@@ -275,7 +275,7 @@ non-successful solution must raise at the call boundary.
 ## Semidiscrete implicit PDE residuals
 
 `compile_semidiscrete_dae` lowers validated `PDEProblemIR` into a
-`CompiledSpatialResidual` and `DifferentialAlgebraicSystem`. It shares field layout,
+`CompiledDiscreteResidual` and `DifferentialAlgebraicSystem`. It shares field layout,
 coordinate, boundary-lift, parameter-binding, and expression validation with
 `compile_semidiscrete_pde`, but retains temporal derivatives in the implicit
 residual.
@@ -435,7 +435,7 @@ determine all algebraic rates.
 
 ---
 
-::: phydrax.equations.CompiledSpatialResidual
+::: phydrax.equations.CompiledDiscreteResidual
 
 ---
 

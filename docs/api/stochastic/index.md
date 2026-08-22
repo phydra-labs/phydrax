@@ -92,10 +92,11 @@ reconstruction occurs.
 
 `StochasticLevelSpec` names every approximation axis—time, space, retained noise,
 surrogate fidelity, or another declared refinement—and records state, solver, problem,
-and observable identities. `StochasticHierarchy` validates parent links and prevents
-nominally adjacent levels with incompatible contracts from being coupled accidentally.
-`NoiseCoupling` records the shared realization and coarse/fine transformation rather
-than treating equal PRNG keys as evidence of common randomness.
+and observable identities. `StochasticCouplingPlan` validates parent links, owns a
+generic `DiscretizationHierarchy`, and prevents nominally adjacent levels with
+incompatible contracts from being coupled accidentally. `NoiseCoupling` records the
+shared realization and coarse/fine transformation rather than treating equal PRNG
+keys as evidence of common randomness.
 
 These contracts are consumed by `solve_coupled_hierarchy` and multilevel integration.
 Coarse and fine outputs retain pair IDs, validity, per-level cost, and coupling
@@ -105,7 +106,7 @@ provenance; a failed member is never silently replaced by an independent draw.
 
 ---
 
-::: phydrax.stochastic.StochasticHierarchy
+::: phydrax.stochastic.StochasticCouplingPlan
 
 
 ## Path events and changes of measure

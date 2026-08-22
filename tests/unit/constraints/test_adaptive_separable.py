@@ -7,12 +7,8 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
-from phydrax.domain import (
-    GridBatch,
-    GridSpec,
-    HyperRectangle,
-    NestedDyadicAxisSpec,
-)
+from phydrax.discretization import NestedDyadicAxisSpec, TensorGridPlan
+from phydrax.domain import GridBatch, HyperRectangle
 from phydrax.sampling.collocation import (
     HierarchicalAxisCollocation,
     PeriodicSeparableCollocation,
@@ -125,7 +121,7 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
     condition = phx.conditions.Residual("u", component, lambda _u: shifted_x)
     source = phx.integration.adaptive(
         phx.integration.over(component),
-        phx.domain.GridSampling({"x": GridSpec((spec, spec))}),
+        phx.domain.GridSampling({"x": TensorGridPlan((spec, spec))}),
         policy,
     )
     term = phx.terms.ResidualPenalty(condition, source)

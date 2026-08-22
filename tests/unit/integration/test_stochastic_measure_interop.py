@@ -8,7 +8,7 @@ import phydrax as phx
 
 def _spatiotemporal_trajectory():
     times = jnp.asarray([0.0, 0.2, 0.6, 1.0])
-    spatial_axis = phx.domain.FourierAxisSpec(4).materialize(0.0, 1.0)
+    spatial_axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
     path = jnp.arange(3.0)[:, None, None]
     time = times[None, :, None]
     space = spatial_axis.nodes[None, None, :]
@@ -35,7 +35,7 @@ def _spatiotemporal_trajectory():
         state_axes=("space",),
         realizations=(realization,),
     )
-    discretization = phx.solver.TensorGridDiscretization((spatial_axis,))
+    discretization = phx.discretization.SeparableSpectralDiscretization((spatial_axis,))
     return trajectory, discretization
 
 
@@ -70,7 +70,7 @@ def test_staged_space_time_path_reduction_is_jittable_and_differentiable():
     time_target = phx.stochastic.time_measure(trajectory)
     time_weights = time_target.weights
     assert isinstance(time_weights, cx.Field)
-    spatial_target = phx.solver.spatial_measure(
+    spatial_target = phx.integration.spatial_measure(
         discretization,
         spatial_dims="space",
     )

@@ -65,7 +65,7 @@ from ._fractional import (
 from ._hierarchy import (
     NoiseCoupling,
     RefinementAxis,
-    StochasticHierarchy,
+    StochasticCouplingPlan,
     StochasticLevelSpec,
 )
 from ._integration import (
@@ -219,6 +219,7 @@ from ._solver_transition import (
     JumpTransitionKernel,
     PathwiseTransitionKernel,
 )
+from ._spatial_noise import SpatialNoiseApproximation, SpatialNoiseBasis
 from ._state_space import (
     AbstractObservationModel,
     AbstractStatePrior,
@@ -432,6 +433,8 @@ __all__ = [
     "RandomFieldRole",
     "RandomFieldSample",
     "SpatialBasisSynthesis",
+    "SpatialNoiseApproximation",
+    "SpatialNoiseBasis",
     "is_stochastic_realization",
     "realization_path_labels",
     "StaticGaussianRandomField",
@@ -464,7 +467,7 @@ __all__ = [
     "TrendComponent",
     "realization_independence_labels",
     "StochasticTrajectory",
-    "StochasticHierarchy",
+    "StochasticCouplingPlan",
     "query_feynman_kac_labels",
     "sample_feynman_kac_paths",
     "trajectory_node_feynman_kac_labels",

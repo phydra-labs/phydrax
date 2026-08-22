@@ -20,7 +20,7 @@ from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._strict import StrictModule
-from phydrax.graph._cochain import CochainBoundaryKind, CochainBoundaryPolicy
+from phydrax.discretization import CochainBoundaryKind, CochainBoundaryPolicy
 from phydrax.graph._cochain_ops import (
     cochain_codifferential,
     cochain_exterior_derivative,

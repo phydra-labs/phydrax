@@ -9,17 +9,31 @@ import math
 
 import numpy as np
 
-from ._spectrum import DiscreteLaplacianEigenbasis, LaplacianEigenbasisReport
+from ..discretization import LaplacianEigenbasisReport, SpectralDecomposition
+
+
+def _laplacian_report(basis: SpectralDecomposition, /) -> LaplacianEigenbasisReport:
+    report = basis.report
+    if report is None:
+        raise ValueError("Product factors require Laplacian eigenbasis provenance.")
+    return report
+
+
+def _spectral_dimension(basis: SpectralDecomposition, /) -> float:
+    dimension = basis.spectral_dimension
+    if dimension is None:
+        raise ValueError("Product factors require a declared spectral dimension.")
+    return dimension
 
 
 def _first_missing_product_eigenvalue(
-    factors: tuple[DiscreteLaplacianEigenbasis, ...],
+    factors: tuple[SpectralDecomposition, ...],
     /,
 ) -> float:
     candidates = []
     minimum_values = [float(np.asarray(factor.eigenvalues)[0]) for factor in factors]
     for index, factor in enumerate(factors):
-        next_value = factor.report.next_eigenvalue
+        next_value = _laplacian_report(factor).next_eigenvalue
         if np.isfinite(next_value):
             candidates.append(
                 float(next_value)
@@ -68,24 +82,24 @@ def _lowest_product_modes(
 
 
 def product_laplacian_eigenbasis(
-    factors: tuple[DiscreteLaplacianEigenbasis, ...],
+    factors: tuple[SpectralDecomposition, ...],
     /,
     *,
     num_modes: int | None,
     degeneracy_tolerance: float = 1e-8,
     orthonormality_tolerance: float = 1e-8,
-) -> DiscreteLaplacianEigenbasis:
+) -> SpectralDecomposition:
     """Materialize certified low eigenpairs of a summed product Laplacian."""
     resolved = tuple(factors)
     if len(resolved) < 2:
         raise ValueError("A product Laplacian requires at least two factors.")
-    if not all(isinstance(factor, DiscreteLaplacianEigenbasis) for factor in resolved):
-        raise TypeError("Product factors must be DiscreteLaplacianEigenbasis objects.")
+    if not all(isinstance(factor, SpectralDecomposition) for factor in resolved):
+        raise TypeError("Product factors must be SpectralDecomposition objects.")
     if any(
-        not factor.report.exact
+        not _laplacian_report(factor).exact
         and (
-            not factor.report.tail_certified
-            or not np.isfinite(factor.report.next_eigenvalue)
+            not _laplacian_report(factor).tail_certified
+            or not np.isfinite(_laplacian_report(factor).next_eigenvalue)
         )
         for factor in resolved
     ):
@@ -140,9 +154,9 @@ def product_laplacian_eigenbasis(
         active &= np.asarray(factor.active_mask)[factor_entities]
     functions[~active] = 0.0
     exact = requested == available_modes and all(
-        factor.report.exact for factor in resolved
+        _laplacian_report(factor).exact for factor in resolved
     )
-    source_id = "product:" + "|".join(factor.basis_id for factor in resolved)
+    source_id = "product:" + "|".join(factor.decomposition_id for factor in resolved)
     gram = functions.T @ (measure[:, None] * functions)
     residual = float(np.max(np.abs(gram - np.eye(requested))))
     report = LaplacianEigenbasisReport(
@@ -159,12 +173,12 @@ def product_laplacian_eigenbasis(
         boundary_gap=boundary_gap,
         orthonormality_residual=residual,
     )
-    return DiscreteLaplacianEigenbasis(
+    return SpectralDecomposition(
         summed_values[:requested],
         functions,
         measure,
-        spectral_dimension=sum(factor.spectral_dimension for factor in resolved),
-        basis_id=f"{source_id}:rank={requested}:exact={int(exact)}",
+        spectral_dimension=sum(_spectral_dimension(factor) for factor in resolved),
+        decomposition_id=f"{source_id}:rank={requested}:exact={int(exact)}",
         active_mask=active,
         report=report,
         negative_eigenvalue_tolerance=0.0,

@@ -108,10 +108,7 @@ from .spectral._fno import (
 )
 from .spectral._hofno import HOFNO
 from .spectral._laplace import LaplaceTemporalOperator
-from .spectral._manifold_spectral import (
-    ManifoldSpectralOperator,
-    SpectralDiscretization,
-)
+from .spectral._manifold_spectral import ManifoldSpectralOperator
 from .spectral._sfno import (
     SFNO,
     SphericalHarmonicPlan,
@@ -242,7 +239,6 @@ __all__ = [
     "LinearRecurrentOperator",
     "LocalIntegralOperator",
     "ManifoldSpectralOperator",
-    "SpectralDiscretization",
     "NativeGraphOperator",
     "CoordinateConditionedOperator",
     "CoordinateDecoderState",

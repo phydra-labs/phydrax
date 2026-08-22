@@ -253,13 +253,17 @@ def stochastic_heat_transition_data(
         raise ValueError("duration, diffusivity, and dt0 must be positive.")
     initial_key, realization_key = jr.split(key)
     initial = _smooth_initial_states(initial_key, cases, size)
-    axis_discretization = phx.domain.UniformAxisSpec(
+    axis_discretization = phx.discretization.UniformAxisSpec(
         size,
         endpoint=False,
         periodic=True,
     ).materialize(0.0, 1.0)
-    spatial = phx.solver.TensorGridDiscretization((axis_discretization,))
-    noise_basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    spatial = phx.discretization.periodic_finite_difference(
+        phx.discretization.PreparedTensorGrid(
+            (axis_discretization,), axis_names=("x",)
+        )
+    )
+    noise_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         spatial,
         float(noise_scale) ** 2 / float(size),
         rank=int(noise_rank),
@@ -343,13 +347,17 @@ def allen_cahn_transition_data(
     size, cases, draws = int(grid_size), int(num_cases), int(num_realizations)
     initial_key, realization_key = jr.split(key)
     initial = 0.35 * _smooth_initial_states(initial_key, cases, size)
-    axis_discretization = phx.domain.UniformAxisSpec(
+    axis_discretization = phx.discretization.UniformAxisSpec(
         size,
         endpoint=False,
         periodic=True,
     ).materialize(0.0, 1.0)
-    spatial = phx.solver.TensorGridDiscretization((axis_discretization,))
-    noise_basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    spatial = phx.discretization.periodic_finite_difference(
+        phx.discretization.PreparedTensorGrid(
+            (axis_discretization,), axis_names=("x",)
+        )
+    )
+    noise_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         spatial,
         float(noise_scale) ** 2 / float(size),
         rank=int(noise_rank),

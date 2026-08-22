@@ -18,68 +18,20 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization import (
+    CellComplexTopology,
+    CochainBoundaryKind,
+    CochainBoundaryPolicy,
+    CochainDiscretization,
+    EntitySet,
+    EntitySubset,
+    OrientedIncidence,
+)
 from ..sparse import EdgeRelation, SparseLinearMap
 from ._ir import GraphIR
 
 
-CochainBoundaryKind: TypeAlias = Literal["absolute", "relative"]
-CochainSide: TypeAlias = Literal["primal", "dual"]
-CochainCellOrientation: TypeAlias = Literal["invariant", "signed"]
-CochainSampling: TypeAlias = Literal["point_value", "cell_average", "cell_integral"]
 GraphEdgeSemantics: TypeAlias = Literal["reciprocal", "undirected_once"]
-
-
-class CochainFieldSpec(StrictModule):
-    """Discrete differential-form semantics shared by fields and operators."""
-
-    degree: int = eqx.field(static=True)
-    complex_side: CochainSide = eqx.field(static=True)
-    cell_orientation: CochainCellOrientation = eqx.field(static=True)
-    sampling: CochainSampling = eqx.field(static=True)
-
-    def __init__(
-        self,
-        degree: int,
-        /,
-        *,
-        complex_side: CochainSide = "primal",
-        cell_orientation: CochainCellOrientation,
-        sampling: CochainSampling,
-    ):
-        resolved_degree = int(degree)
-        if resolved_degree < 0:
-            raise ValueError("Cochain degree must be non-negative.")
-        if complex_side not in ("primal", "dual"):
-            raise ValueError("complex_side must be 'primal' or 'dual'.")
-        if cell_orientation not in ("invariant", "signed"):
-            raise ValueError("cell_orientation must be 'invariant' or 'signed'.")
-        if sampling not in ("point_value", "cell_average", "cell_integral"):
-            raise ValueError(
-                "sampling must be 'point_value', 'cell_average', or 'cell_integral'."
-            )
-        self.degree = resolved_degree
-        self.complex_side = complex_side
-        self.cell_orientation = cell_orientation
-        self.sampling = sampling
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return canonical JSON-compatible cochain semantics."""
-        return {
-            "degree": self.degree,
-            "complex_side": self.complex_side,
-            "cell_orientation": self.cell_orientation,
-            "sampling": self.sampling,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any], /) -> "CochainFieldSpec":
-        """Restore cochain semantics from a canonical dictionary."""
-        return cls(
-            int(value["degree"]),
-            complex_side=value.get("complex_side", "primal"),
-            cell_orientation=value["cell_orientation"],
-            sampling=value["sampling"],
-        )
 
 
 def _host_array(name: str, value: Any, /, *, dtype: Any | None = None) -> np.ndarray:
@@ -108,21 +60,6 @@ def _fingerprint(*values: Any) -> str:
         else:
             _array_digest(digest, value)
     return digest.hexdigest()
-
-
-class CochainBoundaryPolicy(StrictModule, NonTrainableState):
-    """Boundary realization used by metric cochain operators."""
-
-    kind: CochainBoundaryKind = eqx.field(static=True)
-
-    def __init__(self, kind: CochainBoundaryKind = "absolute"):
-        if kind not in ("absolute", "relative"):
-            raise ValueError("Cochain boundary policy must be 'absolute' or 'relative'.")
-        self.kind = kind
-
-    @property
-    def code(self) -> int:
-        return 0 if self.kind == "absolute" else 1
 
 
 class CochainIncidence(StrictModule, NonTrainableState):
@@ -292,6 +229,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
     boundary_masks: tuple[Array, ...]
     coordinates: tuple[Array | None, ...]
     harmonic_subspace: HarmonicSubspace | None
+    discretization: CochainDiscretization
     cell_counts: tuple[int, ...] = eqx.field(static=True)
     cell_offsets: tuple[int, ...] = eqx.field(static=True)
     incidence_fingerprint: str = eqx.field(static=True)
@@ -389,6 +327,7 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         self.metric_fingerprint = metric_fingerprint
         self.boundary_fingerprint = boundary_fingerprint
         self.fingerprint = fingerprint
+        self.discretization = self._canonical_discretization(validate=validate)
         self.graph = self._build_graph()
         if validate:
             self.validate()
@@ -476,6 +415,48 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             _array_digest(digest, incidence.upper_indices)
             _array_digest(digest, incidence.signs)
         return digest.hexdigest()
+
+    def _canonical_discretization(self, *, validate: bool) -> CochainDiscretization:
+        entity_sets = tuple(
+            EntitySet(
+                f"cells_{degree}",
+                degree,
+                np.arange(count, dtype=np.int32),
+                subsets=(EntitySubset("boundary", self.boundary_masks[degree]),),
+            )
+            for degree, count in enumerate(self.cell_counts)
+        )
+        incidences = tuple(
+            OrientedIncidence(
+                incidence.degree,
+                entity_sets[incidence.degree - 1],
+                entity_sets[incidence.degree],
+                EdgeRelation(
+                    incidence.lower_indices,
+                    incidence.upper_indices,
+                    source_size=incidence.lower_count,
+                    target_size=incidence.upper_count,
+                ),
+                incidence.signs,
+                incidence_id=self.incidence_fingerprint + f":degree:{incidence.degree}",
+            )
+            for incidence in self.incidences
+        )
+        topology = CellComplexTopology(
+            entity_sets,
+            incidences,
+            topology_id=self.incidence_fingerprint,
+            validate=validate,
+        )
+        return CochainDiscretization(
+            topology,
+            self.hodge_stars,
+            primal_measures=self.primal_measures,
+            dual_measures=self.dual_measures,
+            boundary_masks=self.boundary_masks,
+            coordinates=self.coordinates,
+            plan_id=self.incidence_fingerprint,
+        )
 
     @property
     def max_degree(self) -> int:
@@ -1040,8 +1021,6 @@ def reorient_cochain_complex(
 
 
 __all__ = [
-    "CochainBoundaryKind",
-    "CochainBoundaryPolicy",
     "CochainComplexIR",
     "GraphEdgeSemantics",
     "CochainIncidence",

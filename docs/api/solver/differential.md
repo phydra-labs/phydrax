@@ -597,38 +597,37 @@ therefore fail before integration.
 
 ### Spatial discretizations
 
-`TensorGridDiscretization` consumes the existing materialized
+`SeparableSpectralDiscretization` consumes materialized Fourier, sine, or cosine
 `AxisDiscretization` objects:
 
 | Axis basis | Laplacian | Boundary semantics |
 | --- | --- | --- |
-| `uniform` | second-order centered finite difference | periodic |
 | `fourier` | FFT spectral derivative | periodic |
 | `sine` | odd-extension spectral derivative | homogeneous Dirichlet |
 | `cosine` | even-extension spectral derivative | homogeneous Neumann |
 
-Tensor-grid states begin with the declared spatial shape; trailing channel axes
-are preserved by `laplacian`, `flatten`, and `unflatten`. `eigenpairs(rank=...)`
-combines exact one-dimensional spectra and selects only the lowest requested
-tensor sums. It does not assemble the full tensor Laplacian or enumerate every
-product mode. `laplacian_matrix()` remains an explicit diagnostic for small
-systems; ordinary integration and low-rank spectral noise do not use it.
+Uniform axes use `PreparedTensorGrid` plus `periodic_finite_difference` or an explicit
+`FiniteDifferencePlan`; polynomial axes use a collocation method. The methods are not
+silently reinterpreted as spectral bases.
 
-`SpectralSpatialDiscretization` wraps an existing
-`phydrax._spectral.SpectralDiscretization` directly. It reuses that plan's
-analysis, synthesis, eigenvalues, quadrature, degeneracy ordering, and
-`basis_id`; it does not introduce a provider or a second manifold eigenbasis
-convention.
+Tensor-grid states begin with the declared spatial shape; trailing channel axes are
+preserved by `laplacian`, `flatten`, and `unflatten`. `eigenpairs(rank=...)` selects
+the lowest requested real modes without assembling the full tensor Laplacian.
+`laplacian_matrix()` remains an explicit diagnostic for small systems.
 
-::: phydrax.solver.AbstractSpatialDiscretization
+`SpectralDiscretization` wraps a canonical
+`phydrax.discretization.SpectralDecomposition`. It reuses a `ModalTransform` and the
+selected `OperatorSpectrum`; transform and operator identities remain separate.
 
----
-
-::: phydrax.solver.TensorGridDiscretization
+::: phydrax.discretization.AbstractStrongFormDiscretization
 
 ---
 
-::: phydrax.solver.SpectralSpatialDiscretization
+::: phydrax.discretization.SeparableSpectralDiscretization
+
+---
+
+::: phydrax.discretization.SpectralDiscretization
 
 ### Finite-rank spatial noise
 
@@ -657,11 +656,11 @@ state are rejected before integration.
 mode IDs, and spatial discretization provenance. It changes when the grid,
 rank, spectrum, modes, or randomized seed changes.
 
-::: phydrax.solver.SpatialNoiseBasis
+::: phydrax.stochastic.SpatialNoiseBasis
 
 ---
 
-::: phydrax.solver.SpatialNoiseApproximation
+::: phydrax.stochastic.SpatialNoiseApproximation
 
 ### Composition and integration
 
@@ -670,9 +669,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 
-axis = phx.domain.FourierAxisSpec(32).materialize(0.0, 1.0)
-space = phx.solver.TensorGridDiscretization((axis,))
-noise = phx.solver.SpatialNoiseBasis.from_spectrum(
+axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
+space = phx.discretization.SeparableSpectralDiscretization((axis,))
+noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     space,
     lambda eigenvalue: 0.02 * jnp.exp(-0.05 * eigenvalue),
     rank=6,
@@ -744,7 +743,7 @@ requested.
 
 ---
 
-::: phydrax.linalg.SpectralMatrixRepresentation
+::: phydrax.linalg.TransformDiagonalRepresentation
 
 ---
 
@@ -823,7 +822,7 @@ finite-horizon and stationary solution-aware truncation.
 
 ### Coupled hierarchy execution
 
-`solve_coupled_hierarchy` runs one validated `StochasticHierarchy` through a
+`solve_coupled_hierarchy` runs one validated `StochasticCouplingPlan` through a
 level-specific solver callback. Every adjacent result carries its shared realization,
 pair IDs, coarse/fine validity, observables, and cost. This is the solver-side bridge
 for strong convergence studies and multilevel estimators.

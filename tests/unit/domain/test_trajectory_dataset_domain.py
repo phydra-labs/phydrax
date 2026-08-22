@@ -7,12 +7,12 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax.discretization import UniformAxisSpec
 from phydrax.domain import (
     FixedEnd,
     SampleLayout,
     TRAJECTORY_CASE_INDEX_KEY,
     TrajectoryDatasetDomain,
-    UniformAxisSpec,
 )
 from phydrax.integration import from_samples, over
 from phydrax.operators.differential import partial_t

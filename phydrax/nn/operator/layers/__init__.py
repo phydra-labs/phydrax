@@ -28,7 +28,7 @@ from ._o3 import (
     RadialMap,
 )
 from ._regional_processor import RegionalGraphProcessor
-from ._spectral import BasisSpectralConvND, BasisTransformPlan, SpectralBasis
+from ._spectral import BasisSpectralConvND, BasisTransformPlan, ModalTransformKind
 from ._transformer import OperatorTransformerProcessor
 
 
@@ -45,7 +45,7 @@ __all__ = [
     "OperatorAttention",
     "OperatorTransformerProcessor",
     "SliceAttention",
-    "SpectralBasis",
+    "ModalTransformKind",
     "GeometryMomentEmbedding",
     "O3PointwiseLinear",
     "o3_gated_activation",

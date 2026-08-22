@@ -14,6 +14,13 @@ import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import canonical_fingerprint
+from ..discretization import (
+    DiscretizationBundle,
+    DiscretizationKey,
+    DiscretizationRecord,
+    DiscretizationRole,
+)
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
@@ -22,8 +29,8 @@ from ..linalg import (
     MatrixFunctionPolicy,
 )
 from ..stochastic import WienerRealization
+from ..stochastic._spatial_noise import SpatialNoiseBasis
 from ._differential import DifferentialProblem, DifferentialSolution
-from ._noise import SpatialNoiseBasis
 from ._spde import SemidiscreteSPDE
 
 
@@ -38,6 +45,78 @@ _ResolvedSemilinearSPDEScheme: TypeAlias = Literal[
     "exponential_euler",
     "exponential_milstein",
 ]
+
+
+def _semilinear_solution_bundle(
+    spde: SemidiscreteSPDE,
+    realization: WienerRealization | None,
+    num_steps: int,
+    scheme: str,
+    /,
+) -> DiscretizationBundle:
+    records = list(spde.discretization_bundle.records)
+    temporal_key = DiscretizationKey(
+        "spde_internal_time",
+        DiscretizationRole.TEMPORAL,
+        domain_labels=("time",),
+    )
+    records.append(
+        DiscretizationRecord(
+            temporal_key,
+            "fixed-step-temporal-mesh",
+            canonical_fingerprint(
+                {
+                    "kind": "semilinear-spde-time",
+                    "problem": spde.discretization_bundle.bundle_id,
+                    "num_steps": int(num_steps),
+                    "scheme": str(scheme),
+                }
+            ),
+        )
+    )
+    coupling_ids = list(spde.discretization_bundle.stochastic_coupling_ids)
+    if realization is not None:
+        driver_key = DiscretizationKey(
+            "wiener_driver",
+            DiscretizationRole.DRIVER,
+            domain_labels=("time",),
+        )
+        records.append(
+            DiscretizationRecord(
+                driver_key,
+                "wiener-realization",
+                realization.realization_id,
+                dependency_key_ids=(temporal_key.key_id,),
+                realization_id=realization.realization_id,
+            )
+        )
+        if realization.coupling_id is not None:
+            coupling_ids.append(realization.coupling_id)
+        if realization.sample_shape:
+            ensemble_key = DiscretizationKey(
+                "path_ensemble",
+                DiscretizationRole.ENSEMBLE,
+            )
+            records.append(
+                DiscretizationRecord(
+                    ensemble_key,
+                    "stochastic-path-ensemble",
+                    canonical_fingerprint(
+                        {
+                            "kind": "path-ensemble",
+                            "realization": realization.realization_id,
+                            "sample_shape": list(realization.sample_shape),
+                        }
+                    ),
+                    dependency_key_ids=(driver_key.key_id,),
+                    realization_id=realization.realization_id,
+                )
+            )
+    return DiscretizationBundle(
+        records,
+        transfers=spde.discretization_bundle.transfers,
+        stochastic_coupling_ids=tuple(dict.fromkeys(coupling_ids)),
+    )
 
 
 def _stochastic_convolution_time_factor(
@@ -599,6 +678,12 @@ def solve_semilinear_spde(
         state_geometry_id=spde.problem.state_geometry_id,
         solver_id=f"solver:semilinear:{resolved_scheme}",
         resolved_method=f"{resolved_scheme}:{policy.method}",
+        discretization_bundle=_semilinear_solution_bundle(
+            spde,
+            realization,
+            num_steps,
+            resolved_scheme,
+        ),
     )
 
 

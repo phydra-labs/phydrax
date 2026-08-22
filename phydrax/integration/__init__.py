@@ -14,6 +14,7 @@ from ._batches import (
 )
 from ._calibration import calibrate, MeasureCalibrationDiagnostics
 from ._compression import compress, MeasureCompressionDiagnostics
+from ._discrete_support import spatial_measure
 from ._estimates import (
     AdaptivePartition,
     AdaptiveQuadratureDiagnostics,
@@ -224,6 +225,7 @@ __all__ = [
     "SparseGridDiagnostics",
     "SparseGridPlan",
     "SparseGridRealization",
+    "spatial_measure",
     "StratifiedDesign",
     "StratifiedDiagnostics",
     "StratifiedMonteCarloPlan",

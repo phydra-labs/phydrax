@@ -9,7 +9,7 @@ import jax.tree_util as jtu
 import numpy as np
 import scipy.sparse as scipy_sparse
 
-from .._spectral._modal import SpectralDiscretization
+from ..discretization._spectral import SpectralDecomposition
 from ..sparse import linear_apply, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
@@ -487,9 +487,9 @@ def spectral_discretization_from_graph(
     mass_key: str | None = None,
     symmetrize: bool = True,
     group_tolerance: float = 1e-7,
-    basis_id: str | None = None,
+    decomposition_id: str | None = None,
     max_construction_bytes: int = 512 * 1024**2,
-) -> SpectralDiscretization:
+) -> SpectralDecomposition:
     """Build a host-side weighted graph-Laplacian eigenbasis.
 
     Directed adjacency is averaged with its transpose when ``symmetrize`` is true;
@@ -560,12 +560,12 @@ def spectral_discretization_from_graph(
         measure = np.ones((num_nodes,), dtype=float)
     else:
         measure = mass
-    return SpectralDiscretization.from_stiffness(
+    return SpectralDecomposition.from_stiffness(
         stiffness,
         measure,
         n_modes=n_modes,
         group_tolerance=group_tolerance,
-        basis_id=basis_id,
+        decomposition_id=decomposition_id,
         max_construction_bytes=max_construction_bytes,
     )
 
@@ -576,9 +576,9 @@ def spectral_discretization_from_triangle_mesh(
     *,
     n_modes: int,
     group_tolerance: float = 1e-7,
-    basis_id: str | None = None,
+    decomposition_id: str | None = None,
     max_construction_bytes: int = 512 * 1024**2,
-) -> SpectralDiscretization:
+) -> SpectralDecomposition:
     """Build a cotangent-FEM eigenbasis from a ``TriangleMesh``."""
     from phydrax.geometry.simplicial import DDGOperators, TriangleMesh
 
@@ -607,12 +607,12 @@ def spectral_discretization_from_triangle_mesh(
         dtype=float,
     ).tocsr()
     stiffness.sum_duplicates()
-    return SpectralDiscretization.from_stiffness(
+    return SpectralDecomposition.from_stiffness(
         stiffness,
         np.asarray(operators.vertex_mass, dtype=float),
         n_modes=n_modes,
         group_tolerance=group_tolerance,
-        basis_id=basis_id,
+        decomposition_id=decomposition_id,
         max_construction_bytes=max_construction_bytes,
     )
 

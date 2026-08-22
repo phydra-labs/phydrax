@@ -12,14 +12,14 @@ from phydrax.domain import Domain, DomainFunction
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
-from ._discretization import PathDiscretization
+from ...discretization import TemporalMesh
 from ._euclidean import euclidean_kernel
 from ._potential import PotentialLike
 
 
 class _EuclideanKernelCallable(StrictModule):
     potential: PotentialLike | None
-    slicing: PathDiscretization
+    slicing: TemporalMesh
     mass: ArrayLike
     hbar: ArrayLike
     num_paths: int
@@ -30,7 +30,7 @@ class _EuclideanKernelCallable(StrictModule):
     def __init__(
         self,
         potential: PotentialLike | None,
-        slicing: PathDiscretization,
+        slicing: TemporalMesh,
         mass: ArrayLike,
         hbar: ArrayLike,
         num_paths: int,
@@ -78,7 +78,7 @@ def euclidean_kernel_function(
     *,
     start_var: str,
     end_var: str,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     mass: ArrayLike = 1.0,
     hbar: ArrayLike = 1.0,
     num_paths: int,

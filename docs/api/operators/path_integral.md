@@ -8,7 +8,7 @@
     These operators implement finite-dimensional Euclidean and stochastic path
     expectations. They do not provide generic real-time or field-theory path integrals.
 
-::: phydrax.operators.PathDiscretization
+::: phydrax.discretization.TemporalMesh
 
 ---
 

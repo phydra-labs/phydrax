@@ -10,6 +10,13 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._strict import StrictModule
+from ...discretization import (
+    CellComplexTopology,
+    EntitySet,
+    EntitySubset,
+    OrientedIncidence,
+)
+from ...sparse import EdgeRelation
 
 
 def _csr(
@@ -61,6 +68,41 @@ class SegmentTopology(StrictModule):
     @property
     def vertex_degree(self) -> Array:
         return self.vertex_edge_offsets[1:] - self.vertex_edge_offsets[:-1]
+
+    def cell_complex_topology(self, /) -> CellComplexTopology:
+        """Return the canonical oriented one-complex view."""
+        edges = np.asarray(self.edges, dtype=np.int32)
+        boundary_vertices = np.zeros((self.num_vertices,), dtype=bool)
+        degree = np.bincount(edges.reshape((-1,)), minlength=self.num_vertices)
+        boundary_vertices[degree == 1] = True
+        vertices = EntitySet(
+            "vertices",
+            0,
+            np.arange(self.num_vertices, dtype=np.int32),
+            subsets=(EntitySubset("boundary", boundary_vertices),),
+        )
+        edge_entities = EntitySet(
+            "edges",
+            1,
+            np.arange(self.num_edges, dtype=np.int32),
+            subsets=(
+                EntitySubset(
+                    "boundary",
+                    np.zeros((self.num_edges,), dtype=bool),
+                ),
+            ),
+        )
+        relation = EdgeRelation(
+            edges.reshape((-1,)),
+            np.repeat(np.arange(self.num_edges, dtype=np.int32), 2),
+            source_size=self.num_vertices,
+            target_size=self.num_edges,
+        )
+        signs = np.tile(np.asarray([-1.0, 1.0]), self.num_edges)
+        return CellComplexTopology(
+            (vertices, edge_entities),
+            (OrientedIncidence(1, vertices, edge_entities, relation, signs),),
+        )
 
 
 class TriangleTopology(StrictModule):
@@ -232,6 +274,77 @@ class TriangleTopology(StrictModule):
     @property
     def num_boundary_loops(self) -> int:
         return self.boundary_loop_offsets.shape[0] - 1
+
+    def cell_complex_topology(self, /) -> CellComplexTopology:
+        """Return the canonical oriented two-complex view."""
+        edges = np.asarray(self.edges, dtype=np.int32)
+        faces = np.asarray(self.faces, dtype=np.int32)
+        halfedge_edges = np.asarray(self.halfedge_edge, dtype=np.int32).reshape((-1, 3))
+        origin = faces.reshape((-1,))
+        destination = faces[:, [1, 2, 0]].reshape((-1,))
+        selected_edges = edges[halfedge_edges.reshape((-1,))]
+        face_signs = np.where(
+            (selected_edges[:, 0] == origin) & (selected_edges[:, 1] == destination),
+            1.0,
+            -1.0,
+        )
+        boundary_edges = np.asarray(self.edge_halfedges)[:, 1] < 0
+        boundary_vertices = np.zeros((self.num_vertices,), dtype=bool)
+        boundary_vertices[np.unique(edges[boundary_edges].reshape((-1,)))] = True
+        vertices = EntitySet(
+            "vertices",
+            0,
+            np.arange(self.num_vertices, dtype=np.int32),
+            subsets=(EntitySubset("boundary", boundary_vertices),),
+        )
+        edge_entities = EntitySet(
+            "edges",
+            1,
+            np.arange(self.num_edges, dtype=np.int32),
+            subsets=(EntitySubset("boundary", boundary_edges),),
+        )
+        face_entities = EntitySet(
+            "faces",
+            2,
+            np.arange(self.num_faces, dtype=np.int32),
+            subsets=(
+                EntitySubset(
+                    "boundary",
+                    np.zeros((self.num_faces,), dtype=bool),
+                ),
+            ),
+        )
+        vertex_edge_relation = EdgeRelation(
+            edges.reshape((-1,)),
+            np.repeat(np.arange(self.num_edges, dtype=np.int32), 2),
+            source_size=self.num_vertices,
+            target_size=self.num_edges,
+        )
+        edge_face_relation = EdgeRelation(
+            halfedge_edges.reshape((-1,)),
+            np.repeat(np.arange(self.num_faces, dtype=np.int32), 3),
+            source_size=self.num_edges,
+            target_size=self.num_faces,
+        )
+        return CellComplexTopology(
+            (vertices, edge_entities, face_entities),
+            (
+                OrientedIncidence(
+                    1,
+                    vertices,
+                    edge_entities,
+                    vertex_edge_relation,
+                    np.tile(np.asarray([-1.0, 1.0]), self.num_edges),
+                ),
+                OrientedIncidence(
+                    2,
+                    edge_entities,
+                    face_entities,
+                    edge_face_relation,
+                    face_signs,
+                ),
+            ),
+        )
 
     @property
     def euler_characteristic(self) -> int:

@@ -6,17 +6,17 @@ import phydrax as phx
 
 
 def _periodic_grid(size=8):
-    axis = phx.domain.UniformAxisSpec(
+    axis = phx.discretization.UniformAxisSpec(
         size,
         endpoint=False,
         periodic=True,
     ).materialize(0.0, 1.0)
-    return phx.solver.TensorGridDiscretization((axis,))
+    return phx.discretization.SeparableSpectralDiscretization((axis,))
 
 
 def test_spectral_noise_modes_are_weighted_orthonormal_and_scaled():
     discretization = _periodic_grid()
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         lambda eigenvalues: jnp.exp(-0.2 * eigenvalues),
         rank=4,
@@ -39,12 +39,12 @@ def test_spectral_noise_modes_are_weighted_orthonormal_and_scaled():
 def test_mode_and_discrete_covariance_constructors_reconstruct_covariance():
     discretization = _periodic_grid(6)
     _, modes = discretization.eigenpairs(rank=3)
-    from_modes = phx.solver.SpatialNoiseBasis.from_modes(
+    from_modes = phx.stochastic.SpatialNoiseBasis.from_modes(
         modes,
         jnp.asarray([0.7, 0.3, 0.1]),
         quadrature_weights=discretization.quadrature_weights,
         mode_ids=("constant", "pair-a", "pair-b"),
-        discretization_id=discretization.discretization_id,
+        field_space_id=discretization.field_spaces[0].field_space_id,
     )
     factor = jnp.asarray(
         [
@@ -57,12 +57,12 @@ def test_mode_and_discrete_covariance_constructors_reconstruct_covariance():
         ]
     )
     covariance = factor @ factor.T
-    from_covariance = phx.solver.SpatialNoiseBasis.from_discrete_covariance(
+    from_covariance = phx.stochastic.SpatialNoiseBasis.from_discrete_covariance(
         covariance,
         state_shape=(6,),
         quadrature_weights=discretization.quadrature_weights,
         rank=6,
-        discretization_id=discretization.discretization_id,
+        field_space_id=discretization.field_spaces[0].field_space_id,
     )
 
     assert from_modes.mode_ids == ("constant", "pair-a", "pair-b")
@@ -82,7 +82,7 @@ def test_kernel_covariance_uses_discretization_coordinates_and_weighted_kl():
     def kernel(left, right):
         return jnp.exp(-jnp.sum((left - right) ** 2, axis=-1) / 0.12)
 
-    basis = phx.solver.SpatialNoiseBasis.from_kernel_covariance(
+    basis = phx.stochastic.SpatialNoiseBasis.from_kernel_covariance(
         kernel,
         discretization,
         rank=7,
@@ -107,7 +107,7 @@ def test_randomized_covariance_operator_retains_weighted_kl_modes_and_seed():
     def covariance_operator(state):
         return diagonal * state
 
-    basis = phx.solver.SpatialNoiseBasis.from_covariance_operator(
+    basis = phx.stochastic.SpatialNoiseBasis.from_covariance_operator(
         covariance_operator,
         discretization,
         rank=3,
@@ -116,7 +116,7 @@ def test_randomized_covariance_operator_retains_weighted_kl_modes_and_seed():
         tolerance=0.6,
         diagnostic_probes=4,
     )
-    replay = phx.solver.SpatialNoiseBasis.from_covariance_operator(
+    replay = phx.stochastic.SpatialNoiseBasis.from_covariance_operator(
         covariance_operator,
         discretization,
         rank=3,
@@ -147,16 +147,16 @@ def test_randomized_covariance_operator_retains_weighted_kl_modes_and_seed():
 
 def test_basis_provenance_is_stable_and_changes_with_meaningful_inputs():
     grid = _periodic_grid(8)
-    same_a = phx.solver.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=3)
-    same_b = phx.solver.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=3)
-    changed_spectrum = phx.solver.SpatialNoiseBasis.from_spectrum(grid, 0.3, rank=3)
-    changed_rank = phx.solver.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=2)
-    changed_grid = phx.solver.SpatialNoiseBasis.from_spectrum(
+    same_a = phx.stochastic.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=3)
+    same_b = phx.stochastic.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=3)
+    changed_spectrum = phx.stochastic.SpatialNoiseBasis.from_spectrum(grid, 0.3, rank=3)
+    changed_rank = phx.stochastic.SpatialNoiseBasis.from_spectrum(grid, 0.2, rank=2)
+    changed_grid = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         _periodic_grid(9), 0.2, rank=3
     )
 
     assert same_a.basis_id == same_b.basis_id
-    assert same_a.discretization_id == grid.discretization_id
+    assert same_a.field_space_id == grid.field_spaces[0].field_space_id
     assert len(same_a.basis_id) == 64
     assert same_a.basis_id != changed_spectrum.basis_id
     assert same_a.basis_id != changed_rank.basis_id
@@ -165,7 +165,7 @@ def test_basis_provenance_is_stable_and_changes_with_meaningful_inputs():
 
 def test_noise_basis_provenance_reaches_wiener_realization():
     discretization = _periodic_grid(6)
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         0.05,
         rank=2,
@@ -197,25 +197,25 @@ def test_noise_basis_provenance_reaches_wiener_realization():
 def test_noise_basis_rejects_invalid_rank_modes_and_covariances():
     discretization = _periodic_grid(4)
     with pytest.raises(ValueError, match="rank must lie"):
-        phx.solver.SpatialNoiseBasis.from_spectrum(
+        phx.stochastic.SpatialNoiseBasis.from_spectrum(
             discretization,
             1.0,
             rank=5,
         )
     with pytest.raises(ValueError, match="weighted Gram"):
-        phx.solver.SpatialNoiseBasis.from_modes(
+        phx.stochastic.SpatialNoiseBasis.from_modes(
             jnp.ones((4, 2)),
             jnp.ones((2,)),
             quadrature_weights=discretization.quadrature_weights,
         )
     with pytest.raises(ValueError, match="non-negative"):
-        phx.solver.SpatialNoiseBasis.from_modes(
+        phx.stochastic.SpatialNoiseBasis.from_modes(
             discretization.eigenpairs(rank=1)[1],
             jnp.asarray([-1.0]),
             quadrature_weights=discretization.quadrature_weights,
         )
     with pytest.raises(ValueError, match="symmetric"):
-        phx.solver.SpatialNoiseBasis.from_discrete_covariance(
+        phx.stochastic.SpatialNoiseBasis.from_discrete_covariance(
             jnp.asarray(
                 [
                     [1.0, 1.0, 0.0, 0.0],
@@ -229,7 +229,7 @@ def test_noise_basis_rejects_invalid_rank_modes_and_covariances():
             rank=2,
         )
     with pytest.raises(ValueError, match="positive semidefinite"):
-        phx.solver.SpatialNoiseBasis.from_discrete_covariance(
+        phx.stochastic.SpatialNoiseBasis.from_discrete_covariance(
             jnp.diag(jnp.asarray([1.0, 1.0, 1.0, -0.1])),
             state_shape=(4,),
             quadrature_weights=discretization.quadrature_weights,
@@ -239,7 +239,7 @@ def test_noise_basis_rejects_invalid_rank_modes_and_covariances():
 
 def test_semidiscrete_spde_preserves_declared_solution_concept_and_cutoff():
     discretization = _periodic_grid(6)
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         0.05,
         rank=2,

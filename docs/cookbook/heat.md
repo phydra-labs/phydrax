@@ -202,8 +202,8 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
         regions=(boundary_region,),
     )
 
-    axis = phx.domain.SineAxisSpec(64).materialize(0.0, 1.0)
-    space = phx.solver.TensorGridDiscretization((axis,))
+    axis = phx.discretization.SineAxisSpec(64).materialize(0.0, 1.0)
+    space = phx.discretization.SeparableSpectralDiscretization((axis,))
     dynamics = phx.equations.compile_semidiscrete_pde(problem, space)
 
     initial = jnp.sin(jnp.pi * axis.nodes)
@@ -227,12 +227,12 @@ and `dynamics.physical_state(time, state, args)` reconstructs the physical
 field. This explicit split prevents a nonperiodic boundary from being silently
 treated as periodic.
 
-`TensorGridDiscretization` also exposes `partial_derivative`, `gradient`,
-`divergence`, `curl`, and `integral` while preserving trailing field/component
-axes. A direct vector field uses `divergence(vector)`. The gradient's
-finite-difference and sine/cosine dual representation is explicit:
-`divergence(gradient, dual=True)` gives the discrete Laplacian. PDE IR
-`divergence(gradient(...))` tracks this representation automatically.
+`SeparableSpectralDiscretization` also exposes `partial_derivative`, `gradient`,
+`divergence`, `curl`, and `integral` while preserving trailing field/component axes.
+Sine/cosine nested calculus tracks primal and parity-dual representations, so
+`divergence(gradient, dual=True)` gives the corresponding spectral Laplacian.
+Uniform finite-difference grids use the separate native FD compiler and explicit
+stencil composition.
 Functional parameters accept either component constants or arrays aligned with
 the full spatial shape. Compilation IDs and semilinear operator IDs include
 resolved parameter values and boundary-lift IDs, so cached artifacts cannot be

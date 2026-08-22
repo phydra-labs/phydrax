@@ -6,10 +6,10 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
     Boundary,
     FixedStart,
-    FourierAxisSpec,
     Interval1d,
     TimeInterval,
 )

@@ -44,7 +44,7 @@ def _fields():
             role="both",
             source_name="vertex_source",
             query_name="vertex_query",
-            cochain=phx.graph.CochainFieldSpec(
+            cochain=phx.discretization.CochainFieldSpec(
                 0,
                 cell_orientation="invariant",
                 sampling="point_value",
@@ -55,7 +55,7 @@ def _fields():
             role="both",
             source_name="edge_source",
             query_name="edge_query",
-            cochain=phx.graph.CochainFieldSpec(
+            cochain=phx.discretization.CochainFieldSpec(
                 1,
                 cell_orientation="signed",
                 sampling="cell_integral",
@@ -182,7 +182,7 @@ def test_cochain_field_semantics_roundtrip_through_operator_task():
             "invalid",
             role="source",
             offset=1.0,
-            cochain=phx.graph.CochainFieldSpec(
+            cochain=phx.discretization.CochainFieldSpec(
                 1,
                 cell_orientation="signed",
                 sampling="cell_integral",
@@ -341,7 +341,7 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
             role="both",
             source_name="edge_source",
             query_name="edge_query",
-            cochain=phx.graph.CochainFieldSpec(
+            cochain=phx.discretization.CochainFieldSpec(
                 1,
                 cell_orientation="signed",
                 sampling="cell_integral",
@@ -538,7 +538,7 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
 
 
 def _source_matching_program(*, identity="tests.cochain.source_matching"):
-    zero_spec = phx.graph.CochainFieldSpec(
+    zero_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",

@@ -115,6 +115,8 @@ nav:
         - Open-system amplitude damping: "cookbook/quantum_open_system.md"
     - Guides:
         - Domains and sampling: "guides_domain.md"
+        - Discretization: "guides_discretization.md"
+        - Solver substrates: "guides_solver_substrates.md"
         - Differential operators: "guides_differential.md"
         - Integrals and measures: "guides_integrals.md"
         - Special functions and named integrals: "guides_special_functions.md"
@@ -159,6 +161,15 @@ nav:
             - Metrics and inspection: "api/ml/metrics_inspection.md"
             - Artifacts, conversion, and export: "api/ml/interop.md"
         - Geometry substrate: "api/geometry.md"
+        - Discretization:
+            - Overview: "api/discretization/index.md"
+            - Topology and support: "api/discretization/topology.md"
+            - Field spaces and axes: "api/discretization/spaces.md"
+            - Prepared methods: "api/discretization/methods.md"
+            - Temporal and stochastic composition: "api/discretization/stochastic.md"
+            - Finite differences: "api/discretization/finite_difference.md"
+            - Modal and constrained solvers: "api/discretization/modal_solvers.md"
+            - Fixed-capacity AMR: "api/discretization/amr.md"
         - Domains:
             - Overview: "api/domain/index.md"
             - Time: "api/domain/time.md"

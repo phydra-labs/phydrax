@@ -15,7 +15,7 @@ from jaxtyping import PyTree
 from .._frozendict import frozendict
 from .._sampling import DesignLike, resolve_design, UnitDesign
 from .._strict import StrictModule
-from ._grid import AbstractAxisSpec, AxisDiscretization, GridSpec
+from ..discretization._axis import AbstractAxisSpec, AxisDiscretization, TensorGridPlan
 
 
 _AXIS_PREFIX = "__phydra_blk__"
@@ -191,7 +191,11 @@ class SampleLayout(StrictModule):
 
 
 AxisSampling: TypeAlias = (
-    int | tuple[int, ...] | AbstractAxisSpec | tuple[AbstractAxisSpec, ...] | GridSpec
+    int
+    | tuple[int, ...]
+    | AbstractAxisSpec
+    | tuple[AbstractAxisSpec, ...]
+    | TensorGridPlan
 )
 
 
@@ -235,7 +239,7 @@ class GridSampling(StrictModule):
             | Sequence[int]
             | AbstractAxisSpec
             | Sequence[AbstractAxisSpec]
-            | GridSpec,
+            | TensorGridPlan,
         ],
         /,
         *,
@@ -245,7 +249,7 @@ class GridSampling(StrictModule):
         normalized: dict[str, AxisSampling] = {}
         for label, request in axes.items():
             _validate_label(label)
-            if isinstance(request, (int, AbstractAxisSpec, GridSpec)):
+            if isinstance(request, (int, AbstractAxisSpec, TensorGridPlan)):
                 normalized[label] = request
             else:
                 values = tuple(request)

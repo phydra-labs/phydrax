@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike, Key
 from phydrax.domain import DomainFunction
 
 from ..._doc import DOC_KEY0
-from ._discretization import PathDiscretization
+from ...discretization import TemporalMesh
 from ._potential import _as_point_time_callable, PotentialLike
 
 
@@ -139,7 +139,7 @@ def diffusion_paths_from_noise(
     noise: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     position_var: str = "x",
     time_var: str = "t",
     key: Key[Array, ""] = DOC_KEY0,
@@ -215,7 +215,7 @@ def sample_diffusion_paths(
     x0: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     num_paths: int,
     position_var: str = "x",
     time_var: str = "t",

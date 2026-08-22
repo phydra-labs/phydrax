@@ -15,6 +15,30 @@ from ._compile import (
     IntegralCompiler,
     make_pde_operator,
 )
+from ._conservation import (
+    compile_conservation_problem,
+    CompiledConservationProblem,
+    ConservationProblemIR,
+)
+from ._fd_boundary_lowering import (
+    BoundaryTarget,
+    FDBoundaryBinding,
+    FDInterfaceBinding,
+    FDInterfaceConditionKind,
+    lower_fd_boundaries,
+    lower_fd_interfaces,
+    prepare_fd_boundary_program,
+    prepare_fd_boundary_runtime,
+    prepare_fd_interfaces,
+    PreparedFDBoundaryPair,
+    PreparedFDBoundaryProgram,
+    PreparedFDInterface,
+)
+from ._fd_compile import (
+    compile_finite_difference_pde,
+    CompiledFiniteDifferenceDynamics,
+    FiniteDifferenceCompilationPolicy,
+)
 from ._ir import (
     as_expression,
     PDECondition,
@@ -31,6 +55,13 @@ from ._ir import (
     PDERegionKind,
     PDERepresentation,
 )
+from ._manufactured import (
+    ManufacturedConvergencePlan,
+    ManufacturedConvergenceResult,
+    ManufacturedNorm,
+    ManufacturedPDECase,
+    ManufacturedSpatialOperator,
+)
 from ._randomized_compile import (
     analyze_randomized_compilation,
     compile_pde_randomized_term,
@@ -44,12 +75,12 @@ from ._semidiscrete import (
     BoundaryLift,
     compile_semidiscrete_dae,
     compile_semidiscrete_pde,
-    CompiledSpatialDynamics,
-    CompiledSpatialResidual,
+    CompiledDiscreteDynamics,
+    CompiledDiscreteResidual,
+    DiscreteStateLayout,
     ResolvedSemidiscreteMethod,
     SemidiscreteCompilationMethod,
     SemidiscreteDAEStructuralReport,
-    SemidiscreteFieldLayout,
 )
 from ._serialize import (
     pde_ir_from_dict,
@@ -57,6 +88,11 @@ from ._serialize import (
     pde_ir_hash,
     pde_ir_to_dict,
     pde_ir_to_json,
+)
+from ._stencil_compile import (
+    compile_stencil_dynamics,
+    CompiledStencilDynamics,
+    StencilStateLayout,
 )
 from ._tokens import (
     pad_pde_tokens,
@@ -68,23 +104,43 @@ from ._tokens import (
     tokenize_pde_ir,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
+from ._variational import (
+    compile_variational_problem,
+    CompiledVariationalProblem,
+    VariationalProblemIR,
+)
 
 
 __all__ = [
     "analyze_randomized_compilation",
     "BoundaryLift",
     "CompiledPDECondition",
+    "BoundaryTarget",
     "CompiledPDEEquation",
     "CompiledPDEProblem",
-    "CompiledSpatialDynamics",
-    "CompiledSpatialResidual",
+    "CompiledDiscreteDynamics",
+    "CompiledDiscreteResidual",
+    "CompiledFiniteDifferenceDynamics",
+    "CompiledStencilDynamics",
+    "CompiledVariationalProblem",
+    "CompiledConservationProblem",
+    "ConservationProblemIR",
     "CompiledRandomizedPDETerm",
     "DifferentialBackend",
     "ResolvedSemidiscreteMethod",
     "SemidiscreteCompilationMethod",
+    "FDBoundaryBinding",
+    "FDInterfaceBinding",
+    "FDInterfaceConditionKind",
     "SemidiscreteDAEStructuralReport",
-    "SemidiscreteFieldLayout",
+    "DiscreteStateLayout",
+    "FiniteDifferenceCompilationPolicy",
     "IntegralCompiler",
+    "ManufacturedConvergencePlan",
+    "ManufacturedConvergenceResult",
+    "ManufacturedNorm",
+    "ManufacturedPDECase",
+    "ManufacturedSpatialOperator",
     "PDECondition",
     "PDEConditionKind",
     "PDECoordinate",
@@ -107,9 +163,21 @@ __all__ = [
     "compile_pde_expression",
     "compile_pde_residual_term",
     "compile_pde_randomized_term",
+    "compile_variational_problem",
+    "lower_fd_interfaces",
+    "prepare_fd_boundary_program",
+    "compile_conservation_problem",
     "compile_pde_problem",
+    "prepare_fd_interfaces",
+    "PreparedFDBoundaryProgram",
+    "PreparedFDInterface",
     "compile_semidiscrete_dae",
+    "compile_finite_difference_pde",
+    "lower_fd_boundaries",
+    "prepare_fd_boundary_runtime",
+    "PreparedFDBoundaryPair",
     "compile_semidiscrete_pde",
+    "compile_stencil_dynamics",
     "infer_expression_type",
     "make_pde_operator",
     "pad_pde_tokens",
@@ -124,5 +192,7 @@ __all__ = [
     "RandomizedDifferentialMethod",
     "RandomizedDifferentialPlan",
     "RandomizedNodeCoupling",
+    "StencilStateLayout",
     "validate_pde_ir",
+    "VariationalProblemIR",
 ]

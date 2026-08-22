@@ -12,8 +12,8 @@ from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
 from .._sampling import get_sampler_host, seed_from_key
+from ..discretization._axis import broadcasted_grid
 from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
-from ._grid import broadcasted_grid
 from ._structure import _validate_label
 
 

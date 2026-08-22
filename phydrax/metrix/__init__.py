@@ -139,7 +139,6 @@ from ._signed_validation import (
     validate_lorentzian_metric,
     validate_semi_riemannian_metric,
 )
-from ._spectrum import DiscreteLaplacianEigenbasis, LaplacianEigenbasisReport
 from ._state_geometry import (
     AbstractStateGeometry,
     EmbeddedStateGeometry,
@@ -218,7 +217,6 @@ __all__ = [
     "DENSITY_TENSOR",
     "DifferentiableMap",
     "EmbeddedChart",
-    "DiscreteLaplacianEigenbasis",
     "EmbeddedStateGeometry",
     "EuclideanManifold",
     "EuclideanStateGeometry",
@@ -227,7 +225,6 @@ __all__ = [
     "ObliqueManifold",
     "HyperboloidManifold",
     "LeviCivitaConnection",
-    "LaplacianEigenbasisReport",
     "LocalRetraction",
     "LorentzianConvention",
     "LorentzianMetric",

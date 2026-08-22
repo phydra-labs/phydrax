@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
-from ...graph import CochainFieldSpec
+from ...discretization import CochainFieldSpec
 from .._utils import _get_size
 from .capabilities import OperatorFieldRepresentation
 from .data import OperatorOutputSpec

@@ -50,11 +50,13 @@ def _periodic_heat_problem(
     noise_rank: int,
     noise_scale: float,
 ):
-    axis = phx.domain.UniformAxisSpec(
+    axis = phx.discretization.UniformAxisSpec(
         int(size), endpoint=False, periodic=True
     ).materialize(0.0, 1.0)
-    spatial = phx.solver.TensorGridDiscretization((axis,))
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    spatial = phx.discretization.periodic_finite_difference(
+        phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
+    )
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         spatial,
         float(noise_scale) ** 2 / float(size),
         rank=int(noise_rank),
@@ -158,10 +160,12 @@ def run_stochastic_heat_convergence_benchmark(
 
     spatial_levels: list[phx.solver.SPDEConvergenceLevel] = []
     for size in (8, 16, 32):
-        spatial_axis = phx.domain.UniformAxisSpec(
+        spatial_axis = phx.discretization.UniformAxisSpec(
             size, endpoint=False, periodic=True
         ).materialize(0.0, 1.0)
-        discretization = phx.solver.TensorGridDiscretization((spatial_axis,))
+        discretization = phx.discretization.periodic_finite_difference(
+            phx.discretization.PreparedTensorGrid((spatial_axis,), axis_names=("x",))
+        )
         points = spatial_axis.nodes
         initial = jnp.sin(2.0 * jnp.pi * points)
         deterministic = phx.solver.semidiscretize_reaction_diffusion(
@@ -264,13 +268,13 @@ def run_stochastic_heat_convergence_benchmark(
     assert finite_covariance_error is not None
 
     stationary_q = basis.eigenvalues.at[0].set(0.0)
-    stationary_basis = phx.solver.SpatialNoiseBasis.from_modes(
+    stationary_basis = phx.stochastic.SpatialNoiseBasis.from_modes(
         modal_modes,
         stationary_q,
         quadrature_weights=spatial.quadrature_weights,
         state_shape=spatial.state_shape,
         mode_ids=tuple(f"stationary:{index}" for index in range(basis.rank)),
-        discretization_id=spatial.discretization_id,
+        field_space_id=spatial.field_spaces[0].field_space_id,
     )
     stationary_spde = phx.solver.semidiscretize_reaction_diffusion(
         jnp.zeros(spatial.state_shape),
@@ -448,19 +452,21 @@ def run_multiplicative_reaction_diffusion_benchmark(
     diffusivity = 0.02
     growth = 0.15
     noise_scale = 0.45
-    axis = phx.domain.UniformAxisSpec(size, endpoint=False, periodic=True).materialize(
-        0.0, 1.0
+    axis = phx.discretization.UniformAxisSpec(
+        size, endpoint=False, periodic=True
+    ).materialize(0.0, 1.0)
+    spatial = phx.discretization.periodic_finite_difference(
+        phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
     )
-    spatial = phx.solver.TensorGridDiscretization((axis,))
     mode = 1.0 + 0.2 * jnp.cos(2.0 * jnp.pi * axis.nodes)
     constant = jnp.ones((size, 1))
-    basis = phx.solver.SpatialNoiseBasis.from_modes(
+    basis = phx.stochastic.SpatialNoiseBasis.from_modes(
         constant,
         jnp.ones((1,)),
         quadrature_weights=spatial.quadrature_weights,
         state_shape=spatial.state_shape,
         mode_ids=("global-amplitude",),
-        discretization_id=spatial.discretization_id,
+        field_space_id=spatial.field_spaces[0].field_space_id,
     )
     laplacian_mode = spatial.laplacian(mode)
     # The constant offset and cosine have different eigenvalues. Cancel diffusion
@@ -660,7 +666,7 @@ def run_multilevel_monte_carlo_benchmark(
         )
         for index, count in enumerate(steps)
     )
-    hierarchy = phx.stochastic.StochasticHierarchy(
+    hierarchy = phx.stochastic.StochasticCouplingPlan(
         levels,
         hierarchy_id="gbm-mlmc-benchmark",
     )

@@ -11,9 +11,9 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
+from ...discretization import TemporalMesh
 from ._action import _paths_array, potential_action
 from ._diffusion import DiffusionLike, DriftLike, sample_diffusion_paths
-from ._discretization import PathDiscretization
 from ._estimate import _estimate_positive_log_weights, PathIntegralEstimate
 from ._potential import _as_point_time_callable, PotentialLike
 
@@ -23,7 +23,7 @@ def _terminal_values(
     paths: Array,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     position_var: str,
     time_var: str,
     key: Key[Array, ""],
@@ -62,7 +62,7 @@ def feynman_kac_from_paths(
     paths: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     killing: PotentialLike | None = None,
     position_var: str = "x",
     time_var: str = "t",
@@ -135,7 +135,7 @@ def feynman_kac_expectation(
     x0: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     num_paths: int,
     killing: PotentialLike | None = None,
     position_var: str = "x",

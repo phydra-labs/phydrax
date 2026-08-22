@@ -14,12 +14,11 @@ from phydrax.domain.graph import (
     with_cochain_field_spec,
 )
 
+from ...discretization import CochainBoundaryKind, CochainFieldSpec
 from ...domain.graph import GraphModel
 from ...graph import (
-    CochainBoundaryKind,
     CochainCodifferential,
     CochainExteriorDerivative,
-    CochainFieldSpec,
     CochainHarmonicProjection,
     CochainHodgeLaplacian,
     HodgeLaplacianComponent,

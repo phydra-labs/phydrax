@@ -13,7 +13,7 @@ theory, or molecular path-integral dynamics.
 
 ## Uniform time slicing
 
-`PathDiscretization(t0, t1, num_steps=...)` defines the nodes
+`TemporalMesh.uniform(t0, t1, num_steps, role="path")` defines the nodes
 
 $$
 t_k=t_0+k\Delta t,
@@ -49,7 +49,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 
-slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=32)
+slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 32, role="path")
 omega = 0.8
 potential = lambda q, t: 0.5 * omega**2 * q[0] ** 2
 
@@ -104,7 +104,7 @@ absorb paths at geometry boundaries.
 ```python
 kappa = 0.35
 wave_number = 1.1
-heat_slicing = phx.operators.PathDiscretization(0.0, 0.7, num_steps=24)
+heat_slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.7, 24, role="path")
 
 heat = phx.operators.feynman_kac_expectation(
     lambda x, t: jnp.cos(wave_number * x[0]),

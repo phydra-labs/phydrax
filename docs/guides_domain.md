@@ -362,7 +362,7 @@ import phydrax as phx
 
 geom = phx.domain.Interval1d(0.0, 1.0)
 batch = geom.component().sample(
-    phx.domain.GridSampling({"x": phx.domain.FourierAxisSpec(64)}),
+    phx.domain.GridSampling({"x": phx.discretization.FourierAxisSpec(64)}),
     key=jr.key(0),
 )
 ```
@@ -412,16 +412,16 @@ while nested nodes become active.
 For an irregular geometry sampled on bounding-box axes, `coord_mask_by_label`
 remains a boolean support mask. A numerical geometry correction is stored
 separately in `coord_geometry_weight_by_label`; integrals multiply both. Request a
-deterministic subcell estimate with `GridSpec(..., cut_cell_order=k)`:
+deterministic subcell estimate with `TensorGridPlan(..., cut_cell_order=k)`:
 
 ```python
 cad = phx.domain.GeometryDomain(
     phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
 )
-grid = phx.domain.GridSpec(
+grid = phx.discretization.TensorGridPlan(
     (
-        phx.domain.UniformAxisSpec(25),
-        phx.domain.UniformAxisSpec(25),
+        phx.discretization.UniformAxisSpec(25),
+        phx.discretization.UniformAxisSpec(25),
     ),
     cut_cell_order=3,
 )

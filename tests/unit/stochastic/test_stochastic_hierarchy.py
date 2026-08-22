@@ -32,7 +32,7 @@ def test_hierarchy_validates_order_parent_and_transfer_identity():
         _level(1, parent="level-0"),
         _level(2, shape=(9,), parent="level-1", transfer="nested-grid-transfer"),
     )
-    hierarchy = phx.stochastic.StochasticHierarchy(
+    hierarchy = phx.stochastic.StochasticCouplingPlan(
         levels,
         hierarchy_id="ou-time-hierarchy",
     )
@@ -41,16 +41,24 @@ def test_hierarchy_validates_order_parent_and_transfer_identity():
     assert hierarchy.level(1) is levels[1]
     assert hierarchy.level("level-2") is levels[2]
     assert hierarchy.coupled
+    assert isinstance(
+        hierarchy.discretization_hierarchy,
+        phx.discretization.DiscretizationHierarchy,
+    )
+    assert tuple(
+        level.level_id for level in hierarchy.discretization_hierarchy.levels
+    ) == ("level-0", "level-1", "level-2")
+    assert all(level.discretization_bundle.records for level in levels)
     assert (
         hierarchy.fingerprint
-        == phx.stochastic.StochasticHierarchy(
+        == phx.stochastic.StochasticCouplingPlan(
             levels,
             hierarchy_id="ou-time-hierarchy",
         ).fingerprint
     )
 
     with pytest.raises(ValueError, match="state_transfer_id"):
-        phx.stochastic.StochasticHierarchy(
+        phx.stochastic.StochasticCouplingPlan(
             (
                 _level(0),
                 _level(1, shape=(9,), parent="level-0"),
@@ -58,7 +66,7 @@ def test_hierarchy_validates_order_parent_and_transfer_identity():
             hierarchy_id="missing-transfer",
         )
     with pytest.raises(ValueError, match="name 'level-0'"):
-        phx.stochastic.StochasticHierarchy(
+        phx.stochastic.StochasticCouplingPlan(
             (_level(0), _level(1, parent="wrong-parent")),
             hierarchy_id="bad-parent",
         )
@@ -78,15 +86,15 @@ def test_multi_axis_and_independent_noise_are_explicit():
         noise_coupling="independent",
     )
     with pytest.raises(ValueError, match="allow_multi_axis"):
-        phx.stochastic.StochasticHierarchy((level,), hierarchy_id="multi")
-    hierarchy = phx.stochastic.StochasticHierarchy(
+        phx.stochastic.StochasticCouplingPlan((level,), hierarchy_id="multi")
+    hierarchy = phx.stochastic.StochasticCouplingPlan(
         (level,), hierarchy_id="multi", allow_multi_axis=True
     )
     assert hierarchy.refinement_axes == ("time", "space")
 
 
 def test_tensor_grid_transfer_preserves_nested_nodes_constants_and_jit():
-    transfer = phx.solver.TensorGridStateTransfer(
+    transfer = phx.discretization.TensorGridStateTransfer(
         (5, 5),
         (3, 3),
         restriction="injection",
@@ -99,7 +107,7 @@ def test_tensor_grid_transfer_preserves_nested_nodes_constants_and_jit():
     assert jnp.allclose(round_trip, coarse)
     assert jnp.allclose(transfer.prolong(jnp.ones((3, 3))), 1.0)
 
-    weighted = phx.solver.TensorGridStateTransfer(
+    weighted = phx.discretization.TensorGridStateTransfer(
         (6,),
         (3,),
         boundary="periodic",
@@ -110,11 +118,11 @@ def test_tensor_grid_transfer_preserves_nested_nodes_constants_and_jit():
 
 
 def test_spectral_and_identity_transfers_preserve_trailing_channels():
-    identity = phx.solver.IdentityStateTransfer((3,))
+    identity = phx.discretization.IdentityStateTransfer((3,))
     state = jnp.arange(6.0).reshape((3, 2))
     assert identity.restrict(state) is state
 
-    spectral = phx.solver.SpectralCoefficientStateTransfer(
+    spectral = phx.discretization.SpectralCoefficientStateTransfer(
         (5,),
         (3,),
     )

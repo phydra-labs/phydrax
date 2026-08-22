@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ...discretization import TemporalMesh
 from ._action import _paths_array
-from ._discretization import PathDiscretization
 from ._estimate import PathIntegralEstimate
 
 
@@ -54,7 +54,7 @@ def first_exit_time(
     inside: Callable[[Array], ArrayLike],
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
 ) -> Array:
     """Return discrete first-crossing times, or ``inf`` for surviving paths.
 
