@@ -1,7 +1,7 @@
 # External solver backends
 
 `phydrax.backends` is the explicit boundary between Phydrax problem contracts and
-optional solver runtimes. Importing `phydrax` does not require PETSc, SLEPc,
+optional solver runtimes. Importing `phydrax` does not require MPAX, PETSc, SLEPc,
 PyAMGCL, CUDA, or AmgX. A provider is imported only when its availability or
 preparation function is called.
 
@@ -47,6 +47,73 @@ else:
 ---
 
 ::: phydrax.backends.AbstractExternalBackend
+
+## Clarabel conic programming
+
+Clarabel 0.11.1 is an optional host interior-point backend for LP, QP, and the
+public Phydrax cone product. Install `phydrax[clarabel]` and select
+`ClarabelInteriorPoint` explicitly. The provider retains settings and version
+evidence; the optimization adapter maps cone and bound layouts, restores rotated-SOC
+coordinates, and independently audits original-coordinate KKT residuals and rays.
+
+Clarabel execution transfers program arrays to SciPy CSC on the host. It is not
+JIT-compatible and exposes no Phydrax differentiation mode. No native or other
+external method is selected after a Clarabel failure.
+
+::: phydrax.backends.ClarabelBackend
+
+---
+
+::: phydrax.backends.ClarabelPlan
+
+---
+
+::: phydrax.backends.PreparedClarabel
+
+---
+
+::: phydrax.backends.clarabel_availability
+
+---
+
+::: phydrax.backends.prepare_clarabel
+
+---
+
+## MPAX mathematical programming
+
+MPAX 0.2.4 is an optional device backend for assembled LPs and convex QPs. Install
+the compatible `mpax==0.2.4` wheel separately, then select `MPAXraPDHG` for LP/QP
+or `MPAXr2HPDHG` for LP only. MPAX's Darwin x86_64 wheel pins an incompatible JAX,
+so Phydrax does not publish an unsatisfiable cross-platform `mpax` extra.
+Phydrax maps inequality and dual signs explicitly, preserves native variable bounds,
+and independently audits the original unscaled program before assigning an optimal,
+infeasible, or unbounded status.
+
+MPAX's default JIT loop is not reverse-mode differentiable. Algorithmic
+differentiation requires `unroll=True`, a finite iteration capacity, and
+`ConvexDifferentiationPolicy("algorithmic")`. It is not implicit KKT sensitivity.
+Warm starts require an MPAX method configured with `warm_start=True`.
+
+::: phydrax.backends.MPAXBackend
+
+---
+
+::: phydrax.backends.MPAXPlan
+
+---
+
+::: phydrax.backends.PreparedMPAX
+
+---
+
+::: phydrax.backends.mpax_availability
+
+---
+
+::: phydrax.backends.prepare_mpax
+
+---
 
 ## PETSc KSP and SNES
 

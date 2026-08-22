@@ -74,6 +74,18 @@
   predictor--corrector KKT solves, state/design adjoints, stochastic risks and
   decomposition, explicit Optimistix interoperation, and `FunctionalSolver`
   integration.
+- Canonical linear and quadratic programs with native variable bounds, typed solve and
+  differentiation policies, reusable plan/prepare/bind/refresh lifecycles, explicit
+  warm starts, independently audited KKT and infeasibility/recession certificates,
+  portable status, and complete numeric provenance.
+- Public zero, nonnegative, second-order, rotated second-order, and product-cone
+  programs, with optional MPAX 0.2.4 LP/QP and Clarabel 0.11.1 conic execution behind
+  lazy provider lifecycles and original-coordinate audits.
+- Dense/structural-sparse linear-control compilation, reusable numeric refresh,
+  explicit receding-horizon warm-start shifting, and affine stage/terminal SOCP
+  constraints.
+- Reproducible LP/QP/SOCP advanced-solver cases and independent certificates, plus
+  control-horizon campaigns for sparse storage and cold-versus-warm MPC evidence.
 - `phydrax.continuation` contracts for generic parameterized residual curves,
   arbitrary physical-parameter PyTrees, natural and pseudo-arclength
   predictor/corrector methods, reusable bordered solves, adaptive rejection,

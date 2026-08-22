@@ -33,6 +33,34 @@ def test_edge_linear_map_matches_dense_forward_transpose_and_adjoint():
     assert jnp.allclose(adjoint, jnp.conj(dense).T @ target)
 
 
+def test_shared_pattern_batched_sparse_map_matches_dense_actions_and_storage():
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1, 2, 0], dtype=jnp.int32),
+        jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
+        source_size=3,
+        target_size=2,
+        valid=jnp.asarray([True, False, True, True]),
+    )
+    coefficients = jnp.asarray([[2.0, jnp.nan, -1.0, 4.0], [-3.0, jnp.nan, 0.5, 2.0]])
+    action = phx.sparse.SparseLinearMap(relation, coefficients)
+    source = jnp.asarray([[1.0, 0.0, 2.0], [-1.0, 0.0, 3.0]])
+    target = jnp.asarray([[2.0, -1.0], [0.5, 4.0]])
+    dense = action.as_dense()
+
+    forward = jax.jit(lambda values: action.mv(values))(source)
+    transpose = jax.jit(lambda values: action.transpose_mv(values))(target)
+    adjoint = jax.jit(lambda values: action.adjoint_mv(values))(target)
+    storage = action.sparse_storage()
+
+    assert action.batch_shape == (2,)
+    assert dense.shape == (2, 2, 3)
+    assert storage.batch_shape == (2,)
+    assert storage.values.shape[0] == 2
+    assert jnp.allclose(forward, jnp.einsum("bij,bj->bi", dense, source))
+    assert jnp.allclose(transpose, jnp.einsum("bji,bj->bi", dense, target))
+    assert jnp.allclose(adjoint, transpose)
+
+
 def test_row_linear_map_preserves_cases_payloads_and_dense_adjoint():
     relation = phx.sparse.RowRelation(
         jnp.asarray(

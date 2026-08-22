@@ -19,12 +19,14 @@ SparseFormat = Literal["csr"]
 
 
 class SparseStorage(StrictModule):
-    """Canonical CSR storage owned by a sparse linear operator."""
+    """Canonical shared-pattern CSR storage with optional leading value batches."""
 
     values: Array
     indices: Array
     indptr: Array
     shape: tuple[int, int] = eqx.field(static=True)
+    batch_shape: tuple[int, ...] = eqx.field(static=True)
+    nnz: int = eqx.field(static=True)
     format: SparseFormat = eqx.field(static=True)
     index_width: int = eqx.field(static=True)
     sorted_indices: bool = eqx.field(static=True)
@@ -48,8 +50,15 @@ class SparseStorage(StrictModule):
         if len(shape_values) != 2 or any(size < 0 for size in shape_values):
             raise ValueError("Sparse storage shape must contain nonnegative dimensions.")
         shape_ = (shape_values[0], shape_values[1])
-        if values_.ndim != 1 or indices_.shape != values_.shape:
-            raise ValueError("Sparse values and indices must be matching vectors.")
+        if (
+            values_.ndim < 1
+            or indices_.ndim != 1
+            or values_.shape[-1] != indices_.shape[0]
+        ):
+            raise ValueError(
+                "Sparse values must end in the one-dimensional CSR index capacity."
+            )
+        nnz = int(indices_.shape[0])
         if indptr_.shape != (shape_[0] + 1,):
             raise ValueError("CSR indptr length must equal the row count plus one.")
         if not jnp.issubdtype(values_.dtype, jnp.inexact):
@@ -67,6 +76,8 @@ class SparseStorage(StrictModule):
         self.indices = indices_
         self.indptr = indptr_
         self.shape = shape_
+        self.batch_shape = tuple(int(size) for size in values_.shape[:-1])
+        self.nnz = nnz
         self.format = "csr"
         self.index_width = width
         self.sorted_indices = bool(sorted_indices)

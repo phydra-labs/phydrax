@@ -207,9 +207,10 @@ def test_infeasible_dense_qp_status_is_propagated():
     assert result.last_qp_result is not None
 
     assert result.status == phx.control.MULTIPLE_SHOOTING_QP_FAILED
-    assert result.last_qp_result.status == phx.optim.QP_INFEASIBLE
+    assert result.last_qp_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
     np.testing.assert_array_equal(
-        result.history.qp_status, jnp.asarray([phx.optim.QP_INFEASIBLE])
+        result.history.qp_status,
+        jnp.asarray([phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE]),
     )
     assert not result.valid
 

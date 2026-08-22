@@ -547,6 +547,14 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
             "distance_to_reference",
             "proximal_gradient_mapping_norm",
         ),
+        "optimization-program-kkt": (
+            "objective",
+            "objective_gap",
+            "distance_to_reference",
+            "primal_feasibility",
+            "dual_stationarity_norm",
+            "cone_violation",
+        ),
     }
     if certificate["kind"] in optimization_fields:
         fields = optimization_fields[certificate["kind"]]

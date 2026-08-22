@@ -38,7 +38,10 @@ def test_compiler_matches_finite_lqr_and_preserves_exact_primal_policy():
         terminal_constant=0.75,
     )
     qp_solution = phx.control.solve_linear_quadratic_control(
-        specification, tolerance=1e-9
+        specification,
+        policy=phx.optim.ConvexSolvePolicy(
+            termination=phx.optim.ConvexTermination(absolute=1e-9)
+        ),
     )
     lqr = phx.control.finite_horizon_lqr(
         dynamics,
@@ -125,6 +128,7 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
     compilation = phx.control.compile_linear_quadratic_control(specification)
     decision = compilation.decision_layout
     constraints_layout = compilation.constraint_layout
+    bound_layout = compilation.bound_layout
     qp = compilation.quadratic_program
 
     assert decision.initial_state_slice == slice(0, 2)
@@ -135,24 +139,22 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
     assert constraints_layout.dynamics_slices == (slice(2, 4), slice(4, 6))
     assert constraints_layout.stage_equality_slices == (slice(6, 7), slice(7, 8))
     assert constraints_layout.terminal_equality_slice == slice(8, 9)
-    assert constraints_layout.state_lower_slices == (
+    assert bound_layout.state_lower_slices == (
         slice(0, 2),
         slice(2, 4),
         slice(4, 6),
     )
-    assert constraints_layout.state_upper_slices == (
-        slice(6, 8),
-        slice(8, 10),
-        slice(10, 12),
-    )
-    assert constraints_layout.control_lower_slices == (slice(12, 13), slice(13, 14))
-    assert constraints_layout.control_upper_slices == (slice(14, 15), slice(15, 16))
+    assert bound_layout.state_upper_slices == bound_layout.state_lower_slices
+    assert bound_layout.control_lower_slices == (slice(6, 7), slice(7, 8))
+    assert bound_layout.control_upper_slices == bound_layout.control_lower_slices
     assert constraints_layout.stage_inequality_slices == (
-        slice(16, 18),
-        slice(18, 20),
+        slice(0, 2),
+        slice(2, 4),
     )
-    assert constraints_layout.terminal_inequality_slice == slice(20, 21)
+    assert constraints_layout.terminal_inequality_slice == slice(4, 5)
     assert qp.num_equalities == 9
+    assert qp.num_user_equalities == 9
+    assert qp.num_user_inequalities == 5
     assert qp.num_inequalities == 21
 
     np.testing.assert_array_equal(
@@ -212,30 +214,18 @@ def test_decision_and_constraint_layouts_identify_every_compiled_block():
         ],
         jnp.array([[1.0, 0.0]]),
     )
-    first_state_lower = constraints_layout.state_lower_slices[0]
-    first_state_upper = constraints_layout.state_upper_slices[0]
-    first_control_lower = constraints_layout.control_lower_slices[0]
-    first_control_upper = constraints_layout.control_upper_slices[0]
+    first_state = bound_layout.state_lower_slices[0]
+    first_control = bound_layout.control_lower_slices[0]
     np.testing.assert_array_equal(
-        qp.inequality_matrix[first_state_lower, decision.state_slice(0)],
-        -jnp.eye(2),
+        qp.lower_bounds[first_state],
+        -10.0 * jnp.ones(2),
     )
-    np.testing.assert_array_equal(qp.inequality_rhs[first_state_lower], [10.0, 10.0])
     np.testing.assert_array_equal(
-        qp.inequality_matrix[first_state_upper, decision.state_slice(0)],
-        jnp.eye(2),
+        qp.upper_bounds[first_state],
+        10.0 * jnp.ones(2),
     )
-    np.testing.assert_array_equal(qp.inequality_rhs[first_state_upper], [10.0, 10.0])
-    np.testing.assert_array_equal(
-        qp.inequality_matrix[first_control_lower, decision.control_slice(0)],
-        -jnp.ones((1, 1)),
-    )
-    np.testing.assert_array_equal(qp.inequality_rhs[first_control_lower], [2.0])
-    np.testing.assert_array_equal(
-        qp.inequality_matrix[first_control_upper, decision.control_slice(0)],
-        jnp.ones((1, 1)),
-    )
-    np.testing.assert_array_equal(qp.inequality_rhs[first_control_upper], [2.0])
+    np.testing.assert_array_equal(qp.lower_bounds[first_control], [-2.0])
+    np.testing.assert_array_equal(qp.upper_bounds[first_control], [2.0])
     first_stage_inequality = constraints_layout.stage_inequality_slices[0]
     np.testing.assert_array_equal(
         qp.inequality_matrix[first_stage_inequality, decision.state_slice(0)],
@@ -276,7 +266,13 @@ def test_box_polyhedral_and_terminal_constraints_are_enforced_without_repair():
         terminal_inequality_rhs=jnp.array([0.3]),
     )
     solution = phx.control.solve_linear_quadratic_control(
-        specification, tolerance=2e-8, max_iterations=200
+        specification,
+        policy=phx.optim.ConvexSolvePolicy(
+            termination=phx.optim.ConvexTermination(
+                absolute=2e-8,
+                maximum_steps=200,
+            )
+        ),
     )
     assert solution.valid
     np.testing.assert_allclose(solution.controls[:, 0], [-0.5, -0.25], atol=2e-6)
@@ -360,7 +356,7 @@ def test_batched_cases_and_failure_statuses_remain_case_explicit():
         terminal_equality_rhs=jnp.array([0.0]),
     )
     infeasible_solution = phx.control.solve_linear_quadratic_control(infeasible)
-    assert infeasible_solution.status == phx.optim.QP_INFEASIBLE
+    assert infeasible_solution.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
     assert not infeasible_solution.valid
 
     nonfinite = phx.control.LinearQuadraticControlProblem(
@@ -372,7 +368,7 @@ def test_batched_cases_and_failure_statuses_remain_case_explicit():
         jnp.ones((1, 1)),
     )
     nonfinite_solution = phx.control.solve_linear_quadratic_control(nonfinite)
-    assert nonfinite_solution.status == phx.optim.QP_NONFINITE
+    assert nonfinite_solution.status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
     assert not nonfinite_solution.valid
     assert jnp.isnan(nonfinite_solution.qp_result.primal).any()
 
@@ -387,23 +383,26 @@ def test_receding_horizon_state_handoff_and_terminal_policy_are_explicit():
         jnp.ones((horizon, 1, 1)),
         10.0 * jnp.ones((1, 1)),
     )
+    policy = phx.optim.ConvexSolvePolicy(
+        termination=phx.optim.ConvexTermination(absolute=1e-9)
+    )
     global_result = phx.control.solve_receding_horizon_mpc(
         specification,
         prediction_horizon=1,
         terminal_policy="global",
-        tolerance=1e-9,
+        policy=policy,
     )
     always_result = phx.control.solve_receding_horizon_mpc(
         specification,
         prediction_horizon=1,
         terminal_policy="always",
-        tolerance=1e-9,
+        policy=policy,
     )
     no_terminal_result = phx.control.solve_receding_horizon_mpc(
         specification,
         prediction_horizon=1,
         terminal_policy="none",
-        tolerance=1e-9,
+        policy=policy,
     )
     assert global_result.valid
     assert always_result.valid
@@ -422,7 +421,7 @@ def test_receding_horizon_state_handoff_and_terminal_policy_are_explicit():
         global_result.states[:-1, 0] + global_result.controls[:, 0],
         atol=1e-9,
     )
-    with pytest.raises(NotImplementedError, match="warm starts"):
+    with pytest.raises(TypeError, match="LinearControlQPSolution"):
         phx.control.solve_receding_horizon_mpc(
             specification,
             prediction_horizon=1,
@@ -447,8 +446,11 @@ def test_mpc_propagates_infeasible_qp_and_nonfinite_rollout_failures():
         prediction_horizon=1,
         terminal_policy="global",
     )
-    assert infeasible_result.qp_results[0].status == phx.optim.QP_INFEASIBLE
-    assert infeasible_result.status == phx.optim.QP_INFEASIBLE
+    assert (
+        infeasible_result.qp_results[0].status
+        == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
+    )
+    assert infeasible_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
     assert not infeasible_result.valid
 
     dynamics = jnp.array([[[1.0]], [[jnp.nan]]])
@@ -465,9 +467,9 @@ def test_mpc_propagates_infeasible_qp_and_nonfinite_rollout_failures():
         prediction_horizon=1,
         terminal_policy="global",
     )
-    assert result.qp_results[0].status == phx.optim.QP_SUCCESS
-    assert result.qp_results[1].status == phx.optim.QP_NONFINITE
-    assert result.status == phx.optim.QP_NONFINITE
+    assert result.qp_results[0].status == phx.optim.ConvexProgramStatus.OPTIMAL
+    assert result.qp_results[1].status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
+    assert result.status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
     assert not result.valid
     assert not result.trajectory.successful
     assert jnp.isnan(result.states[-1]).any()

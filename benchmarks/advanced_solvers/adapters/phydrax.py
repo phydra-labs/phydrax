@@ -17,6 +17,7 @@ import numpy as np
 from ..problems import (
     ContinuationProblem,
     GeneralEigenProblem,
+    MathematicalProgramProblem,
     NonlinearProblem,
     OptimizationProblem,
     SparseLinearProblem,
@@ -44,6 +45,8 @@ _CAPABILITIES = frozenset(
         "optimization.unconstrained",
         "optimization.constrained",
         "optimization.proximal",
+        "optimization.linear-program",
+        "optimization.quadratic-program",
     }
 )
 
@@ -79,6 +82,17 @@ class PhydraxAdapter(BenchmarkAdapter):
                 adapter=self.name,
                 dependency=self.dependency,
                 capability=capability,
+            )
+        if (
+            capability == "optimization.conic-program"
+            and importlib.util.find_spec("clarabel") is None
+        ):
+            return Availability(
+                available=False,
+                capability=capability,
+                dependency="phydrax[clarabel]",
+                dependency_version=None,
+                reason="Clarabel is required for the selected Phydrax conic method",
             )
         required_module, required_names = _required_public_api(capability)
         try:
@@ -150,6 +164,12 @@ class PhydraxAdapter(BenchmarkAdapter):
             method, preconditioner = "sqp-merit", "dense-bfgs-qp"
         elif capability == "optimization.proximal":
             method, preconditioner = "proximal-gradient", "exact-l1-proximal-map"
+        elif capability == "optimization.linear-program":
+            method, preconditioner = "dense-primal-dual-lp", "none"
+        elif capability == "optimization.quadratic-program":
+            method, preconditioner = "dense-primal-dual-qp", "none"
+        elif capability == "optimization.conic-program":
+            method, preconditioner = "unsupported-native-conic", "none"
         else:
             method, preconditioner = "pseudo-arclength", "newton-krylov-corrector"
         return Implementation(
@@ -468,6 +488,77 @@ class PhydraxAdapter(BenchmarkAdapter):
                 rhs=initial,
                 host_to_device_bytes=transferred_bytes,
             )
+        if isinstance(problem, MathematicalProgramProblem):
+            optim = import_module("phydrax.optim")
+            bounds = optim.Bounds(
+                jnp.asarray(problem.lower),
+                jnp.asarray(problem.upper),
+            )
+            if problem.variant == "lp":
+                native_problem = optim.LinearProgram(
+                    jnp.asarray(problem.linear),
+                    equality_matrix=jnp.asarray(problem.equality_matrix),
+                    equality_rhs=jnp.asarray(problem.equality_rhs),
+                    inequality_matrix=jnp.asarray(problem.inequality_matrix),
+                    inequality_rhs=jnp.asarray(problem.inequality_rhs),
+                    bounds=bounds,
+                    problem_id=f"benchmark-lp:{problem.name}:{problem.seed}",
+                )
+                method = optim.DensePrimalDualQP()
+            elif problem.variant == "qp":
+                native_problem = optim.QuadraticProgram(
+                    jnp.asarray(problem.quadratic),
+                    jnp.asarray(problem.linear),
+                    equality_matrix=jnp.asarray(problem.equality_matrix),
+                    equality_rhs=jnp.asarray(problem.equality_rhs),
+                    inequality_matrix=jnp.asarray(problem.inequality_matrix),
+                    inequality_rhs=jnp.asarray(problem.inequality_rhs),
+                    bounds=bounds,
+                    problem_id=f"benchmark-qp:{problem.name}:{problem.seed}",
+                )
+                method = optim.DensePrimalDualQP()
+            else:
+                if problem.conic_matrix is None or problem.conic_rhs is None:
+                    raise ValueError("SOCP benchmark lacks conic data")
+                native_problem = optim.ConicProgram(
+                    jnp.asarray(problem.quadratic),
+                    jnp.asarray(problem.linear),
+                    jnp.asarray(problem.conic_matrix),
+                    jnp.asarray(problem.conic_rhs),
+                    optim.SecondOrderCone(problem.conic_matrix.shape[0]),
+                    bounds=bounds,
+                    problem_id=f"benchmark-socp:{problem.name}:{problem.seed}",
+                )
+                method = optim.ClarabelInteriorPoint(presolve=False)
+            policy = optim.ConvexSolvePolicy(
+                method,
+                termination=optim.ConvexTermination(
+                    absolute=spec.tolerances.absolute,
+                    relative=spec.tolerances.relative,
+                    maximum_steps=spec.tolerances.max_steps,
+                ),
+            )
+            transferred_bytes = int(
+                sum(
+                    array.nbytes
+                    for array in (
+                        problem.linear,
+                        problem.equality_matrix,
+                        problem.equality_rhs,
+                        problem.inequality_matrix,
+                        problem.inequality_rhs,
+                        problem.lower,
+                        problem.upper,
+                    )
+                )
+            )
+            return _PhydraxState(
+                spec=spec,
+                phx=phx,
+                native_problem=native_problem,
+                policy=policy,
+                host_to_device_bytes=transferred_bytes,
+            )
         if isinstance(problem, ContinuationProblem):
             continuation = import_module("phydrax.continuation")
             native_problem = continuation.ParameterContinuationProblem(
@@ -512,6 +603,7 @@ class PhydraxAdapter(BenchmarkAdapter):
             (
                 SparseLinearProblem,
                 GeneralEigenProblem,
+                MathematicalProgramProblem,
                 ContinuationProblem,
                 OptimizationProblem,
             ),
@@ -537,6 +629,11 @@ class PhydraxAdapter(BenchmarkAdapter):
             )
         elif isinstance(problem, GeneralEigenProblem):
             setup_state.plan = phx.linalg.eigen.plan_general_eigensolve(
+                setup_state.native_problem,
+                setup_state.policy,
+            )
+        elif isinstance(problem, MathematicalProgramProblem):
+            setup_state.plan = phx.optim.plan_convex_program(
                 setup_state.native_problem,
                 setup_state.policy,
             )
@@ -599,7 +696,12 @@ class PhydraxAdapter(BenchmarkAdapter):
         problem = compiled_state.spec.problem
         return isinstance(
             problem,
-            (SparseLinearProblem, GeneralEigenProblem, ContinuationProblem),
+            (
+                SparseLinearProblem,
+                GeneralEigenProblem,
+                ContinuationProblem,
+                MathematicalProgramProblem,
+            ),
         ) or (isinstance(problem, NonlinearProblem) and problem.variant == "root")
 
     def prepare(self, compiled_state: _PhydraxState, /) -> _PhydraxState:
@@ -615,6 +717,11 @@ class PhydraxAdapter(BenchmarkAdapter):
                     compiled_state.native_problem,
                     compiled_state.plan,
                 )
+            )
+        elif isinstance(problem, MathematicalProgramProblem):
+            compiled_state.prepared = compiled_state.phx.optim.prepare_convex_program(
+                compiled_state.native_problem,
+                compiled_state.plan,
             )
         elif isinstance(problem, ContinuationProblem):
             compiled_state.prepared = (
@@ -739,6 +846,32 @@ class PhydraxAdapter(BenchmarkAdapter):
                     "jacobian_evaluations": diagnostics.jacobian_preparations,
                 },
             )
+        if isinstance(problem, MathematicalProgramProblem):
+            execution = phx.optim.solve_convex_program(prepared_state.prepared)
+            result = execution.result
+            return SolveResult(
+                solution=result.primal,
+                auxiliary={
+                    "status_code": result.status,
+                    "objective": result.objective,
+                    "certificate": result.certificate,
+                    "equality_dual": result.equality_dual,
+                    "inequality_dual": result.inequality_dual,
+                    "lower_bound_dual": result.lower_bound_dual,
+                    "upper_bound_dual": result.upper_bound_dual,
+                    "cone_dual": result.cone_dual,
+                },
+                converged=result.successful,
+                message="Phydrax mathematical program completed with audited evidence",
+                operations={
+                    "iterations": result.iterations,
+                    "matvecs": None,
+                    "preconditioner_applications": None,
+                    "linear_solves": None,
+                    "nonlinear_evaluations": None,
+                    "jacobian_evaluations": None,
+                },
+            )
         if isinstance(problem, OptimizationProblem):
             result = prepared_state.prepared(prepared_state.rhs)
             diagnostics = result.diagnostics
@@ -838,7 +971,12 @@ class PhydraxAdapter(BenchmarkAdapter):
         problem = prepared_state.spec.problem
         return isinstance(
             problem,
-            (SparseLinearProblem, GeneralEigenProblem, ContinuationProblem),
+            (
+                SparseLinearProblem,
+                GeneralEigenProblem,
+                ContinuationProblem,
+                MathematicalProgramProblem,
+            ),
         ) or (isinstance(problem, NonlinearProblem) and problem.variant == "root")
 
     def refresh(
@@ -907,6 +1045,22 @@ class PhydraxAdapter(BenchmarkAdapter):
                 prepared_state.rhs,
                 args=prepared_state.target,
             )
+        elif isinstance(problem, MathematicalProgramProblem):
+            refreshed_problem = replace(
+                problem,
+                quadratic=(
+                    None if problem.quadratic is None else problem.quadratic * 1.01
+                ),
+                linear=problem.linear * 1.01,
+            )
+            refreshed_spec = replace(prepared_state.spec, problem=refreshed_problem)
+            refreshed_setup = self.setup(refreshed_spec)
+            prepared_state.native_problem = refreshed_setup.native_problem
+            prepared_state.refreshed_certificate_problem = refreshed_problem
+            prepared_state.prepared = prepared_state.phx.optim.refresh_convex_program(
+                prepared_state.prepared,
+                prepared_state.native_problem,
+            )
         elif isinstance(problem, ContinuationProblem):
             prepared_state.initial_coordinate = prepared_state.initial_coordinate * 0.99
             prepared_state.refreshed_certificate_problem = replace(
@@ -923,7 +1077,7 @@ class PhydraxAdapter(BenchmarkAdapter):
         else:
             raise TypeError(
                 "Phydrax refresh applies only to linear, eigen, continuation, "
-                "and nonlinear-root lifecycle cases"
+                "mathematical-program, and nonlinear-root lifecycle cases"
             )
         return prepared_state, RefreshEvidence(
             applicable=True,
@@ -1001,6 +1155,21 @@ class PhydraxAdapter(BenchmarkAdapter):
                 arrays.append(problem.upper)
             if problem.diagonal is not None:
                 arrays.append(problem.diagonal)
+            matrix_bytes = int(sum(array.nbytes for array in arrays))
+        elif isinstance(problem, MathematicalProgramProblem):
+            arrays = [
+                problem.linear,
+                problem.equality_matrix,
+                problem.equality_rhs,
+                problem.inequality_matrix,
+                problem.inequality_rhs,
+                problem.lower,
+                problem.upper,
+            ]
+            if problem.quadratic is not None:
+                arrays.append(problem.quadratic)
+            if problem.conic_matrix is not None and problem.conic_rhs is not None:
+                arrays.extend((problem.conic_matrix, problem.conic_rhs))
             matrix_bytes = int(sum(array.nbytes for array in arrays))
         elif isinstance(problem, OptimizationProblem):
             arrays = [problem.initial, problem.optimum]
@@ -1103,6 +1272,40 @@ def _required_public_api(capability: str) -> tuple[str, frozenset[str]]:
             }
         )
     if capability.startswith("optimization."):
+        if capability == "optimization.linear-program":
+            return "phydrax.optim", frozenset(
+                {
+                    "LinearProgram",
+                    "ConvexSolvePolicy",
+                    "DensePrimalDualQP",
+                    "plan_convex_program",
+                    "prepare_convex_program",
+                    "solve_convex_program",
+                }
+            )
+        if capability == "optimization.quadratic-program":
+            return "phydrax.optim", frozenset(
+                {
+                    "QuadraticProgram",
+                    "ConvexSolvePolicy",
+                    "DensePrimalDualQP",
+                    "plan_convex_program",
+                    "prepare_convex_program",
+                    "solve_convex_program",
+                }
+            )
+        if capability == "optimization.conic-program":
+            return "phydrax.optim", frozenset(
+                {
+                    "ConicProgram",
+                    "ConvexSolvePolicy",
+                    "ClarabelInteriorPoint",
+                    "SecondOrderCone",
+                    "plan_convex_program",
+                    "prepare_convex_program",
+                    "solve_convex_program",
+                }
+            )
         common = {
             "MinimizationProblem",
             "OptimizationTermination",

@@ -32,8 +32,11 @@ from ._iterative._types import (
     OptimizationTermination,
 )
 from ._newton_krylov import NewtonKrylov
-from ._quadratic_program import (
-    QP_SUCCESS,
+from ._programming import (
+    ConvexProgramStatus,
+    ConvexSolvePolicy,
+    ConvexTermination,
+    DensePrimalDualQP,
     QuadraticProgram,
     solve_quadratic_program,
 )
@@ -1688,13 +1691,17 @@ def _solve_sqp(
             )
             qp_result = solve_quadratic_program(
                 qp,
-                tolerance=method.qp_tolerance,
-                max_iterations=method.qp_maximum_steps,
-                regularization=method.qp_regularization,
-                max_dense_dimension=method.max_dense_dimension,
+                policy=ConvexSolvePolicy(
+                    DensePrimalDualQP(max_kkt_dimension=method.max_dense_dimension),
+                    termination=ConvexTermination(
+                        absolute=method.qp_tolerance,
+                        maximum_steps=method.qp_maximum_steps,
+                    ),
+                    regularization=method.qp_regularization,
+                ),
             )
             qp_success = (
-                (qp_result.status == QP_SUCCESS)
+                (qp_result.status == int(ConvexProgramStatus.OPTIMAL))
                 & qp_result.valid
                 & jnp.all(jnp.isfinite(qp_result.primal))
             )

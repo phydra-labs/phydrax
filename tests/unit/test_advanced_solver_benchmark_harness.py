@@ -24,8 +24,10 @@ from benchmarks.advanced_solvers.adapters.base import (
 from benchmarks.advanced_solvers.adapters.optimistix import _root_solver
 from benchmarks.advanced_solvers.certificates import independent_certificate
 from benchmarks.advanced_solvers.cli import main as benchmark_main
+from benchmarks.advanced_solvers.control_campaign import run_control_horizon_campaign
 from benchmarks.advanced_solvers.harness import execute_case
 from benchmarks.advanced_solvers.problems import (
+    bounded_linear_program,
     general_eigenproblem,
     nonlinear_root,
     semilinear_poisson_root,
@@ -230,6 +232,8 @@ def test_unavailable_adapter_emits_precise_skip_without_executing_setup():
 def test_optional_adapters_load_without_importing_optional_dependencies_eagerly():
     assert adapter_names() == (
         "phydrax",
+        "mpax",
+        "clarabel",
         "jax",
         "lineax",
         "optimistix",
@@ -265,8 +269,11 @@ def test_public_phydrax_adapter_declares_every_representative_family():
             "optimization.unconstrained",
             "optimization.constrained",
             "optimization.proximal",
+            "optimization.linear-program",
+            "optimization.quadratic-program",
         }
     )
+    assert not adapter.availability("optimization.conic-program").available
 
 
 def test_capabilities_cli_emits_all_common_solver_families(capsys):
@@ -283,6 +290,9 @@ def test_capabilities_cli_emits_all_common_solver_families(capsys):
         "optimization.unconstrained",
         "optimization.constrained",
         "optimization.proximal",
+        "optimization.linear-program",
+        "optimization.quadratic-program",
+        "optimization.conic-program",
     }
 
 
@@ -401,6 +411,34 @@ def test_phydrax_sparse_root_runs_prepared_numeric_refresh_lifecycle():
     assert row["certificate"]["relative_residual"] < 1e-8
     assert row["timing"]["differentiation"]["count"] == 0
     assert row["timing"]["refresh"]["count"] == 1
+    assert row["refresh"]["symbolic_reused"] is True
+    assert row["refresh"]["numeric_refreshed"] is True
+    assert row["refresh"]["certificate_converged"] is True
+    validate_row(row)
+
+
+def test_phydrax_program_runs_compiled_prepared_refresh_lifecycle():
+    problem = bounded_linear_program(size=8, seed=25)
+    adapter = load_adapter("phydrax")
+    spec = CaseSpec(
+        "optimization-linear-program",
+        problem,
+        Tolerances(relative=1e-6, absolute=1e-7, max_steps=500),
+    )
+    setup_state = adapter.setup(spec)
+
+    assert adapter.compilation_applicable(setup_state)
+    row = execute_case(
+        adapter,
+        spec,
+        environment=_environment(),
+        warmup=0,
+        repeats=1,
+    )
+
+    assert row["outcome"]["status"] == "success"
+    assert row["timing"]["compilation"]["count"] == 1
+    assert row["timing"]["preparation"]["count"] == 1
     assert row["refresh"]["symbolic_reused"] is True
     assert row["refresh"]["numeric_refreshed"] is True
     assert row["refresh"]["certificate_converged"] is True
@@ -580,3 +618,16 @@ def test_slepc_initial_space_is_seed_deterministic():
         _deterministic_initial_vector(first),
         _deterministic_initial_vector(changed),
     )
+
+
+def test_control_horizon_campaign_reports_warm_and_sparse_evidence():
+    report = run_control_horizon_campaign((2,), seed=17, warmup=0, repeats=1)
+    row = report["rows"][0]
+
+    assert report["campaign"] == "control-horizon-warm-start"
+    assert row["horizon"] == 2
+    assert row["sparse_value_bytes"] < row["dense_matrix_bytes"]
+    assert row["cold"]["certificate"]["successful"]
+    assert row["warm"]["certificate"]["successful"]
+    assert row["cold"]["certificate"]["dynamics_residual"] < 1e-10
+    assert row["warm"]["certificate"]["bound_violation"] < 1e-10

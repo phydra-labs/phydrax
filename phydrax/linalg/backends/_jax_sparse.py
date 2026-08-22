@@ -38,7 +38,9 @@ class SparseBackendOutput(StrictModule):
 
 
 def _validated_storage(storage: SparseStorage, /) -> SparseStorage:
-    nnz = storage.values.shape[0]
+    if storage.batch_shape:
+        raise ValueError("Sparse direct providers require unbatched CSR values.")
+    nnz = storage.nnz
     positions = jnp.arange(nnz, dtype=storage.indptr.dtype)
     rows = jnp.searchsorted(storage.indptr[1:], positions, side="right")
     same_row = rows[1:] == rows[:-1]

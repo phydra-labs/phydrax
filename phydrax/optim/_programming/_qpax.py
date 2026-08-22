@@ -53,6 +53,7 @@ def solve_qpax_implicit(
     """
 
     _validate_step_fraction(step_fraction)
+    quadratic = _regularized_quadratic(quadratic, regularization)
 
     def solve_one(q, c, a, b, g, h):
         return qpax.solve_qp(
@@ -108,6 +109,7 @@ def solve_qpax_implicit_primal(
     """
 
     _validate_step_fraction(step_fraction)
+    quadratic = _regularized_quadratic(quadratic, regularization)
 
     def solve_one(q, c, a, b, g, h):
         return qpax.solve_qp_primal(

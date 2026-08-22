@@ -190,14 +190,47 @@ def _coefficient_array(
     /,
 ) -> Array:
     values = jnp.asarray(coefficients)
-    if values.shape != relation.route_shape:
+    route_ndim = len(relation.route_shape)
+    if (
+        values.ndim < route_ndim
+        or tuple(values.shape[-route_ndim:]) != relation.route_shape
+    ):
         raise ValueError(
-            f"Sparse coefficients must have route shape {relation.route_shape}; "
+            f"Sparse coefficients must end in route shape {relation.route_shape}; "
             f"got {values.shape}."
         )
     if not jnp.issubdtype(values.dtype, jnp.inexact):
         values = values.astype(float)
-    return jnp.where(relation.valid, values, jnp.zeros((), dtype=values.dtype))
+    batch_ndim = values.ndim - route_ndim
+    valid = relation.valid.reshape((1,) * batch_ndim + relation.valid.shape)
+    return jnp.where(valid, values, jnp.zeros((), dtype=values.dtype))
+
+
+def _flatten_operator_batch(
+    values: Any,
+    batch_shape: tuple[int, ...],
+    event_shape: tuple[int, ...],
+    name: str,
+    /,
+) -> Any:
+    count = 1
+    for size in batch_shape:
+        count *= size
+
+    def flatten_leaf(value: Any, /) -> Array:
+        array = jnp.asarray(value)
+        prefix = batch_shape + event_shape
+        payload_shape = _require_prefix(name, array, prefix)
+        return array.reshape((count,) + event_shape + payload_shape)
+
+    return jtu.tree_map(flatten_leaf, values)
+
+
+def _restore_operator_batch(values: Any, batch_shape: tuple[int, ...], /) -> Any:
+    return jtu.tree_map(
+        lambda value: jnp.asarray(value).reshape(batch_shape + value.shape[1:]),
+        values,
+    )
 
 
 def linear_apply(
@@ -208,6 +241,21 @@ def linear_apply(
 ) -> Any:
     """Apply a scalar-coefficient sparse linear map to source payloads."""
     weights = _coefficient_array(relation, coefficients)
+    route_ndim = len(relation.route_shape)
+    batch_shape = tuple(int(size) for size in weights.shape[:-route_ndim])
+    if batch_shape:
+        flattened_weights = weights.reshape((-1,) + relation.route_shape)
+        flattened_values = _flatten_operator_batch(
+            values,
+            batch_shape,
+            relation.input_shape,
+            "Batched sparse source values",
+        )
+        output = jax.vmap(lambda weight, value: linear_apply(relation, weight, value))(
+            flattened_weights,
+            flattened_values,
+        )
+        return _restore_operator_batch(output, batch_shape)
     gathered = gather_routes(relation, values)
 
     def weight_leaf(value: Any, /) -> Array:
@@ -253,6 +301,25 @@ def _linear_reverse_apply(
     conjugate: bool,
 ) -> Any:
     weights = _coefficient_array(relation, coefficients)
+    route_ndim = len(relation.route_shape)
+    batch_shape = tuple(int(size) for size in weights.shape[:-route_ndim])
+    if batch_shape:
+        flattened_weights = weights.reshape((-1,) + relation.route_shape)
+        flattened_values = _flatten_operator_batch(
+            values,
+            batch_shape,
+            relation.output_shape,
+            "Batched sparse target values",
+        )
+        output = jax.vmap(
+            lambda weight, value: _linear_reverse_apply(
+                relation,
+                weight,
+                value,
+                conjugate=conjugate,
+            )
+        )(flattened_weights, flattened_values)
+        return _restore_operator_batch(output, batch_shape)
     if conjugate:
         weights = jnp.conj(weights)
     if isinstance(relation, EdgeRelation):

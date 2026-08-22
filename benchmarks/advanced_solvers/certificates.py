@@ -14,6 +14,7 @@ from .problems import (
     BenchmarkProblem,
     ContinuationProblem,
     GeneralEigenProblem,
+    MathematicalProgramProblem,
     NonlinearProblem,
     OptimizationProblem,
     SparseLinearProblem,
@@ -37,6 +38,8 @@ def independent_certificate(
         return _continuation_certificate(problem, solution, auxiliary)
     if isinstance(problem, OptimizationProblem):
         return _optimization_certificate(problem, solution)
+    if isinstance(problem, MathematicalProgramProblem):
+        return _mathematical_program_certificate(problem, solution, auxiliary)
     raise TypeError(f"Unsupported benchmark problem type {type(problem).__name__!r}")
 
 
@@ -80,6 +83,8 @@ def _nonlinear_certificate(
 ) -> dict[str, Any]:
     value = np.asarray(solution, dtype=np.float64)
     if problem.variant == "vi":
+        if problem.lower is None or problem.upper is None:
+            raise ValueError("VI benchmark is missing bounds")
         residual = problem.natural_map(value)
         kind = "variational-inequality-natural-map"
         scale = max(1.0, float(np.linalg.norm(value)))
@@ -308,6 +313,196 @@ def _optimization_certificate(
     relative = residual_norm / _positive_scale(scale)
     return _certificate(
         kind,
+        residual_norm=residual_norm,
+        relative_residual=relative,
+        backward_error=relative,
+        details=details,
+    )
+
+
+def _auxiliary_vector(
+    auxiliary: Mapping[str, Any],
+    name: str,
+    shape: tuple[int, ...],
+    /,
+) -> np.ndarray | None:
+    candidate = auxiliary.get(name)
+    if candidate is None:
+        return None
+    value = np.asarray(candidate, dtype=np.float64)
+    if value.shape != shape:
+        raise ValueError(
+            f"mathematical-program auxiliary {name!r} has shape {value.shape}"
+        )
+    return value
+
+
+def _cone_membership_violation(
+    value: np.ndarray,
+    blocks: tuple[tuple[str, int], ...],
+    /,
+) -> float:
+    cursor = 0
+    violation = 0.0
+    for kind, dimension in blocks:
+        block = value[cursor : cursor + dimension]
+        cursor += dimension
+        if kind == "zero":
+            block_violation = float(np.max(np.abs(block), initial=0.0))
+        elif kind == "nonnegative":
+            block_violation = float(np.max(-block, initial=0.0))
+        elif kind == "soc":
+            block_violation = max(float(np.linalg.norm(block[1:]) - block[0]), 0.0)
+        elif kind == "rotated-soc":
+            transformed = np.concatenate(
+                (
+                    np.asarray([block[0] + block[1], block[0] - block[1]]),
+                    np.sqrt(2.0) * block[2:],
+                )
+            )
+            block_violation = max(
+                float(np.linalg.norm(transformed[1:]) - transformed[0]),
+                0.0,
+            )
+        else:
+            raise ValueError(f"unsupported benchmark cone kind {kind!r}")
+        violation = max(violation, block_violation)
+    if cursor != value.size:
+        raise ValueError("benchmark cone blocks do not cover the conic vector")
+    return violation
+
+
+def _mathematical_program_certificate(
+    problem: MathematicalProgramProblem,
+    solution: Any,
+    auxiliary: Mapping[str, Any],
+    /,
+) -> dict[str, Any]:
+    value = np.asarray(solution, dtype=np.float64)
+    if value.shape != problem.optimum.shape:
+        raise ValueError("mathematical-program result has the wrong parameter shape")
+    gradient = problem.gradient(value)
+    equality_residual = problem.equality_matrix @ value - problem.equality_rhs
+    inequality_slack = problem.inequality_rhs - problem.inequality_matrix @ value
+    inequality_violation = np.maximum(-inequality_slack, 0.0)
+    lower_slack = np.where(np.isfinite(problem.lower), value - problem.lower, 0.0)
+    upper_slack = np.where(np.isfinite(problem.upper), problem.upper - value, 0.0)
+    bound_violation = np.maximum(
+        np.maximum(problem.lower - value, value - problem.upper),
+        0.0,
+    )
+    lower_dual = _auxiliary_vector(
+        auxiliary,
+        "lower_bound_dual",
+        value.shape,
+    )
+    upper_dual = _auxiliary_vector(
+        auxiliary,
+        "upper_bound_dual",
+        value.shape,
+    )
+    equality_dual = _auxiliary_vector(
+        auxiliary,
+        "equality_dual",
+        problem.equality_rhs.shape,
+    )
+    inequality_dual = _auxiliary_vector(
+        auxiliary,
+        "inequality_dual",
+        problem.inequality_rhs.shape,
+    )
+    cone_violation = 0.0
+    dual_violation = 0.0
+    complementarity = 0.0
+    stationarity = value - np.clip(
+        value - gradient,
+        problem.lower,
+        problem.upper,
+    )
+    if problem.variant == "socp":
+        if problem.conic_matrix is None or problem.conic_rhs is None:
+            raise ValueError("SOCP certificate requires conic data")
+        cone_slack = problem.conic_rhs - problem.conic_matrix @ value
+        cone_violation = _cone_membership_violation(cone_slack, problem.cone_blocks)
+        cone_dual = _auxiliary_vector(
+            auxiliary,
+            "cone_dual",
+            problem.conic_rhs.shape,
+        )
+        if cone_dual is None or lower_dual is None or upper_dual is None:
+            norm = float(np.linalg.norm(value))
+            normal = value / max(norm, np.finfo(np.float64).tiny)
+            multiplier = max(0.0, -float(gradient @ normal))
+            stationarity = gradient + multiplier * normal
+        else:
+            stationarity = (
+                gradient + problem.conic_matrix.T @ cone_dual - lower_dual + upper_dual
+            )
+            dual_violation = max(
+                _cone_membership_violation(cone_dual, problem.cone_blocks),
+                float(np.max(-lower_dual, initial=0.0)),
+                float(np.max(-upper_dual, initial=0.0)),
+            )
+            complementarity = max(
+                abs(float(cone_slack @ cone_dual)),
+                float(np.max(np.abs(lower_slack * lower_dual), initial=0.0)),
+                float(np.max(np.abs(upper_slack * upper_dual), initial=0.0)),
+            )
+    elif (
+        equality_dual is not None
+        and inequality_dual is not None
+        and lower_dual is not None
+        and upper_dual is not None
+    ):
+        stationarity = (
+            gradient
+            + problem.equality_matrix.T @ equality_dual
+            + problem.inequality_matrix.T @ inequality_dual
+            - lower_dual
+            + upper_dual
+        )
+        dual_violation = max(
+            float(np.max(-inequality_dual, initial=0.0)),
+            float(np.max(-lower_dual, initial=0.0)),
+            float(np.max(-upper_dual, initial=0.0)),
+        )
+        complementarity = max(
+            float(np.max(np.abs(inequality_slack * inequality_dual), initial=0.0)),
+            float(np.max(np.abs(lower_slack * lower_dual), initial=0.0)),
+            float(np.max(np.abs(upper_slack * upper_dual), initial=0.0)),
+        )
+    primal_feasibility = max(
+        float(np.max(np.abs(equality_residual), initial=0.0)),
+        float(np.max(np.abs(inequality_violation), initial=0.0)),
+        float(np.max(np.abs(bound_violation), initial=0.0)),
+        cone_violation,
+    )
+    stationarity_norm = float(np.linalg.norm(stationarity, ord=np.inf))
+    residual_norm = max(
+        primal_feasibility,
+        stationarity_norm,
+        dual_violation,
+        complementarity,
+    )
+    objective = problem.objective(value)
+    reference_objective = problem.objective(problem.optimum)
+    details = {
+        "objective": objective,
+        "objective_gap": abs(objective - reference_objective),
+        "distance_to_reference": float(np.linalg.norm(value - problem.optimum)),
+        "primal_feasibility": primal_feasibility,
+        "dual_stationarity_norm": stationarity_norm,
+        "dual_feasibility": dual_violation,
+        "complementarity": complementarity,
+        "cone_violation": cone_violation,
+    }
+    scale = 1.0 + max(
+        abs(reference_objective),
+        float(np.linalg.norm(gradient, ord=np.inf)),
+    )
+    relative = residual_norm / _positive_scale(scale)
+    return _certificate(
+        "optimization-program-kkt",
         residual_norm=residual_norm,
         relative_residual=relative,
         backward_error=relative,

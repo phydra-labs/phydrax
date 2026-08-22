@@ -150,12 +150,17 @@ linear_quadratic = phx.control.LinearQuadraticControlProblem(
     dynamics_id=dynamics.dynamics_id,
 )
 
-compilation = phx.control.compile_linear_quadratic_control(linear_quadratic)
-qp_result = phx.optim.solve_quadratic_program(
-    compilation.qp,
-    method="dense-primal-dual",
+compilation = phx.control.compile_linear_quadratic_control(
+    linear_quadratic,
+    compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
 )
-qp_solution = phx.control.decode_linear_control_solution(compilation, qp_result)
+qp_policy = phx.optim.ConvexSolvePolicy(phx.optim.DensePrimalDualQP())
+prepared = phx.control.prepare_linear_quadratic_control(
+    linear_quadratic,
+    policy=qp_policy,
+    compilation_policy=phx.control.LinearControlCompilationPolicy("sparse"),
+)
+qp_solution = phx.control.solve_prepared_linear_quadratic_control(prepared)
 
 if not bool(qp_solution.successful):
     raise RuntimeError(
@@ -170,17 +175,15 @@ first_control_slice = compilation.decision_layout.control_slice(0)
 first_dynamics_rows = compilation.constraint_layout.dynamics_slices[0]
 ```
 
-`solve_linear_quadratic_control(linear_quadratic)` is the convenience form of the same
-compile, solve, and decode sequence. Use the explicit form above when you need the
-canonical `QuadraticProgram`, decision slices, constraint provenance, or a separately
-configured public QP call.
+`solve_linear_quadratic_control(linear_quadratic, policy=qp_policy)` is the
+one-shot form. The explicit lifecycle separates structural compilation, numeric
+refresh, solve, and decode. Native state/control bounds stay outside user
+polyhedral row axes, and their multipliers are retained separately.
 
-The default dense guard is 512 for
-`num_variables + num_equalities + 2 * num_inequalities`. Raise it deliberately only when
-the intended dense solve fits the available memory. `regularization=0.0` is the default;
-a nonzero value is an explicit model choice. To use QPax, select
-`method="qpax-implicit"`. QPax's explicit differentiation mode is not a supported control
-backend.
+The dense method keeps its explicit KKT dimension guard. The sparse compilation
+policy emits shared-pattern sparse Hessian/equality/inequality operators without
+changing the exact decision layout. QPax and optional MPAX remain explicitly
+selected methods; no backend is chosen from problem size.
 
 ## Run receding-horizon MPC
 
@@ -189,7 +192,11 @@ mpc = phx.control.solve_receding_horizon_mpc(
     linear_quadratic,
     prediction_horizon=3,
     terminal_policy="global",
-    method="dense-primal-dual",
+    policy=qp_policy,
+    warm_start_policy=phx.control.MPCWarmStartPolicy(
+        terminal_control="hold",
+        interior_margin=1e-7,
+    ),
 )
 if not bool(mpc.successful):
     raise RuntimeError(f"MPC failed with status {mpc.status}")
@@ -197,10 +204,10 @@ if not bool(mpc.successful):
 
 `terminal_policy="global"` applies terminal cost and constraints only to a prediction
 window that reaches the original final node. Choose `"always"` to impose them at every
-local endpoint or `"none"` to omit them. `mpc.subproblem_solutions`, `mpc.qp_results`,
-`mpc.stage_valid`, `mpc.trajectory.backend_status`, and `mpc.method_id` preserve every
-local solve and exact affine state handoff. Warm starts are not implemented; passing one
-raises instead of being ignored.
+local endpoint or `"none"` to omit them. MPC prepares one template per horizon/terminal
+topology, refreshes compatible numeric windows, and shifts primal and dual state through
+the declared layouts when `MPCWarmStartPolicy` is supplied. `mpc.subproblem_solutions`,
+`mpc.qp_results`, `mpc.stage_valid`, and the exact affine state handoff remain visible.
 
 ## Initialize iLQR from the QP control
 

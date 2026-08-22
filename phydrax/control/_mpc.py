@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -15,19 +16,21 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
-from ..optim._quadratic_program import (
-    QP_INFEASIBLE,
-    QP_NONFINITE,
-    QP_SUCCESS,
-    QPMethod,
-    QuadraticProgramResult,
+from ..optim._programming import (
+    ConvexProgramResult,
+    ConvexProgramStatus,
+    ConvexSolvePolicy,
+    ConvexWarmStart,
 )
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._qp_compiler import (
     LinearControlQPSolution,
     LinearQuadraticControlProblem,
-    solve_linear_quadratic_control,
+    prepare_linear_quadratic_control,
+    PreparedLinearControlQP,
+    refresh_linear_quadratic_control,
+    solve_prepared_linear_quadratic_control,
 )
 from ._trajectory import (
     CONTROL_DYNAMICS_FAILED,
@@ -40,6 +43,27 @@ from ._trajectory import (
 MPCTerminalPolicy: TypeAlias = Literal["global", "always", "none"]
 
 
+class MPCWarmStartPolicy(StrictModule):
+    """Explicit primal/dual shift and interiorization policy between MPC windows."""
+
+    terminal_control: Literal["hold", "zero"] = eqx.field(static=True)
+    interior_margin: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        terminal_control: Literal["hold", "zero"] = "hold",
+        interior_margin: float = 1e-7,
+    ):
+        if terminal_control not in ("hold", "zero"):
+            raise ValueError("terminal_control must be 'hold' or 'zero'.")
+        margin = float(interior_margin)
+        if not isfinite(margin) or margin <= 0.0:
+            raise ValueError("interior_margin must be finite and positive.")
+        self.terminal_control = terminal_control
+        self.interior_margin = margin
+
+
 class RecedingHorizonMPCResult(StrictModule):
     """Applied MPC rollout and every local QP result, without hidden repair."""
 
@@ -47,7 +71,7 @@ class RecedingHorizonMPCResult(StrictModule):
     policy: PiecewiseConstantControlParameterization
     parameters: Array
     subproblem_solutions: tuple[LinearControlQPSolution, ...]
-    qp_results: tuple[QuadraticProgramResult, ...]
+    qp_results: tuple[ConvexProgramResult, ...]
     objective: Array
     stage_valid: Array
     valid: Array
@@ -67,7 +91,7 @@ class RecedingHorizonMPCResult(StrictModule):
 
     @property
     def successful(self) -> Array:
-        return self.valid & (self.status == QP_SUCCESS)
+        return self.valid & (self.status == int(ConvexProgramStatus.OPTIMAL))
 
 
 class RecedingHorizonMPC(StrictModule):
@@ -76,20 +100,16 @@ class RecedingHorizonMPC(StrictModule):
     ``terminal_policy="global"`` applies terminal cost and terminal constraints
     only when a prediction window reaches the specification's final node.
     ``"always"`` applies them at every prediction endpoint, and ``"none"``
-    omits them even at the global endpoint. Warm starts are not implemented and
-    passing one raises instead of silently ignoring it.
+    omits them. Warm starts are enabled only through an explicit
+    `MPCWarmStartPolicy` and a selected QP method that declares support.
     """
 
     specification: LinearQuadraticControlProblem
     prediction_horizon: int = eqx.field(static=True)
     terminal_policy: MPCTerminalPolicy = eqx.field(static=True)
-    method: QPMethod = eqx.field(static=True)
-    tolerance: float = eqx.field(static=True)
+    qp_policy: ConvexSolvePolicy
+    warm_start_policy: MPCWarmStartPolicy | None
     cost_tolerance: float = eqx.field(static=True)
-    max_iterations: int = eqx.field(static=True)
-    regularization: float = eqx.field(static=True)
-    step_fraction: float = eqx.field(static=True)
-    max_dense_dimension: int = eqx.field(static=True)
     controller_id: str = eqx.field(static=True)
 
     def __init__(
@@ -99,13 +119,9 @@ class RecedingHorizonMPC(StrictModule):
         *,
         prediction_horizon: int,
         terminal_policy: MPCTerminalPolicy,
-        method: QPMethod = "dense-primal-dual",
-        tolerance: float = 1e-7,
         cost_tolerance: float = 1e-10,
-        max_iterations: int = 100,
-        regularization: float = 0.0,
-        step_fraction: float = 0.995,
-        max_dense_dimension: int = 512,
+        policy: ConvexSolvePolicy | None = None,
+        warm_start_policy: MPCWarmStartPolicy | None = None,
         controller_id: str = "control:mpc:receding-horizon",
     ):
         if not isinstance(specification, LinearQuadraticControlProblem):
@@ -122,13 +138,20 @@ class RecedingHorizonMPC(StrictModule):
         self.specification = specification
         self.prediction_horizon = prediction_horizon
         self.terminal_policy = terminal_policy
-        self.method = method
-        self.tolerance = float(tolerance)
+        policy = ConvexSolvePolicy() if policy is None else policy
+        if not isinstance(policy, ConvexSolvePolicy):
+            raise TypeError("policy must be a ConvexSolvePolicy or None.")
+        if warm_start_policy is not None and not isinstance(
+            warm_start_policy, MPCWarmStartPolicy
+        ):
+            raise TypeError("warm_start_policy must be an MPCWarmStartPolicy or None.")
+        if warm_start_policy is not None and not policy.method.capabilities.warm_start:
+            raise ValueError(
+                f"Method {policy.method.method_id!r} does not support MPC warm starts."
+            )
+        self.qp_policy = policy
+        self.warm_start_policy = warm_start_policy
         self.cost_tolerance = float(cost_tolerance)
-        self.max_iterations = int(max_iterations)
-        self.regularization = float(regularization)
-        self.step_fraction = float(step_fraction)
-        self.max_dense_dimension = int(max_dense_dimension)
         self.controller_id = _identifier(controller_id, "controller_id")
 
     def solve(
@@ -136,14 +159,13 @@ class RecedingHorizonMPC(StrictModule):
         /,
         *,
         initial_state: ArrayLike | None = None,
-        warm_start: ArrayLike | None = None,
+        warm_start: LinearControlQPSolution | None = None,
     ) -> RecedingHorizonMPCResult:
         """Solve each local QP, hand off the exact state, and roll out controls."""
-        if warm_start is not None:
-            raise NotImplementedError(
-                "RecedingHorizonMPC does not implement warm starts; "
-                "warm_start must be None."
-            )
+        if warm_start is not None and not isinstance(warm_start, LinearControlQPSolution):
+            raise TypeError("warm_start must be a LinearControlQPSolution or None.")
+        if warm_start is not None and self.warm_start_policy is None:
+            raise ValueError("warm_start requires an explicit MPCWarmStartPolicy.")
         specification = self.specification
         if initial_state is None:
             current_state = specification.initial_state
@@ -162,19 +184,43 @@ class RecedingHorizonMPC(StrictModule):
         applied_controls: list[Array] = []
         subproblem_solutions: list[LinearControlQPSolution] = []
         online_states = [current_state]
+        prepared_by_topology: dict[tuple[int, bool], PreparedLinearControlQP] = {}
+        previous_solution = warm_start
         for stage in range(specification.horizon):
             local_horizon = min(self.prediction_horizon, specification.horizon - stage)
-            local_problem = self._subproblem(stage, local_horizon, current_state)
-            local_solution = solve_linear_quadratic_control(
-                local_problem,
-                method=self.method,
-                tolerance=self.tolerance,
-                cost_tolerance=self.cost_tolerance,
-                max_iterations=self.max_iterations,
-                regularization=self.regularization,
-                step_fraction=self.step_fraction,
-                max_dense_dimension=self.max_dense_dimension,
+            end = stage + local_horizon
+            apply_terminal = self.terminal_policy == "always" or (
+                self.terminal_policy == "global" and end == specification.horizon
             )
+            topology = (local_horizon, apply_terminal)
+            local_problem = self._subproblem(stage, local_horizon, current_state)
+            if topology in prepared_by_topology:
+                prepared = refresh_linear_quadratic_control(
+                    prepared_by_topology[topology],
+                    local_problem,
+                    cost_tolerance=self.cost_tolerance,
+                )
+            else:
+                prepared = prepare_linear_quadratic_control(
+                    local_problem,
+                    policy=self.qp_policy,
+                    cost_tolerance=self.cost_tolerance,
+                )
+            prepared_by_topology[topology] = prepared
+            convex_warm = (
+                None
+                if self.warm_start_policy is None or previous_solution is None
+                else self._shift_warm_start(
+                    previous_solution,
+                    local_problem,
+                    prepared.compilation,
+                )
+            )
+            local_solution = solve_prepared_linear_quadratic_control(
+                prepared,
+                warm_start=convex_warm,
+            )
+            previous_solution = local_solution
             applied_control = local_solution.controls[..., 0, :]
             next_state = (
                 oe.contract(
@@ -215,11 +261,12 @@ class RecedingHorizonMPC(StrictModule):
             local_valid = result.valid & finite_step
             local_status = jnp.where(
                 result.valid & ~finite_step,
-                QP_NONFINITE,
+                int(ConvexProgramStatus.NONFINITE_OUTPUT),
                 result.status,
             ).astype(jnp.int32)
             status = jnp.where(
-                (status == QP_SUCCESS) & (local_status != QP_SUCCESS),
+                (status == int(ConvexProgramStatus.OPTIMAL))
+                & (local_status != int(ConvexProgramStatus.OPTIMAL)),
                 local_status,
                 status,
             )
@@ -230,8 +277,8 @@ class RecedingHorizonMPC(StrictModule):
         trajectory_valid = jnp.stack(node_valid_values, axis=case_axis)
         valid = jnp.all(stage_valid, axis=-1) & jnp.all(trajectory_valid, axis=-1)
         status = jnp.where(
-            (status == QP_SUCCESS) & ~valid,
-            QP_NONFINITE,
+            (status == int(ConvexProgramStatus.OPTIMAL)) & ~valid,
+            int(ConvexProgramStatus.NONFINITE_OUTPUT),
             status,
         ).astype(jnp.int32)
 
@@ -242,10 +289,10 @@ class RecedingHorizonMPC(StrictModule):
             parameterization_id=policy_id,
         )
         control_status = jnp.where(
-            status == QP_SUCCESS,
+            status == int(ConvexProgramStatus.OPTIMAL),
             CONTROL_SUCCESS,
             jnp.where(
-                status == QP_INFEASIBLE,
+                status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
                 CONTROL_INFEASIBLE,
                 CONTROL_DYNAMICS_FAILED,
             ),
@@ -267,7 +314,7 @@ class RecedingHorizonMPC(StrictModule):
             dynamics_id=specification.dynamics_id,
             control_id=policy_id,
             backend_id=qp_results[0].backend,
-            method_id=f"control:mpc:{self.method}",
+            method_id=f"control:mpc:{self.qp_policy.method.method_id}",
             discretization_id="control:discrete:exact-affine",
             approximation_id=policy.approximation_id,
         )
@@ -285,10 +332,200 @@ class RecedingHorizonMPC(StrictModule):
             prediction_horizon=self.prediction_horizon,
             terminal_policy=self.terminal_policy,
             result_id=f"{self.controller_id}:result",
-            method_id=f"control:mpc:{self.method}",
+            method_id=f"control:mpc:{self.qp_policy.method.method_id}",
         )
 
     __call__ = solve
+
+    def _shift_warm_start(
+        self,
+        previous: LinearControlQPSolution,
+        problem: LinearQuadraticControlProblem,
+        compilation,
+        /,
+    ) -> ConvexWarmStart:
+        policy = self.warm_start_policy
+        if policy is None:
+            raise RuntimeError("Warm-start shifting requires MPCWarmStartPolicy.")
+        horizon = problem.horizon
+        dtype = problem.initial_state.dtype
+        previous_controls = previous.controls
+        shifted_controls = [
+            previous_controls[..., stage, :]
+            for stage in range(1, min(previous_controls.shape[-2], horizon + 1))
+        ]
+        fill_control = (
+            jnp.zeros(problem.case_shape + (problem.control_size,), dtype=dtype)
+            if policy.terminal_control == "zero"
+            else previous_controls[..., -1, :]
+        )
+        while len(shifted_controls) < horizon:
+            shifted_controls.append(fill_control)
+        controls = jnp.stack(tuple(shifted_controls[:horizon]), axis=-2)
+
+        states = [problem.initial_state]
+        current = problem.initial_state
+        for stage in range(horizon):
+            current = (
+                oe.contract(
+                    "...ij,...j->...i",
+                    problem.dynamics_matrices[..., stage, :, :],
+                    current,
+                )
+                + oe.contract(
+                    "...ij,...j->...i",
+                    problem.control_matrices[..., stage, :, :],
+                    controls[..., stage, :],
+                )
+                + problem.dynamics_bias[..., stage, :]
+            )
+            states.append(current)
+        primal = compilation.decision_layout.encode(
+            jnp.stack(tuple(states), axis=-2),
+            controls,
+        )
+        qp = compilation.quadratic_program
+        margin = jnp.asarray(policy.interior_margin, dtype=dtype)
+        lower_finite = jnp.isfinite(qp.lower_bounds)
+        upper_finite = jnp.isfinite(qp.upper_bounds)
+        fixed = lower_finite & upper_finite & (qp.lower_bounds == qp.upper_bounds)
+        narrow = (
+            lower_finite
+            & upper_finite
+            & ((qp.upper_bounds - qp.lower_bounds) <= 2.0 * margin)
+        )
+        primal = jnp.where(
+            lower_finite,
+            jnp.maximum(primal, qp.lower_bounds + margin),
+            primal,
+        )
+        primal = jnp.where(
+            upper_finite,
+            jnp.minimum(primal, qp.upper_bounds - margin),
+            primal,
+        )
+        primal = jnp.where(
+            narrow,
+            0.5 * (qp.lower_bounds + qp.upper_bounds),
+            primal,
+        )
+        primal = jnp.where(fixed, qp.lower_bounds, primal)
+
+        old_compilation = previous.compilation
+        old_constraints = old_compilation.constraint_layout
+        new_constraints = compilation.constraint_layout
+        old_result = previous.qp_result
+        equality_dual = jnp.zeros(
+            problem.case_shape + (qp.num_user_equalities,), dtype=dtype
+        )
+        for stage, target in enumerate(new_constraints.dynamics_slices):
+            source_stage = stage + 1
+            if source_stage < len(old_constraints.dynamics_slices):
+                equality_dual = equality_dual.at[..., target].set(
+                    old_result.equality_dual[
+                        ..., old_constraints.dynamics_slices[source_stage]
+                    ]
+                )
+        for stage, target in enumerate(new_constraints.stage_equality_slices):
+            source_stage = stage + 1
+            if source_stage < len(old_constraints.stage_equality_slices):
+                equality_dual = equality_dual.at[..., target].set(
+                    old_result.equality_dual[
+                        ..., old_constraints.stage_equality_slices[source_stage]
+                    ]
+                )
+        if (
+            new_constraints.terminal_equality_slice is not None
+            and old_constraints.terminal_equality_slice is not None
+        ):
+            equality_dual = equality_dual.at[
+                ..., new_constraints.terminal_equality_slice
+            ].set(old_result.equality_dual[..., old_constraints.terminal_equality_slice])
+
+        inequality_dual = jnp.full(
+            problem.case_shape + (qp.num_user_inequalities,),
+            margin,
+            dtype=dtype,
+        )
+        for stage, target in enumerate(new_constraints.stage_inequality_slices):
+            source_stage = stage + 1
+            if source_stage < len(old_constraints.stage_inequality_slices):
+                inequality_dual = inequality_dual.at[..., target].set(
+                    jnp.maximum(
+                        old_result.inequality_dual[
+                            ..., old_constraints.stage_inequality_slices[source_stage]
+                        ],
+                        margin,
+                    )
+                )
+        if (
+            new_constraints.terminal_inequality_slice is not None
+            and old_constraints.terminal_inequality_slice is not None
+        ):
+            inequality_dual = inequality_dual.at[
+                ..., new_constraints.terminal_inequality_slice
+            ].set(
+                jnp.maximum(
+                    old_result.inequality_dual[
+                        ..., old_constraints.terminal_inequality_slice
+                    ],
+                    margin,
+                )
+            )
+        inequality_slack = jnp.maximum(
+            qp.inequality_rhs[..., : qp.num_user_inequalities]
+            - oe.contract(
+                "...ij,...j->...i",
+                qp.inequality_matrix[..., : qp.num_user_inequalities, :],
+                primal,
+            ),
+            margin,
+        )
+
+        def shift_bound_dual(values):
+            old_states, old_controls = old_compilation.decision_layout.decode(values)
+            state_values = [
+                old_states[..., stage, :]
+                for stage in range(1, min(old_states.shape[-2], horizon + 2))
+            ]
+            while len(state_values) < horizon + 1:
+                state_values.append(
+                    jnp.full(
+                        problem.case_shape + (problem.state_size,), margin, dtype=dtype
+                    )
+                )
+            control_values = [
+                old_controls[..., stage, :]
+                for stage in range(1, min(old_controls.shape[-2], horizon + 1))
+            ]
+            while len(control_values) < horizon:
+                control_values.append(
+                    jnp.full(
+                        problem.case_shape + (problem.control_size,),
+                        margin,
+                        dtype=dtype,
+                    )
+                )
+            return compilation.decision_layout.encode(
+                jnp.stack(tuple(state_values[: horizon + 1]), axis=-2),
+                jnp.stack(tuple(control_values[:horizon]), axis=-2),
+            )
+
+        lower_bound_dual = jnp.maximum(
+            shift_bound_dual(old_result.lower_bound_dual), margin
+        )
+        upper_bound_dual = jnp.maximum(
+            shift_bound_dual(old_result.upper_bound_dual), margin
+        )
+        return ConvexWarmStart(
+            primal=primal,
+            equality_dual=equality_dual,
+            inequality_dual=inequality_dual,
+            inequality_slack=inequality_slack,
+            lower_bound_dual=lower_bound_dual,
+            upper_bound_dual=upper_bound_dual,
+            structure_id=qp.structure_id,
+        )
 
     def _subproblem(
         self,
@@ -407,7 +644,10 @@ class RecedingHorizonMPC(StrictModule):
             terminal_inequality_matrix=terminal_inequality_matrix,
             terminal_inequality_rhs=terminal_inequality_rhs,
             time_grid=local_time_grid,
-            problem_id=f"{specification.problem_id}:mpc:{stage}:{end}",
+            problem_id=(
+                f"{specification.problem_id}:mpc-window:"
+                f"{local_horizon}:terminal-{int(apply_terminal)}"
+            ),
             dynamics_id=specification.dynamics_id,
         )
 
@@ -472,14 +712,10 @@ def solve_receding_horizon_mpc(
     prediction_horizon: int,
     terminal_policy: MPCTerminalPolicy,
     initial_state: ArrayLike | None = None,
-    warm_start: ArrayLike | None = None,
-    method: QPMethod = "dense-primal-dual",
-    tolerance: float = 1e-7,
+    warm_start: LinearControlQPSolution | None = None,
     cost_tolerance: float = 1e-10,
-    max_iterations: int = 100,
-    regularization: float = 0.0,
-    step_fraction: float = 0.995,
-    max_dense_dimension: int = 512,
+    policy: ConvexSolvePolicy | None = None,
+    warm_start_policy: MPCWarmStartPolicy | None = None,
     controller_id: str = "control:mpc:receding-horizon",
 ) -> RecedingHorizonMPCResult:
     """Configure and execute receding-horizon MPC over the full time grid."""
@@ -487,13 +723,9 @@ def solve_receding_horizon_mpc(
         specification,
         prediction_horizon=prediction_horizon,
         terminal_policy=terminal_policy,
-        method=method,
-        tolerance=tolerance,
         cost_tolerance=cost_tolerance,
-        max_iterations=max_iterations,
-        regularization=regularization,
-        step_fraction=step_fraction,
-        max_dense_dimension=max_dense_dimension,
+        policy=policy,
+        warm_start_policy=warm_start_policy,
         controller_id=controller_id,
     )
     return controller.solve(initial_state=initial_state, warm_start=warm_start)
@@ -501,6 +733,7 @@ def solve_receding_horizon_mpc(
 
 __all__ = [
     "MPCTerminalPolicy",
+    "MPCWarmStartPolicy",
     "RecedingHorizonMPC",
     "RecedingHorizonMPCResult",
     "solve_receding_horizon_mpc",

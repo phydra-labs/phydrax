@@ -23,6 +23,9 @@ Capability = Literal[
     "optimization.unconstrained",
     "optimization.constrained",
     "optimization.proximal",
+    "optimization.linear-program",
+    "optimization.quadratic-program",
+    "optimization.conic-program",
 ]
 
 
@@ -387,12 +390,113 @@ class OptimizationProblem:
         }
 
 
+@dataclass(frozen=True)
+class MathematicalProgramProblem:
+    """Deterministic LP, QP, or SOCP benchmark with an independent reference."""
+
+    name: str
+    variant: Literal["lp", "qp", "socp"]
+    seed: int
+    quadratic: np.ndarray | None
+    linear: np.ndarray
+    equality_matrix: np.ndarray
+    equality_rhs: np.ndarray
+    inequality_matrix: np.ndarray
+    inequality_rhs: np.ndarray
+    lower: np.ndarray
+    upper: np.ndarray
+    optimum: np.ndarray
+    conic_matrix: np.ndarray | None = None
+    conic_rhs: np.ndarray | None = None
+    cone_blocks: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def capability(self) -> Capability:
+        if self.variant == "lp":
+            return "optimization.linear-program"
+        if self.variant == "qp":
+            return "optimization.quadratic-program"
+        return "optimization.conic-program"
+
+    def objective(self, value: np.ndarray) -> float:
+        point = np.asarray(value, dtype=np.float64)
+        quadratic = (
+            0.0 if self.quadratic is None else 0.5 * float(point @ self.quadratic @ point)
+        )
+        return quadratic + float(self.linear @ point)
+
+    def gradient(self, value: np.ndarray) -> np.ndarray:
+        point = np.asarray(value, dtype=np.float64)
+        return (
+            self.linear
+            if self.quadratic is None
+            else self.quadratic @ point + self.linear
+        )
+
+    def identity(self) -> dict[str, Any]:
+        arrays = [
+            self.linear,
+            self.equality_matrix,
+            self.equality_rhs,
+            self.inequality_matrix,
+            self.inequality_rhs,
+            self.lower,
+            self.upper,
+            self.optimum,
+        ]
+        if self.quadratic is not None:
+            arrays.append(self.quadratic)
+        if self.conic_matrix is not None and self.conic_rhs is not None:
+            arrays.extend((self.conic_matrix, self.conic_rhs))
+        return _identity(
+            family="optimization-program",
+            name=self.name,
+            variant=self.variant,
+            seed=self.seed,
+            dtype=self.linear.dtype,
+            parameters={
+                "construction": {
+                    "lp": "separable bounded linear program",
+                    "qp": "diagonal positive-definite bounded quadratic program",
+                    "socp": "active Lorentz-cone quadratic program",
+                }[self.variant],
+                "cone_blocks": list(self.cone_blocks),
+            },
+            arrays=tuple(arrays),
+        )
+
+    def sizes(self) -> dict[str, int]:
+        dimension = int(self.linear.size)
+        rows = (
+            int(self.conic_matrix.shape[0])
+            if self.conic_matrix is not None
+            else int(self.equality_matrix.shape[0] + self.inequality_matrix.shape[0])
+        )
+        matrices = [self.equality_matrix, self.inequality_matrix]
+        if self.quadratic is not None:
+            matrices.append(self.quadratic)
+        if self.conic_matrix is not None:
+            matrices.append(self.conic_matrix)
+        return {
+            "dimension": dimension,
+            "rows": max(1, rows),
+            "columns": dimension,
+            "nnz": int(
+                np.count_nonzero(self.linear)
+                + sum(np.count_nonzero(value) for value in matrices)
+            ),
+            "block_size": 1,
+            "right_hand_sides": 1,
+        }
+
+
 BenchmarkProblem = (
     SparseLinearProblem
     | NonlinearProblem
     | GeneralEigenProblem
     | ContinuationProblem
     | OptimizationProblem
+    | MathematicalProgramProblem
 )
 
 
@@ -589,6 +693,77 @@ def l1_composite_optimization(*, size: int, seed: int) -> OptimizationProblem:
     )
 
 
+def bounded_linear_program(*, size: int, seed: int) -> MathematicalProgramProblem:
+    generator = np.random.Generator(np.random.PCG64(seed))
+    linear = generator.standard_normal(size)
+    lower = np.zeros(size)
+    upper = np.ones(size)
+    optimum = np.where(linear < 0.0, upper, lower)
+    empty_matrix = np.empty((0, size))
+    empty_rhs = np.empty((0,))
+    return MathematicalProgramProblem(
+        name="bounded-separable-lp",
+        variant="lp",
+        seed=seed,
+        quadratic=None,
+        linear=linear,
+        equality_matrix=empty_matrix,
+        equality_rhs=empty_rhs,
+        inequality_matrix=empty_matrix,
+        inequality_rhs=empty_rhs,
+        lower=lower,
+        upper=upper,
+        optimum=optimum,
+    )
+
+
+def bounded_quadratic_program(*, size: int, seed: int) -> MathematicalProgramProblem:
+    generator = np.random.Generator(np.random.PCG64(seed))
+    diagonal = 0.5 + generator.random(size)
+    linear = generator.standard_normal(size)
+    lower = np.zeros(size)
+    upper = np.ones(size)
+    optimum = np.clip(-linear / diagonal, lower, upper)
+    empty_matrix = np.empty((0, size))
+    empty_rhs = np.empty((0,))
+    return MathematicalProgramProblem(
+        name="bounded-diagonal-qp",
+        variant="qp",
+        seed=seed,
+        quadratic=np.diag(diagonal),
+        linear=linear,
+        equality_matrix=empty_matrix,
+        equality_rhs=empty_rhs,
+        inequality_matrix=empty_matrix,
+        inequality_rhs=empty_rhs,
+        lower=lower,
+        upper=upper,
+        optimum=optimum,
+    )
+
+
+def active_second_order_cone_program(*, seed: int) -> MathematicalProgramProblem:
+    empty_matrix = np.empty((0, 2))
+    empty_rhs = np.empty((0,))
+    return MathematicalProgramProblem(
+        name="active-socp",
+        variant="socp",
+        seed=seed,
+        quadratic=np.eye(2),
+        linear=np.asarray([-2.0, 0.0]),
+        equality_matrix=empty_matrix,
+        equality_rhs=empty_rhs,
+        inequality_matrix=empty_matrix,
+        inequality_rhs=empty_rhs,
+        lower=np.full(2, -np.inf),
+        upper=np.full(2, np.inf),
+        optimum=np.asarray([1.0, 0.0]),
+        conic_matrix=np.asarray([[0.0, 0.0], [-1.0, 0.0], [0.0, -1.0]]),
+        conic_rhs=np.asarray([1.0, 0.0, 0.0]),
+        cone_blocks=(("soc", 3),),
+    )
+
+
 def default_problems(*, size: int, seed: int) -> dict[str, BenchmarkProblem]:
     """Return the common deterministic cross-adapter problem campaign."""
     if size < 8:
@@ -630,6 +805,17 @@ def default_problems(*, size: int, seed: int) -> dict[str, BenchmarkProblem]:
         "optimization-proximal": l1_composite_optimization(
             size=size,
             seed=seed + 8,
+        ),
+        "optimization-linear-program": bounded_linear_program(
+            size=size,
+            seed=seed + 10,
+        ),
+        "optimization-quadratic-program": bounded_quadratic_program(
+            size=size,
+            seed=seed + 11,
+        ),
+        "optimization-conic-program": active_second_order_cone_program(
+            seed=seed + 12,
         ),
     }
 

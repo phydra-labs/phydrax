@@ -246,6 +246,8 @@ def _validated_pattern(
     if not isinstance(operator, AbstractSparseLinearOperator):
         raise TypeError("operator must be an AbstractSparseLinearOperator.")
     storage = operator.sparse_storage()
+    if storage.batch_shape:
+        raise ValueError("Sparse factorization requires unbatched CSR values.")
     if storage.shape[0] != storage.shape[1]:
         raise ValueError("Sparse factorization requires a square operator.")
     indices = np.asarray(storage.indices, dtype=np.int64)

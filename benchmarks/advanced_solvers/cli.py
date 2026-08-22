@@ -37,6 +37,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-steps", type=_positive_integer)
     run.add_argument("--output", type=Path)
 
+    control = commands.add_parser(
+        "control",
+        help="run prepared sparse and shifted-warm MPC horizon campaigns",
+    )
+    control.add_argument("--horizon", action="append", type=_positive_integer)
+    control.add_argument("--seed", type=int, default=20260816)
+    control.add_argument("--warmup", type=_nonnegative_integer, default=1)
+    control.add_argument("--repeats", type=_positive_integer, default=5)
+    control.add_argument("--output", type=Path)
     compare = commands.add_parser("compare", help="compare two complete JSON reports")
     compare.add_argument("reference", type=Path)
     compare.add_argument("candidate", type=Path)
@@ -56,6 +65,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     arguments = build_parser().parse_args(argv)
     if arguments.command == "run":
         output = _run(arguments)
+        destination = arguments.output
+    elif arguments.command == "control":
+        from .control_campaign import run_control_horizon_campaign
+
+        output = run_control_horizon_campaign(
+            tuple(arguments.horizon or (8, 32, 128)),
+            seed=arguments.seed,
+            warmup=arguments.warmup,
+            repeats=arguments.repeats,
+        )
         destination = arguments.output
     elif arguments.command == "compare":
         reference = _read_json(arguments.reference)
@@ -145,6 +164,9 @@ def _all_capabilities() -> tuple[str, ...]:
         "optimization.unconstrained",
         "optimization.constrained",
         "optimization.proximal",
+        "optimization.linear-program",
+        "optimization.quadratic-program",
+        "optimization.conic-program",
     )
 
 

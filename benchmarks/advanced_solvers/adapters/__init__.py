@@ -12,6 +12,11 @@ from .base import BenchmarkAdapter
 
 _ADAPTERS = {
     "phydrax": ("benchmarks.advanced_solvers.adapters.phydrax", "PhydraxAdapter"),
+    "mpax": ("benchmarks.advanced_solvers.adapters.mpax", "MPAXAdapter"),
+    "clarabel": (
+        "benchmarks.advanced_solvers.adapters.clarabel",
+        "ClarabelAdapter",
+    ),
     "jax": ("benchmarks.advanced_solvers.adapters.jax", "JaxAdapter"),
     "lineax": ("benchmarks.advanced_solvers.adapters.lineax", "LineaxAdapter"),
     "optimistix": (
