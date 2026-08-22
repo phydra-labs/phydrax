@@ -384,6 +384,10 @@ implementation.
 
 ---
 
+::: phydrax.integration.GaussianCubatureRule
+
+---
+
 ::: phydrax.integration.GaussLegendreRule
 
 ---

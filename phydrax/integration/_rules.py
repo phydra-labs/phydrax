@@ -22,6 +22,10 @@ from .._polynomial._cubature import (
     CubatureReference,
     CubatureRuleData,
 )
+from .._polynomial._gaussian_cubature import (
+    gaussian_cubature_rule_data,
+    GaussianCubatureFamily,
+)
 from .._polynomial._orthogonal import (
     OrthogonalRuleData,
     standard_normal_hermite_rule_data,
@@ -103,6 +107,60 @@ class CubatureRule(StrictModule):
             None,
             self.reference_domain,
         )
+
+
+class GaussianCubatureRule(StrictModule):
+    """Positive total-degree cubature for a multivariate standard normal."""
+
+    prepared: CubatureRuleData
+    requested_degree: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        degree: int,
+        /,
+        *,
+        family: GaussianCubatureFamily = "auto",
+        maximum_points: int = 65_536,
+        maximum_rule_bytes: int = 64 * 1024**2,
+    ):
+        self.prepared = gaussian_cubature_rule_data(
+            dimension,
+            degree,
+            family=family,
+            maximum_points=maximum_points,
+            maximum_rule_bytes=maximum_rule_bytes,
+        )
+        self.requested_degree = int(degree)
+
+    @property
+    def dimension(self) -> int:
+        return int(self.prepared.points.shape[1])
+
+    @property
+    def family(self) -> str:
+        return self.prepared.family
+
+    @property
+    def exact_degree(self) -> int:
+        return self.prepared.exact_degree
+
+    @property
+    def num_points(self) -> int:
+        return int(self.prepared.weights.shape[0])
+
+    @property
+    def storage_bytes(self) -> int:
+        return self.prepared.storage_bytes
+
+    @property
+    def source_id(self) -> str:
+        return self.prepared.source_id
+
+    @property
+    def rule_id(self) -> str:
+        return self.prepared.rule_id
 
 
 class GaussLegendreRule(StrictModule):
@@ -187,12 +245,16 @@ class TanhSinhRule(StrictModule):
 IntervalRule: TypeAlias = (
     GaussLegendreRule | GaussKronrodRule | ClenshawCurtisRule | TanhSinhRule
 )
-ProbabilityRule: TypeAlias = GaussHermiteRule
+ProbabilityRule: TypeAlias = GaussHermiteRule | GaussianCubatureRule
 
 
-def probability_rule_data(rule: ProbabilityRule, /) -> OrthogonalRuleData:
+def probability_rule_data(
+    rule: ProbabilityRule, /
+) -> OrthogonalRuleData | CubatureRuleData:
     if isinstance(rule, GaussHermiteRule):
         return rule.data()
+    if isinstance(rule, GaussianCubatureRule):
+        return rule.prepared
     raise TypeError(f"Unsupported probability rule {type(rule).__name__}.")
 
 
@@ -350,6 +412,7 @@ __all__ = [
     "ClenshawCurtisRule",
     "CubatureRule",
     "GaussKronrodRule",
+    "GaussianCubatureRule",
     "GaussHermiteRule",
     "GaussLegendreRule",
     "IntervalRule",

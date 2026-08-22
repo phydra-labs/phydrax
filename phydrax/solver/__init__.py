@@ -260,6 +260,15 @@ from ._levy import (
     LevySmallJumpApproximation,
     solve_levy_sde,
 )
+from ._markov_cubature import (
+    MarkovCubatureDiagnostics,
+    MarkovCubatureMethod,
+    MarkovCubaturePlan,
+    MarkovCubatureSolution,
+    MarkovCubatureStatus,
+    PolynomialRecombination,
+    solve_markov_cubature,
+)
 from ._memory import (
     ConvolutionKernel,
     ConvolutionVolterraProblem,
@@ -468,6 +477,13 @@ __all__ = [
     "plan_dae",
     "prepare_dae",
     "PreparedDAESolve",
+    "MarkovCubatureDiagnostics",
+    "MarkovCubatureMethod",
+    "MarkovCubaturePlan",
+    "MarkovCubatureSolution",
+    "MarkovCubatureStatus",
+    "PolynomialRecombination",
+    "solve_markov_cubature",
     "solve_dae",
     "DiffraxEvolution",
     "DifferentialVectorField",
