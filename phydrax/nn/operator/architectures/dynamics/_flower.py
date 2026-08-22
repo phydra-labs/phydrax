@@ -95,6 +95,7 @@ class _ChannelLastGroupNorm(StrictModule):
         if mask is None:
             mean = jnp.mean(grouped, axis=reduction_axes, keepdims=True)
             variance = jnp.var(grouped, axis=reduction_axes, keepdims=True)
+            centered = grouped - mean
             valid_mask = None
         else:
             valid_mask = jnp.asarray(mask, dtype=bool)
@@ -114,23 +115,33 @@ class _ChannelLastGroupNorm(StrictModule):
                 "Every masked GroupNorm case must contain a valid sample.",
             )
             count = jnp.maximum(count, 1)
+            safe_grouped = jnp.where(
+                grouped_mask,
+                grouped,
+                jnp.zeros((), dtype=grouped.dtype),
+            )
             mean = (
                 jnp.sum(
-                    grouped * grouped_mask,
+                    safe_grouped,
                     axis=reduction_axes,
                     keepdims=True,
                 )
                 / count
+            )
+            centered = jnp.where(
+                grouped_mask,
+                safe_grouped - mean,
+                jnp.zeros((), dtype=grouped.dtype),
             )
             variance = (
                 jnp.sum(
-                    (grouped - mean) ** 2 * grouped_mask,
+                    centered**2,
                     axis=reduction_axes,
                     keepdims=True,
                 )
                 / count
             )
-        normalized = ((grouped - mean) * jax.lax.rsqrt(variance + self.eps)).reshape(
+        normalized = (centered * jax.lax.rsqrt(variance + self.eps)).reshape(
             array.shape
         )
         affine_shape = (1,) * (array.ndim - 1) + (self.channels,)
@@ -149,7 +160,11 @@ class _ChannelLastGroupNorm(StrictModule):
                 modulation_shift.reshape(broadcast)
             )
         if valid_mask is not None:
-            output = output * valid_mask[..., None].astype(output.dtype)
+            output = jnp.where(
+                valid_mask[..., None],
+                output,
+                jnp.zeros((), dtype=output.dtype),
+            )
         return output
 
 
@@ -1024,6 +1039,11 @@ class Flower(AbstractOperatorModel):
                 ),
                 "Every Flower case must contain at least one valid source sample.",
             )
+        values = jnp.where(
+            mask[..., None],
+            values,
+            jnp.zeros((), dtype=values.dtype),
+        )
         return mask, values
 
     def _tensor_product_weights(

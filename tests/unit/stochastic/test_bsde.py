@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -83,6 +84,58 @@ def test_exact_linear_bsde_has_zero_local_global_and_terminal_residuals():
             phx.stochastic.bsde_objective_loss(evaluation, mode=mode), 0.0
         )
     assert phx.stochastic.bsde_diagnostics(evaluation).passed
+
+
+def test_bsde_objective_masks_nonfinite_invalid_paths_before_squaring():
+    paths = _brownian_paths(num_paths=2, num_steps=2)
+    terminal = jnp.asarray([[1.0, 2.0], [jnp.nan, jnp.nan]])
+    local = jnp.asarray(
+        [
+            [[1.0, 2.0], [3.0, 4.0]],
+            [[jnp.nan, jnp.nan], [jnp.nan, jnp.nan]],
+        ]
+    )
+    global_residual = jnp.asarray([[2.0, 1.0], [jnp.nan, jnp.nan]])
+
+    def objective(terminal_residual, local_residuals, complete_residual):
+        evaluation = phx.stochastic.BSDEEvaluation(
+            values=jnp.zeros((2, 3, 2)),
+            controls=jnp.zeros((2, 2, 2, 1)),
+            generator_values=jnp.zeros((2, 2, 2)),
+            terminal_residual=terminal_residual,
+            local_residuals=local_residuals,
+            global_residual=complete_residual,
+            martingale_increments=jnp.zeros((2, 2, 2)),
+            valid_paths=jnp.asarray([True, False]),
+            paths=paths,
+            quadrature="left",
+            control_mode="explicit",
+        )
+        return phx.stochastic.bsde_objective_loss(evaluation, mode="joint")
+
+    value, gradients = jax.value_and_grad(objective, argnums=(0, 1, 2))(
+        terminal, local, global_residual
+    )
+    terminal_gradient, local_gradient, global_gradient = gradients
+
+    assert value == 25.0
+    assert jnp.array_equal(
+        terminal_gradient,
+        jnp.asarray([[2.0, 4.0], [0.0, 0.0]]),
+    )
+    assert jnp.array_equal(
+        local_gradient,
+        jnp.asarray(
+            [
+                [[1.0, 2.0], [3.0, 4.0]],
+                [[0.0, 0.0], [0.0, 0.0]],
+            ]
+        ),
+    )
+    assert jnp.array_equal(
+        global_gradient,
+        jnp.asarray([[4.0, 2.0], [0.0, 0.0]]),
+    )
 
 
 def test_autodiff_control_matches_explicit_control_and_heat_pde_residual():

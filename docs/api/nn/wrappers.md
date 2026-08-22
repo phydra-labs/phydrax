@@ -133,9 +133,13 @@ Use `RaggedSeriesModel` to wrap a callable that consumes
 `RaggedSeriesDatasetDomain` batch and returns a `coordax.Field` with the case
 axis preserved.
 
-`MaskedSeriesPoolingModel` is a small baseline encoder. It applies a per-step
-model to each valid timestep, masks padded entries, pools over time, then applies
-a readout model.
+`MaskedSeriesPoolingModel` is a small baseline encoder. It evaluates a per-step
+model over the complete fixed-shape padded payload, removes inactive latent values,
+pools over time, then applies a readout model.
+The mask makes the reduction padding-invariant; it does not make `step_model`
+execution lazy. For differentiated use, a custom step model must remain finite and
+differentiable on the padded input representation. Use fixed-width sampled views or
+length buckets when evaluating the padded suffix is unsuitable or too expensive.
 
 ```python
 import jax.numpy as jnp

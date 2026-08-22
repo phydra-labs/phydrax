@@ -190,7 +190,12 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator):
 
 
 class MaskedSeriesPoolingModel(StrictModule):
-    """Encode variable-length series with a per-step model and masked reduction."""
+    """Encode variable-length series with a per-step model and masked reduction.
+
+    The step model evaluates the complete padded array before inactive latent values
+    are removed. Differentiated step models must therefore remain finite on the
+    padded input representation.
+    """
 
     step_model: Callable
     readout_model: Callable
@@ -267,11 +272,18 @@ class MaskedSeriesPoolingModel(StrictModule):
         mask = jnp.asarray(x.mask, dtype=bool)
         if mask.shape != step_input.shape[:2]:
             raise ValueError("mask must have shape (N, Lmax).")
-        mask_f = mask.astype(latent.dtype)[..., None]
-        pooled = jnp.sum(latent * mask_f, axis=1)
+        latent_mask = mask[..., None]
+        safe_latent = jnp.where(
+            latent_mask,
+            latent,
+            jnp.zeros((), dtype=latent.dtype),
+        )
+        pooled = jnp.sum(safe_latent, axis=1)
         if self.reduction == "mean":
+            valid_count = jnp.sum(mask, axis=1, dtype=jnp.int32)
             denom = jnp.maximum(
-                jnp.sum(mask_f, axis=1), jnp.asarray(1.0, dtype=pooled.dtype)
+                valid_count.astype(pooled.dtype)[:, None],
+                jnp.asarray(1.0, dtype=pooled.dtype),
             )
             pooled = pooled / denom
         elif self.scale_sampled_sum and x.sample_scale is not None:

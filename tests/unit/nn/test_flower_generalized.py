@@ -3,6 +3,7 @@
 #
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -149,6 +150,13 @@ def test_flower_source_holes_are_supported_and_remain_masked(mask_mode):
         phx.nn.operator.FunctionSamples(values=None, axes=(axis,)),
         source_mask=source_mask,
     )
+    nan_values = values.at[1].set(jnp.nan)
+    nan_batch = _batch(
+        nan_values,
+        (axis,),
+        phx.nn.operator.FunctionSamples(values=None, axes=(axis,)),
+        source_mask=source_mask,
+    )
     model = _flower(
         source_key="state",
         source_mask_mode=mask_mode,
@@ -158,11 +166,27 @@ def test_flower_source_holes_are_supported_and_remain_masked(mask_mode):
 
     output = model(batch)
     changed_output = model(changed_batch)
+    nan_output = eqx.filter_jit(lambda current, data: current(data))(model, nan_batch)
+
+    def squared_output(field):
+        data = _batch(
+            field,
+            (axis,),
+            phx.nn.operator.FunctionSamples(values=None, axes=(axis,)),
+            source_mask=source_mask,
+        )
+        return jnp.sum(model(data) ** 2)
+
+    nan_gradient = jax.grad(squared_output)(nan_values)
 
     assert output.shape == values.shape
     assert jnp.all(jnp.isfinite(output))
     assert jnp.array_equal(output[~source_mask], jnp.zeros((1,)))
     assert jnp.allclose(changed_output, output)
+    assert jnp.all(jnp.isfinite(nan_output))
+    assert jnp.allclose(nan_output, output)
+    assert jnp.all(jnp.isfinite(nan_gradient))
+    assert nan_gradient[1] == 0.0
 
 
 @pytest.mark.parametrize("query_kind", ("tensor_grid", "points"))

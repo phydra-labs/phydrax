@@ -217,3 +217,9 @@
 - Closure-converted matrix-free SVD, eigensolve, spectral-projector, density-kernel, and spectral-function derivatives now support filtered JVP, reverse mode, and JIT.
 - Named truncated-normal initializers now produce their conventional target variance, while rectangular orthogonal initialization avoids max-dimension square samples.
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
+
+### Fixed
+
+- Masked BSDE and deep-splitting losses now sanitize inactive residuals before
+  nonlinear reductions, Flower sanitizes masked source and normalization state,
+  and ragged-series pooling selects inactive latent values before reduction.

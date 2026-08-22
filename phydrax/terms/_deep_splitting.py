@@ -40,7 +40,16 @@ def _masked_mean_square(
     event_shape: tuple[int, ...],
     /,
 ) -> Array:
-    squared = jnp.abs(values) ** 2
+    event_mask = jnp.broadcast_to(
+        valid.reshape(valid.shape + (1,) * len(event_shape)),
+        values.shape,
+    )
+    safe_values = jnp.where(
+        event_mask,
+        values,
+        jnp.zeros((), dtype=values.dtype),
+    )
+    squared = jnp.abs(safe_values) ** 2
     event_axes = tuple(range(squared.ndim - len(event_shape), squared.ndim))
     squared = jnp.sum(squared, axis=event_axes)
     count = jnp.sum(valid)
