@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- `phydrax.transport.continuous` endpoint couplings, linear probability
+  interpolants, status-preserving continuous sampling, exact Euclidean continuous-flow
+  densities, and uncertainty-bearing Hutchinson density estimates; plus
+  `FlowMatchingTerm` and fixed-query quadrature-aware operator velocity metrics.
 
 - Positive certified Xiao--Gimbutas, Lebedev, periodic, radial, and Duffy
   cubature with content identity and bounded storage; measure-matched fixed

@@ -40,6 +40,7 @@ from ._fit import (
     OperatorMixedPrecisionPolicy,
     OperatorValidationPolicy,
 )
+from ._flow_matching import OperatorFlowMatchingMetric
 from ._linearization import linearize_operator, OperatorLinearization
 from ._loader import (
     OperatorBatchEpoch,
@@ -178,6 +179,7 @@ __all__ = [
     "OperatorDTypePolicy",
     "OperatorFitHistory",
     "OperatorFitResult",
+    "OperatorFlowMatchingMetric",
     "OperatorLossContext",
     "OperatorLossTerm",
     "OperatorMixedPrecisionPolicy",

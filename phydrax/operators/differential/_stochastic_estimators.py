@@ -265,6 +265,23 @@ def stochastic_trace_samples(
     )
 
 
+def exact_state_divergence(
+    vector_field: Callable[[Array], Array],
+    state: ArrayLike,
+    /,
+) -> Array:
+    """Return the exact trace of a complete state-shaped vector-field Jacobian."""
+    state_array = jnp.asarray(state)
+    field_value = jnp.asarray(vector_field(state_array))
+    if field_value.shape != state_array.shape:
+        raise ValueError("vector_field must preserve the complete state shape.")
+    jacobian = jax.jacrev(vector_field)(state_array)
+    size = int(state_array.size)
+    if jacobian.shape != state_array.shape + state_array.shape:
+        raise ValueError("vector_field Jacobian has incompatible state axes.")
+    return jnp.trace(jnp.asarray(jacobian).reshape((size, size)))
+
+
 def stochastic_divergence_samples(
     vector_field: Callable[[Array], Array],
     state: ArrayLike,
@@ -278,8 +295,6 @@ def stochastic_divergence_samples(
     if not isinstance(resolved, StochasticTracePolicy):
         raise TypeError("policy must be a StochasticTracePolicy or None.")
     state_array = jnp.asarray(state)
-    if state_array.ndim < 1:
-        raise ValueError("state must have at least one axis.")
     field_value = jnp.asarray(vector_field(state_array))
     if field_value.shape != state_array.shape:
         raise ValueError("vector_field must preserve the complete state shape.")
@@ -361,6 +376,7 @@ def estimate_kolmogorov_generator(
 
 
 __all__ = [
+    "exact_state_divergence",
     "ProbeDistribution",
     "stochastic_divergence_samples",
     "StochasticOperatorEstimate",

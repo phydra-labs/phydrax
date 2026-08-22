@@ -20,6 +20,7 @@ from phydrax.domain import DomainFunction
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..operators.differential._stochastic_estimators import (
+    exact_state_divergence,
     stochastic_divergence_samples,
     StochasticTracePolicy,
 )
@@ -28,6 +29,11 @@ from ..stochastic._state_time import (
     TrajectoryStateTimeSamples,
 )
 from ..stochastic._trajectory import StochasticTrajectory
+from ._sample_statistics import (
+    clustered_standard_error,
+    effective_sample_size,
+    normalized_log_weights,
+)
 
 
 ScoreMatchingMethod: TypeAlias = Literal["exact", "implicit", "sliced"]
@@ -168,54 +174,6 @@ def _probes(
     return jr.normal(key, full_shape, dtype=dtype)
 
 
-def _normalized_weights(
-    log_weights: Array,
-    valid: Array,
-    /,
-) -> Array:
-    valid_count = jnp.sum(valid)
-    valid_count = eqx.error_if(
-        valid_count,
-        valid_count <= 0,
-        "Score-matching batch contains no valid state-time samples.",
-    )
-    safe_log_weights = jnp.where(valid, log_weights, -jnp.inf)
-    reference = jnp.max(safe_log_weights) + 0.0 * valid_count
-    unnormalized = jnp.where(valid, jnp.exp(log_weights - reference), 0.0)
-    mass = jnp.sum(unnormalized)
-    mass = eqx.error_if(
-        mass,
-        ~(jnp.isfinite(mass) & (mass > 0.0)),
-        "Score-matching sample weights have zero finite mass.",
-    )
-    return unnormalized / mass
-
-
-def _weighted_mean(values: Array, weights: Array, /) -> Array:
-    return jnp.sum(
-        weights.reshape(weights.shape + (1,) * (values.ndim - weights.ndim)) * values,
-        axis=tuple(range(weights.ndim)),
-    )
-
-
-def _path_standard_error(
-    node_loss: Array,
-    weights: Array,
-    path_indices: Array,
-    num_paths: int,
-    /,
-) -> Array:
-    path_weight = jax.ops.segment_sum(weights, path_indices, num_paths)
-    path_total = jax.ops.segment_sum(weights * node_loss, path_indices, num_paths)
-    active = path_weight > 0.0
-    path_mean = jnp.where(active, path_total / jnp.maximum(path_weight, 1e-300), 0.0)
-    count = jnp.sum(active)
-    mean = jnp.sum(jnp.where(active, path_mean, 0.0)) / jnp.maximum(count, 1)
-    squared = jnp.sum(jnp.where(active, (path_mean - mean) ** 2, 0.0))
-    variance = jnp.where(count > 1, squared / (count - 1), jnp.nan)
-    return jnp.sqrt(variance / jnp.maximum(count, 1))
-
-
 class ScoreMatchingTerm(AbstractSamplingTerm):
     """Particle-first score-field term with path-cluster diagnostics."""
 
@@ -341,9 +299,8 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
 
         def exact_node(state, time, key):
             value = score_at(state, time, key)
-            jacobian = jax.jacrev(lambda current: score_at(current, time, key))(state)
-            divergence = jnp.trace(
-                jacobian.reshape((prod(state_shape), prod(state_shape)))
+            divergence = exact_state_divergence(
+                lambda current: score_at(current, time, key), state
             )
             norm = jnp.sum(jnp.abs(value) ** 2)
             return 0.5 * norm + divergence, norm, divergence, jnp.asarray(0.0)
@@ -415,7 +372,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             )
         if score_norm.shape != (node_count,):
             raise ValueError("score field output must have the same shape as each state.")
-        normalized = _normalized_weights(log_weights, valid)
+        normalized = normalized_log_weights(log_weights, valid)
         return _ScoreNodeEvaluation(
             loss=node_loss,
             score_norm=score_norm,
@@ -458,7 +415,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         divergence_error = jnp.sqrt(
             jnp.sum(evaluation.weights**2 * evaluation.divergence_standard_error**2)
         )
-        path_error = _path_standard_error(
+        path_error = clustered_standard_error(
             evaluation.loss,
             evaluation.weights,
             evaluation.path_indices,
@@ -469,7 +426,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             valid_array,
             axis=tuple(range(valid_array.ndim - 1)),
         )
-        ess = 1.0 / jnp.sum(evaluation.weights**2)
+        ess = effective_sample_size(evaluation.weights)
         finite = (
             jnp.isfinite(objective) & jnp.isfinite(score_norm) & jnp.isfinite(divergence)
         )
