@@ -10,6 +10,7 @@ This guide explains how `FunctionalSolver` evaluates losses and how `solve()` up
 | --- | --- | --- |
 | `FunctionalSolver` | Parameters minimizing residual, data, integral, and model-loss terms | PINNs, inverse problems, variational objectives |
 | `solve_diffrax` | One finite-dimensional ODE/SDE trajectory | Numerical reference solves, differentiable simulation |
+| `solve_markov_cubature` | One deterministic positive weighted approximation of an SDE law | Weak moments, distribution propagation, deterministic objectives |
 | `solve_diffrax_ensemble` | Coupled SDE trajectories with retained realization provenance | Process uncertainty, stochastic transition data |
 
 An SDE is specified by `DifferentialProblem` with one or more named `WienerTerm`
@@ -29,6 +30,70 @@ Pass `dense=True` to either integration function when states must be evaluated b
 saved times. `DifferentialSolution.evaluate(query_times)` accepts arbitrarily shaped
 shared query arrays and returns `sample_shape + query_shape + state_shape`; dense data
 is not retained by default.
+
+### Deterministic weak-law propagation
+
+`solve_markov_cubature` propagates a finite positive law instead of sampling
+independent trajectories. At every active interval of a `TemporalMesh`, a
+`GaussianCubatureRule` branches each retained state, and
+`PolynomialRecombination` reduces the expanded law while preserving standardized
+total-degree polynomial moments. The retained capacity is fixed at trace time:
+for state dimension `d` and recombination degree `p`, it is
+`comb(d + p, p)`, including the mass constraint. The expanded capacity is that
+number times the increment or path count.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+mesh = phx.discretization.TemporalMesh.uniform(
+    0.0,
+    1.0,
+    8,
+    role="driver",
+)
+problem = phx.solver.DifferentialProblem(
+    lambda time, state, args: jnp.zeros_like(state),
+    jnp.asarray([0.0]),
+    t0=0.0,
+    t1=1.0,
+    wiener_terms=(
+        phx.solver.WienerTerm(
+            "noise",
+            lambda time, state, args: jnp.ones(state.shape + (1,)),
+            (1,),
+            structure="additive",
+        ),
+    ),
+)
+plan = phx.solver.MarkovCubaturePlan(
+    mesh,
+    phx.integration.GaussianCubatureRule(1, 3),
+)
+law = phx.solver.solve_markov_cubature(problem, plan)
+second_moment = phx.integration.integrate(
+    lambda states: states[..., 0] ** 2,
+    law.measure(),
+)
+```
+
+The default `weak-euler` method is weak order one. It supports Itô problems and
+additive Stratonovich problems. `method="stratonovich-flow"` instead drives the
+declared additive or commutative Stratonovich vector fields along a
+degree-three-certified `WienerCubaturePathData`; `flow_substeps` controls the
+fixed RK4 integration within each path segment. General/noncommutative
+Stratonovich noise is rejected because straight degree-three paths do not carry
+the required area information.
+
+Recombination freezes discrete support indices under differentiation and solves
+the selected moment system again for the tangent calculation. Points and
+continuous weights therefore retain finite JAX derivatives without pretending
+that pivot changes are smooth. `maximum_expanded_particles`, feature/storage
+limits, terminal status, per-step mass/moment residuals, numerical rank, minimum
+weight, and retained/expanded counts make every resource and validity boundary
+explicit. Inactive temporal intervals hold the law and record no expansion.
+This deterministic law has no Monte Carlo standard error; discretization and
+finite-degree cubature error remain numerical error.
 
 ### Array state geometry
 

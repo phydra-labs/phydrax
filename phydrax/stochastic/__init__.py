@@ -19,6 +19,7 @@ from ._bsde import (
     evaluate_bsde,
     semilinear_pde_residual,
 )
+from ._cubature_path import straight_wiener_cubature_path, WienerCubaturePathData
 from ._euler_maruyama import (
     EulerMaruyamaParameters,
     EulerMaruyamaQuasiLikelihood,
@@ -276,6 +277,8 @@ from ._wiener import LevyAreaKind, WienerAlgorithm, WienerRealization
 
 
 __all__ = [
+    "WienerCubaturePathData",
+    "straight_wiener_cubature_path",
     "AccumulatedPathEvent",
     "AbstractLevyProcess",
     "AbstractJumpProcess",

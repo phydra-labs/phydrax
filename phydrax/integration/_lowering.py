@@ -40,6 +40,7 @@ from ._rules import (
     ClenshawCurtisRule,
     CubatureRule,
     GaussHermiteRule,
+    GaussianCubatureRule,
     interval_rule_data,
     IntervalRule,
     probability_rule_data,
@@ -354,6 +355,8 @@ class IntegrationAxisSpec(AbstractAxisSpec):
 def _fixed_rule_node_count(rule: IntervalRule | ProbabilityRule, /) -> int:
     if isinstance(rule, GaussHermiteRule):
         return int(probability_rule_data(rule).nodes.shape[0])
+    if isinstance(rule, GaussianCubatureRule):
+        return rule.num_points
     return int(interval_rule_data(rule).nodes.shape[0])
 
 
@@ -362,21 +365,29 @@ def _scalar_interior_rule_data(
     rule: IntervalRule | ProbabilityRule,
     /,
 ) -> tuple[Array, Array]:
-    if isinstance(rule, GaussHermiteRule):
+    if isinstance(rule, (GaussHermiteRule, GaussianCubatureRule)):
+        owner = type(rule).__name__
         if not isinstance(factor, ProbabilityDomain):
-            raise TypeError(
-                "GaussHermiteRule requires a standard-normal probability factor."
-            )
+            raise TypeError(f"{owner} requires a standard-normal probability factor.")
         data = probability_rule_data(rule)
+        if isinstance(rule, GaussianCubatureRule):
+            if rule.dimension != 1:
+                raise ValueError(
+                    "Direct scalar probability integration requires a "
+                    "one-dimensional GaussianCubatureRule."
+                )
+            nodes = data.points[:, 0]
+        else:
+            nodes = data.nodes
         if (
             not factor.supports_reference_transform
             or factor.reference_measure != data.integration_measure
         ):
             raise ValueError(
-                "GaussHermiteRule requires a probability factor with a "
+                f"{owner} requires a probability factor with a "
                 "standard-normal reference transform."
             )
-        return factor.from_reference(data.nodes), data.weights
+        return factor.from_reference(nodes), data.weights
 
     data = interval_rule_data(rule)
     if isinstance(factor, ProbabilityDomain):

@@ -102,6 +102,18 @@ measure conventions. See LICENSES/SCIPY-BSD-3-CLAUSE.txt.
 
 Research and design acknowledgments
 
+The Markov-chain-cubature design study considered tttc3/MCCube at commit
+d5653d88005ef9a421f14aa0c1e9ee6cfee5cecc, licensed under the Apache License,
+Version 2.0, together with the cubature-on-Wiener-space construction of Lyons
+and Victoir. Phydrax's Gaussian formulas, signature certification, controlled
+flow, static positive moment recombination, diagnostics, and solver contracts
+are independent implementations; no MCCube source code or runtime data is
+included.
+
+The positive Gaussian formulas use the original Stroud--Secrest constructions
+from *Gaussian Quadrature Formulas* (1966). The Hadamard degree-three family is
+the orthogonal-array construction associated with Victoir's 2004 cubature work.
+
 The moment-calibration formulation follows Shane Barratt, Guillermo Angeris,
 and Stephen Boyd, “Optimal Representative Sample Weighting,” Statistics and
 Computing 31:19 (2021), and its public cvxgrp/rsw implementation.

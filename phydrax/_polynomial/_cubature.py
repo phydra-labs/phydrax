@@ -29,6 +29,7 @@ CubatureReference: TypeAlias = Literal[
     "disk",
     "sphere",
     "ball",
+    "standard-normal",
 ]
 CubatureFamily: TypeAlias = Literal[
     "xiao-gimbutas",
@@ -36,15 +37,21 @@ CubatureFamily: TypeAlias = Literal[
     "periodic-circle",
     "radial-product",
     "duffy",
+    "stroud-secrest-3-1",
+    "hadamard-3",
+    "stroud-secrest-5-2",
+    "stroud-secrest-5-3",
+    "tensor-hermite",
 ]
 
-_REFERENCE_DIMENSION: dict[str, int] = {
+_REFERENCE_DIMENSION: dict[str, int | None] = {
     "triangle": 2,
     "tetrahedron": 3,
     "circle": 2,
     "disk": 2,
     "sphere": 3,
     "ball": 3,
+    "standard-normal": None,
 }
 _REFERENCE_MASS: dict[str, float] = {
     "triangle": 0.5,
@@ -53,6 +60,7 @@ _REFERENCE_MASS: dict[str, float] = {
     "disk": math.pi,
     "sphere": 4.0 * math.pi,
     "ball": 4.0 * math.pi / 3.0,
+    "standard-normal": 1.0,
 }
 _REFERENCE_MEASURE: dict[str, str] = {
     "triangle": "lebesgue",
@@ -61,6 +69,7 @@ _REFERENCE_MEASURE: dict[str, str] = {
     "disk": "lebesgue",
     "sphere": "surface",
     "ball": "lebesgue",
+    "standard-normal": "standard-normal",
 }
 _DEFAULT_RULE_BYTES = 64 * 1024**2
 
@@ -103,6 +112,11 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             "periodic-circle",
             "radial-product",
             "duffy",
+            "stroud-secrest-3-1",
+            "hadamard-3",
+            "stroud-secrest-5-2",
+            "stroud-secrest-5-3",
+            "tensor-hermite",
         ):
             raise ValueError(f"Unsupported cubature family: {family!r}.")
         dtype_ = np.dtype(dtype)
@@ -111,7 +125,8 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         dimension = _REFERENCE_DIMENSION[reference_domain]
         if (
             points_host.ndim != 2
-            or points_host.shape[1] != dimension
+            or points_host.shape[1] == 0
+            or (dimension is not None and points_host.shape[1] != dimension)
             or points_host.shape[0] == 0
             or weights_host.shape != points_host.shape[:1]
         ):
@@ -127,8 +142,9 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             raise ValueError(
                 "Cubature points must be finite and weights positive finite."
             )
+        point_dimension = int(points_host.shape[1])
         order = np.lexsort(
-            tuple(points_host[:, axis] for axis in range(dimension - 1, -1, -1))
+            tuple(points_host[:, axis] for axis in range(point_dimension - 1, -1, -1))
         )
         points_host = np.asarray(points_host[order], dtype=dtype_)
         weights_host = np.asarray(weights_host[order], dtype=dtype_)
@@ -198,6 +214,8 @@ def _validate_reference_points(
     tolerance: float,
     /,
 ) -> None:
+    if reference == "standard-normal":
+        return
     if reference in ("triangle", "tetrahedron"):
         if np.any(points < -tolerance) or np.any(
             np.sum(points, axis=1) > 1.0 + tolerance

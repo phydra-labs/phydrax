@@ -92,6 +92,52 @@ solution = phx.solver.solve_diffrax(
 
 ::: phydrax.solver.solve_diffrax
 
+## Markov cubature weak solve
+
+`solve_markov_cubature` consumes the same stochastic `DifferentialProblem`, but
+returns a deterministic positive weighted law rather than one sampled
+`DifferentialSolution`. A `MarkovCubaturePlan` owns the complete static
+discretization: temporal mesh, multivariate standard-normal increment rule,
+polynomial recombination policy, optional certified Wiener controls, expansion
+capacity, path-flow substeps, history policy, and throw policy.
+
+`weak-euler` supports Itô coefficients and additive Stratonovich coefficients.
+`stratonovich-flow` requires an additive or commutative Stratonovich declaration
+and signature degree at least three. Both methods currently require a real
+Euclidean state and a Gaussian rule whose dimension matches the concatenated
+named Wiener columns. These gates are mathematical contracts, not backend
+fallback choices.
+
+`MarkovCubatureSolution.points`, `log_weights`, and `mask` have fixed retained
+capacity at every saved mesh node. `measure(index)` exposes one saved law through
+the ordinary dependent weighted-measure integration path. Diagnostics retain
+per-step expansion/retention counts, numerical rank, mass and moment residuals,
+minimum positive weight, statuses, capacities, weak order, and content identities.
+Discrete support selection is frozen under differentiation; the
+selected continuous moment system supplies the weight tangent.
+
+::: phydrax.solver.PolynomialRecombination
+
+---
+
+::: phydrax.solver.MarkovCubaturePlan
+
+---
+
+::: phydrax.solver.MarkovCubatureStatus
+
+---
+
+::: phydrax.solver.MarkovCubatureDiagnostics
+
+---
+
+::: phydrax.solver.MarkovCubatureSolution
+
+---
+
+::: phydrax.solver.solve_markov_cubature
+
 ## Controlled differential equations
 
 ### Differentiable driving paths

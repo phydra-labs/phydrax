@@ -10,6 +10,13 @@
   sphere, and triangle-surface maps; mixed product plans; and static-capacity
   differentiable adaptive triangle refinement with explicit paired-rule error,
   partition, evaluation-budget, and terminal-status evidence.
+- Positive total-degree standard-normal cubature through degree five, including
+  grouped probability-product lowering; static-capacity Markov cubature for weak
+  Itô and Stratonovich law propagation; positive polynomial recombination with
+  frozen-support continuous derivatives; signature-certified piecewise-linear
+  Wiener controls; weighted-measure result interoperability; explicit resource,
+  moment, rank, positivity, and terminal-status diagnostics; and a compiled
+  accuracy/performance benchmark harness.
 - `phydrax.discretization`: canonical entity/topology/support, finite-measure,
   DOF/field-space, plan/preparation, transfer, bundle, hierarchy, temporal, tensor,
   spectral, metric-cochain, conforming P1 finite-element, and conservative

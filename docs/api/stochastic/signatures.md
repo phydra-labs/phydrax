@@ -161,6 +161,30 @@ Sigkax is not retained as a reference backend: its archived custom-call bridge
 targets obsolete JAX/XLA extension APIs, while the native recurrence is portable
 pure JAX on CPU and GPU.
 
+## Signature-certified Wiener cubature controls
+
+`WienerCubaturePathData` stores positive weighted piecewise-linear controls as
+`(path_count, segment_count, noise_dimension)` increments plus normalized
+segment widths. Construction canonicalizes path order and numerically certifies
+the declared Wiener signature degree through three: zero first spatial level,
+the Brownian half-identity second level, zero third spatial level, and zero
+degree-three time--space levels. False degree metadata is rejected. Content,
+source-rule, storage, family, and signature identities are retained in
+`path_id`.
+
+`straight_wiener_cubature_path` lifts a positive degree-three
+`GaussianCubatureRule` to one straight unit-time segment per Gaussian point.
+This is the default control formula for
+`MarkovCubaturePlan(method="stratonovich-flow")`. Custom multisegment formulas
+remain valid only when the same constructor certification succeeds; the solver
+advances every segment at its declared physical-time fraction.
+
+::: phydrax.stochastic.WienerCubaturePathData
+
+---
+
+::: phydrax.stochastic.straight_wiener_cubature_path
+
 ## API
 
 ::: phydrax.stochastic.path_signature

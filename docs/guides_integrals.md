@@ -102,6 +102,52 @@ Built-in `Normal` and `LogNormal` provide one. Combine different reference
 measures with `ProductIntegrationPlan`; one fixed rule is never silently
 reinterpreted for an incompatible factor.
 
+### Coupled standard-normal cubature
+
+`GaussianCubatureRule(dimension, degree)` is the multidimensional counterpart
+for a product of standard-normal reference measures. Its positive formulas are
+certified for every monomial of total degree through three or five; this is a
+total-degree contract, not a tensor-product order. Automatic selection uses the
+`2d`-point Stroud--Secrest degree-three rule, the three-point Hermite rule in one
+dimension at degree five, the nine-point Stroud--Secrest rule in two dimensions,
+and the positive Stroud--Secrest axis/diagonal rule above two dimensions.
+`maximum_points` and `maximum_rule_bytes` reject an infeasible formula before it
+is materialized.
+
+Use one grouped `ProductIntegrationPlan` entry so every transformed coordinate
+shares the rule's single cubature axis:
+
+```python
+gaussian_x = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(1.0, 2.0), label="x"
+)
+gaussian_y = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(-2.0, 0.5), label="y"
+)
+gaussian_domain = phx.domain.ProductDomain(gaussian_x, gaussian_y)
+gaussian_function = gaussian_domain.Function("x", "y")(
+    lambda x, y: ((x - 1.0) / 2.0) ** 2 * ((y + 2.0) / 0.5) ** 2
+)
+gaussian_plan = phx.integration.ProductIntegrationPlan(
+    {
+        ("x", "y"): phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussianCubatureRule(2, 5)
+        )
+    }
+)
+gaussian_moment = phx.integration.integrate(
+    gaussian_function,
+    phx.integration.over(gaussian_domain.component()),
+    gaussian_plan,
+)
+```
+
+Every grouped factor must declare a standard-normal reference transform.
+Built-in `Normal` and `LogNormal` factors qualify. A rule dimension mismatch,
+an incompatible factor, or a family/degree combination outside the built-in
+positive catalog is rejected rather than lowered as independent
+one-dimensional quadrature.
+
 ## Curated multidimensional cubature
 
 `CubatureRule(reference, degree)` returns a prepared positive rule with points
@@ -117,6 +163,9 @@ tabulated rule. Circle, disk, and ball rules use positive periodic/radial produc
 constructions. Sphere rules use only positive-weight Lebedev formulas.
 
 ```python
+mapping = lambda reference: reference
+jacobian = lambda reference: jnp.ones((reference.shape[0],))
+integrand = lambda point: point[:, 0] + point[:, 1]
 triangle_rule = phx.integration.CubatureRule("triangle", 10)
 triangle_target = phx.integration.mapped(
     triangle_rule,
@@ -288,6 +337,20 @@ charts exposed by a geometry cubature atlas. The default positive degree-5 and
 degree-10 rules form a paired error indicator:
 
 ```python
+mesh_vertices = jnp.asarray(
+    (
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+    )
+)
+mesh_faces = jnp.asarray(((0, 2, 1), (0, 1, 3), (0, 3, 2), (1, 2, 3)))
+mesh_domain = phx.domain.GeometryDomain(
+    phx.geometry.MeshRegion(mesh_vertices, mesh_faces).compile()
+)
+mesh_boundary = mesh_domain.component({"x": phx.domain.Boundary()})
+surface_field = mesh_domain.Function("x")(lambda x: jnp.sum(x * x))
 plan = phx.integration.AdaptiveTrianglePlan(
     absolute_tolerance=1e-8,
     relative_tolerance=1e-8,

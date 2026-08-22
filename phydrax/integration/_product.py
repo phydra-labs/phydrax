@@ -64,7 +64,12 @@ from ._plans import (
     RandomizedQMCDesign,
     SparseGridPlan,
 )
-from ._rules import ClenshawCurtisRule, CubatureRule, TanhSinhRule
+from ._rules import (
+    ClenshawCurtisRule,
+    CubatureRule,
+    GaussianCubatureRule,
+    TanhSinhRule,
+)
 from ._sparse_grid import _smolyak_rule
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
@@ -235,7 +240,9 @@ def materialize_product(
     )
     blocks: list[tuple[str, ...]] = []
     for labels, factor_plan in groups:
-        if isinstance(factor_plan, FixedQuadraturePlan):
+        if isinstance(factor_plan, FixedQuadraturePlan) and not isinstance(
+            factor_plan.rule, GaussianCubatureRule
+        ):
             blocks.extend((label,) for label in labels)
         else:
             blocks.append(labels)
@@ -278,6 +285,40 @@ def materialize_product(
                     "Endpoint-inclusive product rules require bounded probability support."
                 )
             if isinstance(factor_plan, FixedQuadraturePlan):
+                if isinstance(factor_plan.rule, GaussianCubatureRule):
+                    rule = factor_plan.rule
+                    if len(labels) != rule.dimension:
+                        raise ValueError(
+                            "Gaussian cubature dimension must match its product labels."
+                        )
+                    axis = structure.axis_for(labels[0])
+                    if axis is None:
+                        raise RuntimeError(
+                            "Gaussian cubature product factor has no axis."
+                        )
+                    for column, (label, factor) in enumerate(
+                        zip(labels, factors, strict=True)
+                    ):
+                        if not isinstance(factor, ProbabilityDomain):
+                            raise TypeError(
+                                "Gaussian cubature product factors must be probability domains."
+                            )
+                        if (
+                            not factor.supports_reference_transform
+                            or factor.reference_measure != "standard-normal"
+                        ):
+                            raise ValueError(
+                                "Gaussian cubature product factors require "
+                                "standard-normal reference transforms."
+                            )
+                        points[label] = cx.Field(
+                            factor.from_reference(rule.prepared.points[:, column]),
+                            dims=(axis,),
+                        )
+                    weights_by_axis[axis] = cx.Field(rule.prepared.weights, dims=(axis,))
+                    if axis in reduction_axes and axis not in deterministic_axes:
+                        deterministic_axes.append(axis)
+                    continue
                 if isinstance(factor_plan.rule, CubatureRule):
                     if len(labels) != 1 or not isinstance(factors[0], AbstractGeometry):
                         raise TypeError(
