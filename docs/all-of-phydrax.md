@@ -747,6 +747,16 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `covariant_hessian`, or the metric overload of `laplace_beltrami`. Attach
   `sqrt(det(g))` to component integration with `with_riemannian_measure`.
   See [API → Metrix](api/metrix/index.md).
+- **Continuous learned transport and flow matching**: sample independent or native
+  balanced endpoint couplings, construct explicit endpoint interpolants, train a
+  state-shaped conditional velocity with `FlowMatchingTerm`, and advance source-law
+  samples through `ContinuousTransport` and an existing `DiffraxEvolution`.
+  `ContinuousFlowLaw` adds exact finite-dimensional Euclidean density evaluation;
+  keyed Hutchinson log-density estimates remain separate uncertainty-bearing
+  diagnostics. Fixed-query field objectives can retain masks, physical quadrature,
+  and channel geometry through `OperatorFlowMatchingMetric`.
+  See [Guides → Optimal transport](guides_transport.md) and
+  [API → Continuous learned transport](api/transport/continuous.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
   `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
   and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density

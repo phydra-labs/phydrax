@@ -12,6 +12,11 @@ contracts. Exact and positive-feature balanced Sinkhorn, unbalanced finite Sinkh
 fixed- and free-support barycenters, semidiscrete density-to-support transport,
 one-dimensional and sliced distances, and differentiable order operators do not
 silently normalize physical masses or erase numerical approximation.
+Continuous learned transport is a separate composition layer over endpoint samples,
+optional finite plans, flow-matching terms, and existing differential evolution. It
+does not turn a Sinkhorn plan into a neural map or conflate finite OT with a
+continuous probability path.
+
 
 ## Basic workflow
 
@@ -97,6 +102,7 @@ call `require_converged` and fail rather than optimize through an invalid solve.
 ## Related pages
 
 - [Ground costs](costs.md)
+- [Continuous learned transport and flow matching](continuous.md)
 - [Sinkhorn solving and divergence](sinkhorn.md)
 - [Positive-feature scalable balanced transport](scalable.md)
 - [Unbalanced Sinkhorn and unequal physical mass](unbalanced.md)

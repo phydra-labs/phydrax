@@ -63,6 +63,41 @@ certificate of PDE error.
 
 ::: phydrax.terms.RandomizedResidualDiagnostics
 
+## Endpoint flow matching
+
+`FlowMatchingTerm` learns a state-shaped velocity field from explicitly coupled
+source/target endpoints. Its interpolant supplies a conditional state and velocity;
+the term never infers a density, inverse, or stochastic-process realization.
+
+Fixed endpoint samples retain common random numbers while resampling interpolation
+times on every optimizer update. With `sampling_mode="resample"`, the endpoint
+provider itself is called exactly once per update. Masks and log weights are
+normalized over valid pairs only.
+
+`EuclideanFlowMatchingMetric` uses the squared norm of the complete event. The
+`normalize_event` option is explicit rather than silently changing loss scale.
+Fixed-query fields should instead use
+`phydrax.nn.operator.training.OperatorFlowMatchingMetric`, which applies query
+quadrature, masks, and channel geometry.
+
+::: phydrax.terms.FlowMatchingTerm
+
+---
+
+::: phydrax.terms.FlowMatchingPolicy
+
+---
+
+::: phydrax.terms.FlowMatchingDiagnostics
+
+---
+
+::: phydrax.terms.EuclideanFlowMatchingMetric
+
+---
+
+::: phydrax.terms.AbstractFlowMatchingMetric
+
 ## Particle score matching
 
 `ScoreMatchingTerm` learns a score field
@@ -131,6 +166,8 @@ residual terms. `RandomizedResidualLossMode` and
 `LabelProvider` is the Feynman--Kac label callback contract.
 `ScoreSampleProvider`, `ScoreMatchingMethod`, and `ScoreMatchingSamplingMode` provide
 the equivalent score-matching contracts.
+`FlowEndpointProvider` and `FlowMatchingSamplingMode` provide the corresponding
+endpoint-provider and refresh contracts for flow matching.
 
 ::: phydrax.terms.RandomizedResidualSamples
 

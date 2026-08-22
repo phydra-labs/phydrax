@@ -209,7 +209,59 @@ Prepared references are useful for model training, calibration against one empir
 dataset, and repeated spatial-density objectives. They are not a generic cache keyed
 only by target array shape.
 
-## 9. Scientific integrations
+## 9. Continuous learned transport
+
+Continuous learned transport is not another optimal-transport solver. It composes
+endpoint samples, an optional finite coupling, a velocity-regression term, and the
+existing differential-evolution substrate.
+
+`independent_endpoint_coupling` draws from the empirical product coupling.
+`transport_plan_endpoint_coupling` instead samples a converged native balanced plan.
+The plan helper materializes the joint matrix and is intended for training
+minibatches. It samples discrete source/target pairs; barycentric plan actions are
+deterministic conditional means and are not interchangeable with joint samples.
+
+`LinearEndpointInterpolant` then returns
+
+```text
+x_t = (1 - t) x_0 + t x_1,     u_t = x_1 - x_0.
+```
+
+The conditional map collapses at the target endpoint and therefore is not exposed as
+a bijection or probability law. `FlowMatchingTerm` regresses a state-shaped
+`DomainFunction` against `u_t`; the population optimum is the conditional expectation
+of endpoint velocity given the interpolated state.
+
+```python
+endpoints = phx.transport.independent_endpoint_coupling(
+    source_samples,
+    target_samples,
+    jr.key(1),
+    num_pairs=512,
+)
+interpolant = phx.transport.LinearEndpointInterpolant((state_size,))
+term = phx.terms.FlowMatchingTerm("velocity", endpoints, interpolant)
+```
+
+Endpoint contexts are gathered with target indices and become explicit dependencies
+of the velocity `DomainFunction`. Construct one coupling per physical case; never let
+an empirical plan pair states belonging to different observations, controls,
+geometries, or parameter cases.
+
+After training, bind the velocity field into a `ContinuousSystem`, choose a
+`DiffraxEvolution`, and construct `ContinuousTransport`. Sampling exposes every
+evolution status. It does not assert an exact inverse or normalized density.
+
+`ContinuousFlowLaw` is a separate exact-density adapter for small real Euclidean
+events. Its inverse solve augments the state with exact divergence. Keyed Hutchinson
+estimates remain a separate diagnostic API and must not be substituted into exact
+MCMC acceptance ratios.
+
+For fixed-query fields, `OperatorFlowMatchingMetric` measures velocity error with the
+query mask, physical quadrature, and channel metric. It does not grant resolution
+transfer or continuum-density semantics.
+
+## 10. Scientific integrations
 
 ### Predictive laws and neural operators
 

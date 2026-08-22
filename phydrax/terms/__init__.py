@@ -39,6 +39,16 @@ from ._feynman_kac import (
     FeynmanKacRegressionTerm,
     LabelProvider,
 )
+from ._flow_matching import (
+    AbstractFlowMatchingMetric,
+    EuclideanFlowMatchingMetric,
+    FlowEndpointProvider,
+    FlowMatchingBatch,
+    FlowMatchingDiagnostics,
+    FlowMatchingPolicy,
+    FlowMatchingSamplingMode,
+    FlowMatchingTerm,
+)
 from ._graph_data import (
     GraphSupervisedTerm,
     GraphTarget,
@@ -102,6 +112,7 @@ from ._unbalanced_transport import SpatialUnbalancedSinkhornDivergenceTerm
 
 __all__ = [
     "AbstractEvaluatedScalarTerm",
+    "AbstractFlowMatchingMetric",
     "AbstractSamplingTerm",
     "AbstractScalarTerm",
     "BSDETerm",
@@ -120,8 +131,15 @@ __all__ = [
     "DeepSplittingRegressionTerm",
     "DifferentialPhysicsInformedOperatorTerm",
     "EmpiricalSinkhornDivergenceTerm",
+    "EuclideanFlowMatchingMetric",
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
+    "FlowEndpointProvider",
+    "FlowMatchingBatch",
+    "FlowMatchingDiagnostics",
+    "FlowMatchingPolicy",
+    "FlowMatchingSamplingMode",
+    "FlowMatchingTerm",
     "GraphSupervisedTerm",
     "GraphTarget",
     "GraphTargetInterpolation",

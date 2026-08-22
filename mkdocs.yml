@@ -139,6 +139,7 @@ nav:
         - Moment weighting: "api/weighting.md"
         - Optimal transport:
             - Overview: "api/transport/index.md"
+            - Continuous learned transport: "api/transport/continuous.md"
             - Ground costs: "api/transport/costs.md"
             - Sinkhorn and divergence: "api/transport/sinkhorn.md"
             - Unbalanced Sinkhorn: "api/transport/unbalanced.md"
