@@ -20,9 +20,11 @@ from .._sampling import (
 )
 from .._strict import StrictModule
 from ._rules import (
+    CubatureRule,
     GaussKronrodRule,
     GaussLegendreRule,
     IntervalRule,
+    ProbabilityRule,
     ReferenceRule,
 )
 
@@ -118,7 +120,9 @@ class FixedQuadraturePlan(StrictModule):
 
     rule: Any
 
-    def __init__(self, rule: IntervalRule | ReferenceRule | None = None):
+    def __init__(
+        self, rule: IntervalRule | ProbabilityRule | ReferenceRule | None = None
+    ):
         self.rule = GaussLegendreRule() if rule is None else rule
 
 
@@ -184,6 +188,57 @@ def _validate_tolerance(value: float | None, name: str, /) -> float | None:
     if not math.isfinite(value_) or value_ < 0.0:
         raise ValueError(f"{name} must be finite and nonnegative.")
     return value_
+
+
+class AdaptiveTrianglePlan(StrictModule):
+    """Static-capacity adaptive quadrature over affine triangle charts."""
+
+    low_rule: CubatureRule
+    high_rule: CubatureRule
+    absolute_tolerance: float | None = eqx.field(static=True)
+    relative_tolerance: float | None = eqx.field(static=True)
+    max_cells: int = eqx.field(static=True)
+    max_evaluations: int | None = eqx.field(static=True)
+    collect_partition: bool = eqx.field(static=True)
+    throw: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        low_rule: CubatureRule | None = None,
+        high_rule: CubatureRule | None = None,
+        /,
+        *,
+        absolute_tolerance: float | None = None,
+        relative_tolerance: float | None = None,
+        max_cells: int = 256,
+        max_evaluations: int | None = None,
+        collect_partition: bool = False,
+        throw: bool = True,
+    ):
+        low = CubatureRule("triangle", 5) if low_rule is None else low_rule
+        high = CubatureRule("triangle", 10) if high_rule is None else high_rule
+        if low.reference_domain != "triangle" or high.reference_domain != "triangle":
+            raise ValueError("Adaptive triangle rules must use the triangle reference.")
+        if high.exact_degree <= low.exact_degree:
+            raise ValueError("Adaptive high_rule must have greater exact degree.")
+        cells = int(max_cells)
+        if cells < 1:
+            raise ValueError("max_cells must be positive.")
+        evaluations = None if max_evaluations is None else int(max_evaluations)
+        if evaluations is not None and evaluations < 1:
+            raise ValueError("max_evaluations must be positive.")
+        self.low_rule = low
+        self.high_rule = high
+        self.absolute_tolerance = _validate_tolerance(
+            absolute_tolerance, "absolute_tolerance"
+        )
+        self.relative_tolerance = _validate_tolerance(
+            relative_tolerance, "relative_tolerance"
+        )
+        self.max_cells = cells
+        self.max_evaluations = evaluations
+        self.collect_partition = bool(collect_partition)
+        self.throw = bool(throw)
 
 
 class MonteCarloPlan(StrictModule):
@@ -446,6 +501,7 @@ class ProductIntegrationPlan(StrictModule):
 IntegrationPlan: TypeAlias = (
     FixedQuadraturePlan
     | AdaptiveQuadraturePlan
+    | AdaptiveTrianglePlan
     | MonteCarloPlan
     | StratifiedMonteCarloPlan
     | QuasiMonteCarloPlan
@@ -459,6 +515,7 @@ IntegrationPlan: TypeAlias = (
 
 __all__ = [
     "AdaptiveQuadraturePlan",
+    "AdaptiveTrianglePlan",
     "AntitheticDesign",
     "CellQuadraturePlan",
     "ControlVariateEstimator",

@@ -79,6 +79,70 @@ A `ProbabilityDomain` used through `over(probability.component())` is lowered th
 its quantile map and retains unit probability mass. This is measure-equivalent to
 `expectation(probability)`; it is not a Lebesgue integral over the support endpoints.
 
+## Measure-matched Gaussian rules
+
+`GaussHermiteRule` integrates directly against a normalized standard-normal
+reference measure. It avoids sending a bounded interval rule through a normal
+quantile map, which is inefficient for tail-sensitive moments:
+
+```python
+normal = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(0.0, 1.0),
+    label="z",
+)
+moment = phx.integration.integrate(
+    normal.Function("z")(lambda z: z**20),
+    phx.integration.expectation(normal),
+    phx.integration.FixedQuadraturePlan(phx.integration.GaussHermiteRule(11)),
+)
+```
+
+The rule requires a distribution with a standard-normal reference transform.
+Built-in `Normal` and `LogNormal` provide one. Combine different reference
+measures with `ProductIntegrationPlan`; one fixed rule is never silently
+reinterpreted for an incompatible factor.
+
+## Curated multidimensional cubature
+
+`CubatureRule(reference, degree)` returns a prepared positive rule with points
+inside its canonical reference domain. Supported references are `"triangle"`,
+`"tetrahedron"`, `"circle"`, `"disk"`, `"sphere"`, and `"ball"`. Rules expose
+their family, certified reference polynomial degree, node count, source identity,
+storage, and content-derived `rule_id`.
+
+Triangle rules through degree 30 and tetrahedron rules through degree 15 use
+Xiao--Gimbutas data. Higher requested simplex degrees use an explicit positive
+Duffy--Gauss fallback by default; set `allow_duffy_fallback=False` to require a
+tabulated rule. Circle, disk, and ball rules use positive periodic/radial product
+constructions. Sphere rules use only positive-weight Lebedev formulas.
+
+```python
+triangle_rule = phx.integration.CubatureRule("triangle", 10)
+triangle_target = phx.integration.mapped(
+    triangle_rule,
+    mapping,
+    jacobian,
+)
+estimate = phx.integration.integrate(
+    integrand,
+    triangle_target,
+    phx.integration.CellQuadraturePlan(triangle_rule),
+)
+```
+
+The certified degree belongs to the canonical reference measure. Affine maps
+preserve that polynomial contract; nonlinear Jacobians generally do not.
+Polynomial degree is not an error bound, so fixed cubature deliberately reports
+`error_estimate=None`.
+
+Analytic circles and spheres expose native interior and boundary cubature maps,
+and watertight `MeshRegion` boundaries expose direct triangle charts. Pass the
+matching `CubatureRule` through `FixedQuadraturePlan` to avoid bounding-box masks
+or tensor chart bias. Rigid transformations, translations, and uniform scaling
+preserve native cubature. Nonuniform scaling currently falls back only when the
+caller chooses another plan; it is never silently assigned an incorrect surface
+Jacobian.
+
 ## Materialize once, reduce many times
 
 Separate materialization from reduction when multiple integrands share a target and
@@ -216,6 +280,35 @@ a JIT-safe runtime error; set `throw=False` only when the caller checks
 Known discontinuities or singular locations belong in `breakpoints`; they seed
 separate initial intervals. Adaptive execution is differentiable through the selected
 refinement path, but refinement decisions are discrete.
+
+## Adaptive triangle quadrature
+
+`AdaptiveTrianglePlan` performs bounded four-way refinement over affine triangle
+charts exposed by a geometry cubature atlas. The default positive degree-5 and
+degree-10 rules form a paired error indicator:
+
+```python
+plan = phx.integration.AdaptiveTrianglePlan(
+    absolute_tolerance=1e-8,
+    relative_tolerance=1e-8,
+    max_cells=256,
+    max_evaluations=20_000,
+    collect_partition=True,
+)
+estimate = phx.integration.integrate(
+    surface_field,
+    phx.integration.over(mesh_boundary),
+    plan,
+)
+```
+
+The global stopping test matches adaptive interval quadrature. Because the two
+triangle rules are not nested, the result reports
+`error_kind="paired-reference-rule"`, not an embedded or statistical error.
+`MAXIMUM_CELLS_REACHED`, `MAXIMUM_EVALUATIONS_REACHED`, and
+`NONFINITE_INTEGRAND` remain distinct terminal statuses. Refinement is
+differentiable through the chosen partition but its selection decisions are
+discrete; fixed cubature remains preferable for repeatedly optimized objectives.
 
 ## Monte Carlo and variance reduction
 

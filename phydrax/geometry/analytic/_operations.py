@@ -28,6 +28,7 @@ from .._certificate import (
     ZeroSetAccuracy,
 )
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureComponent
 from .._sampling import (
     bounded_rejection_sample,
     RejectionSamplingPlan,
@@ -153,6 +154,46 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
         gram = jnp.swapaxes(transformed, -1, -2) @ transformed
         measure = jnp.sqrt(jnp.maximum(jnp.linalg.det(gram), 0.0))
         return measure.reshape(leading)
+
+
+class _AffineCubatureMap(AbstractCubatureMap):
+    base: AbstractCubatureMap
+    linear: Array
+    offset: Array
+    measure_scale: Array
+
+    def __init__(
+        self,
+        base: AbstractCubatureMap,
+        linear: Array,
+        offset: Array,
+        measure_scale: Array,
+    ):
+        self.base = base
+        self.linear = jnp.asarray(linear, dtype=float)
+        self.offset = jnp.asarray(offset, dtype=float)
+        self.measure_scale = jnp.asarray(measure_scale, dtype=float).reshape(())
+
+    @property
+    def num_charts(self) -> int:
+        return self.base.num_charts
+
+    @property
+    def reference_domain(self):
+        return self.base.reference_domain
+
+    @property
+    def ambient_dimension(self) -> int:
+        return self.base.ambient_dimension
+
+    def map(self, chart_indices: Array, reference: Array, /) -> Array:
+        return self.base.map(chart_indices, reference) @ self.linear.T + self.offset
+
+    def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
+        return self.base.jacobian(chart_indices, reference) * self.measure_scale
+
+    def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
+        return self.base.reference_mask(chart_indices, reference)
 
 
 class RigidTransform(GeometrySource):
@@ -307,6 +348,21 @@ class _RigidTransformKernel(GeometryKernel):
             trim_domains=atlas.trim_domains,
         )
 
+    def cubature_atlas(self, state, component: CubatureComponent, /) -> CubatureAtlas:
+        rotation, translation = self._parameters(state)
+        atlas = self.child.cubature_atlas(state, component)
+        return CubatureAtlas(
+            _AffineCubatureMap(
+                atlas.mapping,
+                rotation,
+                translation,
+                jnp.asarray(1.0),
+            ),
+            source_entity_ids=atlas.source_entity_ids,
+            source_id=atlas.source_id,
+            physical_tags=atlas.physical_tags,
+        )
+
 
 class Scaling(GeometrySource):
     """Positive affine scaling about a fixed or trainable center."""
@@ -409,6 +465,7 @@ class _ScalingKernel(GeometryKernel):
         capabilities = set(self.child.capabilities)
         if not self.uniform:
             capabilities.discard(GeometryCapability.SIGNED_DISTANCE)
+            capabilities.discard(GeometryCapability.CUBATURE_ATLAS)
         return frozenset(capabilities)
 
     @property
@@ -528,6 +585,31 @@ class _ScalingKernel(GeometryKernel):
             orientation=atlas.orientation,
             seam_owner=atlas.seam_owner,
             trim_domains=atlas.trim_domains,
+        )
+
+    def cubature_atlas(self, state, component: CubatureComponent, /) -> CubatureAtlas:
+        if not self.uniform:
+            raise NotImplementedError(
+                "Native cubature does not support nonuniform geometry scaling."
+            )
+        scale, center = self._parameters(state)
+        atlas = self.child.cubature_atlas(state, component)
+        offset = center - scale * center
+        measure_dimension = (
+            self.intrinsic_dimension
+            if component == "interior"
+            else self.intrinsic_dimension - 1
+        )
+        return CubatureAtlas(
+            _AffineCubatureMap(
+                atlas.mapping,
+                jnp.diag(scale),
+                offset,
+                jnp.abs(scale[0]) ** measure_dimension,
+            ),
+            source_entity_ids=atlas.source_entity_ids,
+            source_id=atlas.source_id,
+            physical_tags=atlas.physical_tags,
         )
 
 

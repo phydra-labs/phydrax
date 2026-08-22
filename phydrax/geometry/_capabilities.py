@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 from jaxtyping import Array
 
 from ._atlas import BoundaryAtlas
+from ._cubature import CubatureAtlasProvider
 
 
 class GeometryCapability(str, Enum):
@@ -22,6 +23,7 @@ class GeometryCapability(str, Enum):
     INTERIOR_SAMPLING = "interior_sampling"
     BOUNDARY_SAMPLING = "boundary_sampling"
     BOUNDARY_ATLAS = "boundary_atlas"
+    CUBATURE_ATLAS = "cubature_atlas"
     SEAM_DIAGNOSTICS = "seam_diagnostics"
 
 
@@ -44,6 +46,7 @@ class SeamDiagnosticsProvider(Protocol):
 
 __all__ = [
     "BoundaryAtlasProvider",
+    "CubatureAtlasProvider",
     "GeometryCapability",
     "SeamDiagnosticsProvider",
 ]

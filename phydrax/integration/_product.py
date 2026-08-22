@@ -16,6 +16,7 @@ from jaxtyping import Array, Key
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
+    Boundary,
     ComponentSum,
     DomainFunction,
     Fixed,
@@ -45,7 +46,14 @@ from ._estimates import (
     ProductIntegrationDiagnostics,
 )
 from ._fixed import integrate_fixed_component, integrate_fixed_density
-from ._lowering import _block_measure, axes_for_over, component_factor_fields, sum_over
+from ._lowering import (
+    _block_measure,
+    _cubature_factor_data,
+    _scalar_interior_rule_data,
+    axes_for_over,
+    component_factor_fields,
+    sum_over,
+)
 from ._plans import (
     AntitheticDesign,
     FixedQuadraturePlan,
@@ -56,7 +64,7 @@ from ._plans import (
     RandomizedQMCDesign,
     SparseGridPlan,
 )
-from ._rules import ClenshawCurtisRule, interval_rule_data, TanhSinhRule
+from ._rules import ClenshawCurtisRule, CubatureRule, TanhSinhRule
 from ._sparse_grid import _smolyak_rule
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
@@ -119,11 +127,19 @@ def _groups(
                 raise ValueError(
                     f"Product-plan label {label!r} must select a non-fixed component."
                 )
-            if isinstance(factor_plan, (FixedQuadraturePlan, SparseGridPlan)) and not (
-                isinstance(selector, Interior)
-            ):
+            deterministic = isinstance(factor_plan, (FixedQuadraturePlan, SparseGridPlan))
+            native_cubature = isinstance(factor_plan, FixedQuadraturePlan) and isinstance(
+                factor_plan.rule, CubatureRule
+            )
+            valid_selector = (
+                isinstance(selector, (Interior, Boundary))
+                if native_cubature
+                else isinstance(selector, Interior)
+            )
+            if deterministic and not valid_selector:
+                expected = "Interior() or Boundary()" if native_cubature else "Interior()"
                 raise ValueError(
-                    f"Deterministic product-plan label {label!r} must select Interior()."
+                    f"Deterministic product-plan label {label!r} must select {expected}."
                 )
         seen.update(labels)
         groups.append((labels, factor_plan))
@@ -262,14 +278,32 @@ def materialize_product(
                     "Endpoint-inclusive product rules require bounded probability support."
                 )
             if isinstance(factor_plan, FixedQuadraturePlan):
-                data = interval_rule_data(factor_plan.rule)
+                if isinstance(factor_plan.rule, CubatureRule):
+                    if len(labels) != 1 or not isinstance(factors[0], AbstractGeometry):
+                        raise TypeError(
+                            "Native cubature product factors require one geometry label."
+                        )
+                    label = labels[0]
+                    axis = structure.axis_for(label)
+                    if axis is None:
+                        raise RuntimeError("Cubature product factor has no axis.")
+                    mapped, weights = _cubature_factor_data(
+                        factors[0],
+                        component.spec.selection_for(label),
+                        factor_plan.rule,
+                    )
+                    points[label] = cx.Field(mapped, dims=(axis, None))
+                    weights_by_axis[axis] = cx.Field(weights, dims=(axis,))
+                    if axis in reduction_axes and axis not in deterministic_axes:
+                        deterministic_axes.append(axis)
+                    continue
                 for label, factor in zip(labels, factors, strict=True):
                     axis = structure.axis_for(label)
                     if axis is None:
                         raise RuntimeError("Fixed product factor has no axis.")
-                    mapped, scale = _map_canonical(factor, data.nodes)
+                    mapped, weights = _scalar_interior_rule_data(factor, factor_plan.rule)
                     points[label] = cx.Field(jnp.asarray(mapped), dims=(axis,))
-                    weights_by_axis[axis] = cx.Field(scale * data.weights, dims=(axis,))
+                    weights_by_axis[axis] = cx.Field(jnp.asarray(weights), dims=(axis,))
                     if axis in reduction_axes and axis not in deterministic_axes:
                         deterministic_axes.append(axis)
                 continue
@@ -385,7 +419,6 @@ def materialize_product(
                 jnp.full((count,), group_mass / float(count)), dims=(axis,)
             )
         total_weight = cx.Field(jnp.asarray(1.0), dims=())
-        target_mass = jnp.asarray(1.0)
         axis_names = structure.axis_names
         if axis_names is None:
             raise RuntimeError("Product structure is not canonicalized.")
@@ -393,7 +426,10 @@ def materialize_product(
             if axis not in reduction_axes:
                 continue
             total_weight = total_weight * weights_by_axis[axis]
-            target_mass = target_mass * _block_measure(component, block)
+        mass = total_weight
+        for axis in reduction_axes:
+            mass = sum_over(mass, axis)
+        target_mass = jnp.asarray(mass.data)
         point_batch = PointBatch(
             frozendict({label: points[label] for label in component.domain.labels}),
             structure,

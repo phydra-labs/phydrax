@@ -4,6 +4,12 @@
 
 ### Added
 
+- Positive certified Xiao--Gimbutas, Lebedev, periodic, radial, and Duffy
+  cubature with content identity and bounded storage; measure-matched fixed
+  Gauss--Hermite expectations; geometry-owned native disk, circle, ball,
+  sphere, and triangle-surface maps; mixed product plans; and static-capacity
+  differentiable adaptive triangle refinement with explicit paired-rule error,
+  partition, evaluation-budget, and terminal-status evidence.
 - `phydrax.discretization`: canonical entity/topology/support, finite-measure,
   DOF/field-space, plan/preparation, transfer, bundle, hierarchy, temporal, tensor,
   spectral, metric-cochain, conforming P1 finite-element, and conservative

@@ -123,6 +123,19 @@ partition for boundary segments or planar/surface triangles. Sampling APIs retur
 `SamplingResult`; bounded rejection exposes completion, acceptance, and proposal
 counts rather than silently returning too few points.
 
+## Native cubature atlases
+
+`CubatureAtlas` maps certified canonical cubature rules directly to a physical
+interior or boundary measure. Unlike `BoundaryAtlas`, it owns no sampling,
+frames, or general trim semantics: it supplies only a closed reference identity,
+physical point map, Jacobian, active mask, source entities, and tags.
+
+Analytic circles and spheres expose disk/circle and ball/sphere atlases.
+Watertight `MeshRegion` boundaries expose direct unit-triangle charts. Rigid
+transforms, translations, and uniform scaling preserve this capability.
+Nonuniform scaling and CSG do not advertise it until their physical Jacobian
+contracts can be represented without approximation.
+
 ## CAD B-Reps
 
 `BRep(path)` imports STEP, IGES, and BREP files through OCCT.
@@ -268,6 +281,10 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.BoundaryAtlas
+
+---
+
+::: phydrax.geometry.CubatureAtlas
 
 ---
 

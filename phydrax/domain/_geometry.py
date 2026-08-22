@@ -16,6 +16,8 @@ from ..geometry import (
     BoundaryAtlas,
     bounded_rejection_sample,
     CompiledGeometry,
+    CubatureAtlas,
+    CubatureComponent,
     DistanceSemantics,
     GeometryCapability,
     GeometryKind,
@@ -111,6 +113,9 @@ class GeometryDomain(AbstractGeometry):
     @property
     def boundary_atlas(self) -> BoundaryAtlas:
         return self.geometry.boundary_atlas
+
+    def cubature_atlas(self, component: CubatureComponent, /) -> CubatureAtlas:
+        return self.geometry.cubature_atlas(component)
 
     def adf(self, points: Array, /) -> Array:
         """Evaluate the certified negative-inside boundary field."""

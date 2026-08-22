@@ -21,7 +21,7 @@ from ._estimates import (
     MappedIntegrationDiagnostics,
 )
 from ._plans import CellQuadraturePlan, FixedQuadraturePlan
-from ._rules import reference_rule_data
+from ._rules import CubatureRule, reference_rule_data
 from ._status import IntegrationStatus
 from ._targets import DensityTarget, MappedTarget
 
@@ -62,13 +62,19 @@ def materialize_mapped(
             jnp.asarray(jnp.nan),
         )
         weights = raw_weights * scale
+    provenance = (
+        rule.rule_id
+        if isinstance(rule, CubatureRule)
+        else f"{data.cell}:{type(rule).__name__}"
+    )
     return MappedIntegrationBatch(
         reference_points,
         points,
         weights,
         mask=mask,
         target_mass=target_mass,
-        provenance=data.cell,
+        cell=data.cell,
+        provenance=provenance,
     )
 
 
@@ -161,7 +167,7 @@ def integrate_mapped(
         num_evaluations=jnp.asarray(count, dtype=jnp.int32),
         target_mass=batch.target_mass,
         num_active_points=jnp.sum(batch.mask, dtype=jnp.int32),
-        cell=batch.provenance,
+        cell=batch.cell,
     )
     return IntegrationEstimate(
         cx.Field(value, dims=output_dims),

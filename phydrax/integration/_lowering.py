@@ -33,11 +33,19 @@ from phydrax.domain import (
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._numerics import QuadratureRuleData
-from ..geometry import BoundaryAtlasProvider
+from ..geometry import BoundaryAtlasProvider, CubatureAtlasProvider
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan
-from ._rules import interval_rule_data, IntervalRule
+from ._rules import (
+    ClenshawCurtisRule,
+    CubatureRule,
+    GaussHermiteRule,
+    interval_rule_data,
+    IntervalRule,
+    probability_rule_data,
+    ProbabilityRule,
+    TanhSinhRule,
+)
 from ._targets import ComponentTarget
 
 
@@ -343,20 +351,43 @@ class IntegrationAxisSpec(AbstractAxisSpec):
         )
 
 
+def _fixed_rule_node_count(rule: IntervalRule | ProbabilityRule, /) -> int:
+    if isinstance(rule, GaussHermiteRule):
+        return int(probability_rule_data(rule).nodes.shape[0])
+    return int(interval_rule_data(rule).nodes.shape[0])
+
+
 def _scalar_interior_rule_data(
     factor: AbstractScalarDomain,
-    data: QuadratureRuleData,
+    rule: IntervalRule | ProbabilityRule,
     /,
 ) -> tuple[Array, Array]:
-    if isinstance(factor, ProbabilityDomain):
-        unit = 0.5 * (data.nodes + 1.0)
+    if isinstance(rule, GaussHermiteRule):
+        if not isinstance(factor, ProbabilityDomain):
+            raise TypeError(
+                "GaussHermiteRule requires a standard-normal probability factor."
+            )
+        data = probability_rule_data(rule)
         if (
-            bool(jnp.any(unit <= 0.0)) or bool(jnp.any(unit >= 1.0))
-        ) and factor.distribution.support is None:
+            not factor.supports_reference_transform
+            or factor.reference_measure != data.integration_measure
+        ):
+            raise ValueError(
+                "GaussHermiteRule requires a probability factor with a "
+                "standard-normal reference transform."
+            )
+        return factor.from_reference(data.nodes), data.weights
+
+    data = interval_rule_data(rule)
+    if isinstance(factor, ProbabilityDomain):
+        if isinstance(rule, (ClenshawCurtisRule, TanhSinhRule)) and (
+            factor.distribution.support is None
+        ):
             raise ValueError(
                 "Endpoint-inclusive quadrature cannot map an unbounded probability "
                 "component; use GaussLegendreRule or stochastic integration."
             )
+        unit = 0.5 * (data.nodes + 1.0)
         return jnp.asarray(factor.distribution.icdf(unit)), 0.5 * data.weights
     lower = jnp.asarray(factor.fixed("start"))
     upper = jnp.asarray(factor.fixed("end"))
@@ -368,10 +399,10 @@ def _scalar_interior_rule_data(
 def _materialize_scalar_interiors(
     component: DomainComponent,
     target: ComponentTarget,
-    rule: IntervalRule,
+    rule: IntervalRule | ProbabilityRule,
     /,
 ) -> PointIntegrationBatch:
-    data = interval_rule_data(rule)
+    rule_node_count = _fixed_rule_node_count(rule)
     fixed_labels = frozenset(
         label
         for label in component.domain.labels
@@ -399,7 +430,7 @@ def _materialize_scalar_interiors(
             axis = structure.axis_for(label)
             if axis is None:
                 raise RuntimeError("Interior scalar factor has no integration axis.")
-            values, weights = _scalar_interior_rule_data(factor, data)
+            values, weights = _scalar_interior_rule_data(factor, rule)
             points[label] = cx.Field(values, dims=(axis,))
             weights_by_axis[axis] = cx.Field(weights, dims=(axis,))
         elif isinstance(selector, Fixed):
@@ -425,7 +456,7 @@ def _materialize_scalar_interiors(
         total,
         axes=axes,
         target_mass=_component_base_mass(component),
-        provenance=f"{type(rule).__name__}:{data.nodes.shape[0]}",
+        provenance=f"{type(rule).__name__}:{rule_node_count}",
     )
 
 
@@ -470,7 +501,7 @@ def _materialize_scalar_boundaries(
             )
             weights = jnp.ones((2,), dtype=float)
         elif isinstance(selector, Interior):
-            values, weights = _scalar_interior_rule_data(factor, data)
+            values, weights = _scalar_interior_rule_data(factor, rule)
         else:
             raise TypeError(f"Unsupported scalar selector {type(selector).__name__}.")
         points[label] = cx.Field(values, dims=(axis,))
@@ -595,6 +626,113 @@ def _materialize_boundary_atlas(
     )
 
 
+def _cubature_factor_data(
+    factor: AbstractGeometry,
+    selector: Any,
+    rule: CubatureRule,
+    /,
+) -> tuple[Array, Array]:
+    if not isinstance(factor, CubatureAtlasProvider):
+        raise TypeError("The selected geometry does not expose native cubature.")
+    if isinstance(selector, Interior):
+        component_kind = "interior"
+    elif isinstance(selector, Boundary):
+        component_kind = "boundary"
+    else:
+        raise TypeError("Native cubature requires Interior() or Boundary().")
+    atlas = factor.cubature_atlas(component_kind)
+    if isinstance(selector, Boundary) and (
+        selector.tags is not None or selector.entity_ids is not None
+    ):
+        atlas = atlas.select(tags=selector.tags, entity_ids=selector.entity_ids)
+    if atlas.reference_domain != rule.reference_domain:
+        raise ValueError(
+            f"Cubature rule reference {rule.reference_domain!r} does not match "
+            f"geometry reference {atlas.reference_domain!r}."
+        )
+    reference_data = rule.materialize()
+    count = int(reference_data.points.shape[0])
+    charts = atlas.num_charts
+    reference = jnp.broadcast_to(
+        reference_data.points[None, ...],
+        (charts, count, atlas.reference_dimension),
+    )
+    chart_indices = jnp.broadcast_to(
+        jnp.arange(charts, dtype=jnp.int32)[:, None],
+        (charts, count),
+    )
+    physical = atlas.map(chart_indices, reference)
+    jacobian = atlas.jacobian(chart_indices, reference)
+    active = atlas.reference_mask(chart_indices, reference)
+    weights = jnp.where(
+        active,
+        jacobian * reference_data.weights[None, :],
+        0.0,
+    )
+    return (
+        physical.reshape((-1, factor.spatial_dim)),
+        weights.reshape((-1,)),
+    )
+
+
+def _materialize_cubature_atlas(
+    component: DomainComponent,
+    target: ComponentTarget,
+    rule: CubatureRule,
+    /,
+) -> PointIntegrationBatch:
+    varying = tuple(
+        label
+        for label in component.domain.labels
+        if not isinstance(
+            component.spec.selection_for(label), (Fixed, FixedStart, FixedEnd)
+        )
+    )
+    if len(varying) != 1:
+        raise ValueError(
+            "Native cubature supports one varying geometry factor; "
+            "use ProductIntegrationPlan for mixed factors."
+        )
+    label = varying[0]
+    selector = component.spec.selection_for(label)
+    factor = component.domain.factor(label)
+    physical, weights = _cubature_factor_data(factor, selector, rule)
+    fixed_labels = frozenset(other for other in component.domain.labels if other != label)
+    structure = SampleLayout(((label,),)).canonicalize(
+        component.domain.labels, fixed_labels=fixed_labels
+    )
+    axis = structure.axis_for(label)
+    if axis is None:
+        raise RuntimeError("Native cubature structure has no integration axis.")
+    points: dict[str, cx.Field] = {label: cx.Field(physical, dims=(axis, None))}
+    for other in fixed_labels:
+        selector_ = component.spec.selection_for(other)
+        factor_ = component.domain.factor(other)
+        if isinstance(selector_, Fixed):
+            value = selector_.value
+        elif isinstance(selector_, FixedStart):
+            if not isinstance(factor_, AbstractScalarDomain):
+                raise TypeError("FixedStart requires a scalar domain factor.")
+            value = factor_.fixed("start")
+        else:
+            if not isinstance(factor_, AbstractScalarDomain):
+                raise TypeError("FixedEnd requires a scalar domain factor.")
+            value = factor_.fixed("end")
+        dimensions = (None,) if isinstance(factor_, AbstractGeometry) else ()
+        points[other] = cx.Field(jnp.asarray(value), dims=dimensions)
+    axes = axes_for_over(structure, target.axes)
+    return PointIntegrationBatch(
+        PointBatch(
+            frozendict({name: points[name] for name in component.domain.labels}),
+            structure,
+        ),
+        cx.Field(weights, dims=(axis,)),
+        axes=axes,
+        target_mass=jnp.sum(weights),
+        provenance=rule.rule_id,
+    )
+
+
 def materialize_fixed_component(
     target: ComponentTarget,
     plan: FixedQuadraturePlan,
@@ -614,7 +752,8 @@ def materialize_fixed_component(
         component.spec.selection_for(label) for label in component.domain.labels
     )
     rule = plan.rule
-    interval_rule_data(rule)
+    if isinstance(rule, CubatureRule):
+        return _materialize_cubature_atlas(component, target, rule)
     if any(isinstance(selector, Boundary) for selector in selectors):
         factors = tuple(
             component.domain.factor(label) for label in component.domain.labels
@@ -622,11 +761,13 @@ def materialize_fixed_component(
         unwrapped = tuple(factor for factor in factors)
         if all(isinstance(factor, AbstractScalarDomain) for factor in unwrapped):
             return _materialize_scalar_boundaries(component, target, rule)
+        interval_rule_data(rule)
         return _materialize_boundary_atlas(component, target, rule)
     factors = tuple(component.domain.factor(label) for label in component.domain.labels)
     unwrapped_factors = tuple(factor for factor in factors)
     if all(isinstance(factor, AbstractScalarDomain) for factor in unwrapped_factors):
         return _materialize_scalar_interiors(component, target, rule)
+    interval_rule_data(rule)
     spec = IntegrationAxisSpec(rule)
     coord_separable: dict[str, Any] = {}
     for label in component.domain.labels:

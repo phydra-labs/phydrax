@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import NamedTuple
 
 import jax.numpy as jnp
@@ -305,6 +306,7 @@ def gauss_legendre_data(order: int) -> QuadratureRuleData:
     return QuadratureRuleData(rule.nodes, rule.weights, None, rule.exact_degree)
 
 
+@lru_cache(maxsize=32)
 def gauss_kronrod_data(order: int) -> QuadratureRuleData:
     """Return a published embedded Gauss--Kronrod rule on ``[-1, 1]``."""
     order_ = int(order)

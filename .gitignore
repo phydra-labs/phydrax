@@ -1,6 +1,8 @@
 *.html
 *.csv
 *.txt
+!LICENSES/MODEPY-MIT.txt
+!LICENSES/SCIPY-BSD-3-CLAUSE.txt
 *.log
 *.egg-info
 *.cache

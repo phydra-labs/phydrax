@@ -17,6 +17,7 @@ from .._atlas import BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import FieldCertificate, sharp_union_certificate
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._cubature import CubatureAtlas, CubatureComponent
 from .._sampling import (
     bounded_rejection_sample,
     RejectionSamplingPlan,
@@ -160,6 +161,11 @@ class _TranslationKernel(GeometryKernel):
 
     def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         return self.child.boundary_atlas(state).translated(self._offset(state))
+
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
+        return self.child.cubature_atlas(state, component).translated(self._offset(state))
 
 
 class Union(GeometrySource):

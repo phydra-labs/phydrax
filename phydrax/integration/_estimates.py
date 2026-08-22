@@ -39,6 +39,25 @@ class AdaptivePartition(StrictModule):
     active: Array
 
 
+class AdaptiveTrianglePartition(StrictModule):
+    """Static-capacity adaptive triangle diagnostics with an active count."""
+
+    count: Array
+    vertices: Array
+    integral_estimates: Array
+    estimated_errors: Array
+    active: Array
+
+
+class AdaptiveTriangleDiagnostics(StrictModule):
+    status: Array
+    num_evaluations: Array
+    estimated_error: Array
+    partition: AdaptiveTrianglePartition | None
+    low_rule: str = eqx.field(static=True)
+    high_rule: str = eqx.field(static=True)
+
+
 class FixedQuadratureDiagnostics(StrictModule):
     status: Array
     num_evaluations: Array
@@ -175,6 +194,8 @@ class IntegrationEstimate(StrictModule):
 
 __all__ = [
     "AdaptivePartition",
+    "AdaptiveTriangleDiagnostics",
+    "AdaptiveTrianglePartition",
     "AdaptiveQuadratureDiagnostics",
     "AntitheticDiagnostics",
     "FixedQuadratureDiagnostics",
