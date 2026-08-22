@@ -6,13 +6,19 @@ from __future__ import annotations
 
 from typing import Any
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
-from ..linalg import LinearSolvePlan, LinearSolveTemplate, LinearSystem
+from ..linalg import (
+    LinearSolvePlan,
+    LinearSolveTemplate,
+    LinearSystem,
+    refresh_recycling,
+)
 from ._linearization import (
     _jacobian_solve_operator,
     prepare_jacobian,
@@ -150,6 +156,7 @@ def _refreshed_run(
     jacobian: PreparedJacobian,
     refresh_state: LinearRefreshState,
     args: Any,
+    recycling,
     /,
 ) -> _RootState:
     residual = jacobian.residual
@@ -214,6 +221,12 @@ def _refreshed_run(
         ),
         status=status,
         refresh_state=refresh_state,
+        recycling=recycling,
+        final_linear_status=jnp.asarray(-1, dtype=jnp.int32),
+        final_linear_rank=jnp.asarray(-1, dtype=jnp.int32),
+        final_linear_condition_estimate=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+        final_linear_residual_norm=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+        final_linear_converged=jnp.asarray(False),
     )
 
 
@@ -300,12 +313,31 @@ def refresh_nonlinear(
     linear_operator = _jacobian_solve_operator(jacobian.operator)
     if linear_operator.source.size != linear_operator.target.size:
         raise ValueError("Newton methods require a square Jacobian coordinate map.")
-    _, refresh_state = prepared.linear_refresh_state.refresh(
+    prepared_linear, refresh_state = prepared.linear_refresh_state.refresh(
         LinearSystem(linear_operator, problem_id=prepared.linear_plan.problem_id)
+    )
+    recycling_policy = prepared_linear.plan.policy.recycling
+    recycling = (
+        None
+        if prepared.run.recycling is None
+        else refresh_recycling(
+            prepared.run.recycling,
+            prepared_linear,
+            extraction=recycling_policy.extraction,
+            refresh=recycling_policy.refresh,
+        )
     )
     if refresh_state.template.template_id != prepared.linear_template_id:
         raise ValueError("Nonlinear refresh changed the symbolic linear template.")
-    run = _refreshed_run(prepared, problem_, state, jacobian, refresh_state, args)
+    run = _refreshed_run(
+        prepared,
+        problem_,
+        state,
+        jacobian,
+        refresh_state,
+        args,
+        recycling,
+    )
     return PreparedNonlinearSolve(
         problem_,
         state,
@@ -343,6 +375,127 @@ def solve_prepared_nonlinear(
             prepared.jacobian,
         ),
     )
+
+
+def _seed_nonlinear_continuation(
+    prepared: PreparedNonlinearSolve,
+    problem: NonlinearSystemProblem,
+    initial_state: PyTree[Any],
+    /,
+    *,
+    args: Any = None,
+    defer_refresh_steps: int = 0,
+) -> PreparedNonlinearSolve:
+    """Seed a new root with retained numerical Jacobian and Krylov state."""
+    if not isinstance(prepared, PreparedNonlinearSolve):
+        raise TypeError("prepared must be a PreparedNonlinearSolve.")
+    if not isinstance(problem, NonlinearSystemProblem):
+        raise TypeError("problem must be a NonlinearSystemProblem.")
+    deferred = int(defer_refresh_steps)
+    if deferred < 0:
+        raise ValueError("defer_refresh_steps must be non-negative.")
+    state = problem.validate_state(initial_state)
+    residual, auxiliary = problem.evaluate(state, args)
+    problem_ = problem.bind_spaces(state, residual)
+    old_state_space = prepared.problem.state_space
+    old_residual_space = prepared.problem.residual_space
+    if (
+        old_state_space is None
+        or old_residual_space is None
+        or problem_.state_space is None
+        or problem_.residual_space is None
+    ):
+        raise ValueError("Nonlinear continuation requires bound vector spaces.")
+    if not old_state_space.compatible(problem_.state_space):
+        raise ValueError("Nonlinear continuation changed the state space.")
+    if not old_residual_space.compatible(problem_.residual_space):
+        raise ValueError("Nonlinear continuation changed the residual space.")
+    operator = prepared.jacobian.operator
+    if not operator.source.compatible(problem_.state_space):
+        raise ValueError("Retained Jacobian source space is incompatible.")
+    if not operator.target.compatible(problem_.residual_space):
+        raise ValueError("Retained Jacobian target space is incompatible.")
+    jacobian = PreparedJacobian(
+        residual,
+        operator,
+        auxiliary=auxiliary,
+        sparse_derivative=prepared.jacobian.sparse_derivative,
+        derivative_id=prepared.jacobian.derivative_id,
+    )
+    run = _refreshed_run(
+        prepared,
+        problem_,
+        state,
+        jacobian,
+        prepared.run.refresh_state,
+        args,
+        prepared.run.recycling,
+    )
+    run = eqx.tree_at(
+        lambda value: (
+            value.jacobian_preparations,
+            value.setup_refreshes,
+            value.numeric_refreshes,
+            value.jacobian_age,
+        ),
+        run,
+        (
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+            jnp.asarray(-deferred, dtype=jnp.int32),
+        ),
+    )
+    return PreparedNonlinearSolve(
+        problem_,
+        state,
+        prepared.method,
+        prepared.termination,
+        args,
+        jacobian,
+        run,
+        prepared.provenance,
+        numeric_version=prepared.numeric_version,
+    )
+
+
+def _solve_prepared_nonlinear_stateful(
+    prepared: PreparedNonlinearSolve,
+    /,
+    *,
+    termination: NonlinearTermination | None = None,
+) -> tuple[NonlinearResult, PreparedNonlinearSolve]:
+    """Solve and retain the final numerical Newton state for temporal reuse."""
+    if not isinstance(prepared, PreparedNonlinearSolve):
+        raise TypeError("prepared must be a PreparedNonlinearSolve.")
+    termination_ = prepared.termination if termination is None else termination
+    if not isinstance(termination_, NonlinearTermination):
+        raise TypeError("termination must be a NonlinearTermination or None.")
+    result, state, run, jacobian = prepared.method.solve(
+        prepared.problem,
+        prepared.state,
+        termination=termination_,
+        args=prepared.args,
+        _prepared_start=(
+            prepared.problem,
+            prepared.state,
+            prepared.run,
+            prepared.jacobian,
+        ),
+        _return_internal=True,
+    )
+    retained = PreparedNonlinearSolve(
+        prepared.problem,
+        state,
+        prepared.method,
+        termination_,
+        prepared.args,
+        jacobian,
+        run,
+        result.provenance,
+        numeric_version=run.refresh_state.numeric_version,
+    )
+    return result, retained
 
 
 __all__ = [

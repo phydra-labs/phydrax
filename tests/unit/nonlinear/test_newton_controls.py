@@ -70,6 +70,52 @@ def test_eisenstat_walker_changes_inner_work_and_records_final_forcing():
     assert 1e-10 <= float(adaptive.diagnostics.final_forcing) < 0.5
 
 
+def test_inexact_newton_carries_gcrodr_state_under_dynamic_forcing():
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
+    expected = jnp.ones((4,))
+    target = matrix @ expected + 0.05 * expected**3
+    problem = nl.NonlinearSystemProblem(
+        lambda state, args: matrix @ state + 0.05 * state**3 - target,
+        problem_id="recycled-inexact-newton",
+    )
+    linear_policy = la.LinearSolvePolicy(
+        la.GMRES(restart=4),
+        tolerance=la.TolerancePolicy(
+            relative=1e-12,
+            absolute=0.0,
+            max_steps=16,
+        ),
+        recycling=la.RecyclingPolicy(capacity=2),
+    )
+    result = nl.NewtonKrylov(
+        linear_policy=linear_policy,
+        forcing_policy=nl.NewtonForcingPolicy(
+            "eisenstat-walker",
+            initial=0.2,
+            minimum=1e-10,
+            maximum=0.5,
+        ),
+        jacobian_refresh=nl.JacobianRefreshPolicy("every-step"),
+    ).solve(
+        problem,
+        jnp.zeros((4,)),
+        termination=nl.NonlinearTermination(
+            absolute_residual=1e-10,
+            relative_residual=1e-10,
+            maximum_steps=20,
+        ),
+    )
+
+    assert bool(result.successful)
+    assert jnp.allclose(result.state, expected, atol=1e-9)
+    assert int(result.diagnostics.linear_solves) > 1
+    assert int(result.diagnostics.linear_iterations) >= int(
+        result.diagnostics.linear_solves
+    )
+    assert 1e-10 <= float(result.diagnostics.final_forcing) < 0.2
+    assert result.provenance.notes == ("linear-method=gmres;linear-backend=native-krylov")
+
+
 def test_jacobian_refresh_policies_change_preparation_counts_without_losing_root():
     problem = nl.NonlinearSystemProblem(
         lambda state, args: state**2 - 2.0,

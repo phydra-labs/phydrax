@@ -305,6 +305,7 @@ from ._results import (
 )
 from ._runtime import (
     bind_numeric,
+    initialize_recycling,
     prepare,
     prepare_template,
     refresh,
@@ -754,6 +755,7 @@ __all__ = [
     "prepare_factored_matrix_equation",
     "prepare_matrix_equation",
     "prepare_recycling_subspace",
+    "initialize_recycling",
     "refresh_recycling",
     "refresh",
     "refresh_factorization",

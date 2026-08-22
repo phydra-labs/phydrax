@@ -63,6 +63,9 @@ step through agreement between the physical residual norm and its local linear
 model. Both reuse the symbolic linear-solve plan across accepted Jacobian refreshes.
 Their default Jacobian is matrix-free and their default linear method is restarted
 GMRES.
+When the linear policy declares `RecyclingPolicy`, Newton carries the immutable
+GCRO-DR state between inner solves and refreshes retained operator images after
+numeric Jacobian updates.
 
 A nonlinear state and residual may use different PyTree containers while still having
 the same coordinate dimension. Phydrax then rebases the Jacobian action onto one

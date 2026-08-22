@@ -57,6 +57,9 @@ def _diagnostic_counts(
         diagnostics.acceleration_restarts,
         diagnostics.setup_refreshes,
         diagnostics.numeric_refreshes,
+        diagnostics.final_linear_status,
+        diagnostics.final_linear_rank,
+        diagnostics.final_linear_converged,
     )
 
 
@@ -69,6 +72,18 @@ def _cast_diagnostic_counts(
         _diagnostic_counts,
         diagnostics,
         tuple(value.astype(dtype) for value in _diagnostic_counts(diagnostics)),
+    )
+
+
+def _restore_diagnostic_types(
+    diagnostics: NonlinearDiagnostics,
+    /,
+) -> NonlinearDiagnostics:
+    restored = _cast_diagnostic_counts(diagnostics, jnp.int32)
+    return eqx.tree_at(
+        lambda value: value.final_linear_converged,
+        restored,
+        diagnostics.final_linear_converged.astype(bool),
     )
 
 
@@ -92,36 +107,51 @@ def _checked_tangent_solve(
     policy: LinearSolvePolicy,
     /,
 ) -> Array:
+    zero_right_hand_side = jnp.all(right_hand_side == 0)
+    safe_right_hand_side = jnp.where(
+        zero_right_hand_side,
+        jnp.ones_like(right_hand_side),
+        right_hand_side,
+    )
     if (
         isinstance(policy.method, (GMRES, FGMRES))
         and policy.preconditioning is None
         and policy.recycling is None
         and policy.precision is None
     ):
-        value = _callable_gmres_for_policy(action, right_hand_side, policy)
-        residual_norm = jnp.linalg.norm(right_hand_side - action(value))
+        value = _callable_gmres_for_policy(action, safe_right_hand_side, policy)
+        residual_norm = jnp.linalg.norm(safe_right_hand_side - action(value))
         threshold = policy.tolerance.absolute + (
-            policy.tolerance.relative * jnp.linalg.norm(right_hand_side)
+            policy.tolerance.relative * jnp.linalg.norm(safe_right_hand_side)
         )
-        return eqx.error_if(
+        checked = eqx.error_if(
             value,
-            ~jnp.isfinite(residual_norm) | (residual_norm > threshold),
+            ~zero_right_hand_side
+            & (~jnp.isfinite(residual_norm) | (residual_norm > threshold)),
             "Implicit root derivative solve failed; the root Jacobian is unresolved.",
         )
-
-    space = PyTreeSpace(right_hand_side)
-    operator = FunctionLinearOperator(
-        action,
-        source=space,
-        target=space,
-        closure_convert=False,
-    )
-    result = solve_linear(LinearSystem(operator), right_hand_side, policy=policy)
-    value = space.flatten(result.value)
-    return eqx.error_if(
-        value,
-        result.status != int(LinearSolveStatus.SUCCESS),
-        "Implicit root derivative solve failed; the root Jacobian is unresolved.",
+    else:
+        space = PyTreeSpace(safe_right_hand_side)
+        operator = FunctionLinearOperator(
+            action,
+            source=space,
+            target=space,
+            closure_convert=False,
+        )
+        result = solve_linear(
+            LinearSystem(operator),
+            safe_right_hand_side,
+            policy=policy,
+        )
+        checked = eqx.error_if(
+            space.flatten(result.value),
+            ~zero_right_hand_side & (result.status != int(LinearSolveStatus.SUCCESS)),
+            "Implicit root derivative solve failed; the root Jacobian is unresolved.",
+        )
+    return jnp.where(
+        zero_right_hand_side,
+        jnp.zeros_like(checked),
+        checked,
     )
 
 
@@ -249,7 +279,7 @@ def implicit_root_result(
         residual=residual,
         auxiliary=auxiliary,
         status=status,
-        diagnostics=_cast_diagnostic_counts(diagnostics, jnp.int32),
+        diagnostics=_restore_diagnostic_types(diagnostics),
         provenance=provenance,
     )
 

@@ -241,9 +241,10 @@ stochastic, memory/delay, rough, and canonical evolution outputs enter the same
 boundaries, case/realization axes, or provenance.
 `DifferentialAlgebraicSystem` adds a state-shaped implicit residual with declared
 differential/algebraic component roles and independent state, rate, and residual
-scales. Its prepared fixed-grid BDF solver preserves native nonlinear diagnostics,
-implicit derivatives, and trajectory rate-validity masks without introducing a
-second identification representation.
+scales. Its prepared BDF solver supports fixed and adaptive accepted grids,
+consistent segmented continuation, frozen-grid implicit replay derivatives,
+checkpointed reverse passes, guarded numerical reuse, and local regularity evidence
+without introducing a second identification representation.
 Array models bind into `ContinuousSystem` as explicit trainable PyTree children.
 Structured Port-Hamiltonian fields provide state-dependent energy,
 interconnection, dissipation, control, and forcing components while preserving
@@ -586,10 +587,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Solver → Differential equations](api/solver/differential.md).
 - **Differential-algebraic equations**: declare a state-shaped residual
   `F(t, y, ydot, args) = 0`, component roles, scales, and an explicit consistency
-  contract. Native prepared BDF1/BDF2 solves support fixed-grid JIT, JVP, VJP, and
-  batching; failed initialization or stages remain explicit status evidence.
-  Semidiscrete PDE IR can compile directly to the same residual contract when every
-  equation has a bijective field target and supported direct temporal incidence.
+  contract. Native prepared BDF1/BDF2 solves support fixed or adaptive JIT
+  execution, implicit derivatives, checkpointed replay, segmented continuation,
+  local regularity evidence, and explicit initialization/attempt/termination status.
+  Semidiscrete PDE IR compiles to the same residual contract when every equation has
+  a bijective field target and supported direct temporal incidence.
   See [API → Solver → Differential-algebraic equations](api/solver/differential_algebraic.md).
 - **System identification and equation discovery**: normalize canonical
   evolution, differential/delay/memory/rough, controlled, or stochastic output

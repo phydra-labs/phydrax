@@ -356,6 +356,11 @@ class NonlinearDiagnostics(StrictModule):
     numeric_refreshes: Array
     final_forcing: Array
     final_trust_radius: Array
+    final_linear_status: Array
+    final_linear_rank: Array
+    final_linear_condition_estimate: Array
+    final_linear_residual_norm: Array
+    final_linear_converged: Array
     counts_complete: bool = eqx.field(static=True)
 
     def __init__(
@@ -380,6 +385,11 @@ class NonlinearDiagnostics(StrictModule):
         numeric_refreshes: Any = 0,
         final_forcing: Any = jnp.nan,
         final_trust_radius: Any = jnp.nan,
+        final_linear_status: Any = -1,
+        final_linear_rank: Any = -1,
+        final_linear_condition_estimate: Any = jnp.nan,
+        final_linear_residual_norm: Any = jnp.nan,
+        final_linear_converged: Any = False,
         counts_complete: bool = True,
     ):
         self.initial_residual_norm = jnp.asarray(initial_residual_norm)
@@ -422,6 +432,13 @@ class NonlinearDiagnostics(StrictModule):
         ) = integer_values
         self.final_forcing = jnp.asarray(final_forcing)
         self.final_trust_radius = jnp.asarray(final_trust_radius)
+        self.final_linear_status = jnp.asarray(final_linear_status, dtype=jnp.int32)
+        self.final_linear_rank = jnp.asarray(final_linear_rank, dtype=jnp.int32)
+        self.final_linear_condition_estimate = jnp.asarray(
+            final_linear_condition_estimate
+        )
+        self.final_linear_residual_norm = jnp.asarray(final_linear_residual_norm)
+        self.final_linear_converged = jnp.asarray(final_linear_converged, dtype=bool)
         self.counts_complete = bool(counts_complete)
 
 

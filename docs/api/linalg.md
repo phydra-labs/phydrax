@@ -175,10 +175,12 @@ final gauge residual separately.
 - numerical-rank requirements;
 - bounded materialization;
 - a `PreconditioningPolicy` with a prepared action or setup-time builder;
+- an optional fixed-capacity `RecyclingPolicy`;
 - differentiation semantics;
 - failure behavior;
 - an optional, capability-checked `MixedPrecisionPolicy`;
-- independent factorization, workspace, and Krylov-basis byte budgets.
+- independent factorization, workspace, Krylov-basis, preconditioner, and recycling
+  byte budgets.
 
 `plan(problem, policy)` returns an immutable `LinearSolvePlan`. Its candidates
 contain accepted or rejected cost estimates and reasons. Numerical state is
@@ -638,6 +640,9 @@ source vectors across a coefficient-only refresh, but always recomputes their
 images. Structure or plan changes reject the state. Extraction and rank
 decisions are algorithmic state and are stopped from mathematical
 differentiation.
+`solve_recycled` accepts the same `LinearSolveControl` as an ordinary native Krylov
+solve, so nonlinear forcing and aggregate iteration limits remain dynamic while the
+recycling capacity stays structural.
 Planning charges both the retained recycling state and the transient augmented
 Arnoldi, search-basis, pseudoinverse, and harmonic-Ritz eigensolve storage before
 preparation.
@@ -1252,6 +1257,9 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.LinearSolvePolicy
+
+---
+
 
 ::: phydrax.linalg.LinearSolveControl
 

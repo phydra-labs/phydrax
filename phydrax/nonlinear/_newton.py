@@ -25,11 +25,14 @@ from ..linalg import (
     AbstractVectorSpace,
     DifferentiationPolicy,
     GMRES,
+    initialize_recycling,
     LinearSolveControl,
     LinearSolvePolicy,
     LinearSolveStatus,
     LinearSystem,
+    RecyclingState,
     solve as solve_linear,
+    solve_recycled,
     TolerancePolicy,
 )
 from ._linearization import (
@@ -402,6 +405,12 @@ class _RootState(StrictModule):
     trust_radius: Array
     status: Array
     refresh_state: LinearRefreshState
+    recycling: RecyclingState | None
+    final_linear_status: Array
+    final_linear_rank: Array
+    final_linear_condition_estimate: Array
+    final_linear_residual_norm: Array
+    final_linear_converged: Array
 
 
 class _SearchResult(StrictModule):
@@ -729,9 +738,14 @@ def _initial_root_state(
         )
     )
     linear_operator = _jacobian_solve_operator(prepared_jacobian.operator)
-    _, refresh_state = prepare_refresh_state(
+    prepared_linear, refresh_state = prepare_refresh_state(
         LinearSystem(linear_operator),
         _iteration_linear_policy(linear_policy),
+    )
+    recycling = (
+        None
+        if prepared_linear.plan.policy.recycling is None
+        else initialize_recycling(prepared_linear)
     )
     valid = problem.valid(state, residual, prepared_jacobian.auxiliary, args)
     finite = tree_allfinite(state) & tree_allfinite(residual)
@@ -786,6 +800,12 @@ def _initial_root_state(
         jacobian_reference_rejected_steps=jnp.asarray(0, dtype=jnp.int32),
         status=status,
         refresh_state=refresh_state,
+        recycling=recycling,
+        final_linear_status=jnp.asarray(-1, dtype=jnp.int32),
+        final_linear_rank=jnp.asarray(-1, dtype=jnp.int32),
+        final_linear_condition_estimate=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+        final_linear_residual_norm=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+        final_linear_converged=jnp.asarray(False),
     )
     return problem, state, run, prepared_jacobian
 
@@ -820,6 +840,28 @@ def _maybe_refresh_jacobian(
         refresh, prepare_dynamic, lambda _: current_dynamic, operand=None
     )
     return eqx.combine(selected_dynamic, current_static), refresh
+
+
+def _solve_newton_linear(
+    prepared: Any,
+    right_hand_side: PyTree[Any],
+    run: _RootState,
+    termination: NonlinearTermination,
+    /,
+):
+    control = _linear_control(prepared, run, termination)
+    if run.recycling is None:
+        return (
+            solve_linear(prepared, right_hand_side, control=control),
+            None,
+        )
+    recycled = solve_recycled(
+        prepared,
+        right_hand_side,
+        recycling=run.recycling,
+        control=control,
+    )
+    return recycled.result, recycled.recycling
 
 
 def _linear_control(
@@ -994,6 +1036,11 @@ def _package_result(
         numeric_refreshes=run.numeric_refreshes,
         final_forcing=run.last_forcing,
         final_trust_radius=run.trust_radius,
+        final_linear_status=run.final_linear_status,
+        final_linear_rank=run.final_linear_rank,
+        final_linear_condition_estimate=run.final_linear_condition_estimate,
+        final_linear_residual_norm=run.final_linear_residual_norm,
+        final_linear_converged=run.final_linear_converged,
     )
     return NonlinearResult(
         state=state,
@@ -1080,7 +1127,8 @@ class NewtonKrylov(AbstractNonlinearMethod):
         args: Any = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
-    ) -> NonlinearResult:
+        _return_internal: bool = False,
+    ) -> Any:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(termination, NonlinearTermination):
@@ -1099,7 +1147,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
             problem, state, run, prepared_jacobian = _prepared_start
         initial_status = _eager_initial_status(run, termination)
         if initial_status is not None:
-            return _package_result(
+            result = _package_result(
                 self,
                 problem,
                 state,
@@ -1111,6 +1159,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 "residual-armijo",
                 args,
             )
+            return (result, state, run, prepared_jacobian) if _return_internal else result
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
         dynamic_jacobian, static_jacobian = eqx.partition(prepared_jacobian, eqx.is_array)
 
@@ -1180,10 +1229,11 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 right_hand_side = _jacobian_solve_right_hand_side(
                     linear_operator, current_residual
                 )
-                linear_result = solve_linear(
+                linear_result, recycling = _solve_newton_linear(
                     prepared,
                     right_hand_side,
-                    control=_linear_control(prepared, current_run, termination),
+                    current_run,
+                    termination,
                 )
                 direction = _jacobian_solve_direction(
                     linear_operator, linear_result.value
@@ -1379,6 +1429,14 @@ class NewtonKrylov(AbstractNonlinearMethod):
                     trust_radius=current_run.trust_radius,
                     status=status,
                     refresh_state=refresh_state,
+                    recycling=recycling,
+                    final_linear_status=linear_result.status,
+                    final_linear_rank=linear_result.diagnostics.rank,
+                    final_linear_condition_estimate=(
+                        linear_result.diagnostics.condition_estimate
+                    ),
+                    final_linear_residual_norm=linear_result.diagnostics.residual_norm,
+                    final_linear_converged=linear_result.diagnostics.converged,
                 )
                 return (
                     search.state,
@@ -1388,14 +1446,15 @@ class NewtonKrylov(AbstractNonlinearMethod):
 
             return jax.lax.cond(terminal_now, terminal, step, operand=None)
 
-        state, dynamic_run, _ = jax.lax.while_loop(
+        state, dynamic_run, dynamic_jacobian = jax.lax.while_loop(
             _condition(termination),
             body,
             (state, dynamic_run, dynamic_jacobian),
         )
         run = eqx.combine(dynamic_run, static_run)
+        jacobian = eqx.combine(dynamic_jacobian, static_jacobian)
         status = _terminal_status(run, termination)
-        return _package_result(
+        result = _package_result(
             self,
             problem,
             state,
@@ -1407,6 +1466,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
             "residual-armijo",
             args,
         )
+        return (result, state, run, jacobian) if _return_internal else result
 
 
 class NewtonTrustRegion(AbstractNonlinearMethod):
@@ -1474,7 +1534,8 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         args: Any = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
-    ) -> NonlinearResult:
+        _return_internal: bool = False,
+    ) -> Any:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(termination, NonlinearTermination):
@@ -1493,7 +1554,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
             problem, state, run, prepared_jacobian = _prepared_start
         initial_status = _eager_initial_status(run, termination)
         if initial_status is not None:
-            return _package_result(
+            result = _package_result(
                 self,
                 problem,
                 state,
@@ -1505,6 +1566,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 "dogleg-residual-trust-region",
                 args,
             )
+            return (result, state, run, prepared_jacobian) if _return_internal else result
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
         dynamic_jacobian, static_jacobian = eqx.partition(prepared_jacobian, eqx.is_array)
 
@@ -1574,10 +1636,11 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 right_hand_side = _jacobian_solve_right_hand_side(
                     linear_operator, current_residual
                 )
-                linear_result = solve_linear(
+                linear_result, recycling = _solve_newton_linear(
                     prepared,
                     right_hand_side,
-                    control=_linear_control(prepared, current_run, termination),
+                    current_run,
+                    termination,
                 )
                 raw_newton = _jacobian_solve_direction(
                     linear_operator, linear_result.value
@@ -1785,6 +1848,14 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                     trust_radius=search.radius,
                     status=status,
                     refresh_state=refresh_state,
+                    recycling=recycling,
+                    final_linear_status=linear_result.status,
+                    final_linear_rank=linear_result.diagnostics.rank,
+                    final_linear_condition_estimate=(
+                        linear_result.diagnostics.condition_estimate
+                    ),
+                    final_linear_residual_norm=linear_result.diagnostics.residual_norm,
+                    final_linear_converged=linear_result.diagnostics.converged,
                 )
                 return (
                     search.state,
@@ -1794,14 +1865,15 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
 
             return jax.lax.cond(terminal_now, terminal, step, operand=None)
 
-        state, dynamic_run, _ = jax.lax.while_loop(
+        state, dynamic_run, dynamic_jacobian = jax.lax.while_loop(
             _condition(termination),
             body,
             (state, dynamic_run, dynamic_jacobian),
         )
         run = eqx.combine(dynamic_run, static_run)
+        jacobian = eqx.combine(dynamic_jacobian, static_jacobian)
         status = _terminal_status(run, termination)
-        return _package_result(
+        result = _package_result(
             self,
             problem,
             state,
@@ -1813,6 +1885,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
             "dogleg-residual-trust-region",
             args,
         )
+        return (result, state, run, jacobian) if _return_internal else result
 
 
 def root(

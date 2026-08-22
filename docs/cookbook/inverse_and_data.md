@@ -134,8 +134,8 @@ operator. Everything is still “minimize functionals over domains”.
 - For sensor tracks over time, construct their paired coordinates with
   `component.points(...)` and use a fixed `ObservationPenalty` source.
 - When the forward model is an implicit index-one system rather than a learned
-  residual field, use `DifferentialAlgebraicProblem` with a prepared fixed-grid
-  `solve_dae`. Runtime parameter PyTrees and consistent initial values remain
-  differentiable through the accepted BDF stages; solver status and work diagnostics
-  remain explicit. See
+  residual field, use `DifferentialAlgebraicProblem` with a prepared fixed or
+  adaptive `solve_dae`. Runtime parameter PyTrees and consistent initial values
+  remain differentiable through fixed BDF stages or frozen accepted-grid replay;
+  controller, regularity, replay, solver-status, and work evidence remain explicit. See
   [Differential-algebraic equation integration](../api/solver/differential_algebraic.md).

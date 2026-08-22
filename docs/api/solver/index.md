@@ -14,8 +14,9 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   finite-time Lyapunov spectra, finite-activity jump and hybrid trajectories,
   finite-rank semidiscrete SPDEs, and process ensembles.
 - [Differential-algebraic equation integration](differential_algebraic.md) defines
-  consistent initialization, prepared fixed-grid BDF1/BDF2, discrete implicit
-  differentiation, and implicit semidiscrete PDE residuals.
+  consistent initialization, prepared fixed/adaptive BDF1/BDF2, segmented
+  continuation, frozen-grid replay derivatives, local regularity evidence, and
+  implicit semidiscrete PDE residuals.
 - [Delay and functional differential equations](delay.md) defines causal method-of-steps,
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and
@@ -36,7 +37,7 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
       each active term realization across its gradient, curvature update, and line search.
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.
     - Use `DifferentialAlgebraicProblem`, a `TimeGrid`, and `solve_dae` for regular
-      fixed-grid index-one residuals `F(t, y, ydot, args) = 0`.
+      fixed-grid or adaptive index-one residuals `F(t, y, ydot, args) = 0`.
     - Use `AbstractDifferentiableDrivingPath` plus `solve_diffrax_cde` for smooth
       first-level controls; rough controls and their second level belong to
       `solve_rough_differential`.
