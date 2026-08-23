@@ -1,0 +1,63 @@
+{
+  "backend": "cpu",
+  "benchmark": "integral-physics",
+  "jax_version": "0.9.2",
+  "records": [
+    {
+      "absolute_error": 0.0,
+      "case": "deterministic-time-convolution",
+      "compile_ms": 26.29379101563245,
+      "num_inner_evaluations": 64,
+      "reference": 0.4522394219494945,
+      "steady_ms": 0.012972004090746244,
+      "successful": true,
+      "value": 0.4522394219494945
+    },
+    {
+      "absolute_error": 0.0,
+      "case": "integral-heat-residual-nonzero-initial",
+      "compile_ms": 105.66791705787182,
+      "num_inner_evaluations": 64,
+      "steady_ms": 0.02940297902872165,
+      "successful": true,
+      "value": 0.0
+    },
+    {
+      "absolute_error": 5.395683899678261e-14,
+      "case": "caputo-power-alpha-0.5",
+      "compile_ms": 20.231417031027377,
+      "num_inner_evaluations": 128,
+      "reference": 1.0765365427286,
+      "steady_ms": 0.011694345933695635,
+      "successful": true,
+      "value": 1.076536542728546
+    },
+    {
+      "absolute_error": 1.6919798895287386e-13,
+      "case": "caputo-power-alpha-1.5",
+      "compile_ms": 17.05083402339369,
+      "num_inner_evaluations": 128,
+      "reference": 3.229609628185806,
+      "steady_ms": 0.013611318233112494,
+      "successful": true,
+      "value": 3.229609628185637
+    },
+    {
+      "case": "randomized-moment-estimator-bias",
+      "expected_plugin_mean": 0.09333333333333332,
+      "inner_samples_per_estimate": 2,
+      "num_batches": 512,
+      "num_estimates_per_batch": 2,
+      "plug_in_absolute_error": 4.598111505664526e-05,
+      "plug_in_mean": 0.09337931444838997,
+      "successful": true,
+      "true_objective": 0.09,
+      "u_statistic_absolute_error": 0.0003632967421054317,
+      "u_statistic_mean": 0.09036329674210543
+    }
+  ],
+  "repeats": 3,
+  "schema_version": 1,
+  "seed": 0,
+  "successful": true
+}

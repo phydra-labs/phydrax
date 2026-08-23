@@ -94,6 +94,7 @@ nav:
         - Overview: "cookbook/index.md"
         - Poisson (field learning): "cookbook/poisson.md"
         - Heat equation (space–time): "cookbook/heat.md"
+        - Integral and nonlocal physics: "cookbook/integral_physics.md"
         - Stochastic dynamics (PINNs and SPDEs): "cookbook/stochastic_dynamics.md"
         - Filtering and smoothing: "cookbook/filtering.md"
         - Controlled dynamics: "cookbook/controlled_dynamics.md"

@@ -21,7 +21,7 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
-from phydrax.terms import MomentPenalty, ResidualPenalty
+from phydrax.terms import RandomizedMomentPenalty, ResidualPenalty
 
 
 class _KeyConsumingResidual(BatchEvaluator):
@@ -148,7 +148,7 @@ def test_sampling_jit_integral_constraint():
     structure = SampleLayout((("x",),))
 
     condition = Moment("u", component, lambda u: u)
-    MomentPenalty(
+    RandomizedMomentPenalty(
         condition,
         phx.integration.per_step(
             phx.integration.over(condition.on),
@@ -199,7 +199,7 @@ def test_integral_constraint_splits_sampling_and_evaluation_keys():
     structure = SampleLayout((("x",),))
     function = geom.Function("x")(_KeyConsumingResidual())
     condition = Moment("u", component, lambda u: u)
-    term = MomentPenalty(
+    term = RandomizedMomentPenalty(
         condition,
         phx.integration.per_step(
             phx.integration.over(condition.on),
@@ -207,11 +207,13 @@ def test_integral_constraint_splits_sampling_and_evaluation_keys():
         ),
     )
     caller_key = jr.key(23)
-    _, evaluation_key = jr.split(caller_key)
+    realization_keys = tuple(jr.split(caller_key, 2))
+    evaluation_keys = tuple(jr.split(key)[1] for key in realization_keys)
 
     loss = term.loss({"u": function}, key=caller_key)
 
-    assert jnp.allclose(loss, jr.uniform(evaluation_key) ** 2, atol=1e-14)
+    expected = jr.uniform(evaluation_keys[0]) * jr.uniform(evaluation_keys[1])
+    assert jnp.allclose(loss, expected, atol=1e-14)
 
 
 def test_geometry_domain_point_and_grid_sampling_share_constraint_contract():

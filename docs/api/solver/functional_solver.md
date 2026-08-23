@@ -40,6 +40,10 @@ four-layer model and integration-source choices, see
       `evaluation_parameters` transforms that could leave the manifold.
     - `solve(..., train_term_sample_size=k)` trains on an unbiased fixed-size
       subset of training terms per optimizer step.
+    - Signed unbiased `RandomizedResidualTerm` and
+      `RandomizedMomentPenalty` objectives require `keep_best=False`. Their
+      individual estimates may be negative, so minimum sampled training loss is
+      not a valid selection criterion.
     - Every optimizer update prepares one immutable objective realization. Sampled
       batches, per-step integration realizations, adaptive weights, evaluation
       keys, and the iteration value are reused by every candidate evaluation and
