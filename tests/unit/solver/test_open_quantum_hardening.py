@@ -152,8 +152,9 @@ def test_causal_process_tomography_and_compression_status():
     result = phx.solver.fit_causal_process_initial_state(
         problem, jnp.eye(2, dtype=complex), iterations=1
     )
-    assert bool(result.valid)
-    compressed = phx.tensor_network.compress_causal_process_memory(process, 1)
+    assert bool(result.underidentified)
+    assert not bool(result.valid)
+    compressed = phx.tensor_network.project_process_memory_subspace(process, 1)
     assert bool(compressed.valid)
 
 
