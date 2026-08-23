@@ -107,6 +107,25 @@
   variable-density projection, poroelasticity, and thermoelasticity. Certified
   FFT/DCT/DST direct solves and directional split-field acoustic PML remain integrated
   with the same provenance.
+- Structured finite volume now binds cell-average and directional face spaces directly
+  to tensor support; supports uniform/nonuniform Cartesian and stationary mapped
+  geometry, typed physical boundaries, piecewise-constant/MUSCL/WENO-Z/TENO/MP5 and
+  characteristic reconstruction, Rusanov/HLL/HLLC/Roe and entropy fluxes, normal and
+  transverse wave propagation, shallow-water f-wave balancing, multidimensional
+  split/unsplit execution, Euler/multispecies/MHD systems, positivity and
+  differentiability policies, conservative diffusion and compressible viscous fluxes,
+  MAC pressure projection, matrix-free linearization, conforming/nested multiblock
+  fluxes, and fixed-capacity AMR synchronization with integrated reflux.
+- Structured finite-volume runtime hardening adds immutable ideal/stiffened-gas
+  materials and constant/Sutherland/Prandtl transport closures; material-owned viscous
+  and mapped-viscous fluxes; slip, no-slip thermal, supersonic, characteristic, and
+  far-field boundaries; one prepared halo authority; Einfeldt-HLL fallback blending;
+  bounded SSPRK retry/status runtime; versioned case, precision, checksum checkpoint,
+  optional HDF5/XDMF output, differentiable scan/rematerialization rollout, quantitative
+  verification contracts and CLI, and NamedSharding decomposition with scaling
+  benchmarks.
+
+
 
 - `phydrax.weighting` exact and quadratically reconciled relative-entropy moment
   calibration for dense, sparse, and matrix-free feature actions, with affine-rank
@@ -250,6 +269,12 @@
   Caputo field operators now use direct deterministic Gauss--Jacobi or
   Gauss--Legendre evaluation for both supported order intervals; stochastic
   sampler and endpoint-regularization arguments were removed.
+- Finite-volume ownership is now structured and face-first. The triangular generic
+  `FiniteVolumePlan`, system-specific reconstruction dynamics, and the
+  `phydrax.discretization.reconstruction` owner were removed. Physical conservation
+  systems now live in `phydrax.equations`, conservative face operators live in
+  `phydrax.discretization.finite_volume`, time advancement lives in `phydrax.solver`,
+  and `FDAMRSubcyclingPlan` is now `ConservativeAMRSubcyclingPlan`.
 
 - Orthogonal-polynomial evaluation and Gaussian rule construction now pass through
   one private convention boundary. Hermite and Laguerre KAN identity/default

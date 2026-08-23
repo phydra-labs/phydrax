@@ -222,6 +222,43 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._finite_volume import (
+    DirectionalSplitFiniteVolumePlan,
+    FiniteVolumeStepResult,
+    SplittingKind,
+    UnsplitFiniteVolumeSSPRK3Plan,
+)
+from ._finite_volume_case import (
+    FiniteVolumeCaseSpec,
+    FiniteVolumeExecutionSpec,
+    FiniteVolumePrecisionPolicy,
+    PrecisionDType,
+)
+from ._finite_volume_case_loader import (
+    load_finite_volume_case,
+    PreparedFiniteVolumeCase,
+)
+from ._finite_volume_checkpoint import (
+    FiniteVolumeCheckpoint,
+    FiniteVolumeCheckpointPlan,
+    read_finite_volume_checkpoint,
+    write_finite_volume_checkpoint,
+)
+from ._finite_volume_output import FiniteVolumeOutputPlan
+from ._finite_volume_rollout import (
+    FiniteVolumeGradientReport,
+    FiniteVolumeRematerializationPolicy,
+    FiniteVolumeRetentionPolicy,
+    FiniteVolumeRolloutPlan,
+    FiniteVolumeRolloutResult,
+)
+from ._finite_volume_runtime import (
+    FiniteVolumeAdvanceResult,
+    FiniteVolumeRunStatus,
+    FiniteVolumeRuntimeState,
+    FiniteVolumeStepPolicy,
+    PreparedFiniteVolumeRuntime,
+)
 from ._fractional_memory import (
     CaputoFractionalProblem,
     FractionalVectorField,
@@ -773,6 +810,31 @@ __all__ = [
     "StaggeredAcousticPlan",
     "StaggeredAcousticState",
     "StrangSplitPlan",
+    "DirectionalSplitFiniteVolumePlan",
+    "FiniteVolumeStepResult",
+    "SplittingKind",
+    "UnsplitFiniteVolumeSSPRK3Plan",
+    "FiniteVolumeAdvanceResult",
+    "FiniteVolumeRunStatus",
+    "FiniteVolumeRuntimeState",
+    "FiniteVolumeStepPolicy",
+    "PreparedFiniteVolumeRuntime",
+    "FiniteVolumeCaseSpec",
+    "FiniteVolumeExecutionSpec",
+    "FiniteVolumePrecisionPolicy",
+    "PrecisionDType",
+    "load_finite_volume_case",
+    "PreparedFiniteVolumeCase",
+    "FiniteVolumeCheckpoint",
+    "FiniteVolumeCheckpointPlan",
+    "read_finite_volume_checkpoint",
+    "write_finite_volume_checkpoint",
+    "FiniteVolumeOutputPlan",
+    "FiniteVolumeGradientReport",
+    "FiniteVolumeRematerializationPolicy",
+    "FiniteVolumeRetentionPolicy",
+    "FiniteVolumeRolloutPlan",
+    "FiniteVolumeRolloutResult",
     "solve_direct_ssa",
     "solve_jump_differential",
     "solve_next_reaction",

@@ -33,11 +33,11 @@ from ...linalg import (
 )
 from .._axis import TensorGridPlan, UniformAxisSpec, UniformCellAxisSpec
 from .._tensor_support import PreparedTensorGrid
-from ._coefficients import fornberg_weights
-from ._conservative import (
+from ..finite_volume._diffusion import (
     ConservativeDiffusionPlan,
     PreparedConservativeDiffusion,
 )
+from ._coefficients import fornberg_weights
 
 
 StructuredMGCompatibility: TypeAlias = Literal["error", "project_rhs"]
