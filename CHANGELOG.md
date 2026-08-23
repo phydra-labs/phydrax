@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added event-driven quantum jumps, MPS canonicalization and TEBD, MPS jump
+  trajectories, locally purified Kraus evolution, HEOM continuation,
+  non-Markovian cross-representation diagnostics, adaptive Fock continuation,
+  fermionic Gaussian dynamics, process-comb causality, and neural jump
+  projection.
+
 - Added Gaussian bosonic Lindblad dynamics, quantum-jump ensembles, adaptive
   bosonic Fock spaces, pseudomode/reaction-coordinate embeddings, HEOM,
   memory-kernel and TCL evolution, tensor-network states and truncation
