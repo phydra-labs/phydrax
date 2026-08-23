@@ -1,9 +1,10 @@
 # Metrix
 
 `phydrax.metrix` is Phydrax's differentiable geometry layer. It represents charts,
-differentiable maps, tensors and forms, positive and signed metrics, affine
-connections, curvature, Lie groups, symplectic and Poisson structures, horizontal
-cometrics, and array manifolds as ordinary JAX programs.
+atlases, differentiable maps and immersions, tensors and forms, positive and signed
+metrics, affine and bundle connections, curvature, metric measures, Lie groups,
+symplectic and Poisson structures, horizontal cometrics, complex/Kähler structures,
+and real or complex array manifolds as ordinary JAX programs.
 
 Metrix is intentionally below the domain and solver layers:
 
@@ -85,7 +86,9 @@ point coordinates or replace domain admissibility rules.
 
 - [Charts and tensors](charts.md)
 - [Differentiable maps](maps.md)
+- [Riemannian maps and immersions](map_geometry.md)
 - [Metrics and metric jets](metrics.md)
+- [Metric measures and boundaries](metric_measure.md)
 - [Signed metrics](signed_metrics.md)
   The [inverse spacetime workflow](../../cookbook/relativity_inverse.md) combines
   safe ADM parameterization, curvature observations, and functional optimization.
@@ -95,11 +98,14 @@ point coordinates or replace domain admissibility rules.
 - [Differential forms](forms.md)
 - [Embedded geometry](embedded.md)
 - [Array manifolds](manifolds.md)
+- [Intrinsic endpoint geometry](intrinsic_geometry.md)
+- [Complex, Hermitian, and Kähler geometry](complex_geometry.md)
 - [Lie groups](lie_groups.md)
 - [Symplectic and Poisson geometry](symplectic_poisson.md)
 - [Sub-Riemannian geometry](subriemannian.md)
 - [Stochastic geometry](stochastic.md)
 - [Array state geometry](state_geometry.md)
+- [Vector bundles and gauge geometry](bundles.md)
 
 ## Laplacian spectra
 

@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Expanded `phydrax.metrix` with immersion validation and Riemannian map
+  geometry; correct tensor-density covariant derivatives; weighted metric
+  measures and intrinsic hypersurface normals; exact and numerical endpoint
+  geodesics with Fréchet statistics and transport/flow-matching adapters;
+  complex-projective, unitary, special-unitary, and Hermitian-positive-definite
+  manifolds; real-coordinate almost-complex, Hermitian, Kähler, atlas, and local
+  Calabi–Yau diagnostics; Hessian and exponential-family information geometry;
+  vector-bundle gauge curvature; metric cochain Hodge assembly; anisotropic
+  horizontal cometrics; and fixed-step Störmer–Verlet integration.
+
 - `phydrax.transport.continuous` endpoint couplings, linear probability
   interpolants, status-preserving continuous sampling, exact Euclidean continuous-flow
   densities, and uncertainty-bearing Hutchinson density estimates; plus
