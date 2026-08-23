@@ -309,6 +309,12 @@ from ._probabilistic_ode import (
     ProbabilisticODEUpdate,
     solve_probabilistic_ode,
 )
+from ._quantum_propagation import (
+    solve_unitary_propagator,
+    UnitaryGroupKind,
+    UnitaryPropagatorProblem,
+    UnitaryPropagatorSolution,
+)
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -402,6 +408,10 @@ __all__ = [
     "SeparableHamiltonianResult",
     "integrate_stormer_verlet",
     "stormer_verlet_step",
+    "UnitaryGroupKind",
+    "UnitaryPropagatorProblem",
+    "UnitaryPropagatorSolution",
+    "solve_unitary_propagator",
     "AbstractDifferentiableDrivingPath",
     "AbstractGeometricSolver",
     "AbstractBSDERegressionBasis",

@@ -11,6 +11,18 @@ global features.
 """
 
 from . import compat, nn
+from ._abelian_gauge import (
+    abelian_current_continuity,
+    abelian_curvature,
+    abelian_gauge_transform,
+    abelian_maxwell_action,
+    abelian_maxwell_residual,
+    AbelianBridgeReport,
+    AbelianGaugeDiagnostics,
+    AbelianMaxwellOperator,
+    project_abelian_gauge_field,
+    validate_abelian_gauge_system,
+)
 from ._architectures import MeshGraphNet, MeshGraphNetBlock, RowMLP
 from ._cochain import (
     cochain_complex_from_incidences,
@@ -24,6 +36,7 @@ from ._cochain import (
     reorient_cochain_complex,
     triangle_mesh_to_cochain_complex,
 )
+from ._cochain_field import CochainField
 from ._cochain_metric import cochain_metric_reduce, CochainMetricReduction
 from ._cochain_ops import (
     cochain_codifferential,
@@ -469,4 +482,15 @@ __all__ = [
     "StokesValidationReport",
     "integrate_form_to_cochain",
     "validate_stokes_bridge",
+    "AbelianBridgeReport",
+    "AbelianGaugeDiagnostics",
+    "AbelianMaxwellOperator",
+    "CochainField",
+    "abelian_current_continuity",
+    "abelian_curvature",
+    "abelian_gauge_transform",
+    "abelian_maxwell_action",
+    "abelian_maxwell_residual",
+    "project_abelian_gauge_field",
+    "validate_abelian_gauge_system",
 ]

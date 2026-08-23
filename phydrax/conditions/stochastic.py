@@ -4,16 +4,30 @@
 
 from typing import Any, TypeAlias
 
-from phydrax.domain import ComponentSum, DomainComponent, DomainFunction
+from jaxtyping import ArrayLike
+
+from phydrax.domain import (
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    ReferencedDensityField,
+)
 
 from .._strict import StrictModule
-from ..metrix import RiemannianHypersurface, RiemannianMetric
+from ..metrix import (
+    RiemannianHypersurface,
+    RiemannianMetric,
+    WeightedRiemannianMeasure,
+)
 from ..operators.differential import (
     dt,
     fokker_planck_operator,
     kolmogorov_generator,
     probability_current,
     StochasticInterpretation,
+    weighted_fokker_planck_operator,
+    weighted_kolmogorov_generator,
+    weighted_probability_current,
 )
 from ._base import ConditionSupport, Residual
 from ._field_ops import dot
@@ -227,4 +241,150 @@ def ProbabilityFlux(
     return Residual(names, on, residual, label=label)
 
 
-__all__ = ["CoefficientField", "FokkerPlanck", "Kolmogorov", "ProbabilityFlux"]
+def WeightedKolmogorov(
+    field: str,
+    on: ConditionSupport,
+    /,
+    *,
+    drift: CoefficientField,
+    measure: WeightedRiemannianMeasure,
+    evolution_var: str | None,
+    diffusivity: ArrayLike = 1.0,
+    state_var: str = "x",
+    label: str | None = None,
+) -> Residual:
+    """Backward Kolmogorov residual relative to a weighted measure."""
+    if not isinstance(drift, (DomainFunction, str)):
+        raise TypeError("drift must be a DomainFunction or field name.")
+    if not isinstance(measure, WeightedRiemannianMeasure):
+        raise TypeError("measure must be a WeightedRiemannianMeasure.")
+    names = _fields(field, drift)
+
+    def residual(*values: DomainFunction) -> DomainFunction:
+        functions = dict(zip(names, values, strict=True))
+        observable = functions[field]
+        drift_field = _coefficient(drift, functions, name="drift")
+        if drift_field is None:
+            raise ValueError("Weighted Kolmogorov drift cannot be None.")
+        generator = weighted_kolmogorov_generator(
+            observable,
+            drift_field,
+            measure,
+            diffusivity=diffusivity,
+            var=state_var,
+        )
+        if evolution_var is None:
+            return generator
+        return dt(observable, var=evolution_var) + generator
+
+    return Residual(names, on, residual, label=label)
+
+
+def WeightedFokkerPlanck(
+    density_field: str,
+    on: ConditionSupport,
+    /,
+    *,
+    drift: CoefficientField,
+    measure: WeightedRiemannianMeasure,
+    evolution_var: str | None,
+    diffusivity: ArrayLike = 1.0,
+    state_var: str = "x",
+    label: str | None = None,
+) -> Residual:
+    """Fokker–Planck residual for density relative to ``dmu``."""
+    if not isinstance(drift, (DomainFunction, str)):
+        raise TypeError("drift must be a DomainFunction or field name.")
+    if not isinstance(measure, WeightedRiemannianMeasure):
+        raise TypeError("measure must be a WeightedRiemannianMeasure.")
+    names = _fields(density_field, drift)
+
+    def residual(*values: DomainFunction) -> DomainFunction:
+        functions = dict(zip(names, values, strict=True))
+        density = functions[density_field]
+        drift_field = _coefficient(drift, functions, name="drift")
+        if drift_field is None:
+            raise ValueError("Weighted Fokker–Planck drift cannot be None.")
+        referenced = ReferencedDensityField(
+            density,
+            reference="weighted-riemannian-volume",
+            state_var=state_var,
+            measure=measure,
+        )
+        adjoint = weighted_fokker_planck_operator(
+            referenced,
+            drift_field,
+            measure,
+            diffusivity=diffusivity,
+            var=state_var,
+        )
+        if evolution_var is None:
+            return adjoint
+        return dt(density, var=evolution_var) - adjoint
+
+    return Residual(names, on, residual, label=label)
+
+
+def WeightedProbabilityFlux(
+    density_field: str,
+    on: DomainComponent,
+    /,
+    *,
+    drift: CoefficientField,
+    measure: WeightedRiemannianMeasure,
+    boundary_geometry: RiemannianHypersurface,
+    diffusivity: ArrayLike = 1.0,
+    target: ConditionValue | None = None,
+    state_var: str = "x",
+    label: str | None = None,
+) -> Residual:
+    """Intrinsic weighted probability-current flux."""
+    if isinstance(on, ComponentSum) or not isinstance(on, DomainComponent):
+        raise TypeError("WeightedProbabilityFlux requires one DomainComponent.")
+    if not isinstance(boundary_geometry, RiemannianHypersurface):
+        raise TypeError("boundary_geometry must be a RiemannianHypersurface.")
+    if boundary_geometry.metric is not measure.metric:
+        raise ValueError("Boundary geometry and measure must share one metric.")
+    if not isinstance(drift, (DomainFunction, str)):
+        raise TypeError("drift must be a DomainFunction or field name.")
+    names = _fields(density_field, drift)
+    normal = DomainFunction(
+        domain=on.domain,
+        deps=(state_var,),
+        func=_RiemannianNormalCallable(boundary_geometry),
+        metadata={},
+    )
+    target_value = _condition_value(target, on, 0.0)
+
+    def residual(*values: DomainFunction) -> DomainFunction:
+        functions = dict(zip(names, values, strict=True))
+        density = ReferencedDensityField(
+            functions[density_field],
+            reference="weighted-riemannian-volume",
+            state_var=state_var,
+            measure=measure,
+        )
+        drift_field = _coefficient(drift, functions, name="drift")
+        if drift_field is None:
+            raise ValueError("Weighted probability-flux drift cannot be None.")
+        current = weighted_probability_current(
+            density,
+            drift_field,
+            measure,
+            diffusivity=diffusivity,
+            var=state_var,
+        )
+        return dot(current, normal) - target_value
+
+    return Residual(names, on, residual, label=label)
+
+
+__all__ = [
+    "CoefficientField",
+    "FokkerPlanck",
+    "Kolmogorov",
+    "ProbabilityFlux",
+    "WeightedFokkerPlanck",
+    "WeightedKolmogorov",
+    "WeightedProbabilityFlux",
+]

@@ -48,6 +48,7 @@ from ._flow_matching import (
     FlowMatchingPolicy,
     FlowMatchingSamplingMode,
     FlowMatchingTerm,
+    ManifoldFlowMatchingMetric,
     RiemannianFlowMatchingMetric,
 )
 from ._graph_data import (
@@ -84,6 +85,7 @@ from ._randomized_residual import (
     ResidualEvaluator,
 )
 from ._residual import ResidualPenalty
+from ._ricci_flat import ricci_flat_kahler_term
 from ._score_matching import (
     ScoreMatchingBatch,
     ScoreMatchingDiagnostics,
@@ -134,6 +136,8 @@ __all__ = [
     "EmpiricalSinkhornDivergenceTerm",
     "EuclideanFlowMatchingMetric",
     "RiemannianFlowMatchingMetric",
+    "ManifoldFlowMatchingMetric",
+    "ricci_flat_kahler_term",
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
     "FlowEndpointProvider",
