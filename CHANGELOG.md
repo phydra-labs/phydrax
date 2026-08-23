@@ -3,6 +3,32 @@
 ## Unreleased
 
 ### Added
+- General nonlinear root families with certified scalar bracketing,
+  safeguarded Newton/Halley, chord and limited-memory Broyden, DF-SANE,
+  pseudo-transient continuation, vector Halley, capability-selected and robust
+  attempt graphs, Type-I/II Anderson, Steffensen acceleration, exact nested work
+  budgets, scaling, mixed precision, batched small-system kernels, explicit
+  sharding semantics, and first/second-order solution maps.
+- Block residual/factor graphs with robust losses, manifold parameter blocks,
+  route and Schur planning, traditional/subspace dogleg, dogbox,
+  trust-reflective bounds, variable projection, POUNDERS, and incremental
+  add/remove/relinearization evidence; plus BOBYQA, COBYQA, deterministic
+  multistart, and independently recertified SciPy, NLopt, Ipopt, and Ceres
+  boundaries.
+- Scaled constrained models, SQP BFGS/SR1/exact Hessian choices, a native filter
+  interior-point method with restoration, KKT inertia/null/range planning, fixed
+  active-set and barrier sensitivities, frozen peer/corpus manifests,
+  cross-family performance-profile campaigns, and solver graduation/regression
+  gates.
+- Authoritative physical optimization certificates now demote false-success
+  POUNDERS and interior-point exits; condensed interior-point KKT systems reuse
+  one factorization across predictor/corrector right-hand sides. Root
+  polyalgorithms reuse residual and prepared Newton evidence across attempts.
+  Residual-graph plans now execute dense, LSMR, or Schur routes with block-local
+  robust curvature and explicit clipping evidence. Nonlinear comparisons keep
+  backend claims separate from mathematics, enforce frozen runner identity and
+  initial fingerprints, record cold/warm/steady phases in flat JSON, and form
+  family-compatible performance profiles.
 - Added Gaussian bosonic Lindblad dynamics, quantum-jump ensembles, adaptive
   bosonic Fock spaces, pseudomode/reaction-coordinate embeddings, HEOM,
   memory-kernel and TCL evolution, tensor-network states and truncation

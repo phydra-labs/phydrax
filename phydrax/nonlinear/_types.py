@@ -509,6 +509,7 @@ class NonlinearResult(StrictModule):
     diagnostics: NonlinearDiagnostics
     provenance: NonlinearProvenance
     transformation_evidence: NonlinearTransformationEvidence | None
+    attempts: tuple[Any, ...]
 
     def __init__(
         self,
@@ -520,6 +521,7 @@ class NonlinearResult(StrictModule):
         diagnostics: NonlinearDiagnostics,
         provenance: NonlinearProvenance,
         transformation_evidence: NonlinearTransformationEvidence | None = None,
+        attempts: tuple[Any, ...] = (),
     ):
         if not isinstance(diagnostics, NonlinearDiagnostics):
             raise TypeError("diagnostics must be NonlinearDiagnostics.")
@@ -538,6 +540,7 @@ class NonlinearResult(StrictModule):
         self.diagnostics = diagnostics
         self.provenance = provenance
         self.transformation_evidence = transformation_evidence
+        self.attempts = tuple(attempts)
 
     @property
     def successful(self) -> Array:

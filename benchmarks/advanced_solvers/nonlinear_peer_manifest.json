@@ -1,0 +1,153 @@
+{
+  "frozen_at": "2026-08-23",
+  "phydrax_baseline": "8760f270a11906df991c818d5a3cfa76712ff386",
+  "peers": [
+    {
+      "id": "nonlinearsolve-jl",
+      "repository": "https://github.com/SciML/NonlinearSolve.jl",
+      "revision": "d2e5ce5690632c2ad66ba1a08e7fed9b53c96202",
+      "families": ["root", "least-squares", "fixed-point"],
+      "runner": {
+        "kind": "external-process",
+        "expected_identity": "d2e5ce5690632c2ad66ba1a08e7fed9b53c96202",
+        "command_environment": "PHYDRAX_NONLINEARSOLVE_JL_RUNNER"
+      }
+    },
+    {
+      "id": "optimistix",
+      "repository": "https://github.com/patrick-kidger/optimistix",
+      "revision": "5bad66fb3df5e4111a9e99914ddcf2cca88b4936",
+      "families": ["root", "least-squares", "minimization"],
+      "runner": {
+        "kind": "python-distribution",
+        "expected_identity": "optimistix==0.1.0",
+        "package": "optimistix"
+      }
+    },
+    {
+      "id": "scipy",
+      "repository": "https://github.com/scipy/scipy",
+      "revision": "3dbf660a919b1479cdf30d533176053b428d08d3",
+      "families": ["root", "least-squares", "constrained", "global"],
+      "runner": {
+        "kind": "python-distribution",
+        "expected_identity": "scipy==1.18.1",
+        "package": "scipy"
+      }
+    },
+    {
+      "id": "ceres",
+      "repository": "https://github.com/ceres-solver/ceres-solver",
+      "revision": "fe351d5ab8cbc574f33456376bf5aa90d3162d5d",
+      "families": ["least-squares", "factor-graph"],
+      "runner": {
+        "kind": "external-process",
+        "expected_identity": "fe351d5ab8cbc574f33456376bf5aa90d3162d5d",
+        "command_environment": "PHYDRAX_CERES_RUNNER"
+      }
+    },
+    {
+      "id": "ipopt",
+      "repository": "https://github.com/coin-or/Ipopt",
+      "revision": "72a29c9aab198afa0dbb940339022a22c415a4eb",
+      "families": ["constrained"],
+      "runner": {
+        "kind": "external-process",
+        "expected_identity": "72a29c9aab198afa0dbb940339022a22c415a4eb",
+        "command_environment": "PHYDRAX_IPOPT_RUNNER"
+      }
+    },
+    {
+      "id": "nlopt",
+      "repository": "https://github.com/stevengj/nlopt",
+      "revision": "6e6593f131ba3a38bc9edbed0a357bc01526e54b",
+      "families": ["derivative-free", "global"],
+      "runner": {
+        "kind": "external-process",
+        "expected_identity": "6e6593f131ba3a38bc9edbed0a357bc01526e54b",
+        "command_environment": "PHYDRAX_NLOPT_RUNNER"
+      }
+    },
+    {
+      "id": "theseus",
+      "repository": "https://github.com/facebookresearch/theseus",
+      "revision": "c8583de41824613fb135ee9bad0e930ded6be404",
+      "families": ["least-squares", "factor-graph", "differentiation"],
+      "runner": {
+        "kind": "external-process",
+        "expected_identity": "c8583de41824613fb135ee9bad0e930ded6be404",
+        "command_environment": "PHYDRAX_THESEUS_RUNNER"
+      }
+    },
+    {
+      "id": "gtsam",
+      "repository": "https://github.com/borglab/gtsam",
+      "revision": "06c77c48c01bde44283726b7ba2b5bb432e51ee3",
+      "families": ["factor-graph", "incremental"],
+      "runner": {
+        "kind": "external-process",
+        "expected_identity": "06c77c48c01bde44283726b7ba2b5bb432e51ee3",
+        "command_environment": "PHYDRAX_GTSAM_RUNNER"
+      }
+    }
+  ],
+  "corpora": {
+    "root": [
+      "more-garbow-hillstrom",
+      "minpack",
+      "nonlinearsolve-23",
+      "scalar-pathologies",
+      "singular-jacobians",
+      "domain-restricted",
+      "batched-small"
+    ],
+    "least_squares": [
+      "nist-regression",
+      "more-least-squares",
+      "rank-deficient",
+      "active-bounds",
+      "robust-outliers",
+      "separable-variable-projection",
+      "bal-subsets",
+      "manifold-factor-graphs"
+    ],
+    "constrained": [
+      "hock-schittkowski",
+      "cutest-smooth-subset",
+      "maratos",
+      "rank-deficient",
+      "infeasible-start",
+      "restoration"
+    ],
+    "global": [
+      "coco-bbob-smooth",
+      "coco-bbob-noisy",
+      "constrained-black-box"
+    ],
+    "differentiation": [
+      "analytic-root-maps",
+      "least-squares-maps",
+      "active-kkt-maps",
+      "barrier-maps",
+      "singularity-sweeps",
+      "active-set-transitions"
+    ]
+  },
+  "rules": {
+    "certificate_source": "independent-physical",
+    "timing_phases": [
+      "setup",
+      "compilation",
+      "preparation",
+      "cold-solve",
+      "warmup",
+      "steady-solve",
+      "verification"
+    ],
+    "performance_profile": "family-specific-dolan-more",
+    "runtime_identity": "exact-match",
+    "initial_fingerprint": "exact-match",
+    "unsupported_behavior": "explicit-skip",
+    "false_successes_allowed": 0
+  }
+}

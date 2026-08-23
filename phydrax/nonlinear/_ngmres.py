@@ -28,6 +28,7 @@ from ._types import (
 from ._updates import (
     AbstractNonlinearUpdate,
     apply_prepared_nonlinear_update,
+    NonlinearUpdateControl,
     prepare_nonlinear_update,
     PreparedNonlinearUpdate,
 )
@@ -208,10 +209,31 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 current.prepared_update,
                 prepared_static,
             )
+            remaining_residual_evaluations = (
+                jnp.asarray(-1, dtype=jnp.int32)
+                if termination.maximum_evaluations is None
+                else jnp.maximum(
+                    termination.maximum_evaluations - current.residual_evaluations - 1,
+                    0,
+                )
+            )
+            remaining_linear_iterations = (
+                jnp.asarray(-1, dtype=jnp.int32)
+                if termination.maximum_linear_iterations is None
+                else jnp.maximum(
+                    termination.maximum_linear_iterations - current.linear_iterations,
+                    0,
+                )
+            )
+            update_control = NonlinearUpdateControl(
+                maximum_residual_evaluations=remaining_residual_evaluations,
+                maximum_linear_iterations=remaining_linear_iterations,
+            )
             base_result, next_prepared_update = apply_prepared_nonlinear_update(
                 combined_prepared,
                 state_tree,
                 args=args,
+                control=update_control,
             )
             next_prepared_dynamic, _ = eqx.partition(
                 next_prepared_update,
