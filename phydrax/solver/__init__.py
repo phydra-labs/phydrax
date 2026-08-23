@@ -45,6 +45,21 @@ term evaluation.
 """
 
 from ._bdf_method import BDFMethod
+from ._calabi_yau import (
+    CalabiYauMetricProblem,
+    CalabiYauMetricResult,
+    CalabiYauSolvePolicy,
+    solve_calabi_yau_metric,
+)
+from ._calabi_yau_archive import CalabiYauMetricArtifact, freeze_calabi_yau_result
+from ._calabi_yau_campaigns import (
+    CalabiYauCampaign,
+    cp1_calibration,
+    prepare_elliptic_curve,
+    prepare_fermat_calabi_yau,
+    prepare_fermat_quintic,
+    prepare_quartic_k3,
+)
 from ._collocation import (
     assemble_stochastic_collocation,
     COLLOCATION_NONFINITE,
@@ -270,6 +285,13 @@ from ._levy import (
     LevySmallJumpApproximation,
     solve_levy_sde,
 )
+from ._lindblad import (
+    amplitude_damping_problem,
+    dephasing_problem,
+    LindbladProblem,
+    LindbladSolution,
+    solve_lindblad,
+)
 from ._markov_cubature import (
     MarkovCubatureDiagnostics,
     MarkovCubatureMethod,
@@ -331,6 +353,15 @@ from ._quantum_propagation import (
     UnitaryPropagatorProblem,
     UnitaryPropagatorSolution,
 )
+from ._quantum_tomography import (
+    freeze_quantum_tomography,
+    QuantumTomographyArtifact,
+    QuantumTomographyPolicy,
+    QuantumTomographyProblem,
+    QuantumTomographyResult,
+    solve_quantum_tomography,
+)
+from ._quantum_tomography_campaigns import tetrahedral_qubit_tomography
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -441,6 +472,30 @@ from ._variational_tdvp import (
 
 
 __all__ = [
+    "CalabiYauCampaign",
+    "CalabiYauMetricArtifact",
+    "CalabiYauMetricProblem",
+    "CalabiYauMetricResult",
+    "CalabiYauSolvePolicy",
+    "LindbladProblem",
+    "LindbladSolution",
+    "QuantumTomographyArtifact",
+    "QuantumTomographyPolicy",
+    "QuantumTomographyProblem",
+    "QuantumTomographyResult",
+    "amplitude_damping_problem",
+    "cp1_calibration",
+    "dephasing_problem",
+    "freeze_calabi_yau_result",
+    "freeze_quantum_tomography",
+    "prepare_elliptic_curve",
+    "prepare_fermat_calabi_yau",
+    "prepare_fermat_quintic",
+    "prepare_quartic_k3",
+    "solve_calabi_yau_metric",
+    "solve_lindblad",
+    "solve_quantum_tomography",
+    "tetrahedral_qubit_tomography",
     "SeparableHamiltonianResult",
     "integrate_stormer_verlet",
     "stormer_verlet_step",

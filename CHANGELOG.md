@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added projective-line Calabi–Yau campaign preparation, residue and induced
+  hypersurface geometry, positivity-globalized Kähler-potential solving,
+  Hermitian spectral/Sylvester infrastructure, faithful Bures density geometry,
+  SLD quantum Fisher actions, mixed-state tomography, fixed-rank/Uhlmann
+  primitives, and finite-dimensional Lindblad channel evolution.
+
 - Estimator-aware `RandomizedMomentPenalty` with U-statistic,
   independent-product, and explicit plug-in modes; deterministic causal
   convolution and Caputo field-operator provenance; integral/nonlocal physics

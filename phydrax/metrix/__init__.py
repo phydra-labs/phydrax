@@ -203,6 +203,19 @@ from ._patchwise import (
     PatchwiseTensorField,
 )
 from ._product_spectrum import product_laplacian_eigenbasis
+from ._quantum_density import (
+    bures_squared_distance,
+    BuresDensityManifold,
+    density_fidelity,
+    faithful_density_from_cholesky,
+    faithful_density_from_generator,
+    FaithfulDensityReport,
+    FixedRankDensityStratum,
+    principal_purification,
+    SLDQuantumFisherGeometry,
+    uhlmann_alignment,
+    UhlmannAlignment,
+)
 from ._semi_riemannian import (
     causal_character,
     CausalCharacter,
@@ -516,5 +529,16 @@ __all__ = [
     "PatchwiseDensity",
     "PatchwiseDifferentialForm",
     "PatchwiseMetric",
+    "BuresDensityManifold",
+    "FaithfulDensityReport",
+    "FixedRankDensityStratum",
+    "SLDQuantumFisherGeometry",
+    "UhlmannAlignment",
+    "bures_squared_distance",
+    "density_fidelity",
+    "faithful_density_from_cholesky",
+    "faithful_density_from_generator",
+    "principal_purification",
+    "uhlmann_alignment",
     "PatchwiseTensorField",
 ]
