@@ -435,6 +435,11 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
     ) -> LeastSquaresResult:
         if not isinstance(problem, NonlinearLeastSquaresProblem):
             raise TypeError("problem must be a NonlinearLeastSquaresProblem.")
+        if problem.bounds is not None:
+            raise ValueError(
+                "FiniteDifferenceGaussNewton does not silently ignore bounds; "
+                "use a bounded least-squares method."
+            )
         if not isinstance(termination, OptimizationTermination):
             raise TypeError("termination must be an OptimizationTermination.")
         parameters = _validate_real_inexact_tree(

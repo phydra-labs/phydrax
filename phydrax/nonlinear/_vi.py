@@ -11,13 +11,21 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, PyTree
 
 from .._bounds import Bounds
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, tree_norm, validate_real_inexact_tree
 from ..linalg import PyTreeSpace
 from ._newton import NewtonKrylov
+from ._prepared import (
+    prepare_nonlinear,
+    PreparedNonlinearSolve,
+    refresh_nonlinear,
+    solve_prepared_nonlinear,
+)
 from ._types import (
     NonlinearDiagnostics,
     NonlinearProvenance,
@@ -29,6 +37,7 @@ from ._types import (
 
 
 ComplementarityFormulation: TypeAlias = Literal["natural", "fischer-burmeister"]
+VariationalInequalityFeasibility: TypeAlias = Literal["allow-infeasible", "preserve-box"]
 
 
 @jax.custom_jvp
@@ -193,6 +202,7 @@ class VariationalInequalityProblem(StrictModule):
         /,
         *,
         derivative_policy: GeneralizedDerivativePolicy | None = None,
+        project_trials: bool = False,
     ) -> NonlinearSystemProblem:
         if formulation not in ("natural", "fischer-burmeister"):
             raise ValueError(f"Unknown complementarity formulation {formulation!r}.")
@@ -207,7 +217,8 @@ class VariationalInequalityProblem(StrictModule):
             )
 
         def residual(state, args):
-            value = validate_real_inexact_tree(state, name="VI state")
+            raw_value = validate_real_inexact_tree(state, name="VI state")
+            value = self.bounds.project(raw_value) if project_trials else raw_value
             physical = self.evaluate(value, args)
             transformed = (
                 _natural_map(value, physical, self.bounds)
@@ -224,7 +235,11 @@ class VariationalInequalityProblem(StrictModule):
         return NonlinearSystemProblem(
             residual,
             has_aux=True,
-            problem_id=f"{self.problem_id}/{formulation}",
+            problem_id=(
+                f"{self.problem_id}/{formulation}/projected"
+                if project_trials
+                else f"{self.problem_id}/{formulation}"
+            ),
         )
 
 
@@ -286,12 +301,14 @@ class SemismoothNewton(StrictModule):
     formulation: ComplementarityFormulation = eqx.field(static=True)
     derivative_policy: GeneralizedDerivativePolicy
     certification_tolerance: float = eqx.field(static=True)
+    feasibility: VariationalInequalityFeasibility = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         newton: NewtonKrylov | None = None,
         formulation: ComplementarityFormulation = "fischer-burmeister",
+        feasibility: VariationalInequalityFeasibility = "allow-infeasible",
         derivative_policy: GeneralizedDerivativePolicy | None = None,
         certification_tolerance: float = 1e-7,
     ):
@@ -306,6 +323,8 @@ class SemismoothNewton(StrictModule):
             raise TypeError("newton must be NewtonKrylov or None.")
         if formulation not in ("natural", "fischer-burmeister"):
             raise ValueError(f"Unknown complementarity formulation {formulation!r}.")
+        if feasibility not in ("allow-infeasible", "preserve-box"):
+            raise ValueError("feasibility must be 'allow-infeasible' or 'preserve-box'.")
         if not isinstance(policy_, GeneralizedDerivativePolicy):
             raise TypeError(
                 "derivative_policy must be GeneralizedDerivativePolicy or None."
@@ -316,6 +335,7 @@ class SemismoothNewton(StrictModule):
         self.formulation = formulation
         self.derivative_policy = policy_
         self.certification_tolerance = tolerance
+        self.feasibility = feasibility
 
     def solve(
         self,
@@ -326,46 +346,265 @@ class SemismoothNewton(StrictModule):
         termination: NonlinearTermination | None = None,
         args: Any = None,
     ) -> VariationalInequalityResult:
-        if not isinstance(problem, VariationalInequalityProblem):
-            raise TypeError("problem must be a VariationalInequalityProblem.")
-        termination_ = NonlinearTermination() if termination is None else termination
-        if not isinstance(termination_, NonlinearTermination):
-            raise TypeError("termination must be NonlinearTermination or None.")
-        initial = problem.bounds.project(initial_state)
-        nonlinear_problem = problem.as_nonlinear_problem(
-            self.formulation,
-            derivative_policy=self.derivative_policy,
-        )
-        result = self.newton.solve(
-            nonlinear_problem,
-            initial,
-            termination=termination_,
-            args=args,
-        )
-        certificate = complementarity_certificate(
+        prepared = prepare_variational_inequality(
             problem,
-            result.state,
+            initial_state,
+            method=self,
+            termination=termination,
             args=args,
-            tolerance=self.certification_tolerance,
-            derivative_policy=self.derivative_policy,
         )
-        certified_status = jnp.where(
-            (result.status == int(NonlinearStatus.SUCCESS)) & ~certificate.certified,
-            int(NonlinearStatus.RESIDUAL_STAGNATION),
-            result.status,
-        ).astype(jnp.int32)
-        certified_result = NonlinearResult(
-            state=result.state,
-            residual=result.residual,
-            auxiliary=result.auxiliary,
-            status=certified_status,
-            diagnostics=result.diagnostics,
-            provenance=result.provenance,
+        return solve_prepared_variational_inequality(prepared)
+
+
+class PreparedVariationalInequalitySolve(StrictModule):
+    """Prepared semismooth VI solve with fixed bound-role topology."""
+
+    problem: VariationalInequalityProblem
+    method: SemismoothNewton
+    termination: NonlinearTermination
+    args: Any
+    nonlinear: PreparedNonlinearSolve
+    numeric_version: Array
+    topology_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        problem: VariationalInequalityProblem,
+        method: SemismoothNewton,
+        termination: NonlinearTermination,
+        args: Any,
+        nonlinear: PreparedNonlinearSolve,
+        /,
+        *,
+        topology_id: str,
+        numeric_version: Any,
+    ):
+        if not isinstance(problem, VariationalInequalityProblem):
+            raise TypeError("problem must be VariationalInequalityProblem.")
+        if not isinstance(method, SemismoothNewton):
+            raise TypeError("method must be SemismoothNewton.")
+        if not isinstance(termination, NonlinearTermination):
+            raise TypeError("termination must be NonlinearTermination.")
+        if not isinstance(nonlinear, PreparedNonlinearSolve):
+            raise TypeError("nonlinear must be PreparedNonlinearSolve.")
+        topology_id_ = str(topology_id)
+        if not topology_id_:
+            raise ValueError("topology_id must be non-empty.")
+        version = jnp.asarray(numeric_version, dtype=jnp.int32)
+        if version.ndim != 0:
+            raise ValueError("numeric_version must be scalar.")
+        version = eqx.error_if(
+            version,
+            version < 0,
+            "numeric_version must be non-negative.",
         )
-        return VariationalInequalityResult(
-            nonlinear_result=certified_result,
-            certificate=certificate,
+        self.problem = problem
+        self.method = method
+        self.termination = termination
+        self.args = args
+        self.nonlinear = nonlinear
+        self.numeric_version = version
+        self.topology_id = topology_id_
+
+
+def _bound_topology_id(problem: VariationalInequalityProblem, state, /) -> str:
+    lower, upper = problem.bounds.materialize(state)
+    roles = []
+    for lower_leaf, upper_leaf in zip(
+        jax.tree.leaves(lower),
+        jax.tree.leaves(upper),
+        strict=True,
+    ):
+        lower_host = np.asarray(lower_leaf)
+        upper_host = np.asarray(upper_leaf)
+        role = (
+            np.isfinite(lower_host).astype(np.int8)
+            + 2 * np.isfinite(upper_host).astype(np.int8)
+            + 4
+            * (
+                np.isfinite(lower_host)
+                & np.isfinite(upper_host)
+                & (lower_host == upper_host)
+            ).astype(np.int8)
         )
+        roles.append(
+            {
+                "shape": list(role.shape),
+                "roles": role.reshape(-1).tolist(),
+            }
+        )
+    return canonical_fingerprint(
+        {
+            "kind": "variational-inequality-bound-topology",
+            "problem": problem.problem_id,
+            "roles": roles,
+        }
+    )
+
+
+def _vi_nonlinear_problem(
+    problem: VariationalInequalityProblem,
+    method: SemismoothNewton,
+    /,
+) -> NonlinearSystemProblem:
+    return problem.as_nonlinear_problem(
+        method.formulation,
+        derivative_policy=method.derivative_policy,
+        project_trials=method.feasibility == "preserve-box",
+    )
+
+
+def prepare_variational_inequality(
+    problem: VariationalInequalityProblem,
+    initial_state: PyTree[Any],
+    /,
+    *,
+    method: SemismoothNewton | None = None,
+    termination: NonlinearTermination | None = None,
+    args: Any = None,
+) -> PreparedVariationalInequalitySolve:
+    if not isinstance(problem, VariationalInequalityProblem):
+        raise TypeError("problem must be VariationalInequalityProblem.")
+    method_ = SemismoothNewton() if method is None else method
+    termination_ = NonlinearTermination() if termination is None else termination
+    if not isinstance(method_, SemismoothNewton):
+        raise TypeError("method must be SemismoothNewton or None.")
+    if not isinstance(termination_, NonlinearTermination):
+        raise TypeError("termination must be NonlinearTermination or None.")
+    initial = problem.bounds.project(initial_state)
+    nonlinear = prepare_nonlinear(
+        _vi_nonlinear_problem(problem, method_),
+        initial,
+        method=method_.newton,
+        termination=termination_,
+        args=args,
+    )
+    return PreparedVariationalInequalitySolve(
+        problem,
+        method_,
+        termination_,
+        args,
+        nonlinear,
+        topology_id=_bound_topology_id(problem, initial),
+        numeric_version=0,
+    )
+
+
+def refresh_variational_inequality(
+    prepared: PreparedVariationalInequalitySolve,
+    problem: VariationalInequalityProblem,
+    initial_state: PyTree[Any],
+    /,
+    *,
+    args: Any = None,
+) -> PreparedVariationalInequalitySolve:
+    if not isinstance(prepared, PreparedVariationalInequalitySolve):
+        raise TypeError("prepared must be PreparedVariationalInequalitySolve.")
+    if not isinstance(problem, VariationalInequalityProblem):
+        raise TypeError("problem must be VariationalInequalityProblem.")
+    if problem.problem_id != prepared.problem.problem_id:
+        raise ValueError("VI refresh must preserve problem_id.")
+    initial = problem.bounds.project(initial_state)
+    topology_id = _bound_topology_id(problem, initial)
+    if topology_id != prepared.topology_id:
+        raise ValueError("VI refresh changed finite/infinite/fixed bound topology.")
+    nonlinear = refresh_nonlinear(
+        prepared.nonlinear,
+        _vi_nonlinear_problem(problem, prepared.method),
+        initial,
+        args=args,
+    )
+    return PreparedVariationalInequalitySolve(
+        problem,
+        prepared.method,
+        prepared.termination,
+        args,
+        nonlinear,
+        topology_id=prepared.topology_id,
+        numeric_version=prepared.numeric_version + 1,
+    )
+
+
+def solve_prepared_variational_inequality(
+    prepared: PreparedVariationalInequalitySolve,
+    /,
+    *,
+    termination: NonlinearTermination | None = None,
+) -> VariationalInequalityResult:
+    if not isinstance(prepared, PreparedVariationalInequalitySolve):
+        raise TypeError("prepared must be PreparedVariationalInequalitySolve.")
+    termination_ = prepared.termination if termination is None else termination
+    if not isinstance(termination_, NonlinearTermination):
+        raise TypeError("termination must be NonlinearTermination or None.")
+    result = solve_prepared_nonlinear(
+        prepared.nonlinear,
+        termination=termination_,
+    )
+    return _certify_variational_inequality_result(
+        prepared.problem,
+        prepared.method,
+        result,
+        prepared.args,
+    )
+
+
+def _certify_variational_inequality_result(
+    problem: VariationalInequalityProblem,
+    method: SemismoothNewton,
+    result: NonlinearResult,
+    args: Any,
+    /,
+) -> VariationalInequalityResult:
+    state = (
+        problem.bounds.project(result.state)
+        if method.feasibility == "preserve-box"
+        else result.state
+    )
+    nonlinear_problem = _vi_nonlinear_problem(problem, method)
+    transformed, physical = nonlinear_problem.evaluate(state, args)
+    certificate = complementarity_certificate(
+        problem,
+        state,
+        args=args,
+        tolerance=method.certification_tolerance,
+        derivative_policy=method.derivative_policy,
+    )
+    certified_status = jnp.where(
+        (result.status == int(NonlinearStatus.SUCCESS)) & ~certificate.certified,
+        int(NonlinearStatus.RESIDUAL_STAGNATION),
+        result.status,
+    ).astype(jnp.int32)
+    diagnostics = eqx.tree_at(
+        lambda value: (
+            value.final_residual_norm,
+            value.residual_evaluations,
+        ),
+        result.diagnostics,
+        (
+            tree_norm(transformed),
+            result.diagnostics.residual_evaluations + 1,
+        ),
+    )
+    provenance = NonlinearProvenance(
+        problem_id=nonlinear_problem.problem_id,
+        method_id=result.provenance.method_id,
+        derivative_id=result.provenance.derivative_id,
+        globalization_id=result.provenance.globalization_id,
+        linear_plan_id=result.provenance.linear_plan_id,
+        notes=(f"vi-formulation={method.formulation};feasibility={method.feasibility}"),
+    )
+    certified_result = NonlinearResult(
+        state=state,
+        residual=transformed,
+        auxiliary=physical,
+        status=certified_status,
+        diagnostics=diagnostics,
+        provenance=provenance,
+    )
+    return VariationalInequalityResult(
+        nonlinear_result=certified_result,
+        certificate=certificate,
+    )
 
 
 def complementarity_certificate(
@@ -445,9 +684,14 @@ def complementarity_certificate(
 __all__ = [
     "ComplementarityCertificate",
     "ComplementarityFormulation",
+    "PreparedVariationalInequalitySolve",
     "GeneralizedDerivativePolicy",
     "SemismoothNewton",
     "VariationalInequalityProblem",
     "VariationalInequalityResult",
+    "VariationalInequalityFeasibility",
     "complementarity_certificate",
+    "prepare_variational_inequality",
+    "refresh_variational_inequality",
+    "solve_prepared_variational_inequality",
 ]

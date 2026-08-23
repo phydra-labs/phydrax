@@ -23,6 +23,7 @@ Capability = Literal[
     "optimization.unconstrained",
     "optimization.constrained",
     "optimization.proximal",
+    "optimization.bounded-least-squares",
     "optimization.linear-program",
     "optimization.quadratic-program",
     "optimization.conic-program",
@@ -298,6 +299,8 @@ class OptimizationProblem:
             return "optimization.constrained"
         if self.variant == "proximal":
             return "optimization.proximal"
+        if self.variant == "bounded-least-squares":
+            return "optimization.bounded-least-squares"
         raise ValueError(f"Unsupported optimization variant {self.variant!r}")
 
     def objective(self, value: np.ndarray) -> float:
@@ -308,6 +311,10 @@ class OptimizationProblem:
             return float(np.sum(100.0 * (right - left * left) ** 2 + (1.0 - left) ** 2))
         if self.variant == "constrained":
             return float(2.0 * (point @ point - 1.0) - point[0])
+        if self.variant == "bounded-least-squares":
+            if self.target is None:
+                raise ValueError("bounded least-squares problem is missing its target")
+            return float(0.5 * np.sum((point - self.target) ** 2))
         if self.target is None:
             raise ValueError("proximal problem is missing its target")
         return float(
@@ -328,6 +335,10 @@ class OptimizationProblem:
             gradient = 4.0 * point
             gradient[0] -= 1.0
             return gradient
+        if self.variant == "bounded-least-squares":
+            if self.target is None:
+                raise ValueError("bounded least-squares problem is missing its target")
+            return point - self.target
         if self.target is None:
             raise ValueError("proximal problem is missing its target")
         return point - self.target
@@ -372,6 +383,9 @@ class OptimizationProblem:
                     "unconstrained": "nonquadratic Rosenbrock chain",
                     "constrained": "Maratos-style circle equality with affine inequality",
                     "proximal": "separable quadratic plus L1",
+                    "bounded-least-squares": (
+                        "separable residual with active unit-box solution"
+                    ),
                 }[self.variant],
                 "l1_weight": self.l1_weight,
             },
@@ -693,6 +707,28 @@ def l1_composite_optimization(*, size: int, seed: int) -> OptimizationProblem:
     )
 
 
+def bounded_least_squares_optimization(
+    *,
+    size: int,
+    seed: int,
+) -> OptimizationProblem:
+    if size < 1:
+        raise ValueError("bounded least-squares dimension must be positive")
+    generator = np.random.Generator(np.random.PCG64(seed))
+    target = generator.standard_normal(size)
+    target[::2] += 1.5
+    target[1::2] -= 1.5
+    optimum = np.clip(target, 0.0, 1.0)
+    return OptimizationProblem(
+        name="bounded-separable-residual",
+        variant="bounded-least-squares",
+        seed=seed,
+        initial=np.full(size, 0.5, dtype=np.float64),
+        optimum=optimum,
+        target=target,
+    )
+
+
 def bounded_linear_program(*, size: int, seed: int) -> MathematicalProgramProblem:
     generator = np.random.Generator(np.random.PCG64(seed))
     linear = generator.standard_normal(size)
@@ -806,6 +842,12 @@ def default_problems(*, size: int, seed: int) -> dict[str, BenchmarkProblem]:
             size=size,
             seed=seed + 8,
         ),
+        "optimization-bounded-least-squares": (
+            bounded_least_squares_optimization(
+                size=size,
+                seed=seed + 13,
+            )
+        ),
         "optimization-linear-program": bounded_linear_program(
             size=size,
             seed=seed + 10,
@@ -907,6 +949,7 @@ __all__ = [
     "NonlinearProblem",
     "OptimizationProblem",
     "SparseLinearProblem",
+    "bounded_least_squares_optimization",
     "default_problems",
     "general_eigenproblem",
     "l1_composite_optimization",

@@ -13,9 +13,19 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
-from .._tree_math import tree_add_scaled
+from .._tree_math import tree_add_scaled, tree_allfinite
 from ..linalg import AbstractVectorSpace
 from ._types import NonlinearProvenance, NonlinearStatus
+from ._updates import (
+    AbstractNonlinearUpdate,
+    NonlinearUpdateCapabilities,
+    NonlinearUpdateControl,
+    NonlinearUpdateDiagnostics,
+    NonlinearUpdateProvenance,
+    NonlinearUpdateResult,
+    NonlinearUpdateStatus,
+    PreparedNonlinearUpdate,
+)
 
 
 FASCycleKind: TypeAlias = Literal["v", "w", "f"]
@@ -409,8 +419,8 @@ def fas_cycle(
     )
 
 
-class FASNonlinearPreconditioner(StrictModule):
-    """One FAS cycle exposed as a nonlinear state preconditioner."""
+class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
+    """One prepared FAS cycle exposed as a finite nonlinear update."""
 
     hierarchy: FASHierarchy
     policy: FASCyclePolicy
@@ -430,6 +440,27 @@ class FASNonlinearPreconditioner(StrictModule):
         self.hierarchy = hierarchy
         self.policy = policy_
 
+    @property
+    def update_id(self) -> str:
+        return f"fas-{self.policy.kind}/{self.hierarchy.hierarchy_id}"
+
+    @property
+    def capabilities(self) -> NonlinearUpdateCapabilities:
+        return NonlinearUpdateCapabilities(
+            jit=True,
+            prepared_refresh=True,
+            differentiable_action=True,
+            counts_complete=False,
+        )
+
+    def _prepare_internal(self, problem, state, args, /):
+        del problem, state, args
+        return None
+
+    def _refresh_internal(self, internal_state, problem, state, args, /):
+        del problem, state, args
+        return internal_state
+
     def __call__(self, state: PyTree[Any], args: Any = None, /) -> PyTree[Array]:
         return fas_cycle(
             self.hierarchy,
@@ -437,6 +468,109 @@ class FASNonlinearPreconditioner(StrictModule):
             args=args,
             policy=self.policy,
         ).state
+
+    def _apply(
+        self,
+        prepared: PreparedNonlinearUpdate,
+        state: PyTree[Any],
+        args: Any,
+        control: NonlinearUpdateControl,
+        /,
+    ):
+        problem = prepared.problem
+        state_ = prepared.plan.state_space.validate(state)
+        initial_residual, initial_auxiliary = problem.evaluate(state_, args)
+        initial_norm = _space_norm(prepared.plan.residual_space, initial_residual)
+        hard_budget_requested = any(
+            value is not None
+            for value in (
+                control.maximum_residual_evaluations,
+                control.maximum_jacobian_preparations,
+                control.maximum_linear_solves,
+                control.maximum_linear_iterations,
+            )
+        )
+        if hard_budget_requested:
+            diagnostics = NonlinearUpdateDiagnostics(
+                initial_residual_norm=initial_norm,
+                final_residual_norm=initial_norm,
+                step_norm=0.0,
+                residual_evaluations=1,
+                counts_complete=False,
+            )
+            return (
+                NonlinearUpdateResult(
+                    state=state_,
+                    residual=initial_residual,
+                    auxiliary=initial_auxiliary,
+                    status=NonlinearUpdateStatus.BUDGET_EXHAUSTED,
+                    diagnostics=diagnostics,
+                    provenance=NonlinearUpdateProvenance(
+                        problem_id=problem.problem_id,
+                        update_id=self.update_id,
+                        plan_id=prepared.plan.plan_id,
+                        notes="FAS smoother/coarse work is not fully countable.",
+                    ),
+                ),
+                prepared.internal_state,
+            )
+        cycle = fas_cycle(
+            self.hierarchy,
+            state_,
+            args=args,
+            policy=self.policy,
+        )
+        residual, auxiliary = problem.evaluate(cycle.state, args)
+        final_norm = _space_norm(prepared.plan.residual_space, residual)
+        finite = (
+            tree_allfinite(cycle.state)
+            & tree_allfinite(residual)
+            & cycle.diagnostics.finite
+        )
+        valid = problem.valid(cycle.state, residual, auxiliary, args)
+        status = jnp.where(
+            ~finite,
+            int(NonlinearUpdateStatus.NONFINITE_EVALUATION),
+            jnp.where(
+                ~valid,
+                int(NonlinearUpdateStatus.DOMAIN_REJECTED),
+                int(NonlinearUpdateStatus.APPLIED),
+            ),
+        ).astype(jnp.int32)
+        diagnostics = NonlinearUpdateDiagnostics(
+            initial_residual_norm=initial_norm,
+            final_residual_norm=final_norm,
+            step_norm=_space_norm(
+                prepared.plan.state_space,
+                jax.tree.map(lambda new, old: new - old, cycle.state, state_),
+            ),
+            residual_evaluations=2,
+            accepted_steps=(status == int(NonlinearUpdateStatus.APPLIED)).astype(
+                jnp.int32
+            ),
+            rejected_steps=(status != int(NonlinearUpdateStatus.APPLIED)).astype(
+                jnp.int32
+            ),
+            domain_failures=(finite & ~valid).astype(jnp.int32),
+            nonfinite_trials=(~finite).astype(jnp.int32),
+            counts_complete=False,
+        )
+        return (
+            NonlinearUpdateResult(
+                state=cycle.state,
+                residual=residual,
+                auxiliary=auxiliary,
+                status=status,
+                diagnostics=diagnostics,
+                provenance=NonlinearUpdateProvenance(
+                    problem_id=problem.problem_id,
+                    update_id=self.update_id,
+                    plan_id=prepared.plan.plan_id,
+                    notes=f"cycle={self.policy.kind};hierarchy={self.hierarchy.hierarchy_id}",
+                ),
+            ),
+            prepared.internal_state,
+        )
 
 
 __all__ = [

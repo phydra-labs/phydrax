@@ -201,6 +201,8 @@ def test_prepared_nonlinear_rejects_unsupported_methods_and_is_public():
         nl.prepare_nonlinear(
             problem,
             jnp.zeros(1),
-            method=nl.NonlinearGMRES(lambda state, args: state),
+            method=nl.NonlinearGMRES(
+                nl.FunctionNonlinearUpdate(lambda state, args: state)
+            ),
             termination=_termination(),
         )

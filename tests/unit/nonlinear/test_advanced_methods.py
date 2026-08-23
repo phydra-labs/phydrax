@@ -390,7 +390,7 @@ def test_nonlinear_gmres_rejects_a_harmful_affine_combination_and_restarts():
         return 1.0 - 0.1 * (state - 1.0) + 10.0 * jnp.maximum(state - 2.0, 0.0) ** 2
 
     method = nl.NonlinearGMRES(
-        lambda state, args: state + 1.0,
+        nl.FunctionNonlinearUpdate(lambda state, args: state + 1.0),
         history=2,
         safeguard_factor=1.0,
     )

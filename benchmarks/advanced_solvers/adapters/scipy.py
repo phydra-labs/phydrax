@@ -36,6 +36,7 @@ _CAPABILITIES = frozenset(
         "optimization.unconstrained",
         "optimization.constrained",
         "optimization.proximal",
+        "optimization.bounded-least-squares",
     }
 )
 
@@ -318,6 +319,21 @@ class ScipyAdapter(BenchmarkAdapter):
                 method="SLSQP",
                 options=options,
             )
+        elif problem.variant == "bounded-least-squares":
+            options.update(
+                {
+                    "ftol": tolerance.absolute,
+                    "gtol": tolerance.absolute,
+                }
+            )
+            result = optimize.minimize(
+                problem.objective,
+                problem.initial,
+                jac=problem.gradient,
+                bounds=[(0.0, 1.0)] * problem.initial.size,
+                method="L-BFGS-B",
+                options=options,
+            )
         else:
             options.update(
                 {
@@ -365,6 +381,8 @@ def _configuration(spec: CaseSpec) -> tuple[str, str]:
         return "slsqp", "dense-bfgs-qp"
     if capability == "optimization.proximal":
         return "powell-exact-composite-objective", "none"
+    if capability == "optimization.bounded-least-squares":
+        return "l-bfgs-b-bound-least-squares", "none"
     return "unsupported", "none"
 
 
