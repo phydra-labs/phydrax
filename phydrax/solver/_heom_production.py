@@ -75,7 +75,8 @@ def solve_heom_continuation(
         raise ValueError("HEOM continuation depths must be strictly increasing.")
     solutions = []
     stages = []
-    previous_root = base_problem.initial_state[0]
+    initial_root = base_problem.initial_state[0]
+    previous_final = None
     for depth in depth_sequence:
         hierarchy = HEOMHierarchy(base_problem.expansion.rank, depth)
         problem = HEOMProblem(
@@ -83,12 +84,16 @@ def solve_heom_continuation(
             base_problem.coupling_operator,
             base_problem.expansion,
             hierarchy,
-            previous_root,
+            initial_root,
             problem_id=f"{base_problem.problem_id}:depth-{depth}",
         )
         solution = solve_heom(problem, step_size=step_size, steps=steps)
         root = solution.root_states[-1]
-        difference = jnp.linalg.norm(root - previous_root)
+        difference = (
+            jnp.asarray(jnp.inf)
+            if previous_final is None
+            else jnp.linalg.norm(root - previous_final)
+        )
         top_norm = solution.maximum_auxiliary_norm_by_level[-1]
         stages.append(
             HEOMContinuationStage(
@@ -100,7 +105,7 @@ def solve_heom_continuation(
             )
         )
         solutions.append(solution)
-        previous_root = root
+        previous_final = root
     return HEOMContinuationResult(solutions, stages, tolerance=tolerance)
 
 

@@ -23,6 +23,10 @@ def drude_lorentz_matsubara(
     count = int(term_count)
     if energy < 0.0 or cutoff <= 0.0 or thermal <= 0.0 or count < 1:
         raise ValueError("Drude–Lorentz decomposition parameters are invalid.")
+    for index in range(1, count):
+        frequency = 2.0 * jnp.pi * index * thermal
+        if abs(float(frequency**2 - cutoff**2)) <= 1e-12 * max(1.0, cutoff**2):
+            raise ValueError("Matsubara pole collides with the Drude cutoff frequency.")
     coefficients = [energy * cutoff * (1.0 / jnp.tan(cutoff / (2.0 * thermal)) - 1j)]
     exponents = [cutoff + 0.0j]
     for index in range(1, count):
@@ -39,4 +43,59 @@ def drude_lorentz_matsubara(
     )
 
 
-__all__ = ["drude_lorentz_matsubara"]
+def fit_bath_exponentials(
+    target,
+    times,
+    exponents,
+    /,
+    *,
+    expansion_id: str,
+) -> BathCorrelationExpansion:
+    """Fit coefficients for caller-supplied stable rational/Padé poles."""
+    if not callable(target):
+        raise TypeError("target must be callable.")
+    times_ = jnp.asarray(times, dtype=float)
+    exponents_ = jnp.asarray(exponents, dtype=complex)
+    if times_.ndim != 1 or exponents_.ndim != 1:
+        raise ValueError("Bath fit times and exponents must be vectors.")
+    if jnp.any(jnp.real(exponents_) <= 0.0):
+        raise ValueError("Bath fit exponents must have positive real part.")
+    design = jnp.exp(-times_[:, None] * exponents_[None, :])
+    reference = jnp.asarray(target(times_), dtype=complex)
+    coefficients = jnp.linalg.lstsq(design, reference, rcond=None)[0]
+    residual = jnp.sqrt(jnp.mean(jnp.abs(design @ coefficients - reference) ** 2))
+    return BathCorrelationExpansion(
+        coefficients,
+        exponents_,
+        expansion_id=expansion_id,
+        fit_residual=residual,
+    )
+
+
+def underdamped_brownian_two_pole(
+    frequency: float,
+    damping: float,
+    coupling: float,
+    /,
+) -> BathCorrelationExpansion:
+    """Two-pole underdamped Brownian correlation approximation."""
+    omega = float(frequency)
+    gamma = float(damping)
+    strength = float(coupling)
+    if omega <= 0.0 or gamma <= 0.0 or gamma >= 2.0 * omega:
+        raise ValueError("Underdamped Brownian parameters require 0 < gamma < 2 omega.")
+    damped = jnp.sqrt(omega**2 - 0.25 * gamma**2)
+    exponents = jnp.asarray([0.5 * gamma + 1j * damped, 0.5 * gamma - 1j * damped])
+    coefficients = jnp.asarray([0.5 * strength, 0.5 * strength], dtype=complex)
+    return BathCorrelationExpansion(
+        coefficients,
+        exponents,
+        expansion_id="underdamped-brownian-two-pole",
+    )
+
+
+__all__ = [
+    "drude_lorentz_matsubara",
+    "fit_bath_exponentials",
+    "underdamped_brownian_two_pole",
+]

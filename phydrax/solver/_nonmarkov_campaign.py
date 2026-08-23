@@ -11,7 +11,12 @@ from .._strict import StrictModule
 from ..metrix import bures_squared_distance
 from ..operators.quantum import lorentzian_pseudomode
 from ._heom import HEOMHierarchy, HEOMProblem, solve_heom
-from ._memory_kernel import exponential_memory_qubit_problem, solve_memory_kernel
+from ._memory_kernel import (
+    exponential_memory_qubit_problem,
+    MemoryKernelMasterEquation,
+    QuantumMemoryKernel,
+    solve_memory_kernel,
+)
 from ._pseudomode import jaynes_cummings_pseudomode_problem, solve_pseudomode
 
 
@@ -57,6 +62,28 @@ class NonMarkovianComparisonResult(StrictModule):
         )
 
 
+class SpinBosonComparisonResult(StrictModule):
+    heom_states: Array
+    memory_states: Array
+    bures_distance: Array
+    valid: Array
+
+    def __init__(self, heom_states: ArrayLike, memory_states: ArrayLike, /):
+        heom = jnp.asarray(heom_states)
+        memory = jnp.asarray(memory_states)
+        if heom.shape != memory.shape:
+            raise ValueError("Spin-boson trajectories must share shape.")
+        self.heom_states = heom
+        self.memory_states = memory
+        self.bures_distance = jnp.stack(
+            [
+                bures_squared_distance(left, right)
+                for left, right in zip(heom, memory, strict=True)
+            ]
+        )
+        self.valid = jnp.all(jnp.isfinite(heom)) & jnp.all(jnp.isfinite(memory))
+
+
 def lorentzian_qubit_comparison(
     initial_density: ArrayLike,
     /,
@@ -94,4 +121,57 @@ def lorentzian_qubit_comparison(
     )
 
 
-__all__ = ["NonMarkovianComparisonResult", "lorentzian_qubit_comparison"]
+def spin_boson_dephasing_comparison(
+    initial_density: ArrayLike,
+    /,
+    *,
+    bias: float = 0.0,
+    tunneling: float = 1.0,
+    coupling: float = 0.05,
+    decay: float = 1.0,
+    heom_depth: int = 2,
+    step_size: float = 0.01,
+    steps: int = 4,
+) -> SpinBosonComparisonResult:
+    sigma_x = jnp.asarray([[0, 1], [1, 0]], dtype=complex)
+    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=complex)
+    hamiltonian = 0.5 * (float(bias) * sigma_z + float(tunneling) * sigma_x)
+    expansion = lorentzian_pseudomode(0.0, 2.0 * float(decay), coupling, cutoff=2)[0]
+    heom_problem = HEOMProblem(
+        hamiltonian,
+        sigma_z,
+        expansion,
+        HEOMHierarchy(expansion.rank, heom_depth),
+        initial_density,
+        problem_id="spin-boson-dephasing-heom",
+    )
+    heom = solve_heom(heom_problem, step_size=step_size, steps=steps)
+
+    def kernel(lag, density):
+        correlation = expansion(lag)
+        return -jnp.real(correlation) * (
+            sigma_z @ (sigma_z @ density - density @ sigma_z)
+            - (sigma_z @ density - density @ sigma_z) @ sigma_z
+        )
+
+    memory_problem = MemoryKernelMasterEquation(
+        lambda time, density: -1j * (hamiltonian @ density - density @ hamiltonian),
+        QuantumMemoryKernel(
+            kernel,
+            2,
+            memory_horizon=8.0 / float(decay),
+            kernel_id="spin-boson-dephasing-kernel",
+        ),
+        initial_density,
+        problem_id="spin-boson-dephasing-memory",
+    )
+    memory = solve_memory_kernel(memory_problem, step_size=step_size, steps=steps)
+    return SpinBosonComparisonResult(heom.root_states, memory.states)
+
+
+__all__ = [
+    "NonMarkovianComparisonResult",
+    "SpinBosonComparisonResult",
+    "lorentzian_qubit_comparison",
+    "spin_boson_dephasing_comparison",
+]

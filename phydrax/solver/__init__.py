@@ -226,6 +226,7 @@ from ._fermionic_gaussian import (
     damped_fermionic_mode,
     FermionicGaussianProblem,
     FermionicGaussianSolution,
+    open_kitaev_chain,
     solve_fermionic_gaussian,
 )
 from ._finite_volume import (
@@ -316,11 +317,17 @@ from ._heom import (
     solve_heom,
     thermal_drude_lorentz_qubit_heom,
 )
+from ._heom_implicit import (
+    HEOMImplicitEvidence,
+    HEOMImplicitResult,
+    solve_heom_backward_euler,
+)
 from ._heom_production import (
     HEOMContinuationResult,
     HEOMContinuationStage,
     solve_heom_continuation,
 )
+from ._heom_scaled import ScaledHEOMTopology
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -412,13 +419,17 @@ from ._neural_cde import (
 from ._neural_quantum_jump import (
     NeuralJumpProjectionProblem,
     NeuralJumpProjectionResult,
+    NeuralNoJumpTDVPProblem,
+    NeuralNoJumpTDVPResult,
     solve_neural_jump_projection,
+    solve_neural_no_jump_tdvp,
 )
 from ._nonmarkov_campaign import (
     lorentzian_qubit_comparison,
     NonMarkovianComparisonResult,
+    spin_boson_dephasing_comparison,
+    SpinBosonComparisonResult,
 )
-from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
 from ._particles import (
     InteractingParticleProblem,
     InteractingParticleSolution,
@@ -440,6 +451,12 @@ from ._probabilistic_ode import (
     ProbabilisticODEUpdate,
     solve_probabilistic_ode,
 )
+from ._process_tomography import (
+    CausalProcessTomographyProblem,
+    CausalProcessTomographyResult,
+    fit_causal_process_initial_state,
+    ProcessTomographyExperiment,
+)
 from ._pseudomode import (
     jaynes_cummings_pseudomode_problem,
     PseudomodeEmbeddingProblem,
@@ -453,6 +470,13 @@ from ._purified_lindblad import (
     PurifiedLindbladProblem,
     PurifiedLindbladResult,
     solve_purified_lindblad,
+)
+from ._purified_tebd import (
+    apply_lpdo_two_site_unitary,
+    LPDOBondEvidence,
+    PurifiedStrangProblem,
+    PurifiedStrangResult,
+    solve_purified_strang,
 )
 from ._quantum_jump import (
     amplitude_damping_trajectory_problem,
@@ -481,6 +505,12 @@ from ._quantum_tomography import (
     solve_quantum_tomography,
 )
 from ._quantum_tomography_campaigns import tetrahedral_qubit_tomography
+from ._quantum_trajectory_contract import (
+    QuantumTrajectoryCheckpoint,
+    QuantumTrajectoryEventTable,
+    QuantumTrajectoryPlan,
+    QuantumTrajectoryStatus,
+)
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -588,6 +618,7 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
+from ._xxz_open import boundary_driven_xxz_problem
 
 
 __all__ = [
@@ -1019,4 +1050,28 @@ __all__ = [
     "VMCStatus",
     "vmc_status_name",
     "train_neural_cde",
+    "CausalProcessTomographyProblem",
+    "CausalProcessTomographyResult",
+    "HEOMImplicitEvidence",
+    "HEOMImplicitResult",
+    "LPDOBondEvidence",
+    "NeuralNoJumpTDVPProblem",
+    "NeuralNoJumpTDVPResult",
+    "ProcessTomographyExperiment",
+    "PurifiedStrangProblem",
+    "PurifiedStrangResult",
+    "QuantumTrajectoryCheckpoint",
+    "QuantumTrajectoryEventTable",
+    "QuantumTrajectoryPlan",
+    "QuantumTrajectoryStatus",
+    "ScaledHEOMTopology",
+    "SpinBosonComparisonResult",
+    "apply_lpdo_two_site_unitary",
+    "boundary_driven_xxz_problem",
+    "fit_causal_process_initial_state",
+    "open_kitaev_chain",
+    "solve_heom_backward_euler",
+    "solve_neural_no_jump_tdvp",
+    "solve_purified_strang",
+    "spin_boson_dephasing_comparison",
 ]

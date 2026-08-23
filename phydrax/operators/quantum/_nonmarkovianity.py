@@ -15,6 +15,7 @@ class DynamicalMapSeriesPhysicality(StrictModule):
     trace_preservation_residuals: Array
     intermediate_cp_margins: Array
     intermediate_condition_numbers: Array
+    intermediate_solve_residuals: Array
     cp_valid: Array
     cp_divisible: Array
     valid: Array
@@ -25,12 +26,14 @@ class DynamicalMapSeriesPhysicality(StrictModule):
         trace_preservation_residuals: ArrayLike,
         intermediate_cp_margins: ArrayLike,
         intermediate_condition_numbers: ArrayLike,
+        intermediate_solve_residuals: ArrayLike,
         /,
     ):
         self.cp_margins = jnp.asarray(cp_margins)
         self.trace_preservation_residuals = jnp.asarray(trace_preservation_residuals)
         self.intermediate_cp_margins = jnp.asarray(intermediate_cp_margins)
         self.intermediate_condition_numbers = jnp.asarray(intermediate_condition_numbers)
+        self.intermediate_solve_residuals = jnp.asarray(intermediate_solve_residuals)
         self.cp_valid = jnp.all(self.cp_margins >= -1e-8) & jnp.all(
             self.trace_preservation_residuals <= 1e-8
         )
@@ -39,6 +42,7 @@ class DynamicalMapSeriesPhysicality(StrictModule):
             jnp.all(jnp.isfinite(self.cp_margins))
             & jnp.all(jnp.isfinite(self.trace_preservation_residuals))
             & jnp.all(jnp.isfinite(self.intermediate_condition_numbers))
+            & jnp.all(jnp.isfinite(self.intermediate_solve_residuals))
         )
 
 
@@ -77,10 +81,15 @@ def analyze_dynamical_map_series(
     direct = [_choi_evidence(mapping, dimension) for mapping in maps]
     intermediate_margins = []
     conditions = []
+    solve_residuals = []
     for previous, current in zip(maps[:-1], maps[1:], strict=True):
         condition = jnp.linalg.cond(previous)
         conditions.append(condition)
-        intermediate = current @ jnp.linalg.pinv(previous)
+        intermediate = jnp.linalg.solve(previous.T, current.T).T
+        solve_residual = jnp.linalg.norm(intermediate @ previous - current)
+        solve_residuals.append(
+            jnp.where(condition <= condition_limit, solve_residual, jnp.nan)
+        )
         margin, _ = _choi_evidence(intermediate, dimension)
         intermediate_margins.append(
             jnp.where(condition <= condition_limit, margin, jnp.nan)
@@ -90,6 +99,7 @@ def analyze_dynamical_map_series(
         jnp.stack([item[1] for item in direct]),
         jnp.stack(intermediate_margins) if intermediate_margins else jnp.zeros((0,)),
         jnp.stack(conditions) if conditions else jnp.zeros((0,)),
+        jnp.stack(solve_residuals) if solve_residuals else jnp.zeros((0,)),
     )
 
 

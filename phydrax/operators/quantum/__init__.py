@@ -18,7 +18,11 @@ from ._amplitude import (
     LogAmplitude,
     sampling_log_weight,
 )
-from ._bath_decomposition import drude_lorentz_matsubara
+from ._bath_decomposition import (
+    drude_lorentz_matsubara,
+    fit_bath_exponentials,
+    underdamped_brownian_two_pole,
+)
 from ._berry import (
     berry_link,
     berry_loop_phase,
@@ -153,4 +157,6 @@ __all__ = [
     "analyze_dynamical_map_series",
     "blp_information_backflow",
     "drude_lorentz_matsubara",
+    "fit_bath_exponentials",
+    "underdamped_brownian_two_pole",
 ]

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -38,11 +39,23 @@ class MatrixProductState(StrictModule):
             state = jnp.tensordot(state, tensor, axes=(-1, 0))
         return state[..., 0].reshape(-1)
 
+    def inner(self, other: MatrixProductState, /) -> Array:
+        from ._environments import mps_inner
+
+        return mps_inner(self, other)
+
     def norm(self) -> Array:
-        return jnp.linalg.norm(self.to_dense())
+        from ._environments import mps_norm_squared
+
+        return jnp.sqrt(mps_norm_squared(self))
 
     def normalized(self) -> MatrixProductState:
         norm = self.norm()
+        norm = eqx.error_if(
+            norm,
+            ~jnp.isfinite(norm) | (norm <= 0.0),
+            "MPS norm must be finite and positive.",
+        )
         tensors = (self.tensors[0] / norm,) + self.tensors[1:]
         return MatrixProductState(tensors)
 
@@ -75,7 +88,9 @@ class MatrixProductOperator(StrictModule):
         output_axes = tuple(range(0, 2 * self.site_count, 2))
         input_axes = tuple(range(1, 2 * self.site_count, 2))
         operator = jnp.transpose(operator, output_axes + input_axes)
-        return operator.reshape((prod(self.output_dimensions), prod(self.input_dimensions)))
+        return operator.reshape(
+            (prod(self.output_dimensions), prod(self.input_dimensions))
+        )
 
 
 class LocallyPurifiedDensity(StrictModule):
@@ -87,7 +102,9 @@ class LocallyPurifiedDensity(StrictModule):
     def __init__(self, tensors: Sequence[ArrayLike], /):
         values = tuple(jnp.asarray(tensor) for tensor in tensors)
         if not values or any(tensor.ndim != 4 for tensor in values):
-            raise ValueError("Purification tensors require (left, physical, kraus, right).")
+            raise ValueError(
+                "Purification tensors require (left, physical, kraus, right)."
+            )
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
             raise ValueError("Purification edge bonds must be one.")
         for left, right in zip(values[:-1], values[1:], strict=True):
@@ -110,10 +127,33 @@ class LocallyPurifiedDensity(StrictModule):
             (prod(self.physical_dimensions), prod(self.purification_dimensions))
         )
 
-    def density(self) -> Array:
+    def raw_trace(self) -> Array:
+        from ._environments import lpdo_raw_trace
+
+        return lpdo_raw_trace(self)
+
+    def to_dense_density(self, /, *, normalize: bool = False) -> Array:
         amplitude = self.amplitude()
         density = amplitude @ jnp.conj(amplitude.T)
-        return density / jnp.trace(density)
+        if not normalize:
+            return density
+        trace = jnp.real(jnp.trace(density))
+        trace = eqx.error_if(
+            trace,
+            ~jnp.isfinite(trace) | (trace <= 0.0),
+            "LPDO trace must be finite and positive.",
+        )
+        return density / trace
+
+    def normalized(self) -> LocallyPurifiedDensity:
+        trace = self.raw_trace()
+        trace = eqx.error_if(
+            trace,
+            ~jnp.isfinite(trace) | (trace <= 0.0),
+            "LPDO trace must be finite and positive.",
+        )
+        tensors = (self.tensors[0] / jnp.sqrt(trace),) + self.tensors[1:]
+        return LocallyPurifiedDensity(tensors)
 
 
 # Local import avoids exposing a utility dependency in public signatures.

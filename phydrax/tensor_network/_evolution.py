@@ -37,6 +37,7 @@ def apply_two_site_gate(
     /,
     *,
     maximum_bond_dimension: int,
+    normalize: bool = True,
 ) -> tuple[MatrixProductState, TensorTruncationEvidence]:
     if not isinstance(state, MatrixProductState):
         raise TypeError("state must be a MatrixProductState.")
@@ -67,7 +68,9 @@ def apply_two_site_gate(
     tensors = list(state.tensors)
     tensors[site] = new_left
     tensors[site + 1] = new_right
-    result = MatrixProductState(tuple(tensors)).normalized()
+    result = MatrixProductState(tuple(tensors))
+    if normalize:
+        result = result.normalized()
     return result, TensorTruncationEvidence(retained, available, discarded)
 
 

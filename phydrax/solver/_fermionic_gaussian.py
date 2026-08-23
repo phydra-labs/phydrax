@@ -124,9 +124,55 @@ def damped_fermionic_mode(
     )
 
 
+def open_kitaev_chain(
+    site_count: int,
+    /,
+    *,
+    hopping: float = 1.0,
+    pairing: float = 1.0,
+    chemical_potential: float = 0.0,
+    damping: float = 0.1,
+    target_occupation: float = 0.5,
+) -> FermionicGaussianProblem:
+    count = int(site_count)
+    if count < 1 or damping <= 0.0 or not 0.0 <= target_occupation <= 1.0:
+        raise ValueError("Open Kitaev-chain parameters are invalid.")
+    dimension = 2 * count
+    generator = jnp.zeros((dimension, dimension))
+    for site in range(count):
+        left = 2 * site
+        generator = generator.at[left, left + 1].set(chemical_potential)
+        generator = generator.at[left + 1, left].set(-chemical_potential)
+    for site in range(count - 1):
+        current = 2 * site
+        following = 2 * (site + 1)
+        generator = generator.at[current + 1, following].set(hopping + pairing)
+        generator = generator.at[following, current + 1].set(-(hopping + pairing))
+        generator = generator.at[current, following + 1].set(hopping - pairing)
+        generator = generator.at[following + 1, current].set(-(hopping - pairing))
+    drift = generator - 0.5 * float(damping) * jnp.eye(dimension)
+    block = jnp.asarray(
+        [
+            [0.0, 2.0 * target_occupation - 1.0],
+            [1.0 - 2.0 * target_occupation, 0.0],
+        ]
+    )
+    target = jnp.kron(jnp.eye(count), block)
+    diffusion = -drift @ target - target @ drift.T
+    vacuum = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
+    initial = FermionicGaussianState(jnp.kron(jnp.eye(count), vacuum))
+    return FermionicGaussianProblem(
+        drift,
+        diffusion,
+        initial,
+        problem_id=f"open-kitaev-chain:{count}",
+    )
+
+
 __all__ = [
     "FermionicGaussianProblem",
     "FermionicGaussianSolution",
     "damped_fermionic_mode",
+    "open_kitaev_chain",
     "solve_fermionic_gaussian",
 ]

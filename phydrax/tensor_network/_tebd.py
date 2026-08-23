@@ -83,6 +83,7 @@ def _layer(
     bonds: range,
     step: Array,
     maximum_bond_dimension: int,
+    normalize: bool,
 ):
     current = state
     evidence: list[TensorTruncationEvidence] = []
@@ -92,6 +93,7 @@ def _layer(
             bond,
             hamiltonian.gate(bond, step),
             maximum_bond_dimension=maximum_bond_dimension,
+            normalize=normalize,
         )
         evidence.append(local)
     return current, evidence
@@ -105,6 +107,7 @@ def tebd_step(
     *,
     maximum_bond_dimension: int,
     order: int = 2,
+    normalize: bool = True,
 ) -> tuple[MatrixProductState, TEBDEvidence]:
     if tuple(state.physical_dimensions) != hamiltonian.physical_dimensions:
         raise ValueError("MPS and Hamiltonian physical dimensions differ.")
@@ -120,6 +123,7 @@ def tebd_step(
             range(0, state.site_count - 1, 2),
             step,
             maximum_bond_dimension,
+            normalize,
         )
         records.extend(local)
         current, local = _layer(
@@ -128,6 +132,7 @@ def tebd_step(
             range(1, state.site_count - 1, 2),
             step,
             maximum_bond_dimension,
+            normalize,
         )
         records.extend(local)
     else:
@@ -137,6 +142,7 @@ def tebd_step(
             range(0, state.site_count - 1, 2),
             0.5 * step,
             maximum_bond_dimension,
+            normalize,
         )
         records.extend(local)
         current, local = _layer(
@@ -145,6 +151,7 @@ def tebd_step(
             range(1, state.site_count - 1, 2),
             step,
             maximum_bond_dimension,
+            normalize,
         )
         records.extend(local)
         current, local = _layer(
@@ -153,9 +160,12 @@ def tebd_step(
             range(0, state.site_count - 1, 2),
             0.5 * step,
             maximum_bond_dimension,
+            normalize,
         )
         records.extend(local)
-    current, _ = canonicalize_mps(current, center=state.site_count // 2)
+    current, _ = canonicalize_mps(
+        current, center=state.site_count // 2, normalize=normalize
+    )
     discarded = jnp.stack([record.discarded_weight for record in records])
     return current, TEBDEvidence(
         discarded,

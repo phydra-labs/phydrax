@@ -11,7 +11,9 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from ..nonlinear import scalar_root, ScalarRootProblem, TOMS748
 from ..tensor_network import MatrixProductState, NearestNeighborHamiltonian, tebd_step
 
 
@@ -123,33 +125,83 @@ def solve_mps_quantum_jump(
     active = jnp.zeros((maximum_events,), dtype=bool)
     discarded = []
     event_count = 0
-    threshold = jax.random.uniform(key)
+    threshold_address = SampleAddress(
+        "quantum-trajectory",
+        "mps-jump-threshold",
+        target=problem.problem_id,
+        role="threshold",
+    )
+    channel_address = SampleAddress(
+        "quantum-trajectory",
+        "mps-jump-channel",
+        target=problem.problem_id,
+        role="channel",
+    )
+    threshold = -jnp.log(
+        jnp.maximum(
+            1.0 - jax.random.uniform(derive_key(key, threshold_address, 0)),
+            1e-30,
+        )
+    )
     accumulated_hazard = jnp.asarray(0.0)
     for index in range(int(steps)):
-        state, evidence = tebd_step(
-            state,
+        start = state
+        rates = jnp.stack([jump.rate(start) for jump in problem.jumps])
+        total = jnp.sum(rates)
+        candidate, evidence = tebd_step(
+            start,
             problem.hamiltonian,
             step,
             maximum_bond_dimension=maximum_bond_dimension,
             order=2,
         )
         discarded.append(evidence.cumulative_discarded_weight)
-        rates = jnp.stack([jump.rate(state) for jump in problem.jumps])
-        total = jnp.sum(rates)
-        accumulated_hazard = accumulated_hazard + step * total
-        crossing = 1.0 - jnp.exp(-accumulated_hazard) >= threshold
+        crossing = accumulated_hazard + step * total >= threshold
         if bool(jax.device_get(crossing)) and event_count < maximum_events:
-            local_key = jax.random.fold_in(key, event_count + 1)
+            root_problem = ScalarRootProblem(
+                lambda duration, args: accumulated_hazard + duration * total - threshold,
+                bracket=(jnp.asarray(0.0), step),
+                problem_id=f"{problem.problem_id}:mps-survival-root",
+            )
+            root = scalar_root(root_problem, method=TOMS748())
+            event_duration = root.nonlinear_result.state
+            event_state, event_evidence = tebd_step(
+                start,
+                problem.hamiltonian,
+                event_duration,
+                maximum_bond_dimension=maximum_bond_dimension,
+                order=2,
+            )
+            discarded.append(event_evidence.cumulative_discarded_weight)
+            local_key = derive_key(key, channel_address, event_count)
             channel = jax.random.categorical(
                 local_key, jnp.log(jnp.maximum(rates / total, 1e-30))
             )
-            state = problem.jumps[int(channel)].apply(state, normalize=True)
-            times = times.at[event_count].set((index + 1) * step)
-            channels = channels.at[event_count].set(channel)
+            state = problem.jumps[int(channel)].apply(event_state, normalize=True)
+            remaining = step - event_duration
+            state, remainder_evidence = tebd_step(
+                state,
+                problem.hamiltonian,
+                remaining,
+                maximum_bond_dimension=maximum_bond_dimension,
+                order=2,
+            )
+            discarded.append(remainder_evidence.cumulative_discarded_weight)
+            times = times.at[event_count].set(index * step + event_duration)
+            channels = channels.at[event_count].set(jnp.asarray(channel, dtype=jnp.int32))
             active = active.at[event_count].set(True)
             event_count += 1
             accumulated_hazard = jnp.asarray(0.0)
-            threshold = jax.random.uniform(jax.random.fold_in(key, event_count + 1000))
+            threshold = -jnp.log(
+                jnp.maximum(
+                    1.0
+                    - jax.random.uniform(derive_key(key, threshold_address, event_count)),
+                    1e-30,
+                )
+            )
+        else:
+            state = candidate
+            accumulated_hazard = accumulated_hazard + step * total
     return MPSQuantumTrajectoryResult(
         state,
         times,
