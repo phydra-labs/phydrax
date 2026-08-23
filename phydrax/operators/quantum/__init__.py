@@ -38,6 +38,12 @@ from ._dynamics import (
     schrodinger_residual,
     von_neumann_residual,
 )
+from ._fock import (
+    BosonicFockSpace,
+    FockCutoffEvidence,
+    jaynes_cummings_hamiltonian,
+    kerr_hamiltonian,
+)
 from ._information import (
     density_fidelity,
     purity,
@@ -45,12 +51,27 @@ from ._information import (
     trace_distance,
     von_neumann_entropy,
 )
+from ._open_contracts import (
+    ApproximationAxis,
+    OpenSystemApproximationEvidence,
+    OpenSystemPhysicalityEvidence,
+    OpenSystemRefinement,
+    PhysicalityStatus,
+    QuantumGeneratorAction,
+    QuantumObservablePlan,
+)
 from ._open_system import lindblad_dissipator, lindblad_residual
 from ._propagation import (
     apply_unitary_to_state,
     conjugate_density,
     density_invariant_residuals,
     unitarity_residual,
+)
+from ._pseudomode import (
+    BathCorrelationExpansion,
+    lorentzian_pseudomode,
+    Pseudomode,
+    ReactionCoordinateMapping,
 )
 from ._states import (
     density_expectation,
@@ -107,4 +128,19 @@ __all__ = [
     "density_invariant_residuals",
     "quantum_geometric_tensor",
     "unitarity_residual",
+    "ApproximationAxis",
+    "BathCorrelationExpansion",
+    "BosonicFockSpace",
+    "FockCutoffEvidence",
+    "OpenSystemApproximationEvidence",
+    "OpenSystemPhysicalityEvidence",
+    "OpenSystemRefinement",
+    "PhysicalityStatus",
+    "Pseudomode",
+    "QuantumGeneratorAction",
+    "QuantumObservablePlan",
+    "ReactionCoordinateMapping",
+    "jaynes_cummings_hamiltonian",
+    "kerr_hamiltonian",
+    "lorentzian_pseudomode",
 ]

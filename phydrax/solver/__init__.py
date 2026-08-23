@@ -272,6 +272,12 @@ from ._functional_differential import (
     solve_functional_differential,
 )
 from ._functional_solver import FunctionalSolver
+from ._gaussian_lindblad import (
+    damped_thermal_oscillator,
+    GaussianLindbladProblem,
+    GaussianLindbladSolution,
+    solve_gaussian_lindblad,
+)
 from ._generalized_alpha import (
     GeneralizedAlphaMethod,
     GeneralizedAlphaSolution,
@@ -289,6 +295,14 @@ from ._geometric import (
     solver_state_geometry,
     SRKMK,
     StormerVerlet,
+)
+from ._heom import (
+    drude_lorentz_qubit_heom,
+    HEOMHierarchy,
+    HEOMProblem,
+    HEOMSolution,
+    solve_heom,
+    thermal_drude_lorentz_qubit_heom,
 )
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -349,6 +363,16 @@ from ._memory import (
     VolterraKernel,
     VolterraVectorField,
 )
+from ._memory_kernel import (
+    DynamicalMapPhysicality,
+    exponential_memory_qubit_problem,
+    MemoryKernelMasterEquation,
+    OpenSystemHistorySolution,
+    QuantumMemoryKernel,
+    solve_memory_kernel,
+    solve_time_local_open_system,
+    TimeLocalOpenSystemProblem,
+)
 from ._multirate import (
     multirate_amr_subcycling_plan,
     MultiratePartitionedRK,
@@ -383,6 +407,19 @@ from ._probabilistic_ode import (
     ProbabilisticODEStatus,
     ProbabilisticODEUpdate,
     solve_probabilistic_ode,
+)
+from ._pseudomode import (
+    jaynes_cummings_pseudomode_problem,
+    PseudomodeEmbeddingProblem,
+    PseudomodeSolution,
+    solve_pseudomode,
+)
+from ._quantum_jump import (
+    amplitude_damping_trajectory_problem,
+    QuantumJumpProblem,
+    QuantumTrajectoryEnsemble,
+    solve_quantum_jump_ensemble,
+    StateVectorOperator,
 )
 from ._quantum_propagation import (
     solve_unitary_propagator,
@@ -533,6 +570,33 @@ __all__ = [
     "solve_lindblad",
     "solve_quantum_tomography",
     "tetrahedral_qubit_tomography",
+    "DynamicalMapPhysicality",
+    "GaussianLindbladProblem",
+    "GaussianLindbladSolution",
+    "HEOMHierarchy",
+    "HEOMProblem",
+    "HEOMSolution",
+    "MemoryKernelMasterEquation",
+    "OpenSystemHistorySolution",
+    "PseudomodeEmbeddingProblem",
+    "PseudomodeSolution",
+    "QuantumJumpProblem",
+    "QuantumMemoryKernel",
+    "QuantumTrajectoryEnsemble",
+    "StateVectorOperator",
+    "TimeLocalOpenSystemProblem",
+    "amplitude_damping_trajectory_problem",
+    "damped_thermal_oscillator",
+    "drude_lorentz_qubit_heom",
+    "exponential_memory_qubit_problem",
+    "jaynes_cummings_pseudomode_problem",
+    "solve_gaussian_lindblad",
+    "solve_heom",
+    "solve_memory_kernel",
+    "solve_pseudomode",
+    "solve_quantum_jump_ensemble",
+    "solve_time_local_open_system",
+    "thermal_drude_lorentz_qubit_heom",
     "SeparableHamiltonianResult",
     "integrate_stormer_verlet",
     "stormer_verlet_step",

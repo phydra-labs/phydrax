@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added Gaussian bosonic Lindblad dynamics, quantum-jump ensembles, adaptive
+  bosonic Fock spaces, pseudomode/reaction-coordinate embeddings, HEOM,
+  memory-kernel and TCL evolution, tensor-network states and truncation
+  evidence, and process-tensor MPO contracts.
+
 - Added projective-line Calabi–Yau campaign preparation, residue and induced
   hypersurface geometry, positivity-globalized Kähler-potential solving,
   Hermitian spectral/Sylvester infrastructure, faithful Bures density geometry,
