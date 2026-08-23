@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._numerics._ssp_runge_kutta import ssprk33_step
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._weno import WENOReconstructionPlan
@@ -109,6 +110,7 @@ class FluxDifferenceDynamics1D(StrictModule):
                 "numerical_flux": numerical_flux.plan_id,
                 "spacing": float(spacing_),
                 "source": None if source is None else repr(source),
+                "temporal_method": "temporal:ssprk:3:3",
             }
         )
 
@@ -143,13 +145,12 @@ class FluxDifferenceDynamics1D(StrictModule):
         step_size: ArrayLike,
         args: Any = None,
     ) -> Array:
-        dt = jnp.asarray(step_size)
-        first = state + dt * self(time, state, args)
-        second = 0.75 * state + 0.25 * (
-            first + dt * self(jnp.asarray(time) + dt, first, args)
-        )
-        return (1.0 / 3.0) * state + (2.0 / 3.0) * (
-            second + dt * self(jnp.asarray(time) + 0.5 * dt, second, args)
+        return ssprk33_step(
+            self,
+            jnp.asarray(time),
+            jnp.asarray(state),
+            jnp.asarray(step_size),
+            args,
         )
 
 

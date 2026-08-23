@@ -9,14 +9,16 @@ semidiscrete spatial systems.
 For a conceptual overview (loss evaluation, exact enforcement, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).
 
+- [Time integrators](time_integrators.md) gives the equation/method compatibility
+  matrix, method properties, backend ownership, and differentiation semantics.
 - [Differential equation integration](differential.md) defines reproducible ODE/SDE,
   differentiable CDE and neural-CDE training, probabilistic ODE filtering,
   finite-time Lyapunov spectra, finite-activity jump and hybrid trajectories,
   finite-rank semidiscrete SPDEs, and process ensembles.
 - [Differential-algebraic equation integration](differential_algebraic.md) defines
-  consistent initialization, prepared fixed/adaptive BDF1/BDF2, segmented
-  continuation, frozen-grid replay derivatives, local regularity evidence, and
-  implicit semidiscrete PDE residuals.
+  consistent initialization, prepared fixed/adaptive BDF1--BDF5, endpoint theta,
+  segmented continuation, frozen-grid replay derivatives, local regularity evidence,
+  and implicit semidiscrete PDE residuals.
 - [Delay and functional differential equations](delay.md) defines causal method-of-steps,
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and

@@ -21,7 +21,7 @@ def _problem(*, problem_id="adaptive-continuation"):
 
 def _policy():
     return phx.solver.DAESolvePolicy(
-        integration_method="bdf2",
+        method=phx.solver.BDFMethod(2),
         adaptive=phx.solver.DAEAdaptivePolicy(
             relative_tolerance=1e-5,
             absolute_tolerance=1e-8,

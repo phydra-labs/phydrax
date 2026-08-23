@@ -610,14 +610,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   Diffrax backend. Stochastic collocation provides a separate deterministic
   quadrature path for finite-dimensional random inputs.
   See [API → Solver → Differential equations](api/solver/differential.md).
-- **Differential-algebraic equations**: declare a state-shaped residual
-  `F(t, y, ydot, args) = 0`, component roles, scales, and an explicit consistency
-  contract. Native prepared BDF1/BDF2 solves support fixed or adaptive JIT
-  execution, implicit derivatives, checkpointed replay, segmented continuation,
-  local regularity evidence, and explicit initialization/attempt/termination status.
-  Semidiscrete PDE IR compiles to the same residual contract when every equation has
-  a bijective field target and supported direct temporal incidence.
-  See [API → Solver → Differential-algebraic equations](api/solver/differential_algebraic.md).
+- **Time integration and differential-algebraic equations**: preserve explicit,
+  additive IMEX, implicit residual, second-order, partitioned, stochastic, and
+  geometric equation forms. Capability-checked methods include Diffrax ERK/ESDIRK/ARK,
+  native SSPRK, endpoint theta, BDF1--BDF5, matrix-free Rosenbrock-W,
+  generalized-alpha, partitioned RK, Gauss--Legendre IRK, and geometric/exponential
+  families. Native residual solves retain consistent initialization, implicit
+  derivatives, replay, continuation, local regularity, and complete attempt evidence.
+  See [API → Solver → Time integrators](api/solver/time_integrators.md) and
+  [API → Solver → Differential-algebraic equations](api/solver/differential_algebraic.md).
 - **System identification and equation discovery**: normalize canonical
   evolution, differential/delay/memory/rough, controlled, or stochastic output
   as `TrajectoryData`; preserve sample/transition masks and reset boundaries;

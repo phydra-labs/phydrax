@@ -125,7 +125,7 @@ def _policy(*, residual_tolerance: float = 1e-10) -> phx.solver.DAESolvePolicy:
         maximum_steps=32,
     )
     return phx.solver.DAESolvePolicy(
-        integration_method="bdf2",
+        method=phx.solver.BDFMethod(2),
         nonlinear_method=phx.nonlinear.NewtonKrylov(),
         nonlinear_termination=stage_termination,
         initialization_method=phx.nonlinear.NewtonTrustRegion(),
@@ -203,7 +203,7 @@ def _adaptive_case(
         maximum_attempts=2 * maximum_accepted_steps,
     )
     policy = phx.solver.DAESolvePolicy(
-        integration_method=base.integration_method,
+        method=base.method,
         nonlinear_method=stage_method,
         nonlinear_termination=base.nonlinear_termination,
         initialization_method=base.initialization_method,
@@ -585,7 +585,7 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
             },
         },
         "solver_evidence": {
-            "integration_method": solution.integration_method,
+            "method_id": solution.method_id,
             "nonlinear_method_id": solution.nonlinear_method_id,
             "differentiation_mode": solution.differentiation_mode,
             "grid_origin": solution.grid_origin,

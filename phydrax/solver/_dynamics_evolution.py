@@ -26,6 +26,7 @@ from ..dynamics import (
 )
 from ._differential import DifferentialProblem
 from ._diffrax_backend import solve_diffrax
+from ._temporal_method import configuration_id
 
 
 _DIFFRAX_SUCCESS = jax.tree.leaves(dfx.RESULTS.successful)[0]
@@ -119,7 +120,19 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             f"{system.system_id}:diffrax-evolution",
             "DiffraxEvolution evolution_id",
         )
-        self.method_id = "adaptive-deterministic-differential-flow"
+        self.method_id = configuration_id(
+            (
+                solver,
+                stepsize_controller,
+                self.adjoint,
+                None if dt0 is None else repr(dt0),
+                event,
+                relative_tolerance,
+                absolute_tolerance,
+                step_limit,
+            ),
+            prefix="diffrax-evolution",
+        )
         self.backend_id = "backend:diffrax"
         self.discretization_id = "diffrax-selected-step-sequence"
         self.approximation_id = "numerical-differential-flow"

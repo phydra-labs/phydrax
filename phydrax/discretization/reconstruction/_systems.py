@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._numerics._ssp_runge_kutta import ssprk33_step
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._high_resolution import (
@@ -358,6 +359,7 @@ class Euler1DDynamics(StrictModule):
                 "limiter": limiter_.plan_id,
                 "flux": numerical_flux.flux_id,
                 "spacing": float(spacing_),
+                "temporal_method": "temporal:ssprk:3:3",
             }
         )
 
@@ -417,15 +419,13 @@ class Euler1DDynamics(StrictModule):
         step_size: ArrayLike,
         args=None,
     ) -> Array:
-        dt = jnp.asarray(step_size)
-        first = self._validated(state + dt * self(time, state, args))
-        second = self._validated(
-            0.75 * state + 0.25 * (first + dt * self(jnp.asarray(time) + dt, first, args))
-        )
-        return self._validated(
-            (1.0 / 3.0) * state
-            + (2.0 / 3.0)
-            * (second + dt * self(jnp.asarray(time) + 0.5 * dt, second, args))
+        return ssprk33_step(
+            self,
+            jnp.asarray(time),
+            jnp.asarray(state),
+            jnp.asarray(step_size),
+            args,
+            stage_transform=self._validated,
         )
 
 

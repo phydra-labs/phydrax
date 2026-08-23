@@ -28,21 +28,37 @@ class AMRSubcycleResult(StrictModule):
     fine_state: Array
     flux_register: FluxRegister
     substeps: int = eqx.field(static=True)
+    temporal_method_id: str = eqx.field(static=True)
 
 
 class FDAMRSubcyclingPlan(StrictModule, NonTrainableState):
     """Two-level temporal subcycling with time-integrated conservative reflux."""
 
     refinement_ratio: int = eqx.field(static=True)
+    temporal_method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(self, refinement_ratio: int = 2, /):
+    def __init__(
+        self,
+        refinement_ratio: int = 2,
+        /,
+        *,
+        temporal_method_id: str = "temporal:caller-supplied",
+    ):
         ratio = int(refinement_ratio)
+        method_id = str(temporal_method_id)
         if ratio <= 1:
             raise ValueError("AMR subcycling refinement ratio must exceed one.")
+        if not method_id:
+            raise ValueError("temporal_method_id must be non-empty.")
         self.refinement_ratio = ratio
+        self.temporal_method_id = method_id
         self.plan_id = canonical_fingerprint(
-            {"kind": "fd-amr-subcycling", "refinement_ratio": ratio}
+            {
+                "kind": "fd-amr-subcycling",
+                "refinement_ratio": ratio,
+                "temporal_method_id": method_id,
+            }
         )
 
     def advance(
@@ -102,6 +118,7 @@ class FDAMRSubcyclingPlan(StrictModule, NonTrainableState):
             fine_state=fine_new,
             flux_register=register,
             substeps=self.refinement_ratio,
+            temporal_method_id=self.temporal_method_id,
         )
 
 

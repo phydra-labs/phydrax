@@ -13,6 +13,11 @@
   vector-bundle gauge curvature; metric cochain Hodge assembly; anisotropic
   horizontal cometrics; and fixed-step Störmer–Verlet integration.
 
+- Capability-checked temporal integration with complete Diffrax configuration
+  provenance; additive KenCarp/Sil3 IMEX; native SSPRK3/SSPRK54, endpoint theta,
+  variable-step BDF1--BDF5, matrix-free RA34PW2 Rosenbrock-W, generalized-alpha,
+  fixed-ratio partitioned RK2/RK3, and one- through three-stage Gauss--Legendre
+  implicit RK with collocation dense output.
 - `phydrax.transport.continuous` endpoint couplings, linear probability
   interpolants, status-preserving continuous sampling, exact Euclidean continuous-flow
   densities, and uncertainty-bearing Hutchinson density estimates; plus
@@ -136,7 +141,7 @@
   complementarity solves, and implicit root derivatives with explicit failure status.
 - Native regular index-one differential-algebraic systems with explicit structural
   roles and scales, consistent initialization contracts, prepared fixed/adaptive
-  BDF1/BDF2 integration, guarded cross-step numerical reuse, segmented continuation,
+  BDF1--BDF5 integration, guarded cross-step numerical reuse, segmented continuation,
   local regularity evidence, frozen accepted-grid JVP/VJP replay with bounded
   checkpoint memory, status-rich trajectory evidence, semidiscrete implicit PDE
   compilation, and canonical identification adapters.

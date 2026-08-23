@@ -39,7 +39,9 @@ def _metadata_2d(plan):
 def test_multidimensional_same_level_halos_fill_faces_edges_and_corners():
     plan = _plan_2d()
     metadata = _metadata_2d(plan)
-    values = jnp.stack(tuple(jnp.full(plan.block_shape, float(slot)) for slot in range(4)))
+    values = jnp.stack(
+        tuple(jnp.full(plan.block_shape, float(slot)) for slot in range(4))
+    )
     state = phx.discretization.BlockLevelState(plan, metadata, values)
 
     workspace = phx.discretization.FDAMRHaloPlan(plan).fill_same_level(state)
@@ -64,7 +66,9 @@ def test_entity_specific_transfers_preserve_declared_invariants():
 
     assert cell.report.passed and node.report.passed
     assert face.report.passed and edge.report.passed
-    np.testing.assert_allclose(cell.restrict(fine_cell), coarse_cell, rtol=0.0, atol=1e-14)
+    np.testing.assert_allclose(
+        cell.restrict(fine_cell), coarse_cell, rtol=0.0, atol=1e-14
+    )
     np.testing.assert_allclose(
         fine_node,
         2.0 * jnp.linspace(0.0, 1.0, 9) - 0.4,
@@ -156,6 +160,7 @@ def test_subcycling_accumulates_time_integrated_flux_and_refluxes_coarse_state()
     np.testing.assert_allclose(result.flux_register.mismatch(), [0.2, 0.0])
     np.testing.assert_allclose(result.coarse_state, [10.4, 20.0])
     assert result.substeps == 2
+    assert result.temporal_method_id == "temporal:caller-supplied"
 
 
 def test_regridding_populates_children_deterministically_and_masks_inactive_payload():
@@ -189,9 +194,7 @@ def test_regridding_populates_children_deterministically_and_masks_inactive_payl
         block_ids=[-1] * 4,
         parent_ids=[0, 0, 1, 1],
     )
-    refinement = phx.discretization.FixedCapacityRefinementPlan(
-        [[0, 1], [2, 3]]
-    )
+    refinement = phx.discretization.FixedCapacityRefinementPlan([[0, 1], [2, 3]])
     regrid = phx.discretization.FDRegridPlan(
         refinement,
         phx.discretization.AMREntityTransferPlan.cells(1),

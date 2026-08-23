@@ -23,7 +23,7 @@ def _prepared(*, replay, problem_id):
         time_id=problem_id,
     )
     policy = phx.solver.DAESolvePolicy(
-        integration_method="bdf2",
+        method=phx.solver.BDFMethod(2),
         adaptive=phx.solver.DAEAdaptivePolicy(
             relative_tolerance=1e-6,
             absolute_tolerance=1e-9,

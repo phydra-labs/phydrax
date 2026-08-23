@@ -158,7 +158,7 @@ def trajectory_data_from_differential_solution(
         derivative_valid = jnp.all(solution.rate_valid, axis=state_axes)
         default_coordinate_id = solution.time_id
         default_source_id = (
-            f"dae:{solution.problem_id}:{solution.integration_method}:{solution.plan_id}"
+            f"dae:{solution.problem_id}:{solution.method_id}:{solution.plan_id}"
         )
     elif isinstance(solution, ControlledDifferentialSolution):
         base = solution.differential_solution

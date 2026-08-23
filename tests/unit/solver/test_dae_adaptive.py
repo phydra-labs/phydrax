@@ -28,7 +28,7 @@ def _adaptive_policy(**overrides):
     }
     values.update(overrides)
     return phx.solver.DAESolvePolicy(
-        integration_method="bdf2",
+        method=phx.solver.BDFMethod(2),
         adaptive=phx.solver.DAEAdaptivePolicy(**values),
         failure="status",
     )
