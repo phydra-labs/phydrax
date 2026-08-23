@@ -18,6 +18,7 @@ from ._amplitude import (
     LogAmplitude,
     sampling_log_weight,
 )
+from ._bath_decomposition import drude_lorentz_matsubara
 from ._berry import (
     berry_link,
     berry_loop_phase,
@@ -50,6 +51,11 @@ from ._information import (
     state_fidelity,
     trace_distance,
     von_neumann_entropy,
+)
+from ._nonmarkovianity import (
+    analyze_dynamical_map_series,
+    blp_information_backflow,
+    DynamicalMapSeriesPhysicality,
 )
 from ._open_contracts import (
     ApproximationAxis,
@@ -143,4 +149,8 @@ __all__ = [
     "jaynes_cummings_hamiltonian",
     "kerr_hamiltonian",
     "lorentzian_pseudomode",
+    "DynamicalMapSeriesPhysicality",
+    "analyze_dynamical_map_series",
+    "blp_information_backflow",
+    "drude_lorentz_matsubara",
 ]

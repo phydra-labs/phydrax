@@ -222,6 +222,18 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._fermionic_gaussian import (
+    damped_fermionic_mode,
+    FermionicGaussianProblem,
+    FermionicGaussianSolution,
+    solve_fermionic_gaussian,
+)
+from ._fock_continuation import (
+    FockContinuationPolicy,
+    FockContinuationResult,
+    FockContinuationStage,
+    solve_fock_continuation,
+)
 from ._fractional_memory import (
     CaputoFractionalProblem,
     FractionalVectorField,
@@ -266,6 +278,11 @@ from ._heom import (
     HEOMSolution,
     solve_heom,
     thermal_drude_lorentz_qubit_heom,
+)
+from ._heom_production import (
+    HEOMContinuationResult,
+    HEOMContinuationStage,
+    solve_heom_continuation,
 )
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -336,6 +353,12 @@ from ._memory_kernel import (
     solve_time_local_open_system,
     TimeLocalOpenSystemProblem,
 )
+from ._mps_quantum_jump import (
+    LocalMPSJump,
+    MPSQuantumJumpProblem,
+    MPSQuantumTrajectoryResult,
+    solve_mps_quantum_jump,
+)
 from ._multirate import (
     multirate_amr_subcycling_plan,
     MultiratePartitionedRK,
@@ -348,6 +371,15 @@ from ._neural_cde import (
     NeuralCDETrainingState,
     NeuralCDEVectorField,
     train_neural_cde,
+)
+from ._neural_quantum_jump import (
+    NeuralJumpProjectionProblem,
+    NeuralJumpProjectionResult,
+    solve_neural_jump_projection,
+)
+from ._nonmarkov_campaign import (
+    lorentzian_qubit_comparison,
+    NonMarkovianComparisonResult,
 )
 from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
 from ._particles import (
@@ -377,12 +409,25 @@ from ._pseudomode import (
     PseudomodeSolution,
     solve_pseudomode,
 )
+from ._purified_lindblad import (
+    apply_local_kraus_channel,
+    LocalKrausChannel,
+    PurificationTruncationEvidence,
+    PurifiedLindbladProblem,
+    PurifiedLindbladResult,
+    solve_purified_lindblad,
+)
 from ._quantum_jump import (
     amplitude_damping_trajectory_problem,
     QuantumJumpProblem,
     QuantumTrajectoryEnsemble,
     solve_quantum_jump_ensemble,
     StateVectorOperator,
+)
+from ._quantum_jump_event import (
+    EventDrivenQuantumJumpResult,
+    QuantumJumpEventTable,
+    solve_event_driven_quantum_jump,
 )
 from ._quantum_propagation import (
     solve_unitary_propagator,
@@ -560,6 +605,35 @@ __all__ = [
     "solve_quantum_jump_ensemble",
     "solve_time_local_open_system",
     "thermal_drude_lorentz_qubit_heom",
+    "EventDrivenQuantumJumpResult",
+    "FermionicGaussianProblem",
+    "FermionicGaussianSolution",
+    "FockContinuationPolicy",
+    "FockContinuationResult",
+    "FockContinuationStage",
+    "HEOMContinuationResult",
+    "HEOMContinuationStage",
+    "LocalKrausChannel",
+    "LocalMPSJump",
+    "MPSQuantumJumpProblem",
+    "MPSQuantumTrajectoryResult",
+    "NeuralJumpProjectionProblem",
+    "NeuralJumpProjectionResult",
+    "NonMarkovianComparisonResult",
+    "PurificationTruncationEvidence",
+    "PurifiedLindbladProblem",
+    "PurifiedLindbladResult",
+    "QuantumJumpEventTable",
+    "apply_local_kraus_channel",
+    "damped_fermionic_mode",
+    "lorentzian_qubit_comparison",
+    "solve_event_driven_quantum_jump",
+    "solve_fermionic_gaussian",
+    "solve_fock_continuation",
+    "solve_heom_continuation",
+    "solve_mps_quantum_jump",
+    "solve_neural_jump_projection",
+    "solve_purified_lindblad",
     "SeparableHamiltonianResult",
     "integrate_stormer_verlet",
     "stormer_verlet_step",

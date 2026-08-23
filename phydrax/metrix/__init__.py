@@ -107,6 +107,7 @@ from ._density import (
     VolumeDensityValidationReport,
 )
 from ._embedded import EmbeddedChart, tangent_projector_from_normal
+from ._fermionic_gaussian import FermionicGaussianState
 from ._forms import (
     codifferential,
     DifferentialForm,
@@ -549,4 +550,5 @@ __all__ = [
     "BosonicGaussianState",
     "canonical_commutation_matrix",
     "PatchwiseTensorField",
+    "FermionicGaussianState",
 ]
