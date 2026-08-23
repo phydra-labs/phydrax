@@ -14,7 +14,12 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
-from .._tree_math import tree_add_scaled, tree_norm, validate_inexact_tree
+from .._tree_math import (
+    tree_add_scaled,
+    tree_allfinite,
+    tree_norm,
+    validate_inexact_tree,
+)
 from ..linalg import AbstractPreconditioner, PyTreeSpace
 from ._types import (
     FixedPointProblem,
@@ -25,6 +30,16 @@ from ._types import (
     NonlinearStatus,
     NonlinearSystemProblem,
     NonlinearTermination,
+)
+from ._updates import (
+    AbstractNonlinearUpdate,
+    NonlinearUpdateCapabilities,
+    NonlinearUpdateControl,
+    NonlinearUpdateDiagnostics,
+    NonlinearUpdateProvenance,
+    NonlinearUpdateResult,
+    NonlinearUpdateStatus,
+    PreparedNonlinearUpdate,
 )
 
 
@@ -390,6 +405,176 @@ class FixedPointIteration(StrictModule):
         )
 
 
+def _picard_candidate(
+    inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner,
+    damping: float,
+    state: PyTree[Any],
+    residual: PyTree[Any],
+    /,
+) -> PyTree[Array]:
+    correction = (
+        inverse_action.apply(residual)
+        if isinstance(inverse_action, AbstractPreconditioner)
+        else inverse_action(residual)
+    )
+    return tree_add_scaled(state, correction, -damping)
+
+
+class PicardUpdate(AbstractNonlinearUpdate):
+    """One preconditioned Picard correction as a finite nonlinear update."""
+
+    inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner
+    damping: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner,
+        /,
+        *,
+        damping: float = 1.0,
+    ):
+        if not callable(inverse_action) and not isinstance(
+            inverse_action, AbstractPreconditioner
+        ):
+            raise TypeError("inverse_action must be callable or AbstractPreconditioner.")
+        damping_ = float(damping)
+        if not isfinite(damping_) or not 0.0 < damping_ <= 1.0:
+            raise ValueError("Picard damping must lie in (0, 1].")
+        self.inverse_action = inverse_action
+        self.damping = damping_
+
+    @property
+    def update_id(self) -> str:
+        return "picard-update"
+
+    @property
+    def capabilities(self) -> NonlinearUpdateCapabilities:
+        return NonlinearUpdateCapabilities(
+            jit=True,
+            prepared_refresh=True,
+            differentiable_action=True,
+        )
+
+    def _prepare_internal(self, problem, state, args, /):
+        del problem, state, args
+        return None
+
+    def _refresh_internal(self, internal_state, problem, state, args, /):
+        del problem, state, args
+        return internal_state
+
+    def _apply(
+        self,
+        prepared: PreparedNonlinearUpdate,
+        state: PyTree[Any],
+        args: Any,
+        control: NonlinearUpdateControl,
+        /,
+    ):
+        problem = prepared.problem
+        state_ = prepared.plan.state_space.validate(state)
+        residual, auxiliary = problem.evaluate(state_, args)
+        initial_norm = jnp.sqrt(
+            jnp.maximum(
+                jnp.real(prepared.plan.residual_space.inner(residual, residual)),
+                0.0,
+            )
+        )
+        if not control.permits(
+            residual_evaluations=2,
+            jacobian_preparations=0,
+            linear_solves=0,
+            linear_iterations=0,
+        ):
+            diagnostics = NonlinearUpdateDiagnostics(
+                initial_residual_norm=initial_norm,
+                final_residual_norm=initial_norm,
+                step_norm=0.0,
+                residual_evaluations=1,
+            )
+            return (
+                NonlinearUpdateResult(
+                    state=state_,
+                    residual=residual,
+                    auxiliary=auxiliary,
+                    status=NonlinearUpdateStatus.BUDGET_EXHAUSTED,
+                    diagnostics=diagnostics,
+                    provenance=NonlinearUpdateProvenance(
+                        problem_id=problem.problem_id,
+                        update_id=self.update_id,
+                        plan_id=prepared.plan.plan_id,
+                    ),
+                ),
+                prepared.internal_state,
+            )
+        candidate = prepared.plan.state_space.validate(
+            _picard_candidate(self.inverse_action, self.damping, state_, residual)
+        )
+        candidate_residual, candidate_auxiliary = problem.evaluate(candidate, args)
+        final_norm = jnp.sqrt(
+            jnp.maximum(
+                jnp.real(
+                    prepared.plan.residual_space.inner(
+                        candidate_residual,
+                        candidate_residual,
+                    )
+                ),
+                0.0,
+            )
+        )
+        finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
+        valid = problem.valid(
+            candidate,
+            candidate_residual,
+            candidate_auxiliary,
+            args,
+        )
+        status = jnp.where(
+            ~finite,
+            int(NonlinearUpdateStatus.NONFINITE_EVALUATION),
+            jnp.where(
+                ~valid,
+                int(NonlinearUpdateStatus.DOMAIN_REJECTED),
+                int(NonlinearUpdateStatus.APPLIED),
+            ),
+        ).astype(jnp.int32)
+        step = jax.tree.map(lambda new, old: new - old, candidate, state_)
+        diagnostics = NonlinearUpdateDiagnostics(
+            initial_residual_norm=initial_norm,
+            final_residual_norm=final_norm,
+            step_norm=jnp.sqrt(
+                jnp.maximum(
+                    jnp.real(prepared.plan.state_space.inner(step, step)),
+                    0.0,
+                )
+            ),
+            residual_evaluations=2,
+            accepted_steps=(status == int(NonlinearUpdateStatus.APPLIED)).astype(
+                jnp.int32
+            ),
+            rejected_steps=(status != int(NonlinearUpdateStatus.APPLIED)).astype(
+                jnp.int32
+            ),
+            domain_failures=(finite & ~valid).astype(jnp.int32),
+            nonfinite_trials=(~finite).astype(jnp.int32),
+        )
+        return (
+            NonlinearUpdateResult(
+                state=candidate,
+                residual=candidate_residual,
+                auxiliary=candidate_auxiliary,
+                status=status,
+                diagnostics=diagnostics,
+                provenance=NonlinearUpdateProvenance(
+                    problem_id=problem.problem_id,
+                    update_id=self.update_id,
+                    plan_id=prepared.plan.plan_id,
+                ),
+            ),
+            prepared.internal_state,
+        )
+
+
 class PicardIteration(StrictModule):
     """Preconditioned Picard iteration for a physical nonlinear residual."""
 
@@ -437,12 +622,12 @@ class PicardIteration(StrictModule):
 
         def mapping(state, current_args):
             residual = problem.residual(state, current_args)
-            correction = (
-                self.inverse_action.apply(residual)
-                if isinstance(self.inverse_action, AbstractPreconditioner)
-                else self.inverse_action(residual)
+            return _picard_candidate(
+                self.inverse_action,
+                self.damping,
+                state,
+                residual,
             )
-            return tree_add_scaled(state, correction, -self.damping)
 
         fixed_problem = FixedPointProblem(
             mapping,
@@ -487,4 +672,9 @@ class PicardIteration(StrictModule):
         )
 
 
-__all__ = ["AndersonAcceleration", "FixedPointIteration", "PicardIteration"]
+__all__ = [
+    "AndersonAcceleration",
+    "FixedPointIteration",
+    "PicardIteration",
+    "PicardUpdate",
+]

@@ -137,12 +137,14 @@ boundary_penalty = phx.terms.ResidualPenalty(
     scale=10.0,
 )
 
-mass_penalty = phx.terms.MomentPenalty(
+mass_penalty = phx.terms.RandomizedMomentPenalty(
     mass,
     phx.integration.per_step(
         phx.integration.over(mass.on),
         phx.integration.MonteCarloPlan(256),
     ),
+    num_realizations=2,
+    loss_mode="u_statistic",
 )
 ```
 

@@ -514,6 +514,7 @@ def _certificate_kind(capability: str) -> str:
         "optimization.unconstrained": "optimization-stationarity",
         "optimization.constrained": "optimization-kkt",
         "optimization.proximal": "optimization-proximal-stationarity",
+        "optimization.bounded-least-squares": ("optimization-bound-stationarity"),
         "optimization.linear-program": "optimization-program-kkt",
         "optimization.quadratic-program": "optimization-program-kkt",
         "optimization.conic-program": "optimization-program-kkt",

@@ -16,7 +16,12 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.operators.differential import div_diag_k_grad, dt, laplacian
-from phydrax.terms import MomentPenalty, ObservationPenalty, ResidualPenalty
+from phydrax.terms import (
+    MomentPenalty,
+    ObservationPenalty,
+    RandomizedMomentPenalty,
+    ResidualPenalty,
+)
 
 
 def _jit_loss(term, functions):
@@ -95,7 +100,10 @@ def test_integral_constraint_over_axis_constant():
 
     expected = 1.0
     condition = Moment("u", component, lambda field: field, target=expected)
-    term = MomentPenalty(condition, _per_step(condition, num_x * num_t, moment=True))
+    term = RandomizedMomentPenalty(
+        condition,
+        _per_step(condition, num_x * num_t, moment=True),
+    )
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 

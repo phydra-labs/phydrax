@@ -30,8 +30,10 @@ but do not sample, integrate, weight, or choose soft versus exact treatment.
 ## Generic penalties
 
 Residual and observation penalties integrate a squared pointwise mismatch.
-Moment penalties integrate first and then square the mismatch with the
-condition's target. Each receives an explicit integration source.
+`MomentPenalty` integrates first and then squares under a deterministic or
+explicitly frozen realization. Use `RandomizedMomentPenalty` for resampled
+stochastic moment estimates so the squared-mean estimator is declared.
+Each term receives an explicit integration source.
 
 ::: phydrax.terms.ResidualPenalty
     options:
@@ -49,6 +51,11 @@ condition's target. Each receives an explicit integration source.
             - loss
 
 ---
+
+::: phydrax.terms.RandomizedMomentPenalty
+
+---
+
 
 ::: phydrax.terms.ObservationPenalty
 

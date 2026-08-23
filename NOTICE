@@ -100,6 +100,14 @@ The positive-weight Lebedev sphere rules are generated from SciPy 1.18.0's
 Lebedev implementation and independently certified under Phydrax reference
 measure conventions. See LICENSES/SCIPY-BSD-3-CLAUSE.txt.
 
+PETSc
+Copyright (c) 1991-2025, UChicago Argonne, LLC and the PETSc Developers and
+Contributors.
+Licensed under the BSD 2-Clause License.
+The RA34PW2 Rosenbrock-W tableau constants are adapted from PETSc's public TS
+method registry and executed through an independent native JAX matrix-free
+implementation. See LICENSES/PETSC-BSD-2-CLAUSE.txt.
+
 Research and design acknowledgments
 
 The Markov-chain-cubature design study considered tttc3/MCCube at commit

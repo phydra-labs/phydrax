@@ -122,7 +122,7 @@ def test_stochastic_and_conservation_catalogs_use_generic_penalties():
         boundary,
         0.0,
     )
-    pressure_penalty = phx.terms.MomentPenalty(
+    pressure_penalty = phx.terms.RandomizedMomentPenalty(
         pressure_condition,
         _source(boundary),
     )

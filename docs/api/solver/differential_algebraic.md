@@ -7,7 +7,7 @@ F(t, y, \dot y, a) = 0
 \]
 
 on a declared `TimeGrid`. The implementation is native Phydrax: consistency and every
-BDF stage use the prepared nonlinear and linear-solve lifecycles from
+implicit stage use the prepared nonlinear and linear-solve lifecycles from
 `phydrax.nonlinear` and `phydrax.linalg`. It does not route through Optimistix or
 Diffrax.
 
@@ -107,24 +107,24 @@ nonlinear status and diagnostics, and a stable initialization ID. A check-only r
 has no nonlinear solve. Failed consistency is reported as evidence; the solver does
 not replace a failed pair with the original guess.
 
-## Fixed and adaptive BDF lifecycle
+## Fixed and adaptive implicit lifecycle
 
-`DAESolvePolicy` selects `"bdf1"` or variable-step `"bdf2"`, native
-`NewtonKrylov` or `NewtonTrustRegion` methods for initialization and stages,
-termination contracts, temporal reuse, regularity evidence, replay checkpointing, a
-maximum adjacent-step ratio, and failure behavior. Supplying `DAEAdaptivePolicy`
-enables accepted-step control; omitting it preserves the fixed-grid contract.
+`DAESolvePolicy.method` accepts `BDFMethod(maximum_order=1..5)` or a fixed-grid
+stiffly accurate endpoint `ThetaMethod`. Native `NewtonKrylov` or
+`NewtonTrustRegion` methods own initialization and stages alongside termination,
+temporal reuse, regularity, replay, adjacent-step-ratio, and failure policies.
+Supplying `DAEAdaptivePolicy` enables accepted-step BDF control; endpoint theta remains
+fixed-grid.
 
-BDF2 uses BDF1 until enough accepted history exists. A fixed BDF2 grid whose adjacent
-interval ratio exceeds `max_step_ratio` is rejected during planning. An adaptive solve
-uses BDF1 whenever accepted history or the proposed ratio cannot safely support BDF2.
-Every accepted state is followed by an independent residual certification.
+BDF startup increases order only after sufficient accepted history exists. Rejections
+or unsafe adjacent-step ratios lower the realized order. Every accepted state is
+followed by an independent residual certification.
 
 Planning, preparation, and execution are separate:
 
 1. `plan_dae` validates the grid, method, state contract, and static identities.
 2. `prepare_dae` prepares reusable symbolic nonlinear/linear templates for the
-   consistency problem and every BDF stage.
+   consistency problem and every implicit stage.
 3. `solve_dae(prepared, ...)` solves consistency for the runtime state, rate, and
    model arguments, then refreshes numeric stage and Jacobian data while preserving
    both template identities.
@@ -135,7 +135,7 @@ grid = phx.dynamics.TimeGrid(
     time_id="training-grid",
 )
 policy = phx.solver.DAESolvePolicy(
-    integration_method="bdf2",
+    method=phx.solver.BDFMethod(2),
     nonlinear_method=phx.nonlinear.NewtonKrylov(),
     nonlinear_termination=phx.nonlinear.NonlinearTermination(
         absolute_residual=1e-9,
@@ -174,7 +174,7 @@ capacities are hard JAX-static bounds.
 
 ```python
 adaptive_policy = phx.solver.DAESolvePolicy(
-    integration_method="bdf2",
+    method=phx.solver.BDFMethod(5),
     nonlinear_method=phx.nonlinear.NewtonKrylov(),
     adaptive=phx.solver.DAEAdaptivePolicy(
         relative_tolerance=1e-5,
@@ -256,8 +256,8 @@ adaptive primal has no valid derivative.
 
 `DAERegularityPolicy("solver-evidence")` records rank and convergence information
 already available from consistency and nonlinear solves. The `"periodic"` mode
-explicitly probes the configured consistency-coordinate Jacobian and the local BDF
-stage operator `F_y + alpha F_ydot` every `interval` accepted steps. Optional
+explicitly probes the configured consistency-coordinate Jacobian and the local
+implicit-stage operator `F_y + shift * F_ydot` every `interval` accepted steps. Optional
 `condition_limit` classifies an otherwise full-rank operator as numerically singular.
 `failure="record"` preserves evidence without changing the solve; `"status"` promotes
 a probed singular stage to an explicit rejected attempt and terminal status.
@@ -265,7 +265,7 @@ a probed singular stage to an explicit rejected attempt and terminal status.
 This evidence is local and numerical. It never claims a global differentiation index
 or regularity between probes.
 
-`DifferentialAlgebraicSolution` stores requested states, reconstructed BDF rates,
+`DifferentialAlgebraicSolution` stores requested states, reconstructed stage rates,
 node validity, accepted-step and attempt histories, residual and constraint norms,
 initialization, continuation, local regularity, replay, termination, and
 plan/method/linear-plan provenance. If initialization or integration fails, unsaved

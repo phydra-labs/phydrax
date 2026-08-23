@@ -116,7 +116,11 @@ def test_time_convolution_grad_matches_closed_form():
 
     def loss(parameter):
         function = domain.Function("t")(lambda time: parameter * jnp.sin(time))
-        convolution = time_convolution(lambda lag: jnp.exp(-lag), function, order=64)
+        convolution = time_convolution(
+            lambda lag: jnp.exp(-lag),
+            function,
+            rule=phx.integration.GaussLegendreRule(64),
+        )
         return jnp.asarray(
             convolution(frozendict({"t": cx.Field(jnp.array(1.234), dims=())})).data
         )

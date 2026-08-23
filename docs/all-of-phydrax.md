@@ -324,21 +324,24 @@ choices with no automatic fallback or universal differentiability claim.
 General nonlinear optimization lives in `phydrax.optim`. Scalar, residual,
 residual-plus-signed-scalar, proximal-composite, constrained, state/design, and
 stochastic problems share typed termination, status, diagnostics, provenance, and
-PyTree contracts. Native methods cover matrix-free Newton--Krylov, Newton trust
-regions, nonlinear conjugate gradients with strong-Wolfe search, Gauss--Newton,
-Levenberg--Marquardt, deterministic finite-difference least squares, proximal
-gradient/Newton methods, projected box methods, augmented Lagrangian, filter/SOC
-SQP, and primal--dual predictor--corrector KKT solves. Curvature methods prepare
-reusable symbolic linear-solve templates and report numeric refreshes separately
-from setup. Smooth stationarity, least-squares normal-equation, and strictly
-complementary active-set KKT solution maps are differentiated implicitly;
-unsuccessful, singular, or ambiguous solves fail instead of returning fabricated
-sensitivities.
+PyTree contracts. Native methods cover matrix-free Newton--Krylov, operator
+Steihaug--Toint and explicit dense-dogleg trust regions, nonlinear conjugate
+gradients with strong-Wolfe search, Gauss--Newton, Levenberg--Marquardt,
+bound-aware residual trust regions, deterministic finite-difference least
+squares, proximal gradient/Newton methods, projected box methods, augmented
+Lagrangian, filter/SOC SQP, and primal--dual predictor--corrector KKT solves.
+Curvature methods prepare reusable symbolic linear-solve templates and report
+numeric refreshes separately from setup. Smooth stationarity, least-squares
+normal-equation, and strictly complementary active-set KKT solution maps are
+differentiated implicitly; unsuccessful, singular, or ambiguous solves fail
+instead of returning fabricated sensitivities.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`, not in optimization.
-Newton--Krylov and trust-region roots, nonlinear GMRES, semismooth complementarity
-solves, fixed-point acceleration, nonlinear preconditioners, full-approximation
-multigrid, and implicit root maps share explicit status and work diagnostics.
+Complete solves are separated from prepared finite updates. Static
+additive/multiplicative/residual-optimal graphs compose Newton/Picard/FAS,
+nonlinear Schwarz and Gauss--Seidel, Richardson, NGMRES, and ASPIN while final
+success remains certified by the original physical residual. Semismooth
+complementarity offers explicit infeasible and strict box-preserving execution.
 Domain-invalid evaluations remain distinct from nonfinite trials.
 
 Generic parameterized residual curves and local bifurcation workflows live in
@@ -556,6 +559,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 
 - **Forward PDE solve (PINN-style)**: interior residual + boundary/initial terms (soft or enforced).
   Start at [Getting started](index.md) and continue with the conditions-and-terms guide.
+- **Integral and nonlocal field learning**: compose deterministic causal,
+  spatial, or fractional operators inside ordinary residuals. Use
+  `RandomizedMomentPenalty` when a squared moment is resampled rather than
+  silently squaring one stochastic estimate. See the
+  [integral-physics cookbook](cookbook/integral_physics.md).
 - **Enforced BC/IC**: declare `EnforcementSpec` values with `phx.enforcement`,
   compile them into an `EnforcementProgram`, and pass that program to the solver.
   See [API reference](api/phydrax.md).
@@ -607,14 +615,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   Diffrax backend. Stochastic collocation provides a separate deterministic
   quadrature path for finite-dimensional random inputs.
   See [API → Solver → Differential equations](api/solver/differential.md).
-- **Differential-algebraic equations**: declare a state-shaped residual
-  `F(t, y, ydot, args) = 0`, component roles, scales, and an explicit consistency
-  contract. Native prepared BDF1/BDF2 solves support fixed or adaptive JIT
-  execution, implicit derivatives, checkpointed replay, segmented continuation,
-  local regularity evidence, and explicit initialization/attempt/termination status.
-  Semidiscrete PDE IR compiles to the same residual contract when every equation has
-  a bijective field target and supported direct temporal incidence.
-  See [API → Solver → Differential-algebraic equations](api/solver/differential_algebraic.md).
+- **Time integration and differential-algebraic equations**: preserve explicit,
+  additive IMEX, implicit residual, second-order, partitioned, stochastic, and
+  geometric equation forms. Capability-checked methods include Diffrax ERK/ESDIRK/ARK,
+  native SSPRK, endpoint theta, BDF1--BDF5, matrix-free Rosenbrock-W,
+  generalized-alpha, partitioned RK, Gauss--Legendre IRK, and geometric/exponential
+  families. Native residual solves retain consistent initialization, implicit
+  derivatives, replay, continuation, local regularity, and complete attempt evidence.
+  See [API → Solver → Time integrators](api/solver/time_integrators.md) and
+  [API → Solver → Differential-algebraic equations](api/solver/differential_algebraic.md).
 - **System identification and equation discovery**: normalize canonical
   evolution, differential/delay/memory/rough, controlled, or stochastic output
   as `TrajectoryData`; preserve sample/transition masks and reset boundaries;

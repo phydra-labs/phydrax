@@ -9,13 +9,16 @@
   SLD quantum Fisher actions, mixed-state tomography, fixed-rank/Uhlmann
   primitives, and finite-dimensional Lindblad channel evolution.
 
+- Estimator-aware `RandomizedMomentPenalty` with U-statistic,
+  independent-product, and explicit plug-in modes; deterministic causal
+  convolution and Caputo field-operator provenance; integral/nonlocal physics
+  guidance; and an accuracy, bias, and performance benchmark campaign.
 - Added end-to-end weighted geometric diffusion semantics, right-trivialized
   unitary propagation, abelian metric-DEC gauge fields, matrix-free Fisher and
   Hessian operators, geodesic manifold flow matching, explicit atlas covers and
   patch integration, CP^n Fubini–Study references, Dolbeault/Chern/Berry
   calculus, projective hypersurfaces, Kähler-potential Monge–Ampère operators,
   and Ricci-flat Kähler optimization composition.
-
 - Expanded `phydrax.metrix` with immersion validation and Riemannian map
   geometry; correct tensor-density covariant derivatives; weighted metric
   measures and intrinsic hypersurface normals; exact and numerical endpoint
@@ -26,11 +29,25 @@
   vector-bundle gauge curvature; metric cochain Hodge assembly; anisotropic
   horizontal cometrics; and fixed-step Störmer–Verlet integration.
 
+- Capability-checked temporal integration with complete Diffrax configuration
+  provenance; additive KenCarp/Sil3 IMEX; native SSPRK3/SSPRK54, endpoint theta,
+  variable-step BDF1--BDF5, matrix-free RA34PW2 Rosenbrock-W, generalized-alpha,
+  fixed-ratio partitioned RK2/RK3, and one- through three-stage Gauss--Legendre
+  implicit RK with collocation dense output.
 - `phydrax.transport.continuous` endpoint couplings, linear probability
   interpolants, status-preserving continuous sampling, exact Euclidean continuous-flow
   densities, and uncertainty-bearing Hutchinson density estimates; plus
   `FlowMatchingTerm` and fixed-query quadrature-aware operator velocity metrics.
 
+- Prepared finite nonlinear updates with typed application status, hard work
+  controls, refreshable plans, additive/multiplicative/residual-optimal
+  composition, Armijo Richardson and typed NGMRES outer methods, FAS/Picard/Newton
+  updates, nonlinear Schwarz/Gauss--Seidel decomposition, and ASPIN with
+  independently certified physical roots.
+- Strict box-preserving semismooth variational inequalities with prepared
+  topology-preserving refresh; matrix-free Steihaug--Toint quadratic trust
+  regions; large-scale unconstrained and bounded Newton trust-region methods;
+  and bound-aware Gauss--Newton and Levenberg--Marquardt residual optimization.
 - Positive certified Xiao--Gimbutas, Lebedev, periodic, radial, and Duffy
   cubature with content identity and bounded storage; measure-matched fixed
   Gauss--Hermite expectations; geometry-owned native disk, circle, ball,
@@ -140,7 +157,7 @@
   complementarity solves, and implicit root derivatives with explicit failure status.
 - Native regular index-one differential-algebraic systems with explicit structural
   roles and scales, consistent initialization contracts, prepared fixed/adaptive
-  BDF1/BDF2 integration, guarded cross-step numerical reuse, segmented continuation,
+  BDF1--BDF5 integration, guarded cross-step numerical reuse, segmented continuation,
   local regularity evidence, frozen accepted-grid JVP/VJP replay with bounded
   checkpoint memory, status-rich trajectory evidence, semidiscrete implicit PDE
   compilation, and canonical identification adapters.
@@ -226,6 +243,13 @@
   resource accounting.
 
 ### Changed
+- `MomentPenalty` now rejects resampled stochastic integration rather than
+  silently optimizing a variance-biased squared estimate. `time_convolution`
+  now accepts a deterministic `IntervalRule`; randomized QMC and importance
+  modes were removed from the field-valued operator.
+  Caputo field operators now use direct deterministic Gauss--Jacobi or
+  Gauss--Legendre evaluation for both supported order intervals; stochastic
+  sampler and endpoint-regularization arguments were removed.
 
 - Orthogonal-polynomial evaluation and Gaussian rule construction now pass through
   one private convention boundary. Hermite and Laguerre KAN identity/default
@@ -276,6 +300,9 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Causal interval clustering now uses the Jacobian of the original reference
+  coordinate, and zero-duration convolution and Caputo evaluations return exact
+  zeros without evaluating singular kernels.
 
 - Masked BSDE and deep-splitting losses now sanitize inactive residuals before
   nonlinear reductions, Flower sanitizes masked source and normalization state,

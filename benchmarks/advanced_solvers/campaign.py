@@ -34,6 +34,7 @@ DEFAULT_CASES = (
     "optimization-unconstrained",
     "optimization-constrained",
     "optimization-proximal",
+    "optimization-bounded-least-squares",
 )
 MATCHED_ROOT_CASES = (
     "nonlinear-root-dense",

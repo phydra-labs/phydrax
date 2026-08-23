@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import abc
 from collections.abc import Callable
 from math import isfinite
 from typing import Any
@@ -16,12 +17,14 @@ from jaxtyping import Array, PyTree
 from .._linear_refresh import LinearRefreshState, prepare_refresh_state
 from .._strict import StrictModule
 from ..linalg import (
+    FunctionLinearOperator,
     GeneralizedLSMR,
     IdentityLinearOperator,
     JacobianLinearOperator,
     LeastSquaresProblem as LinearLeastSquaresProblem,
     LinearSolvePolicy,
     LinearSolveStatus,
+    OperatorProperties,
     prepare_linearization,
     PyTreeSpace,
     ScaledLinearOperator,
@@ -46,6 +49,11 @@ from ._iterative._types import (
     OptimizationProvenance,
     OptimizationStatus,
     OptimizationTermination,
+)
+from ._trust_region import (
+    solve_trust_region_subproblem,
+    SteihaugToint,
+    TrustRegionQuadraticProblem,
 )
 
 
@@ -1024,6 +1032,204 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
         )
 
 
+class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
+    """Shared complete-solve contract for bound-aware residual methods."""
+
+    subproblem: SteihaugToint
+    initial_radius: float = eqx.field(static=True)
+    maximum_radius: float = eqx.field(static=True)
+    minimum_radius: float = eqx.field(static=True)
+    damping_increase: float = eqx.field(static=True)
+    damping_decrease: float = eqx.field(static=True)
+    minimum_damping: float = eqx.field(static=True)
+    maximum_damping: float = eqx.field(static=True)
+    active_tolerance: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        subproblem: SteihaugToint | None = None,
+        initial_radius: float = 1.0,
+        maximum_radius: float = 1e4,
+        minimum_radius: float = 1e-12,
+        damping: float | None = None,
+        damping_increase: float = 2.0,
+        damping_decrease: float = 0.5,
+        minimum_damping: float = 1e-12,
+        maximum_damping: float = 1e12,
+        active_tolerance: float = 1e-10,
+    ):
+        subproblem_ = SteihaugToint() if subproblem is None else subproblem
+        if not isinstance(subproblem_, SteihaugToint):
+            raise TypeError("subproblem must be SteihaugToint or None.")
+        damping_ = self.default_damping if damping is None else float(damping)
+        values = tuple(
+            float(value)
+            for value in (
+                initial_radius,
+                maximum_radius,
+                minimum_radius,
+                damping_,
+                damping_increase,
+                damping_decrease,
+                minimum_damping,
+                maximum_damping,
+                active_tolerance,
+            )
+        )
+        if any(not isfinite(value) or value <= 0.0 for value in values[:3]):
+            raise ValueError("Bounded least-squares radii must be positive and finite.")
+        if not values[2] <= values[0] <= values[1]:
+            raise ValueError(
+                "Radii must satisfy minimum_radius <= initial_radius <= maximum_radius."
+            )
+        if not isfinite(values[3]) or values[3] < 0.0:
+            raise ValueError("damping must be finite and non-negative.")
+        if not isfinite(values[4]) or values[4] <= 1.0:
+            raise ValueError("damping_increase must be finite and exceed one.")
+        if not isfinite(values[5]) or not 0.0 < values[5] < 1.0:
+            raise ValueError("damping_decrease must lie in (0, 1).")
+        if any(not isfinite(value) or value <= 0.0 for value in values[6:8]):
+            raise ValueError("Damping bounds must be positive and finite.")
+        if not values[6] <= max(values[3], values[6]) <= values[7]:
+            raise ValueError("Initial damping must not exceed maximum_damping.")
+        if not isfinite(values[8]) or values[8] < 0.0:
+            raise ValueError("active_tolerance must be finite and non-negative.")
+        self.subproblem = subproblem_
+        self.initial_radius = values[0]
+        self.maximum_radius = values[1]
+        self.minimum_radius = values[2]
+        self.damping_increase = values[4]
+        self.damping_decrease = values[5]
+        self.minimum_damping = values[6]
+        self.maximum_damping = values[7]
+        self.active_tolerance = values[8]
+        self._initial_damping = values[3]
+
+    _initial_damping: float = eqx.field(static=True)
+
+    @property
+    @abc.abstractmethod
+    def default_damping(self) -> float:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def adaptive_damping(self) -> bool:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def method_id(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def globalization_id(self) -> str:
+        return "projected-residual-trust-region"
+
+    @property
+    def capabilities(self) -> OptimizationCapabilities:
+        return OptimizationCapabilities(
+            scalar_objective=False,
+            residual_objective=True,
+            matrix_free=True,
+            prepared_refresh=False,
+            implicit_differentiation=False,
+        )
+
+    def init(self, parameters: PyTree[Any], /) -> LeastSquaresState:
+        parameters_ = _validate_real_inexact_tree(parameters, name="parameters")
+        dtype = jax.tree.leaves(parameters_)[0].dtype
+        metric_nan = jnp.asarray(jnp.nan, dtype=dtype)
+        return LeastSquaresState(
+            initial_optimality_norm=metric_nan,
+            damping=jnp.asarray(self._initial_damping, dtype=dtype),
+            metrics=IterativeStepMetrics(
+                objective=metric_nan,
+                damping=jnp.asarray(self.initial_radius, dtype=dtype),
+            ),
+        )
+
+    def prepare_state(
+        self,
+        residual_function,
+        parameters: PyTree[Any],
+        /,
+    ) -> LeastSquaresState:
+        if not callable(residual_function):
+            raise TypeError("residual_function must be callable.")
+        return self.init(parameters)
+
+    def step(
+        self,
+        residual_function,
+        parameters,
+        state,
+        /,
+        *,
+        termination,
+    ):
+        del residual_function, parameters, state, termination
+        raise ValueError(
+            "Bounded least-squares steps require problem bounds; use solve() or "
+            "phydrax.optim.least_squares()."
+        )
+
+    def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
+        if not isinstance(state, LeastSquaresState):
+            raise TypeError("state must be LeastSquaresState.")
+        return state.metrics
+
+    def solve(
+        self,
+        problem: NonlinearLeastSquaresProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> LeastSquaresResult:
+        return _solve_bounded_least_squares(
+            self,
+            problem,
+            initial_parameters,
+            termination=termination,
+            args=args,
+        )
+
+
+class BoundedGaussNewton(AbstractBoundedLeastSquaresMethod):
+    """Projected matrix-free Gauss--Newton trust-region method."""
+
+    @property
+    def default_damping(self) -> float:
+        return 0.0
+
+    @property
+    def adaptive_damping(self) -> bool:
+        return False
+
+    @property
+    def method_id(self) -> str:
+        return "bounded-gauss-newton"
+
+
+class BoundedLevenbergMarquardt(AbstractBoundedLeastSquaresMethod):
+    """Projected Levenberg--Marquardt with ratio-based damping and radius."""
+
+    @property
+    def default_damping(self) -> float:
+        return 1e-3
+
+    @property
+    def adaptive_damping(self) -> bool:
+        return True
+
+    @property
+    def method_id(self) -> str:
+        return "bounded-levenberg-marquardt"
+
+
 class _LeastSquaresRun(StrictModule):
     parameters: PyTree[Array]
     state: LeastSquaresState
@@ -1039,6 +1245,360 @@ class _LeastSquaresRun(StrictModule):
         self.parameters = parameters
         self.state = state
         self.status = jnp.asarray(status, dtype=jnp.int32)
+
+
+def _solve_bounded_least_squares(
+    method: AbstractBoundedLeastSquaresMethod,
+    problem: NonlinearLeastSquaresProblem,
+    initial_parameters: PyTree[Any],
+    /,
+    *,
+    termination: OptimizationTermination,
+    args: Any,
+) -> LeastSquaresResult:
+    if not isinstance(problem, NonlinearLeastSquaresProblem):
+        raise TypeError("problem must be NonlinearLeastSquaresProblem.")
+    if problem.bounds is None:
+        raise ValueError("A bounded least-squares method requires problem.bounds.")
+    if not isinstance(termination, OptimizationTermination):
+        raise TypeError("termination must be OptimizationTermination.")
+    bounds = problem.bounds
+    parameters = bounds.project(
+        _validate_real_inexact_tree(
+            initial_parameters,
+            name="initial_parameters",
+        )
+    )
+
+    def residual_function(candidate):
+        residual, _ = problem.value(candidate, args)
+        return residual
+
+    state = method.init(parameters)
+    initial_status = jnp.where(
+        _tree_allfinite(parameters),
+        int(OptimizationStatus.ITERATING),
+        int(OptimizationStatus.NONFINITE_INPUT),
+    ).astype(jnp.int32)
+    run = _LeastSquaresRun(parameters, state, initial_status)
+
+    def condition(current):
+        within_evaluations = (
+            jnp.asarray(True)
+            if termination.maximum_evaluations is None
+            else current.state.residual_evaluations + 2 <= termination.maximum_evaluations
+        )
+        return (
+            (current.status == int(OptimizationStatus.ITERATING))
+            & (current.state.iteration < termination.maximum_steps)
+            & within_evaluations
+        )
+
+    def body(current):
+        model = _prepare_residual_model(residual_function, current.parameters)
+        projected_gradient = bounds.projected_gradient(
+            current.parameters,
+            model.gradient,
+        )
+        optimality = _tree_norm(projected_gradient)
+        initial_optimality = jnp.where(
+            current.state.iteration == 0,
+            optimality,
+            current.state.initial_optimality_norm,
+        )
+        finite = (
+            jnp.isfinite(model.objective)
+            & jnp.isfinite(optimality)
+            & _tree_allfinite(current.parameters)
+            & _tree_allfinite(model.residual)
+            & _tree_allfinite(model.gradient)
+        )
+        converged = optimality <= termination.optimality_threshold(initial_optimality)
+
+        def terminal(_):
+            status = jnp.where(
+                ~finite,
+                int(OptimizationStatus.NONFINITE_EVALUATION),
+                int(OptimizationStatus.SUCCESS),
+            ).astype(jnp.int32)
+            next_state = LeastSquaresState(
+                iteration=current.state.iteration + 1,
+                initial_optimality_norm=initial_optimality,
+                damping=current.state.damping,
+                accepted_steps=current.state.accepted_steps,
+                rejected_steps=current.state.rejected_steps + (~finite).astype(jnp.int32),
+                residual_evaluations=current.state.residual_evaluations + 1,
+                scalar_evaluations=current.state.scalar_evaluations,
+                scalar_gradient_evaluations=(current.state.scalar_gradient_evaluations),
+                scalar_hvp_evaluations=current.state.scalar_hvp_evaluations,
+                jvp_evaluations=current.state.jvp_evaluations,
+                vjp_evaluations=current.state.vjp_evaluations + 1,
+                linear_iterations=current.state.linear_iterations,
+                linear_solves=current.state.linear_solves,
+                direction_fallbacks=current.state.direction_fallbacks,
+                setup_refreshes=current.state.setup_refreshes,
+                numeric_refreshes=current.state.numeric_refreshes,
+                linear_refresh_state=current.state.linear_refresh_state,
+                metrics=IterativeStepMetrics(
+                    objective=model.objective,
+                    optimality_norm=optimality,
+                    step_norm=current.state.metrics.step_norm,
+                    accepted_step_size=current.state.metrics.accepted_step_size,
+                    accepted=finite,
+                    damping=current.state.metrics.damping,
+                    reduction_ratio=current.state.metrics.reduction_ratio,
+                    status=status,
+                ),
+            )
+            return _LeastSquaresRun(current.parameters, next_state, status)
+
+        def take_step(_):
+            active = bounds.active_mask(
+                current.parameters,
+                model.gradient,
+                tolerance=method.active_tolerance,
+            )
+            free_gradient = jax.tree.map(
+                lambda value, mask: jnp.where(mask, 0.0, value),
+                model.gradient,
+                active,
+            )
+            space = PyTreeSpace(current.parameters)
+
+            def normal_action(direction):
+                free_direction = jax.tree.map(
+                    lambda value, mask: jnp.where(mask, 0.0, value),
+                    direction,
+                    active,
+                )
+                image = model.jacobian.mv(free_direction)
+                normal = model.jacobian.adjoint_mv(image)
+                regularized = _tree_add_scaled(
+                    normal,
+                    free_direction,
+                    current.state.damping,
+                )
+                return jax.tree.map(
+                    lambda value, mask: jnp.where(mask, 0.0, value),
+                    regularized,
+                    active,
+                )
+
+            normal_operator = FunctionLinearOperator(
+                normal_action,
+                source=space,
+                target=space,
+                properties=OperatorProperties(
+                    self_adjoint=True,
+                    positive_semidefinite=True,
+                    evidence={
+                        "self_adjoint": "construction",
+                        "positive_semidefinite": "construction",
+                    },
+                ),
+                operator_id="bounded-gauss-newton-normal-operator",
+                closure_convert=False,
+            )
+            radius = current.state.metrics.damping
+            subproblem = solve_trust_region_subproblem(
+                TrustRegionQuadraticProblem(
+                    normal_operator,
+                    free_gradient,
+                    radius,
+                ),
+                method=method.subproblem,
+            )
+            unprojected = _tree_add_scaled(
+                current.parameters,
+                subproblem.step,
+                1.0,
+            )
+            candidate = bounds.project(unprojected)
+            displacement = jax.tree.map(
+                lambda new, old: new - old,
+                candidate,
+                current.parameters,
+            )
+            normal_displacement = normal_operator.mv(displacement)
+            predicted = -(
+                _tree_inner(model.gradient, displacement)
+                + 0.5 * _tree_inner(displacement, normal_displacement)
+            )
+            candidate_residual = residual_function(candidate)
+            candidate_objective = 0.5 * _tree_inner(
+                candidate_residual,
+                candidate_residual,
+            )
+            actual = model.objective - candidate_objective
+            ratio = actual / jnp.maximum(predicted, 1e-30)
+            candidate_finite = (
+                _tree_allfinite(candidate)
+                & _tree_allfinite(candidate_residual)
+                & jnp.isfinite(candidate_objective)
+            )
+            accepted = (
+                subproblem.successful
+                & candidate_finite
+                & jnp.isfinite(predicted)
+                & (predicted > 0.0)
+                & jnp.isfinite(ratio)
+                & (ratio >= 1e-4)
+            )
+            step_norm = _tree_norm(displacement)
+            shrink = (
+                ~subproblem.successful
+                | ~candidate_finite
+                | ~jnp.isfinite(ratio)
+                | (ratio < 0.25)
+            )
+            expand = accepted & (ratio > 0.75) & subproblem.diagnostics.boundary_hit
+            next_radius = jnp.where(
+                shrink,
+                jnp.maximum(method.minimum_radius, 0.25 * radius),
+                jnp.where(
+                    expand,
+                    jnp.minimum(method.maximum_radius, 2.0 * radius),
+                    radius,
+                ),
+            )
+            next_damping = (
+                jnp.where(
+                    accepted & (ratio > 0.75),
+                    jnp.maximum(
+                        method.minimum_damping,
+                        method.damping_decrease * current.state.damping,
+                    ),
+                    jnp.where(
+                        ~accepted | (ratio < 0.25),
+                        jnp.minimum(
+                            method.maximum_damping,
+                            method.damping_increase
+                            * jnp.maximum(
+                                current.state.damping,
+                                method.minimum_damping,
+                            ),
+                        ),
+                        current.state.damping,
+                    ),
+                )
+                if method.adaptive_damping
+                else jnp.asarray(0.0, dtype=current.state.damping.dtype)
+            )
+            accepted_parameters = _tree_where(
+                accepted,
+                candidate,
+                current.parameters,
+            )
+            stagnated = (
+                accepted
+                & (
+                    step_norm
+                    <= termination.step_threshold(_tree_norm(accepted_parameters))
+                )
+                & (optimality > termination.optimality_threshold(initial_optimality))
+            )
+            failed = (~accepted) & (next_radius <= method.minimum_radius)
+            status = jnp.where(
+                stagnated,
+                int(OptimizationStatus.STAGNATION),
+                jnp.where(
+                    failed,
+                    int(OptimizationStatus.TRUST_REGION_FAILED),
+                    int(OptimizationStatus.ITERATING),
+                ),
+            ).astype(jnp.int32)
+            hessian_actions = subproblem.diagnostics.hessian_actions + 1
+            next_state = LeastSquaresState(
+                iteration=current.state.iteration + 1,
+                initial_optimality_norm=initial_optimality,
+                damping=next_damping,
+                accepted_steps=current.state.accepted_steps + accepted.astype(jnp.int32),
+                rejected_steps=current.state.rejected_steps
+                + (~accepted).astype(jnp.int32),
+                residual_evaluations=current.state.residual_evaluations + 2,
+                scalar_evaluations=current.state.scalar_evaluations,
+                scalar_gradient_evaluations=(current.state.scalar_gradient_evaluations),
+                scalar_hvp_evaluations=current.state.scalar_hvp_evaluations,
+                jvp_evaluations=current.state.jvp_evaluations + hessian_actions,
+                vjp_evaluations=current.state.vjp_evaluations + hessian_actions + 1,
+                linear_iterations=current.state.linear_iterations
+                + subproblem.diagnostics.iterations,
+                linear_solves=current.state.linear_solves + 1,
+                direction_fallbacks=current.state.direction_fallbacks,
+                setup_refreshes=current.state.setup_refreshes + 1,
+                numeric_refreshes=current.state.numeric_refreshes + 1,
+                linear_refresh_state=current.state.linear_refresh_state,
+                metrics=IterativeStepMetrics(
+                    objective=jnp.where(
+                        accepted,
+                        candidate_objective,
+                        model.objective,
+                    ),
+                    optimality_norm=optimality,
+                    step_norm=step_norm,
+                    accepted_step_size=jnp.where(accepted, 1.0, 0.0),
+                    accepted=accepted,
+                    linear_iterations=subproblem.diagnostics.iterations,
+                    damping=next_radius,
+                    reduction_ratio=ratio,
+                    status=status,
+                ),
+            )
+            return _LeastSquaresRun(accepted_parameters, next_state, status)
+
+        return jax.lax.cond(
+            (~finite) | converged,
+            terminal,
+            take_step,
+            None,
+        )
+
+    run = jax.lax.while_loop(condition, body, run)
+    exhausted_evaluations = (
+        jnp.asarray(False)
+        if termination.maximum_evaluations is None
+        else run.state.residual_evaluations >= termination.maximum_evaluations
+    )
+    status = jnp.where(
+        run.status == int(OptimizationStatus.ITERATING),
+        jnp.where(
+            exhausted_evaluations,
+            int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
+            int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+        ),
+        run.status,
+    ).astype(jnp.int32)
+    packaged = _package_least_squares_result(
+        method,
+        problem,
+        _LeastSquaresRun(run.parameters, run.state, status),
+        residual_function,
+        termination,
+        args,
+    )
+    diagnostics = eqx.tree_at(
+        lambda value: value.primal_feasibility,
+        packaged.diagnostics,
+        bounds.violation(packaged.parameters),
+    )
+    provenance = OptimizationProvenance(
+        problem_id=problem.problem_id,
+        method=method.method_id,
+        backend="phydrax-native",
+        globalization=method.globalization_id,
+        matrix_free=True,
+        implicit_differentiation=False,
+        notes="Every accepted least-squares parameter is projected into its bounds.",
+    )
+    return LeastSquaresResult(
+        packaged.parameters,
+        packaged.residual,
+        packaged.objective,
+        packaged.auxiliary,
+        packaged.status,
+        diagnostics,
+        provenance,
+    )
 
 
 def _run_least_squares_iterations(
@@ -1214,6 +1774,11 @@ def _solve_least_squares(
     termination: OptimizationTermination,
     args: Any,
 ) -> LeastSquaresResult:
+    if problem.bounds is not None:
+        raise ValueError(
+            "GaussNewton, LevenbergMarquardt, and finite-difference methods "
+            "do not silently ignore bounds; use a bounded least-squares method."
+        )
     parameters = _validate_least_squares_inputs(
         problem,
         initial_parameters,
@@ -1270,6 +1835,9 @@ def least_squares(
 
 
 __all__ = [
+    "AbstractBoundedLeastSquaresMethod",
+    "BoundedGaussNewton",
+    "BoundedLevenbergMarquardt",
     "GaussNewton",
     "LeastSquaresState",
     "LevenbergMarquardt",

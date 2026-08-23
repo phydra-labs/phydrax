@@ -28,6 +28,11 @@ from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import InputLayout, InputRole, StateLayout
 from ._linearization import EvolutionJacobianAction
 from ._model_system import continuous_model_system, ContinuousModelVectorField
+from ._second_order import (
+    SecondOrderDifferentialProblem,
+    SecondOrderDifferentialSystem,
+    SecondOrderResidual,
+)
 from ._system import (
     AbstractInputPolicy,
     AutonomousContinuousVectorField,
@@ -81,6 +86,9 @@ __all__ = [
     "InputAlignment",
     "InputRole",
     "IterationGrid",
+    "SecondOrderDifferentialProblem",
+    "SecondOrderDifferentialSystem",
+    "SecondOrderResidual",
     "StateLayout",
     "SystemTransition",
     "SystemVectorField",

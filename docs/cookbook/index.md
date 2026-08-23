@@ -46,6 +46,7 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 
 - [Poisson (field learning, soft vs enforced BC)](poisson.md)
 - [Heat equation (space–time, initial conditions, optional sensors)](heat.md)
+- [Integral and nonlocal physics](integral_physics.md)
 - [Stochastic dynamics (PINNs, SDEs, and semidiscrete SPDEs)](stochastic_dynamics.md)
 - [Filtering and smoothing stochastic state](filtering.md)
 - [Controlled dynamics (driving paths, CDE integration, and Neural CDEs)](controlled_dynamics.md)

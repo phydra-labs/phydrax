@@ -88,13 +88,44 @@ def test_time_convolution_exp_sin_closed_form():
     def function(t):
         return jnp.sin(t)
 
-    convolution = time_convolution(lambda lag: jnp.exp(-lag), function, order=64)
+    convolution = time_convolution(
+        lambda lag: jnp.exp(-lag),
+        function,
+        rule=phx.integration.GaussLegendreRule(64),
+    )
     times = jnp.linspace(0.0, 2.0, 25)
     values = jnp.asarray(
         convolution(frozendict({"t": cx.Field(times, dims=("t",))})).data
     )
     exact = 0.5 * (jnp.sin(times) - jnp.cos(times) + jnp.exp(-times))
     assert jnp.max(jnp.abs(values - exact)) < 2e-3
+
+
+def test_time_convolution_is_exact_zero_at_nonzero_domain_start():
+    domain = TimeInterval(2.0, 3.0)
+    function = domain.Function("t")(lambda time: jnp.stack((time, time**2)))
+    convolution = time_convolution(lambda lag: jnp.exp(-lag), function)
+    start = frozendict({"t": cx.Field(jnp.array(2.0), dims=())})
+
+    value = jnp.asarray(convolution(start).data)
+
+    assert jnp.array_equal(value, jnp.zeros((2,)))
+    assert convolution.metadata["integral_randomized"] is False
+    assert convolution.metadata["integral_rule"] == "GaussLegendreRule"
+
+
+def test_time_convolution_nonzero_start_and_clustered_rule():
+    domain = TimeInterval(2.0, 3.0)
+    function = domain.Function("t")(lambda time: (time - 2.0) ** 2)
+    convolution = time_convolution(
+        lambda lag: jnp.ones_like(lag),
+        function,
+        rule=phx.integration.GaussLegendreRule(32),
+        cluster_exponent=2.0,
+    )
+    endpoint = frozendict({"t": cx.Field(jnp.array(3.0), dims=())})
+
+    assert jnp.allclose(convolution(endpoint).data, 1.0 / 3.0, atol=1e-12)
 
 
 def test_fractional_laplacian_constant_zero():

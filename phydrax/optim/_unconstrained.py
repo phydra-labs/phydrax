@@ -15,6 +15,7 @@ from jaxtyping import Array, PyTree
 
 from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
+from ..linalg import FunctionLinearOperator, OperatorProperties, PyTreeSpace
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._globalization import (
     strong_wolfe_line_search,
@@ -36,6 +37,11 @@ from ._iterative._types import (
     OptimizationTermination,
 )
 from ._scalar import solve_scalar_iterative
+from ._trust_region import (
+    solve_trust_region_subproblem,
+    SteihaugToint,
+    TrustRegionQuadraticProblem,
+)
 
 
 class _AbstractScalarExtensionState(StrictModule):
@@ -495,7 +501,7 @@ class NonlinearConjugateGradient(AbstractScalarIterativeMethod):
         )
 
 
-class NewtonTrustRegionState(_AbstractScalarExtensionState):
+class DenseNewtonDoglegState(_AbstractScalarExtensionState):
     """Accepted-point scalar state with a persistent trust-region radius."""
 
     trust_radius: Array
@@ -505,7 +511,7 @@ class NewtonTrustRegionState(_AbstractScalarExtensionState):
         self.trust_radius = jnp.asarray(trust_radius)
 
 
-class NewtonTrustRegion(AbstractScalarIterativeMethod):
+class DenseNewtonDogleg(AbstractScalarIterativeMethod):
     """Dense Newton dogleg method with ratio-based trust-region acceptance."""
 
     initial_radius: float = eqx.field(static=True)
@@ -575,7 +581,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
 
     @property
     def method_id(self) -> str:
-        return "newton-trust-region/dogleg"
+        return "dense-newton-dogleg"
 
     @property
     def globalization_id(self) -> str:
@@ -591,16 +597,16 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
             implicit_differentiation=True,
         )
 
-    def init(self, parameters: PyTree[Any], /) -> NewtonTrustRegionState:
+    def init(self, parameters: PyTree[Any], /) -> DenseNewtonDoglegState:
         parameters = _validate_real_inexact_tree(parameters, name="parameters")
         flat, _ = ravel_pytree(parameters)
         if int(flat.size) > self.max_dense_dimension:
             raise ValueError(
-                f"NewtonTrustRegion has {flat.size} variables, exceeding "
+                f"DenseNewtonDogleg has {flat.size} variables, exceeding "
                 f"max_dense_dimension={self.max_dense_dimension}."
             )
         metric_nan = jnp.asarray(jnp.nan, dtype=flat.dtype)
-        return NewtonTrustRegionState(
+        return DenseNewtonDoglegState(
             trust_radius=jnp.asarray(self.initial_radius, dtype=flat.dtype),
             initial_optimality_norm=metric_nan,
             metrics=IterativeStepMetrics(objective=metric_nan),
@@ -611,7 +617,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         value_function,
         parameters: PyTree[Any],
         /,
-    ) -> NewtonTrustRegionState:
+    ) -> DenseNewtonDoglegState:
         if not callable(value_function):
             raise TypeError("value_function must be callable.")
         return self.init(parameters)
@@ -624,15 +630,15 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
         /,
         *,
         termination: OptimizationTermination | None,
-    ) -> tuple[PyTree[Any], NewtonTrustRegionState, Any]:
+    ) -> tuple[PyTree[Any], DenseNewtonDoglegState, Any]:
         if not callable(value_function):
             raise TypeError("value_function must be callable.")
-        if not isinstance(state, NewtonTrustRegionState):
-            raise TypeError("state must be a NewtonTrustRegionState.")
+        if not isinstance(state, DenseNewtonDoglegState):
+            raise TypeError("state must be a DenseNewtonDoglegState.")
         flat_parameters, unravel = ravel_pytree(parameters)
         if int(flat_parameters.size) > self.max_dense_dimension:
             raise ValueError(
-                f"NewtonTrustRegion has {flat_parameters.size} variables, exceeding "
+                f"DenseNewtonDogleg has {flat_parameters.size} variables, exceeding "
                 f"max_dense_dimension={self.max_dense_dimension}."
             )
 
@@ -674,7 +680,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
                     int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
                 ),
             )
-            updated = NewtonTrustRegionState(
+            updated = DenseNewtonDoglegState(
                 trust_radius=state.trust_radius,
                 iteration=state.iteration + 1,
                 initial_optimality_norm=initial_optimality,
@@ -829,7 +835,7 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
                 ),
             )
             fallback = ~newton_usable
-            updated = NewtonTrustRegionState(
+            updated = DenseNewtonDoglegState(
                 trust_radius=next_radius,
                 iteration=state.iteration + 1,
                 initial_optimality_norm=initial_optimality,
@@ -877,6 +883,374 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
     def step_metrics(
         self, state: _AbstractScalarExtensionState, /
     ) -> IterativeStepMetrics:
+        if not isinstance(state, DenseNewtonDoglegState):
+            raise TypeError("state must be a DenseNewtonDoglegState.")
+        return state.metrics
+
+    def solve(
+        self,
+        problem: MinimizationProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> MinimizationResult:
+        return solve_scalar_iterative(
+            self,
+            problem,
+            initial_parameters,
+            termination=termination,
+            args=args,
+        )
+
+
+class NewtonTrustRegionState(_AbstractScalarExtensionState):
+    """Accepted-point matrix-free trust-region state."""
+
+    trust_radius: Array
+
+    def __init__(self, *, trust_radius: Any, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.trust_radius = jnp.asarray(trust_radius)
+
+
+class NewtonTrustRegion(AbstractScalarIterativeMethod):
+    """Matrix-free Newton method with a Steihaug--Toint trust region."""
+
+    subproblem: SteihaugToint
+    initial_radius: float = eqx.field(static=True)
+    maximum_radius: float = eqx.field(static=True)
+    minimum_radius: float = eqx.field(static=True)
+    acceptance_ratio: float = eqx.field(static=True)
+    shrink_ratio: float = eqx.field(static=True)
+    expansion_ratio: float = eqx.field(static=True)
+    shrink_factor: float = eqx.field(static=True)
+    expansion_factor: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        subproblem: SteihaugToint | None = None,
+        initial_radius: float = 1.0,
+        maximum_radius: float = 1e4,
+        minimum_radius: float = 1e-12,
+        acceptance_ratio: float = 1e-4,
+        shrink_ratio: float = 0.25,
+        expansion_ratio: float = 0.75,
+        shrink_factor: float = 0.25,
+        expansion_factor: float = 2.0,
+    ):
+        subproblem_ = SteihaugToint() if subproblem is None else subproblem
+        if not isinstance(subproblem_, SteihaugToint):
+            raise TypeError("subproblem must be SteihaugToint or None.")
+        values = tuple(
+            float(value)
+            for value in (
+                initial_radius,
+                maximum_radius,
+                minimum_radius,
+                acceptance_ratio,
+                shrink_ratio,
+                expansion_ratio,
+                shrink_factor,
+                expansion_factor,
+            )
+        )
+        if any(not isfinite(value) or value <= 0.0 for value in values):
+            raise ValueError("Trust-region controls must be positive and finite.")
+        if not values[2] <= values[0] <= values[1]:
+            raise ValueError(
+                "Radii must satisfy minimum_radius <= initial_radius <= maximum_radius."
+            )
+        if not 0.0 < values[3] < values[4] < values[5] < 1.0:
+            raise ValueError("Ratios must satisfy acceptance < shrink < expansion < one.")
+        if not 0.0 < values[6] < 1.0 or values[7] <= 1.0:
+            raise ValueError("Radius factors must shrink below and expand above one.")
+        self.subproblem = subproblem_
+        (
+            self.initial_radius,
+            self.maximum_radius,
+            self.minimum_radius,
+            self.acceptance_ratio,
+            self.shrink_ratio,
+            self.expansion_ratio,
+            self.shrink_factor,
+            self.expansion_factor,
+        ) = values
+
+    @property
+    def method_id(self) -> str:
+        return "newton-trust-region/steihaug-toint"
+
+    @property
+    def globalization_id(self) -> str:
+        return "trust-region-ratio"
+
+    @property
+    def capabilities(self) -> OptimizationCapabilities:
+        return OptimizationCapabilities(
+            scalar_objective=True,
+            residual_objective=False,
+            matrix_free=True,
+            prepared_refresh=False,
+            implicit_differentiation=True,
+        )
+
+    def init(self, parameters: PyTree[Any], /) -> NewtonTrustRegionState:
+        parameters_ = _validate_real_inexact_tree(parameters, name="parameters")
+        metric_nan = jnp.asarray(
+            jnp.nan,
+            dtype=jax.tree.leaves(parameters_)[0].dtype,
+        )
+        return NewtonTrustRegionState(
+            trust_radius=jnp.asarray(self.initial_radius, dtype=metric_nan.dtype),
+            initial_optimality_norm=metric_nan,
+            metrics=IterativeStepMetrics(objective=metric_nan),
+        )
+
+    def prepare_state(
+        self,
+        value_function,
+        parameters: PyTree[Any],
+        /,
+    ) -> NewtonTrustRegionState:
+        if not callable(value_function):
+            raise TypeError("value_function must be callable.")
+        return self.init(parameters)
+
+    def step(
+        self,
+        value_function,
+        parameters: PyTree[Any],
+        state: _AbstractScalarExtensionState,
+        /,
+        *,
+        termination: OptimizationTermination | None,
+    ) -> tuple[PyTree[Any], NewtonTrustRegionState, Any]:
+        if not callable(value_function):
+            raise TypeError("value_function must be callable.")
+        if not isinstance(state, NewtonTrustRegionState):
+            raise TypeError("state must be a NewtonTrustRegionState.")
+        parameters_ = _validate_real_inexact_tree(parameters, name="parameters")
+        value, gradient = jax.value_and_grad(value_function)(parameters_)
+        optimality = _tree_norm(gradient)
+        initial_optimality = jnp.where(
+            state.iteration == 0,
+            optimality,
+            state.initial_optimality_norm,
+        )
+        finite = (
+            jnp.isfinite(value)
+            & jnp.isfinite(optimality)
+            & _tree_allfinite(parameters_)
+            & _tree_allfinite(gradient)
+        )
+        converged = (
+            jnp.asarray(False)
+            if termination is None
+            else optimality <= termination.optimality_threshold(initial_optimality)
+        )
+        budget_allows_candidate = (
+            jnp.asarray(True)
+            if termination is None or termination.maximum_evaluations is None
+            else state.objective_evaluations + 2 <= termination.maximum_evaluations
+        )
+        _, static_state = eqx.partition(state, eqx.is_array)
+
+        def terminal_step(_):
+            status = jnp.where(
+                ~finite,
+                int(OptimizationStatus.NONFINITE_EVALUATION),
+                jnp.where(
+                    converged,
+                    int(OptimizationStatus.SUCCESS),
+                    int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
+                ),
+            ).astype(jnp.int32)
+            updated = NewtonTrustRegionState(
+                trust_radius=state.trust_radius,
+                iteration=state.iteration + 1,
+                initial_optimality_norm=initial_optimality,
+                accepted_steps=state.accepted_steps,
+                rejected_steps=state.rejected_steps + (~finite).astype(jnp.int32),
+                objective_evaluations=state.objective_evaluations + 1,
+                gradient_evaluations=state.gradient_evaluations + 1,
+                hvp_evaluations=state.hvp_evaluations,
+                linear_solves=state.linear_solves,
+                linear_iterations=state.linear_iterations,
+                setup_refreshes=state.setup_refreshes,
+                numeric_refreshes=state.numeric_refreshes,
+                linear_refresh_state=state.linear_refresh_state,
+                direction_fallbacks=state.direction_fallbacks,
+                metrics=IterativeStepMetrics(
+                    objective=value,
+                    optimality_norm=optimality,
+                    step_norm=state.metrics.step_norm,
+                    accepted_step_size=state.metrics.accepted_step_size,
+                    globalization_evaluations=(state.metrics.globalization_evaluations),
+                    accepted=finite,
+                    damping=state.trust_radius,
+                    reduction_ratio=state.metrics.reduction_ratio,
+                    status=status,
+                ),
+            )
+            dynamic, _ = eqx.partition(updated, eqx.is_array)
+            return parameters_, dynamic, value
+
+        def trust_region_step(_):
+            linearized_gradient, hessian_action = jax.linearize(
+                jax.grad(value_function),
+                parameters_,
+            )
+            space = PyTreeSpace(parameters_)
+            hessian = FunctionLinearOperator(
+                hessian_action,
+                source=space,
+                target=space,
+                properties=OperatorProperties(
+                    self_adjoint=True,
+                    evidence={"self_adjoint": "construction"},
+                ),
+                operator_id="objective-hessian-action",
+                closure_convert=False,
+            )
+            subproblem = solve_trust_region_subproblem(
+                TrustRegionQuadraticProblem(
+                    hessian,
+                    linearized_gradient,
+                    state.trust_radius,
+                ),
+                method=self.subproblem,
+            )
+            direction = subproblem.step
+            candidate = _tree_add_scaled(parameters_, direction, 1.0)
+            candidate_value, candidate_gradient = jax.value_and_grad(value_function)(
+                candidate
+            )
+            predicted = subproblem.diagnostics.predicted_reduction
+            actual = value - candidate_value
+            ratio = actual / jnp.maximum(predicted, 1e-30)
+            candidate_finite = (
+                jnp.isfinite(candidate_value)
+                & _tree_allfinite(candidate)
+                & _tree_allfinite(candidate_gradient)
+            )
+            accepted = (
+                subproblem.successful
+                & candidate_finite
+                & jnp.isfinite(predicted)
+                & (predicted > 0.0)
+                & jnp.isfinite(ratio)
+                & (ratio >= self.acceptance_ratio)
+            )
+            step_norm = _tree_norm(direction)
+            shrink = (
+                ~subproblem.successful
+                | ~candidate_finite
+                | ~jnp.isfinite(ratio)
+                | (ratio < self.shrink_ratio)
+            )
+            expand = (
+                accepted
+                & (ratio > self.expansion_ratio)
+                & subproblem.diagnostics.boundary_hit
+            )
+            next_radius = jnp.where(
+                shrink,
+                jnp.maximum(
+                    self.minimum_radius,
+                    self.shrink_factor * state.trust_radius,
+                ),
+                jnp.where(
+                    expand,
+                    jnp.minimum(
+                        self.maximum_radius,
+                        self.expansion_factor * state.trust_radius,
+                    ),
+                    state.trust_radius,
+                ),
+            )
+            accepted_parameters = _tree_where(accepted, candidate, parameters_)
+            accepted_optimality = jnp.where(
+                accepted,
+                _tree_norm(candidate_gradient),
+                optimality,
+            )
+            stagnated = (
+                jnp.asarray(False)
+                if termination is None
+                else accepted
+                & (
+                    step_norm
+                    <= termination.step_threshold(_tree_norm(accepted_parameters))
+                )
+                & (
+                    accepted_optimality
+                    > termination.optimality_threshold(initial_optimality)
+                )
+            )
+            failed = (~accepted) & (next_radius <= self.minimum_radius)
+            status = jnp.where(
+                stagnated,
+                int(OptimizationStatus.STAGNATION),
+                jnp.where(
+                    failed,
+                    int(OptimizationStatus.TRUST_REGION_FAILED),
+                    int(OptimizationStatus.ITERATING),
+                ),
+            ).astype(jnp.int32)
+            updated = NewtonTrustRegionState(
+                trust_radius=next_radius,
+                iteration=state.iteration + 1,
+                initial_optimality_norm=initial_optimality,
+                accepted_steps=state.accepted_steps + accepted.astype(jnp.int32),
+                rejected_steps=state.rejected_steps + (~accepted).astype(jnp.int32),
+                objective_evaluations=state.objective_evaluations + 2,
+                gradient_evaluations=state.gradient_evaluations + 3,
+                hvp_evaluations=(
+                    state.hvp_evaluations + subproblem.diagnostics.hessian_actions
+                ),
+                linear_solves=state.linear_solves + 1,
+                linear_iterations=(
+                    state.linear_iterations + subproblem.diagnostics.iterations
+                ),
+                setup_refreshes=state.setup_refreshes,
+                numeric_refreshes=state.numeric_refreshes,
+                linear_refresh_state=state.linear_refresh_state,
+                direction_fallbacks=state.direction_fallbacks,
+                metrics=IterativeStepMetrics(
+                    objective=jnp.where(accepted, candidate_value, value),
+                    optimality_norm=accepted_optimality,
+                    step_norm=step_norm,
+                    accepted_step_size=jnp.where(accepted, 1.0, 0.0),
+                    accepted=accepted,
+                    linear_iterations=subproblem.diagnostics.iterations,
+                    damping=next_radius,
+                    reduction_ratio=ratio,
+                    status=status,
+                ),
+            )
+            dynamic, _ = eqx.partition(updated, eqx.is_array)
+            return (
+                accepted_parameters,
+                dynamic,
+                jnp.where(accepted, candidate_value, value),
+            )
+
+        next_parameters, dynamic_state, objective = jax.lax.cond(
+            (~finite) | converged | (~budget_allows_candidate),
+            terminal_step,
+            trust_region_step,
+            None,
+        )
+        return next_parameters, eqx.combine(dynamic_state, static_state), objective
+
+    def step_metrics(
+        self,
+        state: _AbstractScalarExtensionState,
+        /,
+    ) -> IterativeStepMetrics:
         if not isinstance(state, NewtonTrustRegionState):
             raise TypeError("state must be a NewtonTrustRegionState.")
         return state.metrics
@@ -901,6 +1275,8 @@ class NewtonTrustRegion(AbstractScalarIterativeMethod):
 
 __all__ = [
     "BetaMethod",
+    "DenseNewtonDogleg",
+    "DenseNewtonDoglegState",
     "NewtonTrustRegion",
     "NewtonTrustRegionState",
     "NonlinearConjugateGradient",

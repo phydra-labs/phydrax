@@ -285,6 +285,30 @@ def _optimization_certificate(
         }
         scale = 1.0 + float(np.linalg.norm(gradient, ord=np.inf))
         kind = "optimization-kkt"
+    elif problem.variant == "bounded-least-squares":
+        projected = np.clip(value - gradient, 0.0, 1.0)
+        stationarity = value - projected
+        feasibility = max(
+            float(np.max(np.maximum(-value, 0.0))),
+            float(np.max(np.maximum(value - 1.0, 0.0))),
+        )
+        residual_norm = max(
+            feasibility,
+            float(np.linalg.norm(stationarity, ord=np.inf)),
+        )
+        details = {
+            "objective": problem.objective(value),
+            "objective_gap": abs(
+                problem.objective(value) - problem.objective(problem.optimum)
+            ),
+            "distance_to_reference": float(np.linalg.norm(value - problem.optimum)),
+            "projected_stationarity_norm": float(
+                np.linalg.norm(stationarity, ord=np.inf)
+            ),
+            "bound_feasibility": feasibility,
+        }
+        scale = 1.0 + float(np.linalg.norm(value, ord=np.inf))
+        kind = "optimization-bound-stationarity"
     elif problem.variant == "proximal":
         stationarity = problem.proximal_stationarity(value)
         residual_norm = float(np.linalg.norm(stationarity, ord=np.inf))

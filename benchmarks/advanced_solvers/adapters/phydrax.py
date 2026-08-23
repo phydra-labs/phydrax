@@ -45,6 +45,7 @@ _CAPABILITIES = frozenset(
         "optimization.unconstrained",
         "optimization.constrained",
         "optimization.proximal",
+        "optimization.bounded-least-squares",
         "optimization.linear-program",
         "optimization.quadratic-program",
     }
@@ -153,7 +154,7 @@ class PhydraxAdapter(BenchmarkAdapter):
             method, preconditioner = methods[spec.solver_mode]
         elif capability == "nonlinear.vi":
             method, preconditioner = (
-                "semismooth-newton-fischer-burmeister",
+                "semismooth-newton-fischer-burmeister-preserve-box",
                 "policy-selected-linear-solver",
             )
         elif capability == "eigen.general":
@@ -164,6 +165,11 @@ class PhydraxAdapter(BenchmarkAdapter):
             method, preconditioner = "sqp-merit", "dense-bfgs-qp"
         elif capability == "optimization.proximal":
             method, preconditioner = "proximal-gradient", "exact-l1-proximal-map"
+        elif capability == "optimization.bounded-least-squares":
+            method, preconditioner = (
+                "bounded-levenberg-marquardt",
+                "active-set-trust-region",
+            )
         elif capability == "optimization.linear-program":
             method, preconditioner = "dense-primal-dual-lp", "none"
         elif capability == "optimization.quadratic-program":
@@ -410,10 +416,11 @@ class PhydraxAdapter(BenchmarkAdapter):
                 )
                 policy = (
                     nonlinear.SemismoothNewton(
+                        feasibility="preserve-box",
                         certification_tolerance=max(
                             spec.tolerances.relative,
                             spec.tolerances.absolute,
-                        )
+                        ),
                     ),
                     termination,
                 )
@@ -467,6 +474,23 @@ class PhydraxAdapter(BenchmarkAdapter):
                 )
                 policy = (optim.SQP(), termination)
                 transferred_bytes = int(problem.initial.nbytes)
+            elif problem.variant == "bounded-least-squares":
+                if problem.target is None:
+                    raise ValueError("bounded least-squares benchmark lacks its target")
+                target = jnp.asarray(problem.target)
+                native_problem = optim.NonlinearLeastSquaresProblem(
+                    lambda value, args: value - target,
+                    bounds=optim.Bounds(0.0, 1.0),
+                    problem_id=(
+                        "benchmark-bounded-least-squares:"
+                        f"{problem.identity()['fingerprint']}"
+                    ),
+                )
+                policy = (
+                    optim.BoundedLevenbergMarquardt(),
+                    termination,
+                )
+                transferred_bytes = int(problem.initial.nbytes + problem.target.nbytes)
             else:
                 if problem.target is None:
                     raise ValueError("proximal benchmark lacks its target")
@@ -668,7 +692,16 @@ class PhydraxAdapter(BenchmarkAdapter):
         elif isinstance(problem, OptimizationProblem):
             jax = import_module("jax")
             method, termination = setup_state.policy
-            if problem.variant == "proximal":
+            if problem.variant == "bounded-least-squares":
+
+                def operation(initial):
+                    return phx.optim.least_squares(
+                        setup_state.native_problem,
+                        initial,
+                        method=method,
+                        termination=termination,
+                    )
+            elif problem.variant == "proximal":
 
                 def operation(initial):
                     return phx.optim.proximal_minimize(
@@ -1304,6 +1337,16 @@ def _required_public_api(capability: str) -> tuple[str, frozenset[str]]:
                     "plan_convex_program",
                     "prepare_convex_program",
                     "solve_convex_program",
+                }
+            )
+        if capability == "optimization.bounded-least-squares":
+            return "phydrax.optim", frozenset(
+                {
+                    "BoundedLevenbergMarquardt",
+                    "Bounds",
+                    "NonlinearLeastSquaresProblem",
+                    "OptimizationTermination",
+                    "least_squares",
                 }
             )
         common = {

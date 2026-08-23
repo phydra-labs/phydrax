@@ -158,7 +158,7 @@ def test_compiled_dae_solve_is_jittable_and_parameter_differentiable():
     prepared = phx.solver.prepare_dae(
         problem,
         grid,
-        policy=phx.solver.DAESolvePolicy(integration_method="bdf1"),
+        policy=phx.solver.DAESolvePolicy(method=phx.solver.BDFMethod(1)),
     )
     assert problem.discretization_bundle_id == compiled.discretization_bundle.bundle_id
     assert (
@@ -217,7 +217,7 @@ def test_dae_trajectory_adapter_retains_rates_validity_and_provenance():
     solution = phx.solver.solve_dae(
         problem,
         phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.01, 3), time_id="adapter"),
-        policy=phx.solver.DAESolvePolicy(integration_method="bdf1"),
+        policy=phx.solver.DAESolvePolicy(method=phx.solver.BDFMethod(1)),
     )
 
     data = phx.dynamics.identification.trajectory_data_from_differential_solution(
@@ -251,7 +251,7 @@ def test_compiled_dae_adaptive_plan_preserves_discretization_identity():
         problem,
         grid,
         policy=phx.solver.DAESolvePolicy(
-            integration_method="bdf1",
+            method=phx.solver.BDFMethod(1),
             adaptive=phx.solver.DAEAdaptivePolicy(
                 maximum_accepted_steps=8,
                 maximum_attempts=16,

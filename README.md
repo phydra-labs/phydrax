@@ -287,6 +287,13 @@ convergence evidence rather than claiming automatic certificates. See the
 [nonlinear-dynamics cookbook](docs/cookbook/nonlinear_dynamics.md) and
 [dynamics API](docs/api/dynamics.md).
 
+Time integration preserves explicit, additive IMEX, residual, second-order,
+partitioned, stochastic, and geometric equation forms. Diffrax methods coexist with
+native SSPRK, endpoint theta, BDF1--BDF5, matrix-free Rosenbrock-W,
+generalized-alpha, multirate partitioned RK, Gauss--Legendre collocation, geometric,
+and exponential methods under explicit capability and provenance contracts. See the
+[time-integrator API](docs/api/solver/time_integrators.md).
+
 Controlled-dynamics support includes explicit causal or offline differentiable
 driving paths, Diffrax-backed CDE integration, Neural CDE training, and
 probabilistic numerical ODE solutions. A probabilistic ODE solution quantifies

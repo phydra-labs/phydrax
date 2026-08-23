@@ -23,6 +23,7 @@ from ..integration import (
     PerStepIntegration,
     reduce,
 )
+from ..integration._api import _requires_random_key
 from ._integrated import (
     checked_estimate_field,
     resolve_term_realization,
@@ -65,6 +66,12 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
             )
         if not isinstance(source, _SOURCE_TYPES):
             raise TypeError("MomentPenalty requires a typed IntegrationSource.")
+        if isinstance(source, PerStepIntegration) and _requires_random_key(source.plan):
+            raise ValueError(
+                "MomentPenalty cannot square a resampled stochastic integration "
+                "estimate; use RandomizedMomentPenalty or freeze an explicit "
+                "IntegrationRealization."
+            )
         validate_condition_source(condition.on, source)
         coefficient = jnp.asarray(scale, dtype=float)
         if coefficient.shape != ():

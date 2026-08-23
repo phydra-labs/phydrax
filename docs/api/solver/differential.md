@@ -7,8 +7,8 @@ integrates a supplied drift and optional named stochastic terms.
 
 Implicit residuals `F(t, y, ydot, args) = 0` use the separate native
 [differential-algebraic solver](differential_algebraic.md). That path owns consistent
-initialization and fixed-grid BDF differentiation rather than encoding a singular
-mass matrix as an explicit Diffrax vector field.
+initialization, BDF1--BDF5, and endpoint theta rather than encoding a singular mass
+matrix as an explicit Diffrax vector field.
 
 ## Problem, Wiener terms, and realization contract
 
@@ -91,6 +91,23 @@ solution = phx.solver.solve_diffrax(
 ```
 
 ::: phydrax.solver.solve_diffrax
+
+## Additive IMEX solve
+
+`SplitDifferentialProblem` preserves `y' = f_explicit + f_implicit` as two terms.
+`solve_diffrax` defaults this form to `diffrax.KenCarp4`; Sil3 and
+KenCarp3/4/5 may be selected explicitly. Passing an ordinary explicit or implicit
+solver rejects rather than silently summing the terms.
+
+::: phydrax.solver.SplitDifferentialProblem
+
+---
+
+::: phydrax.solver.split_differential_problem
+
+`DifferentialSolution.temporal_evidence` records method capabilities and the complete
+solver/controller/adjoint/event configuration identity. `valid` remains per-output
+finite evidence; `successful` additionally requires an acceptable backend result.
 
 ## Markov cubature weak solve
 

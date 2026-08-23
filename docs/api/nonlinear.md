@@ -111,6 +111,37 @@ spaces, derivative structure, or unsupported nonlinear methods are rejected rath
 than replanned. Per-call termination overrides may tighten work limits without
 changing the prepared artifact.
 
+## Finite nonlinear updates and composition
+
+A complete solve and a finite update have different contracts. An
+`AbstractNonlinearUpdate` may apply a Newton step, Picard correction, FAS cycle,
+or subdomain sweep without claiming that the resulting state is a root.
+`NonlinearUpdateResult.applied` means that bounded work produced a finite,
+physically valid proposal; only a complete `NonlinearResult` can certify
+convergence.
+
+`plan_nonlinear_update`, `prepare_nonlinear_update`,
+`refresh_nonlinear_update`, and `apply_prepared_nonlinear_update` bind the
+physical state/residual spaces and retain update history or prepared linear
+state. Work controls are checked before an indivisible update. Arbitrary
+callables enter this lifecycle only through `FunctionNonlinearUpdate`.
+
+`CompositeNonlinearUpdate` supports static multiplicative, weighted additive,
+and safeguarded residual-optimal composition. Every child is evaluated from
+the declared base state, its result remains component evidence, and the
+combined candidate is independently evaluated against the original physical
+problem. `NonlinearRichardson` adds physical-residual Armijo globalization.
+`NonlinearGMRES` accepts a typed update rather than an untracked callable.
+
+`NonlinearSubdomain` declares state and residual restrictions, correction
+prolongation, one local residual, and a typed local update.
+`NonlinearAdditiveSchwarz`, `NonlinearMultiplicativeSchwarz`, and
+`NonlinearGaussSeidel` preserve this topology under JIT and certify the global
+residual after local work. `ASPIN` uses additive Schwarz as a left nonlinear
+preconditioner and prepares local dense Jacobian inverses for reuse within each
+outer approximate-Jacobian action. Its nested local work is explicitly marked
+as incompletely countable.
+
 ## Fixed points and nonlinear acceleration
 
 `FixedPointProblem` represents `state = mapping(state, args)`. `PicardIteration` and
@@ -157,14 +188,24 @@ not a linear correction scheme with nonlinear labels.
 ## Variational inequalities and complementarity
 
 `VariationalInequalityProblem` combines a nonlinear map with explicit `Bounds`.
-`SemismoothNewton` solves a Fischer--Burmeister complementarity residual with a
-configurable `GeneralizedDerivativePolicy`. Infinite one-sided bounds are handled
-without invalid arithmetic.
+`SemismoothNewton` solves a natural-map or Fischer--Burmeister residual with a
+configurable `GeneralizedDerivativePolicy`. Infinite one-sided bounds are
+handled without invalid arithmetic.
+
+`feasibility="allow-infeasible"` retains the ordinary semismooth Newton path.
+`feasibility="preserve-box"` projects every trial before operator evaluation,
+so an operator whose mathematical domain is the box never receives an
+out-of-domain state. The accepted and returned state is exactly projected.
+
+`prepare_variational_inequality`, `refresh_variational_inequality`, and
+`solve_prepared_variational_inequality` separate compilation from repeated
+solves. Refresh permits new finite bound values but rejects changed
+unbounded/lower/upper/box/fixed topology.
 
 `ComplementarityCertificate` reports lower/upper feasibility, natural residual,
 Fischer--Burmeister residual, active sets, and finiteness separately. A loose
-nonlinear residual tolerance cannot turn an infeasible point into a successful VI
-result; final success requires the complementarity certificate as well.
+nonlinear residual tolerance cannot turn an infeasible point into a successful
+VI result; final success requires the complementarity certificate as well.
 
 ## Implicit root differentiation
 
@@ -279,6 +320,54 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 ::: phydrax.nonlinear.NewtonTrustRegion
 
 ---
+::: phydrax.nonlinear.AbstractNonlinearUpdate
+
+---
+
+::: phydrax.nonlinear.NonlinearUpdateResult
+
+---
+
+::: phydrax.nonlinear.PreparedNonlinearUpdate
+
+---
+
+::: phydrax.nonlinear.FunctionNonlinearUpdate
+
+---
+
+::: phydrax.nonlinear.NewtonStepUpdate
+
+---
+
+::: phydrax.nonlinear.CompositeNonlinearUpdate
+
+---
+
+::: phydrax.nonlinear.NonlinearRichardson
+
+---
+
+::: phydrax.nonlinear.NonlinearSubdomain
+
+---
+
+::: phydrax.nonlinear.NonlinearAdditiveSchwarz
+
+---
+
+::: phydrax.nonlinear.NonlinearMultiplicativeSchwarz
+
+---
+
+::: phydrax.nonlinear.NonlinearGaussSeidel
+
+---
+
+::: phydrax.nonlinear.ASPIN
+
+---
+
 
 ::: phydrax.nonlinear.FixedPointProblem
 
@@ -311,6 +400,23 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 ::: phydrax.nonlinear.SemismoothNewton
 
 ---
+
+::: phydrax.nonlinear.PreparedVariationalInequalitySolve
+
+---
+
+::: phydrax.nonlinear.prepare_variational_inequality
+
+---
+
+::: phydrax.nonlinear.refresh_variational_inequality
+
+---
+
+::: phydrax.nonlinear.solve_prepared_variational_inequality
+
+---
+
 
 ::: phydrax.nonlinear.NonlinearTransformationEvidence
 
