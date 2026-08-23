@@ -19,23 +19,16 @@ from ..._trainable import NonTrainableState
 
 
 HighResolutionMethod: TypeAlias = Literal["weno_z", "teno", "mp5"]
-ReconstructionBoundary: TypeAlias = Literal["periodic", "outflow"]
 
 
 def _uniform_windows(
     values: Array,
     offsets: tuple[int, ...],
-    boundary: ReconstructionBoundary,
     /,
 ) -> Array:
     count = values.shape[0]
     indices = jnp.arange(count)[:, None] + jnp.asarray(offsets)[None, :]
-    indices = (
-        jnp.mod(indices, count)
-        if boundary == "periodic"
-        else jnp.clip(indices, 0, count - 1)
-    )
-    return values[indices]
+    return values[jnp.clip(indices, 0, count - 1)]
 
 
 def _weno_candidates(window: Array, /) -> tuple[Array, Array]:
@@ -145,10 +138,9 @@ def _mp5_left(window: Array, /, *, alpha: float = 4.0) -> Array:
 
 
 class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
-    """Uniform periodic/outflow WENO-Z, TENO, or MP5 face reconstruction."""
+    """Ghost-fed WENO-Z, TENO, or MP5 face reconstruction."""
 
     method: HighResolutionMethod = eqx.field(static=True)
-    boundary: ReconstructionBoundary = eqx.field(static=True)
     epsilon: float = eqx.field(static=True)
     power: int = eqx.field(static=True)
     cutoff: float = eqx.field(static=True)
@@ -159,7 +151,6 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         method: HighResolutionMethod = "weno_z",
         /,
         *,
-        boundary: ReconstructionBoundary = "periodic",
         epsilon: float = 1e-12,
         power: int = 2,
         cutoff: float = 1e-6,
@@ -167,11 +158,8 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         epsilon_ = float(epsilon)
         cutoff_ = float(cutoff)
         power_ = int(power)
-        if method not in ("weno_z", "teno", "mp5") or boundary not in (
-            "periodic",
-            "outflow",
-        ):
-            raise ValueError("Unknown high-resolution method or boundary policy.")
+        if method not in ("weno_z", "teno", "mp5"):
+            raise ValueError("Unknown high-resolution reconstruction method.")
         if (
             not np.isfinite(epsilon_)
             or epsilon_ <= 0.0
@@ -182,7 +170,6 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("High-resolution epsilon, power, or cutoff is invalid.")
         self.method = method
-        self.boundary = boundary
         self.epsilon = epsilon_
         self.power = power_
         self.cutoff = cutoff_
@@ -190,7 +177,6 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
             {
                 "kind": "high-resolution-reconstruction",
                 "method": method,
-                "boundary": boundary,
                 "epsilon": epsilon_,
                 "power": power_,
                 "cutoff": cutoff_,
@@ -223,12 +209,10 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         left_windows = _uniform_windows(
             value,
             (-2, -1, 0, 1, 2),
-            self.boundary,
         )
         right_windows = _uniform_windows(
             value,
             (3, 2, 1, 0, -1),
-            self.boundary,
         )
         return self._left(left_windows), self._left(right_windows)
 
@@ -304,11 +288,7 @@ class CharacteristicReconstructionPlan(StrictModule):
         value = jnp.asarray(values)
         if value.ndim != 2 or value.shape[0] < 6:
             raise ValueError("Characteristic state must have shape (cells, components).")
-        adjacent = (
-            jnp.roll(value, -1, axis=0)
-            if self.reconstruction.boundary == "periodic"
-            else jnp.concatenate((value[1:], value[-1:]), axis=0)
-        )
+        adjacent = jnp.concatenate((value[1:], value[-1:]), axis=0)
         left_matrix, right_matrix, wave_speeds = self.system.eigensystem(
             value,
             adjacent,
@@ -322,12 +302,10 @@ class CharacteristicReconstructionPlan(StrictModule):
         left_windows = _uniform_windows(
             value,
             (-2, -1, 0, 1, 2),
-            self.reconstruction.boundary,
         )
         right_windows = _uniform_windows(
             value,
             (3, 2, 1, 0, -1),
-            self.reconstruction.boundary,
         )
         left_characteristic = jnp.einsum("nij,nsj->nsi", left_matrix, left_windows)
         right_characteristic = jnp.einsum("nij,nsj->nsi", left_matrix, right_windows)
@@ -572,5 +550,4 @@ __all__ = [
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",
     "NonuniformWENOReconstructionPlan",
-    "ReconstructionBoundary",
 ]

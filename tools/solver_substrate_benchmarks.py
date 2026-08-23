@@ -276,7 +276,10 @@ def _industrial_extensions(points, repeats):
         _, seconds = _timed(lambda: action(values)[0], repeats)
         reconstruction_times[method] = seconds
 
-    euler = phx.discretization.Euler1DSystem()
+    euler = phx.equations.EulerSystem()
+    euler_discretization = phx.discretization.FiniteVolumePlan(
+        bounded, component_names=euler.component_names
+    ).prepare()
     primitive = jnp.stack(
         (
             jnp.where(bounded.axes[0].nodes < 0.5, 1.0, 0.125),
@@ -285,18 +288,32 @@ def _industrial_extensions(points, repeats):
         ),
         axis=-1,
     )
-    euler_state = euler.conservative(primitive)
-    euler_dynamics = phx.discretization.Euler1DDynamics(
-        euler,
-        phx.discretization.HighResolutionReconstructionPlan(
-            "weno_z",
-            boundary="outflow",
-        ),
-        1.0 / points,
+    euler_state = euler.primitive_to_conserved(primitive)
+    pair = phx.discretization.FiniteVolumeBoundaryPair(
+        phx.discretization.ExtrapolationBoundary(),
+        phx.discretization.ExtrapolationBoundary(),
     )
-    euler_step = eqx.filter_jit(euler_dynamics.ssprk3_step)
+    euler_problem = phx.equations.ConservationProblemIR(
+        "benchmark-euler",
+        "state",
+        euler,
+        phx.discretization.FiniteVolumeBoundarySet(("x",), (pair,)),
+    )
+    euler_method = phx.discretization.FiniteVolumeMethodPlan(
+        phx.discretization.HighResolutionReconstructionPlan(
+            "weno_z", boundary="outflow"
+        ),
+        phx.discretization.HLLCFluxPlan(),
+        positivity=phx.discretization.ConvexStateLimiterPlan(),
+    )
+    euler_dynamics = phx.equations.compile_conservation_problem(
+        euler_problem, euler_discretization, euler_method
+    ).dynamics
+    euler_step = eqx.filter_jit(
+        phx.solver.UnsplitFiniteVolumeSSPRK3Plan(euler_dynamics).advance
+    )
     dt = 0.3 * euler_dynamics.stable_step(euler_state)
-    euler_step(jnp.asarray(0.0), euler_state, dt).block_until_ready()
+    jax.block_until_ready(euler_step(jnp.asarray(0.0), euler_state, dt))
     euler_result, euler_seconds = _timed(
         lambda: euler_step(jnp.asarray(0.0), euler_state, dt),
         repeats,
@@ -313,8 +330,8 @@ def _industrial_extensions(points, repeats):
         "multigrid_levels": len(multigrid.grids),
         "reconstruction_seconds": reconstruction_times,
         "euler_ssprk3_seconds": euler_seconds,
-        "euler_minimum_density": float(jnp.min(euler_result[:, 0])),
-        "euler_minimum_pressure": float(jnp.min(euler.pressure(euler_result))),
+        "euler_minimum_density": float(jnp.min(euler_result.state[:, 0])),
+        "euler_minimum_pressure": float(jnp.min(euler.pressure(euler_result.state))),
         "amr_cell_prolongation_seconds": transfer_seconds,
     }
 

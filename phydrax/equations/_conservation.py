@@ -4,11 +4,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -17,18 +16,39 @@ from ..discretization import (
     DiscretizationKey,
     DiscretizationRecord,
     DiscretizationRole,
+)
+from ..discretization.finite_volume import (
+    AbstractNumericalFluxPlan,
+    AbstractWavePropagationPlan,
+    ConvexStateLimiterPlan,
+    EntropyConservativeEulerFluxPlan,
+    EntropyStableEulerFluxPlan,
+    FiniteVolumeBoundarySet,
     FiniteVolumeDiscretization,
-    FirstOrderFiniteVolumeDynamics,
+    FiniteVolumeMethodPlan,
+    FWaveShallowWaterPlan,
+    HLLCFluxPlan,
+    MappedFiniteVolumeDiscretization,
+    PreparedFiniteVolumeDynamics,
+    RoeFluxPlan,
+)
+from ._hyperbolic_systems import (
+    AbstractAdmissibleSystem,
+    AbstractCharacteristicSystem,
+    AbstractConservationSystem,
+    AbstractEntropySystem,
+    CompressibleNavierStokesSystem,
+    EulerSystem,
+    ShallowWaterSystem,
 )
 
 
 class ConservationProblemIR(StrictModule):
-    """Scalar conservation law with explicit flux, source, and exterior state."""
+    """Conservation or balance law with explicit system, boundaries, and source."""
 
-    flux: Callable[[Array, Array, Array, Any], ArrayLike]
-    wave_speed: Callable[[Array, Array, Array, Any], ArrayLike]
-    exterior_state: Callable[[Array, Array, Array, Array, Any], ArrayLike] | None
-    source: Callable[[Array, Array, Array, Any], ArrayLike] | None
+    system: AbstractConservationSystem
+    boundaries: FiniteVolumeBoundarySet
+    source: Any = eqx.field(static=True)
     name: str = eqx.field(static=True)
     field_name: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -37,75 +57,74 @@ class ConservationProblemIR(StrictModule):
         self,
         name: str,
         field_name: str,
-        flux: Callable[[Array, Array, Array, Any], ArrayLike],
-        wave_speed: Callable[[Array, Array, Array, Any], ArrayLike],
+        system: AbstractConservationSystem,
+        boundaries: FiniteVolumeBoundarySet,
         /,
         *,
-        exterior_state: Callable[[Array, Array, Array, Array, Any], ArrayLike]
-        | None = None,
-        source: Callable[[Array, Array, Array, Any], ArrayLike] | None = None,
+        source=None,
         problem_id: str | None = None,
     ):
         name_ = str(name)
         field = str(field_name)
         if not name_ or not field:
             raise ValueError("Conservation problem and field names must be non-empty.")
-        if not callable(flux) or not callable(wave_speed):
-            raise TypeError("flux and wave_speed must be callable.")
-        if exterior_state is not None and not callable(exterior_state):
-            raise TypeError("exterior_state must be callable or None.")
+        if not isinstance(system, AbstractConservationSystem):
+            raise TypeError("system must be an AbstractConservationSystem.")
+        if not isinstance(boundaries, FiniteVolumeBoundarySet):
+            raise TypeError("boundaries must be a FiniteVolumeBoundarySet.")
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
-        self.flux = flux
-        self.wave_speed = wave_speed
-        self.exterior_state = exterior_state
-        self.source = source
-        self.name = name_
-        self.field_name = field
-        self.problem_id = (
+        identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "scalar-conservation-problem",
+                    "kind": "conservation-problem",
                     "name": name_,
                     "field": field,
-                    "flux": repr(flux),
-                    "wave_speed": repr(wave_speed),
-                    "exterior_state": None
-                    if exterior_state is None
-                    else repr(exterior_state),
+                    "system": system.system_id,
+                    "boundaries": boundaries.boundary_set_id,
                     "source": None if source is None else repr(source),
                 }
             )
             if problem_id is None
             else str(problem_id)
         )
-        if not self.problem_id:
+        if not identifier:
             raise ValueError("problem_id must be non-empty.")
+        self.system = system
+        self.boundaries = boundaries
+        self.source = source
+        self.name = name_
+        self.field_name = field
+        self.problem_id = identifier
 
 
 class CompiledConservationProblem(StrictModule):
-    """Executable conservative residual with complete discretization provenance."""
+    """Executable structured finite-volume residual with complete provenance."""
 
     problem: ConservationProblemIR
-    discretization: FiniteVolumeDiscretization
-    dynamics: FirstOrderFiniteVolumeDynamics
+    discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization
+    method: FiniteVolumeMethodPlan
+    dynamics: PreparedFiniteVolumeDynamics
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         problem: ConservationProblemIR,
-        discretization: FiniteVolumeDiscretization,
-        dynamics: FirstOrderFiniteVolumeDynamics,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
+        method: FiniteVolumeMethodPlan,
+        dynamics: PreparedFiniteVolumeDynamics,
         /,
     ):
-        if problem.field_name != discretization.field_spaces[0].name:
+        if problem.field_name != discretization.cell_space.name:
             raise ValueError("Conserved field name must match the finite-volume space.")
         compilation_id = canonical_fingerprint(
             {
                 "kind": "compiled-conservation-problem",
                 "problem": problem.problem_id,
                 "discretization": discretization.prepared_id,
+                "method": method.method_id,
+                "dynamics": dynamics.dynamics_id,
             }
         )
         form_key = DiscretizationKey(
@@ -115,6 +134,7 @@ class CompiledConservationProblem(StrictModule):
         )
         self.problem = problem
         self.discretization = discretization
+        self.method = method
         self.dynamics = dynamics
         self.discretization_bundle = DiscretizationBundle(
             (
@@ -134,32 +154,103 @@ class CompiledConservationProblem(StrictModule):
         )
         self.compilation_id = compilation_id
 
-    def face_flux(self, time: Array, state: Array, args: Any = None, /) -> Array:
-        return self.dynamics.face_flux(time, state, args)
+    def face_fluxes(self, time: Array, state: Array, args: Any = None, /):
+        return self.dynamics.face_fluxes(time, state, args)
+
+    def residual_with_diagnostics(
+        self,
+        time: Array,
+        state: Array,
+        args: Any = None,
+        /,
+    ):
+        return self.dynamics.residual_with_diagnostics(time, state, args)
+
+    def stable_step(
+        self,
+        state: Array,
+        args: Any = None,
+        /,
+        *,
+        cfl: float = 0.45,
+    ) -> Array:
+        return self.dynamics.stable_step(state, args, cfl=cfl)
+
+    def linearize(self, time: Array, state: Array, args: Any = None, /):
+        return self.dynamics.linearize(time, state, args)
 
     def __call__(self, time: Array, state: Array, args: Any = None) -> Array:
         return self.dynamics(time, state, args)
 
 
+def _validate_method(
+    problem: ConservationProblemIR,
+    method: FiniteVolumeMethodPlan,
+    /,
+) -> None:
+    system = problem.system
+    solver = method.interface_solver
+    if isinstance(solver, RoeFluxPlan) and not isinstance(
+        system, AbstractCharacteristicSystem
+    ):
+        raise ValueError("Roe flux requires a characteristic conservation system.")
+    euler_systems = (EulerSystem, CompressibleNavierStokesSystem)
+    if isinstance(solver, HLLCFluxPlan) and not isinstance(system, euler_systems):
+        raise ValueError("HLLC flux requires an Euler-compatible system.")
+    if isinstance(
+        solver, (EntropyConservativeEulerFluxPlan, EntropyStableEulerFluxPlan)
+    ) and not isinstance(system, euler_systems):
+        raise ValueError("Euler entropy fluxes require an Euler-compatible system.")
+    if method.positivity is not None and not isinstance(
+        system, AbstractAdmissibleSystem
+    ):
+        raise ValueError("Positivity limiting requires an admissible system.")
+    if method.entropy_diagnostics and not isinstance(system, AbstractEntropySystem):
+        raise ValueError("Entropy diagnostics require an entropy system.")
+    if isinstance(solver, FWaveShallowWaterPlan) and not isinstance(
+        system, ShallowWaterSystem
+    ):
+        raise ValueError("Shallow-water f-wave flux requires ShallowWaterSystem.")
+    if isinstance(solver, AbstractWavePropagationPlan) and method.positivity is not None:
+        raise ValueError("Wave-propagation positivity limiting is not yet a face-state policy.")
+    if not isinstance(solver, (AbstractNumericalFluxPlan, AbstractWavePropagationPlan)):
+        raise TypeError("Finite-volume method has an invalid interface solver.")
+    if method.positivity is not None and not isinstance(
+        method.positivity, ConvexStateLimiterPlan
+    ):
+        raise TypeError("Finite-volume positivity policy is invalid.")
+
+
 def compile_conservation_problem(
     problem: ConservationProblemIR,
-    discretization: FiniteVolumeDiscretization,
+    discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
+    method: FiniteVolumeMethodPlan,
     /,
+    *,
+    capacity=None,
+    bathymetry=None,
 ) -> CompiledConservationProblem:
-    """Lower one scalar conservation law onto prepared first-order finite volumes."""
+    """Lower one conservation system onto prepared structured finite volumes."""
     if not isinstance(problem, ConservationProblemIR):
         raise TypeError("problem must be a ConservationProblemIR.")
-    if not isinstance(discretization, FiniteVolumeDiscretization):
-        raise TypeError(
-            "No conservation lowering is registered for this discretization type."
-        )
-    dynamics = discretization.first_order_dynamics(
-        problem.flux,
-        problem.wave_speed,
-        exterior_state=problem.exterior_state,
+    if not isinstance(
+        discretization,
+        (FiniteVolumeDiscretization, MappedFiniteVolumeDiscretization),
+    ):
+        raise TypeError("discretization must be prepared finite-volume geometry.")
+    if not isinstance(method, FiniteVolumeMethodPlan):
+        raise TypeError("method must be a FiniteVolumeMethodPlan.")
+    _validate_method(problem, method)
+    dynamics = PreparedFiniteVolumeDynamics(
+        problem.system,
+        discretization,
+        method,
+        problem.boundaries,
+        capacity=capacity,
+        bathymetry=bathymetry,
         source=problem.source,
     )
-    return CompiledConservationProblem(problem, discretization, dynamics)
+    return CompiledConservationProblem(problem, discretization, method, dynamics)
 
 
 __all__ = [

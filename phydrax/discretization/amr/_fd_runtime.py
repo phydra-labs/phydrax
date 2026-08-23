@@ -31,7 +31,7 @@ class AMRSubcycleResult(StrictModule):
     temporal_method_id: str = eqx.field(static=True)
 
 
-class FDAMRSubcyclingPlan(StrictModule, NonTrainableState):
+class ConservativeAMRSubcyclingPlan(StrictModule, NonTrainableState):
     """Two-level temporal subcycling with time-integrated conservative reflux."""
 
     refinement_ratio: int = eqx.field(static=True)
@@ -55,7 +55,7 @@ class FDAMRSubcyclingPlan(StrictModule, NonTrainableState):
         self.temporal_method_id = method_id
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "fd-amr-subcycling",
+                "kind": "conservative-amr-subcycling",
                 "refinement_ratio": ratio,
                 "temporal_method_id": method_id,
             }
@@ -104,9 +104,12 @@ class FDAMRSubcyclingPlan(StrictModule, NonTrainableState):
             coarse_flux_integral,
             fine_flux_integral,
             interface_mask,
+            accumulated_time=dt,
+            orientation=1,
+            refinement_ratio=self.refinement_ratio,
             register_id=canonical_fingerprint(
                 {
-                    "kind": "fd-amr-subcycle-register",
+                    "kind": "conservative-amr-subcycle-register",
                     "plan": self.plan_id,
                     "coarse_flux_shape": list(coarse_flux_integral.shape),
                 }
@@ -374,7 +377,7 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
 class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
     plan: FDAMRHierarchyPlan
     halo_plans: tuple[FDAMRHaloPlan, ...]
-    subcycling: tuple[FDAMRSubcyclingPlan, ...]
+    subcycling: tuple[ConservativeAMRSubcyclingPlan, ...]
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: FDAMRHierarchyPlan, /):
@@ -382,7 +385,7 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
             raise TypeError("plan must be FDAMRHierarchyPlan.")
         halos = tuple(FDAMRHaloPlan(level) for level in plan.hierarchy.levels)
         subcycling = tuple(
-            FDAMRSubcyclingPlan(level.refinement_ratio)
+            ConservativeAMRSubcyclingPlan(level.refinement_ratio)
             for level in plan.hierarchy.levels[:-1]
         )
         self.plan = plan
@@ -418,7 +421,7 @@ __all__ = [
     "AMRMigrationResult",
     "AMRSubcycleResult",
     "FDAMRHierarchyPlan",
-    "FDAMRSubcyclingPlan",
+    "ConservativeAMRSubcyclingPlan",
     "FDRegridPlan",
     "FDRegridResult",
     "PreparedFDAMRHierarchy",

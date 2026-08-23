@@ -183,33 +183,43 @@ dynamics suitable for differential solvers.
 
 ## Finite volume
 
-The first conservative backend is scalar, cell-centered, first-order finite volume on
-triangular cells:
+Structured finite volume binds cell-average fields and directional face-flux spaces to
+an interval-primary tensor grid:
 
 ```python
-plan = phx.discretization.FiniteVolumePlan(
-    vertices,
-    faces,
-    field_name="u",
-)
-space = plan.prepare()
+grid = phx.discretization.TensorGridPlan(
+    (phx.discretization.UniformCellAxisSpec(128, periodic=True),),
+    axis_names=("x",),
+).prepare(jnp.asarray([[0.0], [1.0]]))
 
+space = phx.discretization.FiniteVolumePlan(grid, field_name="u").prepare()
+system = phx.equations.ScalarConservationSystem(
+    1,
+    lambda state, axis, args: args["speed"] * state,
+    lambda left, right, axis, args: jnp.full(
+        left.shape[:-1], jnp.abs(args["speed"])
+    ),
+    system_id="linear-advection",
+)
 law = phx.equations.ConservationProblemIR(
     "transport",
     "u",
-    flux,
-    wave_speed,
-    exterior_state=boundary_state,
-    source=source,
+    system,
+    phx.discretization.FiniteVolumeBoundarySet.periodic(("x",)),
 )
-dynamics = phx.equations.compile_conservation_problem(law, space)
+method = phx.discretization.FiniteVolumeMethodPlan(
+    phx.discretization.MUSCLReconstruction(),
+    phx.discretization.RusanovFluxPlan(),
+)
+dynamics = phx.equations.compile_conservation_problem(law, space, method)
 ```
 
-Preparation records cell areas and centroids, oriented face normals, left/right cell
-incidence, boundary faces, and the cell-average field space. The Rusanov residual
-uses one integrated face flux with opposite signs in neighboring cells, making global
-conservation an explicit construction invariant. Boundary faces require an exterior
-state policy; no homogeneous or outflow behavior is inferred.
+Every internal integrated face flux is evaluated once and applied with opposite signs
+to its neighboring cells. Geometry, physical systems, reconstruction, interface
+solvers, boundaries, and time integration remain separate plans. See
+[Structured finite volume](guides_finite_volume.md) for high-resolution systems,
+wave propagation, mapped grids, projection, multiblock coupling, AMR, and
+differentiability.
 
 ## Temporal and stochastic discretizations
 

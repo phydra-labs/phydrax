@@ -71,19 +71,36 @@ class StructuredAxis(StrictModule, NonTrainableState):
         else:
             centers = nodes
             count = int(nodes.size)
+            widths = (
+                np.full((count,), float(bounds[1] - bounds[0]) / count)
+                if axis.quad_weights is None
+                else np.asarray(axis.quad_weights, dtype=float)
+            )
+            if (
+                np.any(~np.isfinite(widths))
+                or np.any(widths <= 0.0)
+                or not np.isclose(
+                    np.sum(widths),
+                    bounds[1] - bounds[0],
+                    rtol=1e-10,
+                    atol=1e-12,
+                )
+            ):
+                raise ValueError(
+                    "Interval-primary axis measures must be positive and span bounds."
+                )
+            edge_coordinates = bounds[0] + np.concatenate(([0.0], np.cumsum(widths)))
+            expected_centers = 0.5 * (
+                edge_coordinates[:-1] + edge_coordinates[1:]
+            )
+            if not np.allclose(centers, expected_centers, rtol=1e-10, atol=1e-12):
+                raise ValueError(
+                    "Interval-primary axis nodes must be cell centers for their measures."
+                )
+            points = edge_coordinates[:-1] if axis.periodic else edge_coordinates
             if axis.periodic:
-                width = float(bounds[1] - bounds[0]) / count
-                widths = np.full((count,), width)
-                points = bounds[0] + np.arange(count) * width
-                point_measures = np.full((count,), width)
+                point_measures = 0.5 * (widths + np.roll(widths, 1))
             else:
-                points = np.linspace(bounds[0], bounds[1], count + 1)
-                widths = np.diff(points)
-                expected_centers = 0.5 * (points[:-1] + points[1:])
-                if not np.allclose(centers, expected_centers, rtol=1e-10, atol=1e-12):
-                    raise ValueError(
-                        "Initial interval-primary axes require uniform cell centers."
-                    )
                 point_measures = np.empty((count + 1,), dtype=float)
                 point_measures[0] = 0.5 * widths[0]
                 point_measures[-1] = 0.5 * widths[-1]
