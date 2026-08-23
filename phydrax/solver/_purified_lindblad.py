@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..tensor_network import LocallyPurifiedDensity
+from ..tensor_network import LocallyPurifiedDensity, prepare_local_lindblad_channel
 
 
 class LocalKrausChannel(StrictModule):
@@ -30,6 +31,27 @@ class LocalKrausChannel(StrictModule):
     def completeness_residual(self) -> Array:
         total = sum(jnp.conj(operator.T) @ operator for operator in self.kraus)
         return jnp.max(jnp.abs(total - jnp.eye(total.shape[0], dtype=total.dtype)))
+
+
+def local_kraus_channel_from_lindblad(
+    site: int,
+    hamiltonian: ArrayLike,
+    jump_operators: ArrayLike,
+    step_size: ArrayLike,
+    /,
+    *,
+    channel_id: str,
+    tolerance: float = 1e-9,
+) -> LocalKrausChannel:
+    prepared = prepare_local_lindblad_channel(
+        hamiltonian,
+        jump_operators,
+        step_size,
+        tolerance=tolerance,
+    )
+    if not bool(jax.device_get(prepared.evidence.valid)):
+        raise ValueError("Local Lindblad-to-Kraus preparation failed certification.")
+    return LocalKrausChannel(site, prepared.kraus, channel_id=channel_id)
 
 
 class PurificationTruncationEvidence(StrictModule):
@@ -155,7 +177,7 @@ def solve_purified_lindblad(
     maximum_purification_dimension: int,
 ) -> PurifiedLindbladResult:
     state = problem.initial_state
-    traces = [jnp.real(jnp.trace(state.density()))]
+    traces = [state.raw_trace()]
     discarded = []
     for _ in range(int(steps)):
         for channel in problem.channels:
@@ -165,7 +187,7 @@ def solve_purified_lindblad(
                 maximum_purification_dimension=maximum_purification_dimension,
             )
             discarded.append(evidence.discarded_weight)
-        traces.append(jnp.real(jnp.trace(state.density())))
+        traces.append(state.raw_trace())
     return PurifiedLindbladResult(
         state,
         jnp.stack(traces),
@@ -180,5 +202,6 @@ __all__ = [
     "PurifiedLindbladProblem",
     "PurifiedLindbladResult",
     "apply_local_kraus_channel",
+    "local_kraus_channel_from_lindblad",
     "solve_purified_lindblad",
 ]

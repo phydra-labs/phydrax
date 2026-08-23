@@ -19,6 +19,7 @@ from ._manifold import (
     _array_with_trailing_shape,
     _same_shape,
     AbstractGeodesicManifold,
+    AbstractRiemannianManifold,
 )
 
 
@@ -548,8 +549,98 @@ class AffineInvariantHPDManifold(AbstractGeodesicManifold):
         return _hermitian(congruence @ vector @ _adjoint(congruence))
 
 
+class ComplexStiefelManifold(AbstractRiemannianManifold):
+    """Complex matrices with orthonormal columns under the real Frobenius metric."""
+
+    rows: int = eqx.field(static=True)
+    columns: int = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    manifold_id: str = eqx.field(static=True)
+    point_shape: tuple[int, int] = eqx.field(static=True)
+    retraction_method: str = eqx.field(static=True)
+    transport_method: str = eqx.field(static=True)
+    transport_is_isometric: bool = eqx.field(static=True)
+    transport_is_parallel: bool = eqx.field(static=True)
+
+    def __init__(self, rows: int, columns: int, /, *, tolerance: float = 1e-8):
+        rows_ = int(rows)
+        columns_ = int(columns)
+        if not 1 <= columns_ <= rows_:
+            raise ValueError("Complex Stiefel requires 1 <= columns <= rows.")
+        self.rows = rows_
+        self.columns = columns_
+        self.tolerance = float(tolerance)
+        self.manifold_id = f"manifold:complex-stiefel:{rows_}:{columns_}"
+        self.point_shape = (rows_, columns_)
+        self.retraction_method = "complex-qr"
+        self.transport_method = "tangent-projection"
+        self.transport_is_isometric = False
+        self.transport_is_parallel = False
+
+    @property
+    def scalar_field(self) -> str:
+        return "complex"
+
+    def _matrix(self, value: ArrayLike, name: str, /) -> Array:
+        matrix = _array_with_trailing_shape(value, self.point_shape, name)
+        if not jnp.issubdtype(matrix.dtype, jnp.complexfloating):
+            raise TypeError(f"{name} must use complex coordinates.")
+        return matrix
+
+    def contains(self, point: ArrayLike, /) -> Array:
+        matrix = self._matrix(point, "Complex Stiefel point")
+        identity = jnp.eye(self.columns, dtype=matrix.dtype)
+        residual = jnp.max(jnp.abs(_adjoint(matrix) @ matrix - identity), axis=(-2, -1))
+        return jnp.all(jnp.isfinite(matrix)) & jnp.all(residual <= self.tolerance)
+
+    def constraint_residual(self, point: ArrayLike, /) -> Array:
+        matrix = self._matrix(point, "Complex Stiefel point")
+        identity = jnp.eye(self.columns, dtype=matrix.dtype)
+        return jnp.max(jnp.abs(_adjoint(matrix) @ matrix - identity))
+
+    def project_tangent(self, point: ArrayLike, ambient_vector: ArrayLike, /) -> Array:
+        matrix = self._matrix(point, "Complex Stiefel point")
+        vector = self._matrix(ambient_vector, "Complex Stiefel tangent")
+        correction = _hermitian(_adjoint(matrix) @ vector)
+        return vector - matrix @ correction
+
+    def egrad_to_rgrad(self, point: ArrayLike, ambient_cotangent: ArrayLike, /) -> Array:
+        return self.project_tangent(point, ambient_cotangent)
+
+    def inner(
+        self,
+        point: ArrayLike,
+        left_tangent: ArrayLike,
+        right_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        left = self.project_tangent(point, left_tangent)
+        right = self.project_tangent(point, right_tangent)
+        return jnp.real(jnp.vdot(left, right))
+
+    def retract(self, point: ArrayLike, tangent_step: ArrayLike, /) -> Array:
+        matrix = self._matrix(point, "Complex Stiefel point")
+        step = self.project_tangent(matrix, tangent_step)
+        q, r = jnp.linalg.qr(matrix + step, mode="reduced")
+        diagonal = jnp.diag(r)
+        phase = jnp.where(jnp.abs(diagonal) > 0.0, diagonal / jnp.abs(diagonal), 1.0)
+        return q * jnp.conj(phase)[None, :]
+
+    def transport(
+        self,
+        point: ArrayLike,
+        tangent_step: ArrayLike,
+        destination: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        self.project_tangent(point, tangent_step)
+        return self.project_tangent(destination, tangent)
+
+
 __all__ = [
     "AffineInvariantHPDManifold",
+    "ComplexStiefelManifold",
     "SpecialUnitaryGroup",
     "SpecialUnitaryManifold",
     "UnitaryGroup",

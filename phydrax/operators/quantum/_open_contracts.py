@@ -41,10 +41,47 @@ class ApproximationAxis(StrictModule):
         self.units = str(units)
 
 
+class ApproximationQuantity(StrictModule):
+    name: str = eqx.field(static=True)
+    value: Array
+    threshold: Array
+    units: str = eqx.field(static=True)
+    norm_id: str = eqx.field(static=True)
+    estimate_kind: str = eqx.field(static=True)
+    confidence: Array
+    valid: Array
+
+    def __init__(
+        self,
+        name: str,
+        value: ArrayLike,
+        threshold: ArrayLike,
+        /,
+        *,
+        units: str,
+        norm_id: str,
+        estimate_kind: Literal["bound", "estimate", "statistical"],
+        confidence: ArrayLike = jnp.nan,
+    ):
+        if estimate_kind not in ("bound", "estimate", "statistical"):
+            raise ValueError("Unknown approximation quantity kind.")
+        self.name = str(name)
+        self.value = jnp.asarray(value)
+        self.threshold = jnp.asarray(threshold)
+        self.units = str(units)
+        self.norm_id = str(norm_id)
+        self.estimate_kind = estimate_kind
+        self.confidence = jnp.asarray(confidence)
+        self.valid = (
+            jnp.all(jnp.isfinite(self.value))
+            & jnp.all(jnp.isfinite(self.threshold))
+            & jnp.all(self.value <= self.threshold)
+        )
+
+
 class OpenSystemApproximationEvidence(StrictModule):
     axes: tuple[ApproximationAxis, ...]
-    local_error: Array
-    statistical_error: Array
+    quantities: tuple[ApproximationQuantity, ...]
     valid: Array
     representation_id: str = eqx.field(static=True)
 
@@ -52,17 +89,23 @@ class OpenSystemApproximationEvidence(StrictModule):
         self,
         representation_id: str,
         axes: Sequence[ApproximationAxis],
+        quantities: Sequence[ApproximationQuantity],
         /,
         *,
-        local_error: ArrayLike = 0.0,
-        statistical_error: ArrayLike = 0.0,
-        valid: ArrayLike = True,
+        execution_valid: ArrayLike,
     ):
+        axes_ = tuple(axes)
+        quantities_ = tuple(quantities)
+        if not axes_ or not quantities_:
+            raise ValueError(
+                "Approximation evidence requires declared axes and quantities."
+            )
         self.representation_id = str(representation_id)
-        self.axes = tuple(axes)
-        self.local_error = jnp.asarray(local_error)
-        self.statistical_error = jnp.asarray(statistical_error)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.axes = axes_
+        self.quantities = quantities_
+        self.valid = jnp.asarray(execution_valid, dtype=bool) & jnp.all(
+            jnp.stack([quantity.valid for quantity in quantities_])
+        )
 
 
 class OpenSystemPhysicalityEvidence(StrictModule):
@@ -167,8 +210,103 @@ class OpenSystemRefinement(StrictModule):
         return self.state_embedding(state)
 
 
+class OpenSystemPromotionPolicy(StrictModule):
+    required_axes: tuple[str, ...] = eqx.field(static=True)
+    required_quantities: tuple[str, ...] = eqx.field(static=True)
+    require_physicality: bool = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        required_axes: Sequence[str],
+        required_quantities: Sequence[str],
+        /,
+        *,
+        require_physicality: bool,
+        policy_id: str,
+    ):
+        self.required_axes = tuple(str(value) for value in required_axes)
+        self.required_quantities = tuple(str(value) for value in required_quantities)
+        self.require_physicality = bool(require_physicality)
+        self.policy_id = str(policy_id)
+
+
+class OpenSystemPromotionDecision(StrictModule):
+    promoted: Array
+    missing_axes: tuple[str, ...] = eqx.field(static=True)
+    missing_quantities: tuple[str, ...] = eqx.field(static=True)
+    physicality_satisfied: Array
+    archive_verified: Array
+    capacity_available: Array
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        promoted: ArrayLike,
+        missing_axes: Sequence[str],
+        missing_quantities: Sequence[str],
+        physicality_satisfied: ArrayLike,
+        archive_verified: ArrayLike,
+        capacity_available: ArrayLike,
+        /,
+        *,
+        policy_id: str,
+    ):
+        self.promoted = jnp.asarray(promoted, dtype=bool)
+        self.missing_axes = tuple(missing_axes)
+        self.missing_quantities = tuple(missing_quantities)
+        self.physicality_satisfied = jnp.asarray(physicality_satisfied, dtype=bool)
+        self.archive_verified = jnp.asarray(archive_verified, dtype=bool)
+        self.capacity_available = jnp.asarray(capacity_available, dtype=bool)
+        self.policy_id = str(policy_id)
+
+
+def evaluate_open_system_promotion(
+    policy: OpenSystemPromotionPolicy,
+    approximation: OpenSystemApproximationEvidence,
+    physicality: OpenSystemPhysicalityEvidence,
+    /,
+    *,
+    execution_success: ArrayLike,
+    capacity_exhausted: ArrayLike,
+    archive_verified: ArrayLike,
+) -> OpenSystemPromotionDecision:
+    axes = {axis.name for axis in approximation.axes}
+    quantities = {quantity.name for quantity in approximation.quantities}
+    missing_axes = tuple(name for name in policy.required_axes if name not in axes)
+    missing_quantities = tuple(
+        name for name in policy.required_quantities if name not in quantities
+    )
+    physicality_satisfied = (
+        physicality.valid if policy.require_physicality else jnp.asarray(True)
+    )
+    capacity_available = ~jnp.asarray(capacity_exhausted, dtype=bool)
+    promoted = (
+        jnp.asarray(execution_success, dtype=bool)
+        & approximation.valid
+        & physicality_satisfied
+        & capacity_available
+        & jnp.asarray(archive_verified, dtype=bool)
+        & (len(missing_axes) == 0)
+        & (len(missing_quantities) == 0)
+    )
+    return OpenSystemPromotionDecision(
+        promoted,
+        missing_axes,
+        missing_quantities,
+        physicality_satisfied,
+        archive_verified,
+        capacity_available,
+        policy_id=policy.policy_id,
+    )
+
+
 __all__ = [
+    "ApproximationQuantity",
     "ApproximationAxis",
+    "OpenSystemPromotionDecision",
+    "OpenSystemPromotionPolicy",
+    "evaluate_open_system_promotion",
     "OpenSystemApproximationEvidence",
     "OpenSystemPhysicalityEvidence",
     "OpenSystemRefinement",

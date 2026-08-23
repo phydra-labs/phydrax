@@ -85,11 +85,6 @@ def jaynes_cummings_pseudomode_problem(
     initial_mode = jnp.zeros((mode.cutoff, mode.cutoff), dtype=complex).at[0, 0].set(1.0)
     system_density = jnp.asarray(initial_system_density)
     initial = jnp.kron(initial_mode, system_density)
-    # Keep the enlarged initial state faithful for the dense solver contract.
-    epsilon = 1e-8
-    initial = (1.0 - epsilon) * initial + epsilon * jnp.eye(
-        initial.shape[0]
-    ) / initial.shape[0]
     jump = jnp.sqrt(mode.damping) * jnp.kron(cavity.annihilation_matrix(0), jnp.eye(2))
     lindblad = LindbladProblem(
         hamiltonian,

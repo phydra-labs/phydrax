@@ -21,10 +21,7 @@ def _superoperator_from_kraus(kraus: Array) -> Array:
     )
     outputs = jnp.stack(
         [
-            sum(
-                operator @ value @ jnp.conj(operator.T)
-                for operator in kraus
-            ).reshape(-1)
+            sum(operator @ value @ jnp.conj(operator.T) for operator in kraus).reshape(-1)
             for value in basis
         ]
     )
@@ -46,7 +43,9 @@ class QuantumIntervention(StrictModule):
         dimension = kraus.shape[-1]
         completeness = sum(jnp.conj(operator.T) @ operator for operator in kraus)
         difference = jnp.eye(dimension, dtype=kraus.dtype) - completeness
-        minimum = jnp.min(jnp.linalg.eigvalsh(0.5 * (difference + jnp.conj(difference.T))))
+        minimum = jnp.min(
+            jnp.linalg.eigvalsh(0.5 * (difference + jnp.conj(difference.T)))
+        )
         self.kraus_operators = kraus
         self.superoperator = _superoperator_from_kraus(kraus)
         self.completeness_residual = jnp.max(jnp.abs(completeness - jnp.eye(dimension)))
@@ -61,8 +60,7 @@ class QuantumIntervention(StrictModule):
     def apply(self, density: ArrayLike, /) -> tuple[Array, Array]:
         rho = jnp.asarray(density)
         output = sum(
-            operator @ rho @ jnp.conj(operator.T)
-            for operator in self.kraus_operators
+            operator @ rho @ jnp.conj(operator.T) for operator in self.kraus_operators
         )
         probability = jnp.real(jnp.trace(output))
         normalized = jnp.where(probability > 0.0, output / probability, output)
@@ -72,6 +70,7 @@ class QuantumIntervention(StrictModule):
 class ProcessTensorPhysicality(StrictModule):
     local_cp_margins: Array
     local_tp_residuals: Array
+    initial_state_valid: Array
     causality_residual: Array
     valid: Array
     status: str = eqx.field(static=True)
@@ -80,16 +79,19 @@ class ProcessTensorPhysicality(StrictModule):
         self,
         local_cp_margins: ArrayLike,
         local_tp_residuals: ArrayLike,
+        initial_state_valid: ArrayLike,
         /,
         *,
         status: str,
     ):
         self.local_cp_margins = jnp.asarray(local_cp_margins)
         self.local_tp_residuals = jnp.asarray(local_tp_residuals)
+        self.initial_state_valid = jnp.asarray(initial_state_valid, dtype=bool)
         self.causality_residual = jnp.max(self.local_tp_residuals)
         self.valid = (
             jnp.all(self.local_cp_margins >= -1e-8)
             & jnp.all(self.local_tp_residuals <= 1e-8)
+            & self.initial_state_valid
         )
         self.status = str(status)
 
@@ -162,10 +164,17 @@ class ProcessTensorMPO(StrictModule):
         return state[0].reshape((self.dimension, self.dimension)), probability
 
     def physicality(self) -> ProcessTensorPhysicality:
+        hermitian = 0.5 * (self.initial_density + jnp.conj(self.initial_density.T))
+        initial_valid = (
+            jnp.all(jnp.isfinite(self.initial_density))
+            & (jnp.abs(jnp.trace(self.initial_density) - 1.0) <= 1e-8)
+            & (jnp.min(jnp.linalg.eigvalsh(hermitian)) >= -1e-8)
+        )
         if any(tensor.shape[0] != 1 or tensor.shape[-1] != 1 for tensor in self.tensors):
             return ProcessTensorPhysicality(
                 jnp.asarray([jnp.nan]),
                 jnp.asarray([jnp.nan]),
+                initial_valid,
                 status="unknown-general-temporal-bond",
             )
         reports = [
@@ -175,6 +184,7 @@ class ProcessTensorMPO(StrictModule):
         return ProcessTensorPhysicality(
             jnp.stack([report.cp_margin for report in reports]),
             jnp.stack([report.trace_preservation_residual for report in reports]),
+            initial_valid,
             status="local-markov-factorization",
         )
 
@@ -186,58 +196,15 @@ def markov_process_tensor(
     *,
     process_id: str = "markov-process",
 ) -> ProcessTensorMPO:
-    tensors = tuple(jnp.asarray(operator)[None, :, :, None] for operator in superoperators)
+    tensors = tuple(
+        jnp.asarray(operator)[None, :, :, None] for operator in superoperators
+    )
     return ProcessTensorMPO(tensors, initial_density, process_id=process_id)
-
-
-class ProcessTomographyResult(StrictModule):
-    process_tensor: ProcessTensorMPO
-    reconstruction_residual: Array
-    valid: Array
-
-    def __init__(
-        self,
-        process_tensor: ProcessTensorMPO,
-        reconstruction_residual: ArrayLike,
-        /,
-    ):
-        self.process_tensor = process_tensor
-        self.reconstruction_residual = jnp.asarray(reconstruction_residual)
-        self.valid = (
-            process_tensor.physicality().valid
-            & jnp.isfinite(self.reconstruction_residual)
-        )
-
-
-def reconstruct_markov_process_tensor(
-    observed_superoperators: Sequence[ArrayLike],
-    initial_density: ArrayLike,
-    /,
-    *,
-    process_id: str = "reconstructed-markov-process",
-) -> ProcessTomographyResult:
-    process = markov_process_tensor(
-        observed_superoperators, initial_density, process_id=process_id
-    )
-    residual = jnp.max(
-        jnp.stack(
-            [
-                jnp.linalg.norm(
-                    process.tensors[index][0, :, :, 0]
-                    - jnp.asarray(observed_superoperators[index])
-                )
-                for index in range(len(process.tensors))
-            ]
-        )
-    )
-    return ProcessTomographyResult(process, residual)
 
 
 __all__ = [
     "ProcessTensorMPO",
     "ProcessTensorPhysicality",
-    "ProcessTomographyResult",
     "QuantumIntervention",
     "markov_process_tensor",
-    "reconstruct_markov_process_tensor",
 ]

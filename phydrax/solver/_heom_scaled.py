@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from math import comb
+
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
@@ -75,4 +77,32 @@ class ScaledHEOMTopology(StrictModule):
         return values * self.scaling_factors[:, None, None]
 
 
-__all__ = ["ScaledHEOMTopology"]
+def prepare_scaled_heom_topology(
+    term_count: int,
+    depth: int,
+    expansion: BathCorrelationExpansion,
+    /,
+    *,
+    maximum_auxiliaries: int,
+    maximum_edges: int,
+) -> ScaledHEOMTopology:
+    count = comb(int(term_count) + int(depth), int(depth))
+    edge_bound = 2 * count * int(term_count)
+    if count > int(maximum_auxiliaries):
+        raise ValueError(
+            f"HEOM auxiliary capacity exceeded: required {count}, "
+            f"available {maximum_auxiliaries}."
+        )
+    if edge_bound > int(maximum_edges):
+        raise ValueError(
+            f"HEOM edge capacity exceeded: required at most {edge_bound}, "
+            f"available {maximum_edges}."
+        )
+    hierarchy = HEOMHierarchy(term_count, depth)
+    topology = ScaledHEOMTopology(hierarchy, expansion)
+    if topology.source_edges.shape[0] > int(maximum_edges):
+        raise ValueError("Prepared HEOM topology exceeded exact edge capacity.")
+    return topology
+
+
+__all__ = ["ScaledHEOMTopology", "prepare_scaled_heom_topology"]

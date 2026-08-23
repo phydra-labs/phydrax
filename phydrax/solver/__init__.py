@@ -318,16 +318,25 @@ from ._heom import (
     thermal_drude_lorentz_qubit_heom,
 )
 from ._heom_implicit import (
+    HEOMBDFEvidence,
+    HEOMBDFResult,
     HEOMImplicitEvidence,
     HEOMImplicitResult,
+    HEOMTierBlockPreconditioner,
     solve_heom_backward_euler,
+    solve_heom_bdf,
 )
 from ._heom_production import (
     HEOMContinuationResult,
     HEOMContinuationStage,
+    HEOMGridContinuationResult,
     solve_heom_continuation,
+    solve_heom_continuation_grid,
 )
-from ._heom_scaled import ScaledHEOMTopology
+from ._heom_scaled import (
+    prepare_scaled_heom_topology,
+    ScaledHEOMTopology,
+)
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -424,11 +433,22 @@ from ._neural_quantum_jump import (
     solve_neural_jump_projection,
     solve_neural_no_jump_tdvp,
 )
+from ._neural_sampled_trajectory import (
+    NeuralRateEvidence,
+    SampledNeuralTrajectoryProblem,
+    SampledNeuralTrajectoryResult,
+    solve_sampled_neural_trajectory,
+)
 from ._nonmarkov_campaign import (
     lorentzian_qubit_comparison,
     NonMarkovianComparisonResult,
     spin_boson_dephasing_comparison,
     SpinBosonComparisonResult,
+)
+from ._open_system_artifact import (
+    OPEN_SYSTEM_ARTIFACT_SCHEMA,
+    read_open_system_artifact,
+    write_open_system_artifact,
 )
 from ._particles import (
     InteractingParticleProblem,
@@ -465,6 +485,7 @@ from ._pseudomode import (
 )
 from ._purified_lindblad import (
     apply_local_kraus_channel,
+    local_kraus_channel_from_lindblad,
     LocalKrausChannel,
     PurificationTruncationEvidence,
     PurifiedLindbladProblem,
@@ -473,7 +494,9 @@ from ._purified_lindblad import (
 )
 from ._purified_tebd import (
     apply_lpdo_two_site_unitary,
+    diagnose_purified_stationarity,
     LPDOBondEvidence,
+    PurifiedStationarityDiagnostic,
     PurifiedStrangProblem,
     PurifiedStrangResult,
     solve_purified_strang,
@@ -489,6 +512,10 @@ from ._quantum_jump_event import (
     EventDrivenQuantumJumpResult,
     QuantumJumpEventTable,
     solve_event_driven_quantum_jump,
+)
+from ._quantum_jump_generic import (
+    quantum_jump_differential_problem,
+    solve_quantum_jump_generic,
 )
 from ._quantum_propagation import (
     solve_unitary_propagator,
@@ -581,6 +608,11 @@ from ._stencil_evolution import (
     StaggeredAcousticPlan,
     StaggeredAcousticState,
 )
+from ._stinespring_tomography import (
+    fit_stinespring_process,
+    StinespringTomographyProblem,
+    StinespringTomographyResult,
+)
 from ._symplectic import (
     integrate_stormer_verlet,
     SeparableHamiltonianResult,
@@ -618,7 +650,11 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
-from ._xxz_open import boundary_driven_xxz_problem
+from ._xxz_open import (
+    boundary_driven_xxz_problem,
+    qualify_boundary_driven_xxz,
+    XXZQualificationResult,
+)
 
 
 __all__ = [
@@ -1074,4 +1110,28 @@ __all__ = [
     "solve_neural_no_jump_tdvp",
     "solve_purified_strang",
     "spin_boson_dephasing_comparison",
+    "HEOMBDFEvidence",
+    "HEOMBDFResult",
+    "HEOMGridContinuationResult",
+    "HEOMTierBlockPreconditioner",
+    "NeuralRateEvidence",
+    "OPEN_SYSTEM_ARTIFACT_SCHEMA",
+    "PurifiedStationarityDiagnostic",
+    "SampledNeuralTrajectoryProblem",
+    "SampledNeuralTrajectoryResult",
+    "XXZQualificationResult",
+    "diagnose_purified_stationarity",
+    "local_kraus_channel_from_lindblad",
+    "prepare_scaled_heom_topology",
+    "qualify_boundary_driven_xxz",
+    "quantum_jump_differential_problem",
+    "read_open_system_artifact",
+    "solve_heom_bdf",
+    "solve_heom_continuation_grid",
+    "solve_quantum_jump_generic",
+    "solve_sampled_neural_trajectory",
+    "write_open_system_artifact",
+    "StinespringTomographyProblem",
+    "StinespringTomographyResult",
+    "fit_stinespring_process",
 ]

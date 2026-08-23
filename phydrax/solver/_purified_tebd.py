@@ -199,10 +199,75 @@ def solve_purified_strang(
     )
 
 
+class PurifiedStationarityDiagnostic(StrictModule):
+    maximum_trace_residual: Array
+    maximum_canonical_residual: Array
+    maximum_bond_discarded_weight: Array
+    maximum_kraus_discarded_weight: Array
+    observable_window_change: Array
+    valid: Array
+
+    def __init__(
+        self,
+        result: PurifiedStrangResult,
+        observable_history: ArrayLike,
+        /,
+        *,
+        window: int,
+        tolerance: float,
+        truncation_tolerance: float,
+    ):
+        observables = jnp.asarray(observable_history)
+        if observables.shape[0] < int(window) + 1:
+            raise ValueError(
+                "Observable history is shorter than the steady-state window."
+            )
+        self.maximum_trace_residual = jnp.max(jnp.abs(result.raw_trace_history - 1.0))
+        self.maximum_canonical_residual = jnp.max(result.canonical_residual_history)
+        self.maximum_bond_discarded_weight = jnp.max(
+            result.bond_discarded_history, initial=0.0
+        )
+        self.maximum_kraus_discarded_weight = jnp.max(
+            result.kraus_discarded_history, initial=0.0
+        )
+        recent = observables[-int(window) - 1 :]
+        self.observable_window_change = jnp.max(
+            jnp.linalg.norm(recent[1:] - recent[:-1], axis=-1)
+        )
+        self.valid = (
+            result.valid
+            & (self.maximum_trace_residual <= tolerance)
+            & (self.maximum_canonical_residual <= tolerance)
+            & (self.maximum_bond_discarded_weight <= truncation_tolerance)
+            & (self.maximum_kraus_discarded_weight <= truncation_tolerance)
+            & (self.observable_window_change <= tolerance)
+        )
+
+
+def diagnose_purified_stationarity(
+    result: PurifiedStrangResult,
+    observable_history: ArrayLike,
+    /,
+    *,
+    window: int = 4,
+    tolerance: float = 1e-6,
+    truncation_tolerance: float = 1e-8,
+) -> PurifiedStationarityDiagnostic:
+    return PurifiedStationarityDiagnostic(
+        result,
+        observable_history,
+        window=window,
+        tolerance=tolerance,
+        truncation_tolerance=truncation_tolerance,
+    )
+
+
 __all__ = [
     "LPDOBondEvidence",
+    "PurifiedStationarityDiagnostic",
     "PurifiedStrangProblem",
     "PurifiedStrangResult",
     "apply_lpdo_two_site_unitary",
+    "diagnose_purified_stationarity",
     "solve_purified_strang",
 ]

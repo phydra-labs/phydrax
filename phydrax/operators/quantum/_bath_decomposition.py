@@ -94,8 +94,38 @@ def underdamped_brownian_two_pole(
     )
 
 
+def drude_lorentz_pade_from_poles(
+    reorganization_energy: float,
+    cutoff_frequency: float,
+    temperature: float,
+    pade_poles,
+    reference_times,
+    /,
+    *,
+    reference_matsubara_terms: int = 128,
+) -> BathCorrelationExpansion:
+    """Fit a Drude correlation using caller-supplied positive Padé poles."""
+    reference = drude_lorentz_matsubara(
+        reorganization_energy,
+        cutoff_frequency,
+        temperature,
+        reference_matsubara_terms,
+    )
+    poles = jnp.asarray(pade_poles, dtype=complex)
+    if poles.ndim != 1 or jnp.any(jnp.real(poles) <= 0.0):
+        raise ValueError("Padé poles must be a vector with positive real parts.")
+    exponents = jnp.concatenate((jnp.asarray([cutoff_frequency + 0.0j]), poles))
+    return fit_bath_exponentials(
+        reference,
+        reference_times,
+        exponents,
+        expansion_id=f"drude-pade-supplied-poles:{poles.shape[0]}",
+    )
+
+
 __all__ = [
     "drude_lorentz_matsubara",
+    "drude_lorentz_pade_from_poles",
     "fit_bath_exponentials",
     "underdamped_brownian_two_pole",
 ]

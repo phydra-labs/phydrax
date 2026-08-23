@@ -81,6 +81,7 @@ class MPSQuantumTrajectoryResult(StrictModule):
     jump_channels: Array
     active_events: Array
     discarded_weight_history: Array
+    root_ambiguous: Array
     valid: Array
     problem_id: str = eqx.field(static=True)
 
@@ -91,6 +92,7 @@ class MPSQuantumTrajectoryResult(StrictModule):
         jump_channels: ArrayLike,
         active_events: ArrayLike,
         discarded_weight_history: ArrayLike,
+        root_ambiguous: ArrayLike,
         /,
         *,
         problem_id: str,
@@ -100,10 +102,12 @@ class MPSQuantumTrajectoryResult(StrictModule):
         self.jump_channels = jnp.asarray(jump_channels, dtype=jnp.int32)
         self.active_events = jnp.asarray(active_events, dtype=bool)
         self.discarded_weight_history = jnp.asarray(discarded_weight_history)
+        self.root_ambiguous = jnp.asarray(root_ambiguous, dtype=bool)
         self.valid = (
             jnp.isfinite(final_state.norm())
             & (jnp.abs(final_state.norm() - 1.0) <= 1e-6)
             & jnp.all(jnp.isfinite(self.discarded_weight_history))
+            & ~jnp.any(self.root_ambiguous)
         )
         self.problem_id = str(problem_id)
 
@@ -117,12 +121,14 @@ def solve_mps_quantum_jump(
     steps: int,
     maximum_bond_dimension: int,
     maximum_events: int = 128,
+    root_truncation_tolerance: float = 1e-6,
 ) -> MPSQuantumTrajectoryResult:
     step = jnp.asarray(step_size, dtype=float).reshape(())
     state = problem.initial_state
     times = jnp.zeros((maximum_events,), dtype=step.dtype)
     channels = -jnp.ones((maximum_events,), dtype=jnp.int32)
     active = jnp.zeros((maximum_events,), dtype=bool)
+    root_ambiguous = jnp.zeros((maximum_events,), dtype=bool)
     discarded = []
     event_count = 0
     threshold_address = SampleAddress(
@@ -173,6 +179,14 @@ def solve_mps_quantum_jump(
                 order=2,
             )
             discarded.append(event_evidence.cumulative_discarded_weight)
+            ambiguous = (
+                jnp.sqrt(event_evidence.cumulative_discarded_weight)
+                > root_truncation_tolerance
+            )
+            if bool(jax.device_get(ambiguous)):
+                root_ambiguous = root_ambiguous.at[event_count].set(True)
+                state = candidate
+                break
             local_key = derive_key(key, channel_address, event_count)
             channel = jax.random.categorical(
                 local_key, jnp.log(jnp.maximum(rates / total, 1e-30))
@@ -208,6 +222,7 @@ def solve_mps_quantum_jump(
         channels,
         active,
         jnp.stack(discarded) if discarded else jnp.zeros((0,)),
+        root_ambiguous,
         problem_id=problem.problem_id,
     )
 

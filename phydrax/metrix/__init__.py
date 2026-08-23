@@ -68,6 +68,7 @@ from ._complex import (
 )
 from ._complex_matrix_manifold import (
     AffineInvariantHPDManifold,
+    ComplexStiefelManifold,
     SpecialUnitaryGroup,
     SpecialUnitaryManifold,
     UnitaryGroup,
@@ -316,6 +317,7 @@ __all__ = [
     "AtlasValidationReport",
     "AbstractStateGeometry",
     "AffineInvariantHPDManifold",
+    "ComplexStiefelManifold",
     "AffineInvariantSPDManifold",
     "CallableAffineConnection",
     "CausalCharacter",

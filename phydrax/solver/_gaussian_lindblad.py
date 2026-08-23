@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..metrix import BosonicGaussianState
+from ..metrix import BosonicGaussianState, canonical_commutation_matrix
 
 
 class GaussianLindbladProblem(StrictModule):
@@ -18,6 +18,8 @@ class GaussianLindbladProblem(StrictModule):
     diffusion: Array
     forcing: Array
     initial_state: BosonicGaussianState
+    generator_cp_margin: Array
+    stability_margin: Array
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -43,6 +45,17 @@ class GaussianLindbladProblem(StrictModule):
         self.drift = drift_
         self.diffusion = 0.5 * (diffusion_ + diffusion_.T)
         self.forcing = forcing_
+        omega = canonical_commutation_matrix(initial_state.mode_count, dtype=drift_.dtype)
+        generator_matrix = self.diffusion.astype(complex) - 0.5j * initial_state.hbar * (
+            drift_ @ omega + omega @ drift_.T
+        )
+        generator_margin = jnp.min(jnp.linalg.eigvalsh(generator_matrix))
+        if not bool(jax.device_get(generator_margin >= -1e-9)):
+            raise ValueError(
+                "Gaussian Lindblad drift/diffusion violate the CP generator condition."
+            )
+        self.generator_cp_margin = generator_margin
+        self.stability_margin = -jnp.max(jnp.real(jnp.linalg.eigvals(drift_)))
         self.initial_state = initial_state
         self.problem_id = str(problem_id)
 
@@ -53,6 +66,8 @@ class GaussianLindbladProblem(StrictModule):
         )
 
     def stationary_state(self) -> BosonicGaussianState:
+        if not bool(jax.device_get(self.stability_margin > 0.0)):
+            raise ValueError("Gaussian stationary state requires Hurwitz drift.")
         dimension = self.drift.shape[0]
         identity = jnp.eye(dimension, dtype=self.drift.dtype)
         operator = jnp.kron(identity, self.drift) + jnp.kron(self.drift, identity)
@@ -60,7 +75,13 @@ class GaussianLindbladProblem(StrictModule):
             self.diffusion.shape
         )
         mean = jnp.linalg.solve(self.drift, -self.forcing)
-        return BosonicGaussianState(mean, covariance, hbar=self.initial_state.hbar)
+        state = BosonicGaussianState(mean, covariance, hbar=self.initial_state.hbar)
+        residual = jnp.linalg.norm(
+            self.drift @ covariance + covariance @ self.drift.T + self.diffusion
+        )
+        if not bool(jax.device_get(state.valid & (residual <= 1e-7))):
+            raise ValueError("Gaussian stationary-state certification failed.")
+        return state
 
 
 class GaussianLindbladSolution(StrictModule):

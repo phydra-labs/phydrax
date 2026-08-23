@@ -11,7 +11,7 @@ from .._strict import StrictModule
 from ._causal_process import CausalProcessTensor, CombLegSpec
 
 
-class CausalProcessCompressionResult(StrictModule):
+class ProcessMemoryProjectionResult(StrictModule):
     process: CausalProcessTensor
     discarded_initial_weight: Array
     maximum_channel_completeness_residual: Array
@@ -37,18 +37,18 @@ class CausalProcessCompressionResult(StrictModule):
         )
 
 
-def compress_causal_process_memory(
+def project_process_memory_subspace(
     process: CausalProcessTensor,
     retained_memory_dimension: int,
     /,
-) -> CausalProcessCompressionResult:
+) -> ProcessMemoryProjectionResult:
     """Project onto a fixed memory subspace and validate CPTP after compression."""
     retained = int(retained_memory_dimension)
     old = process.spec.memory_dimension
     if not 1 <= retained <= old:
         raise ValueError("Retained memory dimension is outside the process memory.")
     if retained == old:
-        return CausalProcessCompressionResult(
+        return ProcessMemoryProjectionResult(
             process,
             jnp.asarray(0.0),
             jnp.max(process.channel_completeness_residuals),
@@ -77,11 +77,11 @@ def compress_causal_process_memory(
         channels,
         process_id=f"{process.process_id}:memory-{retained}",
     )
-    return CausalProcessCompressionResult(
+    return ProcessMemoryProjectionResult(
         compressed,
         1.0 - retained_weight,
         jnp.max(compressed.channel_completeness_residuals),
     )
 
 
-__all__ = ["CausalProcessCompressionResult", "compress_causal_process_memory"]
+__all__ = ["ProcessMemoryProjectionResult", "project_process_memory_subspace"]

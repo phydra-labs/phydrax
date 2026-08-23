@@ -20,6 +20,7 @@ from ._amplitude import (
 )
 from ._bath_decomposition import (
     drude_lorentz_matsubara,
+    drude_lorentz_pade_from_poles,
     fit_bath_exponentials,
     underdamped_brownian_two_pole,
 )
@@ -63,8 +64,12 @@ from ._nonmarkovianity import (
 )
 from ._open_contracts import (
     ApproximationAxis,
+    ApproximationQuantity,
+    evaluate_open_system_promotion,
     OpenSystemApproximationEvidence,
     OpenSystemPhysicalityEvidence,
+    OpenSystemPromotionDecision,
+    OpenSystemPromotionPolicy,
     OpenSystemRefinement,
     PhysicalityStatus,
     QuantumGeneratorAction,
@@ -139,10 +144,14 @@ __all__ = [
     "quantum_geometric_tensor",
     "unitarity_residual",
     "ApproximationAxis",
+    "ApproximationQuantity",
     "BathCorrelationExpansion",
     "BosonicFockSpace",
     "FockCutoffEvidence",
     "OpenSystemApproximationEvidence",
+    "evaluate_open_system_promotion",
+    "OpenSystemPromotionDecision",
+    "OpenSystemPromotionPolicy",
     "OpenSystemPhysicalityEvidence",
     "OpenSystemRefinement",
     "PhysicalityStatus",
@@ -157,6 +166,7 @@ __all__ = [
     "analyze_dynamical_map_series",
     "blp_information_backflow",
     "drude_lorentz_matsubara",
+    "drude_lorentz_pade_from_poles",
     "fit_bath_exponentials",
     "underdamped_brownian_two_pole",
 ]

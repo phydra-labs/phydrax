@@ -10,7 +10,9 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..operators.quantum import BathCorrelationExpansion
 from ._heom import HEOMHierarchy, HEOMProblem, HEOMSolution, solve_heom
+from ._heom_implicit import solve_heom_bdf
 
 
 class HEOMContinuationStage(StrictModule):
@@ -109,8 +111,91 @@ def solve_heom_continuation(
     return HEOMContinuationResult(solutions, stages, tolerance=tolerance)
 
 
+class HEOMGridContinuationResult(StrictModule):
+    final_roots: Array
+    depth_differences: Array
+    bath_differences: Array
+    valid: Array
+
+    def __init__(
+        self,
+        final_roots: ArrayLike,
+        depth_differences: ArrayLike,
+        bath_differences: ArrayLike,
+        valid: ArrayLike,
+        /,
+    ):
+        self.final_roots = jnp.asarray(final_roots)
+        self.depth_differences = jnp.asarray(depth_differences)
+        self.bath_differences = jnp.asarray(bath_differences)
+        self.valid = jnp.asarray(valid, dtype=bool)
+
+
+def solve_heom_continuation_grid(
+    base_problem: HEOMProblem,
+    expansions: Sequence[BathCorrelationExpansion],
+    depths: Sequence[int],
+    /,
+    *,
+    step_size: ArrayLike,
+    steps: int,
+    maximum_order: int = 2,
+) -> HEOMGridContinuationResult:
+    expansions_ = tuple(expansions)
+    depths_ = tuple(int(depth) for depth in depths)
+    if not expansions_ or not depths_:
+        raise ValueError("HEOM continuation grid axes must be non-empty.")
+    roots = []
+    valid = []
+    initial = base_problem.initial_state[0]
+    for expansion in expansions_:
+        row = []
+        row_valid = []
+        for depth in depths_:
+            problem = HEOMProblem(
+                base_problem.hamiltonian,
+                base_problem.coupling_operator,
+                expansion,
+                HEOMHierarchy(expansion.rank, depth),
+                initial,
+                problem_id=(
+                    f"{base_problem.problem_id}:bath-{expansion.expansion_id}:"
+                    f"depth-{depth}"
+                ),
+            )
+            result = solve_heom_bdf(
+                problem,
+                step_size=step_size,
+                steps=steps,
+                maximum_order=maximum_order,
+            )
+            row.append(result.solution.root_states[-1])
+            row_valid.append(result.valid)
+        roots.append(jnp.stack(row))
+        valid.append(jnp.stack(row_valid))
+    values = jnp.stack(roots)
+    depth_differences = (
+        jnp.linalg.norm(values[:, 1:] - values[:, :-1], axis=(-2, -1))
+        if len(depths_) > 1
+        else jnp.zeros((len(expansions_), 0))
+    )
+    bath_differences = (
+        jnp.linalg.norm(values[1:] - values[:-1], axis=(-2, -1))
+        if len(expansions_) > 1
+        else jnp.zeros((0, len(depths_)))
+    )
+    return HEOMGridContinuationResult(
+        values,
+        depth_differences,
+        bath_differences,
+        jnp.all(jnp.stack(valid)),
+    )
+
+
 __all__ = [
     "HEOMContinuationResult",
     "HEOMContinuationStage",
+    "HEOMGridContinuationResult",
     "solve_heom_continuation",
+    "solve_heom_continuation_grid",
 ]

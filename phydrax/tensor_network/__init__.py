@@ -23,22 +23,33 @@ from ._environments import (
     mps_one_site_expectation,
 )
 from ._evolution import apply_two_site_gate, product_mps, TensorTruncationEvidence
+from ._local_lindblad import (
+    LocalKrausPreparationEvidence,
+    prepare_local_lindblad_channel,
+    PreparedLocalKrausChannel,
+)
 from ._process_causality import (
     ProcessCombCausalityReport,
     ProcessSequenceLikelihood,
     validate_process_comb_causality,
 )
 from ._process_compression import (
-    CausalProcessCompressionResult,
-    compress_causal_process_memory,
+    ProcessMemoryProjectionResult,
+    project_process_memory_subspace,
+)
+from ._process_sources import (
+    causal_process_from_lindblad,
+    causal_process_from_unitaries,
 )
 from ._process_tensor import (
     markov_process_tensor,
     ProcessTensorMPO,
     ProcessTensorPhysicality,
-    ProcessTomographyResult,
     QuantumIntervention,
-    reconstruct_markov_process_tensor,
+)
+from ._stinespring_process import (
+    ProcessGaugeReport,
+    SequentialStinespringProcess,
 )
 from ._tebd import NearestNeighborHamiltonian, tebd_step, TEBDEvidence
 
@@ -58,23 +69,28 @@ __all__ = [
     "TensorTruncationEvidence",
     "ProcessTensorMPO",
     "ProcessTensorPhysicality",
-    "ProcessTomographyResult",
     "QuantumIntervention",
     "markov_process_tensor",
-    "reconstruct_markov_process_tensor",
     "apply_two_site_gate",
     "product_mps",
-    "CausalProcessCompressionResult",
+    "ProcessMemoryProjectionResult",
     "CausalProcessResult",
     "CausalProcessTensor",
     "CombLegSpec",
     "LPDOCanonicalEvidence",
     "QuantumInstrument",
     "canonicalize_lpdo",
-    "compress_causal_process_memory",
+    "project_process_memory_subspace",
     "lpdo_one_site_reduced",
     "lpdo_raw_trace",
     "mps_inner",
     "mps_norm_squared",
     "mps_one_site_expectation",
+    "LocalKrausPreparationEvidence",
+    "PreparedLocalKrausChannel",
+    "causal_process_from_lindblad",
+    "causal_process_from_unitaries",
+    "prepare_local_lindblad_channel",
+    "ProcessGaugeReport",
+    "SequentialStinespringProcess",
 ]

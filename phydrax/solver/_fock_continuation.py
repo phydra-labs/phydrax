@@ -119,7 +119,7 @@ def solve_fock_continuation(
             cutoffs=space.cutoffs,
         )
         stages.append(stage)
-        observable_converged = previous_observable is None or bool(
+        observable_converged = previous_observable is not None and bool(
             change <= policy.observable_tolerance
         )
         if (
@@ -132,16 +132,23 @@ def solve_fock_continuation(
         ):
             converged = True
             break
+        force_validation_refinement = previous_observable is None
         next_cutoffs = tuple(
             min(
                 cutoff + increment
-                if float(evidence.top_level_probability[index])
+                if force_validation_refinement
+                or float(evidence.top_level_probability[index])
                 > policy.top_probability_tolerance
                 else cutoff,
                 maximum,
             )
             for index, (cutoff, increment, maximum) in enumerate(
-                zip(space.cutoffs, policy.increments, policy.maximum_cutoffs, strict=True)
+                zip(
+                    space.cutoffs,
+                    policy.increments,
+                    policy.maximum_cutoffs,
+                    strict=True,
+                )
             )
         )
         if next_cutoffs == space.cutoffs:

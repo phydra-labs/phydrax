@@ -11,7 +11,7 @@ import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..metrix import FaithfulDensityReport
+from ..linalg import HermitianSpectrum
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -46,10 +46,18 @@ class LindbladProblem(StrictModule):
             raise ValueError("Initial density shape does not match the Hamiltonian.")
         if jnp.max(jnp.abs(hamiltonian_ - _adjoint(hamiltonian_))) > 1e-9:
             raise ValueError("Hamiltonian must be Hermitian.")
+        spectrum = HermitianSpectrum(density, tolerance=1e-10)
+        trace_residual = jnp.abs(jnp.trace(density) - 1.0)
         if not bool(
-            jax.device_get(FaithfulDensityReport(density, tolerance=1e-10).valid)
+            jax.device_get(
+                spectrum.valid
+                & (trace_residual <= 1e-10)
+                & (spectrum.minimum_eigenvalue >= -1e-10)
+            )
         ):
-            raise ValueError("Initial density must be faithful and trace one.")
+            raise ValueError(
+                "Initial density must be Hermitian, positive semidefinite, and trace one."
+            )
         self.hamiltonian = hamiltonian_
         self.jump_operators = jumps
         self.initial_density = density

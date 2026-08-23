@@ -75,11 +75,45 @@ class CausalProcessTomographyProblem(StrictModule):
         value = -jnp.sum(counts * jnp.log(safe))
         return jnp.where(support_violation, jnp.inf, value)
 
+    def initial_state_identifiability(
+        self,
+        factor: ArrayLike,
+        /,
+        *,
+        tolerance: float = 1e-8,
+    ) -> tuple[Array, Array]:
+        value = jnp.asarray(factor)
+        size = value.size
+        realified = jnp.concatenate(
+            (jnp.real(value).reshape(-1), jnp.imag(value).reshape(-1))
+        )
+
+        def probabilities(parameters):
+            candidate = parameters[:size].reshape(value.shape) + 1j * parameters[
+                size:
+            ].reshape(value.shape)
+            density = faithful_density_from_cholesky(candidate)
+            model = CausalProcessTensor(
+                self.process.spec,
+                density,
+                self.process.channel_kraus,
+                process_id=self.process.process_id,
+            )
+            return self.probabilities(model)
+
+        jacobian = jax.jacfwd(probabilities)(realified)
+        singular_values = jnp.linalg.svd(jacobian, compute_uv=False)
+        rank = jnp.sum(singular_values > tolerance)
+        return rank, 2 * size - rank
+
 
 class CausalProcessTomographyResult(StrictModule):
     process: CausalProcessTensor
     loss_history: Array
     support_valid: Array
+    identifiability_rank: Array
+    nullity: Array
+    underidentified: Array
     valid: Array
     problem_id: str
 
@@ -87,6 +121,8 @@ class CausalProcessTomographyResult(StrictModule):
         self,
         process: CausalProcessTensor,
         loss_history: ArrayLike,
+        identifiability_rank: ArrayLike,
+        nullity: ArrayLike,
         /,
         *,
         problem_id: str,
@@ -94,7 +130,10 @@ class CausalProcessTomographyResult(StrictModule):
         self.process = process
         self.loss_history = jnp.asarray(loss_history)
         self.support_valid = jnp.all(jnp.isfinite(self.loss_history))
-        self.valid = process.valid & self.support_valid
+        self.identifiability_rank = jnp.asarray(identifiability_rank)
+        self.nullity = jnp.asarray(nullity)
+        self.underidentified = self.nullity > 0
+        self.valid = process.valid & self.support_valid & ~self.underidentified
         self.problem_id = str(problem_id)
 
 
@@ -129,9 +168,12 @@ def fit_causal_process_initial_state(
         value, gradient = value_and_grad(factor)
         factor = factor - float(learning_rate) * gradient
         history.append(value)
+    rank, nullity = problem.initial_state_identifiability(factor)
     return CausalProcessTomographyResult(
         model(factor),
         jnp.stack(history),
+        rank,
+        nullity,
         problem_id=problem.problem_id,
     )
 

@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..operators.quantum import OpenSystemPhysicalityEvidence
 
 
 class QuantumMemoryKernel(StrictModule):
@@ -102,7 +103,11 @@ class OpenSystemHistorySolution(StrictModule):
     trace_residuals: Array
     hermiticity_residuals: Array
     minimum_eigenvalues: Array
+    execution_valid: Array
+    pointwise_density_valid: Array
+    physicality: OpenSystemPhysicalityEvidence
     valid: Array
+    production_valid: Array
     problem_id: str = eqx.field(static=True)
 
     def __init__(self, states: ArrayLike, times: ArrayLike, /, *, problem_id: str):
@@ -117,11 +122,22 @@ class OpenSystemHistorySolution(StrictModule):
             jnp.linalg.eigvalsh(0.5 * (values + jnp.swapaxes(jnp.conj(values), -1, -2))),
             axis=-1,
         )
-        self.valid = (
+        self.execution_valid = (
             jnp.all(jnp.isfinite(values))
             & jnp.all(self.trace_residuals <= 1e-6)
             & jnp.all(self.hermiticity_residuals <= 1e-6)
         )
+        self.pointwise_density_valid = self.execution_valid & jnp.all(
+            self.minimum_eigenvalues >= -1e-8
+        )
+        self.physicality = OpenSystemPhysicalityEvidence(
+            trace_residual=jnp.max(self.trace_residuals),
+            hermiticity_residual=jnp.max(self.hermiticity_residuals),
+            positivity_margin=jnp.min(self.minimum_eigenvalues),
+            status="unknown",
+        )
+        self.valid = self.execution_valid & self.pointwise_density_valid
+        self.production_valid = self.valid & self.physicality.valid
         self.problem_id = str(problem_id)
 
 
@@ -198,11 +214,20 @@ def solve_time_local_open_system(
 ) -> OpenSystemHistorySolution:
     step = jnp.asarray(step_size, dtype=float).reshape(())
     count = int(steps)
+    if count < 0 or float(step) <= 0.0 or not bool(jnp.isfinite(step)):
+        raise ValueError("TCL steps and step_size must be finite and positive.")
     states = [problem.initial_density]
     for index in range(count):
         time = step * index
         state = states[-1]
-        derivative = problem.generator(time, state)
+        derivative = jnp.asarray(problem.generator(time, state))
+        if derivative.shape != state.shape:
+            raise ValueError("TCL generator must preserve density shape.")
+        derivative = eqx.error_if(
+            derivative,
+            jnp.any(~jnp.isfinite(derivative)),
+            "TCL generator returned nonfinite values.",
+        )
         candidate = state + step * derivative
         states.append(candidate)
     return OpenSystemHistorySolution(

@@ -11,8 +11,13 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
-from ..operators.quantum import ApproximationAxis, OpenSystemApproximationEvidence
+from ..operators.quantum import (
+    ApproximationAxis,
+    ApproximationQuantity,
+    OpenSystemApproximationEvidence,
+)
 
 
 class StateVectorOperator(StrictModule):
@@ -123,6 +128,8 @@ class QuantumTrajectoryEnsemble(StrictModule):
         *,
         step_size: ArrayLike,
         problem_id: str,
+        maximum_step_size: float = 0.1,
+        maximum_statistical_error: float = 0.25,
     ):
         self.states = jnp.asarray(states)
         self.jump_channels = jnp.asarray(jump_channels, dtype=jnp.int32)
@@ -130,15 +137,33 @@ class QuantumTrajectoryEnsemble(StrictModule):
         self.times = jnp.asarray(times)
         norm_residual = jnp.max(jnp.abs(jnp.linalg.norm(self.states, axis=-1) - 1.0))
         self.valid = jnp.all(jnp.isfinite(self.states)) & (norm_residual <= 1e-6)
+        statistical_error = 1.0 / jnp.sqrt(float(self.states.shape[0]))
         self.approximation = OpenSystemApproximationEvidence(
             "quantum-trajectory-ensemble",
             (
                 ApproximationAxis("trajectory-count", self.states.shape[0]),
                 ApproximationAxis("time-step", step_size, units="time"),
             ),
-            statistical_error=1.0 / jnp.sqrt(float(self.states.shape[0])),
-            local_error=jnp.asarray(step_size),
-            valid=self.valid,
+            (
+                ApproximationQuantity(
+                    "time-step",
+                    jnp.asarray(step_size),
+                    maximum_step_size,
+                    units="time",
+                    norm_id="absolute",
+                    estimate_kind="estimate",
+                ),
+                ApproximationQuantity(
+                    "monte-carlo-standard-error-scale",
+                    statistical_error,
+                    maximum_statistical_error,
+                    units="dimensionless",
+                    norm_id="inverse-sqrt-sample-count",
+                    estimate_kind="statistical",
+                    confidence=0.682689,
+                ),
+            ),
+            execution_valid=self.valid,
         )
         self.problem_id = str(problem_id)
 
@@ -165,19 +190,38 @@ def _trajectory(
     count: int,
 ):
     channel_count = len(problem.collapse_operators)
+    decision_address = SampleAddress(
+        "quantum-trajectory",
+        "fixed-step-jump-decision",
+        target=problem.problem_id,
+        role="decision",
+    )
+    channel_address = SampleAddress(
+        "quantum-trajectory",
+        "fixed-step-jump-channel",
+        target=problem.problem_id,
+        role="channel",
+    )
 
     def advance(state, index):
-        local_key = jax.random.fold_in(key, index)
+        decision_key = derive_key(key, decision_address, index)
+        channel_key = derive_key(key, channel_address, index)
         collapsed = jnp.stack(
             [operator(state) for operator in problem.collapse_operators]
         )
         rates = jnp.real(jnp.einsum("ki,ki->k", jnp.conj(collapsed), collapsed))
         probabilities = step * rates
         total = jnp.sum(probabilities)
-        jump = jax.random.uniform(local_key) < jnp.minimum(total, 1.0)
+        probabilities = eqx.error_if(
+            probabilities,
+            total > 0.1,
+            "Fixed-step jump probability exceeds the 0.1 validity limit.",
+        )
+        jump = jax.random.uniform(decision_key) < total
         safe_total = jnp.maximum(total, jnp.finfo(probabilities.dtype).tiny)
         channel = jax.random.categorical(
-            local_key, jnp.log(jnp.maximum(probabilities / safe_total, 1e-30))
+            channel_key,
+            jnp.log(jnp.maximum(probabilities / safe_total, 1e-30)),
         )
         selected = collapsed[jnp.minimum(channel, max(channel_count - 1, 0))]
         jump_state = selected / jnp.maximum(jnp.linalg.norm(selected), 1e-30)
@@ -210,6 +254,14 @@ def solve_quantum_jump_ensemble(
     trajectories = int(trajectory_count)
     if count < 0 or trajectories < 1 or float(step) <= 0.0:
         raise ValueError("Trajectory count, steps, and step size must be positive.")
+    initial_collapsed = jnp.stack(
+        [operator(problem.initial_state) for operator in problem.collapse_operators]
+    )
+    initial_rates = jnp.real(
+        jnp.einsum("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
+    )
+    if float(step * jnp.sum(initial_rates)) > 0.1:
+        raise ValueError("Fixed-step jump probability exceeds the 0.1 validity limit.")
     keys = jax.random.split(key, trajectories)
     states, channels, masks = jax.vmap(
         lambda local_key: _trajectory(problem, local_key, step, count)

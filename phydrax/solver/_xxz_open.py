@@ -6,9 +6,19 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from ..tensor_network import LocallyPurifiedDensity, NearestNeighborHamiltonian
+from .._strict import StrictModule
+from ..tensor_network import (
+    LocallyPurifiedDensity,
+    lpdo_one_site_reduced,
+    NearestNeighborHamiltonian,
+)
 from ._purified_lindblad import LocalKrausChannel
-from ._purified_tebd import PurifiedStrangProblem
+from ._purified_tebd import (
+    diagnose_purified_stationarity,
+    PurifiedStationarityDiagnostic,
+    PurifiedStrangProblem,
+    solve_purified_strang,
+)
 
 
 def _generalized_amplitude_kraus(probability_ground: float, damping: float):
@@ -83,4 +93,79 @@ def boundary_driven_xxz_problem(
     )
 
 
-__all__ = ["boundary_driven_xxz_problem"]
+class XXZQualificationResult(StrictModule):
+    final_result: object
+    magnetization_history: jnp.ndarray
+    diagnostic: PurifiedStationarityDiagnostic
+    valid: jnp.ndarray
+
+    def __init__(
+        self,
+        final_result,
+        magnetization_history,
+        diagnostic: PurifiedStationarityDiagnostic,
+        /,
+    ):
+        self.final_result = final_result
+        self.magnetization_history = jnp.asarray(magnetization_history)
+        self.diagnostic = diagnostic
+        self.valid = diagnostic.valid
+
+
+def qualify_boundary_driven_xxz(
+    problem: PurifiedStrangProblem,
+    /,
+    *,
+    step_size: float,
+    steps: int,
+    maximum_bond_dimension: int,
+    maximum_purification_dimension: int,
+    steady_window: int = 4,
+) -> XXZQualificationResult:
+    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=complex)
+    current_problem = problem
+    magnetization = []
+    final_result = None
+    for _ in range(int(steps)):
+        final_result = solve_purified_strang(
+            current_problem,
+            step_size=step_size,
+            steps=1,
+            maximum_bond_dimension=maximum_bond_dimension,
+            maximum_purification_dimension=maximum_purification_dimension,
+        )
+        local = jnp.stack(
+            [
+                jnp.real(
+                    jnp.trace(
+                        lpdo_one_site_reduced(final_result.final_state, site) @ sigma_z
+                    )
+                )
+                for site in range(final_result.final_state.site_count)
+            ]
+        )
+        magnetization.append(local)
+        current_problem = PurifiedStrangProblem(
+            final_result.final_state,
+            problem.hamiltonian,
+            problem.half_step_channels,
+            problem_id=problem.problem_id,
+        )
+    if final_result is None:
+        raise ValueError("XXZ qualification requires at least one step.")
+    history = jnp.stack(magnetization)
+    diagnostic = diagnose_purified_stationarity(
+        final_result,
+        history,
+        window=min(int(steady_window), max(1, history.shape[0] - 1)),
+        tolerance=1e-4,
+        truncation_tolerance=1e-6,
+    )
+    return XXZQualificationResult(final_result, history, diagnostic)
+
+
+__all__ = [
+    "XXZQualificationResult",
+    "boundary_driven_xxz_problem",
+    "qualify_boundary_driven_xxz",
+]
