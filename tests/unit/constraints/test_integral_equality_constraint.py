@@ -8,7 +8,7 @@ import jax.random as jr
 import phydrax as phx
 from phydrax.conditions import Moment
 from phydrax.domain import Interval1d
-from phydrax.terms import MomentPenalty
+from phydrax.terms import RandomizedMomentPenalty
 
 
 def test_integral_equal_penalty_matches_exact_constant_integral():
@@ -22,11 +22,11 @@ def test_integral_equal_penalty_matches_exact_constant_integral():
     one = geom.Function()(1.0)
 
     condition = Moment("u", component, lambda u: u, target=2.0)
-    term = MomentPenalty(condition, source)
+    term = RandomizedMomentPenalty(condition, source)
     loss = term.loss({"u": one}, key=jr.key(0))
     assert jnp.allclose(loss, 0.0)
 
     condition2 = Moment("u", component, lambda u: u, target=0.0)
-    term2 = MomentPenalty(condition2, source)
+    term2 = RandomizedMomentPenalty(condition2, source)
     loss2 = term2.loss({"u": one}, key=jr.key(0))
     assert jnp.allclose(loss2, 4.0)

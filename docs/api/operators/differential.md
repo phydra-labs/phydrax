@@ -357,6 +357,11 @@ operator on a general curved surface.
 
 ## Fractional derivatives
 
+The Caputo field operator uses deterministic Gauss--Jacobi or
+Gauss--Legendre quadrature and returns exact zero at the time-domain start for
+regular fields. It does not hide a randomized fractional estimate inside a
+pointwise field residual.
+
 ::: phydrax.operators.fractional_laplacian
 
 ---

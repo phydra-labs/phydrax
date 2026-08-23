@@ -503,6 +503,43 @@ weights, replicate diagnostics, and uncertainty estimates. Sharing the reference
 transport does not turn weighted integration realizations into ordinary
 `PointBatch` objects.
 
+## Squaring randomized integral estimates
+
+An unbiased integral estimate does not remain unbiased after a trainable squared
+mismatch. If `I_hat = I + epsilon` and `E[epsilon] = 0`, then
+
+$$
+\mathbb E[(a + \widehat I)^2]
+= (a + I)^2 + \operatorname{Var}(\widehat I).
+$$
+
+Use `MomentPenalty` for deterministic per-step plans, fixed realizations, or
+caller-supplied realizations. It rejects resampled stochastic plans. Use
+`RandomizedMomentPenalty` when a moment is resampled during optimization:
+
+```python
+term = phx.terms.RandomizedMomentPenalty(
+    condition,
+    phx.integration.per_step(
+        phx.integration.over(condition.on),
+        phx.integration.MonteCarloPlan(128),
+    ),
+    num_realizations=2,
+    loss_mode="u_statistic",
+)
+```
+
+`"u_statistic"` and `"independent_product"` estimate the intended squared
+mean without the variance term, but an individual value may be negative.
+They therefore require `FunctionalSolver.solve(..., keep_best=False)` and an
+independent fixed realization for validation. `"plug_in"` is nonnegative but
+retains the variance bias by explicit request.
+
+Freezing a realization produced by a randomized plan is different: conditional
+on those fixed sites it defines one deterministic finite objective. Validate
+that objective against independent or refined sites to detect overfitting to
+the realization.
+
 ## Importance sampling and weighted samples
 
 ```python

@@ -30,10 +30,23 @@ from ..discretization import (
 from ..enforcement import EnforcementProgram
 from ..optim._kfac._config import KFAC
 from ..optim._riemannian import AbstractRiemannianOptimizer
+from ..terms._randomized_moment import RandomizedMomentPenalty
+from ..terms._randomized_residual import RandomizedResidualTerm
 from ._functional_objective import (
     _FunctionalObjective,
     evaluate_prepared_objective,
 )
+
+
+def _has_signed_randomized_objective(
+    terms: Sequence[AbstractScalarTerm],
+    /,
+) -> bool:
+    return any(
+        isinstance(term, (RandomizedResidualTerm, RandomizedMomentPenalty))
+        and term.loss_mode != "plug_in"
+        for term in terms
+    )
 
 
 def _functional_discretization_bundle(
@@ -305,6 +318,9 @@ class FunctionalSolver(StrictModule):
         If `SIGINT` or `SIGTERM` is received while the loop is active, the current
         loop exits gracefully and `solve(...)` returns the best/current solver state
         instead of terminating the calling program.
+        Signed unbiased randomized terms may be negative on an individual update.
+        They require `keep_best=False`; selecting the lowest sampled value would
+        select estimator noise rather than a nonnegative physical objective.
 
         Logging:
 
@@ -325,6 +341,11 @@ class FunctionalSolver(StrictModule):
             raise ValueError("num_iter must be non-negative.")
         if num_iter == 0:
             return self
+        if keep_best and _has_signed_randomized_objective(self.terms):
+            raise ValueError(
+                "Signed unbiased randomized terms require keep_best=False; "
+                "select models with an independent fixed validation objective."
+            )
 
         from ._functional_backend import solve as _solve
         from ._functional_run import FunctionalSolveConfig

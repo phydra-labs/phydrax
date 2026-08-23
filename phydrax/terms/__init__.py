@@ -73,6 +73,11 @@ from ._ragged_time_series import (
     RaggedTimeSeriesDataTerm,
     RaggedTimeSeriesInterpolation,
 )
+from ._randomized_moment import (
+    RandomizedMomentBatch,
+    RandomizedMomentDiagnostics,
+    RandomizedMomentPenalty,
+)
 from ._randomized_residual import (
     BatchSampler,
     RandomizedResidualBatch,
@@ -158,6 +163,9 @@ __all__ = [
     "RaggedTimeSeriesBatch",
     "RaggedTimeSeriesDataTerm",
     "RaggedTimeSeriesInterpolation",
+    "RandomizedMomentBatch",
+    "RandomizedMomentDiagnostics",
+    "RandomizedMomentPenalty",
     "RandomizedResidualBatch",
     "RandomizedResidualDiagnostics",
     "RandomizedResidualLossMode",

@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -14,8 +13,9 @@ from jaxtyping import Array, ArrayLike
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
-from ..._numerics._quadrature_rules import gauss_legendre_data
-from ..._sampling import get_sampler
+from ...integration import GaussLegendreRule
+from ...integration._rules import IntervalRule
+from .._causal_quadrature import causal_reference_rule
 
 
 def _unwrap_factor(factor: object, /) -> object:
@@ -29,140 +29,103 @@ def _time_start(u: DomainFunction, time_var: str) -> Array:
     return jnp.array(0.0, dtype=float)
 
 
-def _legendre_nodes_weights(n: int) -> tuple[Array, Array]:
-    rule = gauss_legendre_data(n)
-    return jnp.asarray(rule.nodes, dtype=float), jnp.asarray(rule.weights, dtype=float)
-
-
 def time_convolution(
     k: Callable[[Array], ArrayLike],
     u: DomainFunction,
     /,
     *,
     time_var: str = "t",
-    order: int = 48,
+    rule: IntervalRule | None = None,
     cluster_exponent: float = 1.0,
-    mode: Literal["gl", "qmc", "gmc_1d"] = "gl",
-    sampler: str = "sobol_scrambled",
-    kernel_exponent: float | None = None,
 ) -> DomainFunction:
-    r"""Time convolution operator on a labeled time coordinate.
+    r"""Deterministic time convolution on a labeled time coordinate.
 
-    Constructs the causal convolution
+    Constructs
 
     $$
     (k * u)(t) = \int_{t_0}^{t} k(t-s)\,u(s)\,ds,
     $$
 
-    where $t_0$ is the start of the time interval when `time_var` is a `TimeInterval`
-    factor (otherwise $t_0=0$).
-
-    The integral is approximated using one of:
-    - `mode="gl"`: Gauss–Legendre quadrature on $[t_0,t]$ (optionally clustered near $t_0$);
-    - `mode="qmc"`: quasi Monte Carlo on $[t_0,t]$;
-    - `mode="gmc_1d"`: importance sampling for weakly singular kernels
-      (requires `kernel_exponent` $\gamma$).
-
-    **Arguments:**
-
-    - `k`: Kernel $k(\tau)$ evaluated at $\tau=t-s$.
-    - `u`: Input function $u(s)$.
-    - `time_var`: Label for the time coordinate (default `"t"`).
-    - `order`: Number of quadrature/MC samples.
-    - `cluster_exponent`: When using Gauss–Legendre, applies a power-law transform to
-      cluster nodes toward the start of the interval.
-    - `sampler`: QMC sampler name used for `mode="qmc"` / `mode="gmc_1d"`.
-    - `kernel_exponent`: Exponent $\gamma$ used in `mode="gmc_1d"` for sampling
-      $\tau^{-\gamma}$-type singularities.
+    where $t_0$ is the start of the scalar time factor. The declared fixed
+    interval rule is mapped independently onto each causal interval. Randomized
+    integral estimators belong in an estimator-aware randomized term rather than
+    this field-valued operator.
     """
+    if not callable(k):
+        raise TypeError("time_convolution kernel must be callable.")
     if time_var not in u.domain.labels:
         raise ValueError(
             f"time_convolution requires time_var {time_var!r} in the function domain."
         )
 
+    resolved_rule = GaussLegendreRule(48) if rule is None else rule
+    reference_nodes, reference_weights = causal_reference_rule(
+        resolved_rule,
+        cluster_exponent=cluster_exponent,
+    )
     t0 = _time_start(u, time_var)
-
-    xs, ws = _legendre_nodes_weights(int(order))
-    r = (xs + 1.0) / 2.0
-
-    ce = float(cluster_exponent)
-    if ce != 1.0:
-        r = jnp.power(r, ce)
-        jac = 0.5 * ce * jnp.power(r, ce - 1.0)
-        W = ws * jac
-    else:
-        W = ws * 0.5
-
-    sampler_fn = get_sampler(sampler)
 
     required = list(u.deps)
     if time_var not in required:
         required.append(time_var)
-    deps = tuple(lbl for lbl in u.domain.labels if lbl in required)
-    idx = {lbl: i for i, lbl in enumerate(deps)}
-    u_pos = tuple(idx[lbl] for lbl in u.deps)
-    t_pos = idx.get(time_var)
-    if t_pos is None:
+    deps = tuple(label for label in u.domain.labels if label in required)
+    positions = {label: index for index, label in enumerate(deps)}
+    u_positions = tuple(positions[label] for label in u.deps)
+    time_position = positions.get(time_var)
+    if time_position is None:
         raise ValueError(
             "time_convolution requires time_var to be present in dependencies."
         )
+    u_time_position = u.deps.index(time_var) if time_var in u.deps else None
 
-    u_time_idx = u.deps.index(time_var) if time_var in u.deps else None
-
-    def _u_at_time(u_args: list[object], tt: Array, *, key, **kwargs):
+    def _u_at_time(u_args: list[object], time: Array, *, key, **kwargs):
         call_args = list(u_args)
-        if u_time_idx is not None:
-            call_args[u_time_idx] = tt
+        if u_time_position is not None:
+            call_args[u_time_position] = time
         return u.func(*call_args, key=key, **kwargs)
 
     def _op(*args, key=None, **kwargs):
-        if key is None:
-            key = DOC_KEY0
+        evaluation_key = DOC_KEY0 if key is None else key
+        target_time = jnp.asarray(args[time_position], dtype=float).reshape(())
+        duration = jnp.maximum(target_time - t0, 0.0)
+        u_args = [args[index] for index in u_positions]
 
-        t = jnp.asarray(args[t_pos], dtype=float).reshape(())
-        dt = jnp.maximum(t - t0, 0.0)
-        dt_safe = jnp.maximum(dt, 1e-12)
+        def integrate(_):
+            source_times = t0 + duration * reference_nodes
+            lags = target_time - source_times
+            values = jax.vmap(
+                lambda source_time: _u_at_time(
+                    u_args,
+                    source_time,
+                    key=evaluation_key,
+                    **kwargs,
+                )
+            )(source_times)
+            kernel_values = jnp.asarray(jax.vmap(k)(lags))
+            if kernel_values.ndim != 1:
+                raise ValueError(
+                    "time_convolution kernel must return one scalar per lag."
+                )
+            effective_weights = duration * reference_weights * kernel_values
+            return jnp.tensordot(effective_weights, values, axes=(0, 0))
 
-        u_args = [args[i] for i in u_pos]
+        def zero(_):
+            return jnp.zeros_like(_u_at_time(u_args, t0, key=evaluation_key, **kwargs))
 
-        if mode == "gl":
-            s = t0 + dt_safe * r
-            tau = t - s
-            U = jax.vmap(lambda si: _u_at_time(u_args, si, key=key, **kwargs))(s)
-            K = jax.vmap(lambda ti: k(ti))(tau)
-            w_eff = (W * dt_safe) * K
-            return jnp.tensordot(w_eff, U, axes=(0, 0))
+        return jax.lax.cond(duration > 0.0, integrate, zero, operand=None)
 
-        if mode == "qmc":
-            F = sampler_fn(int(order), 1, key).squeeze(-1)
-            s = t0 + dt_safe * F
-            tau = t - s
-            U = jax.vmap(lambda si: _u_at_time(u_args, si, key=key, **kwargs))(s)
-            K = jnp.asarray(jax.vmap(lambda ti: k(ti))(tau))
-            Kb = K.reshape((K.shape[0],) + (1,) * (U.ndim - 1))
-            return jnp.mean(U * Kb, axis=0) * dt_safe
-
-        if mode == "gmc_1d":
-            if kernel_exponent is None:
-                raise ValueError("kernel_exponent is required for mode='gmc_1d'.")
-            gamma = float(kernel_exponent)
-            Uu = sampler_fn(int(order), 1, key).squeeze(-1)
-            tau = dt_safe * jnp.power(jnp.clip(Uu, 1e-12, 1.0), 1.0 / (1.0 - gamma))
-            s = t - tau
-            U = jax.vmap(lambda si: _u_at_time(u_args, si, key=key, **kwargs))(s)
-            q = (
-                (1.0 - gamma)
-                * jnp.power(jnp.maximum(tau, 1e-12), -gamma)
-                / jnp.power(dt_safe, 1.0 - gamma)
-            )
-            K = jax.vmap(lambda ti: k(ti))(tau)
-            Wi = K / (q + 1e-12)
-            Wb = Wi.reshape((Wi.shape[0],) + (1,) * (U.ndim - 1))
-            return jnp.mean(U * Wb, axis=0)
-
-        raise ValueError(f"Unsupported mode {mode!r}.")
-
-    return DomainFunction(domain=u.domain, deps=deps, func=_op, metadata=u.metadata)
+    metadata = dict(u.metadata)
+    metadata.update(
+        {
+            "integral_operator": "time-convolution",
+            "integral_time_var": time_var,
+            "integral_rule": type(resolved_rule).__name__,
+            "integral_rule_order": int(resolved_rule.order),
+            "integral_cluster_exponent": float(cluster_exponent),
+            "integral_randomized": False,
+        }
+    )
+    return DomainFunction(domain=u.domain, deps=deps, func=_op, metadata=metadata)
 
 
 __all__ = [

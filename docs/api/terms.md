@@ -47,9 +47,10 @@ estimator-aware squaring:
 - `loss_mode="plug_in"` squares the sample mean and is nonnegative but biased upward
   by estimator variance.
 
-Signed unbiased terms are incompatible with naive `keep_best=True` model
-selection: a more negative noisy batch is not a better nonnegative mathematical loss.
-Use fixed probes or independent validation for selection, and inspect
+Signed unbiased terms are incompatible with `keep_best=True`: a more negative
+sampled value is not a better nonnegative mathematical loss. `FunctionalSolver`
+rejects that combination. Train with `keep_best=False`, use fixed probes or an
+independent deterministic realization for selection, and inspect
 `RandomizedResidualDiagnostics` rather than treating the training scalar as a
 certificate of PDE error.
 
@@ -62,6 +63,26 @@ certificate of PDE error.
 ---
 
 ::: phydrax.terms.RandomizedResidualDiagnostics
+
+## Randomized moment penalties
+
+`MomentPenalty` is reserved for deterministic per-step integration, fixed
+realizations, and caller-supplied realizations. `RandomizedMomentPenalty`
+materializes independent integration realizations and applies the same
+U-statistic, independent-product, or explicit plug-in policy after integration.
+This avoids silently adding parameter-dependent estimator variance to a squared
+moment objective.
+
+::: phydrax.terms.RandomizedMomentPenalty
+
+---
+
+::: phydrax.terms.RandomizedMomentBatch
+
+---
+
+::: phydrax.terms.RandomizedMomentDiagnostics
+
 
 ## Endpoint flow matching
 

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Estimator-aware `RandomizedMomentPenalty` with U-statistic,
+  independent-product, and explicit plug-in modes; deterministic causal
+  convolution and Caputo field-operator provenance; integral/nonlocal physics
+  guidance; and an accuracy, bias, and performance benchmark campaign.
 - Expanded `phydrax.metrix` with immersion validation and Riemannian map
   geometry; correct tensor-density covariant derivatives; weighted metric
   measures and intrinsic hypersurface normals; exact and numerical endpoint
@@ -227,6 +231,13 @@
   resource accounting.
 
 ### Changed
+- `MomentPenalty` now rejects resampled stochastic integration rather than
+  silently optimizing a variance-biased squared estimate. `time_convolution`
+  now accepts a deterministic `IntervalRule`; randomized QMC and importance
+  modes were removed from the field-valued operator.
+  Caputo field operators now use direct deterministic Gauss--Jacobi or
+  Gauss--Legendre evaluation for both supported order intervals; stochastic
+  sampler and endpoint-regularization arguments were removed.
 
 - Orthogonal-polynomial evaluation and Gaussian rule construction now pass through
   one private convention boundary. Hermite and Laguerre KAN identity/default
@@ -277,6 +288,9 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Causal interval clustering now uses the Jacobian of the original reference
+  coordinate, and zero-duration convolution and Caputo evaluations return exact
+  zeros without evaluating singular kernels.
 
 - Masked BSDE and deep-splitting losses now sanitize inactive residuals before
   nonlinear reductions, Flower sanitizes masked source and normalization state,
