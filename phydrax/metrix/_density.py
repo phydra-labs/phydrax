@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -153,4 +154,85 @@ def pullback_density(
     )
 
 
-__all__ = ["VolumeDensity", "metric_volume_density", "pullback_density"]
+class VolumeDensityValidationReport(StrictModule):
+    """Aggregate diagnostics for a positive coordinate density."""
+
+    valid: Array
+    finite: Array
+    positive: Array
+    finite_log: Array
+    maximum_log_residual: Array
+
+    def __init__(
+        self,
+        *,
+        valid: ArrayLike,
+        finite: ArrayLike,
+        positive: ArrayLike,
+        finite_log: ArrayLike,
+        maximum_log_residual: ArrayLike,
+    ):
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=bool)
+        self.positive = jnp.asarray(positive, dtype=bool)
+        self.finite_log = jnp.asarray(finite_log, dtype=bool)
+        self.maximum_log_residual = jnp.asarray(maximum_log_residual)
+
+
+def validate_volume_density(
+    density: VolumeDensity,
+    points: ArrayLike,
+    /,
+    *,
+    log_consistency_tolerance: float = 1e-8,
+    raise_on_error: bool = True,
+) -> VolumeDensityValidationReport:
+    """Validate positivity, finiteness, and an explicit log coefficient."""
+    if not isinstance(density, VolumeDensity):
+        raise TypeError("validate_volume_density requires a VolumeDensity.")
+    if log_consistency_tolerance < 0.0:
+        raise ValueError("log_consistency_tolerance must be non-negative.")
+    coefficients = density(points)
+    log_coefficients = density.log_value(points)
+    finite = jnp.all(jnp.isfinite(coefficients))
+    positive = jnp.all(coefficients > 0)
+    finite_log = jnp.all(jnp.isfinite(log_coefficients))
+    if density.log_coefficient_function is None:
+        maximum_log_residual = jnp.asarray(0.0, dtype=coefficients.dtype)
+    else:
+        safe_coefficients = jnp.where(coefficients > 0, coefficients, 1)
+        maximum_log_residual = jnp.max(
+            jnp.abs(jnp.log(safe_coefficients) - log_coefficients)
+        )
+    valid = (
+        finite
+        & positive
+        & finite_log
+        & (maximum_log_residual <= log_consistency_tolerance)
+    )
+    report = VolumeDensityValidationReport(
+        valid=valid,
+        finite=finite,
+        positive=positive,
+        finite_log=finite_log,
+        maximum_log_residual=maximum_log_residual,
+    )
+    if raise_on_error and not bool(jax.device_get(valid)):
+        raise ValueError(
+            "Volume-density validation failed: "
+            f"finite={bool(jax.device_get(finite))}, "
+            f"positive={bool(jax.device_get(positive))}, "
+            f"finite_log={bool(jax.device_get(finite_log))}, "
+            "maximum_log_residual="
+            f"{float(jax.device_get(maximum_log_residual))}."
+        )
+    return report
+
+
+__all__ = [
+    "VolumeDensity",
+    "VolumeDensityValidationReport",
+    "metric_volume_density",
+    "pullback_density",
+    "validate_volume_density",
+]

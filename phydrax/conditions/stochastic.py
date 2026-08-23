@@ -2,11 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from phydrax.domain import ComponentSum, DomainComponent, DomainFunction
 
-from ..metrix import RiemannianMetric
+from .._strict import StrictModule
+from ..metrix import RiemannianHypersurface, RiemannianMetric
 from ..operators.differential import (
     dt,
     fokker_planck_operator,
@@ -20,6 +21,17 @@ from .boundary import _condition_value, ConditionValue
 
 
 CoefficientField: TypeAlias = DomainFunction | str
+
+
+class _RiemannianNormalCallable(StrictModule):
+    boundary: RiemannianHypersurface
+
+    def __init__(self, boundary: RiemannianHypersurface, /):
+        self.boundary = boundary
+
+    def __call__(self, coordinates, /, *, key=None, **kwargs: Any):
+        del key, kwargs
+        return self.boundary.unit_normal(coordinates)
 
 
 def _validate_coefficients(
@@ -162,6 +174,7 @@ def ProbabilityFlux(
     covariance: CoefficientField | None = None,
     target: ConditionValue | None = None,
     metric: RiemannianMetric | None = None,
+    boundary_geometry: RiemannianHypersurface | None = None,
     interpretation: StochasticInterpretation = "ito",
     state_var: str = "x",
     label: str | None = None,
@@ -173,7 +186,23 @@ def ProbabilityFlux(
         raise TypeError("drift must be a DomainFunction or field name.")
     _validate_coefficients(diffusion, covariance, interpretation)
     names = _fields(density_field, drift, diffusion, covariance)
-    normal = on.normal(var=state_var)
+    if boundary_geometry is None:
+        normal = on.normal(var=state_var)
+        resolved_metric = metric
+    else:
+        if not isinstance(boundary_geometry, RiemannianHypersurface):
+            raise TypeError("boundary_geometry must be a RiemannianHypersurface.")
+        if metric is not None and metric is not boundary_geometry.metric:
+            raise ValueError(
+                "ProbabilityFlux metric and boundary geometry must share one metric."
+            )
+        normal = DomainFunction(
+            domain=on.domain,
+            deps=(state_var,),
+            func=_RiemannianNormalCallable(boundary_geometry),
+            metadata={},
+        )
+        resolved_metric = boundary_geometry.metric
     target_value = _condition_value(target, on, 0.0)
 
     def residual(*values: DomainFunction) -> DomainFunction:
@@ -189,7 +218,7 @@ def ProbabilityFlux(
             drift_field,
             diffusion=diffusion_field,
             covariance=covariance_field,
-            metric=metric,
+            metric=resolved_metric,
             interpretation=interpretation,
             var=state_var,
         )

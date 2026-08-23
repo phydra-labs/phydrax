@@ -48,6 +48,7 @@ from ._flow_matching import (
     FlowMatchingPolicy,
     FlowMatchingSamplingMode,
     FlowMatchingTerm,
+    RiemannianFlowMatchingMetric,
 )
 from ._graph_data import (
     GraphSupervisedTerm,
@@ -132,6 +133,7 @@ __all__ = [
     "DifferentialPhysicsInformedOperatorTerm",
     "EmpiricalSinkhornDivergenceTerm",
     "EuclideanFlowMatchingMetric",
+    "RiemannianFlowMatchingMetric",
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
     "FlowEndpointProvider",

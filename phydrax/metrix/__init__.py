@@ -22,6 +22,25 @@ from ._adm_geometry import (
     adm_spacetime_projector,
     ADMConstraintResiduals,
 )
+from ._atlas import (
+    AtlasValidationReport,
+    ComplexAtlasStructure,
+    CoordinateAtlas,
+    PatchwiseScalarField,
+    validate_coordinate_atlas,
+)
+from ._boundary import (
+    induced_boundary_density,
+    induced_boundary_metric,
+    RiemannianHypersurface,
+)
+from ._bundle import (
+    bundle_covariant_derivative,
+    bundle_curvature,
+    gauge_curvature_residual,
+    gauge_transform_connection,
+    VectorBundleConnection,
+)
 from ._chart import ChartTransition, CoordinateChart
 from ._classical_manifold import (
     HyperboloidManifold,
@@ -29,6 +48,24 @@ from ._classical_manifold import (
     ProbabilitySimplexManifold,
 )
 from ._compact_spectrum import SphereLaplacianLevels
+from ._complex import (
+    AlmostComplexStructure,
+    AlmostComplexValidationReport,
+    ComplexCoordinateConvention,
+    holomorphicity_residual,
+    nijenhuis_tensor,
+    standard_complex_structure,
+    validate_almost_complex_structure,
+    wirtinger_derivatives,
+)
+from ._complex_matrix_manifold import (
+    AffineInvariantHPDManifold,
+    SpecialUnitaryGroup,
+    SpecialUnitaryManifold,
+    UnitaryGroup,
+    UnitaryManifold,
+)
+from ._complex_projective import ComplexProjectiveManifold
 from ._connection import (
     AbstractAffineConnection,
     CallableAffineConnection,
@@ -54,7 +91,13 @@ from ._curvature import (
     scalar_curvature,
     sectional_curvature,
 )
-from ._density import metric_volume_density, pullback_density, VolumeDensity
+from ._density import (
+    metric_volume_density,
+    pullback_density,
+    validate_volume_density,
+    VolumeDensity,
+    VolumeDensityValidationReport,
+)
 from ._embedded import EmbeddedChart, tangent_projector_from_normal
 from ._forms import (
     codifferential,
@@ -67,7 +110,17 @@ from ._forms import (
     pullback_form,
     wedge,
 )
+from ._geodesic_problem import integrate_metric_geodesic, MetricGeodesicResult
+from ._hessian_geometry import HessianGeometry, validate_hessian_geometry
 from ._jet import metric_jet, MetricJet
+from ._kahler import (
+    HermitianStructure,
+    HermitianValidationReport,
+    KahlerStructure,
+    KahlerValidationReport,
+    validate_hermitian_structure,
+    validate_kahler_structure,
+)
 from ._lie_group import (
     AbstractLieGroup,
     LieGroupStateGeometry,
@@ -76,6 +129,7 @@ from ._lie_group import (
 )
 from ._lorentzian import adm_metric, flrw_metric, minkowski_metric, schwarzschild_metric
 from ._manifold import (
+    AbstractGeodesicManifold,
     AbstractRiemannianManifold,
     EuclideanManifold,
     SphereManifold,
@@ -86,7 +140,13 @@ from ._manifold_validation import (
     validate_manifold,
     validate_state_geometry,
 )
-from ._map import DifferentiableMap
+from ._map import (
+    DifferentiableMap,
+    Immersion,
+    ImmersionValidationReport,
+    validate_immersion,
+)
+from ._map_geometry import RiemannianMapGeometry
 from ._matrix_manifold import (
     AffineInvariantSPDManifold,
     FixedRankManifold,
@@ -110,6 +170,7 @@ from ._metric import (
     RiemannianMetric,
     SemiRiemannianMetric,
 )
+from ._metric_measure import WeightedRiemannianMeasure
 from ._operator_kernels import (
     apply_cotangent_map,
     covariant_symbol_contraction,
@@ -139,6 +200,11 @@ from ._signed_validation import (
     validate_lorentzian_metric,
     validate_semi_riemannian_metric,
 )
+from ._special_holonomy import (
+    LocalCalabiYauStructure,
+    LocalCalabiYauValidationReport,
+    validate_local_calabi_yau_structure,
+)
 from ._state_geometry import (
     AbstractStateGeometry,
     EmbeddedStateGeometry,
@@ -148,6 +214,7 @@ from ._state_geometry import (
     SpecialOrthogonalStateGeometry,
     SymmetricPositiveDefiniteStateGeometry,
 )
+from ._statistics import frechet_mean, frechet_objective, FrechetMeanResult
 from ._stochastic import (
     brownian_generator,
     coordinate_stratonovich_to_ito_drift,
@@ -162,6 +229,7 @@ from ._sub_riemannian import (
     HorizontalValidationReport,
     step_two_horizontal_rank,
     sub_laplacian,
+    sub_riemannian_hamiltonian_rhs,
     validate_horizontal_cometric,
 )
 from ._symplectic import (
@@ -205,30 +273,52 @@ __all__ = [
     "ADMParameterization",
     "ADMValidationReport",
     "AbstractAffineConnection",
+    "AbstractGeodesicManifold",
     "AbstractRiemannianManifold",
     "AbstractSemiRiemannianMetric",
+    "AlmostComplexStructure",
+    "AlmostComplexValidationReport",
+    "AtlasValidationReport",
     "AbstractStateGeometry",
+    "AffineInvariantHPDManifold",
     "AffineInvariantSPDManifold",
     "CallableAffineConnection",
     "CausalCharacter",
     "ChartTransition",
+    "ComplexProjectiveManifold",
+    "ComplexAtlasStructure",
+    "CoordinateAtlas",
+    "ComplexCoordinateConvention",
+    "SpecialUnitaryGroup",
+    "SpecialUnitaryManifold",
     "CoordinateChart",
     "COVECTOR_TENSOR",
     "DENSITY_TENSOR",
     "DifferentiableMap",
+    "Immersion",
+    "ImmersionValidationReport",
     "EmbeddedChart",
     "EmbeddedStateGeometry",
     "EuclideanManifold",
     "EuclideanStateGeometry",
     "FixedRankManifold",
+    "FrechetMeanResult",
     "GrassmannManifold",
     "ObliqueManifold",
     "HyperboloidManifold",
+    "HermitianStructure",
+    "HermitianValidationReport",
+    "HessianGeometry",
     "LeviCivitaConnection",
     "LocalRetraction",
     "LorentzianConvention",
     "LorentzianMetric",
+    "KahlerStructure",
+    "KahlerValidationReport",
+    "LocalCalabiYauStructure",
+    "LocalCalabiYauValidationReport",
     "ManifoldValidationReport",
+    "MetricGeodesicResult",
     "MetricJet",
     "MetricSignature",
     "MetricValidationReport",
@@ -238,7 +328,10 @@ __all__ = [
     "RiemannianMetric",
     "SCALAR_TENSOR",
     "SemiRiemannianMetric",
+    "RiemannianMapGeometry",
     "SignedMetricValidationReport",
+    "PatchwiseScalarField",
+    "RiemannianHypersurface",
     "SpecialOrthogonalManifold",
     "SpecialOrthogonalStateGeometry",
     "SphereLaplacianLevels",
@@ -246,13 +339,18 @@ __all__ = [
     "StateGeometryValidationReport",
     "StiefelManifold",
     "SymmetricPositiveDefiniteStateGeometry",
+    "UnitaryGroup",
+    "UnitaryManifold",
     "TensorType",
     "TensorVariance",
     "TimeOrientation",
     "VECTOR_TENSOR",
     "VolumeDensity",
+    "VolumeDensityValidationReport",
+    "WeightedRiemannianMeasure",
     "adm_metric",
     "adm_constraint_residuals",
+    "VectorBundleConnection",
     "adm_extrinsic_curvature",
     "adm_hamiltonian_constraint",
     "adm_momentum_constraint",
@@ -261,6 +359,8 @@ __all__ = [
     "adm_spacetime_projector",
     "apply_cotangent_map",
     "brownian_generator",
+    "bundle_covariant_derivative",
+    "bundle_curvature",
     "causal_character",
     "cholesky_metric",
     "christoffel_from_metric_jet",
@@ -286,9 +386,18 @@ __all__ = [
     "einstein_tensor",
     "euclidean_metric",
     "flrw_metric",
+    "holomorphicity_residual",
+    "nijenhuis_tensor",
     "geodesic_acceleration",
     "geodesic_rhs",
+    "integrate_metric_geodesic",
+    "gauge_curvature_residual",
+    "gauge_transform_connection",
     "gradient",
+    "induced_boundary_density",
+    "frechet_mean",
+    "frechet_objective",
+    "induced_boundary_metric",
     "inner_product",
     "laplace_beltrami",
     "lower_index",
@@ -313,14 +422,24 @@ __all__ = [
     "schwarzschild_metric",
     "sectional_curvature",
     "semi_riemannian_gradient",
+    "standard_complex_structure",
     "tangent_projector_from_normal",
     "tensor_norm_squared",
     "validate_adm_decomposition",
+    "validate_almost_complex_structure",
+    "validate_coordinate_atlas",
+    "validate_hermitian_structure",
+    "validate_kahler_structure",
+    "validate_local_calabi_yau_structure",
+    "validate_hessian_geometry",
+    "validate_immersion",
     "validate_lorentzian_metric",
     "validate_manifold",
     "validate_metric",
     "validate_semi_riemannian_metric",
     "validate_state_geometry",
+    "validate_volume_density",
+    "wirtinger_derivatives",
     "DifferentialForm",
     "codifferential",
     "exterior_derivative",
@@ -352,6 +471,7 @@ __all__ = [
     "HorizontalValidationReport",
     "horizontal_gradient",
     "horizontal_hamiltonian",
+    "sub_riemannian_hamiltonian_rhs",
     "step_two_horizontal_rank",
     "sub_laplacian",
     "validate_horizontal_cometric",

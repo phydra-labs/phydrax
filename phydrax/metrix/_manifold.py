@@ -68,6 +68,11 @@ class AbstractRiemannianManifold(StrictModule):
     transport_is_isometric: AbstractAttribute[bool]
     transport_is_parallel: AbstractAttribute[bool]
 
+    @property
+    def scalar_field(self) -> str:
+        """Return the ambient scalar field expected by parameter bindings."""
+        return "real"
+
     @abstractmethod
     def contains(self, point: ArrayLike, /) -> Array:
         """Return one scalar boolean for membership of the complete product point."""
@@ -139,7 +144,28 @@ class AbstractRiemannianManifold(StrictModule):
         raise NotImplementedError
 
 
-class EuclideanManifold(AbstractRiemannianManifold):
+class AbstractGeodesicManifold(AbstractRiemannianManifold):
+    """Riemannian manifold with exact endpoint geodesic operations."""
+
+    @abstractmethod
+    def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        raise NotImplementedError
+
+    @abstractmethod
+    def log(self, point: ArrayLike, destination: ArrayLike, /) -> Array:
+        raise NotImplementedError
+
+    @abstractmethod
+    def squared_distance(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        raise NotImplementedError
+
+
+class EuclideanManifold(AbstractGeodesicManifold):
     """Euclidean geometry for one or a product of unconstrained array points."""
 
     manifold_id: str = eqx.field(static=True)
@@ -214,6 +240,27 @@ class EuclideanManifold(AbstractRiemannianManifold):
         step = self.project_tangent(value, tangent_step)
         return value + step
 
+    def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        value = _array_with_trailing_shape(point, self.point_shape, "Euclidean point")
+        return value + self.project_tangent(value, tangent)
+
+    def log(self, point: ArrayLike, destination: ArrayLike, /) -> Array:
+        value = _array_with_trailing_shape(point, self.point_shape, "Euclidean point")
+        target = _array_with_trailing_shape(
+            destination, self.point_shape, "Euclidean destination"
+        )
+        _same_shape(target, value, "Euclidean destination")
+        return target - value
+
+    def squared_distance(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        difference = self.log(left, right)
+        return jnp.real(jnp.vdot(difference, difference))
+
     def transport(
         self,
         point: ArrayLike,
@@ -231,7 +278,7 @@ class EuclideanManifold(AbstractRiemannianManifold):
         return self.project_tangent(target, tangent)
 
 
-class SphereManifold(AbstractRiemannianManifold):
+class SphereManifold(AbstractGeodesicManifold):
     """Unit sphere with the induced Euclidean metric and normalization retraction."""
 
     ambient_dimension: int = eqx.field(static=True)
@@ -322,6 +369,51 @@ class SphereManifold(AbstractRiemannianManifold):
         norm = jnp.linalg.norm(candidate, axis=-1, keepdims=True)
         return candidate / norm
 
+    def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        value = self._point(point, "Sphere point")
+        step = self.project_tangent(value, tangent)
+        norm = jnp.linalg.norm(step, axis=-1, keepdims=True)
+        safe_norm = jnp.where(norm > 0.0, norm, 1.0)
+        coefficient = jnp.sin(norm) / safe_norm
+        coefficient = jnp.where(norm > 0.0, coefficient, 1.0)
+        return jnp.cos(norm) * value + coefficient * step
+
+    def log(self, point: ArrayLike, destination: ArrayLike, /) -> Array:
+        value = self._point(point, "Sphere point")
+        target = self._point(destination, "Sphere destination")
+        _same_shape(target, value, "Sphere destination")
+        cosine = jnp.clip(
+            jnp.real(jnp.sum(jnp.conj(value) * target, axis=-1, keepdims=True)),
+            -1.0,
+            1.0,
+        )
+        angle = jnp.arccos(cosine)
+        tangent = target - cosine * value
+        norm = jnp.linalg.norm(tangent, axis=-1, keepdims=True)
+        tangent = eqx.error_if(
+            tangent,
+            jnp.any((angle > self.tolerance) & (norm <= self.tolerance)),
+            "Sphere logarithm is undefined at antipodal points.",
+        )
+        factor = jnp.where(norm > self.tolerance, angle / norm, 1.0)
+        return factor * tangent
+
+    def squared_distance(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        value = self._point(left, "Sphere point")
+        target = self._point(right, "Sphere destination")
+        _same_shape(target, value, "Sphere destination")
+        cosine = jnp.clip(
+            jnp.real(jnp.sum(jnp.conj(value) * target, axis=-1)),
+            -1.0,
+            1.0,
+        )
+        return jnp.sum(jnp.arccos(cosine) ** 2)
+
     def transport(
         self,
         point: ArrayLike,
@@ -341,6 +433,7 @@ class SphereManifold(AbstractRiemannianManifold):
 
 
 __all__ = [
+    "AbstractGeodesicManifold",
     "AbstractRiemannianManifold",
     "EuclideanManifold",
     "SphereManifold",

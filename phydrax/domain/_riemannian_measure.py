@@ -13,6 +13,7 @@ from ..metrix import (
     metric_volume_density,
     RiemannianMetric,
     VolumeDensity,
+    WeightedRiemannianMeasure,
 )
 from ._base import AbstractGeometry
 from ._components import DomainComponent
@@ -100,5 +101,22 @@ def with_riemannian_measure(
     return with_volume_density(
         component,
         metric_volume_density(metric),
+        var=var,
+    )
+
+
+def with_weighted_riemannian_measure(
+    component: DomainComponent,
+    measure: WeightedRiemannianMeasure,
+    /,
+    *,
+    var: str | None = None,
+) -> DomainComponent:
+    """Attach ``exp(log_weight) dvol_g`` to an interior component."""
+    if not isinstance(measure, WeightedRiemannianMeasure):
+        raise TypeError("measure must be a WeightedRiemannianMeasure.")
+    return with_volume_density(
+        component,
+        measure.coordinate_density(),
         var=var,
     )

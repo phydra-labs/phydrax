@@ -367,6 +367,11 @@ from ._stencil_evolution import (
     StaggeredAcousticPlan,
     StaggeredAcousticState,
 )
+from ._symplectic import (
+    integrate_stormer_verlet,
+    SeparableHamiltonianResult,
+    stormer_verlet_step,
+)
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -394,6 +399,9 @@ from ._variational_tdvp import (
 
 
 __all__ = [
+    "SeparableHamiltonianResult",
+    "integrate_stormer_verlet",
+    "stormer_verlet_step",
     "AbstractDifferentiableDrivingPath",
     "AbstractGeometricSolver",
     "AbstractBSDERegressionBasis",
