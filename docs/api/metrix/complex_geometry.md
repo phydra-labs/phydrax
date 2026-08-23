@@ -55,20 +55,37 @@ The fundamental form is emitted as an ordinary `DifferentialForm`, so existing
 exterior, Hodge, symplectic, Poisson, and graph/cochain operations apply without
 a parallel form representation.
 
-## Atlas and local Calabi–Yau diagnostics
+## Dolbeault and Chern calculus
+
+::: phydrax.metrix.BigradedForm
+
+::: phydrax.metrix.partial
+
+::: phydrax.metrix.partial_bar
+
+::: phydrax.metrix.ChernConnection
+
+::: phydrax.metrix.HolomorphicBundleFrame
+
+::: phydrax.metrix.KahlerPotentialGeometry
+
+## Atlas and local SU(n) diagnostics
 
 ::: phydrax.metrix.CoordinateAtlas
 
-::: phydrax.metrix.validate_coordinate_atlas
+::: phydrax.metrix.AtlasCover
 
 ::: phydrax.metrix.PatchwiseScalarField
 
+::: phydrax.metrix.PatchwiseDifferentialForm
+
 ::: phydrax.metrix.ComplexAtlasStructure
 
-::: phydrax.metrix.LocalCalabiYauStructure
+::: phydrax.metrix.LocalSUNStructure
 
-::: phydrax.metrix.validate_local_calabi_yau_structure
+::: phydrax.metrix.validate_local_su_structure
 
-`LocalCalabiYauStructure` validates a local Ricci-flat Kähler candidate with a
-complex volume form. It does not claim compactness, completeness, global
-canonical-bundle trivialization, or global Calabi–Yau topology.
+`LocalSUNStructure` validates a local Ricci-flat Kähler candidate with an
+explicitly declared `(n, 0)` complex volume form. It does not claim compactness,
+completeness, global canonical-bundle trivialization, or global Calabi–Yau
+topology.
