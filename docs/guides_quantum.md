@@ -5,8 +5,10 @@ and Hamiltonians as complex-valued `DomainFunction`s. Quantum algebra and evolut
 residuals therefore compose with the same labeled domains, differentiation backends,
 constraints, and solver used for real-valued PDEs.
 
-The current API targets closed-system dynamics and matrix operator algebra. It does not
-choose a time integrator or make an arbitrary learned trajectory unitary.
+The current API targets closed-system dynamics and matrix operator algebra. Dense
+Hermitian Hamiltonians may be integrated through a structure-preserving U(n)
+propagator; learned residual trajectories remain ordinary functions unless they use
+that explicit propagation contract.
 
 ## Three distinct brackets
 
@@ -274,6 +276,21 @@ quantum operators preserve JAX tracing and parameter gradients. Include a learne
 Hamiltonian, state, observable, or density factor in `FunctionalSolver.functions` to
 expose its trainable leaves. Identifiability remains a responsibility of the model.
 
+## Dense unitary propagation
+
+`UnitaryPropagatorProblem` binds a finite dense Hermitian Hamiltonian to a
+right-trivialized U(n) state geometry. `solve_unitary_propagator` uses the
+commutator-free geometric solver and returns the complete propagator trajectory
+with unitarity and Hamiltonian-Hermiticity evidence.
+
+U(n) is the default. Selecting SU(n) explicitly removes and archives the trace
+generator rather than silently discarding global phase. State evolution applies
+`U psi`; density evolution applies `U rho U†`, preserving trace and spectrum up
+to numerical error.
+
+This path is separate from matrix-free VMC/TDVP and from residual-only
+Schrödinger conditions.
+
 ## Discrete variational Monte Carlo
 
 Finite-configuration VMC is separate from `DomainFunction` residual learning. A user
@@ -332,7 +349,8 @@ See the [VMC cookbook](cookbook/quantum_vmc.md) and
 ## Scope
 
 The current quantum API intentionally excludes non-Markovian master equations,
-creation–annihilation operators, Moyal/star products, and unitary or
-positivity-preserving time integrators. Composite factorization remains explicit
-rather than being inferred from array shapes. These deferred features require
-additional algebraic, memory, or integration contracts.
+creation–annihilation operators, Moyal/star products, and general
+completely-positive open-system time integrators. Dense closed-system unitary
+propagation is explicit; arbitrary learned trajectories are not silently repaired
+to become unitary. Composite factorization remains explicit rather than inferred
+from array shapes.

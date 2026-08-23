@@ -131,6 +131,16 @@ class AbstractLieGroup(StrictModule):
         algebra_array = self.project_algebra(algebra)
         return point_array @ algebra_array
 
+    def right_trivialize(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        point_array = _matrix_shape(point, self.point_shape, "Lie-group point")
+        tangent_array = _matrix_shape(tangent, self.point_shape, "Lie-group tangent")
+        return self.project_algebra(tangent_array @ self.inverse(point_array))
+
+    def right_untrivialize(self, point: ArrayLike, algebra: ArrayLike, /) -> Array:
+        point_array = _matrix_shape(point, self.point_shape, "Lie-group point")
+        algebra_array = self.project_algebra(algebra)
+        return algebra_array @ point_array
+
     def adjoint(self, point: ArrayLike, algebra: ArrayLike, /) -> Array:
         point_array = _matrix_shape(point, self.point_shape, "Lie-group point")
         algebra_array = self.project_algebra(algebra)
@@ -402,9 +412,62 @@ class LieGroupStateGeometry(AbstractStateGeometry):
         )
 
 
+class RightLieGroupStateGeometry(AbstractStateGeometry):
+    """State-space adapter using right-trivialized Lie-group increments."""
+
+    group: AbstractLieGroup
+    geometry_id: str = eqx.field(static=True)
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
+
+    def __init__(self, group: AbstractLieGroup, /):
+        if not isinstance(group, AbstractLieGroup):
+            raise TypeError("RightLieGroupStateGeometry requires an AbstractLieGroup.")
+        self.group = group
+        self.geometry_id = f"state-geometry:{group.group_id}:right"
+        self.retraction_method = "right-group-exponential"
+        self.trivial = False
+        self.supports_exact_pullback = False
+        self.supports_commutator_free = True
+
+    def contains(self, state: ArrayLike, /) -> Array:
+        return self.group.contains(state)
+
+    def project_tangent(self, state: ArrayLike, vector: ArrayLike, /) -> Array:
+        return self.from_local(state, self.to_local(state, vector))
+
+    def to_local(self, state: ArrayLike, tangent: ArrayLike, /) -> Array:
+        return self.group.right_trivialize(state, tangent)
+
+    def from_local(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
+        return self.group.right_untrivialize(state, local_tangent)
+
+    def retract(self, state: ArrayLike, local_tangent: ArrayLike, /) -> Array:
+        return self.group.compose(self.group.exp(local_tangent), state)
+
+    def inverse_retract(self, state: ArrayLike, point: ArrayLike, /) -> Array:
+        relative = self.group.compose(point, self.group.inverse(state))
+        return self.group.log(relative)
+
+    def pullback(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        del state, local_tangent, tangent
+        raise ValueError(
+            "RightLieGroupStateGeometry does not claim an exact exponential pullback."
+        )
+
+
 __all__ = [
     "AbstractLieGroup",
     "LieGroupStateGeometry",
+    "RightLieGroupStateGeometry",
     "SpecialEuclideanGroup",
     "SpecialOrthogonalGroup",
 ]

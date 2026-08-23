@@ -4,7 +4,7 @@
 
 """Representation-aware geometry sources, kernels, and realizations."""
 
-from . import analytic, brep, design, reconstruction, simplicial
+from . import analytic, brep, complex, design, reconstruction, simplicial
 from ._atlas import BoundaryAtlas, BoundaryFrame, BoundaryMap, TrimDomain
 from ._capabilities import (
     BoundaryAtlasProvider,
@@ -167,6 +167,7 @@ from .simplicial import (
 __all__ = [
     "analytic",
     "brep",
+    "complex",
     "design",
     "reconstruction",
     "simplicial",

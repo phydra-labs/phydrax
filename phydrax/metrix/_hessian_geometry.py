@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ._chart import CoordinateChart
+from ._information_operator import InformationMetricOperator
 from ._metric import RiemannianMetric
 from ._utils import _pointwise_array
 from ._validation import MetricValidationReport, validate_metric
@@ -69,6 +70,24 @@ class HessianGeometry(StrictModule):
 
     def metric(self) -> RiemannianMetric:
         return RiemannianMetric(_HessianMetricMap(self), chart=self.chart)
+
+    def information_operator(
+        self,
+        coordinates: ArrayLike,
+        /,
+        *,
+        damping: ArrayLike = 0.0,
+    ) -> InformationMetricOperator:
+        point = jnp.asarray(coordinates)
+        if point.shape != (self.chart.dimension,):
+            raise ValueError("Information operator requires one unbatched chart point.")
+        _, action = jax.linearize(jax.grad(self._potential_point), point)
+        return InformationMetricOperator(
+            action,
+            point,
+            damping=damping,
+            metric_id=f"hessian-information:{self.chart.name}",
+        )
 
     def bregman_divergence(
         self,

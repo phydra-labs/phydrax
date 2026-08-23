@@ -80,6 +80,18 @@ from ._map_ops import (
     riemannian_map_isometry_residual,
     riemannian_map_tension,
 )
+from ._metric_measure_ops import (
+    weighted_fokker_planck_operator,
+    weighted_kolmogorov_generator,
+    weighted_laplacian,
+    weighted_probability_current,
+    weighted_riemannian_div,
+    weighted_riemannian_grad,
+)
+from ._monge_ampere import (
+    domain_kahler_positivity_margin,
+    domain_monge_ampere_residual,
+)
 from ._riemannian_ops import (
     covariant_derivative,
     covariant_hessian,
@@ -185,6 +197,14 @@ __all__ = [
     "riemannian_map_energy",
     "riemannian_map_isometry_residual",
     "riemannian_map_tension",
+    "weighted_fokker_planck_operator",
+    "weighted_kolmogorov_generator",
+    "weighted_laplacian",
+    "weighted_probability_current",
+    "weighted_riemannian_div",
+    "weighted_riemannian_grad",
+    "domain_kahler_positivity_margin",
+    "domain_monge_ampere_residual",
     "laplacian",
     "linear_elastic_cauchy_stress_2d",
     "linear_elastic_orthotropic_stress_2d",

@@ -5,6 +5,12 @@
 """Measure-aware deterministic, adaptive, and stochastic integration."""
 
 from ._api import from_samples, integrate, IntegrationRealization, materialize, reduce
+from ._atlas import (
+    AtlasIntegrationResult,
+    AtlasIntegrationTarget,
+    AtlasPatchQuadrature,
+    integrate_atlas_scalar,
+)
 from ._batches import (
     IntegrationBatch,
     MappedIntegrationBatch,
@@ -81,6 +87,11 @@ from ._plans import (
     StratifiedMonteCarloPlan,
 )
 from ._product import ProductIntegrationRealization
+from ._riemannian import (
+    MetricMeasureNormalization,
+    normalize_metric_measure,
+    riemannian_boundary_target,
+)
 from ._rules import (
     ClenshawCurtisRule,
     CubatureRule,
@@ -148,6 +159,10 @@ from ._transformations import (
 
 
 __all__ = [
+    "AtlasIntegrationResult",
+    "AtlasIntegrationTarget",
+    "AtlasPatchQuadrature",
+    "integrate_atlas_scalar",
     "AdaptivePartition",
     "AdaptiveIntegration",
     "AdaptiveQuadratureDiagnostics",
@@ -203,6 +218,9 @@ __all__ = [
     "MappedIntegrationBatch",
     "MappedIntegrationDiagnostics",
     "MappedTarget",
+    "MetricMeasureNormalization",
+    "normalize_metric_measure",
+    "riemannian_boundary_target",
     "ReferenceCellData",
     "ReferenceHexahedronRule",
     "ReferenceIntervalRule",
