@@ -144,16 +144,17 @@ as incompletely countable.
 
 ## Fixed points and nonlinear acceleration
 
-`FixedPointProblem` represents `state = mapping(state, args)`. `PicardIteration` and
-`FixedPointIteration` provide unaccelerated relaxation. `AndersonAcceleration` solves
-a regularized least-squares mixing problem with bounded history and restarts when the
-mix is unusable. `NonlinearGMRES` constructs a residual-minimizing affine candidate,
-checks it against the unaccelerated proposal, and restarts rather than accepting a
-harmful acceleration.
+`FixedPointProblem` represents `state = mapping(state, args)`. `PicardIteration`
+and `FixedPointIteration` provide unaccelerated relaxation.
+`AndersonAcceleration(kind="type-i" | "type-ii")` uses a fixed-capacity
+regularized history solve with conditioning, residual-growth, and coefficient
+safeguards. `SteffensenIteration` provides elementwise Aitken/Steffensen
+acceleration and falls back to the ordinary mapped point when the accelerated
+residual is worse or the denominator is singular.
 
-The fixed-point residual is always the physical defect `mapping(state) - state`.
-Convergence and diagnostics are based on this defect, not on coefficient norms in an
-acceleration subproblem.
+Fixed-point termination is the physical norm of `mapping(state) - state`.
+Convergence of an acceleration coefficient solve is never treated as fixed-point
+convergence.
 
 ## Nonlinear preconditioning
 
@@ -206,6 +207,65 @@ unbounded/lower/upper/box/fixed topology.
 Fischer--Burmeister residual, active sets, and finiteness separately. A loose
 nonlinear residual tolerance cannot turn an infeasible point into a successful
 VI result; final success requires the complementarity certificate as well.
+
+## General root selection
+
+Scalar equations use `ScalarRootProblem`. Certified bracket methods include
+`Bisection`, `Brent`, `Ridder`, and `TOMS748`; safeguarded Newton and Halley
+retain the bracket while consuming analytic or automatic derivatives.
+
+Vector systems expose complementary local and global strategies:
+
+| Problem evidence | Recommended method |
+|---|---|
+| small, smooth, accurate second derivatives | `VectorHalley` |
+| smooth square system | `NewtonKrylov` or `NewtonTrustRegion` |
+| repeated solve with stable Jacobian | `Chord` |
+| expensive or unavailable Jacobian | `Broyden` or `DFSANE` |
+| difficult basin or ill-conditioned start | `PseudoTransient` |
+| deterministic fallback graph | `RobustRoot` |
+| one capability-selected native attempt | `FastRoot` |
+
+`RootPolyalgorithm` shares one physical work budget across attempts, retains
+every attempt in `NonlinearResult.attempts`, and hands the best physical state
+forward. The first selected method owns the initial residual evaluation.
+Subsequent Broyden, pseudo-transient, and DF-SANE attempts consume the retained
+residual and auxiliary value without evaluating them again. Consecutive Newton
+attempts additionally retain the prepared Jacobian, symbolic linear template,
+numeric refresh state, and Krylov recycling state; attempt-local counters and
+globalization controls are reset before execution. Provenance reports residual
+reuse and prepared handoff counts. `FastRoot` likewise selects from the state
+dimension before residual preparation, so capability selection does not add a
+hidden evaluation. Fallbacks are never hidden.
+
+`NonlinearWorkBudget` carries traced residual, validity, derivative, setup,
+linear, preconditioner, and local-update limits. `NonlinearAttemptEvidence`
+forms a fixed-topology component tree. Multiplicative compositions truly
+short-circuit: later components return zero-work skipped evidence and perform
+no residual or local-solver work.
+
+## Scaling, precision, batching, and sharding
+
+`NonlinearScalingPolicy` prepares positive state and residual scaling while
+retaining physical-unit certification. `NonlinearPrecisionPolicy` separates
+model, direction, linear, and certificate precision;
+`MixedPrecisionRootExecution` always re-evaluates the original problem in
+certificate precision.
+
+`SmallRootKernel` is a fixed-work, masked, batched dense-Newton kernel for small
+array systems. Completed batch members stop updating independently.
+`ShardedNonlinearPolicy` declares state/residual placement and whether norms are
+local or collective; distributed semantics are never inferred from an array
+that merely happens to be sharded.
+
+## Solution-map derivatives
+
+`SensitivityPolicy` selects implicit forward/reverse, unrolled, truncated, or
+direct-loss-minimization semantics. `root_solution_jvp` and
+`root_solution_vjp` solve the final physical linearization;
+`root_solution_second_jvp` applies the second-order implicit-function formula
+without constructing a third-order tensor. Singular, ill-conditioned, and
+nonfinite derivative systems return explicit `SensitivityEvidence`.
 
 ## Implicit root differentiation
 

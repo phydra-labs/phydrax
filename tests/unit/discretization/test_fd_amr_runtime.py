@@ -139,7 +139,7 @@ def test_coarse_fine_halos_use_parent_prolongation_and_child_offsets():
 
 
 def test_subcycling_accumulates_time_integrated_flux_and_refluxes_coarse_state():
-    plan = phx.discretization.FDAMRSubcyclingPlan(2)
+    plan = phx.discretization.ConservativeAMRSubcyclingPlan(2)
     coarse = jnp.asarray([10.0, 20.0])
     fine = jnp.asarray([1.0, 2.0, 3.0, 4.0])
 

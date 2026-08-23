@@ -100,7 +100,7 @@ def test_split_differential_problem_unlocks_kencarp_and_gradients():
     assert jnp.allclose(gradient, 0.2 * jnp.exp(-1.8), rtol=2e-3)
 
 
-def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fd_kernel():
+def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fv_kernel():
     def integrate(step, method):
         state = jnp.asarray([1.0])
         time = jnp.asarray(0.0)
@@ -120,18 +120,39 @@ def test_ssprk_methods_have_expected_smooth_accuracy_and_shared_fd_kernel():
     assert error33 < 2e-5
     assert error54 < error33
 
-    reconstruction = phx.discretization.WENOReconstructionPlan(5)
-    flux = phx.discretization.RusanovFluxPlan(
-        lambda state, args: state,
-        lambda left, right, args: jnp.ones_like(left),
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
+    system = phx.equations.ScalarConservationSystem(
+        1,
+        lambda state, axis, args: state,
+        lambda left, right, axis, args: jnp.ones(left.shape[:-1]),
+        system_id="temporal-kernel-advection",
     )
-    dynamics = phx.discretization.FluxDifferenceDynamics1D(
-        reconstruction, flux, 1.0 / 16.0
+    problem = phx.equations.ConservationProblemIR(
+        "temporal-kernel-advection",
+        "state",
+        system,
+        phx.discretization.FiniteVolumeBoundarySet.periodic(("x",)),
     )
-    constant = jnp.ones((16,))
-    assert jnp.array_equal(
-        dynamics.ssprk3_step(jnp.asarray(0.0), constant, 0.01), constant
+    method = phx.discretization.FiniteVolumeMethodPlan(
+        phx.discretization.WENOReconstructionPlan(5),
+        phx.discretization.RusanovFluxPlan(),
     )
+    dynamics = phx.equations.compile_conservation_problem(
+        problem, discretization, method
+    ).dynamics
+    constant = jnp.ones((16, 1))
+    stepper = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(dynamics)
+    result = stepper.advance(jnp.asarray(0.0), constant, 0.01)
+    direct = phx.solver.ssprk33_step(
+        dynamics, jnp.asarray(0.0), constant, jnp.asarray(0.01)
+    )
+    assert jnp.array_equal(result.state, constant)
+    assert jnp.array_equal(result.state, direct)
+    assert result.temporal_method_id == "temporal:ssprk:3:3"
 
 
 def test_theta_endpoint_and_higher_bdf_follow_expected_decay():

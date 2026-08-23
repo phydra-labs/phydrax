@@ -10,7 +10,15 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
-from ..linalg import FunctionLinearOperator, OperatorProperties
+from ..linalg import (
+    DenseLinearOperator,
+    FunctionLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    prepare as prepare_linear_solve,
+    solve as solve_linear_system,
+)
 from ._decomposition import NonlinearAdditiveSchwarz
 from ._linearization import JacobianPolicy
 from ._newton import NewtonKrylov
@@ -36,10 +44,11 @@ from ._updates import (
 
 
 class ASPIN(AbstractNonlinearMethod):
-    """Additive-Schwarz preconditioned inexact Newton with local Jacobian inverses."""
+    """Additive-Schwarz preconditioned Newton with prepared local solves."""
 
     schwarz: NonlinearAdditiveSchwarz
     outer: NewtonKrylov
+    local_linear_policy: LinearSolvePolicy
 
     def __init__(
         self,
@@ -47,14 +56,21 @@ class ASPIN(AbstractNonlinearMethod):
         /,
         *,
         outer: NewtonKrylov | None = None,
+        local_linear_policy: LinearSolvePolicy | None = None,
     ):
         if not isinstance(schwarz, NonlinearAdditiveSchwarz):
             raise TypeError("schwarz must be NonlinearAdditiveSchwarz.")
         outer_ = NewtonKrylov() if outer is None else outer
         if not isinstance(outer_, NewtonKrylov):
             raise TypeError("outer must be NewtonKrylov or None.")
+        local_policy = (
+            LinearSolvePolicy() if local_linear_policy is None else local_linear_policy
+        )
+        if not isinstance(local_policy, LinearSolvePolicy):
+            raise TypeError("local_linear_policy must be LinearSolvePolicy or None.")
         self.schwarz = schwarz
         self.outer = outer_
+        self.local_linear_policy = local_policy
 
     @property
     def method_id(self) -> str:
@@ -136,6 +152,7 @@ class ASPIN(AbstractNonlinearMethod):
                 prepared,
                 state,
                 current_args,
+                self.local_linear_policy,
             )
 
         outer = NewtonKrylov(
@@ -208,7 +225,7 @@ class ASPIN(AbstractNonlinearMethod):
             linear_plan_id=result.provenance.linear_plan_id,
             notes=(
                 f"subdomains={len(self.schwarz.subdomains)};"
-                "local dense inverses reused within each prepared ASPIN Jacobian"
+                "prepared local linear solves reused within each ASPIN Jacobian"
             ),
         )
         return NonlinearResult(
@@ -219,6 +236,7 @@ class ASPIN(AbstractNonlinearMethod):
             diagnostics=diagnostics,
             provenance=provenance,
             transformation_evidence=result.transformation_evidence,
+            attempts=result.attempts,
         )
 
 
@@ -228,6 +246,7 @@ def _aspin_operator(
     prepared: PreparedNonlinearUpdate,
     state: PyTree[Any],
     args: Any,
+    local_linear_policy: LinearSolvePolicy,
     /,
 ) -> FunctionLinearOperator:
     if problem.state_space is None or problem.residual_space is None:
@@ -263,11 +282,18 @@ def _aspin_operator(
             return subdomain.residual_space.flatten(residual)
 
         matrix = jax.jacfwd(local_coordinates_residual)(coordinates)
-        inverse = jnp.linalg.inv(matrix)
-        inverse = jnp.where(
-            local_result.applied, inverse, jnp.full_like(inverse, jnp.nan)
+        local_operator = DenseLinearOperator(
+            matrix,
+            operator_id=f"aspin-local-jacobian/{subdomain.subdomain_id}",
         )
-        local_data.append((subdomain, inverse))
+        local_linear = prepare_linear_solve(
+            LinearSystem(
+                local_operator,
+                problem_id=f"aspin-local-system/{subdomain.subdomain_id}",
+            ),
+            local_linear_policy,
+        )
+        local_data.append((subdomain, local_linear, local_result.applied))
 
     def action(direction):
         direction_ = problem.state_space.validate(direction)
@@ -277,11 +303,19 @@ def _aspin_operator(
             (direction_,),
         )
         result = problem.state_space.zeros()
-        for subdomain, inverse in local_data:
+        for subdomain, local_linear, local_applied in local_data:
             restricted = subdomain.residual_space.validate(
                 subdomain.restrict_residual(global_action)
             )
-            local_coordinates = inverse @ subdomain.residual_space.flatten(restricted)
+            linear_result = solve_linear_system(
+                local_linear,
+                subdomain.residual_space.flatten(restricted),
+            )
+            local_coordinates = jnp.where(
+                local_applied & linear_result.diagnostics.converged,
+                linear_result.value,
+                jnp.full_like(linear_result.value, jnp.nan),
+            )
             local_correction = subdomain.state_space.unflatten(local_coordinates)
             prolonged = problem.state_space.validate(
                 subdomain.prolong_correction(local_correction)

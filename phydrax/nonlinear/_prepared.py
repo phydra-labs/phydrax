@@ -377,6 +377,55 @@ def solve_prepared_nonlinear(
     )
 
 
+def step_prepared_nonlinear(
+    prepared: PreparedNonlinearSolve,
+    /,
+    *,
+    termination: NonlinearTermination | None = None,
+) -> tuple[NonlinearResult, PreparedNonlinearSolve]:
+    """Apply one canonical Newton iteration and retain its numerical state."""
+    if not isinstance(prepared, PreparedNonlinearSolve):
+        raise TypeError("prepared must be a PreparedNonlinearSolve.")
+    source = prepared.termination if termination is None else termination
+    if not isinstance(source, NonlinearTermination):
+        raise TypeError("termination must be a NonlinearTermination or None.")
+    one_step = NonlinearTermination(
+        absolute_residual=source.absolute_residual,
+        relative_residual=source.relative_residual,
+        absolute_step=source.absolute_step,
+        relative_step=source.relative_step,
+        maximum_steps=1,
+        maximum_evaluations=source.maximum_evaluations,
+        maximum_linear_iterations=source.maximum_linear_iterations,
+        divergence_factor=source.divergence_factor,
+    )
+    result, state, run, jacobian = prepared.method.solve(
+        prepared.problem,
+        prepared.state,
+        termination=one_step,
+        args=prepared.args,
+        _prepared_start=(
+            prepared.problem,
+            prepared.state,
+            prepared.run,
+            prepared.jacobian,
+        ),
+        _return_internal=True,
+    )
+    next_prepared = PreparedNonlinearSolve(
+        prepared.problem,
+        state,
+        prepared.method,
+        prepared.termination,
+        prepared.args,
+        jacobian,
+        run,
+        prepared.provenance,
+        numeric_version=prepared.numeric_version,
+    )
+    return result, next_prepared
+
+
 def _seed_nonlinear_continuation(
     prepared: PreparedNonlinearSolve,
     problem: NonlinearSystemProblem,
@@ -503,4 +552,5 @@ __all__ = [
     "prepare_nonlinear",
     "refresh_nonlinear",
     "solve_prepared_nonlinear",
+    "step_prepared_nonlinear",
 ]

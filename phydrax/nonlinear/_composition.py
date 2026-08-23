@@ -26,7 +26,9 @@ from ._updates import (
     prepare_nonlinear_update,
     PreparedNonlinearUpdate,
     refresh_nonlinear_update,
+    skipped_nonlinear_update_result,
 )
+from ._work import NonlinearWork, work_sum
 
 
 NonlinearCompositionKind: TypeAlias = Literal[
@@ -45,19 +47,12 @@ def _component_control(
     *,
     residual_reserve: int,
 ) -> NonlinearUpdateControl:
-    def share(value: int | None, reserve: int = 0) -> int | None:
-        if value is None:
-            return None
-        return max((value - reserve) // count, 0)
-
-    return NonlinearUpdateControl(
-        maximum_residual_evaluations=share(
-            control.maximum_residual_evaluations,
-            residual_reserve,
+    return control.split(
+        count,
+        reserve=NonlinearWork(
+            residual_evaluations=residual_reserve,
+            validity_evaluations=1,
         ),
-        maximum_jacobian_preparations=share(control.maximum_jacobian_preparations),
-        maximum_linear_solves=share(control.maximum_linear_solves),
-        maximum_linear_iterations=share(control.maximum_linear_iterations),
     )
 
 
@@ -147,6 +142,14 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             ),
         )
 
+    @property
+    def maximum_work(self) -> NonlinearWork:
+        reserve = NonlinearWork(
+            residual_evaluations=(4 if self.kind == "residual-optimal" else 2),
+            validity_evaluations=1,
+        )
+        return work_sum(tuple(update.maximum_work for update in self.updates)) + reserve
+
     def _prepare_internal(self, problem, state, args, /):
         return tuple(
             prepare_nonlinear_update(problem, state, update, args=args)
@@ -208,12 +211,36 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         next_children = []
         active = jnp.asarray(True)
         for child in children:
-            result, next_child = apply_prepared_nonlinear_update(
-                child,
-                current,
-                args=args,
-                control=control,
+            child_dynamic, child_static = eqx.partition(child, eqx.is_array)
+
+            def execute(_):
+                combined = eqx.combine(child_dynamic, child_static)
+                result, next_child = apply_prepared_nonlinear_update(
+                    combined,
+                    current,
+                    args=args,
+                    control=control,
+                )
+                next_dynamic, _ = eqx.partition(next_child, eqx.is_array)
+                return result, next_dynamic
+
+            def skip(_):
+                combined = eqx.combine(child_dynamic, child_static)
+                return (
+                    skipped_nonlinear_update_result(
+                        combined,
+                        current,
+                    ),
+                    child_dynamic,
+                )
+
+            result, next_dynamic = jax.lax.cond(
+                active,
+                execute,
+                skip,
+                operand=None,
             )
+            next_child = eqx.combine(next_dynamic, child_static)
             take = active & result.applied
             current = jax.tree.map(
                 lambda proposed, old: jnp.where(take, proposed, old),
@@ -380,7 +407,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
 
     def _package(self, prepared, initial_state, candidate, args, components, /):
         problem = prepared.problem
-        initial_residual, initial_auxiliary = problem.evaluate(initial_state, args)
+        initial_residual, _ = problem.evaluate(initial_state, args)
         candidate = prepared.plan.state_space.validate(candidate)
         residual, auxiliary = problem.evaluate(candidate, args)
         initial_norm = _space_norm(prepared.plan.residual_space, initial_residual)
@@ -404,19 +431,18 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             ),
         ).astype(jnp.int32)
         step = jax.tree.map(lambda new, old: new - old, candidate, initial_state)
+        component_work = work_sum(
+            tuple(component.diagnostics.work for component in components)
+        )
+        wrapper_work = NonlinearWork(
+            residual_evaluations=(4 if self.kind == "residual-optimal" else 2),
+            validity_evaluations=(2 if self.kind == "residual-optimal" else 1),
+        )
         diagnostics = NonlinearUpdateDiagnostics(
             initial_residual_norm=initial_norm,
             final_residual_norm=final_norm,
             step_norm=_space_norm(prepared.plan.state_space, step),
-            residual_evaluations=(
-                _sum_component_field(components, "residual_evaluations")
-                + (4 if self.kind == "residual-optimal" else 2)
-            ),
-            jacobian_preparations=_sum_component_field(
-                components, "jacobian_preparations"
-            ),
-            linear_solves=_sum_component_field(components, "linear_solves"),
-            linear_iterations=_sum_component_field(components, "linear_iterations"),
+            work=component_work + wrapper_work,
             accepted_steps=_sum_component_field(components, "accepted_steps")
             + (status == int(NonlinearUpdateStatus.APPLIED)).astype(jnp.int32),
             rejected_steps=_sum_component_field(components, "rejected_steps")
@@ -425,9 +451,6 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             + (finite & ~valid).astype(jnp.int32),
             nonfinite_trials=_sum_component_field(components, "nonfinite_trials")
             + (~finite).astype(jnp.int32),
-            counts_complete=all(
-                component.diagnostics.counts_complete for component in components
-            ),
         )
         return NonlinearUpdateResult(
             state=candidate,

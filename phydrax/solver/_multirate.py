@@ -262,12 +262,12 @@ def multirate_amr_subcycling_plan(
     method: MultiratePartitionedRK,
     /,
 ):
-    """Bind one multirate ratio and method identity to conservative FD AMR."""
-    from ..discretization.amr import FDAMRSubcyclingPlan
+    """Bind one multirate ratio and method identity to conservative AMR."""
+    from ..discretization.amr import ConservativeAMRSubcyclingPlan
 
     if not isinstance(method, MultiratePartitionedRK):
         raise TypeError("method must be MultiratePartitionedRK.")
-    return FDAMRSubcyclingPlan(
+    return ConservativeAMRSubcyclingPlan(
         method.refinement_ratio,
         temporal_method_id=method.method_id,
     )

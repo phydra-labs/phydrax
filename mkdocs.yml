@@ -119,6 +119,8 @@ nav:
     - Guides:
         - Domains and sampling: "guides_domain.md"
         - Discretization: "guides_discretization.md"
+        - Structured finite volume: "guides_finite_volume.md"
+        - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
         - Solver substrates: "guides_solver_substrates.md"
         - Differential operators: "guides_differential.md"
         - Integrals and measures: "guides_integrals.md"
@@ -173,6 +175,7 @@ nav:
             - Prepared methods: "api/discretization/methods.md"
             - Temporal and stochastic composition: "api/discretization/stochastic.md"
             - Finite differences: "api/discretization/finite_difference.md"
+            - Structured finite volume: "api/discretization/finite_volume.md"
             - Modal and constrained solvers: "api/discretization/modal_solvers.md"
             - Fixed-capacity AMR: "api/discretization/amr.md"
         - Domains:

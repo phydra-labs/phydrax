@@ -310,6 +310,7 @@ class AbstractNonlinearSystemTransformation(StrictModule):
                 residual=result.residual,
                 auxiliary=transformed_auxiliary,
             ),
+            attempts=result.attempts,
         )
 
 

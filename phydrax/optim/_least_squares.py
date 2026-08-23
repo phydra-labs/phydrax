@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._bounds import Bounds
 from .._linear_refresh import LinearRefreshState, prepare_refresh_state
 from .._strict import StrictModule
 from ..linalg import (
@@ -1032,6 +1033,24 @@ class LevenbergMarquardt(AbstractLeastSquaresMethod):
         )
 
 
+class BoundedResidualFunction(StrictModule):
+    """Residual callable carrying the bounds required by one-step methods."""
+
+    function: Any
+    bounds: Bounds
+
+    def __init__(self, function: Any, bounds: Bounds, /):
+        if not callable(function):
+            raise TypeError("function must be callable.")
+        if not isinstance(bounds, Bounds):
+            raise TypeError("bounds must be Bounds.")
+        self.function = function
+        self.bounds = bounds
+
+    def __call__(self, parameters):
+        return self.function(parameters)
+
+
 class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
     """Shared complete-solve contract for bound-aware residual methods."""
 
@@ -1156,8 +1175,8 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
         parameters: PyTree[Any],
         /,
     ) -> LeastSquaresState:
-        if not callable(residual_function):
-            raise TypeError("residual_function must be callable.")
+        if not isinstance(residual_function, BoundedResidualFunction):
+            raise TypeError("Bounded methods require BoundedResidualFunction context.")
         return self.init(parameters)
 
     def step(
@@ -1169,11 +1188,70 @@ class AbstractBoundedLeastSquaresMethod(AbstractLeastSquaresMethod):
         *,
         termination,
     ):
-        del residual_function, parameters, state, termination
-        raise ValueError(
-            "Bounded least-squares steps require problem bounds; use solve() or "
-            "phydrax.optim.least_squares()."
+        if not isinstance(residual_function, BoundedResidualFunction):
+            raise TypeError("residual_function must be BoundedResidualFunction.")
+        if not isinstance(state, LeastSquaresState):
+            raise TypeError("state must be LeastSquaresState.")
+        if not isinstance(termination, OptimizationTermination):
+            raise TypeError("termination must be OptimizationTermination.")
+        one_step = OptimizationTermination(
+            absolute_optimality=termination.absolute_optimality,
+            relative_optimality=termination.relative_optimality,
+            absolute_step=termination.absolute_step,
+            relative_step=termination.relative_step,
+            maximum_steps=1,
+            maximum_evaluations=termination.maximum_evaluations,
         )
+        problem = NonlinearLeastSquaresProblem(
+            lambda value, args: residual_function(value),
+            bounds=residual_function.bounds,
+            problem_id=f"{self.method_id}/step-context",
+        )
+        result = _solve_bounded_least_squares(
+            self,
+            problem,
+            parameters,
+            termination=one_step,
+            args=None,
+        )
+        diagnostics = result.diagnostics
+        next_state = LeastSquaresState(
+            iteration=state.iteration + diagnostics.iterations,
+            initial_optimality_norm=jnp.where(
+                state.iteration == 0,
+                diagnostics.initial_optimality_norm,
+                state.initial_optimality_norm,
+            ),
+            damping=diagnostics.damping,
+            accepted_steps=state.accepted_steps + diagnostics.accepted_steps,
+            rejected_steps=state.rejected_steps + diagnostics.rejected_steps,
+            residual_evaluations=state.residual_evaluations
+            + diagnostics.residual_evaluations,
+            scalar_evaluations=state.scalar_evaluations,
+            scalar_gradient_evaluations=(state.scalar_gradient_evaluations),
+            scalar_hvp_evaluations=state.scalar_hvp_evaluations,
+            jvp_evaluations=state.jvp_evaluations + diagnostics.jvp_evaluations,
+            vjp_evaluations=state.vjp_evaluations + diagnostics.vjp_evaluations,
+            linear_iterations=state.linear_iterations + diagnostics.linear_iterations,
+            linear_solves=state.linear_solves + diagnostics.linear_solves,
+            direction_fallbacks=state.direction_fallbacks
+            + diagnostics.direction_fallbacks,
+            setup_refreshes=state.setup_refreshes + diagnostics.setup_refreshes,
+            numeric_refreshes=state.numeric_refreshes + diagnostics.numeric_refreshes,
+            linear_refresh_state=state.linear_refresh_state,
+            metrics=IterativeStepMetrics(
+                objective=result.objective,
+                optimality_norm=diagnostics.final_optimality_norm,
+                step_norm=diagnostics.final_step_norm,
+                accepted_step_size=diagnostics.accepted_step_size,
+                accepted=diagnostics.accepted_steps > 0,
+                linear_iterations=diagnostics.linear_iterations,
+                damping=diagnostics.damping,
+                reduction_ratio=diagnostics.reduction_ratio,
+                status=result.status,
+            ),
+        )
+        return result.parameters, next_state, result.objective
 
     def step_metrics(self, state: LeastSquaresState, /) -> IterativeStepMetrics:
         if not isinstance(state, LeastSquaresState):
@@ -1838,6 +1916,7 @@ __all__ = [
     "AbstractBoundedLeastSquaresMethod",
     "BoundedGaussNewton",
     "BoundedLevenbergMarquardt",
+    "BoundedResidualFunction",
     "GaussNewton",
     "LeastSquaresState",
     "LevenbergMarquardt",

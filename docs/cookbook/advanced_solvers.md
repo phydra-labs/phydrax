@@ -157,6 +157,60 @@ vi_result = phx.nonlinear.SemismoothNewton(
 assert bool(vi_result.successful)
 ```
 
+### Select a root family from mathematical evidence
+
+```python
+scalar = phx.nonlinear.ScalarRootProblem(
+    lambda x, target: x * x - target,
+    bracket=(0.0, 2.0),
+)
+scalar_result = phx.nonlinear.scalar_root(
+    scalar,
+    method=phx.nonlinear.TOMS748(),
+    args=2.0,
+)
+
+system = phx.nonlinear.NonlinearSystemProblem(
+    lambda state, target: state * state - target
+)
+robust_result = phx.nonlinear.RobustRoot().solve(
+    system,
+    jnp.ones((2,)),
+    args=jnp.asarray([4.0, 9.0]),
+    termination=phx.nonlinear.NonlinearTermination(
+        maximum_steps=100,
+        maximum_evaluations=1000,
+        maximum_linear_iterations=5000,
+    ),
+)
+assert bool(scalar_result.successful)
+assert bool(robust_result.successful)
+```
+
+### Build robust block least squares
+
+```python
+parameter = phx.optim.ParameterBlock(
+    lambda values: values["location"],
+    lambda values, replacement: {"location": replacement},
+    block_id="location",
+)
+factor = phx.optim.ResidualBlock(
+    lambda values, observations: values[0] - observations,
+    ("location",),
+    loss=phx.optim.HuberLoss(1.0),
+    block_id="observations",
+)
+graph = phx.optim.ResidualGraphProblem((parameter,), (factor,))
+fit = phx.optim.least_squares(
+    graph.as_least_squares_problem(),
+    {"location": jnp.asarray([0.0])},
+    args=jnp.asarray([1.0]),
+    method=phx.optim.LevenbergMarquardt(),
+)
+assert bool(fit.successful)
+```
+
 ## 3. Select an optimization method by contract
 
 Unconstrained second-order optimization, nonlinear least squares, bounds,

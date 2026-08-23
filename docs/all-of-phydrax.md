@@ -321,28 +321,28 @@ independent KKT/ray audits, status, and provenance share one contract. Native de
 QPax 0.1.4, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods remain explicit
 choices with no automatic fallback or universal differentiability claim.
 
-General nonlinear optimization lives in `phydrax.optim`. Scalar, residual,
-residual-plus-signed-scalar, proximal-composite, constrained, state/design, and
-stochastic problems share typed termination, status, diagnostics, provenance, and
-PyTree contracts. Native methods cover matrix-free Newton--Krylov, operator
-Steihaug--Toint and explicit dense-dogleg trust regions, nonlinear conjugate
-gradients with strong-Wolfe search, Gauss--Newton, Levenberg--Marquardt,
-bound-aware residual trust regions, deterministic finite-difference least
-squares, proximal gradient/Newton methods, projected box methods, augmented
-Lagrangian, filter/SOC SQP, and primal--dual predictor--corrector KKT solves.
-Curvature methods prepare reusable symbolic linear-solve templates and report
-numeric refreshes separately from setup. Smooth stationarity, least-squares
-normal-equation, and strictly complementary active-set KKT solution maps are
-differentiated implicitly; unsuccessful, singular, or ambiguous solves fail
-instead of returning fabricated sensitivities.
+General nonlinear optimization lives in `phydrax.optim`. Scalar, block-residual,
+proximal-composite, constrained, state/design, stochastic, manifold, and factor
+graph problems share typed termination, status, diagnostics, provenance, and
+PyTree contracts. Native methods include matrix-free Newton--Krylov and
+Steihaug--Toint, dense/subspace dogleg and dogbox, robust-loss GN/LM,
+trust-reflective bounds, variable projection, POUNDERS, projected quasi-Newton,
+augmented Lagrangian, filter/SOC SQP with BFGS/SR1/exact Hessians, and a filter
+interior-point method with restoration and KKT inertia planning. BOBYQA, COBYQA,
+deterministic multistart, and explicitly recertified SciPy/NLopt/Ipopt/Ceres
+boundaries cover black-box and specialist routes. Residual graphs retain block
+sparsity, Schur ordering, manifold retractions, and incremental factor versions.
 
-Nonlinear algebraic systems live in `phydrax.nonlinear`, not in optimization.
-Complete solves are separated from prepared finite updates. Static
-additive/multiplicative/residual-optimal graphs compose Newton/Picard/FAS,
-nonlinear Schwarz and Gauss--Seidel, Richardson, NGMRES, and ASPIN while final
-success remains certified by the original physical residual. Semismooth
-complementarity offers explicit infeasible and strict box-preserving execution.
-Domain-invalid evaluations remain distinct from nonfinite trials.
+Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
+bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
+pseudo-transient continuation, vector Halley, Type-I/II Anderson, Steffensen,
+and deterministic robust attempt graphs all terminate on the original physical
+residual. Finite nonlinear updates carry traced nested budgets and fixed
+component evidence; failed multiplicative components truly short-circuit.
+Semismooth complementarity offers infeasible and projected feasible searches.
+Scaling, model/direction/certificate precision, batched small kernels, explicit
+sharding, and first/second-order solution maps remain declared rather than
+inferred.
 
 Generic parameterized residual curves and local bifurcation workflows live in
 `phydrax.continuation`. Natural and pseudo-arclength continuation reuse prepared

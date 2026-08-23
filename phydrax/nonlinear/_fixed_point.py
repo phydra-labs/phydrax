@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import isfinite
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -41,11 +41,13 @@ from ._updates import (
     NonlinearUpdateStatus,
     PreparedNonlinearUpdate,
 )
+from ._work import NonlinearWork
 
 
 class AndersonAcceleration(StrictModule):
-    """Fixed-capacity regularized Type-II Anderson acceleration."""
+    """Fixed-capacity regularized Type-I or Type-II Anderson acceleration."""
 
+    kind: Literal["type-i", "type-ii"] = eqx.field(static=True)
     history: int = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
     safeguard_factor: float = eqx.field(static=True)
@@ -54,6 +56,7 @@ class AndersonAcceleration(StrictModule):
     def __init__(
         self,
         *,
+        kind: Literal["type-i", "type-ii"] = "type-ii",
         history: int = 5,
         regularization: float = 1e-10,
         safeguard_factor: float = 2.0,
@@ -63,6 +66,8 @@ class AndersonAcceleration(StrictModule):
         regularization_ = float(regularization)
         safeguard_ = float(safeguard_factor)
         condition_ = float(restart_condition)
+        if kind not in ("type-i", "type-ii"):
+            raise ValueError("Anderson kind must be 'type-i' or 'type-ii'.")
         if history_ < 1:
             raise ValueError("Anderson history must be positive.")
         if not isfinite(regularization_) or regularization_ < 0.0:
@@ -72,6 +77,7 @@ class AndersonAcceleration(StrictModule):
         if not isfinite(condition_) or condition_ <= 1.0:
             raise ValueError("Anderson restart_condition must be finite and exceed one.")
         self.history = history_
+        self.kind = kind
         self.regularization = regularization_
         self.safeguard_factor = safeguard_
         self.restart_condition = condition_
@@ -114,18 +120,29 @@ def _anderson_candidate(
     delta_residuals = next_residuals - previous_residuals
     delta_states = jnp.where(active[:, None], delta_states, 0.0)
     delta_residuals = jnp.where(active[:, None], delta_residuals, 0.0)
-    gram = delta_residuals @ jnp.conj(delta_residuals.T)
+    if policy.kind == "type-ii":
+        gram = delta_residuals @ jnp.conj(delta_residuals.T)
+        right = delta_residuals @ jnp.conj(residual)
+        correction_basis = delta_states + delta_residuals
+        sign = -1.0
+    else:
+        gram = delta_states @ jnp.conj(delta_residuals.T)
+        right = delta_states @ jnp.conj(residual)
+        correction_basis = delta_states - delta_residuals
+        sign = 1.0
     diagonal = jnp.where(
         active,
         jnp.asarray(policy.regularization, dtype=gram.real.dtype),
         jnp.asarray(1.0, dtype=gram.real.dtype),
     )
     gram = gram + jnp.diag(diagonal.astype(gram.dtype))
-    right = delta_residuals @ jnp.conj(residual)
     coefficients = jnp.linalg.solve(gram, right)
     coefficients = jnp.where(active, coefficients, 0.0)
-    correction = jnp.sum(coefficients[:, None] * (delta_states + delta_residuals), axis=0)
-    candidate = mapped - correction
+    correction = jnp.sum(
+        coefficients[:, None] * correction_basis,
+        axis=0,
+    )
+    candidate = mapped + sign * correction
     singular_values = jnp.linalg.svd(gram, compute_uv=False)
     condition = singular_values[0] / jnp.maximum(singular_values[-1], 1e-30)
     usable = (
@@ -405,6 +422,226 @@ class FixedPointIteration(StrictModule):
         )
 
 
+class _SteffensenRun(StrictModule):
+    state: Array
+    residual: Array
+    initial_norm: Array
+    norm: Array
+    step_norm: Array
+    iteration: Array
+    evaluations: Array
+    accepted_steps: Array
+    rejected_steps: Array
+    restarts: Array
+    nonfinite: Array
+    status: Array
+
+
+class SteffensenIteration(StrictModule):
+    """Elementwise Steffensen/Aitken acceleration with residual safeguarding."""
+
+    denominator_tolerance: float = eqx.field(static=True)
+    safeguard_factor: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        denominator_tolerance: float = 1e-12,
+        safeguard_factor: float = 1.0,
+    ):
+        tolerance = float(denominator_tolerance)
+        safeguard = float(safeguard_factor)
+        if not isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("denominator_tolerance must be finite and positive.")
+        if not isfinite(safeguard) or safeguard < 1.0:
+            raise ValueError("safeguard_factor must be finite and at least one.")
+        self.denominator_tolerance = tolerance
+        self.safeguard_factor = safeguard
+
+    @property
+    def method_id(self) -> str:
+        return "steffensen-aitken"
+
+    @property
+    def capabilities(self) -> NonlinearCapabilities:
+        return NonlinearCapabilities(
+            matrix_free=True,
+            prepared_refresh=False,
+            jit=True,
+            implicit_differentiation=False,
+            fixed_point=True,
+        )
+
+    def solve(
+        self,
+        problem: FixedPointProblem,
+        initial_state: PyTree[Any],
+        /,
+        *,
+        termination: NonlinearTermination | None = None,
+        args: Any = None,
+    ) -> NonlinearResult:
+        if not isinstance(problem, FixedPointProblem):
+            raise TypeError("problem must be FixedPointProblem.")
+        termination_ = NonlinearTermination() if termination is None else termination
+        if not isinstance(termination_, NonlinearTermination):
+            raise TypeError("termination must be NonlinearTermination or None.")
+        initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
+        space = PyTreeSpace(initial)
+        state = space.flatten(initial)
+        first = space.flatten(problem.mapping(initial, args))
+        residual = first - state
+        norm = jnp.linalg.norm(residual)
+        finite = jnp.all(jnp.isfinite(state)) & jnp.all(jnp.isfinite(residual))
+        run = _SteffensenRun(
+            state=state,
+            residual=residual,
+            initial_norm=jnp.maximum(norm, 1e-30),
+            norm=norm,
+            step_norm=jnp.asarray(0.0, dtype=norm.dtype),
+            iteration=jnp.asarray(0, dtype=jnp.int32),
+            evaluations=jnp.asarray(1, dtype=jnp.int32),
+            accepted_steps=jnp.asarray(0, dtype=jnp.int32),
+            rejected_steps=jnp.asarray(0, dtype=jnp.int32),
+            restarts=jnp.asarray(0, dtype=jnp.int32),
+            nonfinite=(~finite).astype(jnp.int32),
+            status=jnp.where(
+                finite & (norm <= termination_.residual_threshold(norm)),
+                int(NonlinearStatus.SUCCESS),
+                jnp.where(
+                    finite,
+                    int(NonlinearStatus.ITERATING),
+                    int(NonlinearStatus.NONFINITE_INPUT),
+                ),
+            ).astype(jnp.int32),
+        )
+
+        def condition(current):
+            within = (
+                jnp.asarray(True)
+                if termination_.maximum_evaluations is None
+                else current.evaluations + 3 <= termination_.maximum_evaluations
+            )
+            return (
+                (current.status == int(NonlinearStatus.ITERATING))
+                & (current.iteration < termination_.maximum_steps)
+                & within
+            )
+
+        def body(current):
+            current_tree = space.unflatten(current.state)
+            first_coordinates = space.flatten(problem.mapping(current_tree, args))
+            first_tree = space.unflatten(first_coordinates)
+            second_coordinates = space.flatten(problem.mapping(first_tree, args))
+            denominator = second_coordinates - 2.0 * first_coordinates + current.state
+            usable = jnp.abs(denominator) >= self.denominator_tolerance
+            accelerated = current.state - jnp.where(
+                usable,
+                (first_coordinates - current.state) ** 2 / denominator,
+                0.0,
+            )
+            accelerated_tree = space.unflatten(accelerated)
+            mapped_accelerated = space.flatten(problem.mapping(accelerated_tree, args))
+            accelerated_residual = mapped_accelerated - accelerated
+            plain_residual = second_coordinates - first_coordinates
+            accelerated_norm = jnp.linalg.norm(accelerated_residual)
+            plain_norm = jnp.linalg.norm(plain_residual)
+            finite_accelerated = jnp.all(jnp.isfinite(accelerated)) & jnp.all(
+                jnp.isfinite(accelerated_residual)
+            )
+            take_accelerated = (
+                jnp.any(usable)
+                & finite_accelerated
+                & (accelerated_norm <= self.safeguard_factor * plain_norm)
+            )
+            candidate = jnp.where(
+                take_accelerated,
+                accelerated,
+                first_coordinates,
+            )
+            candidate_residual = jnp.where(
+                take_accelerated,
+                accelerated_residual,
+                plain_residual,
+            )
+            candidate_norm = jnp.linalg.norm(candidate_residual)
+            step_norm = jnp.linalg.norm(candidate - current.state)
+            converged = candidate_norm <= termination_.residual_threshold(
+                current.initial_norm
+            )
+            stagnated = ~converged & (
+                step_norm <= termination_.step_threshold(jnp.linalg.norm(current.state))
+            )
+            finite_candidate = jnp.all(jnp.isfinite(candidate)) & jnp.all(
+                jnp.isfinite(candidate_residual)
+            )
+            status = jnp.where(
+                ~finite_candidate,
+                int(NonlinearStatus.NONFINITE_EVALUATION),
+                jnp.where(
+                    converged,
+                    int(NonlinearStatus.SUCCESS),
+                    jnp.where(
+                        stagnated,
+                        int(NonlinearStatus.RESIDUAL_STAGNATION),
+                        int(NonlinearStatus.ITERATING),
+                    ),
+                ),
+            ).astype(jnp.int32)
+            return _SteffensenRun(
+                state=candidate,
+                residual=candidate_residual,
+                initial_norm=current.initial_norm,
+                norm=candidate_norm,
+                step_norm=step_norm,
+                iteration=current.iteration + 1,
+                evaluations=current.evaluations + 3,
+                accepted_steps=current.accepted_steps + 1,
+                rejected_steps=current.rejected_steps
+                + (~take_accelerated).astype(jnp.int32),
+                restarts=current.restarts + (~take_accelerated).astype(jnp.int32),
+                nonfinite=current.nonfinite + (~finite_accelerated).astype(jnp.int32),
+                status=status,
+            )
+
+        run = jax.lax.while_loop(condition, body, run)
+        status = jnp.where(
+            run.status == int(NonlinearStatus.ITERATING),
+            int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            run.status,
+        ).astype(jnp.int32)
+        final_state = space.unflatten(run.state)
+        final_mapped = problem.mapping(final_state, args)
+        final_residual = jax.tree.map(
+            lambda mapped, value: mapped - value,
+            final_mapped,
+            final_state,
+        )
+        return NonlinearResult(
+            state=final_state,
+            residual=final_residual,
+            auxiliary=final_mapped,
+            status=status,
+            diagnostics=NonlinearDiagnostics(
+                initial_residual_norm=run.initial_norm,
+                final_residual_norm=run.norm,
+                final_step_norm=run.step_norm,
+                iterations=run.iteration,
+                residual_evaluations=run.evaluations + 1,
+                accepted_steps=run.accepted_steps,
+                rejected_steps=run.rejected_steps,
+                nonfinite_trials=run.nonfinite,
+                acceleration_restarts=run.restarts,
+            ),
+            provenance=NonlinearProvenance(
+                problem_id=problem.problem_id,
+                method_id=self.method_id,
+                derivative_id="none",
+                globalization_id="residual-safeguard",
+            ),
+        )
+
+
 def _picard_candidate(
     inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner,
     damping: float,
@@ -455,6 +692,14 @@ class PicardUpdate(AbstractNonlinearUpdate):
             differentiable_action=True,
         )
 
+    @property
+    def maximum_work(self) -> NonlinearWork:
+        return NonlinearWork(
+            residual_evaluations=2,
+            validity_evaluations=1,
+            preconditioner_applications=1,
+        )
+
     def _prepare_internal(self, problem, state, args, /):
         del problem, state, args
         return None
@@ -473,30 +718,19 @@ class PicardUpdate(AbstractNonlinearUpdate):
     ):
         problem = prepared.problem
         state_ = prepared.plan.state_space.validate(state)
-        residual, auxiliary = problem.evaluate(state_, args)
-        initial_norm = jnp.sqrt(
-            jnp.maximum(
-                jnp.real(prepared.plan.residual_space.inner(residual, residual)),
-                0.0,
-            )
-        )
-        if not control.permits(
-            residual_evaluations=2,
-            jacobian_preparations=0,
-            linear_solves=0,
-            linear_iterations=0,
-        ):
+
+        def skipped(_):
             diagnostics = NonlinearUpdateDiagnostics(
-                initial_residual_norm=initial_norm,
-                final_residual_norm=initial_norm,
+                initial_residual_norm=jnp.asarray(jnp.nan),
+                final_residual_norm=jnp.asarray(jnp.nan),
                 step_norm=0.0,
-                residual_evaluations=1,
+                work=NonlinearWork.zero(),
             )
             return (
                 NonlinearUpdateResult(
                     state=state_,
-                    residual=residual,
-                    auxiliary=auxiliary,
+                    residual=prepared.plan.residual_space.zeros(),
+                    auxiliary=prepared.reference_auxiliary,
                     status=NonlinearUpdateStatus.BUDGET_EXHAUSTED,
                     diagnostics=diagnostics,
                     provenance=NonlinearUpdateProvenance(
@@ -507,71 +741,104 @@ class PicardUpdate(AbstractNonlinearUpdate):
                 ),
                 prepared.internal_state,
             )
-        candidate = prepared.plan.state_space.validate(
-            _picard_candidate(self.inverse_action, self.damping, state_, residual)
-        )
-        candidate_residual, candidate_auxiliary = problem.evaluate(candidate, args)
-        final_norm = jnp.sqrt(
-            jnp.maximum(
-                jnp.real(
-                    prepared.plan.residual_space.inner(
-                        candidate_residual,
-                        candidate_residual,
-                    )
-                ),
-                0.0,
-            )
-        )
-        finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
-        valid = problem.valid(
-            candidate,
-            candidate_residual,
-            candidate_auxiliary,
-            args,
-        )
-        status = jnp.where(
-            ~finite,
-            int(NonlinearUpdateStatus.NONFINITE_EVALUATION),
-            jnp.where(
-                ~valid,
-                int(NonlinearUpdateStatus.DOMAIN_REJECTED),
-                int(NonlinearUpdateStatus.APPLIED),
-            ),
-        ).astype(jnp.int32)
-        step = jax.tree.map(lambda new, old: new - old, candidate, state_)
-        diagnostics = NonlinearUpdateDiagnostics(
-            initial_residual_norm=initial_norm,
-            final_residual_norm=final_norm,
-            step_norm=jnp.sqrt(
+
+        def execute(_):
+            residual, _ = problem.evaluate(state_, args)
+            initial_norm = jnp.sqrt(
                 jnp.maximum(
-                    jnp.real(prepared.plan.state_space.inner(step, step)),
+                    jnp.real(
+                        prepared.plan.residual_space.inner(
+                            residual,
+                            residual,
+                        )
+                    ),
                     0.0,
                 )
-            ),
-            residual_evaluations=2,
-            accepted_steps=(status == int(NonlinearUpdateStatus.APPLIED)).astype(
-                jnp.int32
-            ),
-            rejected_steps=(status != int(NonlinearUpdateStatus.APPLIED)).astype(
-                jnp.int32
-            ),
-            domain_failures=(finite & ~valid).astype(jnp.int32),
-            nonfinite_trials=(~finite).astype(jnp.int32),
-        )
-        return (
-            NonlinearUpdateResult(
-                state=candidate,
-                residual=candidate_residual,
-                auxiliary=candidate_auxiliary,
-                status=status,
-                diagnostics=diagnostics,
-                provenance=NonlinearUpdateProvenance(
-                    problem_id=problem.problem_id,
-                    update_id=self.update_id,
-                    plan_id=prepared.plan.plan_id,
+            )
+            candidate = prepared.plan.state_space.validate(
+                _picard_candidate(
+                    self.inverse_action,
+                    self.damping,
+                    state_,
+                    residual,
+                )
+            )
+            candidate_residual, candidate_auxiliary = problem.evaluate(
+                candidate,
+                args,
+            )
+            final_norm = jnp.sqrt(
+                jnp.maximum(
+                    jnp.real(
+                        prepared.plan.residual_space.inner(
+                            candidate_residual,
+                            candidate_residual,
+                        )
+                    ),
+                    0.0,
+                )
+            )
+            finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
+            valid = problem.valid(
+                candidate,
+                candidate_residual,
+                candidate_auxiliary,
+                args,
+            )
+            status = jnp.where(
+                ~finite,
+                int(NonlinearUpdateStatus.NONFINITE_EVALUATION),
+                jnp.where(
+                    ~valid,
+                    int(NonlinearUpdateStatus.DOMAIN_REJECTED),
+                    int(NonlinearUpdateStatus.APPLIED),
                 ),
-            ),
-            prepared.internal_state,
+            ).astype(jnp.int32)
+            step = jax.tree.map(
+                lambda new, old: new - old,
+                candidate,
+                state_,
+            )
+            diagnostics = NonlinearUpdateDiagnostics(
+                initial_residual_norm=initial_norm,
+                final_residual_norm=final_norm,
+                step_norm=jnp.sqrt(
+                    jnp.maximum(
+                        jnp.real(prepared.plan.state_space.inner(step, step)),
+                        0.0,
+                    )
+                ),
+                work=self.maximum_work,
+                accepted_steps=(status == int(NonlinearUpdateStatus.APPLIED)).astype(
+                    jnp.int32
+                ),
+                rejected_steps=(status != int(NonlinearUpdateStatus.APPLIED)).astype(
+                    jnp.int32
+                ),
+                domain_failures=(finite & ~valid).astype(jnp.int32),
+                nonfinite_trials=(~finite).astype(jnp.int32),
+            )
+            return (
+                NonlinearUpdateResult(
+                    state=candidate,
+                    residual=candidate_residual,
+                    auxiliary=candidate_auxiliary,
+                    status=status,
+                    diagnostics=diagnostics,
+                    provenance=NonlinearUpdateProvenance(
+                        problem_id=problem.problem_id,
+                        update_id=self.update_id,
+                        plan_id=prepared.plan.plan_id,
+                    ),
+                ),
+                prepared.internal_state,
+            )
+
+        return jax.lax.cond(
+            control.permits(self.maximum_work),
+            execute,
+            skipped,
+            operand=None,
         )
 
 
@@ -669,6 +936,7 @@ class PicardIteration(StrictModule):
                 derivative_id="preconditioned-residual-map",
                 globalization_id="fixed-point-safeguard",
             ),
+            attempts=result.attempts,
         )
 
 
@@ -677,4 +945,5 @@ __all__ = [
     "FixedPointIteration",
     "PicardIteration",
     "PicardUpdate",
+    "SteffensenIteration",
 ]

@@ -11,19 +11,57 @@ from ._bounds import (
     ProjectedGradient,
     ProjectedLBFGS,
 )
+from ._certificates import (
+    certify_constrained_physical,
+    certify_least_squares_physical,
+    reconcile_optimization_status,
+)
 from ._composite import (
     composite_least_squares,
     CompositeLeastSquaresProblem,
     CompositeLeastSquaresResult,
     GeneralizedGaussNewton,
 )
+from ._constrained_model import (
+    ConstrainedModelEvaluation,
+    ConstraintScalingPolicy,
+    prepare_constrained_model,
+    PreparedConstrainedModel,
+)
+from ._constrained_sensitivity import (
+    constrained_solution_jvp,
+    constrained_solution_vjp,
+    ConstrainedSensitivityMode,
+    ConstrainedSensitivityResult,
+)
 from ._derivative_free_least_squares import FiniteDifferenceGaussNewton
 from ._differential_evolution import DifferentialEvolutionSearch
+from ._external_backends import (
+    ceres_least_squares,
+    IpoptMinimize,
+    NLoptMinimize,
+    SciPyMinimize,
+)
+from ._filter_ipm import FilterInteriorPoint, FilterInteriorPointEvidence
 from ._finite import FiniteAxis, FiniteExhaustiveSearch, FiniteProductSpace
+from ._graph_least_squares import (
+    linearize_residual_graph,
+    ResidualGraphLinearization,
+    ResidualGraphSolveEvidence,
+    solve_residual_graph,
+)
 from ._implicit import (
     implicit_constrained_minimize,
     implicit_least_squares,
     implicit_minimize,
+)
+from ._incremental_factor_graph import (
+    add_incremental_factor,
+    IncrementalFactorUpdate,
+    IncrementalResidualGraph,
+    prepare_incremental_factor_graph,
+    remove_incremental_factor,
+    update_incremental_factor_graph,
 )
 from ._iterative import (
     AbstractCompositeLeastSquaresMethod,
@@ -40,26 +78,63 @@ from ._iterative import (
     NonlinearLeastSquaresProblem,
     optimization_status_message,
     OptimizationCapabilities,
+    OptimizationCertificate,
+    OptimizationCertificateKind,
     OptimizationDiagnostics,
     OptimizationProvenance,
     OptimizationStatus,
+    OptimizationStatusEvidence,
     OptimizationTermination,
     strong_wolfe_line_search,
     StrongWolfeLineSearch,
     StrongWolfeResult,
 )
 from ._kfac._config import kfac
+from ._kkt import (
+    factor_kkt,
+    kkt_inertia,
+    KKTFactorization,
+    KKTForm,
+    KKTInertia,
+    KKTPlan,
+    KKTSolveResult,
+    plan_kkt,
+    solve_factored_kkt,
+    solve_kkt,
+)
 from ._least_squares import (
     AbstractBoundedLeastSquaresMethod,
     BoundedGaussNewton,
     BoundedLevenbergMarquardt,
+    BoundedResidualFunction,
     GaussNewton,
     least_squares,
     LeastSquaresState,
     LevenbergMarquardt,
 )
+from ._least_squares_trust import (
+    DoglegLeastSquares,
+    DoglegMode,
+    TrustRegionReflective,
+)
 from ._minimize import minimize
+from ._model_based import BOBYQA, COBYQA, ModelBasedKind
+from ._multistart import (
+    multistart_minimize,
+    MultiStartPolicy,
+    MultiStartResult,
+    StartGenerator,
+)
 from ._newton_krylov import NewtonKrylov
+from ._nls_planner import (
+    LeastSquaresRoute,
+    LeastSquaresRoutePlan,
+    LeastSquaresRoutePolicy,
+    plan_least_squares_route,
+    prepare_schur_plan,
+    SchurComplementPlan,
+    solve_schur_system,
+)
 from ._nonlinear_constraints import AugmentedLagrangian, FilterGlobalization, SQP
 from ._optimistix import OptimistixMethod
 from ._pde_constrained import (
@@ -73,6 +148,7 @@ from ._pde_constrained import (
     StateDesignResult,
     StateEquationResult,
 )
+from ._pounders import POUNDERS, POUNDERSEvidence
 from ._primal_dual import (
     PrimalDualNewtonKrylov,
     PrimalDualPredictorCorrector,
@@ -140,6 +216,17 @@ from ._proximal import (
     SimplexIndicator,
 )
 from ._reduced_newton import ReducedNewtonKrylov
+from ._residual_graph import (
+    factor_graph_certificate,
+    FactorGraphCertificate,
+    ParameterBlock,
+    prepare_residual_graph,
+    PreparedResidualGraph,
+    refresh_residual_graph,
+    residual_graph_certificate,
+    ResidualBlock,
+    ResidualGraphProblem,
+)
 from ._riemannian import (
     ArmijoLineSearch,
     ParameterGeometry,
@@ -148,6 +235,19 @@ from ._riemannian import (
     riemannian_lbfgs,
     riemannian_momentum,
     riemannian_sgd,
+)
+from ._robust_losses import (
+    AbstractRobustLoss,
+    ArctanLoss,
+    CauchyLoss,
+    HuberLoss,
+    IdentityLoss,
+    robust_normal_weight,
+    robustify_residual,
+    RobustLossEvaluation,
+    ScaledLoss,
+    SoftL1Loss,
+    TukeyLoss,
 )
 from ._stochastic import (
     AbstractRiskMeasure,
@@ -184,6 +284,11 @@ from ._unconstrained import (
     NewtonTrustRegionState,
     NonlinearConjugateGradient,
     NonlinearConjugateGradientState,
+)
+from ._variable_projection import (
+    variable_projection,
+    VariableProjectionProblem,
+    VariableProjectionResult,
 )
 
 
@@ -225,6 +330,9 @@ __all__ = [
     "solve_convex_program",
     "solve_conic_program",
     "solve_prepared_convex_program",
+    "certify_constrained_physical",
+    "certify_least_squares_physical",
+    "reconcile_optimization_status",
     "solve_linear_program",
     "AbstractBoundedLeastSquaresMethod",
     "AbstractCompositeLeastSquaresMethod",
@@ -239,6 +347,8 @@ __all__ = [
     "AbstractRiskMeasure",
     "AbstractSamplingPolicy",
     "AbstractStochasticMethod",
+    "FilterInteriorPoint",
+    "FilterInteriorPointEvidence",
     "ActiveSetNewton",
     "AbstractScalarIterativeMethod",
     "AugmentedLagrangian",
@@ -247,6 +357,7 @@ __all__ = [
     "BoundedNewtonTrustRegion",
     "BoundedGaussNewton",
     "BoundedLevenbergMarquardt",
+    "BoundedResidualFunction",
     "BoxIndicator",
     "CVaRRisk",
     "ChanceConstraint",
@@ -264,12 +375,15 @@ __all__ = [
     "GaussNewton",
     "FilterGlobalization",
     "FiniteDifferenceGaussNewton",
+    "OptimizationCertificate",
+    "OptimizationCertificateKind",
     "IterativeStepMetrics",
     "FiniteAxis",
     "GeneralizedGaussNewton",
     "GroupLassoFunctional",
     "IndicatorFunctional",
     "FiniteExhaustiveSearch",
+    "OptimizationStatusEvidence",
     "FiniteProductSpace",
     "KFACAffineBlock",
     "KFACLayoutProvider",
@@ -348,4 +462,78 @@ __all__ = [
     "solve_trust_region_subproblem",
     "strong_wolfe_line_search",
     "minimize_stochastic",
+    "AbstractRobustLoss",
+    "ArctanLoss",
+    "CauchyLoss",
+    "HuberLoss",
+    "IdentityLoss",
+    "ParameterBlock",
+    "linearize_residual_graph",
+    "PreparedResidualGraph",
+    "ResidualGraphLinearization",
+    "ResidualGraphSolveEvidence",
+    "ResidualBlock",
+    "ResidualGraphProblem",
+    "RobustLossEvaluation",
+    "ScaledLoss",
+    "SoftL1Loss",
+    "TukeyLoss",
+    "prepare_residual_graph",
+    "refresh_residual_graph",
+    "residual_graph_certificate",
+    "solve_residual_graph",
+    "robust_normal_weight",
+    "robustify_residual",
+    "LeastSquaresRoute",
+    "LeastSquaresRoutePlan",
+    "LeastSquaresRoutePolicy",
+    "SchurComplementPlan",
+    "plan_least_squares_route",
+    "prepare_schur_plan",
+    "solve_schur_system",
+    "DoglegLeastSquares",
+    "DoglegMode",
+    "TrustRegionReflective",
+    "VariableProjectionProblem",
+    "VariableProjectionResult",
+    "variable_projection",
+    "POUNDERS",
+    "POUNDERSEvidence",
+    "FactorGraphCertificate",
+    "factor_graph_certificate",
+    "IncrementalFactorUpdate",
+    "IncrementalResidualGraph",
+    "add_incremental_factor",
+    "prepare_incremental_factor_graph",
+    "remove_incremental_factor",
+    "update_incremental_factor_graph",
+    "ConstrainedModelEvaluation",
+    "ConstraintScalingPolicy",
+    "KKTFactorization",
+    "KKTForm",
+    "KKTInertia",
+    "KKTPlan",
+    "KKTSolveResult",
+    "factor_kkt",
+    "kkt_inertia",
+    "plan_kkt",
+    "solve_kkt",
+    "solve_factored_kkt",
+    "ConstrainedSensitivityMode",
+    "ConstrainedSensitivityResult",
+    "constrained_solution_jvp",
+    "constrained_solution_vjp",
+    "BOBYQA",
+    "COBYQA",
+    "ModelBasedKind",
+    "PreparedConstrainedModel",
+    "prepare_constrained_model",
+    "MultiStartPolicy",
+    "MultiStartResult",
+    "StartGenerator",
+    "multistart_minimize",
+    "IpoptMinimize",
+    "NLoptMinimize",
+    "SciPyMinimize",
+    "ceres_least_squares",
 ]

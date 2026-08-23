@@ -1,0 +1,287 @@
+# Structured finite volume
+
+Phydrax finite volume is a structured, face-first discretization for Cartesian,
+stationary mapped, multiblock, and fixed-capacity adaptive grids. It stores conserved
+cell averages on interval entities, constructs one oriented flux per directional face,
+and updates neighboring cells from that shared contribution.
+
+The execution invariant is
+
+```text
+cell volume × state rate = -oriented integrated face flux + volume source
+```
+
+Internal face contributions therefore cancel exactly. Grid geometry, physical systems,
+numerical methods, boundaries, and time integration remain separate objects.
+
+## Scalar conservation law
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+support = phx.discretization.TensorGridPlan(
+    (phx.discretization.UniformCellAxisSpec(128, periodic=True),),
+    axis_names=("x",),
+).prepare(jnp.asarray([[0.0], [1.0]]))
+
+finite_volume = phx.discretization.FiniteVolumePlan(
+    support,
+    field_name="u",
+).prepare()
+
+system = phx.equations.ScalarConservationSystem(
+    1,
+    lambda state, axis, args: args["speed"] * state,
+    lambda left, right, axis, args: jnp.full(
+        left.shape[:-1], jnp.abs(args["speed"])
+    ),
+    system_id="linear-advection",
+)
+
+problem = phx.equations.ConservationProblemIR(
+    "linear-advection",
+    "u",
+    system,
+    phx.discretization.FiniteVolumeBoundarySet.periodic(("x",)),
+)
+
+method = phx.discretization.FiniteVolumeMethodPlan(
+    phx.discretization.MUSCLReconstruction(phx.discretization.MCLimiter()),
+    phx.discretization.RusanovFluxPlan(),
+)
+
+compiled = phx.equations.compile_conservation_problem(
+    problem,
+    finite_volume,
+    method,
+)
+
+x = support.structured_axes[0].interval_centers
+state = jnp.sin(2.0 * jnp.pi * x)[:, None]
+dt = compiled.stable_step(state, {"speed": jnp.asarray(0.7)}, cfl=0.4)
+stepper = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(compiled.dynamics)
+result = stepper.advance(
+    jnp.asarray(0.0),
+    state,
+    dt,
+    {"speed": jnp.asarray(0.7)},
+)
+```
+
+`FiniteVolumePlan` accepts only interval-primary `PreparedTensorGrid` support. Runtime
+state has shape `cell_shape + (component_count,)`; component names and topological
+location remain static discretization metadata.
+
+## Cell and face geometry
+
+A prepared discretization provides:
+
+- `cell_layout`, `cell_centers`, and `cell_volumes`;
+- one directional `face_layout`, center, measure, and area vector per axis;
+- a cell-average `DiscreteFieldSpace`;
+- directional flux-moment spaces;
+- canonical positive-axis orientation;
+- preparation provenance and resource counts.
+
+Bounded axes have one more face than cells. Periodic axes store one unique face per
+cell, including one unique periodic seam. Face measure excludes the normal-axis dual
+measure; it is the physical tangential area used to integrate normal flux density.
+
+`AxisDiscretization.quad_weights` are authoritative interval widths for interval-primary
+axes. This supports nonuniform Cartesian cells when widths span the declared bounds and
+nodes are the resulting cell centers.
+
+## Reconstruction
+
+The method plan selects cell-average to face-trace reconstruction independently from the
+interface solver.
+
+| Reconstruction | Order | Differentiability |
+|---|---:|---|
+| `PiecewiseConstantReconstruction` | 1 | smooth discrete |
+| `MUSCLReconstruction` | 2 in smooth regions | frozen limiter decision |
+| `WENOReconstructionPlan` | 3 or 5 | almost everywhere |
+| `HighResolutionReconstructionPlan("weno_z")` | 5 | almost everywhere |
+| `HighResolutionReconstructionPlan("teno")` | 5 | frozen stencil activation |
+| `HighResolutionReconstructionPlan("mp5")` | 5 | frozen limiter decision |
+| `NonuniformWENOReconstructionPlan` | high order on prepared edges | method dependent |
+
+MUSCL limiters are explicit: minmod, monotonized central, van Leer, and Superbee.
+High-resolution bounded faces use explicit physical exterior states and first-order
+boundary traces; the documented interior order does not extend through the wall.
+
+Characteristic reconstruction requires an equation-owned eigensystem. Physical systems
+live in `phydrax.equations`; reconstruction never owns Euler, multispecies, shallow-water,
+or MHD physics.
+
+## Interface solvers
+
+Conservative numerical-flux plans return one normal flux density and one maximum signal
+speed:
+
+- `RusanovFluxPlan`;
+- `HLLFluxPlan`;
+- `HLLCFluxPlan` for Euler;
+- `RoeFluxPlan` for characteristic systems;
+- `EntropyConservativeEulerFluxPlan`;
+- `EntropyStableEulerFluxPlan`.
+
+Preparation rejects incompatible combinations. HLLC requires Euler state layout, Roe
+requires a characteristic system, positivity limiting requires an admissibility
+predicate, and entropy diagnostics require entropy variables.
+
+Wave propagation is a separate interface family, not an optional extension of a flux
+result:
+
+- `RoeWavePropagationPlan` returns waves, speeds, and left/right fluctuations;
+- `FWaveShallowWaterPlan` decomposes a bathymetry-balanced flux jump;
+- `WaveFamilyLimiterPlan` limits each wave family;
+- `TransverseWaveSolverPlan` splits a normal fluctuation in a transverse direction.
+
+The initial f-wave implementation is one-dimensional and preserves lake-at-rest states.
+
+## Boundaries
+
+Every bounded axis requires a `FiniteVolumeBoundaryPair`; periodic axes require `None`
+and derive their seam from topology.
+
+Available policies:
+
+- `ExtrapolationBoundary`;
+- `ConstantStateBoundary`;
+- `PrescribedStateBoundary`;
+- `ReflectiveBoundary`;
+- `PrescribedNormalFluxBoundary`.
+
+A prescribed state callback receives time, adjacent interior state, physical face
+coordinates, outward normal, and runtime arguments. Reflective boundaries delegate
+component parity to the physical system. Direct normal-flux boundaries bypass exterior
+state construction and are converted from outward orientation to the canonical face
+orientation.
+
+Physical boundary meaning is distinct from numerical closure. A centered diffusive
+Dirichlet ghost formula is not silently reused as an advective inflow state.
+
+## Physical systems
+
+`phydrax.equations` owns:
+
+- `ScalarConservationSystem` in one, two, or three dimensions;
+- `EulerSystem` in one, two, or three dimensions;
+- `MultispeciesEulerSystem` in one, two, or three dimensions;
+- `IdealMHDSystem` with three-vector momentum and magnetic field;
+- `ShallowWaterSystem` in one or two dimensions.
+
+System capabilities are explicit abstract contracts for characteristics, admissibility,
+and entropy variables. Unsupported dimensions or numerical combinations fail during
+construction or compilation.
+
+## Positivity and entropy
+
+`ConvexStateLimiterPlan` scales reconstructed face states toward admissible cell
+averages using fixed-count bisection. It does not claim that an arbitrary time step is
+positive; the time integrator must also respect the method CFL and any source
+restriction.
+
+`residual_with_diagnostics()` returns signal speeds, boundary balance, source integral,
+conservation defect, maximum local rate, and optional entropy production. Diagnostics
+reuse the exact execution fluxes.
+
+## Time execution
+
+Spatial dynamics do not own a stepper.
+
+- `UnsplitFiniteVolumeSSPRK3Plan` advances the complete semidiscretization.
+- `DirectionalSplitFiniteVolumePlan` provides Godunov or symmetric Strang composition
+  of directional residuals.
+- Source and viscous contributions are composed separately from directional hyperbolic
+  updates.
+
+The stable-step estimate uses face speed, face measure, effective cell volume, and an
+optional capacity field. A zero hyperbolic rate produces an infinite hyperbolic step
+limit; source stiffness remains an independent solver concern.
+
+## Diffusion and viscous fluxes
+
+Conservative diffusion is finite-volume owned. `FaceCoefficientPlan` makes arithmetic,
+harmonic, upwind, or callable interpolation explicit. `ConservativeDiffusionPlan`
+constructs scalar, diagonal-tensor, or full-tensor cell-to-face flux followed by
+face-to-cell divergence.
+
+`ViscousFluxPlan` provides Newtonian stress and Fourier heat flux using
+equation-owned thermodynamic materials and transport closures. Convective and viscous
+face contributions remain separate until conservative divergence.
+
+## Incompressible projection
+
+`MACPressureProjectionPlan` stores normal velocity on directional faces and pressure in
+cells. Its divergence and gradient are a compatible pair. The pressure solve:
+
+- removes the volume-weighted compatibility component;
+- solves a matrix-free positive Laplacian;
+- enforces a volume-weighted zero-mean gauge;
+- reports divergence before and after correction and the pressure residual.
+
+`FunctionalPressureCorrectionPlan` composes a fixed number of predictor/projection
+correctors and returns an immutable residual history.
+
+## Stationary mapped grids
+
+`MappedFiniteVolumePlan` maps a prepared Cartesian control-volume geometry while
+retaining fixed tensor topology. Preparation computes mapped vertices, cell volumes,
+face centers, face measures, and oriented area vectors in one, two, or three dimensions.
+It rejects nonpositive orientation or measure.
+
+Mapped execution currently accepts Rusanov or HLL fluxes, which evaluate the physical
+normal flux against mapped unit normals. Topology remains fixed under differentiation.
+Moving meshes are not supported.
+
+## Multiblock and AMR
+
+`ConservativeMultiblockInterfacePlan` computes one conforming or nested 2:1 interface
+flux, orients the opposing trace, evaluates on the fine mortar, sums fine integrated
+fluxes to coarse faces, and reports the global conservation defect.
+
+`ConservativeAMRSubcyclingPlan` accumulates time-integrated coarse and fine interface
+fluxes. `FluxRegister` records orientation, refinement ratio, accumulation time, and the
+interface mask. `ConservativeAMRSynchronizationPlan` executes subcycling, reflux, and
+covered-cell restriction in that order.
+
+State and parameter gradients are supported for a fixed hierarchy. Refinement tagging,
+slot activation, migration routes, and topology changes are discrete and are not
+differentiated.
+
+## Differentiability contract
+
+The substrate differentiates the fixed discrete program. Method metadata distinguishes:
+
+- smooth discrete paths;
+- almost-everywhere paths;
+- frozen branch decisions;
+- explicit smooth surrogates;
+- unsupported topology decisions.
+
+`RusanovFluxPlan(smooth_epsilon=...)` is an opt-in smooth wave-speed surrogate. Hard
+limiters, TENO activation, positivity bisection, and AMR decisions are never silently
+presented as globally smooth.
+
+`PreparedFiniteVolumeDynamics.linearize()` returns the residual, a matrix-free JVP, and
+a VJP pullback. Preparation, grid shape, reconstruction order, boundary kind, and AMR
+topology remain static.
+
+## Current limitations
+
+- No unstructured or polyhedral meshes.
+- No moving mapped grids.
+- Initial shallow-water f-wave support is one-dimensional.
+- Initial transverse solver support is a primitive building block, not a complete
+  three-dimensional CTU implementation.
+- Mapped fluxes currently use Rusanov or HLL.
+- MHD constrained transport remains owned by the compatible cochain substrate rather
+  than the cell-centered hyperbolic update.
+- Hard shock-capturing decisions produce branchwise, not globally smooth, sensitivities.
+
+Runtime, material, boundary, positivity, checkpoint, rollout, and sharding contracts are
+documented in
+[Structured finite-volume runtime](guides_finite_volume_runtime.md).

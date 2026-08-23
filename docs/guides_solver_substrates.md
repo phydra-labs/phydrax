@@ -33,6 +33,21 @@ Linear subspace correction and nonlinear Schwarz reuse explicit restriction and
 prolongation ideas, but not one result type: nonlinear local work owns a local
 problem, update status, domain validity, and physical reconstruction.
 
+## Solver graduation
+
+New nonlinear methods remain internal until they have a derivation, capability
+validation, accepted-point invariant, independent certificate, exact work,
+failure taxonomy, JIT/batch behavior, focused tests, benchmark artifact, and
+selection documentation.
+
+`SolverGraduationEvidence` and `evaluate_solver_graduation` enforce zero false
+successes, certified coverage, peer-profile, derivative, execution, and product
+gates. `evaluate_solver_regression` rejects new false successes, excessive
+coverage/profile loss, derivative degradation, hidden dense materialization,
+numeric-refresh recompilation, or loss of complete work accounting. Wall-time
+thresholds remain in controlled benchmark campaigns rather than ordinary unit
+tests.
+
 ## Structured support
 
 `TensorGridPlan.prepare(bounds)` returns `PreparedTensorGrid`: axes, topology,
@@ -143,20 +158,22 @@ complete discretization provenance.
 
 ## Conservative and high-resolution methods
 
-`FaceCoefficientPlan` declares arithmetic, harmonic, upwind, or callable interpolation.
+Conservative face operators are finite-volume owned. `FaceCoefficientPlan` declares
+arithmetic, harmonic, upwind, or callable interpolation.
 `ConservativeDiffusionPlan` realizes `div(A grad(u))` as cell-to-face flux followed by
 face-to-cell divergence, including discontinuous scalar, diagonal, and full tensor
 coefficients. `ConservativeAdvectionPlan` keeps advective, conservative, skew, and
-energy-split forms distinct. Native PDE lowering recognizes conservative expression
-structure without rewriting it into a pointwise Laplacian.
+energy-split forms distinct. Finite-difference PDE lowering reuses these prepared
+operators when it recognizes conservative expression structure.
 
-`HighResolutionReconstructionPlan` provides WENO-Z, TENO, and MP5 on periodic or
-outflow lines. `NonuniformWENOReconstructionPlan` prepares geometry-specific candidate,
-smoothness, and optimal-weight matrices from cell edges. `CharacteristicReconstructionPlan`
-projects every face stencil through a declared eigensystem. Reference dynamics include
-characteristic ideal-gas Euler, conservative multispecies mixtures, ideal MHD with an
-exact normal-field flux constraint, and unsplit multidimensional shared-face flux
-divergence. Positivity and entropy-dissipation policies remain explicit.
+The structured finite-volume compiler combines cell-average geometry, physical systems,
+boundary policies, reconstruction, and one conservative interface method.
+`HighResolutionReconstructionPlan` provides WENO-Z, TENO, and MP5;
+`CharacteristicReconstructionPlan` uses equation-owned eigensystems. Euler,
+multispecies Euler, shallow water, and ideal MHD live under `phydrax.equations`.
+Rusanov, HLL, HLLC, Roe, entropy fluxes, wave propagation, positivity, and
+multidimensional shared-face divergence remain independently selectable and
+compatibility-checked. See [Structured finite volume](guides_finite_volume.md).
 
 ## SBP-SAT, mapped grids, and multiblock coupling
 
@@ -183,7 +200,7 @@ or dissipative upwind scalar-advection coupling.
 The AMR substrate remains fixed-capacity and masks inactive payload before arithmetic.
 `FDAMRHaloPlan` fills multidimensional same-level and parent-derived fine halos.
 `AMREntityTransferPlan` declares point/interval axes, covering cells, nodes, faces, and
-edges. `FDAMRSubcyclingPlan` accumulates time-integrated fine/coarse fluxes before
+edges. `ConservativeAMRSubcyclingPlan` accumulates time-integrated fine/coarse fluxes before
 reflux. `FDRegridPlan` records deterministic child activation/population and explicit
 overflow; `AMRMigrationPlan` moves active slots without exposing inactive NaN/Inf.
 

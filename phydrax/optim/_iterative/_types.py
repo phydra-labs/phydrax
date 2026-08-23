@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from enum import IntEnum
 from math import isfinite
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -48,6 +48,7 @@ class OptimizationStatus(IntEnum):
     INFEASIBLE = 13
     CONSTRAINT_QUALIFICATION_FAILED = 14
     RESTORATION_FAILED = 15
+    CERTIFICATION_FAILED = 16
 
 
 _STATUS_MESSAGES = {
@@ -73,6 +74,9 @@ _STATUS_MESSAGES = {
         "constraint qualification failed"
     ),
     OptimizationStatus.RESTORATION_FAILED: ("constraint feasibility restoration failed"),
+    OptimizationStatus.CERTIFICATION_FAILED: (
+        "independent final certificate did not pass"
+    ),
 }
 
 
@@ -554,6 +558,101 @@ class OptimizationProvenance(StrictModule):
         self.notes = str(notes)
 
 
+OptimizationCertificateKind: TypeAlias = Literal[
+    "unconstrained-stationarity",
+    "projected-stationarity",
+    "least-squares-normal",
+    "composite-gradient-mapping",
+    "active-kkt",
+    "barrier-kkt",
+    "derivative-free-stationarity",
+    "global-target",
+    "global-bound",
+]
+
+
+class OptimizationCertificate(StrictModule):
+    """Independent physical success evidence for one optimization result."""
+
+    tolerance: Array
+    optimality_norm: Array
+    primal_feasibility: Array
+    dual_feasibility: Array
+    complementarity: Array
+    projected_stationarity: Array
+    finite: Array
+    regular: Array
+    certified: Array
+    evaluation_work: Array
+    kind: OptimizationCertificateKind = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        kind: OptimizationCertificateKind,
+        tolerance: Any,
+        optimality_norm: Any,
+        primal_feasibility: Any = 0.0,
+        dual_feasibility: Any = jnp.nan,
+        complementarity: Any = jnp.nan,
+        projected_stationarity: Any = jnp.nan,
+        finite: Any = True,
+        regular: Any = True,
+        certified: Any,
+        evaluation_work: Any = 0,
+        certificate_id: str,
+    ):
+        identifier = str(certificate_id)
+        if not identifier:
+            raise ValueError("certificate_id must be non-empty.")
+        self.kind = kind
+        self.tolerance = jnp.asarray(tolerance)
+        self.optimality_norm = jnp.asarray(optimality_norm)
+        self.primal_feasibility = jnp.asarray(primal_feasibility)
+        self.dual_feasibility = jnp.asarray(dual_feasibility)
+        self.complementarity = jnp.asarray(complementarity)
+        self.projected_stationarity = jnp.asarray(projected_stationarity)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.regular = jnp.asarray(regular, dtype=jnp.bool_)
+        self.certified = jnp.asarray(certified, dtype=jnp.bool_)
+        self.evaluation_work = jnp.asarray(evaluation_work, dtype=jnp.int32)
+        self.certificate_id = identifier
+
+
+class OptimizationStatusEvidence(StrictModule):
+    """Internal-to-public status reconciliation evidence."""
+
+    internal_status: Array
+    public_status: Array
+    promoted: Array
+    demoted: Array
+    certificate: OptimizationCertificate
+    decision_reason: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        internal_status: Any,
+        public_status: Any,
+        certificate: OptimizationCertificate,
+        promoted: Any,
+        demoted: Any,
+        decision_reason: str,
+    ):
+        if not isinstance(certificate, OptimizationCertificate):
+            raise TypeError("certificate must be OptimizationCertificate.")
+        reason = str(decision_reason)
+        if not reason:
+            raise ValueError("decision_reason must be non-empty.")
+        self.internal_status = jnp.asarray(internal_status, dtype=jnp.int32)
+        self.public_status = jnp.asarray(public_status, dtype=jnp.int32)
+        self.promoted = jnp.asarray(promoted, dtype=jnp.bool_)
+        self.demoted = jnp.asarray(demoted, dtype=jnp.bool_)
+        self.certificate = certificate
+        self.decision_reason = reason
+
+
 class ConstrainedOptimalityCertificate(StrictModule):
     """Canonical multipliers, slacks, activity, and KKT residual evidence."""
 
@@ -625,6 +724,9 @@ class MinimizationResult(StrictModule):
     diagnostics: OptimizationDiagnostics
     provenance: OptimizationProvenance
     certificate: ConstrainedOptimalityCertificate | None
+    optimality_certificate: OptimizationCertificate | None
+    status_evidence: OptimizationStatusEvidence | None
+    method_evidence: Any
 
     def __init__(
         self,
@@ -637,6 +739,9 @@ class MinimizationResult(StrictModule):
         /,
         *,
         certificate: ConstrainedOptimalityCertificate | None = None,
+        optimality_certificate: OptimizationCertificate | None = None,
+        status_evidence: OptimizationStatusEvidence | None = None,
+        method_evidence: Any = None,
     ):
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
@@ -649,6 +754,18 @@ class MinimizationResult(StrictModule):
             raise TypeError(
                 "certificate must be a ConstrainedOptimalityCertificate or None."
             )
+        if optimality_certificate is not None and not isinstance(
+            optimality_certificate,
+            OptimizationCertificate,
+        ):
+            raise TypeError(
+                "optimality_certificate must be OptimizationCertificate or None."
+            )
+        if status_evidence is not None and not isinstance(
+            status_evidence,
+            OptimizationStatusEvidence,
+        ):
+            raise TypeError("status_evidence must be OptimizationStatusEvidence or None.")
         self.parameters = parameters
         self.objective = jnp.asarray(objective)
         self.auxiliary = auxiliary
@@ -656,6 +773,9 @@ class MinimizationResult(StrictModule):
         self.diagnostics = diagnostics
         self.provenance = provenance
         self.certificate = certificate
+        self.optimality_certificate = optimality_certificate
+        self.status_evidence = status_evidence
+        self.method_evidence = method_evidence
 
     @property
     def successful(self) -> Array:
@@ -672,6 +792,9 @@ class LeastSquaresResult(StrictModule):
     status: Array
     diagnostics: OptimizationDiagnostics
     provenance: OptimizationProvenance
+    optimality_certificate: OptimizationCertificate | None
+    status_evidence: OptimizationStatusEvidence | None
+    method_evidence: Any
 
     def __init__(
         self,
@@ -683,11 +806,27 @@ class LeastSquaresResult(StrictModule):
         diagnostics: OptimizationDiagnostics,
         provenance: OptimizationProvenance,
         /,
+        *,
+        optimality_certificate: OptimizationCertificate | None = None,
+        status_evidence: OptimizationStatusEvidence | None = None,
+        method_evidence: Any = None,
     ):
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
         if not isinstance(provenance, OptimizationProvenance):
             raise TypeError("provenance must be OptimizationProvenance.")
+        if optimality_certificate is not None and not isinstance(
+            optimality_certificate,
+            OptimizationCertificate,
+        ):
+            raise TypeError(
+                "optimality_certificate must be OptimizationCertificate or None."
+            )
+        if status_evidence is not None and not isinstance(
+            status_evidence,
+            OptimizationStatusEvidence,
+        ):
+            raise TypeError("status_evidence must be OptimizationStatusEvidence or None.")
         self.parameters = parameters
         self.residual = residual
         self.objective = jnp.asarray(objective)
@@ -695,6 +834,9 @@ class LeastSquaresResult(StrictModule):
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
         self.provenance = provenance
+        self.optimality_certificate = optimality_certificate
+        self.status_evidence = status_evidence
+        self.method_evidence = method_evidence
 
     @property
     def successful(self) -> Array:
@@ -703,6 +845,9 @@ class LeastSquaresResult(StrictModule):
 
 __all__ = [
     "ConstrainedOptimalityCertificate",
+    "OptimizationCertificate",
+    "OptimizationCertificateKind",
+    "OptimizationStatusEvidence",
     "Bounds",
     "IterativeStepMetrics",
     "LeastSquaresResult",

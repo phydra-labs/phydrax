@@ -25,7 +25,7 @@ from ...linalg import (
     OperatorProperties,
 )
 from .._tensor_support import PreparedTensorGrid
-from ._certification import FDConservationReport, FDStabilityReport
+from ..finite_difference._certification import FDConservationReport, FDStabilityReport
 
 
 FaceInterpolationKind: TypeAlias = Literal["arithmetic", "harmonic", "upwind", "callable"]
