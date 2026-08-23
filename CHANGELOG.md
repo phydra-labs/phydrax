@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Hardened open-system workflows with shared scalar-root event refinement,
+  semantic trajectory checkpoints, environment MPS contractions,
+  nonnormalizing TEBD, LPDO Strang evolution, scaled/implicit HEOM, matched
+  spin-boson evidence, causal process tomography, and neural no-jump TDVP.
+
 - Added event-driven quantum jumps, MPS canonicalization and TEBD, MPS jump
   trajectories, locally purified Kraus evolution, HEOM continuation,
   non-Markovian cross-representation diagnostics, adaptive Fock continuation,
