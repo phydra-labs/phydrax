@@ -267,6 +267,7 @@ nav:
             - Overview: "api/solver/index.md"
             - Time integrators: "api/solver/time_integrators.md"
             - Differential equations: "api/solver/differential.md"
+            - Non-Markovian and many-body quantum systems: "api/solver/nonmarkov_manybody.md"
             - Differential-algebraic equations: "api/solver/differential_algebraic.md"
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
