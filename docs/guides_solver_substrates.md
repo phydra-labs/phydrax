@@ -33,6 +33,21 @@ Linear subspace correction and nonlinear Schwarz reuse explicit restriction and
 prolongation ideas, but not one result type: nonlinear local work owns a local
 problem, update status, domain validity, and physical reconstruction.
 
+## Solver graduation
+
+New nonlinear methods remain internal until they have a derivation, capability
+validation, accepted-point invariant, independent certificate, exact work,
+failure taxonomy, JIT/batch behavior, focused tests, benchmark artifact, and
+selection documentation.
+
+`SolverGraduationEvidence` and `evaluate_solver_graduation` enforce zero false
+successes, certified coverage, peer-profile, derivative, execution, and product
+gates. `evaluate_solver_regression` rejects new false successes, excessive
+coverage/profile loss, derivative degradation, hidden dense materialization,
+numeric-refresh recompilation, or loss of complete work accounting. Wall-time
+thresholds remain in controlled benchmark campaigns rather than ordinary unit
+tests.
+
 ## Structured support
 
 `TensorGridPlan.prepare(bounds)` returns `PreparedTensorGrid`: axes, topology,

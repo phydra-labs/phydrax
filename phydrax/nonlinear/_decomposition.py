@@ -30,7 +30,9 @@ from ._updates import (
     prepare_nonlinear_update,
     PreparedNonlinearUpdate,
     refresh_nonlinear_update,
+    skipped_nonlinear_update_result,
 )
+from ._work import NonlinearWork, work_sum
 
 
 def _norm(space, value, /):
@@ -48,19 +50,12 @@ def _child_control(
     count: int,
     /,
 ) -> NonlinearUpdateControl:
-    def share(value: int | None, reserve: int = 0) -> int | None:
-        if value is None:
-            return None
-        return max((value - reserve) // count, 0)
-
-    return NonlinearUpdateControl(
-        maximum_residual_evaluations=share(
-            control.maximum_residual_evaluations,
-            2,
+    return control.split(
+        count,
+        reserve=NonlinearWork(
+            residual_evaluations=2,
+            validity_evaluations=1,
         ),
-        maximum_jacobian_preparations=share(control.maximum_jacobian_preparations),
-        maximum_linear_solves=share(control.maximum_linear_solves),
-        maximum_linear_iterations=share(control.maximum_linear_iterations),
     )
 
 
@@ -186,6 +181,18 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             ),
         )
 
+    @property
+    def maximum_work(self) -> NonlinearWork:
+        children = work_sum(
+            tuple(subdomain.update.maximum_work for subdomain in self.subdomains)
+        )
+        return children + NonlinearWork(
+            residual_evaluations=2,
+            validity_evaluations=1,
+            local_updates=len(self.subdomains),
+            complete=children.complete,
+        )
+
     def _prepare_internal(self, problem, state, args, /):
         del problem
         return tuple(
@@ -265,6 +272,9 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             ),
         ).astype(jnp.int32)
         step = jax.tree.map(lambda new, old: new - old, candidate, state_)
+        component_work = work_sum(
+            tuple(component.diagnostics.work for component in components)
+        )
         diagnostics = NonlinearUpdateDiagnostics(
             initial_residual_norm=_norm(
                 prepared.plan.residual_space,
@@ -272,17 +282,13 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             ),
             final_residual_norm=_norm(prepared.plan.residual_space, residual),
             step_norm=_norm(prepared.plan.state_space, step),
-            residual_evaluations=_sum_field(
-                components,
-                "residual_evaluations",
-            )
-            + 2,
-            jacobian_preparations=_sum_field(
-                components,
-                "jacobian_preparations",
+            work=component_work
+            + NonlinearWork(
+                residual_evaluations=2,
+                validity_evaluations=1,
+                local_updates=len(self.subdomains),
+                complete=component_work.complete,
             ),
-            linear_solves=_sum_field(components, "linear_solves"),
-            linear_iterations=_sum_field(components, "linear_iterations"),
             accepted_steps=_sum_field(components, "accepted_steps")
             + (status == int(NonlinearUpdateStatus.APPLIED)).astype(jnp.int32),
             rejected_steps=_sum_field(components, "rejected_steps")
@@ -291,9 +297,6 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             + (finite & ~valid).astype(jnp.int32),
             nonfinite_trials=_sum_field(components, "nonfinite_trials")
             + (~finite).astype(jnp.int32),
-            counts_complete=all(
-                component.diagnostics.counts_complete for component in components
-            ),
         )
         return (
             NonlinearUpdateResult(
@@ -365,18 +368,42 @@ class AbstractNonlinearSchwarz(AbstractNonlinearUpdate):
             local_state = subdomain.state_space.validate(
                 subdomain.restrict_state(current)
             )
-            refreshed = refresh_nonlinear_update(
-                child,
-                subdomain.local_problem(),
-                local_state,
-                args=(current, args),
+            child_dynamic, child_static = eqx.partition(child, eqx.is_array)
+
+            def execute(_):
+                combined = eqx.combine(child_dynamic, child_static)
+                refreshed = refresh_nonlinear_update(
+                    combined,
+                    subdomain.local_problem(),
+                    local_state,
+                    args=(current, args),
+                )
+                result, next_child = apply_prepared_nonlinear_update(
+                    refreshed,
+                    local_state,
+                    args=(current, args),
+                    control=control,
+                )
+                next_dynamic, _ = eqx.partition(next_child, eqx.is_array)
+                return result, next_dynamic
+
+            def skip(_):
+                combined = eqx.combine(child_dynamic, child_static)
+                return (
+                    skipped_nonlinear_update_result(
+                        combined,
+                        local_state,
+                    ),
+                    child_dynamic,
+                )
+
+            result, next_dynamic = jax.lax.cond(
+                active,
+                execute,
+                skip,
+                operand=None,
             )
-            result, next_child = apply_prepared_nonlinear_update(
-                refreshed,
-                local_state,
-                args=(current, args),
-                control=control,
-            )
+            next_child = eqx.combine(next_dynamic, child_static)
             correction = jax.tree.map(
                 lambda new, old: new - old,
                 result.state,

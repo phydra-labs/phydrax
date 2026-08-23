@@ -810,6 +810,114 @@ def _initial_root_state(
     return problem, state, run, prepared_jacobian
 
 
+def _root_attempt_handoff(
+    method: NewtonKrylov | NewtonTrustRegion,
+    problem: NonlinearSystemProblem,
+    state: PyTree[Any],
+    residual: PyTree[Any],
+    auxiliary: Any,
+    previous_run: _RootState,
+    prepared_jacobian: Any,
+    args: Any,
+    /,
+):
+    """Start a Newton attempt from retained physical and derivative evidence."""
+    if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
+        raise TypeError("method must be NewtonKrylov or NewtonTrustRegion.")
+    state_ = problem.validate_state(state)
+    residual_ = problem.validate_residual(residual)
+    problem_ = problem.bind_spaces(state_, residual_)
+    residual_space = _bound_space(problem_.residual_space, "residual")
+    residual_norm = jnp.sqrt(
+        jnp.maximum(
+            jnp.real(residual_space.inner(residual_, residual_)),
+            0.0,
+        )
+    )
+    finite = tree_allfinite(state_) & tree_allfinite(residual_)
+    valid = problem_.valid(state_, residual_, auxiliary, args)
+    status = jnp.where(
+        finite & valid,
+        int(NonlinearStatus.ITERATING),
+        jnp.where(
+            finite,
+            int(NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE),
+            jnp.where(
+                tree_allfinite(state_),
+                int(NonlinearStatus.NONFINITE_EVALUATION),
+                int(NonlinearStatus.NONFINITE_INPUT),
+            ),
+        ),
+    ).astype(jnp.int32)
+    forcing = jnp.asarray(
+        (
+            method.linear_policy.tolerance.relative
+            if method.forcing_policy.strategy == "constant"
+            else method.forcing_policy.initial
+        ),
+        dtype=residual_norm.dtype,
+    )
+    trust_radius = (
+        method.trust_region.initial_radius
+        if isinstance(method, NewtonTrustRegion)
+        else jnp.nan
+    )
+    zero = jnp.asarray(0, dtype=jnp.int32)
+    run = _RootState(
+        residual=residual_,
+        auxiliary=auxiliary,
+        initial_residual_norm=residual_norm,
+        residual_norm=residual_norm,
+        step_norm=jnp.asarray(0.0, dtype=residual_norm.dtype),
+        iteration=zero,
+        residual_evaluations=zero,
+        jvp_evaluations=zero,
+        vjp_evaluations=zero,
+        jacobian_preparations=zero,
+        linear_solves=zero,
+        linear_iterations=zero,
+        accepted_steps=zero,
+        rejected_steps=zero,
+        globalization_rejections=zero,
+        domain_failures=(finite & ~valid).astype(jnp.int32),
+        nonfinite_trials=zero,
+        setup_refreshes=zero,
+        numeric_refreshes=zero,
+        forcing=forcing,
+        last_forcing=jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
+        jacobian_age=zero,
+        jacobian_reference_residual_norm=residual_norm,
+        jacobian_reference_rejected_steps=zero,
+        trust_radius=jnp.asarray(trust_radius, dtype=residual_norm.dtype),
+        status=status,
+        refresh_state=previous_run.refresh_state,
+        recycling=previous_run.recycling,
+        final_linear_status=jnp.asarray(-1, dtype=jnp.int32),
+        final_linear_rank=jnp.asarray(-1, dtype=jnp.int32),
+        final_linear_condition_estimate=jnp.asarray(
+            jnp.nan,
+            dtype=residual_norm.dtype,
+        ),
+        final_linear_residual_norm=jnp.asarray(
+            jnp.nan,
+            dtype=residual_norm.dtype,
+        ),
+        final_linear_converged=jnp.asarray(False),
+    )
+    jacobian = eqx.tree_at(
+        lambda value: value.residual,
+        prepared_jacobian,
+        residual_,
+    )
+    jacobian = eqx.tree_at(
+        lambda value: value.auxiliary,
+        jacobian,
+        auxiliary,
+        is_leaf=lambda value: value is None,
+    )
+    return problem_, state_, run, jacobian
+
+
 def _maybe_refresh_jacobian(
     problem: NonlinearSystemProblem,
     state: PyTree[Any],

@@ -28,6 +28,7 @@ from ._types import (
 from ._updates import (
     AbstractNonlinearUpdate,
     apply_prepared_nonlinear_update,
+    NonlinearUpdateControl,
     prepare_nonlinear_update,
     PreparedNonlinearUpdate,
 )
@@ -206,10 +207,31 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 current.prepared_update,
                 prepared_static,
             )
+            remaining_residual_evaluations = (
+                jnp.asarray(-1, dtype=jnp.int32)
+                if termination.maximum_evaluations is None
+                else jnp.maximum(
+                    termination.maximum_evaluations - current.residual_evaluations - 1,
+                    0,
+                )
+            )
+            remaining_linear_iterations = (
+                jnp.asarray(-1, dtype=jnp.int32)
+                if termination.maximum_linear_iterations is None
+                else jnp.maximum(
+                    termination.maximum_linear_iterations - current.linear_iterations,
+                    0,
+                )
+            )
+            update_control = NonlinearUpdateControl(
+                maximum_residual_evaluations=remaining_residual_evaluations,
+                maximum_linear_iterations=remaining_linear_iterations,
+            )
             update_result, next_prepared = apply_prepared_nonlinear_update(
                 combined_prepared,
                 state_tree,
                 args=args,
+                control=update_control,
             )
             next_prepared_dynamic, _ = eqx.partition(next_prepared, eqx.is_array)
             proposed_state = source.flatten(update_result.state)
@@ -243,11 +265,22 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             )
 
             def search_condition(item):
+                within_evaluations = (
+                    jnp.asarray(True)
+                    if termination.maximum_evaluations is None
+                    else (
+                        current.residual_evaluations
+                        + update_result.diagnostics.residual_evaluations
+                        + item.steps
+                        < termination.maximum_evaluations
+                    )
+                )
                 return (
                     update_result.applied
                     & ~item.accepted
                     & (item.steps < self.maximum_search_steps)
                     & (item.rate > self.minimum_rate)
+                    & within_evaluations
                 )
 
             def search_body(item):

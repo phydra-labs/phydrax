@@ -26,6 +26,7 @@ from ._updates import (
     NonlinearUpdateStatus,
     PreparedNonlinearUpdate,
 )
+from ._work import NonlinearWork
 
 
 FASCycleKind: TypeAlias = Literal["v", "w", "f"]
@@ -453,6 +454,14 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
             counts_complete=False,
         )
 
+    @property
+    def maximum_work(self) -> NonlinearWork:
+        return NonlinearWork(
+            residual_evaluations=2,
+            local_updates=1,
+            complete=False,
+        )
+
     def _prepare_internal(self, problem, state, args, /):
         del problem, state, args
         return None
@@ -479,97 +488,106 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
     ):
         problem = prepared.problem
         state_ = prepared.plan.state_space.validate(state)
-        initial_residual, initial_auxiliary = problem.evaluate(state_, args)
-        initial_norm = _space_norm(prepared.plan.residual_space, initial_residual)
-        hard_budget_requested = any(
-            value is not None
-            for value in (
-                control.maximum_residual_evaluations,
-                control.maximum_jacobian_preparations,
-                control.maximum_linear_solves,
-                control.maximum_linear_iterations,
-            )
-        )
-        if hard_budget_requested:
+
+        def skipped(_):
             diagnostics = NonlinearUpdateDiagnostics(
-                initial_residual_norm=initial_norm,
-                final_residual_norm=initial_norm,
+                initial_residual_norm=jnp.asarray(jnp.nan),
+                final_residual_norm=jnp.asarray(jnp.nan),
                 step_norm=0.0,
-                residual_evaluations=1,
-                counts_complete=False,
+                work=NonlinearWork.zero(complete=False),
             )
             return (
                 NonlinearUpdateResult(
                     state=state_,
-                    residual=initial_residual,
-                    auxiliary=initial_auxiliary,
+                    residual=prepared.plan.residual_space.zeros(),
+                    auxiliary=prepared.reference_auxiliary,
                     status=NonlinearUpdateStatus.BUDGET_EXHAUSTED,
                     diagnostics=diagnostics,
                     provenance=NonlinearUpdateProvenance(
                         problem_id=problem.problem_id,
                         update_id=self.update_id,
                         plan_id=prepared.plan.plan_id,
-                        notes="FAS smoother/coarse work is not fully countable.",
+                        notes="FAS work is incomplete under a finite budget.",
                     ),
                 ),
                 prepared.internal_state,
             )
-        cycle = fas_cycle(
-            self.hierarchy,
-            state_,
-            args=args,
-            policy=self.policy,
-        )
-        residual, auxiliary = problem.evaluate(cycle.state, args)
-        final_norm = _space_norm(prepared.plan.residual_space, residual)
-        finite = (
-            tree_allfinite(cycle.state)
-            & tree_allfinite(residual)
-            & cycle.diagnostics.finite
-        )
-        valid = problem.valid(cycle.state, residual, auxiliary, args)
-        status = jnp.where(
-            ~finite,
-            int(NonlinearUpdateStatus.NONFINITE_EVALUATION),
-            jnp.where(
-                ~valid,
-                int(NonlinearUpdateStatus.DOMAIN_REJECTED),
-                int(NonlinearUpdateStatus.APPLIED),
-            ),
-        ).astype(jnp.int32)
-        diagnostics = NonlinearUpdateDiagnostics(
-            initial_residual_norm=initial_norm,
-            final_residual_norm=final_norm,
-            step_norm=_space_norm(
-                prepared.plan.state_space,
-                jax.tree.map(lambda new, old: new - old, cycle.state, state_),
-            ),
-            residual_evaluations=2,
-            accepted_steps=(status == int(NonlinearUpdateStatus.APPLIED)).astype(
-                jnp.int32
-            ),
-            rejected_steps=(status != int(NonlinearUpdateStatus.APPLIED)).astype(
-                jnp.int32
-            ),
-            domain_failures=(finite & ~valid).astype(jnp.int32),
-            nonfinite_trials=(~finite).astype(jnp.int32),
-            counts_complete=False,
-        )
-        return (
-            NonlinearUpdateResult(
-                state=cycle.state,
-                residual=residual,
-                auxiliary=auxiliary,
-                status=status,
-                diagnostics=diagnostics,
-                provenance=NonlinearUpdateProvenance(
-                    problem_id=problem.problem_id,
-                    update_id=self.update_id,
-                    plan_id=prepared.plan.plan_id,
-                    notes=f"cycle={self.policy.kind};hierarchy={self.hierarchy.hierarchy_id}",
+
+        def execute(_):
+            initial_residual, _ = problem.evaluate(state_, args)
+            initial_norm = _space_norm(
+                prepared.plan.residual_space,
+                initial_residual,
+            )
+            cycle = fas_cycle(
+                self.hierarchy,
+                state_,
+                args=args,
+                policy=self.policy,
+            )
+            residual, auxiliary = problem.evaluate(cycle.state, args)
+            final_norm = _space_norm(prepared.plan.residual_space, residual)
+            finite = (
+                tree_allfinite(cycle.state)
+                & tree_allfinite(residual)
+                & cycle.diagnostics.finite
+            )
+            valid = problem.valid(cycle.state, residual, auxiliary, args)
+            status = jnp.where(
+                ~finite,
+                int(NonlinearUpdateStatus.NONFINITE_EVALUATION),
+                jnp.where(
+                    ~valid,
+                    int(NonlinearUpdateStatus.DOMAIN_REJECTED),
+                    int(NonlinearUpdateStatus.APPLIED),
                 ),
-            ),
-            prepared.internal_state,
+            ).astype(jnp.int32)
+            diagnostics = NonlinearUpdateDiagnostics(
+                initial_residual_norm=initial_norm,
+                final_residual_norm=final_norm,
+                step_norm=_space_norm(
+                    prepared.plan.state_space,
+                    jax.tree.map(
+                        lambda new, old: new - old,
+                        cycle.state,
+                        state_,
+                    ),
+                ),
+                work=self.maximum_work,
+                accepted_steps=(status == int(NonlinearUpdateStatus.APPLIED)).astype(
+                    jnp.int32
+                ),
+                rejected_steps=(status != int(NonlinearUpdateStatus.APPLIED)).astype(
+                    jnp.int32
+                ),
+                domain_failures=(finite & ~valid).astype(jnp.int32),
+                nonfinite_trials=(~finite).astype(jnp.int32),
+            )
+            return (
+                NonlinearUpdateResult(
+                    state=cycle.state,
+                    residual=residual,
+                    auxiliary=auxiliary,
+                    status=status,
+                    diagnostics=diagnostics,
+                    provenance=NonlinearUpdateProvenance(
+                        problem_id=problem.problem_id,
+                        update_id=self.update_id,
+                        plan_id=prepared.plan.plan_id,
+                        notes=(
+                            f"cycle={self.policy.kind};"
+                            f"hierarchy={self.hierarchy.hierarchy_id}"
+                        ),
+                    ),
+                ),
+                prepared.internal_state,
+            )
+
+        return jax.lax.cond(
+            control.permits(self.maximum_work),
+            execute,
+            skipped,
+            operand=None,
         )
 
 

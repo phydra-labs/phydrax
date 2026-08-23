@@ -1,0 +1,474 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+from __future__ import annotations
+
+import importlib
+import importlib.util
+from typing import Any, Callable
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import numpy as np
+from jax.flatten_util import ravel_pytree
+from jaxtyping import PyTree
+
+from .._tree_math import validate_real_inexact_tree
+from ._constrained_model import prepare_constrained_model
+from ._iterative import (
+    AbstractMinimizationMethod,
+    LeastSquaresResult,
+    MinimizationResult,
+    NonlinearLeastSquaresProblem,
+    OptimizationCapabilities,
+    OptimizationDiagnostics,
+    OptimizationProvenance,
+    OptimizationStatus,
+    OptimizationTermination,
+)
+
+
+def _module(name: str):
+    if importlib.util.find_spec(name) is None:
+        raise ImportError(f"Optional nonlinear backend {name!r} is not installed.")
+    return importlib.import_module(name)
+
+
+def _certify_minimization(problem, parameters, args, termination, backend_success):
+    objective, auxiliary = problem.value(parameters, args)
+    gradient = jax.grad(lambda value: problem.value(value, args)[0])(parameters)
+    flat_gradient, _ = ravel_pytree(gradient)
+    if problem.constraints or problem.bounds is not None:
+        constrained = prepare_constrained_model(problem, parameters, args=args)
+        evaluation = constrained.evaluate(parameters, args)
+        feasibility = evaluation.primal_feasibility
+        raw_jacobian = evaluation.constraint_jacobian
+        equality_jacobian = raw_jacobian[constrained.equality_indices]
+        inequality_jacobian = jnp.concatenate(
+            [
+                raw_jacobian[constrained.lower_indices],
+                -raw_jacobian[constrained.upper_indices],
+            ],
+            axis=0,
+        )
+        active = evaluation.inequality_slacks <= jnp.sqrt(termination.absolute_optimality)
+        active_jacobian = inequality_jacobian[active]
+        multiplier_matrix = jnp.concatenate(
+            [
+                jnp.conj(equality_jacobian.T),
+                -jnp.conj(active_jacobian.T),
+            ],
+            axis=1,
+        )
+        if multiplier_matrix.shape[1]:
+            multipliers = jnp.linalg.lstsq(
+                multiplier_matrix,
+                -flat_gradient,
+                rcond=None,
+            )[0]
+            stationarity = flat_gradient + multiplier_matrix @ multipliers
+        else:
+            stationarity = flat_gradient
+        optimality = jnp.maximum(
+            jnp.linalg.norm(stationarity, ord=jnp.inf),
+            feasibility,
+        )
+    else:
+        optimality = jnp.linalg.norm(flat_gradient, ord=jnp.inf)
+        feasibility = jnp.asarray(0.0, dtype=objective.dtype)
+    certified = (
+        jnp.asarray(backend_success)
+        & jnp.isfinite(objective)
+        & jnp.isfinite(optimality)
+        & (optimality <= termination.absolute_optimality)
+        & (feasibility <= termination.absolute_optimality)
+    )
+    return objective, auxiliary, optimality, feasibility, certified
+
+
+class SciPyMinimize(AbstractMinimizationMethod):
+    """Host SciPy minimization with independent Phydrax recertification."""
+
+    method: str = eqx.field(static=True)
+    options: dict[str, Any] = eqx.field(static=True)
+
+    def __init__(
+        self, method: str = "L-BFGS-B", /, *, options: dict[str, Any] | None = None
+    ):
+        identifier = str(method)
+        if not identifier:
+            raise ValueError("SciPy method must be non-empty.")
+        self.method = identifier
+        self.options = {} if options is None else dict(options)
+
+    @property
+    def method_id(self):
+        return f"scipy/{self.method.lower()}"
+
+    @property
+    def capabilities(self):
+        return OptimizationCapabilities(
+            scalar_objective=True,
+            residual_objective=False,
+            matrix_free=False,
+            prepared_refresh=False,
+            implicit_differentiation=False,
+        )
+
+    def solve(self, problem, initial_parameters, /, *, termination, args):
+        scipy_optimize = _module("scipy.optimize")
+        parameters = validate_real_inexact_tree(initial_parameters, name="parameters")
+        coordinates, unflatten = ravel_pytree(parameters)
+
+        def objective(value):
+            return float(problem.value(unflatten(jnp.asarray(value)), args)[0])
+
+        def gradient(value):
+            point = unflatten(jnp.asarray(value))
+            result = jax.grad(lambda candidate: problem.value(candidate, args)[0])(point)
+            return np.asarray(ravel_pytree(result)[0], dtype=float)
+
+        bounds = None
+        if problem.bounds is not None:
+            lower, upper = problem.bounds.materialize(parameters)
+            lower_coordinates, _ = ravel_pytree(lower)
+            upper_coordinates, _ = ravel_pytree(upper)
+            bounds = list(
+                zip(
+                    np.asarray(lower_coordinates),
+                    np.asarray(upper_coordinates),
+                    strict=True,
+                )
+            )
+        constraints = []
+        for constraint in problem.constraints:
+            value = constraint.value(parameters, args)
+            lower, upper = constraint.bounds(value)
+            constraints.append(
+                scipy_optimize.NonlinearConstraint(
+                    lambda candidate, constraint=constraint: np.asarray(
+                        ravel_pytree(
+                            constraint.value(unflatten(jnp.asarray(candidate)), args)
+                        )[0]
+                    ),
+                    np.asarray(ravel_pytree(lower)[0]),
+                    np.asarray(ravel_pytree(upper)[0]),
+                )
+            )
+        options = dict(self.options)
+        options.setdefault("maxiter", termination.maximum_steps)
+        result = scipy_optimize.minimize(
+            objective,
+            np.asarray(coordinates),
+            jac=gradient,
+            bounds=bounds,
+            constraints=constraints,
+            method=self.method,
+            options=options,
+        )
+        final_parameters = unflatten(jnp.asarray(result.x, dtype=coordinates.dtype))
+        objective_value, auxiliary, optimality, feasibility, certified = (
+            _certify_minimization(
+                problem,
+                final_parameters,
+                args,
+                termination,
+                result.success,
+            )
+        )
+        status = jnp.where(
+            certified,
+            int(OptimizationStatus.SUCCESS),
+            int(OptimizationStatus.BACKEND_FAILED),
+        ).astype(jnp.int32)
+        diagnostics = OptimizationDiagnostics(
+            iterations=int(result.nit),
+            objective_evaluations=int(result.nfev),
+            gradient_evaluations=int(result.njev),
+            final_optimality_norm=optimality,
+            primal_feasibility=feasibility,
+        )
+        return MinimizationResult(
+            final_parameters,
+            objective_value,
+            auxiliary,
+            status,
+            diagnostics,
+            OptimizationProvenance(
+                problem_id=problem.problem_id,
+                method=self.method_id,
+                backend="scipy",
+                globalization=self.method,
+                matrix_free=False,
+                implicit_differentiation=False,
+                notes=str(result.message),
+            ),
+        )
+
+
+class NLoptMinimize(AbstractMinimizationMethod):
+    """Optional NLopt scalar minimization with a caller-selected algorithm ID."""
+
+    algorithm: int = eqx.field(static=True)
+
+    def __init__(self, algorithm: int, /):
+        self.algorithm = int(algorithm)
+
+    @property
+    def method_id(self):
+        return f"nlopt/{self.algorithm}"
+
+    @property
+    def capabilities(self):
+        return OptimizationCapabilities(
+            scalar_objective=True,
+            residual_objective=False,
+            matrix_free=False,
+            prepared_refresh=False,
+            implicit_differentiation=False,
+        )
+
+    def solve(self, problem, initial_parameters, /, *, termination, args):
+        if problem.constraints:
+            raise ValueError(
+                "NLoptMinimize currently supports bounds only; nonlinear "
+                "constraints require an explicit backend-specific method."
+            )
+        nlopt = _module("nlopt")
+        parameters = validate_real_inexact_tree(initial_parameters, name="parameters")
+        coordinates, unflatten = ravel_pytree(parameters)
+        optimizer = nlopt.opt(self.algorithm, coordinates.size)
+        optimizer.set_maxeval(
+            termination.maximum_evaluations
+            if termination.maximum_evaluations is not None
+            else termination.maximum_steps * 10
+        )
+        optimizer.set_ftol_abs(termination.absolute_optimality)
+        if problem.bounds is not None:
+            lower, upper = problem.bounds.materialize(parameters)
+            optimizer.set_lower_bounds(np.asarray(ravel_pytree(lower)[0]))
+            optimizer.set_upper_bounds(np.asarray(ravel_pytree(upper)[0]))
+
+        def objective(value, gradient_buffer):
+            point = unflatten(jnp.asarray(value))
+            if gradient_buffer.size:
+                derivative = jax.grad(
+                    lambda candidate: problem.value(candidate, args)[0]
+                )(point)
+                gradient_buffer[:] = np.asarray(ravel_pytree(derivative)[0])
+            return float(problem.value(point, args)[0])
+
+        optimizer.set_min_objective(objective)
+        final_coordinates = optimizer.optimize(np.asarray(coordinates))
+        final_parameters = unflatten(jnp.asarray(final_coordinates))
+        objective_value, auxiliary, optimality, feasibility, certified = (
+            _certify_minimization(
+                problem,
+                final_parameters,
+                args,
+                termination,
+                optimizer.last_optimize_result() > 0,
+            )
+        )
+        status = jnp.where(
+            certified,
+            int(OptimizationStatus.SUCCESS),
+            int(OptimizationStatus.BACKEND_FAILED),
+        ).astype(jnp.int32)
+        return MinimizationResult(
+            final_parameters,
+            objective_value,
+            auxiliary,
+            status,
+            OptimizationDiagnostics(
+                objective_evaluations=optimizer.get_numevals(),
+                final_optimality_norm=optimality,
+                primal_feasibility=feasibility,
+            ),
+            OptimizationProvenance(
+                problem_id=problem.problem_id,
+                method=self.method_id,
+                backend="nlopt",
+                globalization="backend-selected",
+                matrix_free=False,
+                implicit_differentiation=False,
+            ),
+        )
+
+
+class IpoptMinimize(AbstractMinimizationMethod):
+    """Optional cyipopt minimization boundary with Phydrax KKT recertification."""
+
+    options: dict[str, Any] = eqx.field(static=True)
+
+    def __init__(self, *, options: dict[str, Any] | None = None):
+        self.options = {} if options is None else dict(options)
+
+    @property
+    def method_id(self):
+        return "ipopt"
+
+    @property
+    def capabilities(self):
+        return OptimizationCapabilities(
+            scalar_objective=True,
+            residual_objective=False,
+            matrix_free=False,
+            prepared_refresh=False,
+            implicit_differentiation=False,
+        )
+
+    def solve(self, problem, initial_parameters, /, *, termination, args):
+        cyipopt = _module("cyipopt")
+        scipy_optimize = _module("scipy.optimize")
+        parameters = validate_real_inexact_tree(initial_parameters, name="parameters")
+        coordinates, unflatten = ravel_pytree(parameters)
+        options = dict(self.options)
+        options.setdefault("max_iter", termination.maximum_steps)
+        bounds = None
+        if problem.bounds is not None:
+            lower, upper = problem.bounds.materialize(parameters)
+            bounds = list(
+                zip(
+                    np.asarray(ravel_pytree(lower)[0]),
+                    np.asarray(ravel_pytree(upper)[0]),
+                    strict=True,
+                )
+            )
+        constraints = []
+        for constraint in problem.constraints:
+            value = constraint.value(parameters, args)
+            lower, upper = constraint.bounds(value)
+            constraints.append(
+                scipy_optimize.NonlinearConstraint(
+                    lambda candidate, constraint=constraint: np.asarray(
+                        ravel_pytree(
+                            constraint.value(
+                                unflatten(jnp.asarray(candidate)),
+                                args,
+                            )
+                        )[0]
+                    ),
+                    np.asarray(ravel_pytree(lower)[0]),
+                    np.asarray(ravel_pytree(upper)[0]),
+                )
+            )
+        result = cyipopt.minimize_ipopt(
+            lambda value: float(problem.value(unflatten(jnp.asarray(value)), args)[0]),
+            np.asarray(coordinates),
+            jac=lambda value: np.asarray(
+                ravel_pytree(
+                    jax.grad(lambda candidate: problem.value(candidate, args)[0])(
+                        unflatten(jnp.asarray(value))
+                    )
+                )[0]
+            ),
+            bounds=bounds,
+            constraints=constraints,
+            options=options,
+        )
+        final_parameters = unflatten(jnp.asarray(result.x))
+        objective_value, auxiliary, optimality, feasibility, certified = (
+            _certify_minimization(
+                problem, final_parameters, args, termination, result.success
+            )
+        )
+        return MinimizationResult(
+            final_parameters,
+            objective_value,
+            auxiliary,
+            jnp.where(
+                certified,
+                int(OptimizationStatus.SUCCESS),
+                int(OptimizationStatus.BACKEND_FAILED),
+            ),
+            OptimizationDiagnostics(
+                iterations=int(result.nit),
+                objective_evaluations=int(result.nfev),
+                gradient_evaluations=int(result.njev),
+                final_optimality_norm=optimality,
+                primal_feasibility=feasibility,
+            ),
+            OptimizationProvenance(
+                problem_id=problem.problem_id,
+                method=self.method_id,
+                backend="ipopt",
+                globalization="filter-interior-point",
+                matrix_free=False,
+                implicit_differentiation=False,
+                notes=str(result.message),
+            ),
+        )
+
+
+def ceres_least_squares(
+    problem: NonlinearLeastSquaresProblem,
+    initial_parameters: PyTree[Any],
+    solver: Callable[[NonlinearLeastSquaresProblem, PyTree[Any], Any], Any],
+    /,
+    *,
+    termination: OptimizationTermination | None = None,
+    args: Any = None,
+) -> LeastSquaresResult:
+    if not callable(solver):
+        raise TypeError("solver must be callable.")
+    termination_ = OptimizationTermination() if termination is None else termination
+    backend = solver(problem, initial_parameters, args)
+    if not isinstance(backend, tuple) or len(backend) != 3:
+        raise TypeError("Ceres boundary must return (parameters, success, summary).")
+    parameters, backend_success, summary = backend
+    residual, auxiliary = problem.value(parameters, args)
+    residual_vector, _ = ravel_pytree(residual)
+    gradient = jax.grad(
+        lambda value: (
+            0.5
+            * jnp.real(
+                jnp.vdot(
+                    ravel_pytree(problem.value(value, args)[0])[0],
+                    ravel_pytree(problem.value(value, args)[0])[0],
+                )
+            )
+        )
+    )(parameters)
+    gradient_vector, _ = ravel_pytree(gradient)
+    optimality = jnp.linalg.norm(gradient_vector, ord=jnp.inf)
+    certified = (
+        jnp.asarray(backend_success)
+        & jnp.all(jnp.isfinite(residual_vector))
+        & (optimality <= termination_.absolute_optimality)
+    )
+    return LeastSquaresResult(
+        parameters,
+        residual,
+        0.5 * jnp.real(jnp.vdot(residual_vector, residual_vector)),
+        auxiliary,
+        jnp.where(
+            certified,
+            int(OptimizationStatus.SUCCESS),
+            int(OptimizationStatus.BACKEND_FAILED),
+        ),
+        OptimizationDiagnostics(
+            residual_evaluations=1,
+            vjp_evaluations=1,
+            final_optimality_norm=optimality,
+        ),
+        OptimizationProvenance(
+            problem_id=problem.problem_id,
+            method="ceres",
+            backend="ceres-callback",
+            globalization="backend-selected",
+            matrix_free=False,
+            implicit_differentiation=False,
+            notes=str(summary),
+        ),
+    )
+
+
+__all__ = [
+    "IpoptMinimize",
+    "NLoptMinimize",
+    "SciPyMinimize",
+    "ceres_least_squares",
+]

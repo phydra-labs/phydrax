@@ -541,6 +541,43 @@ scalar losses. `GeneralizedGaussNewton` additionally retains signed
 the residual Gauss--Newton operator plus the exact scalar Hessian action, never the square
 root of an already reduced scalar objective.
 
+### Block residual graphs and robust least squares
+
+`ResidualGraphProblem` lowers explicit `ParameterBlock` and `ResidualBlock`
+objects to the ordinary `NonlinearLeastSquaresProblem` contract. Blocks declare
+parameter dependencies, weights/covariances, robust losses, bounds, manifold
+retractions, and elimination groups. A one-callback residual lowers to one
+parameter block and one residual block rather than creating a second convention.
+
+Robust losses provide `rho`, first derivative, second derivative, and convex
+model evidence. Native choices are identity, Huber, soft-L1, Cauchy, arctangent,
+Tukey, and scaled composition. `linearize_residual_graph` assembles each factor
+only over the parameter blocks it references. Its robust normal model retains
+the radial second-order block curvature and clips only a negative radial
+eigenvalue, with the number of clipped blocks retained as evidence.
+
+`prepare_residual_graph` fixes block shapes, factor adjacency, and elimination
+ordering. `plan_least_squares_route` selects dense QR/SVD, portable LSMR, or
+Schur execution from active dimension, rank, density, and elimination evidence;
+constant parameter blocks do not consume solve coordinates. `solve_residual_graph`
+executes that plan, reports the route and plan IDs, and uses
+`prepare_schur_plan`/`solve_schur_system` when Schur elimination is selected.
+Route planning is therefore executable policy rather than advisory metadata.
+
+The trust-region residual family includes traditional and subspace dogleg,
+dogbox, trust-region reflective bounds, matrix-free bounded GN/LM, and POUNDERS
+residual interpolation. `VariableProjectionProblem` eliminates a declared
+linear coefficient block at every nonlinear point and differentiates the
+reduced residual. `POUNDERS` is model-based derivative-free least squares; its
+public success is independently recertified from finite-difference physical
+stationarity and bounds, not from the interpolation model's stopping flag. It
+is distinct from coordinate finite-difference Gauss--Newton.
+
+Factor graph lifecycle functions track changed factors, affected parameters,
+relinearization thresholds, factor/parameter versions, and topology-changing
+add/remove operations. `FactorGraphCertificate` checks objective stationarity,
+finiteness, and manifold membership at the same returned parameters.
+
 ### Bounds and nonlinear constraints
 
 `Bounds` materializes scalar or PyTree lower and upper values against the parameter tree,
@@ -565,6 +602,24 @@ address the Maratos effect. Elastic restoration has a distinct failure status.
 keeps primal, dual, slack, and complementarity residuals separate, and explicitly
 rejects infeasible or nonfinite initial states. Nested methods aggregate only observable
 work counters; unavailable counts remain explicitly incomplete.
+
+`prepare_constrained_model` fixes the canonical equality/lower/upper ordering,
+source identities, objective and constraint scaling, Jacobian layout, and
+Lagrangian Hessian. `SQP(hessian_update=...)` supports damped BFGS, SR1, and
+exact Lagrangian Hessians. `FilterInteriorPoint` provides affine predictor,
+Mehrotra corrector, fraction-to-boundary, objective-feasibility filter,
+adaptive barrier, and restoration. Both predictor and corrector use one
+condensed KKT factorization per iteration; `FilterInteriorPointEvidence`
+reports factorization builds, right-hand-side solves, and actual reuse.
+
+`plan_kkt` chooses augmented, null-space, or range-space policy from primal and
+constraint dimensions and Jacobian density. `factor_kkt` builds one
+inertia-corrected canonical factorization; `solve_factored_kkt` reuses it for
+additional right-hand sides, while `solve_kkt` is the one-shot convenience
+form. Final interior-point success is reconciled against an independently
+reconstructed physical active-set KKT certificate. An internal success whose
+stationarity, feasibility, regularity, or complementarity misses tolerance is
+returned as explicit certification failure.
 
 !!! example
     ```python
@@ -607,6 +662,11 @@ singular active KKT matrix raises an explicit runtime error; Phydrax does not ch
 subgradient at an active-set transition. The solution map supports forward and reverse
 mode, filtered JIT, nested parameter and argument PyTrees, and batching. Constraint
 topology and bound roles remain static across transformed calls.
+
+`constrained_solution_jvp` and `constrained_solution_vjp` expose both
+`fixed-active` and `barrier` derivative systems with condition and active-set
+evidence. The fixed-active route uses only the certified active inequalities;
+the barrier route differentiates positive slack-multiplier complementarity.
 
 !!! example
     ```python
@@ -1246,6 +1306,29 @@ bypassing their domain contract.
         members:
             - __init__
 
+### Model-based and multistart search
+
+`BOBYQA` and `COBYQA` share the same quadratic interpolation, poisedness, trust
+region, and polling kernel. BOBYQA accepts bounds only; COBYQA evaluates the
+physical objective plus explicit feasibility merit and independently reports
+the final physical objective and feasibility. Neither method claims global
+optimality.
+
+`MultiStartPolicy` deterministically generates bounded-uniform or normal starts,
+divides the declared work budget across local solves, retains every status and
+objective, and returns the best certified local result. `POUNDERS` is the
+residual-wise counterpart for black-box least squares.
+
+`nonlinear_peer_manifest.json` freezes source revisions and exact runtime
+identities. Peer runners reject runtime-identity, revision, and
+initial-fingerprint mismatches before comparison.
+`best_nonlinear_campaigns.py` writes ordinary flat JSON rows. Backend outcomes
+and independent mathematical certificates remain separate; unavailable
+evidence uses `null` rather than non-finite sentinels, and cold, warmup, and
+repeated steady timing remain distinct. Performance profiles are formed per
+family and compatible work unit. Global rows certify a known global target gap
+rather than relabeling local stationarity as global evidence.
+
 ## External optimizer compatibility
 
 | Object | Standalone nonlinear API | `FunctionalSolver` | `fit_operator` | Geometry/UQ search |
@@ -1257,6 +1340,10 @@ bypassing their domain contract.
 | Phydrax Riemannian optimizers | No | Yes | No | No |
 | `DifferentialEvolutionSearch` | No | No | No | Yes, through semantic adapters |
 | `OptimistixMethod` | Yes | No | No | No |
+| `SciPyMinimize` | Yes, host-only | No | No | No |
+| `NLoptMinimize` | Yes when NLopt is installed | No | No | No |
+| `IpoptMinimize` | Yes when cyipopt is installed | No | No | No |
+| `ceres_least_squares` | Explicit callback boundary | No | No | No |
 
 `FunctionalSolver.solve` accepts standard and extra-argument Optax transformations,
 Phydrax KFAC and Riemannian optimizers, and native scalar, least-squares, and composite

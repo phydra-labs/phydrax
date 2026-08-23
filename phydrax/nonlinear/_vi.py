@@ -18,7 +18,8 @@ from .._bounds import Bounds
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, tree_norm, validate_real_inexact_tree
-from ..linalg import PyTreeSpace
+from ..linalg import LinearSystem, PyTreeSpace, solve as solve_linear
+from ._linearization import prepare_jacobian
 from ._newton import NewtonKrylov
 from ._prepared import (
     prepare_nonlinear,
@@ -525,6 +526,465 @@ def refresh_variational_inequality(
     )
 
 
+class _ProjectedVISearch(StrictModule):
+    state: PyTree[Array]
+    residual: PyTree[Array]
+    auxiliary: Any
+    residual_norm: Array
+    rate: Array
+    evaluations: Array
+    accepted: Array
+    finite_seen: Array
+    domain_failures: Array
+    nonfinite_trials: Array
+
+
+class _ProjectedVIRun(StrictModule):
+    state: PyTree[Array]
+    residual: PyTree[Array]
+    auxiliary: Any
+    initial_residual_norm: Array
+    residual_norm: Array
+    step_norm: Array
+    iteration: Array
+    residual_evaluations: Array
+    jvp_evaluations: Array
+    vjp_evaluations: Array
+    jacobian_preparations: Array
+    linear_solves: Array
+    linear_iterations: Array
+    accepted_steps: Array
+    rejected_steps: Array
+    domain_failures: Array
+    nonfinite_trials: Array
+    final_linear_status: Array
+    final_linear_residual_norm: Array
+    final_linear_converged: Array
+    status: Array
+
+
+def _solve_projected_semismooth(
+    prepared: PreparedVariationalInequalitySolve,
+    termination: NonlinearTermination,
+    /,
+) -> NonlinearResult:
+    problem = prepared.problem
+    method = prepared.method
+    args = prepared.args
+    nonlinear_problem = problem.as_nonlinear_problem(
+        method.formulation,
+        derivative_policy=method.derivative_policy,
+        project_trials=False,
+    )
+    state = problem.bounds.project(prepared.nonlinear.state)
+    residual, auxiliary = nonlinear_problem.evaluate(state, args)
+    initial_norm = tree_norm(residual)
+    finite = tree_allfinite(state) & tree_allfinite(residual)
+    valid = nonlinear_problem.valid(state, residual, auxiliary, args)
+    converged = (
+        finite & valid & (initial_norm <= termination.residual_threshold(initial_norm))
+    )
+    run = _ProjectedVIRun(
+        state=state,
+        residual=residual,
+        auxiliary=auxiliary,
+        initial_residual_norm=initial_norm,
+        residual_norm=initial_norm,
+        step_norm=jnp.asarray(0.0, dtype=initial_norm.dtype),
+        iteration=jnp.asarray(0, dtype=jnp.int32),
+        residual_evaluations=jnp.asarray(1, dtype=jnp.int32),
+        jvp_evaluations=jnp.asarray(0, dtype=jnp.int32),
+        vjp_evaluations=jnp.asarray(0, dtype=jnp.int32),
+        jacobian_preparations=jnp.asarray(0, dtype=jnp.int32),
+        linear_solves=jnp.asarray(0, dtype=jnp.int32),
+        linear_iterations=jnp.asarray(0, dtype=jnp.int32),
+        accepted_steps=jnp.asarray(0, dtype=jnp.int32),
+        rejected_steps=jnp.asarray(0, dtype=jnp.int32),
+        domain_failures=(finite & ~valid).astype(jnp.int32),
+        nonfinite_trials=(~finite).astype(jnp.int32),
+        final_linear_status=jnp.asarray(-1, dtype=jnp.int32),
+        final_linear_residual_norm=jnp.asarray(
+            jnp.nan,
+            dtype=initial_norm.dtype,
+        ),
+        final_linear_converged=jnp.asarray(False),
+        status=jnp.where(
+            converged,
+            int(NonlinearStatus.SUCCESS),
+            jnp.where(
+                finite & valid,
+                int(NonlinearStatus.ITERATING),
+                jnp.where(
+                    finite,
+                    int(NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE),
+                    int(NonlinearStatus.NONFINITE_INPUT),
+                ),
+            ),
+        ).astype(jnp.int32),
+    )
+
+    def condition(current):
+        within_evaluations = (
+            jnp.asarray(True)
+            if termination.maximum_evaluations is None
+            else current.residual_evaluations < termination.maximum_evaluations
+        )
+        within_linear = (
+            jnp.asarray(True)
+            if termination.maximum_linear_iterations is None
+            else current.linear_iterations < termination.maximum_linear_iterations
+        )
+        return (
+            (current.status == int(NonlinearStatus.ITERATING))
+            & (current.iteration < termination.maximum_steps)
+            & within_evaluations
+            & within_linear
+        )
+
+    def body(current):
+        jacobian = prepare_jacobian(
+            nonlinear_problem,
+            current.state,
+            method.newton.jacobian_policy,
+            args,
+        )
+        right_hand_side = jax.tree.map(jnp.negative, jacobian.residual)
+        linear_result = solve_linear(
+            LinearSystem(jacobian.operator),
+            right_hand_side,
+            policy=method.newton.linear_policy,
+        )
+        newton_direction = linear_result.value
+        newton_image = jacobian.operator.mv(newton_direction)
+        newton_slope = jnp.real(
+            PyTreeSpace(jacobian.residual).inner(
+                jacobian.residual,
+                newton_image,
+            )
+        )
+        linear_usable = (
+            linear_result.diagnostics.converged
+            & tree_allfinite(newton_direction)
+            & jnp.isfinite(newton_slope)
+            & (newton_slope < 0.0)
+        )
+        if jacobian.operator.capabilities.adjoint:
+            merit_gradient = jacobian.operator.adjoint_mv(jacobian.residual)
+        else:
+            merit_gradient = nonlinear_problem.state_space.unflatten(
+                nonlinear_problem.residual_space.flatten(jacobian.residual)
+            )
+        fallback_direction = jax.tree.map(jnp.negative, merit_gradient)
+        direction = jax.tree.map(
+            lambda newton_value, fallback_value: jnp.where(
+                linear_usable,
+                newton_value,
+                fallback_value,
+            ),
+            newton_direction,
+            fallback_direction,
+        )
+        direction_image = jacobian.operator.mv(direction)
+        slope = jnp.real(
+            PyTreeSpace(jacobian.residual).inner(
+                jacobian.residual,
+                direction_image,
+            )
+        )
+        initial_rate = jnp.asarray(
+            method.newton.line_search.initial_rate,
+            dtype=current.residual_norm.dtype,
+        )
+        search = _ProjectedVISearch(
+            state=current.state,
+            residual=current.residual,
+            auxiliary=current.auxiliary,
+            residual_norm=current.residual_norm,
+            rate=initial_rate,
+            evaluations=jnp.asarray(0, dtype=jnp.int32),
+            accepted=jnp.asarray(False),
+            finite_seen=jnp.asarray(False),
+            domain_failures=jnp.asarray(0, dtype=jnp.int32),
+            nonfinite_trials=jnp.asarray(0, dtype=jnp.int32),
+        )
+
+        def search_condition(item):
+            within_evaluations = (
+                jnp.asarray(True)
+                if termination.maximum_evaluations is None
+                else (
+                    current.residual_evaluations
+                    + jacobian.residual_evaluations
+                    + item.evaluations
+                    < termination.maximum_evaluations
+                )
+            )
+            return (
+                ~item.accepted
+                & (item.evaluations < method.newton.line_search.maximum_steps)
+                & (item.rate >= method.newton.line_search.minimum_rate)
+                & within_evaluations
+            )
+
+        def search_body(item):
+            raw = jax.tree.map(
+                lambda value, delta: value + item.rate * delta,
+                current.state,
+                direction,
+            )
+            candidate = problem.bounds.project(raw)
+            candidate_residual, candidate_auxiliary = nonlinear_problem.evaluate(
+                candidate, args
+            )
+            candidate_norm = tree_norm(candidate_residual)
+            candidate_finite = tree_allfinite(candidate) & tree_allfinite(
+                candidate_residual
+            )
+            candidate_valid = nonlinear_problem.valid(
+                candidate,
+                candidate_residual,
+                candidate_auxiliary,
+                args,
+            )
+            merit = 0.5 * candidate_norm * candidate_norm
+            current_merit = 0.5 * current.residual_norm * current.residual_norm
+            projected_step = jax.tree.map(
+                lambda new, old: new - old,
+                candidate,
+                current.state,
+            )
+            projected_nonzero = tree_norm(projected_step) > 0.0
+            accepted = (
+                candidate_finite
+                & candidate_valid
+                & projected_nonzero
+                & (
+                    merit
+                    <= current_merit
+                    + method.newton.line_search.sufficient_decrease
+                    * item.rate
+                    * jnp.minimum(slope, -1e-30)
+                )
+            )
+            return _ProjectedVISearch(
+                state=jax.tree.map(
+                    lambda proposed, old: jnp.where(
+                        accepted,
+                        proposed,
+                        old,
+                    ),
+                    candidate,
+                    item.state,
+                ),
+                residual=jax.tree.map(
+                    lambda proposed, old: jnp.where(
+                        accepted,
+                        proposed,
+                        old,
+                    ),
+                    candidate_residual,
+                    item.residual,
+                ),
+                auxiliary=jax.tree.map(
+                    lambda proposed, old: jnp.where(
+                        accepted,
+                        proposed,
+                        old,
+                    ),
+                    candidate_auxiliary,
+                    item.auxiliary,
+                ),
+                residual_norm=jnp.where(
+                    accepted,
+                    candidate_norm,
+                    item.residual_norm,
+                ),
+                rate=jnp.where(
+                    accepted,
+                    item.rate,
+                    method.newton.line_search.contraction * item.rate,
+                ),
+                evaluations=item.evaluations + 1,
+                accepted=accepted,
+                finite_seen=item.finite_seen | (candidate_finite & candidate_valid),
+                domain_failures=item.domain_failures
+                + (candidate_finite & ~candidate_valid).astype(jnp.int32),
+                nonfinite_trials=item.nonfinite_trials
+                + (~candidate_finite).astype(jnp.int32),
+            )
+
+        search = jax.lax.while_loop(
+            search_condition,
+            search_body,
+            search,
+        )
+        step = jax.tree.map(
+            lambda new, old: new - old,
+            search.state,
+            current.state,
+        )
+        step_norm = tree_norm(step)
+        converged = search.accepted & (
+            search.residual_norm
+            <= termination.residual_threshold(current.initial_residual_norm)
+        )
+        stagnated = (
+            search.accepted
+            & ~converged
+            & (step_norm <= termination.step_threshold(tree_norm(current.state)))
+        )
+        linear_iterations = jnp.sum(
+            linear_result.diagnostics.iterations,
+            dtype=jnp.int32,
+        )
+        next_evaluations = (
+            current.residual_evaluations
+            + jacobian.residual_evaluations
+            + search.evaluations
+        )
+        next_linear_iterations = current.linear_iterations + linear_iterations
+        evaluations_exhausted = (
+            jnp.asarray(False)
+            if termination.maximum_evaluations is None
+            else next_evaluations >= termination.maximum_evaluations
+        )
+        linear_exhausted = (
+            jnp.asarray(False)
+            if termination.maximum_linear_iterations is None
+            else next_linear_iterations >= termination.maximum_linear_iterations
+        )
+        status = jnp.where(
+            converged,
+            int(NonlinearStatus.SUCCESS),
+            jnp.where(
+                stagnated,
+                int(NonlinearStatus.RESIDUAL_STAGNATION),
+                jnp.where(
+                    evaluations_exhausted,
+                    int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
+                    jnp.where(
+                        linear_exhausted,
+                        int(NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED),
+                        jnp.where(
+                            search.accepted,
+                            int(NonlinearStatus.ITERATING),
+                            jnp.where(
+                                search.finite_seen,
+                                int(NonlinearStatus.LINE_SEARCH_FAILED),
+                                jnp.where(
+                                    search.domain_failures > 0,
+                                    int(NonlinearStatus.RECOVERABLE_DOMAIN_FAILURE),
+                                    int(NonlinearStatus.NONFINITE_EVALUATION),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ).astype(jnp.int32)
+        return _ProjectedVIRun(
+            state=jax.tree.map(
+                lambda proposed, old: jnp.where(
+                    search.accepted,
+                    proposed,
+                    old,
+                ),
+                search.state,
+                current.state,
+            ),
+            residual=jax.tree.map(
+                lambda proposed, old: jnp.where(
+                    search.accepted,
+                    proposed,
+                    old,
+                ),
+                search.residual,
+                current.residual,
+            ),
+            auxiliary=jax.tree.map(
+                lambda proposed, old: jnp.where(
+                    search.accepted,
+                    proposed,
+                    old,
+                ),
+                search.auxiliary,
+                current.auxiliary,
+            ),
+            initial_residual_norm=current.initial_residual_norm,
+            residual_norm=jnp.where(
+                search.accepted,
+                search.residual_norm,
+                current.residual_norm,
+            ),
+            step_norm=step_norm,
+            iteration=current.iteration + 1,
+            residual_evaluations=next_evaluations,
+            jvp_evaluations=current.jvp_evaluations
+            + jnp.sum(
+                linear_result.diagnostics.matvec_count,
+                dtype=jnp.int32,
+            )
+            + 2,
+            vjp_evaluations=current.vjp_evaluations
+            + jnp.sum(
+                linear_result.diagnostics.adjoint_matvec_count,
+                dtype=jnp.int32,
+            )
+            + 1,
+            jacobian_preparations=current.jacobian_preparations + 1,
+            linear_solves=current.linear_solves + 1,
+            linear_iterations=next_linear_iterations,
+            accepted_steps=current.accepted_steps + search.accepted.astype(jnp.int32),
+            rejected_steps=current.rejected_steps + (~search.accepted).astype(jnp.int32),
+            domain_failures=current.domain_failures + search.domain_failures,
+            nonfinite_trials=current.nonfinite_trials + search.nonfinite_trials,
+            final_linear_status=linear_result.status,
+            final_linear_residual_norm=(linear_result.diagnostics.residual_norm),
+            final_linear_converged=(linear_result.diagnostics.converged),
+            status=status,
+        )
+
+    run = jax.lax.while_loop(condition, body, run)
+    exhausted_status = jnp.where(
+        run.status == int(NonlinearStatus.ITERATING),
+        int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+        run.status,
+    ).astype(jnp.int32)
+    diagnostics = NonlinearDiagnostics(
+        initial_residual_norm=run.initial_residual_norm,
+        final_residual_norm=run.residual_norm,
+        final_step_norm=run.step_norm,
+        iterations=run.iteration,
+        residual_evaluations=run.residual_evaluations,
+        jvp_evaluations=run.jvp_evaluations,
+        vjp_evaluations=run.vjp_evaluations,
+        jacobian_preparations=run.jacobian_preparations,
+        linear_solves=run.linear_solves,
+        linear_iterations=run.linear_iterations,
+        accepted_steps=run.accepted_steps,
+        rejected_steps=run.rejected_steps,
+        domain_failures=run.domain_failures,
+        nonfinite_trials=run.nonfinite_trials,
+        final_linear_status=run.final_linear_status,
+        final_linear_residual_norm=run.final_linear_residual_norm,
+        final_linear_converged=run.final_linear_converged,
+    )
+    return NonlinearResult(
+        state=run.state,
+        residual=run.residual,
+        auxiliary=run.auxiliary,
+        status=exhausted_status,
+        diagnostics=diagnostics,
+        provenance=NonlinearProvenance(
+            problem_id=nonlinear_problem.problem_id,
+            method_id="semismooth-newton/projected",
+            derivative_id=method.newton.jacobian_policy.mode,
+            globalization_id="projected-complementarity-armijo",
+            notes="Operator evaluations are restricted to the closed box.",
+        ),
+    )
+
+
 def solve_prepared_variational_inequality(
     prepared: PreparedVariationalInequalitySolve,
     /,
@@ -536,9 +996,13 @@ def solve_prepared_variational_inequality(
     termination_ = prepared.termination if termination is None else termination
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be NonlinearTermination or None.")
-    result = solve_prepared_nonlinear(
-        prepared.nonlinear,
-        termination=termination_,
+    result = (
+        _solve_projected_semismooth(prepared, termination_)
+        if prepared.method.feasibility == "preserve-box"
+        else solve_prepared_nonlinear(
+            prepared.nonlinear,
+            termination=termination_,
+        )
     )
     return _certify_variational_inequality_result(
         prepared.problem,
@@ -600,6 +1064,7 @@ def _certify_variational_inequality_result(
         status=certified_status,
         diagnostics=diagnostics,
         provenance=provenance,
+        attempts=result.attempts,
     )
     return VariationalInequalityResult(
         nonlinear_result=certified_result,

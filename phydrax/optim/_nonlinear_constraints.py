@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -605,6 +605,7 @@ class SQP(AbstractMinimizationMethod):
     qp_regularization: float = eqx.field(static=True)
     max_dense_dimension: int = eqx.field(static=True)
     active_tolerance: float = eqx.field(static=True)
+    hessian_update: Literal["bfgs", "sr1", "exact"] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -619,6 +620,7 @@ class SQP(AbstractMinimizationMethod):
         qp_regularization: float = 1e-8,
         max_dense_dimension: int = 512,
         active_tolerance: float = 1e-8,
+        hessian_update: Literal["bfgs", "sr1", "exact"] = "bfgs",
     ):
         search = ArmijoLineSearch() if line_search is None else line_search
         scalars = tuple(
@@ -639,6 +641,8 @@ class SQP(AbstractMinimizationMethod):
             filter_globalization, FilterGlobalization
         ):
             raise TypeError("filter_globalization must be a FilterGlobalization or None.")
+        if hessian_update not in ("bfgs", "sr1", "exact"):
+            raise ValueError("hessian_update must be 'bfgs', 'sr1', or 'exact'.")
         if any(not isfinite(value) or value <= 0.0 for value in scalars[:3]):
             raise ValueError(
                 "Merit, Hessian, and QP tolerances must be positive and finite."
@@ -659,6 +663,7 @@ class SQP(AbstractMinimizationMethod):
         ) = scalars
         self.qp_maximum_steps = qp_steps
         self.max_dense_dimension = dense_dimension
+        self.hessian_update = hessian_update
 
     @property
     def method_id(self) -> str:
@@ -1210,6 +1215,60 @@ def _bfgs_update(matrix: Array, step: Array, gradient_change: Array, /) -> Array
     )
     symmetric = 0.5 * (updated + updated.T)
     return jnp.where(usable_update, symmetric, matrix)
+
+
+def _sr1_update(
+    matrix: Array,
+    step: Array,
+    gradient_change: Array,
+    /,
+    *,
+    tolerance: float = 1e-8,
+) -> Array:
+    difference = gradient_change - matrix @ step
+    denominator = jnp.vdot(difference, step).real
+    threshold = tolerance * jnp.linalg.norm(difference) * jnp.linalg.norm(step)
+    usable = (
+        jnp.isfinite(denominator)
+        & (jnp.abs(denominator) > threshold)
+        & jnp.all(jnp.isfinite(difference))
+    )
+    candidate = matrix + jnp.outer(difference, jnp.conj(difference)) / jnp.where(
+        jnp.abs(denominator) > 0.0,
+        denominator,
+        1.0,
+    )
+    symmetric = 0.5 * (candidate + jnp.conj(candidate.T))
+    return jnp.where(usable, symmetric, matrix)
+
+
+def _exact_lagrangian_hessian(
+    problem: MinimizationProblem,
+    layout: _ConstraintLayout,
+    parameters: PyTree[Any],
+    equality_multipliers: Array,
+    inequality_multipliers: Array,
+    args: Any,
+    /,
+) -> Array:
+    coordinates, unflatten = ravel_pytree(parameters)
+
+    def lagrangian(value):
+        point = unflatten(value)
+        objective = problem.value(point, args)[0]
+        equality, inequality = _canonical_constraints(
+            problem,
+            layout,
+            point,
+            args,
+        )
+        return jnp.real(
+            objective
+            + jnp.vdot(equality_multipliers, equality)
+            + jnp.vdot(inequality_multipliers, inequality)
+        )
+
+    return jax.hessian(lagrangian)(coordinates)
 
 
 class _FilterSearchResult(eqx.Module):
@@ -1942,11 +2001,31 @@ def _solve_sqp(
                         equality_multipliers,
                         inequality_multipliers,
                     )
-                    hessian = _bfgs_update(
-                        state.hessian,
-                        candidate_flat - flat_parameters,
-                        (next_lagrangian_gradient - previous_lagrangian_gradient),
+                    step_coordinates = candidate_flat - flat_parameters
+                    gradient_change = (
+                        next_lagrangian_gradient - previous_lagrangian_gradient
                     )
+                    if method.hessian_update == "exact":
+                        hessian = _exact_lagrangian_hessian(
+                            problem,
+                            layout,
+                            candidate_parameters,
+                            equality_multipliers,
+                            inequality_multipliers,
+                            args,
+                        )
+                    elif method.hessian_update == "sr1":
+                        hessian = _sr1_update(
+                            state.hessian,
+                            step_coordinates,
+                            gradient_change,
+                        )
+                    else:
+                        hessian = _bfgs_update(
+                            state.hessian,
+                            step_coordinates,
+                            gradient_change,
+                        )
                     stagnated = final_step_norm <= termination.step_threshold(
                         jnp.linalg.norm(candidate_flat)
                     )
