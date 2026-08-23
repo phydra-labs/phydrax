@@ -16,7 +16,7 @@ from ..data import OperatorBatch, OperatorPrediction
 from ..engine import AbstractOperatorModel
 from ..sharding import OperatorShardingPolicy
 from ..task import _freeze_json, OperatorTask
-from ._dtype import OperatorDTypePolicy
+from ._dtype import OperatorDTypePolicy, OperatorPrecisionEvidence
 from ._execution import (
     operator_contract_fingerprint,
     operator_normalization_fingerprint,
@@ -104,6 +104,10 @@ class TrainedOperator(StrictModule):
     @property
     def dtype_policy(self) -> OperatorDTypePolicy:
         return self.execution_plan.dtype_policy
+
+    @property
+    def precision_evidence(self) -> OperatorPrecisionEvidence:
+        return self.execution_plan.precision_evidence
 
     @property
     def training_evidence(self) -> OperatorTrainingEvidence:

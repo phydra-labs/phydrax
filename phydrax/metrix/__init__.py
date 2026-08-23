@@ -209,6 +209,7 @@ from ._patchwise import (
     PatchwiseMetric,
     PatchwiseTensorField,
 )
+from ._precision import GeometryPrecisionPolicy
 from ._product_spectrum import product_laplacian_eigenbasis
 from ._quantum_density import (
     bures_squared_distance,
@@ -340,6 +341,7 @@ __all__ = [
     "EuclideanStateGeometry",
     "FixedRankManifold",
     "FrechetMeanResult",
+    "GeometryPrecisionPolicy",
     "GrassmannManifold",
     "ObliqueManifold",
     "HyperboloidManifold",

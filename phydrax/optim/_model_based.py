@@ -9,11 +9,20 @@ from math import isfinite
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jaxtyping import PyTree
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve as solve_linear,
+)
 from ._constrained_model import prepare_constrained_model
 from ._interpolation_model import (
     coordinate_interpolation_points,
@@ -31,6 +40,10 @@ from ._iterative import (
 )
 
 
+def _coordinate_norm(value, precision: NonlinearPrecisionPolicy, /):
+    return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
+
+
 ModelBasedKind: TypeAlias = Literal["bobyqa", "cobyqa"]
 
 
@@ -42,6 +55,8 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
     maximum_radius: float = eqx.field(static=True)
     penalty: float = eqx.field(static=True)
     maximum_dimension: int = eqx.field(static=True)
+    linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -51,6 +66,8 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         maximum_radius: float = 1e3,
         penalty: float = 100.0,
         maximum_dimension: int = 64,
+        linear: LinearSolvePolicy | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         values = tuple(
             float(value)
@@ -66,6 +83,12 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             raise ValueError("Model-based controls must be finite and positive.")
         if not values[1] <= values[0] <= values[2] or dimension < 1:
             raise ValueError("Model-based radius ordering or dimension is invalid.")
+        linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         (
             self.initial_radius,
             self.minimum_radius,
@@ -73,6 +96,8 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             self.penalty,
         ) = values
         self.maximum_dimension = dimension
+        self.linear = linear_
+        self.precision = precision_
 
     @property
     @abc.abstractmethod
@@ -104,6 +129,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
     ) -> MinimizationResult:
         if not isinstance(problem, MinimizationProblem):
             raise TypeError("problem must be MinimizationProblem.")
+        self.precision.validate_tolerance(termination.absolute_optimality)
         if self.kind == "bobyqa" and problem.bounds is None:
             raise ValueError("BOBYQA requires parameter bounds.")
         if self.kind == "bobyqa" and problem.constraints:
@@ -112,6 +138,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         if problem.bounds is not None:
             parameters = problem.bounds.project(parameters)
         center, unflatten = ravel_pytree(parameters)
+        coordinate_dtype = center.dtype
         if center.size > self.maximum_dimension:
             raise ValueError("Model-based dimension exceeds maximum_dimension.")
         constrained = (
@@ -121,6 +148,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         )
 
         def evaluate(coordinates):
+            coordinates = jnp.asarray(coordinates, dtype=coordinate_dtype)
             value = unflatten(coordinates)
             if problem.bounds is not None:
                 value = problem.bounds.project(value)
@@ -131,7 +159,10 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
                 if constrained is None
                 else constrained.evaluate(value, args).primal_feasibility
             )
-            merit = objective + self.penalty * feasibility * feasibility
+            merit = self.precision.decision(
+                self.precision.accumulation(objective)
+                + self.penalty * self.precision.accumulation(feasibility) ** 2
+            )
             return coordinates, objective, feasibility, merit, auxiliary
 
         radius = self.initial_radius
@@ -145,7 +176,13 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         merit = center_eval[3]
         auxiliary = center_eval[4]
         evaluations = len(evaluated) + 1
-        model = fit_quadratic_scalar_model(points, values, center, radius)
+        model = fit_quadratic_scalar_model(
+            points,
+            values,
+            center,
+            radius,
+            precision=self.precision,
+        )
         accepted = rejected = iterations = 0
         step_norm = 0.0
         ratio = jnp.asarray(jnp.nan, dtype=objective.dtype)
@@ -157,7 +194,12 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         ):
             gradient = model.gradient(center)
             hessian = model.hessian(center)
-            optimality = jnp.linalg.norm(gradient, ord=jnp.inf)
+            optimality = self.precision.decision(
+                jnp.linalg.norm(
+                    self.precision.accumulation(gradient),
+                    ord=jnp.inf,
+                )
+            )
             if initial_optimality is None:
                 initial_optimality = optimality
             if float(optimality) <= float(
@@ -166,11 +208,20 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
                 status = int(OptimizationStatus.SUCCESS)
                 break
             regularized = hessian + 1e-8 * jnp.eye(center.size, dtype=hessian.dtype)
-            newton_step = jnp.linalg.solve(regularized, -gradient)
+            linear_result = solve_linear(
+                LinearSystem(DenseLinearOperator(regularized)),
+                -gradient,
+                policy=self.precision.bind_linear(self.linear),
+            )
+            newton_step = self.precision.direction(linear_result.value)
             newton_step = (
                 jnp.minimum(
                     1.0,
-                    radius / jnp.maximum(jnp.linalg.norm(newton_step), 1e-30),
+                    radius
+                    / jnp.maximum(
+                        _coordinate_norm(newton_step, self.precision),
+                        1e-30,
+                    ),
                 )
                 * newton_step
             )
@@ -178,13 +229,23 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
                 -radius
                 * gradient
                 / jnp.maximum(
-                    jnp.linalg.norm(gradient),
+                    _coordinate_norm(gradient, self.precision),
                     1e-30,
                 )
             )
             step = jnp.where(
                 jnp.all(jnp.isfinite(newton_step))
-                & (jnp.real(jnp.vdot(gradient, newton_step)) < 0.0)
+                & (
+                    self.precision.decision(
+                        jnp.real(
+                            jnp.sum(
+                                jnp.conj(self.precision.accumulation(gradient))
+                                * self.precision.accumulation(newton_step)
+                            )
+                        )
+                    )
+                    < 0.0
+                )
                 & (model.condition_estimate < 1e12),
                 newton_step,
                 cauchy_step,
@@ -228,19 +289,39 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
                 accepted += 1
             else:
                 rejected += 1
-            replace = int(jnp.argmax(jnp.linalg.norm(points - center[None, :], axis=1)))
+            replace = int(
+                jnp.argmax(
+                    jnp.linalg.norm(
+                        self.precision.accumulation(points - center[None, :]),
+                        axis=1,
+                    )
+                )
+            )
             points = points.at[replace].set(candidate[0])
             values = values.at[replace].set(candidate[3])
             if ratio < 0.25 or not finite:
                 radius = max(self.minimum_radius, 0.25 * radius)
-            elif ratio > 0.75 and jnp.linalg.norm(step) >= 0.9 * radius:
+            elif (
+                ratio > 0.75
+                and _coordinate_norm(
+                    step,
+                    self.precision,
+                )
+                >= 0.9 * radius
+            ):
                 radius = min(self.maximum_radius, 2.0 * radius)
-            model = fit_quadratic_scalar_model(points, values, center, radius)
+            model = fit_quadratic_scalar_model(
+                points,
+                values,
+                center,
+                radius,
+                precision=self.precision,
+            )
             evaluations += 1
             iterations += 1
-            step_norm = float(jnp.linalg.norm(step))
+            step_norm = float(_coordinate_norm(step, self.precision))
             if accept and step_norm <= float(
-                termination.step_threshold(jnp.linalg.norm(center))
+                termination.step_threshold(_coordinate_norm(center, self.precision))
             ):
                 status = int(OptimizationStatus.STAGNATION)
             elif not accept and radius <= self.minimum_radius:
@@ -260,7 +341,12 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             minus = evaluate(center - direction)[3]
             gradient_columns.append((plus - minus) / (2.0 * finite_difference_step))
         independent_gradient = jnp.stack(gradient_columns)
-        final_optimality = jnp.linalg.norm(independent_gradient, ord=jnp.inf)
+        final_optimality = self.precision.decision(
+            jnp.linalg.norm(
+                self.precision.accumulation(independent_gradient),
+                ord=jnp.inf,
+            )
+        )
         if (
             float(final_optimality)
             <= float(
@@ -272,7 +358,11 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
         ):
             status = int(OptimizationStatus.SUCCESS)
         evaluations += 2 * center.size
-        parameters = unflatten(center)
+        model_parameters = unflatten(center)
+        output_parameters = jax.tree.map(
+            self.precision.output,
+            model_parameters,
+        )
         diagnostics = OptimizationDiagnostics(
             iterations=iterations,
             accepted_steps=accepted,
@@ -295,15 +385,26 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             globalization="quadratic-interpolation-trust-region",
             matrix_free=False,
             implicit_differentiation=False,
-            notes=f"poisedness-condition={float(model.condition_estimate):.6g}",
+            precision_policy_id=self.precision.policy_id,
+            notes=(
+                f"poisedness-condition={float(model.condition_estimate):.6g};"
+                f"linear-plan={model.linear_plan_id}"
+            ),
+        )
+        precision_evidence = self.precision.evidence_for(
+            model_parameters,
+            unflatten(self.precision.residual(independent_gradient)),
+            children={"interpolation-model": model.precision_evidence},
+            output_value=output_parameters,
         )
         return MinimizationResult(
-            parameters,
-            objective,
+            output_parameters,
+            self.precision.output(objective),
             auxiliary,
             status,
             diagnostics,
             provenance,
+            precision_evidence=precision_evidence,
         )
 
 

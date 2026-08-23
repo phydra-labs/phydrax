@@ -10,17 +10,31 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ._precision import TensorNetworkPrecisionPolicy
 
 
 class MatrixProductState(StrictModule):
     tensors: tuple[Array, ...]
+    precision: TensorNetworkPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     site_count: int
     physical_dimensions: tuple[int, ...]
     bond_dimensions: tuple[int, ...]
 
-    def __init__(self, tensors: Sequence[ArrayLike], /):
-        values = tuple(jnp.asarray(tensor) for tensor in tensors)
+    def __init__(
+        self,
+        tensors: Sequence[ArrayLike],
+        /,
+        *,
+        precision: TensorNetworkPrecisionPolicy | None = None,
+    ):
+        precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, TensorNetworkPrecisionPolicy):
+            raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
+        values = tuple(precision_.storage(jnp.asarray(tensor)) for tensor in tensors)
+        precision_.validate_storage(values)
         if not values or any(tensor.ndim != 3 for tensor in values):
             raise ValueError("MPS tensors must have shape (left, physical, right).")
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
@@ -29,13 +43,16 @@ class MatrixProductState(StrictModule):
             if left.shape[-1] != right.shape[0]:
                 raise ValueError("Adjacent MPS bond dimensions must match.")
         self.tensors = values
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence_for(values)
         self.site_count = len(values)
         self.physical_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
         self.bond_dimensions = tuple(int(tensor.shape[-1]) for tensor in values[:-1])
 
-    def to_dense(self) -> Array:
-        state = self.tensors[0][0]
-        for tensor in self.tensors[1:]:
+    def _contract(self) -> Array:
+        tensors = self.precision.contraction(self.tensors)
+        state = tensors[0][0]
+        for tensor in tensors[1:]:
             state = jnp.tensordot(state, tensor, axes=(-1, 0))
         return state[..., 0].reshape(-1)
 
@@ -47,7 +64,7 @@ class MatrixProductState(StrictModule):
     def norm(self) -> Array:
         from ._environments import mps_norm_squared
 
-        return jnp.sqrt(mps_norm_squared(self))
+        return self.precision.decision(jnp.sqrt(mps_norm_squared(self)))
 
     def normalized(self) -> MatrixProductState:
         norm = self.norm()
@@ -57,17 +74,29 @@ class MatrixProductState(StrictModule):
             "MPS norm must be finite and positive.",
         )
         tensors = (self.tensors[0] / norm,) + self.tensors[1:]
-        return MatrixProductState(tensors)
+        return MatrixProductState(tensors, precision=self.precision)
 
 
 class MatrixProductOperator(StrictModule):
     tensors: tuple[Array, ...]
+    precision: TensorNetworkPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     site_count: int
     output_dimensions: tuple[int, ...]
     input_dimensions: tuple[int, ...]
 
-    def __init__(self, tensors: Sequence[ArrayLike], /):
-        values = tuple(jnp.asarray(tensor) for tensor in tensors)
+    def __init__(
+        self,
+        tensors: Sequence[ArrayLike],
+        /,
+        *,
+        precision: TensorNetworkPrecisionPolicy | None = None,
+    ):
+        precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, TensorNetworkPrecisionPolicy):
+            raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
+        values = tuple(precision_.storage(jnp.asarray(tensor)) for tensor in tensors)
+        precision_.validate_storage(values)
         if not values or any(tensor.ndim != 4 for tensor in values):
             raise ValueError("MPO tensors require (left, output, input, right).")
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
@@ -76,31 +105,46 @@ class MatrixProductOperator(StrictModule):
             if left.shape[-1] != right.shape[0]:
                 raise ValueError("Adjacent MPO bonds must match.")
         self.tensors = values
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence_for(values)
         self.site_count = len(values)
         self.output_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
         self.input_dimensions = tuple(int(tensor.shape[2]) for tensor in values)
 
     def to_dense(self) -> Array:
-        operator = self.tensors[0][0]
-        for tensor in self.tensors[1:]:
+        tensors = self.precision.contraction(self.tensors)
+        operator = tensors[0][0]
+        for tensor in tensors[1:]:
             operator = jnp.tensordot(operator, tensor, axes=(-1, 0))
         operator = operator[..., 0]
         output_axes = tuple(range(0, 2 * self.site_count, 2))
         input_axes = tuple(range(1, 2 * self.site_count, 2))
         operator = jnp.transpose(operator, output_axes + input_axes)
-        return operator.reshape(
-            (prod(self.output_dimensions), prod(self.input_dimensions))
+        return self.precision.output(
+            operator.reshape((prod(self.output_dimensions), prod(self.input_dimensions)))
         )
 
 
 class LocallyPurifiedDensity(StrictModule):
     tensors: tuple[Array, ...]
+    precision: TensorNetworkPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     site_count: int
     physical_dimensions: tuple[int, ...]
     purification_dimensions: tuple[int, ...]
 
-    def __init__(self, tensors: Sequence[ArrayLike], /):
-        values = tuple(jnp.asarray(tensor) for tensor in tensors)
+    def __init__(
+        self,
+        tensors: Sequence[ArrayLike],
+        /,
+        *,
+        precision: TensorNetworkPrecisionPolicy | None = None,
+    ):
+        precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, TensorNetworkPrecisionPolicy):
+            raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
+        values = tuple(precision_.storage(jnp.asarray(tensor)) for tensor in tensors)
+        precision_.validate_storage(values)
         if not values or any(tensor.ndim != 4 for tensor in values):
             raise ValueError(
                 "Purification tensors require (left, physical, kraus, right)."
@@ -111,13 +155,16 @@ class LocallyPurifiedDensity(StrictModule):
             if left.shape[-1] != right.shape[0]:
                 raise ValueError("Adjacent purification bonds must match.")
         self.tensors = values
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence_for(values)
         self.site_count = len(values)
         self.physical_dimensions = tuple(int(tensor.shape[1]) for tensor in values)
         self.purification_dimensions = tuple(int(tensor.shape[2]) for tensor in values)
 
-    def amplitude(self) -> Array:
-        amplitude = self.tensors[0][0]
-        for tensor in self.tensors[1:]:
+    def _amplitude(self) -> Array:
+        tensors = self.precision.contraction(self.tensors)
+        amplitude = tensors[0][0]
+        for tensor in tensors[1:]:
             amplitude = jnp.tensordot(amplitude, tensor, axes=(-1, 0))
         amplitude = amplitude[..., 0]
         physical_axes = tuple(range(0, 2 * self.site_count, 2))
@@ -130,20 +177,20 @@ class LocallyPurifiedDensity(StrictModule):
     def raw_trace(self) -> Array:
         from ._environments import lpdo_raw_trace
 
-        return lpdo_raw_trace(self)
+        return self.precision.decision(lpdo_raw_trace(self))
 
     def to_dense_density(self, /, *, normalize: bool = False) -> Array:
-        amplitude = self.amplitude()
-        density = amplitude @ jnp.conj(amplitude.T)
+        amplitude = self.precision.contraction(self._amplitude())
+        density = self.precision.accumulation(amplitude @ jnp.conj(amplitude.T))
         if not normalize:
-            return density
-        trace = jnp.real(jnp.trace(density))
+            return self.precision.output(density)
+        trace = self.precision.decision(jnp.real(self.precision.sum(jnp.diag(density))))
         trace = eqx.error_if(
             trace,
             ~jnp.isfinite(trace) | (trace <= 0.0),
             "LPDO trace must be finite and positive.",
         )
-        return density / trace
+        return self.precision.output(density / trace)
 
     def normalized(self) -> LocallyPurifiedDensity:
         trace = self.raw_trace()
@@ -153,7 +200,7 @@ class LocallyPurifiedDensity(StrictModule):
             "LPDO trace must be finite and positive.",
         )
         tensors = (self.tensors[0] / jnp.sqrt(trace),) + self.tensors[1:]
-        return LocallyPurifiedDensity(tensors)
+        return LocallyPurifiedDensity(tensors, precision=self.precision)
 
 
 # Local import avoids exposing a utility dependency in public signatures.

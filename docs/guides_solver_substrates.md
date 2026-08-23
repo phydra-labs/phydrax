@@ -208,7 +208,9 @@ overflow; `AMRMigrationPlan` moves active slots without exposing inactive NaN/In
 uses conservative cell or nested nodal transfers, selectable damped Jacobi,
 red-black Gauss-Seidel, or bounded-axis line smoothing, and a nullspace-aware dense
 coarse pseudoinverse. V/W/F/full cycle semantics come from the generic
-`phydrax.linalg` hierarchy.
+`phydrax.linalg` hierarchy. Transfer storage and fields follow the bound
+`FDExecutionPrecisionPolicy`; compatibility, gauge, and residual-norm decisions
+remain in its certification precision.
 
 ## Execution, distribution, and production lifecycle
 
@@ -224,7 +226,8 @@ model.
 
 `FDExecutionPreflightPlan` accounts for state, halo, compact-stencil metadata,
 temporaries, fixed-capacity AMR, and checkpoint copies under an explicit
-`FDPrecisionPolicy` and memory budget.
+`FDExecutionPrecisionPolicy` and memory budget. Its resource-assumption identity
+and the executable policy identity are both retained in the estimate.
 
 `FDCheckpointPlan` writes checksum-validated pickle-free fields and auxiliary PML,
 AMR, partition, and integrator state. `FDActionAdjointPlan` transposes fixed-topology

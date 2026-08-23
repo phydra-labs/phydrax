@@ -10,6 +10,7 @@ from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
 from ...._flow_matching_metric import AbstractFlowMatchingMetric
+from ...._geometry_precision import GeometryPrecisionPolicy
 from ...._trainable import NonTrainableState
 from ..data import FunctionSamples, OperatorOutputSpec
 from ._physics import operator_hilbert_norm
@@ -21,6 +22,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
     query: FunctionSamples
     output_spec: OperatorOutputSpec
     channel_metric: Array | None
+    precision: GeometryPrecisionPolicy
     event_shape: tuple[int, ...] = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
 
@@ -31,6 +33,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
         /,
         *,
         channel_metric: ArrayLike | None = None,
+        precision: GeometryPrecisionPolicy | None = None,
         metric_id: str | None = None,
     ):
         if not isinstance(query, FunctionSamples):
@@ -41,6 +44,9 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
             raise ValueError(
                 "Operator flow matching requires one fixed query geometry per metric."
             )
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
         metric = None if channel_metric is None else jnp.asarray(channel_metric)
         channels = 1 if output_spec.channels == "scalar" else int(output_spec.channels)
         if metric is not None and metric.shape != (channels, channels):
@@ -58,6 +64,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
                     "channel_metric_shape": None
                     if metric is None
                     else list(metric.shape),
+                    "precision_policy_id": precision_.policy_id,
                 }
             )
             if metric_id is None
@@ -68,6 +75,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
         self.query = query
         self.output_spec = output_spec
         self.channel_metric = metric
+        self.precision = precision_
         self.event_shape = events
         self.metric_id = resolved_id
 
@@ -88,16 +96,25 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
                 f"Operator flow-matching values must have fixed event shape "
                 f"{self.event_shape}."
             )
-        residual = predicted_velocity - target_velocity
+        self.precision.validate_coordinates(state)
+        residual = self.precision.accumulation(
+            self.precision.compute(predicted_velocity)
+            - self.precision.compute(target_velocity)
+        )
+        channel_metric = (
+            None
+            if self.channel_metric is None
+            else self.precision.accumulation(self.precision.compute(self.channel_metric))
+        )
         value = operator_hilbert_norm(
             residual,
             self.query,
             case_shape=(),
-            channel_metric=self.channel_metric,
+            channel_metric=channel_metric,
             squared=True,
             reduction="none",
         )
-        return jnp.asarray(value, dtype=float).reshape(())
+        return self.precision.decision(value).reshape(())
 
 
 __all__ = ["OperatorFlowMatchingMetric"]

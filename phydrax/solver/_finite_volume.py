@@ -54,12 +54,8 @@ class UnsplitFiniteVolumeSSPRK3Plan(StrictModule, NonTrainableState):
         time_ = jnp.asarray(time).reshape(())
         value = jnp.asarray(state)
         dt = jnp.asarray(step_size).reshape(())
-        updated = ssprk33_step(
-            self.dynamics, time_, value, dt, args
-        )
-        return FiniteVolumeStepResult(
-            updated, time_ + dt, dt, self.temporal_method_id
-        )
+        updated = ssprk33_step(self.dynamics, time_, value, dt, args)
+        return FiniteVolumeStepResult(updated, time_ + dt, dt, self.temporal_method_id)
 
 
 class DirectionalSplitFiniteVolumePlan(StrictModule, NonTrainableState):
@@ -103,9 +99,7 @@ class DirectionalSplitFiniteVolumePlan(StrictModule, NonTrainableState):
     ) -> Array:
         first_rate = self.dynamics.axis_residual(time, state, axis, args)
         predictor = state + step_size * first_rate
-        second_rate = self.dynamics.axis_residual(
-            time + step_size, predictor, axis, args
-        )
+        second_rate = self.dynamics.axis_residual(time + step_size, predictor, axis, args)
         return state + 0.5 * step_size * (first_rate + second_rate)
 
     def _auxiliary_rhs(
@@ -151,13 +145,9 @@ class DirectionalSplitFiniteVolumePlan(StrictModule, NonTrainableState):
                 updated = self._heun_axis(time_ + half, updated, half, axis, args)
         first_auxiliary = self._auxiliary_rhs(time_, updated, args)
         auxiliary_predictor = updated + dt * first_auxiliary
-        second_auxiliary = self._auxiliary_rhs(
-            time_ + dt, auxiliary_predictor, args
-        )
+        second_auxiliary = self._auxiliary_rhs(time_ + dt, auxiliary_predictor, args)
         updated = updated + 0.5 * dt * (first_auxiliary + second_auxiliary)
-        return FiniteVolumeStepResult(
-            updated, time_ + dt, dt, self.temporal_method_id
-        )
+        return FiniteVolumeStepResult(updated, time_ + dt, dt, self.temporal_method_id)
 
 
 __all__ = [

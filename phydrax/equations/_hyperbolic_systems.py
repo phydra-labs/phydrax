@@ -45,6 +45,7 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         raise NotImplementedError
+
     @abc.abstractmethod
     def signal_bounds(
         self,
@@ -66,9 +67,7 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
         normal_ = jnp.asarray(normal)
         flux = jnp.zeros_like(state)
         for axis in range(self.dimension):
-            flux = flux + normal_[..., axis, None] * self.physical_flux(
-                state, axis, args
-            )
+            flux = flux + normal_[..., axis, None] * self.physical_flux(state, axis, args)
         return flux
 
     def max_normal_wave_speed(
@@ -97,8 +96,6 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array]:
         speed = self.max_normal_wave_speed(left, right, normal, args)
         return -speed, speed
-
-
 
     @abc.abstractmethod
     def conserved_to_primitive(self, state: Array, /) -> Array:
@@ -191,6 +188,7 @@ class ScalarConservationSystem(AbstractConservationSystem):
         /,
     ) -> Array:
         return jnp.asarray(self.wave_speed(left, right, int(axis), args))
+
     def signal_bounds(
         self,
         left: Array,
@@ -201,7 +199,6 @@ class ScalarConservationSystem(AbstractConservationSystem):
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
         return -speed, speed
-
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
         return jnp.asarray(state)
@@ -268,14 +265,13 @@ class EulerSystem(
         density = value[..., 0]
         momentum = value[..., 1 : 1 + self.dimension]
         specific_internal_energy = (
-            value[..., -1] / density
-            - 0.5 * jnp.sum(momentum**2, axis=-1) / density**2
+            value[..., -1] / density - 0.5 * jnp.sum(momentum**2, axis=-1) / density**2
         )
         return self.material.pressure(density, specific_internal_energy)
+
     def temperature(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
         return self.material.temperature(value[..., 0], self.pressure(value))
-
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
@@ -334,12 +330,11 @@ class EulerSystem(
 
         def speed(state: Array) -> Array:
             primitive = self.conserved_to_primitive(state)
-            sound = self.material.sound_speed(
-                primitive[..., 0], primitive[..., -1]
-            )
+            sound = self.material.sound_speed(primitive[..., 0], primitive[..., -1])
             return jnp.abs(primitive[..., 1 + axis_]) + sound
 
         return jnp.maximum(speed(left), speed(right))
+
     def signal_bounds(
         self,
         left: Array,
@@ -368,7 +363,6 @@ class EulerSystem(
         )
         return lower, upper
 
-
     def admissible(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
         return self.material.admissible(value[..., 0], self.pressure(value))
@@ -396,15 +390,11 @@ class EulerSystem(
             left_root[..., None] * left_primitive[..., 1:-1]
             + right_root[..., None] * right_primitive[..., 1:-1]
         ) / denominator[..., None]
-        left_enthalpy = (left[..., -1] + left_primitive[..., -1]) / left_primitive[
-            ..., 0
-        ]
+        left_enthalpy = (left[..., -1] + left_primitive[..., -1]) / left_primitive[..., 0]
         right_enthalpy = (right[..., -1] + right_primitive[..., -1]) / right_primitive[
             ..., 0
         ]
-        enthalpy = (
-            left_root * left_enthalpy + right_root * right_enthalpy
-        ) / denominator
+        enthalpy = (left_root * left_enthalpy + right_root * right_enthalpy) / denominator
         speed_squared = jnp.sum(velocity**2, axis=-1)
         sound = jnp.sqrt(
             jnp.maximum(
@@ -434,9 +424,7 @@ class EulerSystem(
         for transverse in range(self.dimension):
             if transverse == axis_:
                 continue
-            momentum = jnp.broadcast_to(
-                basis[transverse], velocity.shape
-            )
+            momentum = jnp.broadcast_to(basis[transverse], velocity.shape)
             shear_columns.append(
                 jnp.concatenate(
                     (
@@ -477,10 +465,9 @@ class EulerSystem(
         pressure = primitive[..., -1]
         entropy = jnp.log(pressure) - self.material.gamma * jnp.log(density)
         beta = density / (2.0 * pressure)
-        first = (
-            (self.material.gamma - entropy) / (self.material.gamma - 1.0)
-            - beta * jnp.sum(velocity**2, axis=-1)
-        )
+        first = (self.material.gamma - entropy) / (
+            self.material.gamma - 1.0
+        ) - beta * jnp.sum(velocity**2, axis=-1)
         return jnp.concatenate(
             (
                 first[..., None],
@@ -551,9 +538,7 @@ class CompressibleNavierStokesSystem(
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
         return self.inviscid.primitive_to_conserved(primitive)
 
-    def physical_flux(
-        self, state: Array, axis: int, args: Any = None, /
-    ) -> Array:
+    def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         return self.inviscid.physical_flux(state, axis, args)
 
     def max_wave_speed(
@@ -686,9 +671,9 @@ class MultispeciesEulerSystem(AbstractAdmissibleSystem):
             ),
             axis=-1,
         )
-        energy = pressure / (self.mixture_gamma(provisional) - 1.0) + 0.5 * density * jnp.sum(
-            velocity**2, axis=-1
-        )
+        energy = pressure / (
+            self.mixture_gamma(provisional) - 1.0
+        ) + 0.5 * density * jnp.sum(velocity**2, axis=-1)
         return provisional.at[..., -1].set(energy)
 
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
@@ -725,6 +710,7 @@ class MultispeciesEulerSystem(AbstractAdmissibleSystem):
             return jnp.abs(velocity) + sound
 
         return jnp.maximum(speed(left), speed(right))
+
     def signal_bounds(
         self,
         left: Array,
@@ -735,7 +721,6 @@ class MultispeciesEulerSystem(AbstractAdmissibleSystem):
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
         return -speed, speed
-
 
     def admissible(self, state: Array, /) -> Array:
         return jnp.all(
@@ -850,12 +835,16 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
         total_pressure = pressure + 0.5 * jnp.sum(magnetic**2, axis=-1)
         normal_velocity = velocity[..., axis_]
         normal_magnetic = magnetic[..., axis_]
-        momentum_flux = momentum * normal_velocity[..., None] - normal_magnetic[..., None] * magnetic
-        momentum_flux = momentum_flux.at[..., axis_].add(total_pressure)
-        energy_flux = (energy + total_pressure) * normal_velocity - normal_magnetic * jnp.sum(
-            velocity * magnetic, axis=-1
+        momentum_flux = (
+            momentum * normal_velocity[..., None] - normal_magnetic[..., None] * magnetic
         )
-        magnetic_flux = normal_velocity[..., None] * magnetic - normal_magnetic[..., None] * velocity
+        momentum_flux = momentum_flux.at[..., axis_].add(total_pressure)
+        energy_flux = (
+            energy + total_pressure
+        ) * normal_velocity - normal_magnetic * jnp.sum(velocity * magnetic, axis=-1)
+        magnetic_flux = (
+            normal_velocity[..., None] * magnetic - normal_magnetic[..., None] * velocity
+        )
         magnetic_flux = magnetic_flux.at[..., axis_].set(0.0)
         return jnp.concatenate(
             (
@@ -891,16 +880,12 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
                 0.0,
             )
             fast = jnp.sqrt(
-                0.5
-                * (
-                    sound_squared
-                    + magnetic_squared
-                    + jnp.sqrt(discriminant)
-                )
+                0.5 * (sound_squared + magnetic_squared + jnp.sqrt(discriminant))
             )
             return jnp.abs(velocity) + fast
 
         return jnp.maximum(speed(left), speed(right))
+
     def signal_bounds(
         self,
         left: Array,
@@ -911,7 +896,6 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
         return -speed, speed
-
 
     def admissible(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
@@ -962,15 +946,11 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
-        return jnp.concatenate(
-            (value[..., :1], value[..., 1:] / value[..., :1]), axis=-1
-        )
+        return jnp.concatenate((value[..., :1], value[..., 1:] / value[..., :1]), axis=-1)
 
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
         value = jnp.asarray(primitive)
-        return jnp.concatenate(
-            (value[..., :1], value[..., :1] * value[..., 1:]), axis=-1
-        )
+        return jnp.concatenate((value[..., :1], value[..., :1] * value[..., 1:]), axis=-1)
 
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         del args
@@ -980,7 +960,9 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
         velocity = discharge / depth[..., None]
         normal_velocity = velocity[..., int(axis)]
         momentum_flux = discharge * normal_velocity[..., None]
-        momentum_flux = momentum_flux.at[..., int(axis)].add(0.5 * self.gravity * depth**2)
+        momentum_flux = momentum_flux.at[..., int(axis)].add(
+            0.5 * self.gravity * depth**2
+        )
         return jnp.concatenate(
             (discharge[..., int(axis) : int(axis) + 1], momentum_flux), axis=-1
         )
@@ -1002,6 +984,7 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
             )
 
         return jnp.maximum(speed(left), speed(right))
+
     def signal_bounds(
         self,
         left: Array,
@@ -1012,7 +995,6 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
         return -speed, speed
-
 
     def admissible(self, state: Array, /) -> Array:
         return jnp.asarray(state)[..., 0] >= self.depth_floor

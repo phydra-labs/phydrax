@@ -140,6 +140,56 @@ class _CostedPreconditioner(Protocol):
     ) -> PreconditionerCostEstimate: ...
 
 
+class PrecisionCastPreconditioner(AbstractPreconditioner):
+    """High-coordinate adapter around one lower-precision prepared action."""
+
+    inner: AbstractPreconditioner
+    compute_dtype: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        inner: AbstractPreconditioner,
+        space: AbstractVectorSpace,
+        compute_dtype: Any,
+        /,
+    ):
+        if not isinstance(inner, AbstractPreconditioner):
+            raise TypeError("inner must be an AbstractPreconditioner.")
+        if not isinstance(space, AbstractVectorSpace):
+            raise TypeError("space must be an AbstractVectorSpace.")
+        self.inner = inner
+        self.space = space
+        self.compute_dtype = jnp.dtype(compute_dtype).name
+        self.properties = inner.properties
+        self.preconditioner_id = canonical_fingerprint(
+            {
+                "kind": "precision-cast-preconditioner",
+                "inner": inner.preconditioner_id,
+                "space": space.space_id,
+                "compute_dtype": self.compute_dtype,
+            }
+        )
+
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        checked = self.space.validate(residual)
+        lowered = jax.tree.map(
+            lambda leaf: leaf.astype(self.compute_dtype),
+            checked,
+        )
+        solved = self.inner.apply(lowered, iteration=iteration)
+        restored = jax.tree.map(
+            lambda leaf: leaf.astype(_coordinate_dtype(self.space)),
+            solved,
+        )
+        return self.space.validate(restored)
+
+
 class IdentityPreconditioner(AbstractPreconditioner):
     def __init__(self, space: AbstractVectorSpace, /):
         if not isinstance(space, AbstractVectorSpace):

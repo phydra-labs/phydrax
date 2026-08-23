@@ -11,6 +11,7 @@ import diffrax as dfx
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -173,6 +174,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
     adaptive: bool = eqx.field(static=True)
     dense: bool = eqx.field(static=True)
     maximum_steps: int | None = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope | None
 
     def __init__(
         self,
@@ -188,6 +190,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         adaptive: bool,
         dense: bool,
         maximum_steps: int | None,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
         if not isinstance(capabilities, TemporalMethodCapabilities):
             raise TypeError("capabilities must be TemporalMethodCapabilities.")
@@ -205,6 +208,13 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         limit = None if maximum_steps is None else int(maximum_steps)
         if limit is not None and limit < 1:
             raise ValueError("maximum_steps must be positive or None.")
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         self.capabilities = capabilities
         self.equation_form = equation_form
         self.backend_id, self.configuration_id, self.controller_id, self.adjoint_id = (
@@ -214,6 +224,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         self.adaptive = bool(adaptive)
         self.dense = bool(dense)
         self.maximum_steps = limit
+        self.precision_evidence = precision_evidence
 
 
 def qualified_type_name(value: Any, /) -> str:

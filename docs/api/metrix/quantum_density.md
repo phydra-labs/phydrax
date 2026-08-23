@@ -14,6 +14,12 @@ The package convention fixes `g_Bures = g_SLD / 4`. SLD actions solve the
 Sylvester equation `(rho L + L rho) / 2 = tangent` through the shared Hermitian
 matrix-equation substrate.
 
+`GeometryPrecisionPolicy` controls density coordinates, metric reductions, and
+reported decisions. `HermitianPrecisionPolicy` independently controls the
+Hermitian spectra and Sylvester factorization used by Bures/SLD operations.
+POVM, likelihood, tomography, and frozen artifacts retain both evidence
+envelopes; output casting occurs only at public result boundaries.
+
 ::: phydrax.metrix.bures_squared_distance
 
 ::: phydrax.metrix.principal_purification

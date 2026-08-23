@@ -17,6 +17,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._boundary import HaloPlan
+from ._precision import FDExecutionPrecisionPolicy
 
 
 class DistributedStencilPartition(StrictModule, NonTrainableState):
@@ -29,6 +30,7 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
     periodic: bool = eqx.field(static=True)
     halo_plan: HaloPlan
     sharding: NamedSharding = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -41,6 +43,7 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
         devices: Sequence[jax.Device] | None = None,
         device_axis_name: str = "partitions",
         periodic: bool = False,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         shape = tuple(int(size) for size in global_shape)
         axis = int(partition_axis)
@@ -59,6 +62,9 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
         axis_name = str(device_axis_name)
         if not axis_name:
             raise ValueError("device_axis_name must be non-empty.")
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         mesh = Mesh(np.asarray(selected, dtype=object), (axis_name,))
         partitions: list[str | None] = [None] * len(shape)
         partitions[axis] = axis_name
@@ -70,6 +76,7 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
         self.periodic = bool(periodic)
         self.halo_plan = halo_plan
         self.sharding = sharding
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "distributed-stencil-partition",
@@ -79,11 +86,14 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
                 "device_count": len(selected),
                 "periodic": bool(periodic),
                 "halo": halo_plan.halo_id,
+                "precision": precision_.policy_id,
             }
         )
 
     def shard(self, values: ArrayLike, /) -> Array:
         array = jnp.asarray(values)
+        if array.dtype != jnp.dtype(self.precision.field_dtype):
+            raise TypeError("Distributed FD payload dtype must match field precision.")
         if array.shape != self.global_shape:
             raise ValueError("Distributed value shape must match global_shape.")
         return jax.device_put(array, self.sharding)
@@ -103,6 +113,8 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
 
     def ppermute_halo(self, values: Array, direction: int, /) -> Array:
         """Exchange one mapped halo payload inside ``shard_map``/collective context."""
+        if values.dtype != jnp.dtype(self.precision.field_dtype):
+            raise TypeError("FD halo payload dtype must match field precision.")
         return jax.lax.ppermute(
             values,
             axis_name=self.device_axis_name,
@@ -112,6 +124,8 @@ class DistributedStencilPartition(StrictModule, NonTrainableState):
     def exchange_block_halos_1d(self, blocks: ArrayLike, /) -> Array:
         """Reference leading-partition halo exchange for deterministic verification."""
         values = jnp.asarray(blocks)
+        if values.dtype != jnp.dtype(self.precision.field_dtype):
+            raise TypeError("FD halo blocks must match field precision.")
         if values.ndim < 2 or values.shape[0] != self.device_count:
             raise ValueError("blocks must begin with one entry per partition.")
         width = self.halo_plan.lower_widths[self.partition_axis]
@@ -189,6 +203,7 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
     mesh_axis_names: tuple[str, ...] = eqx.field(static=True)
     sharding: NamedSharding = eqx.field(static=True)
     exchanges: tuple[HaloExchangeDescriptor, ...]
+    precision: FDExecutionPrecisionPolicy
     schedule_id: str = eqx.field(static=True)
 
     def __init__(
@@ -201,6 +216,7 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
         periodic_axes: Sequence[bool] | None = None,
         devices: Sequence[jax.Device] | None = None,
         mesh_axis_prefix: str = "fd",
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         shape = tuple(int(value) for value in global_shape)
         partitions = tuple(int(value) for value in partition_shape)
@@ -226,6 +242,9 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
         prefix = str(mesh_axis_prefix)
         if not prefix:
             raise ValueError("mesh_axis_prefix must be non-empty.")
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         mesh_names = tuple(f"{prefix}_{axis}" for axis in range(len(shape)))
         mesh = Mesh(np.asarray(selected, dtype=object).reshape(partitions), mesh_names)
         spec = PartitionSpec(
@@ -265,6 +284,7 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
         self.mesh_axis_names = mesh_names
         self.sharding = NamedSharding(mesh, spec)
         self.exchanges = tuple(descriptors)
+        self.precision = precision_
         self.schedule_id = canonical_fingerprint(
             {
                 "kind": "distributed-halo-schedule",
@@ -273,6 +293,7 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
                 "periodic_axes": list(periodic),
                 "halo": halo_plan.halo_id,
                 "exchanges": [value.descriptor_id for value in descriptors],
+                "precision": precision_.policy_id,
             }
         )
 
@@ -304,6 +325,8 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         """Exchange one local payload on a selected mesh axis inside shard_map."""
+        if values.dtype != jnp.dtype(self.precision.field_dtype):
+            raise TypeError("FD halo payload dtype must match field precision.")
         axis_ = int(axis)
         return jax.lax.ppermute(
             values,
@@ -313,6 +336,8 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
 
     def shard(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)
+        if value.dtype != jnp.dtype(self.precision.field_dtype):
+            raise TypeError("Distributed FD payload dtype must match field precision.")
         if value.shape != self.global_shape:
             raise ValueError("Distributed halo value must match global_shape.")
         return jax.device_put(value, self.sharding)
@@ -331,6 +356,8 @@ class DistributedHaloSchedule(StrictModule, NonTrainableState):
     def exchange_reference(self, blocks: ArrayLike, /) -> Array:
         """Deterministic all-codimension exchange for partition-indexed local blocks."""
         value = jnp.asarray(blocks)
+        if value.dtype != jnp.dtype(self.precision.field_dtype):
+            raise TypeError("FD halo blocks must match field precision.")
         expected = self.partition_shape + self.local_shape
         if value.shape != expected:
             raise ValueError(

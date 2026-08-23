@@ -231,17 +231,29 @@ inexact Newton methods.
 factorization, preconditioning, Krylov work, residual certification, and correction
 accumulation. A provider must either implement every requested stage or reject the
 policy during planning.
-The current implemented mixed-precision route is an explicit square dense
-`DenseLU`: the operator and residual remain in the stored high precision, the LU
-factor may use a lower same-kind precision, and accepted iterative-refinement
-corrections accumulate in the high precision.
+Two routes are implemented. Explicit square dense `DenseLU` keeps the operator
+and certified residual in stored precision, forms a lower same-kind LU factor,
+screens the condition number before factorization, and accumulates iterative
+refinement corrections in stored precision. Native `GMRES`/`FGMRES` keeps
+operator actions, Arnoldi inner products, Hessenberg solves, convergence
+decisions, and final residuals in coordinate precision while optionally storing
+Krylov and preconditioned basis vectors in `krylov_dtype`. A Jacobi
+preconditioner may independently store/apply its diagonal in
+`preconditioner_dtype`; explicit adapters cast residuals into that space and
+corrections back.
 
-Before creating a low-precision factor, preparation estimates the condition number
-in the stored precision and rejects values outside the lower precision's safe
-range. Diagnostics report the number of refinement attempts; provenance retains
-both the requested policy and resolved effective dtypes. Matrix-free Krylov,
-preconditioner, non-Euclidean, half-precision LU, and mixed real/complex requests
-are currently rejected explicitly rather than cast opportunistically.
+Planning rejects unsupported methods, providers, real/complex-kind changes, or
+wider low-precision stages before execution. Resource estimates use the actual
+factor, basis, and preconditioner item sizes, including cast workspace.
+Provenance retains both requested and resolved effective dtypes. Other
+preconditioner builders, compressed non-GMRES bases, half-precision LU, and
+mixed residual/accumulation precision remain capability-rejected.
+
+Standalone Hermitian eigendecompositions, matrix functions, and Sylvester
+inverses use `HermitianPrecisionPolicy` rather than pretending they are ordinary
+linear solves. It separates compute, eigendecomposition/factorization,
+accumulation, certification, and output precision; spectra and Sylvester results
+retain effective evidence.
 
 `KernelCertificate` and `SpectralInterval` attach auditable evidence to one
 operator structure or numerical value. Numerical certificates include an array
@@ -1022,8 +1034,9 @@ Current boundaries are deliberate and reported before execution:
 - public factorization artifacts are unbatched and dense;
 - matrix functions and stochastic spectral estimators require unbatched
   endomorphisms;
-- mixed-precision execution currently requires explicit dense square `DenseLU`
-  with Euclidean pairings and capability-checked stage dtypes;
+- mixed-precision execution supports capability-checked dense `DenseLU`
+  refinement plus native `GMRES`/`FGMRES` compressed bases and lower-precision
+  Jacobi preconditioning; other stage/provider combinations are rejected;
 - factored matrix-equation execution currently covers only unbatched continuous
   Lyapunov equations with explicit ADI shifts;
 - Tensor-product spaces require factors with explicit positive coordinate-
@@ -1283,6 +1296,9 @@ runtime.
 ---
 
 ::: phydrax.linalg.MixedPrecisionPolicy
+
+---
+::: phydrax.linalg.HermitianPrecisionPolicy
 
 ---
 

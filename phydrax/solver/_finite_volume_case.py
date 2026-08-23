@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypeAlias
+from typing import Any
 
 import equinox as eqx
 import numpy as np
@@ -12,70 +12,14 @@ import numpy as np
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization._fv_precision import (
+    FiniteVolumePrecisionPolicy,
+    PrecisionDType,
+)
 from ._finite_volume_runtime import (
     FiniteVolumeStepPolicy,
     PreparedFiniteVolumeRuntime,
 )
-
-
-PrecisionDType: TypeAlias = Literal["float32", "float64"]
-
-
-class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
-    storage_dtype: PrecisionDType = eqx.field(static=True)
-    reconstruction_dtype: PrecisionDType = eqx.field(static=True)
-    flux_dtype: PrecisionDType = eqx.field(static=True)
-    reduction_dtype: PrecisionDType = eqx.field(static=True)
-    output_dtype: PrecisionDType = eqx.field(static=True)
-    checkpoint_dtype: PrecisionDType = eqx.field(static=True)
-    policy_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        storage_dtype: PrecisionDType = "float64",
-        /,
-        *,
-        reconstruction_dtype: PrecisionDType | None = None,
-        flux_dtype: PrecisionDType | None = None,
-        reduction_dtype: PrecisionDType | None = None,
-        output_dtype: PrecisionDType | None = None,
-        checkpoint_dtype: PrecisionDType | None = None,
-    ):
-        allowed = ("float32", "float64")
-        values = (
-            storage_dtype,
-            storage_dtype if reconstruction_dtype is None else reconstruction_dtype,
-            storage_dtype if flux_dtype is None else flux_dtype,
-            storage_dtype if reduction_dtype is None else reduction_dtype,
-            storage_dtype if output_dtype is None else output_dtype,
-            storage_dtype if checkpoint_dtype is None else checkpoint_dtype,
-        )
-        if any(value not in allowed for value in values):
-            raise ValueError("Finite-volume precision dtypes must be float32 or float64.")
-        (
-            self.storage_dtype,
-            self.reconstruction_dtype,
-            self.flux_dtype,
-            self.reduction_dtype,
-            self.output_dtype,
-            self.checkpoint_dtype,
-        ) = values
-        self.policy_id = canonical_fingerprint(
-            {"kind": "finite-volume-precision", "dtypes": list(values)}
-        )
-
-    def numpy_dtype(self, role: str, /):
-        values = {
-            "storage": self.storage_dtype,
-            "reconstruction": self.reconstruction_dtype,
-            "flux": self.flux_dtype,
-            "reduction": self.reduction_dtype,
-            "output": self.output_dtype,
-            "checkpoint": self.checkpoint_dtype,
-        }
-        if role not in values:
-            raise ValueError(f"Unknown finite-volume precision role {role!r}.")
-        return np.dtype(values[role])
 
 
 class FiniteVolumeExecutionSpec(StrictModule, NonTrainableState):
@@ -138,15 +82,21 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
     ):
         name_ = str(name)
         version = int(schema_version)
-        precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
         if not name_ or version != 1:
-            raise ValueError("Finite-volume case name must be non-empty and schema version 1.")
+            raise ValueError(
+                "Finite-volume case name must be non-empty and schema version 1."
+            )
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
+        precision_ = runtime.precision if precision is None else precision
         if not isinstance(execution, FiniteVolumeExecutionSpec):
             raise TypeError("execution must be FiniteVolumeExecutionSpec.")
         if not isinstance(precision_, FiniteVolumePrecisionPolicy):
             raise TypeError("precision must be FiniteVolumePrecisionPolicy.")
+        if precision_.policy_id != runtime.precision.policy_id:
+            raise ValueError(
+                "Finite-volume case precision must match the prepared runtime."
+            )
         dynamics = runtime.dynamics
         self.schema_version = version
         self.name = name_
@@ -209,6 +159,7 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
             )
         if payload["schema_version"] != 1:
             raise ValueError("Unsupported finite-volume case schema version.")
+
     @classmethod
     def from_dict(
         cls,
@@ -255,7 +206,6 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
                 "Finite-volume case identities do not match prepared runtime."
             )
         return case
-
 
 
 __all__ = [

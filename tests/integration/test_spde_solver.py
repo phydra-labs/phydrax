@@ -6,11 +6,7 @@ import phydrax as phx
 
 
 def _periodic_discretization(size):
-    axis = phx.discretization.UniformAxisSpec(
-        size,
-        endpoint=False,
-        periodic=True,
-    ).materialize(0.0, 1.0)
+    axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
     return phx.discretization.SeparableSpectralDiscretization((axis,))
 
 

@@ -12,7 +12,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..linalg import HermitianPrecisionPolicy
 from ..metrix import (
     RightLieGroupStateGeometry,
     SpecialUnitaryGroup,
@@ -22,6 +25,7 @@ from ..operators.quantum._propagation import unitarity_residual
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
 from ._geometric import CommutatorFreeSolver
+from ._temporal_precision import TemporalPrecisionPolicy
 
 
 UnitaryGroupKind: TypeAlias = Literal["unitary", "special-unitary"]
@@ -36,6 +40,9 @@ class UnitaryPropagatorProblem(StrictModule):
     t1: Array
     hbar: Array
     args: Any
+    temporal_precision: TemporalPrecisionPolicy
+    geometry_precision: GeometryPrecisionPolicy
+    hermitian_precision: HermitianPrecisionPolicy
     dimension: int = eqx.field(static=True)
     group_kind: UnitaryGroupKind = eqx.field(static=True)
     hermiticity_tolerance: float = eqx.field(static=True)
@@ -53,6 +60,9 @@ class UnitaryPropagatorProblem(StrictModule):
         initial_propagator: ArrayLike | None = None,
         group_kind: UnitaryGroupKind = "unitary",
         hermiticity_tolerance: float = 1e-9,
+        temporal_precision: TemporalPrecisionPolicy | None = None,
+        geometry_precision: GeometryPrecisionPolicy | None = None,
+        hermitian_precision: HermitianPrecisionPolicy | None = None,
     ):
         if not callable(hamiltonian):
             raise TypeError("hamiltonian must be callable.")
@@ -63,9 +73,36 @@ class UnitaryPropagatorProblem(StrictModule):
             raise ValueError("Unknown unitary group kind.")
         if hermiticity_tolerance < 0.0:
             raise ValueError("hermiticity_tolerance must be non-negative.")
+        temporal_ = (
+            TemporalPrecisionPolicy()
+            if temporal_precision is None
+            else temporal_precision
+        )
+        geometry_ = (
+            GeometryPrecisionPolicy()
+            if geometry_precision is None
+            else geometry_precision
+        )
+        hermitian_ = (
+            HermitianPrecisionPolicy()
+            if hermitian_precision is None
+            else hermitian_precision
+        )
+        if not isinstance(temporal_, TemporalPrecisionPolicy):
+            raise TypeError(
+                "temporal_precision must be a TemporalPrecisionPolicy or None."
+            )
+        if not isinstance(geometry_, GeometryPrecisionPolicy):
+            raise TypeError(
+                "geometry_precision must be a GeometryPrecisionPolicy or None."
+            )
+        if not isinstance(hermitian_, HermitianPrecisionPolicy):
+            raise TypeError(
+                "hermitian_precision must be a HermitianPrecisionPolicy or None."
+            )
         start = jnp.asarray(t0, dtype=float)
         end = jnp.asarray(t1, dtype=float)
-        hbar_ = jnp.asarray(hbar, dtype=float)
+        hbar_ = temporal_.coefficient(jnp.asarray(hbar, dtype=float))
         if start.shape != () or end.shape != () or hbar_.shape != ():
             raise ValueError("t0, t1, and hbar must be scalar.")
         hbar_ = eqx.error_if(
@@ -78,6 +115,8 @@ class UnitaryPropagatorProblem(StrictModule):
             if initial_propagator is None
             else jnp.asarray(initial_propagator)
         )
+        temporal_.validate_state(initial)
+        geometry_.validate_coordinates(initial)
         expected = (dimension_, dimension_)
         if initial.shape != expected:
             raise ValueError(f"initial_propagator must have shape {expected}.")
@@ -97,21 +136,31 @@ class UnitaryPropagatorProblem(StrictModule):
         self.t1 = end
         self.hbar = hbar_
         self.args = args
+        self.temporal_precision = temporal_
+        self.geometry_precision = geometry_
+        self.hermitian_precision = hermitian_
         self.initial_propagator = initial
         self.group_kind = group_kind
         self.hermiticity_tolerance = float(hermiticity_tolerance)
 
     def hamiltonian(self, time: ArrayLike, /) -> Array:
-        value = jnp.asarray(self.hamiltonian_function(jnp.asarray(time), self.args))
+        value = self.hermitian_precision.compute(
+            self.hamiltonian_function(jnp.asarray(time), self.args)
+        )
         expected = (self.dimension, self.dimension)
         if value.shape != expected:
             raise ValueError(
                 f"Hamiltonian must have shape {expected}; got {value.shape}."
             )
-        residual = jnp.max(jnp.abs(value - jnp.conj(value.T)))
+        residual = self.geometry_precision.decision(
+            jnp.max(
+                jnp.abs(self.geometry_precision.accumulation(value - jnp.conj(value.T)))
+            )
+        )
         return eqx.error_if(
-            value,
-            ~jnp.all(jnp.isfinite(value)) | (residual > self.hermiticity_tolerance),
+            self.hermitian_precision.output(value),
+            ~jnp.all(jnp.isfinite(value))
+            | (residual > self.geometry_precision.decision(self.hermiticity_tolerance)),
             "Hamiltonian must be finite and Hermitian.",
         )
 
@@ -146,6 +195,8 @@ class UnitaryPropagatorSolution(StrictModule):
     maximum_hamiltonian_hermiticity_residual: Array
     group_kind: UnitaryGroupKind = eqx.field(static=True)
     hbar: Array
+    geometry_precision_evidence: PrecisionEvidenceEnvelope
+    hermitian_precision_evidence: PrecisionEvidenceEnvelope
 
     def __init__(
         self,
@@ -157,6 +208,8 @@ class UnitaryPropagatorSolution(StrictModule):
         maximum_hamiltonian_hermiticity_residual: ArrayLike,
         group_kind: UnitaryGroupKind,
         hbar: ArrayLike,
+        geometry_precision_evidence: PrecisionEvidenceEnvelope,
+        hermitian_precision_evidence: PrecisionEvidenceEnvelope,
     ):
         self.differential_solution = differential_solution
         self.times = differential_solution.times
@@ -173,6 +226,8 @@ class UnitaryPropagatorSolution(StrictModule):
         )
         self.group_kind = group_kind
         self.hbar = jnp.asarray(hbar)
+        self.geometry_precision_evidence = geometry_precision_evidence
+        self.hermitian_precision_evidence = hermitian_precision_evidence
 
 
 def solve_unitary_propagator(
@@ -182,10 +237,16 @@ def solve_unitary_propagator(
     save_times: ArrayLike,
     dt0: ArrayLike,
     max_steps: int = 4096,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> UnitaryPropagatorSolution:
     """Solve a dense unitary propagation problem with a CF Lie integrator."""
     if not isinstance(problem, UnitaryPropagatorProblem):
         raise TypeError("problem must be a UnitaryPropagatorProblem.")
+    precision_ = problem.temporal_precision if precision is None else precision
+    if not isinstance(precision_, TemporalPrecisionPolicy):
+        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+    if precision_.policy_id != problem.temporal_precision.policy_id:
+        raise ValueError("Solve precision must match the unitary problem.")
     group = (
         UnitaryGroup(
             problem.dimension, tolerance=max(problem.hermiticity_tolerance, 1e-12)
@@ -211,17 +272,29 @@ def solve_unitary_propagator(
         dt0=dt0,
         max_steps=max_steps,
         throw=False,
+        precision=precision_,
     )
-    unitarity = jnp.max(unitarity_residual(solution.states))
+    geometry_precision = problem.geometry_precision
+    unitarity = geometry_precision.decision(
+        jnp.max(geometry_precision.accumulation(unitarity_residual(solution.states)))
+    )
     determinants = jnp.linalg.det(solution.states)
     determinant_residual = (
-        jnp.max(jnp.abs(determinants - 1.0))
+        geometry_precision.decision(
+            jnp.max(jnp.abs(geometry_precision.accumulation(determinants - 1.0)))
+        )
         if problem.group_kind == "special-unitary"
-        else jnp.asarray(0.0, dtype=unitarity.dtype)
+        else geometry_precision.decision(0.0)
     )
     hamiltonians = jax.vmap(problem.hamiltonian)(solution.times)
-    hermiticity = jnp.max(
-        jnp.abs(hamiltonians - jnp.swapaxes(jnp.conj(hamiltonians), -1, -2))
+    hermiticity = geometry_precision.decision(
+        jnp.max(
+            jnp.abs(
+                geometry_precision.accumulation(
+                    hamiltonians - jnp.swapaxes(jnp.conj(hamiltonians), -1, -2)
+                )
+            )
+        )
     )
     return UnitaryPropagatorSolution(
         solution,
@@ -230,6 +303,12 @@ def solve_unitary_propagator(
         maximum_hamiltonian_hermiticity_residual=hermiticity,
         group_kind=problem.group_kind,
         hbar=problem.hbar,
+        geometry_precision_evidence=problem.geometry_precision.evidence_for(
+            problem.initial_propagator
+        ),
+        hermitian_precision_evidence=problem.hermitian_precision.evidence_for(
+            problem.hamiltonian(problem.t0)
+        ),
     )
 
 

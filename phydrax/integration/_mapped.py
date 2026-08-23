@@ -21,6 +21,7 @@ from ._estimates import (
     MappedIntegrationDiagnostics,
 )
 from ._plans import CellQuadraturePlan, FixedQuadraturePlan
+from ._precision import IntegrationPrecisionPolicy
 from ._rules import CubatureRule, reference_rule_data
 from ._status import IntegrationStatus
 from ._targets import DensityTarget, MappedTarget
@@ -121,20 +122,26 @@ def integrate_mapped(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Evaluate and reduce a mapped reference-cell target."""
     callback_kwargs = {} if kwargs is None else kwargs
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, MappedTarget):
         raise TypeError("Mapped integration requires a mapped target base.")
     values, output_dims = _mapped_values(
         integrand, batch, key=key, kwargs=callback_kwargs
     )
-    weights = jnp.where(batch.mask, batch.weights, 0.0)
+    values = precision_.evaluation(values)
+    weights = precision_.accumulation(jnp.where(batch.mask, batch.weights, 0.0))
     if isinstance(target, DensityTarget):
         log_values, log_dims = _mapped_values(
             target.log_density, batch, key=key, kwargs=callback_kwargs
         )
+        log_values = precision_.evaluation(log_values)
         if log_dims or log_values.ndim != 1:
             raise ValueError("Mapped log density must be scalar-valued per point.")
         weights = weights * jnp.exp(log_values)
@@ -143,7 +150,10 @@ def integrate_mapped(
         normalized = False
     count = int(batch.weights.shape[0])
     expanded = jnp.reshape(weights, (count,) + (1,) * (values.ndim - 1))
-    numerator = jnp.sum(expanded * values, axis=0)
+    numerator = jnp.sum(
+        precision_.accumulation(expanded * values),
+        axis=0,
+    )
     mass = jnp.sum(weights)
     finite_operands = jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(weights))
     if normalized:

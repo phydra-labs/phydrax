@@ -15,6 +15,7 @@ import equinox as eqx
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._finite_volume_case import FiniteVolumeCaseSpec
@@ -42,8 +43,10 @@ class FiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-checkpoint-plan",
-                "schema_version": 1,
+                "schema_version": 2,
                 "case": case.case_id,
+                "precision_policy_id": case.precision.policy_id,
+                "precision_evidence_id": case.precision.evidence().evidence_id,
                 "checkpoint_dtype": case.precision.checkpoint_dtype,
             }
         )
@@ -53,6 +56,7 @@ class FiniteVolumeCheckpoint(StrictModule):
     runtime_state: FiniteVolumeRuntimeState
     checkpoint_id: str = eqx.field(static=True)
     payload_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope
 
 
 def write_finite_volume_checkpoint(
@@ -65,6 +69,7 @@ def write_finite_volume_checkpoint(
         raise TypeError("plan must be a FiniteVolumeCheckpointPlan.")
     if not isinstance(runtime_state, FiniteVolumeRuntimeState):
         raise TypeError("runtime_state must be a FiniteVolumeRuntimeState.")
+    plan.case.precision.validate_state(runtime_state.conservative_state)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_dtype = plan.case.precision.numpy_dtype("checkpoint")
@@ -84,9 +89,10 @@ def write_finite_volume_checkpoint(
     }
     payloads = {name: _array_payload(value) for name, value in arrays.items()}
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "checkpoint_id": plan.checkpoint_id,
         "case": plan.case.to_dict(),
+        "precision_evidence": plan.case.precision.evidence().to_dict(),
         "arrays": {
             name: {
                 "file": f"arrays/{name}.npy",
@@ -104,13 +110,16 @@ def write_finite_volume_checkpoint(
     manifest["payload_id"] = payload_id
     temporary = target.with_suffix(target.suffix + ".tmp")
     with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(
-            "manifest.json", json.dumps(manifest, indent=2, sort_keys=True)
-        )
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
         for name, payload in payloads.items():
             archive.writestr(f"arrays/{name}.npy", payload)
     os.replace(temporary, target)
-    return FiniteVolumeCheckpoint(runtime_state, plan.checkpoint_id, payload_id)
+    return FiniteVolumeCheckpoint(
+        runtime_state,
+        plan.checkpoint_id,
+        payload_id,
+        plan.case.precision.evidence(),
+    )
 
 
 def read_finite_volume_checkpoint(
@@ -122,13 +131,19 @@ def read_finite_volume_checkpoint(
         raise TypeError("plan must be a FiniteVolumeCheckpointPlan.")
     with zipfile.ZipFile(Path(path), "r") as archive:
         manifest = json.loads(archive.read("manifest.json"))
-        if manifest.get("schema_version") != 1:
+        if manifest.get("schema_version") != 2:
             raise ValueError("Unsupported finite-volume checkpoint schema.")
         if manifest.get("checkpoint_id") != plan.checkpoint_id:
             raise ValueError("Finite-volume checkpoint is incompatible with this plan.")
         FiniteVolumeCaseSpec.validate_dict(manifest["case"])
         if manifest["case"]["case_id"] != plan.case.case_id:
             raise ValueError("Finite-volume checkpoint case identity changed.")
+        precision_evidence = PrecisionEvidenceEnvelope.from_dict(
+            manifest["precision_evidence"]
+        )
+        expected_precision = plan.case.precision.evidence()
+        if precision_evidence.evidence_id != expected_precision.evidence_id:
+            raise ValueError("Finite-volume checkpoint precision evidence changed.")
         arrays = {}
         payloads = []
         for name in (
@@ -148,8 +163,13 @@ def read_finite_volume_checkpoint(
             if _checksum(payload) != metadata["sha256"]:
                 raise ValueError(f"Finite-volume checkpoint array {name!r} is corrupt.")
             value = np.load(io.BytesIO(payload), allow_pickle=False)
-            if list(value.shape) != metadata["shape"] or str(value.dtype) != metadata["dtype"]:
-                raise ValueError(f"Finite-volume checkpoint array {name!r} metadata changed.")
+            if (
+                list(value.shape) != metadata["shape"]
+                or str(value.dtype) != metadata["dtype"]
+            ):
+                raise ValueError(
+                    f"Finite-volume checkpoint array {name!r} metadata changed."
+                )
             arrays[name] = value
             payloads.append(payload)
     manifest_without_payload = dict(manifest)
@@ -161,9 +181,9 @@ def read_finite_volume_checkpoint(
     if actual_payload_id != expected_payload_id:
         raise ValueError("Finite-volume checkpoint manifest or payload is corrupt.")
     runtime = FiniteVolumeRuntimeState(
-        arrays["conservative_state"],
-        arrays["time"],
-        arrays["step_size"],
+        plan.case.precision.storage(arrays["conservative_state"]),
+        plan.case.precision.decision(arrays["time"]),
+        plan.case.precision.decision(arrays["step_size"]),
         accepted_step=arrays["accepted_step"],
         last_status=arrays["last_status"],
         controller_state=arrays["controller_state"],
@@ -172,7 +192,12 @@ def read_finite_volume_checkpoint(
         random_state=arrays["random_state"],
         output_cursor=arrays["output_cursor"],
     )
-    return FiniteVolumeCheckpoint(runtime, plan.checkpoint_id, actual_payload_id)
+    return FiniteVolumeCheckpoint(
+        runtime,
+        plan.checkpoint_id,
+        actual_payload_id,
+        precision_evidence,
+    )
 
 
 __all__ = [

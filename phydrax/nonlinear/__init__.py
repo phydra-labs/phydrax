@@ -95,6 +95,7 @@ from ._newton import (
 )
 from ._ngmres import NonlinearGMRES
 from ._polyalgorithm import FastRoot, RobustRoot, RootPolyalgorithm
+from ._precision import NonlinearPrecisionPolicy
 from ._preconditioning import (
     AbstractLeftNonlinearPreconditioner,
     AbstractNonlinearSystemTransformation,
@@ -129,7 +130,6 @@ from ._scalar import (
     TOMS748,
 )
 from ._scaling import (
-    NonlinearPrecisionPolicy,
     NonlinearScaling,
     NonlinearScalingPolicy,
     prepare_scaled_root,

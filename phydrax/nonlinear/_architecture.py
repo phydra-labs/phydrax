@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import (
@@ -23,6 +24,7 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ._linearization import JacobianPolicy, prepare_jacobian
+from ._precision import NonlinearPrecisionPolicy
 from ._types import NonlinearSystemProblem, NonlinearTermination
 from ._work import NonlinearWork, NonlinearWorkBudget
 
@@ -53,6 +55,8 @@ class NonlinearModel(StrictModule):
     residual_norm: Array
     merit: Array
     work: NonlinearWork
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
     model_id: str = eqx.field(static=True)
 
     def __init__(
@@ -65,12 +69,19 @@ class NonlinearModel(StrictModule):
         residual_norm: Any,
         merit: Any,
         work: NonlinearWork,
+        precision_evidence: PrecisionEvidenceEnvelope,
+        precision_policy_id: str,
         model_id: str,
     ):
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be AbstractLinearOperator.")
         if not isinstance(work, NonlinearWork):
             raise TypeError("work must be NonlinearWork.")
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        precision_identifier = str(precision_policy_id)
+        if not precision_identifier:
+            raise ValueError("precision_policy_id must be non-empty.")
         identifier = str(model_id)
         if not identifier:
             raise ValueError("model_id must be non-empty.")
@@ -81,6 +92,8 @@ class NonlinearModel(StrictModule):
         self.residual_norm = jnp.asarray(residual_norm)
         self.merit = jnp.asarray(merit)
         self.work = work
+        self.precision_evidence = precision_evidence
+        self.precision_policy_id = precision_identifier
         self.model_id = identifier
 
 
@@ -91,6 +104,8 @@ class DirectionResult(StrictModule):
     predicted_reduction: Array
     status: Array
     work: NonlinearWork
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
     direction_id: str = eqx.field(static=True)
 
     @property
@@ -107,6 +122,8 @@ class GlobalizationResult(StrictModule):
     rate: Array
     status: Array
     work: NonlinearWork
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
     globalization_id: str = eqx.field(static=True)
 
     @property
@@ -120,6 +137,8 @@ class NonlinearCertificate(StrictModule):
     finite: Array
     valid: Array
     certified: Array
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
 
@@ -178,25 +197,31 @@ class AbstractNonlinearCertificate(StrictModule):
 
 class RootLinearModelPolicy(AbstractNonlinearModelPolicy):
     jacobian: JacobianPolicy
+    precision: NonlinearPrecisionPolicy
 
-    def __init__(self, jacobian: JacobianPolicy | None = None, /):
+    def __init__(
+        self,
+        jacobian: JacobianPolicy | None = None,
+        /,
+        *,
+        precision: NonlinearPrecisionPolicy | None = None,
+    ):
         policy = JacobianPolicy() if jacobian is None else jacobian
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, JacobianPolicy):
             raise TypeError("jacobian must be JacobianPolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.jacobian = policy
+        self.precision = precision_
 
     def prepare(self, problem, state, args, /) -> NonlinearModel:
         prepared = prepare_jacobian(problem, state, self.jacobian, args)
-        residual_norm = jnp.sqrt(
-            jnp.maximum(
-                jnp.real(
-                    prepared.operator.target.inner(
-                        prepared.residual,
-                        prepared.residual,
-                    )
-                ),
-                0.0,
-            )
+        self.precision.validate_trees(state, prepared.residual)
+        self.precision.validate_accumulation_space(prepared.operator.target)
+        residual_norm = self.precision.norm(
+            prepared.operator.target,
+            prepared.residual,
         )
         return NonlinearModel(
             state=state,
@@ -204,23 +229,39 @@ class RootLinearModelPolicy(AbstractNonlinearModelPolicy):
             auxiliary=prepared.auxiliary,
             operator=prepared.operator,
             residual_norm=residual_norm,
-            merit=0.5 * residual_norm * residual_norm,
+            merit=self.precision.decision(0.5 * residual_norm * residual_norm),
             work=NonlinearWork(
                 residual_evaluations=prepared.residual_evaluations,
                 jacobian_preparations=1,
             ),
+            precision_evidence=self.precision.evidence_for(
+                state,
+                prepared.residual,
+            ),
+            precision_policy_id=self.precision.policy_id,
             model_id=f"root-linear/{prepared.derivative_id}",
         )
 
 
 class NewtonDirectionPolicy(AbstractDirectionPolicy):
     linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
-    def __init__(self, linear: LinearSolvePolicy | None = None, /):
+    def __init__(
+        self,
+        linear: LinearSolvePolicy | None = None,
+        /,
+        *,
+        precision: NonlinearPrecisionPolicy | None = None,
+    ):
         policy = LinearSolvePolicy() if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
         if not isinstance(policy, LinearSolvePolicy):
             raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.linear = policy
+        self.precision = precision_
 
     def compute(self, model, budget, /) -> DirectionResult:
         if not isinstance(model, NonlinearModel):
@@ -231,11 +272,19 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
         linear_result = solve_linear(
             LinearSystem(model.operator),
             right_hand_side,
-            policy=self.linear,
+            policy=self.precision.bind_linear(self.linear),
         )
         direction = linear_result.value
         image = model.operator.mv(direction)
-        slope = jnp.real(model.operator.target.inner(model.residual, image))
+        slope = self.precision.decision(
+            jnp.real(
+                self.precision.inner(
+                    model.operator.target,
+                    model.residual,
+                    image,
+                )
+            )
+        )
         iterations = jnp.sum(
             linear_result.diagnostics.iterations,
             dtype=jnp.int32,
@@ -280,6 +329,8 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
             predicted_reduction=-slope,
             status=status,
             work=work,
+            precision_evidence=model.precision_evidence,
+            precision_policy_id=self.precision.policy_id,
             direction_id="newton",
         )
 
@@ -290,6 +341,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
     sufficient_decrease: float = eqx.field(static=True)
     minimum_rate: float = eqx.field(static=True)
     maximum_steps: int = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -299,6 +351,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         sufficient_decrease: float = 1e-4,
         minimum_rate: float = 1e-10,
         maximum_steps: int = 24,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         values = tuple(
             float(value)
@@ -316,6 +369,9 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
         steps = int(maximum_steps)
         if steps < 1:
             raise ValueError("maximum_steps must be positive.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         (
             self.initial_rate,
             self.contraction,
@@ -323,6 +379,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
             self.minimum_rate,
         ) = values
         self.maximum_steps = steps
+        self.precision = precision_
 
     def apply(self, problem, model, direction, args, budget, /):
         if not isinstance(problem, NonlinearSystemProblem):
@@ -333,6 +390,8 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
             raise TypeError("direction must be DirectionResult.")
         if not isinstance(budget, NonlinearWorkBudget):
             raise TypeError("budget must be NonlinearWorkBudget.")
+        self.precision.validate_accumulation_space(model.operator.source)
+        self.precision.validate_accumulation_space(model.operator.target)
 
         class _Search(StrictModule):
             state: PyTree[Array]
@@ -350,7 +409,7 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
             residual=model.residual,
             auxiliary=model.auxiliary,
             norm=model.residual_norm,
-            rate=jnp.asarray(self.initial_rate, dtype=model.residual_norm.dtype),
+            rate=self.precision.decision(self.initial_rate),
             evaluations=jnp.asarray(0, dtype=jnp.int32),
             accepted=jnp.asarray(False),
             finite_seen=jnp.asarray(False),
@@ -372,24 +431,22 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
 
         def body(item):
             candidate = jax.tree.map(
-                lambda value, delta: value + item.rate * delta,
+                lambda value, delta: jnp.asarray(
+                    value + item.rate * delta,
+                    dtype=value.dtype,
+                ),
                 model.state,
                 direction.direction,
             )
             residual, auxiliary = problem.evaluate(candidate, args)
-            norm = jnp.sqrt(
-                jnp.maximum(
-                    jnp.real(model.operator.target.inner(residual, residual)),
-                    0.0,
-                )
-            )
+            norm = self.precision.norm(model.operator.target, residual)
             finite = tree_allfinite(candidate) & tree_allfinite(residual)
             valid = problem.valid(candidate, residual, auxiliary, args)
             accepted = (
                 finite
                 & valid
                 & (
-                    0.5 * norm * norm
+                    self.precision.decision(0.5 * norm * norm)
                     <= model.merit
                     + self.sufficient_decrease * item.rate * direction.slope
                 )
@@ -454,20 +511,28 @@ class ResidualArmijoPolicy(AbstractGlobalizationPolicy):
             residual=search.residual,
             auxiliary=search.auxiliary,
             residual_norm=search.norm,
-            step_norm=jnp.sqrt(
-                jnp.maximum(
-                    jnp.real(model.operator.source.inner(step, step)),
-                    0.0,
-                )
-            ),
+            step_norm=self.precision.norm(model.operator.source, step),
             rate=search.rate,
             status=status,
             work=work,
+            precision_evidence=self.precision.evidence_for(
+                search.state,
+                search.residual,
+            ),
+            precision_policy_id=self.precision.policy_id,
             globalization_id="residual-armijo",
         )
 
 
 class RootResidualCertificate(AbstractNonlinearCertificate):
+    precision: NonlinearPrecisionPolicy
+
+    def __init__(self, precision: NonlinearPrecisionPolicy | None = None, /):
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+        self.precision = precision_
+
     def certify(
         self,
         problem,
@@ -481,21 +546,25 @@ class RootResidualCertificate(AbstractNonlinearCertificate):
     ) -> NonlinearCertificate:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be NonlinearSystemProblem.")
-        norm = jnp.sqrt(
-            jnp.maximum(
-                jnp.real(problem.residual_space.inner(residual, residual)),
-                0.0,
-            )
-        )
+        if problem.residual_space is None:
+            raise ValueError("Root certification requires a bound residual space.")
+        self.precision.validate_trees(state, residual)
+        self.precision.validate_accumulation_space(problem.residual_space)
+        self.precision.validate_tolerance(termination.absolute_residual)
+        norm = self.precision.norm(problem.residual_space, residual)
         finite = tree_allfinite(state) & tree_allfinite(residual)
         valid = problem.valid(state, residual, auxiliary, args)
-        threshold = termination.residual_threshold(initial_residual_norm)
+        threshold = self.precision.decision(
+            termination.residual_threshold(initial_residual_norm)
+        )
         return NonlinearCertificate(
             residual_norm=norm,
             threshold=threshold,
             finite=finite,
             valid=valid,
             certified=finite & valid & (norm <= threshold),
+            precision_evidence=self.precision.evidence_for(state, residual),
+            precision_policy_id=self.precision.policy_id,
             certificate_id="physical-root-residual",
         )
 

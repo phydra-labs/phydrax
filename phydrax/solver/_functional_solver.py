@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import equinox as eqx
+import jax
 import optax
 from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from jaxtyping import Array, Key
@@ -18,6 +20,7 @@ from phydrax.domain import DomainFunction
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
 from .._training import EvaluationParametersFn
@@ -36,6 +39,7 @@ from ._functional_objective import (
     _FunctionalObjective,
     evaluate_prepared_objective,
 )
+from ._functional_precision import FunctionalPrecisionPolicy
 
 
 def _has_signed_randomized_objective(
@@ -139,6 +143,8 @@ class FunctionalSolver(StrictModule):
     objective: _FunctionalObjective
     training_diagnostics: frozendict[str, Array]
     discretization_bundle: DiscretizationBundle
+    precision: FunctionalPrecisionPolicy | None
+    precision_evidence: PrecisionEvidenceEnvelope | None
 
     def __init__(
         self,
@@ -158,6 +164,8 @@ class FunctionalSolver(StrictModule):
             collocation_key=collocation_key,
         )
         self.training_diagnostics = frozendict()
+        self.precision = None
+        self.precision_evidence = None
         self.discretization_bundle = _functional_discretization_bundle(
             self.functions,
             self.objective.terms + self.objective.evaluation_terms,
@@ -191,6 +199,49 @@ class FunctionalSolver(StrictModule):
         objective = self.objective.with_populations(collocation)
         return eqx.tree_at(lambda solver: solver.objective, self, objective)
 
+    def _with_precision_evidence(
+        self,
+        precision: FunctionalPrecisionPolicy | None,
+        evidence: PrecisionEvidenceEnvelope | None,
+        /,
+    ) -> "FunctionalSolver":
+        evidence_id = None if evidence is None else evidence.evidence_id
+        records = tuple(
+            DiscretizationRecord(
+                record.key,
+                record.artifact_kind,
+                record.artifact_id,
+                numeric_version=record.numeric_version,
+                dependency_key_ids=record.dependency_key_ids,
+                realization_id=record.realization_id,
+                precision_evidence_id=evidence_id,
+                resource_evidence_id=record.resource_evidence_id,
+            )
+            for record in self.discretization_bundle.records
+        )
+        bundle = DiscretizationBundle(
+            records,
+            transfers=self.discretization_bundle.transfers,
+            stochastic_coupling_ids=(self.discretization_bundle.stochastic_coupling_ids),
+        )
+        updated = eqx.tree_at(
+            lambda solver: solver.precision,
+            self,
+            precision,
+            is_leaf=lambda value: value is None,
+        )
+        updated = eqx.tree_at(
+            lambda solver: solver.precision_evidence,
+            updated,
+            evidence,
+            is_leaf=lambda value: value is None,
+        )
+        return eqx.tree_at(
+            lambda solver: solver.discretization_bundle,
+            updated,
+            bundle,
+        )
+
     def _append_training_terms(
         self,
         terms: AbstractScalarTerm | Sequence[AbstractScalarTerm],
@@ -200,7 +251,7 @@ class FunctionalSolver(StrictModule):
     ) -> "FunctionalSolver":
         objective = self.objective.append_training_terms(terms, key=key)
         updated = eqx.tree_at(lambda solver: solver.objective, self, objective)
-        return eqx.tree_at(
+        updated = eqx.tree_at(
             lambda solver: solver.discretization_bundle,
             updated,
             _functional_discretization_bundle(
@@ -208,17 +259,29 @@ class FunctionalSolver(StrictModule):
                 updated.objective.terms + updated.objective.evaluation_terms,
             ),
         )
+        if updated.precision is None:
+            return updated
+        return updated._with_precision_evidence(
+            updated.precision,
+            updated.precision_evidence,
+        )
 
     def _retain_training_prefix(self, count: int, /) -> "FunctionalSolver":
         objective = self.objective.retain_training_prefix(count)
         updated = eqx.tree_at(lambda solver: solver.objective, self, objective)
-        return eqx.tree_at(
+        updated = eqx.tree_at(
             lambda solver: solver.discretization_bundle,
             updated,
             _functional_discretization_bundle(
                 updated.functions,
                 updated.objective.terms + updated.objective.evaluation_terms,
             ),
+        )
+        if updated.precision is None:
+            return updated
+        return updated._with_precision_evidence(
+            updated.precision,
+            updated.precision_evidence,
         )
 
     def ansatz_functions(self) -> frozendict[str, DomainFunction]:
@@ -269,7 +332,13 @@ class FunctionalSolver(StrictModule):
             iteration=step,
             evaluation_kwargs=kwargs,
         )
-        return evaluate_prepared_objective(prepared, self.functions).total
+        precision_context = (
+            nullcontext()
+            if self.precision is None
+            else jax.default_matmul_precision(self.precision.matmul_precision)
+        )
+        with precision_context:
+            return evaluate_prepared_objective(prepared, self.functions).total
 
     def solve(
         self,
@@ -293,6 +362,7 @@ class FunctionalSolver(StrictModule):
         tensorboard_flush_every: int = 10,
         profile_adaptive: bool = False,
         train_term_sample_size: int | None = None,
+        precision: FunctionalPrecisionPolicy | None = None,
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
@@ -365,5 +435,6 @@ class FunctionalSolver(StrictModule):
             tensorboard_flush_every=tensorboard_flush_every,
             profile_adaptive=profile_adaptive,
             train_term_sample_size=train_term_sample_size,
+            precision=precision,
         )
         return _solve(self, optim=optimizer, config=config)

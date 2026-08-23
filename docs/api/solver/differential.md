@@ -92,6 +92,10 @@ solution = phx.solver.solve_diffrax(
 
 ::: phydrax.solver.solve_diffrax
 
+---
+
+::: phydrax.solver.TemporalPrecisionPolicy
+
 ## Additive IMEX solve
 
 `SplitDifferentialProblem` preserves `y' = f_explicit + f_implicit` as two terms.
@@ -108,6 +112,16 @@ solver rejects rather than silently summing the terms.
 `DifferentialSolution.temporal_evidence` records method capabilities and the complete
 solver/controller/adjoint/event configuration identity. `valid` remains per-output
 finite evidence; `successful` additionally requires an acceptable backend result.
+
+`TemporalPrecisionPolicy` separates coefficient, stored-state, stage, accumulation,
+residual, acceptance-decision, checkpoint, and returned-output precision. The
+Phydrax SSP, Rosenbrock-W, Gauss--Legendre IRK, multirate, generalized-alpha, and
+Störmer--Verlet paths apply supported placements and retain effective evidence.
+Diffrax promotes state against its time dtype, so its coefficient precision must
+match the real component of state precision; unsupported requests fail before the
+solve. Native implicit methods likewise require coefficient, stage, and residual
+precision to match storage while permitting wider accumulation and decisions.
+Dense output applies the declared output dtype instead of leaking backend storage.
 
 ## Markov cubature weak solve
 
@@ -657,6 +671,10 @@ where \(M\) is the spatial quadrature mass.
 `SemidiscreteSPDE.wiener_realization` derives the combined noise shape and propagates
 the basis fingerprint as `noise_id`. A mismatched realization and retained noise basis
 therefore fail before integration.
+`SemidiscreteSPDE.precision_evidence` is a parent envelope over the state dtype
+and any available spatial-discretization and noise-basis evidence. The same IDs
+are retained in its `DiscretizationBundle`; a nominal state dtype never erases
+lower-precision spatial or covariance stages.
 
 ### Spatial discretizations
 
@@ -720,6 +738,10 @@ mode IDs, and spatial discretization provenance. It changes when the grid,
 rank, spectrum, modes, or randomized seed changes.
 
 ::: phydrax.stochastic.SpatialNoiseBasis
+
+---
+
+::: phydrax.stochastic.SpatialNoisePrecisionPolicy
 
 ---
 

@@ -14,7 +14,15 @@ from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree
-from ..linalg import PyTreeSpace
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    PyTreeSpace,
+    solve as solve_linear,
+)
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
     NonlinearCapabilities,
@@ -32,6 +40,10 @@ from ._updates import (
     prepare_nonlinear_update,
     PreparedNonlinearUpdate,
 )
+
+
+def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
 
 
 class _NGMRESRun(StrictModule):
@@ -66,6 +78,8 @@ class NonlinearGMRES(AbstractNonlinearMethod):
     history: int
     regularization: float
     safeguard_factor: float
+    linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -75,6 +89,8 @@ class NonlinearGMRES(AbstractNonlinearMethod):
         history: int = 8,
         regularization: float = 1e-10,
         safeguard_factor: float = 1.0,
+        linear: LinearSolvePolicy | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         if not isinstance(update, AbstractNonlinearUpdate):
             raise TypeError("update must be AbstractNonlinearUpdate.")
@@ -87,10 +103,18 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             raise ValueError("regularization must be finite and non-negative.")
         if not isfinite(safeguard_) or safeguard_ < 1.0:
             raise ValueError("safeguard_factor must be finite and at least one.")
+        linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.update = update
         self.history = history_
         self.regularization = regularization_
         self.safeguard_factor = safeguard_
+        self.linear = linear_
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -120,6 +144,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be a NonlinearTermination.")
+        self.precision.validate_tolerance(termination.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial NGMRES state")
         source = PyTreeSpace(initial)
         residual_tree, initial_auxiliary = problem.evaluate(initial, args)
@@ -128,7 +153,8 @@ class NonlinearGMRES(AbstractNonlinearMethod):
         initial_residual = target.flatten(residual_tree)
         if initial_coordinates.dtype != initial_residual.dtype:
             raise TypeError("NGMRES state and residual coordinate dtypes must match.")
-        initial_norm = jnp.linalg.norm(initial_residual)
+        self.precision.validate_trees(initial, residual_tree)
+        initial_norm = _coordinate_norm(initial_residual, self.precision)
         history_states = jnp.zeros(
             (self.history, source.size), dtype=initial_coordinates.dtype
         )
@@ -254,17 +280,27 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             delta_residuals = current.history_residuals - base_residual[None, :]
             delta_states = jnp.where(active[:, None], delta_states, 0.0)
             delta_residuals = jnp.where(active[:, None], delta_residuals, 0.0)
-            gram = jnp.conj(delta_residuals) @ delta_residuals.T
+            delta_states_ = self.precision.accumulation(delta_states)
+            delta_residuals_ = self.precision.accumulation(delta_residuals)
+            base_residual_ = self.precision.accumulation(base_residual)
+            gram = jnp.conj(delta_residuals_) @ delta_residuals_.T
             diagonal = jnp.where(
                 active,
                 jnp.asarray(self.regularization, dtype=gram.real.dtype),
                 jnp.asarray(1.0, dtype=gram.real.dtype),
             )
             gram = gram + jnp.diag(diagonal.astype(gram.dtype))
-            right = -(jnp.conj(delta_residuals) @ base_residual)
-            coefficients = jnp.linalg.solve(gram, right)
+            right = -(jnp.conj(delta_residuals_) @ base_residual_)
+            coefficients = solve_linear(
+                LeastSquaresProblem(DenseLinearOperator(gram)),
+                right,
+                policy=self.precision.bind_linear(self.linear),
+            ).value
             coefficients = jnp.where(active, coefficients, 0.0)
-            accelerated = base + jnp.sum(coefficients[:, None] * delta_states, axis=0)
+            accelerated = jnp.asarray(
+                base + jnp.sum(coefficients[:, None] * delta_states_, axis=0),
+                dtype=base.dtype,
+            )
             accelerated_tree = source.unflatten(accelerated)
             accelerated_residual_tree, accelerated_auxiliary = problem.evaluate(
                 accelerated_tree, args
@@ -279,8 +315,11 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 accelerated_auxiliary,
                 args,
             )
-            base_norm = jnp.linalg.norm(base_residual)
-            accelerated_norm = jnp.linalg.norm(accelerated_residual)
+            base_norm = _coordinate_norm(base_residual, self.precision)
+            accelerated_norm = _coordinate_norm(
+                accelerated_residual,
+                self.precision,
+            )
             use_accelerated = (
                 (current.history_count > 0)
                 & base_finite
@@ -303,7 +342,10 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             accepted_state = jnp.where(accepted, candidate, current.state)
             accepted_residual = jnp.where(accepted, candidate_residual, current.residual)
             accepted_norm = jnp.where(accepted, candidate_norm, current.residual_norm)
-            step_norm = jnp.linalg.norm(accepted_state - current.state)
+            step_norm = _coordinate_norm(
+                accepted_state - current.state,
+                self.precision,
+            )
             converged = accepted & (
                 accepted_norm
                 <= termination.residual_threshold(current.initial_residual_norm)
@@ -313,7 +355,9 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 & ~converged
                 & (
                     step_norm
-                    <= termination.step_threshold(jnp.linalg.norm(current.state))
+                    <= termination.step_threshold(
+                        _coordinate_norm(current.state, self.precision)
+                    )
                 )
             )
             diverged = accepted_norm > (
@@ -438,7 +482,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
         final_state = source.unflatten(run.state)
         final_residual, final_auxiliary = problem.evaluate(final_state, args)
         final_coordinates = target.flatten(final_residual)
-        final_norm = jnp.linalg.norm(final_coordinates)
+        final_norm = _coordinate_norm(final_coordinates, self.precision)
         final_finite = jnp.all(jnp.isfinite(run.state)) & jnp.all(
             jnp.isfinite(final_coordinates)
         )
@@ -478,8 +522,9 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             acceleration_restarts=run.restarts,
             counts_complete=self.update.capabilities.counts_complete,
         )
+        output_state = jax.tree.map(self.precision.output, final_state)
         return NonlinearResult(
-            state=final_state,
+            state=output_state,
             residual=final_residual,
             auxiliary=final_auxiliary,
             status=status,
@@ -489,7 +534,13 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 method_id=self.method_id,
                 derivative_id="residual-affine-model",
                 globalization_id="preconditioner-safeguard",
+                precision_policy_id=self.precision.policy_id,
                 notes=f"update={self.update.update_id}",
+            ),
+            precision_evidence=self.precision.evidence_for(
+                final_state,
+                final_residual,
+                output_value=output_state,
             ),
         )
 

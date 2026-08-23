@@ -5,19 +5,22 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Literal
+from typing import Any, Literal
 
 import coordax as cx
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._frozendict import frozendict
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._uncertainty import (
     UNCERTAINTY_SOURCES,
     UncertaintySource,
     validate_uncertainty_source,
 )
+from ._precision import PredictivePrecisionPolicy
 
 
 class SampleAxis(StrictModule):
@@ -81,6 +84,8 @@ class PredictiveField(StrictModule):
     sample_axes: tuple[SampleAxis, ...]
     conditional_variance: cx.Field | None
     valid: cx.Field | None
+    precision: PredictivePrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
     def __init__(
         self,
@@ -89,6 +94,7 @@ class PredictiveField(StrictModule):
         *,
         conditional_variance: cx.Field | None = None,
         valid: cx.Field | None = None,
+        precision: PredictivePrecisionPolicy | None = None,
     ):
         if not isinstance(samples, cx.Field):
             raise TypeError("PredictiveField.samples must be a coordax.Field.")
@@ -135,10 +141,21 @@ class PredictiveField(StrictModule):
                     "Predictive validity masks may use only named dimensions."
                 )
             _broadcast_field_data(valid, samples)
-        self.samples = samples
+        precision_ = PredictivePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, PredictivePrecisionPolicy):
+            raise TypeError("precision must be a PredictivePrecisionPolicy.")
+        stored_samples = cx.Field(
+            precision_.storage(samples.data),
+            dims=samples.dims,
+        )
+        self.samples = stored_samples
         self.sample_axes = axes
         self.conditional_variance = conditional_variance
         self.valid = valid
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence(
+            jnp.asarray(stored_samples.data).dtype
+        )
 
     def _selected_dims(
         self, sources: UncertaintySource | Iterable[UncertaintySource] | None
@@ -171,7 +188,13 @@ class PredictiveField(StrictModule):
         *,
         sources: UncertaintySource | Iterable[UncertaintySource] | None = None,
     ) -> cx.Field:
-        return _masked_moment(self.samples, self._selected_dims(sources), self.valid, 1)
+        return _masked_moment(
+            self.samples,
+            self._selected_dims(sources),
+            self.valid,
+            1,
+            dtype=self.precision.summary_dtype,
+        )
 
     def variance(
         self,
@@ -179,8 +202,12 @@ class PredictiveField(StrictModule):
         sources: UncertaintySource | Iterable[UncertaintySource] | None = None,
     ) -> cx.Field:
         dims = self._selected_dims(sources)
-        mean = _masked_moment(self.samples, dims, self.valid, 1)
-        second = _masked_moment(self.samples, dims, self.valid, 2)
+        mean = _masked_moment(
+            self.samples, dims, self.valid, 1, dtype=self.precision.summary_dtype
+        )
+        second = _masked_moment(
+            self.samples, dims, self.valid, 2, dtype=self.precision.summary_dtype
+        )
         return cx.Field(
             jnp.maximum(jnp.asarray(second.data) - jnp.asarray(mean.data) ** 2, 0.0),
             dims=mean.dims,
@@ -200,7 +227,14 @@ class PredictiveField(StrictModule):
         *,
         sources: UncertaintySource | Iterable[UncertaintySource] | None = None,
     ) -> cx.Field:
-        q_arr = jnp.asarray(q, dtype=float)
+        q_arr = jnp.asarray(
+            q,
+            dtype=(
+                float
+                if self.precision.summary_dtype is None
+                else self.precision.summary_dtype
+            ),
+        )
         if q_arr.ndim != 0:
             raise ValueError("PredictiveField.quantile currently requires a scalar q.")
         q_value = float(q_arr)
@@ -208,7 +242,7 @@ class PredictiveField(StrictModule):
             raise ValueError("q must lie between zero and one.")
         dims = self._selected_dims(sources)
         positions = tuple(self.samples.dims.index(dim) for dim in dims)
-        data = jnp.asarray(self.samples.data)
+        data = self.precision.summary(self.samples.data)
         if self.valid is not None:
             valid = _broadcast_field_data(self.valid, self.samples).astype(bool)
             data = jnp.where(valid, data, jnp.nan)
@@ -251,7 +285,13 @@ class PredictiveField(StrictModule):
         data = _broadcast_field_data(self.conditional_variance, self.samples)
         field = cx.Field(data, dims=self.samples.dims)
         sample_dims = tuple(axis.dim for axis in self.sample_axes)
-        return _masked_moment(field, sample_dims, self.valid, 1)
+        return _masked_moment(
+            field,
+            sample_dims,
+            self.valid,
+            1,
+            dtype=self.precision.summary_dtype,
+        )
 
     def process_variance(self) -> cx.Field:
         return self.variance(sources="process")
@@ -311,12 +351,19 @@ def _masked_moment(
     dims: tuple[str, ...],
     valid: cx.Field | None,
     power: int,
+    *,
+    dtype: Any | None = None,
 ) -> cx.Field:
     if not dims:
         data = jnp.asarray(field.data) ** power
+        if dtype is not None:
+            data = data.astype(dtype)
         return cx.Field(data, dims=field.dims)
     positions = tuple(field.dims.index(dim) for dim in dims)
-    values = jnp.asarray(field.data) ** power
+    values = jnp.asarray(field.data)
+    if dtype is not None:
+        values = values.astype(dtype)
+    values = values**power
     if valid is None:
         reduced = jnp.mean(values, axis=positions)
     else:

@@ -7,17 +7,27 @@ from __future__ import annotations
 from typing import Any, Callable
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._bounds import Bounds
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
 from .._tree_math import validate_real_inexact_tree
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve as solve_linear,
+)
 from ._iterative import (
     AbstractLeastSquaresMethod,
     LeastSquaresResult,
     NonlinearLeastSquaresProblem,
     OptimizationDiagnostics,
+    OptimizationProvenance,
     OptimizationTermination,
 )
 from ._least_squares import (
@@ -36,6 +46,8 @@ class VariableProjectionProblem(StrictModule):
     bounds: Bounds | None
     regularization: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
+    linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -47,6 +59,8 @@ class VariableProjectionProblem(StrictModule):
         bounds: Bounds | None = None,
         regularization: float = 0.0,
         problem_id: str = "variable-projection",
+        linear: LinearSolvePolicy | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         if not callable(design_matrix):
             raise TypeError("design_matrix must be callable.")
@@ -65,6 +79,12 @@ class VariableProjectionProblem(StrictModule):
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
+        linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.design_matrix = design_matrix
         self.observations = observations_
         self.offset = (
@@ -75,10 +95,14 @@ class VariableProjectionProblem(StrictModule):
         self.bounds = bounds
         self.regularization = regularization_
         self.problem_id = identifier
+        self.linear = linear_
+        self.precision = precision_
 
     def linear_solution(self, nonlinear_parameters, args=None, /):
-        matrix = jnp.asarray(self.design_matrix(nonlinear_parameters, args))
-        offset = jnp.asarray(self.offset(nonlinear_parameters, args))
+        matrix = self.precision.accumulation(
+            self.design_matrix(nonlinear_parameters, args)
+        )
+        offset = self.precision.residual(self.offset(nonlinear_parameters, args))
         if matrix.ndim != 2 or matrix.shape[0] != self.observations.size:
             raise ValueError("design_matrix must return (observations, coefficients).")
         if offset.shape != self.observations.shape:
@@ -99,12 +123,16 @@ class VariableProjectionProblem(StrictModule):
         else:
             augmented_matrix = matrix
             augmented_right = right
-        solution, _, rank, singular_values = jnp.linalg.lstsq(
-            augmented_matrix,
-            augmented_right,
-            rcond=None,
+        linear_result = solve_linear(
+            LeastSquaresProblem(DenseLinearOperator(augmented_matrix)),
+            self.precision.accumulation(augmented_right),
+            policy=self.precision.bind_linear(self.linear),
         )
-        residual = matrix @ solution + offset - self.observations
+        solution = self.precision.direction(linear_result.value)
+        rank = linear_result.diagnostics.rank
+        singular_values = linear_result.diagnostics.singular_values
+        assert singular_values is not None
+        residual = self.precision.residual(matrix @ solution + offset - self.observations)
         return solution, residual, rank, singular_values
 
 
@@ -204,14 +232,45 @@ def variable_projection(
         active_constraints=result.diagnostics.active_constraints,
         counts_complete=result.diagnostics.counts_complete,
     )
+    model_parameters = problem.precision.state(result.parameters)
+    model_residual = problem.precision.residual(residual)
+    output_parameters = jax.tree.map(
+        problem.precision.output,
+        model_parameters,
+    )
+    residual_ = problem.precision.accumulation(model_residual)
+    provenance = OptimizationProvenance(
+        problem_id=result.provenance.problem_id,
+        method=result.provenance.method,
+        backend=result.provenance.backend,
+        backend_method=result.provenance.backend_method,
+        globalization=result.provenance.globalization,
+        matrix_free=result.provenance.matrix_free,
+        implicit_differentiation=result.provenance.implicit_differentiation,
+        precision_policy_id=problem.precision.policy_id,
+        notes=result.provenance.notes,
+    )
+    children = (
+        {}
+        if result.precision_evidence is None
+        else {"reduced-solve": result.precision_evidence}
+    )
     augmented_result = LeastSquaresResult(
-        result.parameters,
-        residual,
-        0.5 * jnp.real(jnp.vdot(residual, residual)),
+        output_parameters,
+        model_residual,
+        problem.precision.decision(
+            0.5 * jnp.real(jnp.sum(jnp.conj(residual_) * residual_))
+        ),
         result.auxiliary,
         result.status,
         diagnostics,
-        result.provenance,
+        provenance,
+        precision_evidence=problem.precision.evidence_for(
+            model_parameters,
+            model_residual,
+            children=children,
+            output_value=output_parameters,
+        ),
     )
     return VariableProjectionResult(
         augmented_result,

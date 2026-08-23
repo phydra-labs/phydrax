@@ -51,6 +51,19 @@ def _interval(
     return start, end, support
 
 
+def _array_interval(t0: ArrayLike, t1: ArrayLike, /) -> tuple[Array, Array]:
+    start = jnp.asarray(t0, dtype=float)
+    end = jnp.asarray(t1, dtype=float)
+    if start.shape != () or end.shape != ():
+        raise ValueError("Transition solver times must be scalar.")
+    end = eqx.error_if(
+        end,
+        ~(jnp.isfinite(start) & jnp.isfinite(end) & (end > start)),
+        "Transition solver times require finite t1 > t0.",
+    )
+    return start, end
+
+
 def _transition_sample(
     values: Array,
     valid: Array,
@@ -632,7 +645,7 @@ class FiniteStateTransitionKernel(AbstractTransitionKernel):
 
     def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
         del context
-        start, end, _ = _interval(t0, t1)
+        start, end = _array_interval(t0, t1)
         values = jnp.asarray(state)
         indices, valid, batch_shape = self._indices(values)
         matrix = self.generator.transition_matrix(end - start)
@@ -666,7 +679,7 @@ class FiniteStateTransitionKernel(AbstractTransitionKernel):
 
     def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
         del context
-        start, end, _ = _interval(t0, t1)
+        start, end = _array_interval(t0, t1)
         current, current_valid, batch_shape = self._indices(state)
         following, following_valid, next_batch_shape = self._indices(next_state)
         if batch_shape != next_batch_shape:

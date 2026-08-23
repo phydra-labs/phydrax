@@ -64,6 +64,7 @@ class _GradientBackend:
             tensorboard_flush_every=config.tensorboard_flush_every,
             profile_adaptive=config.profile_adaptive,
             train_term_sample_size=config.train_term_sample_size,
+            precision=config.precision,
         )
 
 
@@ -183,6 +184,13 @@ def solve(
     config: FunctionalSolveConfig,
 ) -> "FunctionalSolver":
     """Dispatch one functional run through the common backend interface."""
+    if config.precision is not None and not isinstance(
+        optim,
+        optax.GradientTransformation,
+    ):
+        raise ValueError(
+            "Functional precision currently supports standard Optax transforms only."
+        )
     backend = _resolve_backend(
         optim,
         evaluation_parameters=config.evaluation_parameters,

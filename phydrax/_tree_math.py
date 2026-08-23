@@ -5,8 +5,8 @@
 from __future__ import annotations
 
 from typing import Any
-import equinox as eqx
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree

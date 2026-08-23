@@ -28,6 +28,7 @@ from ._local_lindblad import (
     prepare_local_lindblad_channel,
     PreparedLocalKrausChannel,
 )
+from ._precision import TensorNetworkPrecisionPolicy
 from ._process_causality import (
     ProcessCombCausalityReport,
     ProcessSequenceLikelihood,
@@ -67,6 +68,7 @@ __all__ = [
     "MatrixProductOperator",
     "MatrixProductState",
     "TensorTruncationEvidence",
+    "TensorNetworkPrecisionPolicy",
     "ProcessTensorMPO",
     "ProcessTensorPhysicality",
     "QuantumIntervention",

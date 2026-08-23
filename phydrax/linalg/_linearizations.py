@@ -71,8 +71,6 @@ class PreparedLinearization(StrictModule):
         return self.source.validate(self.pullback(self.target.validate(cotangent)))
 
 
-
-
 def prepare_linearization(
     function: Callable[[PyTree[Any]], PyTree[Any]],
     point: PyTree[Any],

@@ -14,11 +14,13 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import (
     FiniteVolumeAdmissibilityReport,
     FiniteVolumeMethodPlan,
+    FiniteVolumePrecisionPolicy,
     FluxPositivityPlan,
     PiecewiseConstantReconstruction,
     PreparedFiniteVolumeDynamics,
@@ -106,29 +108,21 @@ class FiniteVolumeRuntimeState(StrictModule):
     ):
         self.conservative_state = jnp.asarray(conservative_state)
         self.time = jnp.asarray(time).reshape(())
-        self.accepted_step = jnp.asarray(
-            accepted_step, dtype=jnp.int32
-        ).reshape(())
+        self.accepted_step = jnp.asarray(accepted_step, dtype=jnp.int32).reshape(())
         self.step_size = jnp.asarray(step_size).reshape(())
-        self.last_status = jnp.asarray(
-            last_status, dtype=jnp.int32
-        ).reshape(())
+        self.last_status = jnp.asarray(last_status, dtype=jnp.int32).reshape(())
         self.controller_state = jnp.asarray(
             () if controller_state is None else controller_state
         )
         self.integrator_state = jnp.asarray(
             () if integrator_state is None else integrator_state
         )
-        self.forcing_state = jnp.asarray(
-            () if forcing_state is None else forcing_state
-        )
+        self.forcing_state = jnp.asarray(() if forcing_state is None else forcing_state)
         self.random_state = jnp.asarray(
             () if random_state is None else random_state,
             dtype=jnp.uint32,
         )
-        self.output_cursor = jnp.asarray(
-            output_cursor, dtype=jnp.int32
-        ).reshape(())
+        self.output_cursor = jnp.asarray(output_cursor, dtype=jnp.int32).reshape(())
 
 
 class FiniteVolumeAdvanceResult(StrictModule):
@@ -139,6 +133,7 @@ class FiniteVolumeAdvanceResult(StrictModule):
     accepted_step_size: Array
     positivity: FiniteVolumeAdmissibilityReport
     accepted_integrated_fluxes: tuple[Array, ...]
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
 
 class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
@@ -148,6 +143,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
     fallback_dynamics: PreparedFiniteVolumeDynamics
     positivity: FluxPositivityPlan
     policy: FiniteVolumeStepPolicy
+    precision: FiniteVolumePrecisionPolicy
     runtime_id: str = eqx.field(static=True)
 
     def __init__(
@@ -177,11 +173,13 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             dynamics.boundaries,
             capacity=dynamics.capacity,
             bathymetry=dynamics.bathymetry,
+            precision=dynamics.precision,
             source=dynamics.source,
         )
         self.dynamics = dynamics
         self.fallback_dynamics = fallback
         self.positivity = positivity
+        self.precision = dynamics.precision
         self.policy = policy_
         self.runtime_id = canonical_fingerprint(
             {
@@ -190,6 +188,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 "fallback": fallback.dynamics_id,
                 "positivity": positivity.plan_id,
                 "policy": policy_.policy_id,
+                "precision": dynamics.precision.policy_id,
             }
         )
 
@@ -202,17 +201,16 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         args: Any,
         /,
     ):
-        high_fluxes, _ = self.dynamics.face_fluxes(
-            time, evaluation_state, args
-        )
+        high_fluxes, _ = self.dynamics.face_fluxes(time, evaluation_state, args)
         fallback_fluxes, _ = self.fallback_dynamics.face_fluxes(
             time, evaluation_state, args
         )
-        high_residual = self.dynamics(
-            time, evaluation_state, args
+        high_residual = self.precision.reduction(
+            self.dynamics(time, evaluation_state, args)
         )
-        common_residual = high_residual - self.dynamics._flux_residual(
-            high_fluxes
+        common_residual = self.precision.storage(
+            high_residual
+            - self.precision.reduction(self.dynamics._flux_residual(high_fluxes))
         )
         return self.positivity.limit_face_fluxes(
             self.dynamics.system,
@@ -224,6 +222,18 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             self.dynamics.discretization,
         )
 
+    def _precision_report(
+        self,
+        report: FiniteVolumeAdmissibilityReport,
+        /,
+    ) -> FiniteVolumeAdmissibilityReport:
+        return jax.tree.map(
+            lambda value: (
+                self.precision.reduction(value) if eqx.is_inexact_array(value) else value
+            ),
+            report,
+        )
+
     def _candidate(
         self,
         time: Array,
@@ -232,31 +242,35 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         args: Any,
         /,
     ):
-        first = self._limited_euler(
-            time, state, state, step_size, args
+        first = self._limited_euler(time, state, state, step_size, args)
+        second_base = self.precision.storage(
+            0.75 * self.precision.reduction(state)
+            + 0.25 * self.precision.reduction(first.state)
         )
-        second_base = 0.75 * state + 0.25 * first.state
         second = self._limited_euler(
-            time + step_size,
-            first.state,
+            self.precision.decision(time + step_size),
+            self.precision.storage(first.state),
             second_base,
-            0.25 * step_size,
+            self.precision.decision(0.25 * step_size),
             args,
         )
-        third_base = (
-            (1.0 / 3.0) * state + (2.0 / 3.0) * second.state
+        third_base = self.precision.storage(
+            (1.0 / 3.0) * self.precision.reduction(state)
+            + (2.0 / 3.0) * self.precision.reduction(second.state)
         )
         third = self._limited_euler(
-            time + 0.5 * step_size,
-            second.state,
+            self.precision.decision(time + 0.5 * step_size),
+            self.precision.storage(second.state),
             third_base,
-            (2.0 / 3.0) * step_size,
+            self.precision.decision((2.0 / 3.0) * step_size),
             args,
         )
         integrated_fluxes = tuple(
-            (1.0 / 6.0) * first_flux
-            + (1.0 / 6.0) * second_flux
-            + (2.0 / 3.0) * third_flux
+            self.precision.reduction(
+                (1.0 / 6.0) * self.precision.reduction(first_flux)
+                + (1.0 / 6.0) * self.precision.reduction(second_flux)
+                + (2.0 / 3.0) * self.precision.reduction(third_flux)
+            )
             for first_flux, second_flux, third_flux in zip(
                 first.integrated_fluxes,
                 second.integrated_fluxes,
@@ -265,7 +279,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             )
         )
         normal_fluxes = tuple(
-            integrated / measure[..., None]
+            self.precision.flux(integrated / self.precision.reduction(measure[..., None]))
             for integrated, measure in zip(
                 integrated_fluxes,
                 self.dynamics.discretization.face_measures,
@@ -273,8 +287,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             )
         )
         return type(third)(
-            state=third.state,
-            report=third.report,
+            state=self.precision.storage(third.state),
+            report=self._precision_report(third.report),
             normal_fluxes=normal_fluxes,
             integrated_fluxes=integrated_fluxes,
             face_blend_factors=third.face_blend_factors,
@@ -288,11 +302,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
     ) -> FiniteVolumeAdvanceResult:
         if not isinstance(runtime_state, FiniteVolumeRuntimeState):
             raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
-        valid = jnp.all(
-            self.dynamics.system.admissible(
-                runtime_state.conservative_state
-            )
-        )
+        self.precision.validate_state(runtime_state.conservative_state)
+        valid = jnp.all(self.dynamics.system.admissible(runtime_state.conservative_state))
 
         def valid_branch(_):
             return self._advance_valid(runtime_state, args)
@@ -303,9 +314,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 runtime_state.time,
                 runtime_state.step_size,
                 accepted_step=runtime_state.accepted_step,
-                last_status=int(
-                    FiniteVolumeRunStatus.INVALID_INITIAL_STATE
-                ),
+                last_status=int(FiniteVolumeRunStatus.INVALID_INITIAL_STATE),
                 controller_state=runtime_state.controller_state,
                 integrator_state=runtime_state.integrator_state,
                 forcing_state=runtime_state.forcing_state,
@@ -316,23 +325,24 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 high_order_valid=jnp.asarray(False),
                 fallback_valid=jnp.asarray(False),
                 blend_factor=jnp.asarray(
-                    0.0, dtype=runtime_state.conservative_state.dtype
+                    0.0,
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
                 ),
                 activated=jnp.asarray(False),
-                minimum_density=jnp.min(
-                    runtime_state.conservative_state[..., 0]
+                minimum_density=self.precision.decision(
+                    jnp.min(runtime_state.conservative_state[..., 0])
                 ),
                 limited_state_valid=jnp.asarray(False),
                 secondary_reduction_applied=jnp.asarray(False),
                 secondary_reduction_factor=jnp.asarray(
-                    0.0, dtype=runtime_state.conservative_state.dtype
+                    0.0,
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
                 ),
             )
             zero_fluxes = tuple(
                 jnp.zeros(
-                    layout.shape
-                    + (self.dynamics.discretization.component_count,),
-                    dtype=runtime_state.conservative_state.dtype,
+                    layout.shape + (self.dynamics.discretization.component_count,),
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
                 )
                 for layout in self.dynamics.discretization.face_layouts
             )
@@ -341,11 +351,10 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 accepted=jnp.asarray(False),
                 retries=jnp.asarray(0, dtype=jnp.int32),
                 attempted_step_size=runtime_state.step_size,
-                accepted_step_size=jnp.asarray(
-                    0.0, dtype=runtime_state.step_size.dtype
-                ),
+                accepted_step_size=jnp.asarray(0.0, dtype=runtime_state.step_size.dtype),
                 positivity=report,
                 accepted_integrated_fluxes=zero_fluxes,
+                precision_evidence=self.precision.evidence(),
             )
 
         return jax.lax.cond(valid, valid_branch, invalid_branch, operand=None)
@@ -357,10 +366,17 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         /,
     ) -> FiniteVolumeAdvanceResult:
         original = runtime_state.conservative_state
-        stable = self.dynamics.stable_step(
-            original, args, cfl=self.policy.cfl
+        self.precision.validate_state(original)
+        stable = self.precision.decision(
+            self.dynamics.stable_step(
+                original,
+                args,
+                cfl=self.policy.cfl,
+            )
         )
-        attempted = jnp.minimum(runtime_state.step_size, stable)
+        attempted = self.precision.decision(
+            jnp.minimum(self.precision.decision(runtime_state.step_size), stable)
+        )
         accepted = jnp.asarray(False)
         accepted_state = original
         accepted_dt = jnp.asarray(0.0, dtype=attempted.dtype)
@@ -368,28 +384,29 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         last_report = FiniteVolumeAdmissibilityReport(
             high_order_valid=jnp.asarray(False),
             fallback_valid=jnp.asarray(False),
-            blend_factor=jnp.asarray(0.0, dtype=original.dtype),
+            blend_factor=jnp.asarray(
+                0.0,
+                dtype=jnp.dtype(self.precision.reduction_dtype),
+            ),
             activated=jnp.asarray(False),
-            minimum_density=jnp.min(original[..., 0]),
+            minimum_density=self.precision.decision(jnp.min(original[..., 0])),
             limited_state_valid=jnp.asarray(False),
             secondary_reduction_applied=jnp.asarray(False),
             secondary_reduction_factor=jnp.asarray(
-                0.0, dtype=original.dtype
+                0.0,
+                dtype=jnp.dtype(self.precision.reduction_dtype),
             ),
         )
         accepted_fluxes = tuple(
             jnp.zeros(
-                layout.shape
-                + (self.dynamics.discretization.component_count,),
-                dtype=original.dtype,
+                layout.shape + (self.dynamics.discretization.component_count,),
+                dtype=jnp.dtype(self.precision.reduction_dtype),
             )
             for layout in self.dynamics.discretization.face_layouts
         )
-        current_dt = attempted
+        current_dt = self.precision.decision(attempted)
         for retry in range(self.policy.maximum_retries + 1):
-            candidate = self._candidate(
-                runtime_state.time, original, current_dt, args
-            )
+            candidate = self._candidate(runtime_state.time, original, current_dt, args)
             finite = jnp.all(jnp.isfinite(candidate.state))
             valid = (
                 finite
@@ -397,8 +414,16 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 & candidate.report.limited_state_valid
             )
             take = (~accepted) & valid
-            accepted_state = jnp.where(take, candidate.state, accepted_state)
-            accepted_dt = jnp.where(take, current_dt, accepted_dt)
+            accepted_state = jnp.where(
+                take,
+                self.precision.storage(candidate.state),
+                accepted_state,
+            )
+            accepted_dt = jnp.where(
+                take,
+                self.precision.decision(current_dt),
+                accepted_dt,
+            )
             retries = jnp.where(take, retry, retries)
             last_report = jax.tree.map(
                 lambda new, old: jnp.where(take, new, old),
@@ -406,7 +431,11 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 last_report,
             )
             accepted_fluxes = tuple(
-                jnp.where(take, new, old)
+                jnp.where(
+                    take,
+                    self.precision.reduction(new),
+                    old,
+                )
                 for new, old in zip(
                     candidate.integrated_fluxes,
                     accepted_fluxes,
@@ -414,9 +443,13 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 )
             )
             accepted = accepted | take
-            current_dt = current_dt * self.policy.reduction_factor
+            current_dt = self.precision.decision(
+                current_dt * self.policy.reduction_factor
+            )
 
-        minimum_reached = current_dt < self.policy.minimum_step_size
+        minimum_reached = current_dt < self.precision.decision(
+            self.policy.minimum_step_size
+        )
         status = jnp.where(
             accepted & (retries > 0),
             int(FiniteVolumeRunStatus.RECOVERED_REJECTION),
@@ -431,12 +464,12 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             ),
         )
         next_state = FiniteVolumeRuntimeState(
-            accepted_state,
-            runtime_state.time + accepted_dt,
-            jnp.where(accepted, accepted_dt, runtime_state.step_size),
-            accepted_step=(
-                runtime_state.accepted_step + accepted.astype(jnp.int32)
+            self.precision.storage(accepted_state),
+            self.precision.decision(runtime_state.time + accepted_dt),
+            self.precision.decision(
+                jnp.where(accepted, accepted_dt, runtime_state.step_size)
             ),
+            accepted_step=(runtime_state.accepted_step + accepted.astype(jnp.int32)),
             last_status=status,
             controller_state=runtime_state.controller_state,
             integrator_state=runtime_state.integrator_state,
@@ -452,6 +485,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             accepted_step_size=accepted_dt,
             positivity=last_report,
             accepted_integrated_fluxes=accepted_fluxes,
+            precision_evidence=self.precision.evidence(),
         )
 
 

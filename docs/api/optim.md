@@ -573,6 +573,14 @@ public success is independently recertified from finite-difference physical
 stationarity and bounds, not from the interpolation model's stopping flag. It
 is distinct from coordinate finite-difference Gauss--Newton.
 
+Model-based and dense least-squares methods reuse `NonlinearPrecisionPolicy` for
+parameter/model storage, direction arithmetic, widened reductions, certificate
+decisions, and returned parameters. Interpolation fits, dogleg systems, POUNDERS,
+variable projection, finite-difference Gauss--Newton, and Schur complements route
+dense algebra through `phydrax.linalg`. `MinimizationResult` and
+`LeastSquaresResult` retain the parent precision envelope; interpolation-model and
+physical-certificate envelopes remain named children.
+
 Factor graph lifecycle functions track changed factors, affected parameters,
 relinearization thresholds, factor/parameter versions, and topology-changing
 add/remove operations. `FactorGraphCertificate` checks objective stationarity,
@@ -620,6 +628,13 @@ form. Final interior-point success is reconciled against an independently
 reconstructed physical active-set KKT certificate. An internal success whose
 stationarity, feasibility, regularity, or complementarity misses tolerance is
 returned as explicit certification failure.
+
+KKT inertia uses the Hermitian spectral precision path, while KKT residuals and
+active-set decisions use the optimization precision policy. Physical least-squares
+and constrained certificates carry their own precision envelopes. Forward and
+reverse constrained sensitivities retain both the dense linear plan ID and the
+primal precision evidence, so a regularity decision is auditable independently of
+the returned tangent.
 
 !!! example
     ```python

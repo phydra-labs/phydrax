@@ -26,6 +26,7 @@ from ...linalg import (
 )
 from .._tensor_support import PreparedTensorGrid
 from ..finite_difference._certification import FDConservationReport, FDStabilityReport
+from ._precision import FiniteVolumePrecisionPolicy
 
 
 FaceInterpolationKind: TypeAlias = Literal["arithmetic", "harmonic", "upwind", "callable"]
@@ -285,6 +286,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
     ]
     interpolation: FaceCoefficientPlan
     plan_id: str = eqx.field(static=True)
+    precision: FiniteVolumePrecisionPolicy
 
     def __init__(
         self,
@@ -300,7 +302,11 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
         ]
         | None = None,
         interpolation: FaceInterpolationKind = "harmonic",
+        precision: FiniteVolumePrecisionPolicy | None = None,
     ):
+        precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FiniteVolumePrecisionPolicy):
+            raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Conservative diffusion requires PreparedTensorGrid.")
         if grid.primary_entity_layout.layout_id != grid.cells().layout_id:
@@ -310,6 +316,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
         self.grid = grid
         self.boundaries = boundaries_
         self.interpolation = face_plan
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "conservative-diffusion-plan",
@@ -319,6 +326,7 @@ class ConservativeDiffusionPlan(StrictModule, NonTrainableState):
                     for lower, upper in boundaries_
                 ],
                 "interpolation": face_plan.plan_id,
+                "precision": precision_.policy_id,
             }
         )
 
@@ -335,6 +343,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
     coefficient: Array
     conservation_report: FDConservationReport
     stability_report: FDStabilityReport
+    precision: FiniteVolumePrecisionPolicy
 
     def __init__(
         self,
@@ -344,8 +353,15 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
     ):
         if not isinstance(plan, ConservativeDiffusionPlan):
             raise TypeError("plan must be ConservativeDiffusionPlan.")
-        coefficient_ = _normalize_tensor_coefficient(coefficient, plan.grid)
-        host = np.asarray(coefficient_)
+        coefficient_ = plan.precision.flux(
+            _normalize_tensor_coefficient(coefficient, plan.grid)
+        )
+        if jnp.issubdtype(coefficient_.dtype, jnp.complexfloating):
+            raise ValueError("Conservative diffusion requires real coefficients.")
+        host = np.asarray(
+            coefficient_,
+            dtype=np.dtype(plan.precision.reduction_dtype),
+        )
         if np.any(~np.isfinite(host)):
             raise ValueError("Diffusion coefficient must be finite.")
         symmetric_residual = float(np.max(np.abs(host - np.swapaxes(host, -1, -2))))
@@ -362,7 +378,10 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             and symmetric_residual <= 1e-10
             and diagonal_residual <= 1e-12
         )
-        field = plan.grid.field_space("conservative_diffusion")
+        field = plan.grid.field_space(
+            "conservative_diffusion",
+            dtype=jnp.dtype(plan.precision.storage_dtype),
+        )
         if not isinstance(field.vector_space, ArraySpace):
             raise TypeError("Conservative diffusion requires an ArraySpace field.")
         self.source = field.vector_space
@@ -380,10 +399,12 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
                 "kind": "prepared-conservative-diffusion",
                 "plan": plan.plan_id,
                 "coefficient_shape": list(coefficient_.shape),
+                "precision": plan.precision.policy_id,
             }
         )
         self.plan = plan
         self.coefficient = coefficient_
+        self.precision = plan.precision
         constant = jnp.ones(plan.grid.shape, dtype=self.source.dtype)
         constant_residual = float(np.asarray(jnp.max(jnp.abs(self.mv(constant)))))
         global_balance = float(
@@ -420,11 +441,9 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         state_index = 0 if side == "lower" else value.shape[axis_index] - 1
         state = jnp.take(value, state_index, axis=axis_index)
         target_ = _boundary_value(target, value.shape, axis_index, value.dtype)
-        distance = (
-            axis.interval_centers[0] - axis.bounds[0]
-            if side == "lower"
-            else axis.bounds[1] - axis.interval_centers[-1]
-        )
+        centers = self.precision.reduction(axis.interval_centers)
+        bounds = self.precision.reduction(axis.bounds)
+        distance = centers[0] - bounds[0] if side == "lower" else bounds[1] - centers[-1]
         if condition.kind == "dirichlet":
             boundary_state = target_ / condition.alpha
             return (
@@ -455,7 +474,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         axis = grid.structured_axes[axis_index]
         if axis.periodic:
             previous = jnp.roll(value, 1, axis=axis_index)
-            widths = axis.interval_widths
+            widths = self.precision.reduction(axis.interval_widths)
             reshape = [1] * value.ndim
             reshape[axis_index] = int(widths.size)
             return (value - previous) / widths.reshape(reshape)
@@ -490,7 +509,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             jnp.arange(1, value.shape[axis_index]),
             axis=axis_index,
         )
-        distances = jnp.diff(axis.interval_centers)
+        distances = jnp.diff(self.precision.reduction(axis.interval_centers))
         reshape = [1] * value.ndim
         reshape[axis_index] = int(distances.size)
         interior = (right - left) / distances.reshape(reshape)
@@ -499,7 +518,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
     def _cell_gradient(self, value: Array, axis_index: int, /) -> Array:
         axis = self.plan.grid.structured_axes[axis_index]
         if axis.periodic:
-            width = axis.interval_widths
+            width = self.precision.reduction(axis.interval_widths)
             reshape = [1] * value.ndim
             reshape[axis_index] = int(width.size)
             return (
@@ -507,12 +526,13 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             ) / (2.0 * width.reshape(reshape))
         if value.shape[axis_index] < 3:
             raise ValueError("Tangential cell gradient requires at least three cells.")
+        centers = self.precision.reduction(axis.interval_centers)
         lower = (
             jnp.take(value, 1, axis=axis_index) - jnp.take(value, 0, axis=axis_index)
-        ) / (axis.interval_centers[1] - axis.interval_centers[0])
+        ) / (centers[1] - centers[0])
         upper = (
             jnp.take(value, -1, axis=axis_index) - jnp.take(value, -2, axis=axis_index)
-        ) / (axis.interval_centers[-1] - axis.interval_centers[-2])
+        ) / (centers[-1] - centers[-2])
         center = jnp.take(
             value,
             jnp.arange(2, value.shape[axis_index]),
@@ -522,7 +542,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             jnp.arange(value.shape[axis_index] - 2),
             axis=axis_index,
         )
-        distances = axis.interval_centers[2:] - axis.interval_centers[:-2]
+        distances = centers[2:] - centers[:-2]
         reshape = [1] * value.ndim
         reshape[axis_index] = int(distances.size)
         center = center / distances.reshape(reshape)
@@ -536,7 +556,10 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         )
 
     def _coefficient(self, coefficient: ArrayLike, /) -> Array:
-        return _normalize_tensor_coefficient(coefficient, self.plan.grid)
+        stored = self.precision.flux(
+            _normalize_tensor_coefficient(coefficient, self.plan.grid)
+        )
+        return self.precision.reduction(stored)
 
     def diagonal_with_coefficient(
         self,
@@ -545,10 +568,13 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
     ) -> Array:
         grid = self.plan.grid
         coefficient_ = self._coefficient(coefficient)
-        diagonal = jnp.zeros(grid.shape, dtype=coefficient_.dtype)
+        diagonal = jnp.zeros(
+            grid.shape,
+            dtype=jnp.dtype(self.precision.reduction_dtype),
+        )
         for axis_index, axis_name in enumerate(grid.axis_names):
             structured_axis = grid.structured_axes[axis_index]
-            widths = structured_axis.interval_widths
+            widths = self.precision.reduction(structured_axis.interval_widths)
             width_shape = [1] * len(grid.shape)
             width_shape[axis_index] = int(widths.size)
             cell_width = widths.reshape(width_shape)
@@ -563,14 +589,15 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
                     / cell_width**2
                 )
                 continue
-            centers = structured_axis.interval_centers
+            centers = self.precision.reduction(structured_axis.interval_centers)
             center_distance = jnp.diff(centers)
             distance_shape = [1] * len(grid.shape)
             distance_shape[axis_index] = int(center_distance.size)
             interior_distance = center_distance.reshape(distance_shape)
             lower_condition, upper_condition = self.plan.boundaries[axis_index]
-            lower_distance = centers[0] - structured_axis.bounds[0]
-            upper_distance = structured_axis.bounds[1] - centers[-1]
+            bounds = self.precision.reduction(structured_axis.bounds)
+            lower_distance = centers[0] - bounds[0]
+            upper_distance = bounds[1] - centers[-1]
 
             def boundary_derivative(
                 condition: ConservativeBoundaryCondition,
@@ -612,7 +639,10 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
                 )
                 / jnp.take(widths, widths.size - 1)
             )
-            contribution = jnp.zeros(grid.shape, dtype=coefficient_.dtype)
+            contribution = jnp.zeros(
+                grid.shape,
+                dtype=jnp.dtype(self.precision.reduction_dtype),
+            )
             lower_index: list[slice | int] = [slice(None)] * len(grid.shape)
             upper_index: list[slice | int] = [slice(None)] * len(grid.shape)
             lower_index[axis_index] = 0
@@ -649,7 +679,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
                     -lower_interior / right_cells
                 )
             diagonal = diagonal + contribution
-        return diagonal
+        return self.precision.storage(diagonal)
 
     def diagonal(self, /) -> Array:
         return self.diagonal_with_coefficient(self.coefficient)
@@ -661,6 +691,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         boundary_values: Mapping[str, tuple[ArrayLike, ArrayLike]] | None,
         /,
     ) -> tuple[Array, ...]:
+        value = self.precision.reduction(value)
         grid = self.plan.grid
         coefficient_ = self._coefficient(coefficient)
         targets = {} if boundary_values is None else dict(boundary_values)
@@ -694,17 +725,21 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
                     axis_name,
                 )
                 flux = flux + face_coefficient * gradient
-            output.append(flux)
+            output.append(self.precision.reduction(flux))
         return tuple(output)
 
     def divergence(self, fluxes: Sequence[Array], /) -> Array:
         grid = self.plan.grid
-        if len(tuple(fluxes)) != len(grid.shape):
+        fluxes_ = tuple(self.precision.reduction(value) for value in fluxes)
+        if len(fluxes_) != len(grid.shape):
             raise ValueError("Diffusion requires one normal flux per axis.")
-        result = jnp.zeros(grid.shape, dtype=jnp.result_type(*tuple(fluxes)))
-        for axis_index, flux in enumerate(fluxes):
+        result = jnp.zeros(
+            grid.shape,
+            dtype=jnp.dtype(self.precision.reduction_dtype),
+        )
+        for axis_index, flux in enumerate(fluxes_):
             structured_axis = grid.structured_axes[axis_index]
-            widths = structured_axis.interval_widths
+            widths = self.precision.reduction(structured_axis.interval_widths)
             reshape = [1] * len(grid.shape)
             reshape[axis_index] = int(widths.size)
             if structured_axis.periodic:
@@ -733,7 +768,8 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         boundary_values: Mapping[str, tuple[ArrayLike, ArrayLike]] | None = None,
     ) -> Array:
         value = self.source.validate(jnp.asarray(vector))
-        return self.divergence(self.fluxes(value, coefficient, boundary_values))
+        accumulated = self.divergence(self.fluxes(value, coefficient, boundary_values))
+        return self.target.validate(self.precision.storage(accumulated))
 
     def apply(
         self,
@@ -790,6 +826,7 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
     boundaries: tuple[
         tuple[ConservativeBoundaryCondition, ConservativeBoundaryCondition], ...
     ]
+    precision: FiniteVolumePrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -807,6 +844,7 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
             ],
         ]
         | None = None,
+        precision: FiniteVolumePrecisionPolicy | None = None,
     ):
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Conservative advection requires PreparedTensorGrid.")
@@ -816,11 +854,15 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
             raise ValueError("Unknown advection form.")
         if reconstruction not in ("arithmetic", "upwind"):
             raise ValueError("Unknown advection reconstruction.")
+        precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FiniteVolumePrecisionPolicy):
+            raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
         boundaries_ = _normalize_boundaries(grid, boundaries)
         self.grid = grid
         self.form = form
         self.reconstruction = reconstruction
         self.boundaries = boundaries_
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "conservative-advection-plan",
@@ -831,6 +873,7 @@ class ConservativeAdvectionPlan(StrictModule, NonTrainableState):
                     [lower.condition_id, upper.condition_id]
                     for lower, upper in boundaries_
                 ],
+                "precision": precision_.policy_id,
             }
         )
 
@@ -866,6 +909,7 @@ class PreparedConservativeAdvection(StrictModule):
                 )
             },
             interpolation="arithmetic",
+            precision=plan.precision,
         ).prepare(1.0)
         self.plan = plan
         self.face_velocity = faces
@@ -886,7 +930,7 @@ class PreparedConservativeAdvection(StrictModule):
     ) -> tuple[Array, ...]:
         dimension = len(plan.grid.shape)
         if isinstance(velocity, (tuple, list)):
-            faces = tuple(jnp.asarray(value) for value in velocity)
+            faces = tuple(plan.precision.flux(value) for value in velocity)
             if len(faces) != dimension or any(
                 value.shape != plan.grid.faces(axis).shape
                 for value, axis in zip(
@@ -899,12 +943,14 @@ class PreparedConservativeAdvection(StrictModule):
                     "Face velocity tuple must align with every normal face layout."
                 )
             return faces
-        cell_velocity = jnp.asarray(velocity)
+        cell_velocity = plan.precision.flux(velocity)
         if cell_velocity.shape != plan.grid.shape + (dimension,):
             raise ValueError("Cell velocity must have one trailing spatial component.")
         interpolation = FaceCoefficientPlan(plan.grid, kind="arithmetic")
         return tuple(
-            interpolation.interpolate(cell_velocity[..., axis], axis_name)
+            plan.precision.flux(
+                interpolation.interpolate(cell_velocity[..., axis], axis_name)
+            )
             for axis, axis_name in enumerate(plan.grid.axis_names)
         )
 
@@ -923,6 +969,8 @@ class PreparedConservativeAdvection(StrictModule):
         velocity: Array,
         /,
     ) -> Array:
+        state = self.plan.precision.reconstruction(state)
+        velocity = self.plan.precision.flux(velocity)
         grid = self.plan.grid
         axis = grid.structured_axes[axis_index]
         if axis.periodic:
@@ -968,18 +1016,20 @@ class PreparedConservativeAdvection(StrictModule):
         /,
     ) -> Array:
         fluxes = tuple(
-            velocity
-            * self._face_state(
-                state,
-                axis,
-                boundary_values.get(axis_name, (0.0, 0.0)),
-                velocity,
+            self.plan.precision.flux(
+                velocity
+                * self._face_state(
+                    state,
+                    axis,
+                    boundary_values.get(axis_name, (0.0, 0.0)),
+                    velocity,
+                )
             )
             for axis, (axis_name, velocity) in enumerate(
                 zip(self.plan.grid.axis_names, face_velocity, strict=True)
             )
         )
-        return self.geometry.divergence(fluxes)
+        return self.plan.precision.reduction(self.geometry.divergence(fluxes))
 
     def _advective(
         self,
@@ -987,9 +1037,14 @@ class PreparedConservativeAdvection(StrictModule):
         face_velocity: tuple[Array, ...],
         /,
     ) -> Array:
-        result = jnp.zeros_like(state)
+        result = jnp.zeros(
+            state.shape,
+            dtype=jnp.dtype(self.plan.precision.reduction_dtype),
+        )
         for axis, velocity in enumerate(face_velocity):
-            gradient = self.geometry._cell_gradient(state, axis)
+            gradient = self.plan.precision.reduction(
+                self.geometry._cell_gradient(state, axis)
+            )
             cell_velocity = (
                 0.5 * (velocity + jnp.roll(velocity, -1, axis=axis))
                 if self.plan.grid.structured_axes[axis].periodic
@@ -1007,7 +1062,9 @@ class PreparedConservativeAdvection(StrictModule):
                     )
                 )
             )
-            result = result + cell_velocity * gradient
+            result = self.plan.precision.reduction(
+                result + self.plan.precision.reduction(cell_velocity) * gradient
+            )
         return result
 
     def _apply_faces(
@@ -1039,8 +1096,11 @@ class PreparedConservativeAdvection(StrictModule):
         value = jnp.asarray(state)
         if value.shape != self.plan.grid.shape:
             raise ValueError("Advection state must match the cell grid shape.")
+        self.plan.precision.validate_state(value)
         targets = {} if boundary_values is None else dict(boundary_values)
-        return self._apply_faces(value, self.face_velocity, targets)
+        return self.plan.precision.storage(
+            self._apply_faces(value, self.face_velocity, targets)
+        )
 
     def apply_with_velocity(
         self,
@@ -1053,11 +1113,14 @@ class PreparedConservativeAdvection(StrictModule):
         value = jnp.asarray(state)
         if value.shape != self.plan.grid.shape:
             raise ValueError("Advection state must match the cell grid shape.")
+        self.plan.precision.validate_state(value)
         targets = {} if boundary_values is None else dict(boundary_values)
-        return self._apply_faces(
-            value,
-            self._resolve_velocity(velocity),
-            targets,
+        return self.plan.precision.storage(
+            self._apply_faces(
+                value,
+                self._resolve_velocity(velocity),
+                targets,
+            )
         )
 
 

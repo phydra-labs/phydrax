@@ -128,14 +128,18 @@ def test_precision_and_resource_preflight_enforce_memory_budget():
         (phx.discretization.UniformAxisSpec(128, endpoint=False, periodic=True),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
-    fd = phx.discretization.periodic_finite_difference(grid, accuracy_order=4)
-    lowered = phx.discretization.lower_stencil_operator(fd.operator("d_x_1"))
-    precision = phx.discretization.FDPrecisionPolicy(
+    precision = phx.discretization.FDExecutionPrecisionPolicy(
         coefficient_dtype=jnp.float32,
-        compute_dtype=jnp.float32,
-        reduction_dtype=jnp.float64,
-        checkpoint_dtype=jnp.float32,
+        field_dtype=jnp.float32,
+        accumulation_dtype=jnp.float64,
+        certification_dtype=jnp.float64,
     )
+    fd = phx.discretization.periodic_finite_difference(
+        grid,
+        accuracy_order=4,
+        precision=precision,
+    )
+    lowered = phx.discretization.lower_stencil_operator(fd.operator("d_x_1"))
     plan = phx.discretization.FDExecutionPreflightPlan(
         grid,
         field_count=3,

@@ -13,6 +13,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import AbstractLinearOperator, AbstractPreconditioner
@@ -121,6 +123,7 @@ class TrustRegionSubproblemResult(StrictModule):
     step: PyTree[Array]
     status: Array
     diagnostics: TrustRegionSubproblemDiagnostics
+    precision_evidence: PrecisionEvidenceEnvelope
 
     @property
     def successful(self) -> Array:
@@ -145,12 +148,12 @@ class _TrustRegionRun(StrictModule):
     status: Array
 
 
-def _inner(space, left, right, /) -> Array:
-    return jnp.real(space.inner(left, right))
+def _inner(space, left, right, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.decision(jnp.real(precision.inner(space, left, right)))
 
 
-def _norm(space, value, /) -> Array:
-    return jnp.sqrt(jnp.maximum(_inner(space, value, value), 0.0))
+def _norm(space, value, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.norm(space, value)
 
 
 def _add_scaled(base, direction, scale, /):
@@ -165,12 +168,20 @@ def _apply_preconditioner(preconditioner, residual, /):
     return residual if preconditioner is None else preconditioner.apply(residual)
 
 
-def _boundary_rate(space, step, direction, radius, /) -> Array:
-    a = _inner(space, direction, direction)
-    b = 2.0 * _inner(space, step, direction)
-    c = _inner(space, step, step) - radius * radius
+def _boundary_rate(
+    space,
+    step,
+    direction,
+    radius,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    a = _inner(space, direction, direction, precision)
+    b = 2.0 * _inner(space, step, direction, precision)
+    c = _inner(space, step, step, precision) - radius * radius
     discriminant = jnp.maximum(b * b - 4.0 * a * c, 0.0)
-    return (-b + jnp.sqrt(discriminant)) / jnp.maximum(2.0 * a, 1e-30)
+    tiny = jnp.finfo(a.dtype).tiny
+    return (-b + jnp.sqrt(discriminant)) / jnp.maximum(2.0 * a, tiny)
 
 
 def solve_trust_region_subproblem(
@@ -179,6 +190,7 @@ def solve_trust_region_subproblem(
     *,
     method: SteihaugToint | None = None,
     preconditioner: AbstractPreconditioner | None = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> TrustRegionSubproblemResult:
     """Solve one matrix-free quadratic trust-region subproblem."""
     if not isinstance(problem, TrustRegionQuadraticProblem):
@@ -186,6 +198,9 @@ def solve_trust_region_subproblem(
     method_ = SteihaugToint() if method is None else method
     if not isinstance(method_, SteihaugToint):
         raise TypeError("method must be SteihaugToint or None.")
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
     space = problem.hessian.source
     if preconditioner is not None:
         if not isinstance(preconditioner, AbstractPreconditioner):
@@ -203,10 +218,15 @@ def solve_trust_region_subproblem(
                 "Steihaug-Toint preconditioning requires fixed linear SPD evidence."
             )
     gradient = space.validate(problem.gradient)
-    initial_norm = _norm(space, gradient)
-    threshold = method_.absolute_tolerance + method_.relative_tolerance * initial_norm
+    precision_.validate_trees(gradient, gradient)
+    precision_.validate_accumulation_space(space)
+    initial_norm = _norm(space, gradient, precision_)
+    threshold = precision_.decision(
+        method_.absolute_tolerance + method_.relative_tolerance * initial_norm
+    )
+    radius = precision_.decision(problem.radius)
     preconditioned = space.validate(_apply_preconditioner(preconditioner, gradient))
-    pairing = _inner(space, gradient, preconditioned)
+    pairing = _inner(space, gradient, preconditioned, precision_)
     finite = (
         tree_allfinite(gradient)
         & tree_allfinite(preconditioned)
@@ -252,9 +272,20 @@ def solve_trust_region_subproblem(
 
     def body(current):
         hessian_direction = space.validate(problem.hessian.mv(current.direction))
-        curvature = _inner(space, current.direction, hessian_direction)
-        direction_norm_squared = _inner(space, current.direction, current.direction)
-        normalized_curvature = curvature / jnp.maximum(direction_norm_squared, 1e-30)
+        curvature = _inner(
+            space,
+            current.direction,
+            hessian_direction,
+            precision_,
+        )
+        direction_norm_squared = _inner(
+            space,
+            current.direction,
+            current.direction,
+            precision_,
+        )
+        tiny = jnp.finfo(curvature.dtype).tiny
+        normalized_curvature = curvature / jnp.maximum(direction_norm_squared, tiny)
         nonfinite = (
             ~tree_allfinite(hessian_direction)
             | ~jnp.isfinite(curvature)
@@ -264,16 +295,17 @@ def solve_trust_region_subproblem(
         alpha = jnp.where(
             negative | nonfinite,
             0.0,
-            current.residual_pairing / jnp.maximum(curvature, 1e-30),
+            current.residual_pairing / jnp.maximum(curvature, tiny),
         )
         unconstrained = _add_scaled(current.step, current.direction, alpha)
-        crosses = _norm(space, unconstrained) >= problem.radius
+        crosses = _norm(space, unconstrained, precision_) >= radius
         boundary = negative | crosses
         rate = _boundary_rate(
             space,
             current.step,
             current.direction,
-            problem.radius,
+            radius,
+            precision_,
         )
         boundary_step = _add_scaled(current.step, current.direction, rate)
         trial_step = jax.tree.map(
@@ -289,11 +321,16 @@ def solve_trust_region_subproblem(
         trial_preconditioned = space.validate(
             _apply_preconditioner(preconditioner, trial_residual)
         )
-        trial_pairing = _inner(space, trial_residual, trial_preconditioned)
-        trial_norm = _norm(space, trial_residual)
+        trial_pairing = _inner(
+            space,
+            trial_residual,
+            trial_preconditioned,
+            precision_,
+        )
+        trial_norm = _norm(space, trial_residual, precision_)
         converged = (~boundary) & (trial_norm <= threshold)
         usable_pairing = jnp.isfinite(trial_pairing) & (trial_pairing > 0.0)
-        beta = trial_pairing / jnp.maximum(current.residual_pairing, 1e-30)
+        beta = trial_pairing / jnp.maximum(current.residual_pairing, tiny)
         next_direction = jax.tree.map(
             lambda z, d: -z + beta * d,
             trial_preconditioned,
@@ -370,7 +407,8 @@ def solve_trust_region_subproblem(
     ).astype(jnp.int32)
     hessian_step = space.validate(problem.hessian.mv(run.step))
     predicted_reduction = -(
-        _inner(space, gradient, run.step) + 0.5 * _inner(space, run.step, hessian_step)
+        _inner(space, gradient, run.step, precision_)
+        + 0.5 * _inner(space, run.step, hessian_step, precision_)
     )
     final_finite = tree_allfinite(run.step) & jnp.isfinite(predicted_reduction)
     status = jnp.where(
@@ -384,7 +422,7 @@ def solve_trust_region_subproblem(
         preconditioner_applications=run.preconditioner_applications,
         initial_residual_norm=initial_norm,
         final_residual_norm=run.residual_norm,
-        step_norm=_norm(space, run.step),
+        step_norm=_norm(space, run.step, precision_),
         predicted_reduction=predicted_reduction,
         minimum_curvature=run.minimum_curvature,
         boundary_hit=(
@@ -395,10 +433,13 @@ def solve_trust_region_subproblem(
             status == int(TrustRegionSubproblemStatus.NEGATIVE_CURVATURE)
         ),
     )
+    output_step = jax.tree.map(precision_.output, run.step)
+    precision_evidence = precision_.evidence_for(run.step, gradient)
     return TrustRegionSubproblemResult(
-        step=run.step,
+        step=output_step,
         status=status,
         diagnostics=diagnostics,
+        precision_evidence=precision_evidence,
     )
 
 

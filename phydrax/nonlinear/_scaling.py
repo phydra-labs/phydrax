@@ -15,16 +15,10 @@ from jaxtyping import PyTree
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree
-from ..linalg import MixedPrecisionPolicy
 from ._types import NonlinearSystemProblem
 
 
 ScalingMode: TypeAlias = Literal["none", "automatic", "explicit"]
-PrecisionDType: TypeAlias = Literal["float32", "float64"]
-
-
-def _cast_tree(value, dtype, /):
-    return jax.tree.map(lambda leaf: jnp.asarray(leaf, dtype=dtype), value)
 
 
 class NonlinearScaling(StrictModule):
@@ -195,52 +189,6 @@ class NonlinearScalingPolicy(StrictModule):
         return problem_, scaling
 
 
-class NonlinearPrecisionPolicy(StrictModule):
-    """Explicit model, direction, certificate, and linear arithmetic precision."""
-
-    model_dtype: PrecisionDType = eqx.field(static=True)
-    direction_dtype: PrecisionDType = eqx.field(static=True)
-    certificate_dtype: PrecisionDType = eqx.field(static=True)
-    linear: MixedPrecisionPolicy | None
-
-    def __init__(
-        self,
-        *,
-        model_dtype: PrecisionDType = "float64",
-        direction_dtype: PrecisionDType = "float64",
-        certificate_dtype: PrecisionDType = "float64",
-        linear: MixedPrecisionPolicy | None = None,
-    ):
-        values = (model_dtype, direction_dtype, certificate_dtype)
-        if any(value not in ("float32", "float64") for value in values):
-            raise ValueError("Nonlinear precision must be float32 or float64.")
-        if linear is not None and not isinstance(linear, MixedPrecisionPolicy):
-            raise TypeError("linear must be MixedPrecisionPolicy or None.")
-        self.model_dtype = model_dtype
-        self.direction_dtype = direction_dtype
-        self.certificate_dtype = certificate_dtype
-        self.linear = linear
-
-    def model(self, value, /):
-        return _cast_tree(value, jnp.dtype(self.model_dtype))
-
-    def direction(self, value, /):
-        return _cast_tree(value, jnp.dtype(self.direction_dtype))
-
-    def certificate(self, value, /):
-        return _cast_tree(value, jnp.dtype(self.certificate_dtype))
-
-    def validate_tolerance(self, tolerance: Any, /) -> None:
-        value = float(tolerance)
-        if not isfinite(value) or value < 0.0:
-            raise ValueError("tolerance must be finite and non-negative.")
-        epsilon = float(jnp.finfo(jnp.dtype(self.certificate_dtype)).eps)
-        if 0.0 < value < epsilon:
-            raise ValueError(
-                "Requested tolerance is below certificate precision epsilon."
-            )
-
-
 class PreparedScaledRoot(StrictModule):
     """Physical problem and fixed scaling used by a solver-coordinate route."""
 
@@ -291,7 +239,6 @@ def prepare_scaled_root(
 
 
 __all__ = [
-    "NonlinearPrecisionPolicy",
     "NonlinearScaling",
     "NonlinearScalingPolicy",
     "PreparedScaledRoot",

@@ -1424,9 +1424,10 @@ physical space; set `space="execution"` only for an objective intentionally
 defined on normalized execution values. `OperatorLossContext` exposes paired
 execution and physical predictions, batches, and targets. Set
 `gradient_accumulation` for exact case-weighted microbatch accumulation; use
-`OperatorMixedPrecisionPolicy` for dynamic loss scaling and
-`OperatorShardingPolicy` to shard a named case dimension while keeping
-parameters and shared geometry replicated.
+`OperatorDTypePolicy` for parameter/compute/reduction placement and an explicit
+`OperatorLossScalePolicy` for float16 dynamic loss scaling.
+`OperatorShardingPolicy` shards a named case dimension while keeping parameters
+and shared geometry replicated.
 
 ### Exact output transforms, weak forms, and operator adjoints
 

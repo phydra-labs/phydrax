@@ -4,8 +4,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 from jaxtyping import Array
+
+from .._precision import real_precision_dtype_name
 
 
 def log_normalize(
@@ -14,11 +18,16 @@ def log_normalize(
     *,
     axes: int | tuple[int, ...] = 0,
     mask: Array | None = None,
+    accumulation_dtype: Any | None = None,
     keepdims: bool = False,
 ) -> tuple[Array, Array, Array]:
     """Normalize masked log weights independently over explicit sample axes."""
     log_weights_ = jnp.asarray(log_weights)
-    if not jnp.issubdtype(log_weights_.dtype, jnp.inexact):
+    if accumulation_dtype is not None:
+        log_weights_ = log_weights_.astype(
+            jnp.dtype(real_precision_dtype_name(accumulation_dtype))
+        )
+    elif not jnp.issubdtype(log_weights_.dtype, jnp.inexact):
         log_weights_ = log_weights_.astype(float)
     raw_axes = (axes,) if isinstance(axes, int) else tuple(axes)
     if not raw_axes:
@@ -68,10 +77,16 @@ def signed_logsumexp(
     /,
     *,
     axis: int = 0,
+    accumulation_dtype: Any | None = None,
 ) -> tuple[Array, Array]:
     """Return sign and log magnitude of a cancellation-aware signed sum."""
-    log_magnitudes_ = jnp.asarray(log_magnitudes, dtype=float)
-    signs_ = jnp.asarray(signs, dtype=float)
+    dtype = (
+        float
+        if accumulation_dtype is None
+        else jnp.dtype(real_precision_dtype_name(accumulation_dtype))
+    )
+    log_magnitudes_ = jnp.asarray(log_magnitudes, dtype=dtype)
+    signs_ = jnp.asarray(signs, dtype=dtype)
     maximum = jnp.max(log_magnitudes_, axis=axis, keepdims=True)
     maximum = jnp.where(jnp.isfinite(maximum), maximum, 0.0)
     scaled = jnp.sum(signs_ * jnp.exp(log_magnitudes_ - maximum), axis=axis)
@@ -79,10 +94,24 @@ def signed_logsumexp(
     return jnp.sign(scaled), scale + jnp.log(jnp.abs(scaled))
 
 
-def weight_ess(normalized_weights: Array, /, *, axis: int = 0) -> Array:
+def weight_ess(
+    normalized_weights: Array,
+    /,
+    *,
+    axis: int = 0,
+    accumulation_dtype: Any | None = None,
+) -> Array:
     """Effective sample size for already-normalized nonnegative weights."""
-    weights = jnp.asarray(normalized_weights, dtype=float)
-    return 1.0 / jnp.maximum(jnp.sum(weights * weights, axis=axis), jnp.finfo(float).tiny)
+    dtype = (
+        float
+        if accumulation_dtype is None
+        else jnp.dtype(real_precision_dtype_name(accumulation_dtype))
+    )
+    weights = jnp.asarray(normalized_weights, dtype=dtype)
+    return 1.0 / jnp.maximum(
+        jnp.sum(weights * weights, axis=axis),
+        jnp.finfo(weights.dtype).tiny,
+    )
 
 
 __all__ = ["log_normalize", "signed_logsumexp", "weight_ess"]

@@ -12,13 +12,20 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
 from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
     DenseQR,
     DenseSVD,
     GeneralizedLSMR,
     LinearSolvePolicy,
+    LinearSystem,
+    prepare as prepare_linear,
     RankPolicy,
+    solve as solve_linear,
+    solve_many as solve_linear_many,
     TolerancePolicy,
 )
 from ._residual_graph import PreparedResidualGraph
@@ -233,9 +240,18 @@ def solve_schur_system(
     gradient: Any,
     plan: SchurComplementPlan,
     /,
+    *,
+    linear: LinearSolvePolicy | None = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> Array:
-    matrix = jnp.asarray(normal_matrix)
-    vector = jnp.asarray(gradient)
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
+    if not isinstance(linear_, LinearSolvePolicy):
+        raise TypeError("linear must be LinearSolvePolicy or None.")
+    matrix = precision_.accumulation(normal_matrix)
+    vector = precision_.accumulation(gradient)
     if matrix.shape != (plan.dimension, plan.dimension):
         raise ValueError("normal_matrix shape does not match Schur plan.")
     if vector.shape != (plan.dimension,):
@@ -247,15 +263,29 @@ def solve_schur_system(
     c = matrix[jnp.ix_(retained, retained)]
     ge = vector[eliminated]
     gr = vector[retained]
-    a_inverse_b = jnp.linalg.solve(a, b)
-    a_inverse_g = jnp.linalg.solve(a, ge)
+    prepared_a = prepare_linear(
+        LinearSystem(DenseLinearOperator(a)),
+        precision_.bind_linear(linear_),
+    )
+    a_inverse_b = solve_linear_many(prepared_a, b).value
+    a_inverse_g = solve_linear(prepared_a, ge).value
     schur = c - jnp.conj(b.T) @ a_inverse_b
     reduced_gradient = gr - jnp.conj(b.T) @ a_inverse_g
-    retained_step = jnp.linalg.solve(schur, -reduced_gradient)
-    eliminated_step = jnp.linalg.solve(a, -(ge + b @ retained_step))
-    result = jnp.zeros_like(vector)
+    prepared_schur = prepare_linear(
+        LinearSystem(DenseLinearOperator(schur)),
+        precision_.bind_linear(linear_),
+    )
+    retained_step = solve_linear(
+        prepared_schur,
+        -reduced_gradient,
+    ).value
+    eliminated_step = solve_linear(
+        prepared_a,
+        -(ge + b @ retained_step),
+    ).value
+    result = jnp.zeros((plan.dimension,), dtype=retained_step.dtype)
     result = result.at[eliminated].set(eliminated_step)
-    return result.at[retained].set(retained_step)
+    return precision_.direction(result.at[retained].set(retained_step))
 
 
 __all__ = [

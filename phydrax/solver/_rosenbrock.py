@@ -31,6 +31,7 @@ from ._temporal_method import (
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
+from ._temporal_precision import TemporalPrecisionPolicy
 
 
 _DEFAULT_ARGS = object()
@@ -217,6 +218,7 @@ def _rosenbrock_step(
     state: Array,
     step_size: Array,
     args: Any,
+    precision: TemporalPrecisionPolicy,
     /,
 ) -> tuple[Array, Array, Array, Array]:
     propagation = jnp.asarray(method.propagation, dtype=state.real.dtype)
@@ -237,9 +239,13 @@ def _rosenbrock_step(
             )
             correction = correction + stage_matrix[index, previous] * increments[previous]
         stage_time = time + step_size * jnp.sum(propagation[index])
-        rhs = step_size * jnp.asarray(problem.drift(stage_time, stage_state, args))
-        rhs = rhs + step_size * jacobian(correction)
-        rhs = rhs + step_size**2 * jnp.sum(stage_matrix[index]) * time_derivative
+        rhs = precision.residual(
+            step_size * jnp.asarray(problem.drift(stage_time, stage_state, args))
+        )
+        rhs = precision.residual(rhs + step_size * jacobian(correction))
+        rhs = precision.residual(
+            rhs + step_size**2 * jnp.sum(stage_matrix[index]) * time_derivative
+        )
         gamma = stage_matrix[index, index]
         operator = FunctionLinearOperator(
             _ShiftedJacobianAction(jacobian, step_size * gamma),
@@ -248,15 +254,25 @@ def _rosenbrock_step(
             operator_id=f"{method.method_id}:shifted-jacobian",
         )
         linear_result = solve(LinearSystem(operator), rhs, policy=policy)
-        increments.append(jnp.asarray(linear_result.value))
+        increments.append(jnp.asarray(linear_result.value, dtype=state.dtype))
         successful = successful & linear_result.successful
         iterations = iterations + jnp.asarray(
             linear_result.diagnostics.iterations, dtype=jnp.int32
         )
     stacked = jnp.stack(increments)
-    next_state = state + jnp.tensordot(weights, stacked, axes=1)
-    embedded_state = state + jnp.tensordot(embedded, stacked, axes=1)
-    error = jnp.sqrt(jnp.mean(jnp.abs(next_state - embedded_state) ** 2))
+    accumulated_state = precision.accumulation(state)
+    accumulated_stages = precision.accumulation(stacked)
+    accumulated_weights = precision.accumulation(weights)
+    accumulated_embedded = precision.accumulation(embedded)
+    next_state = (
+        accumulated_state + jnp.tensordot(accumulated_weights, accumulated_stages, axes=1)
+    ).astype(state.dtype)
+    embedded_state = (
+        accumulated_state
+        + jnp.tensordot(accumulated_embedded, accumulated_stages, axes=1)
+    ).astype(state.dtype)
+    difference = precision.accumulation(next_state - embedded_state)
+    error = precision.decision(jnp.sqrt(jnp.mean(jnp.abs(difference) ** 2)))
     finite = jnp.all(jnp.isfinite(next_state)) & jnp.isfinite(error)
     return next_state, successful & finite, error, iterations
 
@@ -269,6 +285,7 @@ def solve_rosenbrock(
     method: RosenbrockWMethod | None = None,
     linear_policy: LinearSolvePolicy | None = None,
     args: Any = _DEFAULT_ARGS,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> DifferentialSolution:
     """Integrate one deterministic ODE on a fixed grid with matrix-free RA34PW2."""
     if not isinstance(problem, DifferentialProblem) or problem.stochastic:
@@ -294,6 +311,10 @@ def solve_rosenbrock(
     )
     if not isinstance(policy, LinearSolvePolicy):
         raise TypeError("linear_policy must be LinearSolvePolicy or None.")
+    precision_ = TemporalPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, TemporalPrecisionPolicy):
+        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+    precision_.validate_implicit_state(problem.initial_state)
     runtime_args = problem.args if args is _DEFAULT_ARGS else args
     space = ArraySpace(problem.initial_state.shape, dtype=problem.initial_state.dtype)
 
@@ -311,6 +332,7 @@ def solve_rosenbrock(
                 state,
                 step_size,
                 runtime_args,
+                precision_,
             )
 
         def skip_step(_):
@@ -338,7 +360,8 @@ def solve_rosenbrock(
         equation_form="explicit-ode",
         backend_id="backend:phydrax:rosenbrock-w",
         configuration_id=configuration_id(
-            (selected, policy, time_grid.time_id), prefix="temporal-configuration"
+            (selected, policy, precision_.policy_id, time_grid.time_id),
+            prefix="temporal-configuration",
         ),
         controller_id=f"controller:fixed-grid:{time_grid.time_id}",
         adjoint_id="adjoint:jax-discrete-linear-solves",
@@ -346,11 +369,13 @@ def solve_rosenbrock(
         adaptive=False,
         dense=False,
         maximum_steps=time_grid.num_steps,
+        precision_evidence=precision_.evidence_for(problem.initial_state, times),
     )
     successful = jnp.all(valid)
+    output_states = jax.vmap(precision_.output)(states)
     return DifferentialSolution(
         times=times,
-        states=states,
+        states=output_states,
         valid=valid,
         backend_result=jnp.where(successful, 0, 1),
         stats={
@@ -392,6 +417,7 @@ def solve_rosenbrock_adaptive(
     adaptive: RosenbrockAdaptivePolicy | None = None,
     linear_policy: LinearSolvePolicy | None = None,
     args: Any = _DEFAULT_ARGS,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> DifferentialSolution:
     """Realize and replay an adaptive RA34PW2 solve with frozen-grid derivatives."""
     if not isinstance(problem, DifferentialProblem) or problem.stochastic:
@@ -422,6 +448,10 @@ def solve_rosenbrock_adaptive(
         raise TypeError("adaptive must be RosenbrockAdaptivePolicy or None.")
     if not isinstance(policy, LinearSolvePolicy):
         raise TypeError("linear_policy must be LinearSolvePolicy or None.")
+    precision_ = TemporalPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, TemporalPrecisionPolicy):
+        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+    precision_.validate_implicit_state(problem.initial_state)
     runtime_args = problem.args if args is _DEFAULT_ARGS else args
     space = ArraySpace(problem.initial_state.shape, dtype=problem.initial_state.dtype)
     initial_step = jnp.minimum(
@@ -466,20 +496,16 @@ def solve_rosenbrock_adaptive(
             current.state,
             step_size,
             runtime_args,
+            precision_,
         )
-        scale = (
+        scale = precision_.decision(
             controller.absolute_tolerance
             + controller.relative_tolerance
             * jnp.maximum(jnp.abs(current.state), jnp.abs(next_state))
         )
-        error_ratio = jnp.sqrt(
-            jnp.mean(
-                jnp.abs(
-                    (next_state - current.state) * 0.0
-                    + error / jnp.maximum(scale, jnp.finfo(scale.dtype).tiny)
-                )
-                ** 2
-            )
+        safe_scale = jnp.maximum(scale, jnp.finfo(scale.dtype).tiny)
+        error_ratio = precision_.decision(
+            jnp.sqrt(jnp.mean(jnp.abs(error / safe_scale) ** 2))
         )
         accepted = step_ok & (error_ratio <= 1.0)
         accepted_index = current.accepted_count
@@ -550,6 +576,7 @@ def solve_rosenbrock_adaptive(
                 state,
                 step_size,
                 runtime_args,
+                precision_,
             )
             return (
                 time + step_size,
@@ -589,7 +616,13 @@ def solve_rosenbrock_adaptive(
         equation_form="explicit-ode",
         backend_id="backend:phydrax:rosenbrock-w",
         configuration_id=configuration_id(
-            (selected, policy, controller, time_grid.time_id),
+            (
+                selected,
+                policy,
+                controller,
+                precision_.policy_id,
+                time_grid.time_id,
+            ),
             prefix="temporal-configuration",
         ),
         controller_id=configuration_id(controller, prefix="controller"),
@@ -598,10 +631,12 @@ def solve_rosenbrock_adaptive(
         adaptive=True,
         dense=False,
         maximum_steps=controller.maximum_attempts,
+        precision_evidence=precision_.evidence_for(problem.initial_state, times),
     )
+    output_states = jax.vmap(precision_.output)(states)
     return DifferentialSolution(
         times=times,
-        states=states,
+        states=output_states,
         valid=valid,
         backend_result=jnp.where(successful, 0, 1),
         stats={

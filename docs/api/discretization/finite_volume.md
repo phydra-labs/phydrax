@@ -304,6 +304,18 @@
 
 ## Runtime and persistence
 
+`FiniteVolumePrecisionPolicy` is owned by the prepared discretization/runtime,
+not attached as case metadata after preparation. It independently places stored
+cell averages, reconstruction, interface fluxes, conservative reductions and
+decisions, returned snapshots, and checkpoints. SSPRK combinations, CFL and
+positivity decisions, flux registers, conservation diagnostics, AMR
+synchronization, rollout retention, HDF5 output, and checkpoint restore all
+consume the same policy and retain content-addressed evidence.
+
+::: phydrax.discretization.FiniteVolumePrecisionPolicy
+
+---
+
 ::: phydrax.solver.FiniteVolumeRuntimeState
 
 ---

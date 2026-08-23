@@ -206,9 +206,7 @@ class ComplexProjectiveAtlas(StrictModule):
 
     def metric(self, chart_index: int, /) -> RiemannianMetric:
         convention = self.conventions[int(chart_index)]
-        return RiemannianMetric(
-            _FubiniStudyMetricMap(convention), chart=convention.chart
-        )
+        return RiemannianMetric(_FubiniStudyMetricMap(convention), chart=convention.chart)
 
     def kahler_structure(self, chart_index: int, /) -> KahlerStructure:
         convention = self.conventions[int(chart_index)]

@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 
 
@@ -84,6 +85,8 @@ class OpenSystemApproximationEvidence(StrictModule):
     quantities: tuple[ApproximationQuantity, ...]
     valid: Array
     representation_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
+    precision_policy_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -93,6 +96,8 @@ class OpenSystemApproximationEvidence(StrictModule):
         /,
         *,
         execution_valid: ArrayLike,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
+        precision_policy_ids: Sequence[str] = (),
     ):
         axes_ = tuple(axes)
         quantities_ = tuple(quantities)
@@ -100,11 +105,21 @@ class OpenSystemApproximationEvidence(StrictModule):
             raise ValueError(
                 "Approximation evidence requires declared axes and quantities."
             )
+        if precision_evidence is not None and not isinstance(
+            precision_evidence, PrecisionEvidenceEnvelope
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         self.representation_id = str(representation_id)
         self.axes = axes_
         self.quantities = quantities_
         self.valid = jnp.asarray(execution_valid, dtype=bool) & jnp.all(
             jnp.stack([quantity.valid for quantity in quantities_])
+        )
+        self.precision_evidence = precision_evidence
+        self.precision_policy_ids = tuple(
+            str(identifier) for identifier in precision_policy_ids
         )
 
 
@@ -115,6 +130,7 @@ class OpenSystemPhysicalityEvidence(StrictModule):
     channel_cp_margin: Array
     valid: Array
     status: PhysicalityStatus = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -125,7 +141,15 @@ class OpenSystemPhysicalityEvidence(StrictModule):
         positivity_margin: ArrayLike = jnp.nan,
         channel_cp_margin: ArrayLike = jnp.nan,
         status: PhysicalityStatus = "unknown",
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         if status not in ("valid", "invalid", "unknown"):
             raise ValueError("Unknown physicality status.")
         self.trace_residual = jnp.asarray(trace_residual)
@@ -134,6 +158,7 @@ class OpenSystemPhysicalityEvidence(StrictModule):
         self.channel_cp_margin = jnp.asarray(channel_cp_margin)
         self.status = status
         self.valid = jnp.asarray(status == "valid")
+        self.precision_evidence = precision_evidence
 
 
 class QuantumGeneratorAction(StrictModule):
@@ -214,6 +239,7 @@ class OpenSystemPromotionPolicy(StrictModule):
     required_axes: tuple[str, ...] = eqx.field(static=True)
     required_quantities: tuple[str, ...] = eqx.field(static=True)
     require_physicality: bool = eqx.field(static=True)
+    require_precision: bool = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -223,11 +249,13 @@ class OpenSystemPromotionPolicy(StrictModule):
         /,
         *,
         require_physicality: bool,
+        require_precision: bool = True,
         policy_id: str,
     ):
         self.required_axes = tuple(str(value) for value in required_axes)
         self.required_quantities = tuple(str(value) for value in required_quantities)
         self.require_physicality = bool(require_physicality)
+        self.require_precision = bool(require_precision)
         self.policy_id = str(policy_id)
 
 
@@ -238,6 +266,7 @@ class OpenSystemPromotionDecision(StrictModule):
     physicality_satisfied: Array
     archive_verified: Array
     capacity_available: Array
+    precision_satisfied: Array
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -248,6 +277,7 @@ class OpenSystemPromotionDecision(StrictModule):
         physicality_satisfied: ArrayLike,
         archive_verified: ArrayLike,
         capacity_available: ArrayLike,
+        precision_satisfied: ArrayLike,
         /,
         *,
         policy_id: str,
@@ -258,6 +288,7 @@ class OpenSystemPromotionDecision(StrictModule):
         self.physicality_satisfied = jnp.asarray(physicality_satisfied, dtype=bool)
         self.archive_verified = jnp.asarray(archive_verified, dtype=bool)
         self.capacity_available = jnp.asarray(capacity_available, dtype=bool)
+        self.precision_satisfied = jnp.asarray(precision_satisfied, dtype=bool)
         self.policy_id = str(policy_id)
 
 
@@ -280,12 +311,21 @@ def evaluate_open_system_promotion(
     physicality_satisfied = (
         physicality.valid if policy.require_physicality else jnp.asarray(True)
     )
+    precision_satisfied = (
+        jnp.asarray(
+            approximation.precision_evidence is not None
+            and bool(approximation.precision_policy_ids)
+        )
+        if policy.require_precision
+        else jnp.asarray(True)
+    )
     capacity_available = ~jnp.asarray(capacity_exhausted, dtype=bool)
     promoted = (
         jnp.asarray(execution_success, dtype=bool)
         & approximation.valid
         & physicality_satisfied
         & capacity_available
+        & precision_satisfied
         & jnp.asarray(archive_verified, dtype=bool)
         & (len(missing_axes) == 0)
         & (len(missing_quantities) == 0)
@@ -297,6 +337,7 @@ def evaluate_open_system_promotion(
         physicality_satisfied,
         archive_verified,
         capacity_available,
+        precision_satisfied,
         policy_id=policy.policy_id,
     )
 

@@ -30,3 +30,9 @@ Reference factories cover CP1 calibration, a Fermat cubic elliptic curve, a
 quartic K3 surface, and the Fermat quintic. These are fixed-complex-structure,
 fixed-Kähler-class numerical candidates; sampled residuals do not prove global
 topology or Yau's theorem.
+
+## Precision
+
+Campaign problems accept `GeometryPrecisionPolicy`. Sample weights, potential
+gauge means, Monge--Ampère residual objectives, positivity decisions, gradient
+norms, histories, and frozen artifacts retain the resolved policy and evidence.

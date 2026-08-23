@@ -494,6 +494,7 @@ from ._posterior_terms import (
     FixedSupervisedLikelihood,
     GaussianProcessMarginalLikelihood,
 )
+from ._precision import ParticlePrecisionPolicy, PredictivePrecisionPolicy
 from ._predictive import (
     PredictionInterval,
     PredictiveField,
@@ -1151,6 +1152,8 @@ __all__ = [
     "RaoBlackwellizedStateSpaceProblem",
     "PredictionInterval",
     "PredictiveField",
+    "ParticlePrecisionPolicy",
+    "PredictivePrecisionPolicy",
     "SampleAxis",
     "UncertaintySource",
     "OperatorFunctionalConformal",

@@ -85,9 +85,7 @@ def load_finite_volume_case(
     if payload["schema_version"] != 1:
         raise ValueError("case.schema_version must be 1.")
     grid_payload = payload["grid"]
-    _require_fields(
-        grid_payload, {"cells", "lower", "upper", "periodic"}, "case.grid"
-    )
+    _require_fields(grid_payload, {"cells", "lower", "upper", "periodic"}, "case.grid")
     cells = int(grid_payload["cells"])
     lower = float(grid_payload["lower"])
     upper = float(grid_payload["upper"])
@@ -154,9 +152,7 @@ def load_finite_volume_case(
             )
         else:
             raise ValueError(f"Unsupported transport type {transport_type!r}.")
-        system = CompressibleNavierStokesSystem(
-            transport, material=material
-        )
+        system = CompressibleNavierStokesSystem(transport, material=material)
         viscous = ViscousFluxPlan()
     else:
         raise ValueError(f"Unsupported equation type {equation_type!r}.")
@@ -165,18 +161,14 @@ def load_finite_volume_case(
         grid, component_names=system.component_names
     ).prepare()
     method_payload = payload["method"]
-    _require_fields(
-        method_payload, {"reconstruction", "flux"}, "case.method"
-    )
+    _require_fields(method_payload, {"reconstruction", "flux"}, "case.method")
     reconstruction_name = method_payload["reconstruction"]
     if reconstruction_name == "piecewise_constant":
         reconstruction = PiecewiseConstantReconstruction()
     elif reconstruction_name == "muscl":
         reconstruction = MUSCLReconstruction()
     else:
-        raise ValueError(
-            f"Unsupported reconstruction {reconstruction_name!r}."
-        )
+        raise ValueError(f"Unsupported reconstruction {reconstruction_name!r}.")
     flux_name = method_payload["flux"]
     fluxes = {
         "rusanov": RusanovFluxPlan,
@@ -185,9 +177,7 @@ def load_finite_volume_case(
     }
     if flux_name not in fluxes:
         raise ValueError(f"Unsupported numerical flux {flux_name!r}.")
-    method = FiniteVolumeMethodPlan(
-        reconstruction, fluxes[flux_name](), viscous=viscous
-    )
+    method = FiniteVolumeMethodPlan(reconstruction, fluxes[flux_name](), viscous=viscous)
 
     boundary_payload = payload["boundary"]
     _require_fields(boundary_payload, {"type"}, "case.boundary")
@@ -198,18 +188,18 @@ def load_finite_volume_case(
         boundaries = FiniteVolumeBoundarySet.periodic(("x",))
     else:
         if boundary_type != "extrapolation":
-            raise ValueError(
-                "The initial loader supports extrapolation on bounded axes."
-            )
-        pair = FiniteVolumeBoundaryPair(
-            ExtrapolationBoundary(), ExtrapolationBoundary()
-        )
+            raise ValueError("The initial loader supports extrapolation on bounded axes.")
+        pair = FiniteVolumeBoundaryPair(ExtrapolationBoundary(), ExtrapolationBoundary())
         boundaries = FiniteVolumeBoundarySet(("x",), (pair,))
-    problem = ConservationProblemIR(
-        str(payload["name"]), "state", system, boundaries
-    )
+    precision_payload = payload["precision"]
+    _require_fields(precision_payload, {"dtype"}, "case.precision")
+    precision = FiniteVolumePrecisionPolicy(precision_payload["dtype"])
+    problem = ConservationProblemIR(str(payload["name"]), "state", system, boundaries)
     compiled = compile_conservation_problem(
-        problem, discretization, method
+        problem,
+        discretization,
+        method,
+        precision=precision,
     )
 
     execution_payload = payload["execution"]
@@ -222,9 +212,6 @@ def load_finite_volume_case(
         float(execution_payload["end_time"]),
         int(execution_payload["maximum_steps"]),
     )
-    precision_payload = payload["precision"]
-    _require_fields(precision_payload, {"dtype"}, "case.precision")
-    precision = FiniteVolumePrecisionPolicy(precision_payload["dtype"])
     runtime = PreparedFiniteVolumeRuntime(
         compiled.dynamics, FluxPositivityPlan(), execution.step_policy
     )

@@ -8,7 +8,9 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ._hermitian_precision import HermitianPrecisionPolicy
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -27,15 +29,28 @@ class HermitianSpectrum(StrictModule):
     numerical_rank: Array
     condition_number: Array
     valid: Array
+    precision: HermitianPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope
     tolerance: float = eqx.field(static=True)
 
-    def __init__(self, matrix: ArrayLike, /, *, tolerance: float = 1e-10):
-        value = jnp.asarray(matrix)
+    def __init__(
+        self,
+        matrix: ArrayLike,
+        /,
+        *,
+        tolerance: float = 1e-10,
+        precision: HermitianPrecisionPolicy | None = None,
+    ):
+        original = jnp.asarray(matrix)
+        precision_ = HermitianPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, HermitianPrecisionPolicy):
+            raise TypeError("precision must be a HermitianPrecisionPolicy or None.")
+        value = precision_.compute(original)
         if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
             raise ValueError("Hermitian spectrum requires square trailing matrix axes.")
         if tolerance < 0.0:
             raise ValueError("tolerance must be non-negative.")
-        hermitian = 0.5 * (value + _adjoint(value))
+        hermitian = precision_.factorization(0.5 * (value + _adjoint(value)))
         eigenvalues, eigenvectors = jnp.linalg.eigh(hermitian)
         differences = jnp.abs(eigenvalues[..., 1:] - eigenvalues[..., :-1])
         minimum_gap = (
@@ -43,22 +58,29 @@ class HermitianSpectrum(StrictModule):
             if value.shape[-1] > 1
             else jnp.full(value.shape[:-2], jnp.inf, dtype=eigenvalues.dtype)
         )
-        magnitude = jnp.max(jnp.abs(eigenvalues), axis=-1)
-        threshold = tolerance * jnp.maximum(magnitude, 1.0)
+        magnitude = precision_.decision(jnp.max(jnp.abs(eigenvalues), axis=-1))
+        threshold = precision_.decision(tolerance) * jnp.maximum(magnitude, 1.0)
         rank = jnp.sum(jnp.abs(eigenvalues) > threshold[..., None], axis=-1)
-        minimum_absolute = jnp.min(jnp.abs(eigenvalues), axis=-1)
+        minimum_absolute = precision_.decision(jnp.min(jnp.abs(eigenvalues), axis=-1))
         condition = magnitude / jnp.maximum(
             minimum_absolute, jnp.finfo(eigenvalues.dtype).tiny
         )
-        residual = jnp.max(jnp.abs(value - _adjoint(value)), axis=(-2, -1))
-        self.matrix = value
+        residual = precision_.decision(
+            jnp.max(
+                jnp.abs(precision_.accumulation(value - _adjoint(value))),
+                axis=(-2, -1),
+            )
+        )
+        self.matrix = hermitian
         self.eigenvalues = eigenvalues
         self.eigenvectors = eigenvectors
         self.hermiticity_residual = residual
-        self.minimum_eigenvalue = jnp.min(eigenvalues, axis=-1)
-        self.minimum_gap = minimum_gap
+        self.minimum_eigenvalue = precision_.decision(jnp.min(eigenvalues, axis=-1))
+        self.minimum_gap = precision_.decision(minimum_gap)
         self.numerical_rank = rank
-        self.condition_number = condition
+        self.condition_number = precision_.decision(condition)
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence_for(original)
         self.valid = (
             jnp.all(jnp.isfinite(value), axis=(-2, -1))
             & (residual <= tolerance)
@@ -101,8 +123,13 @@ def _spectral_result(
     function_id: str,
     tolerance: float,
     positive: bool,
+    precision: HermitianPrecisionPolicy | None = None,
 ) -> HermitianFunctionResult:
-    spectrum = HermitianSpectrum(matrix, tolerance=tolerance)
+    spectrum = HermitianSpectrum(
+        matrix,
+        tolerance=tolerance,
+        precision=precision,
+    )
     transformed = function(spectrum.eigenvalues)
     value = (spectrum.eigenvectors * transformed[..., None, :]) @ _adjoint(
         spectrum.eigenvectors
@@ -111,7 +138,7 @@ def _spectral_result(
     if positive:
         valid = valid & (spectrum.minimum_eigenvalue > tolerance)
     return HermitianFunctionResult(
-        0.5 * (value + _adjoint(value)),
+        spectrum.precision.output(0.5 * (value + _adjoint(value))),
         spectrum,
         function_id=function_id,
         valid=valid,
@@ -119,7 +146,11 @@ def _spectral_result(
 
 
 def hermitian_sqrt(
-    matrix: ArrayLike, /, *, tolerance: float = 1e-10
+    matrix: ArrayLike,
+    /,
+    *,
+    tolerance: float = 1e-10,
+    precision: HermitianPrecisionPolicy | None = None,
 ) -> HermitianFunctionResult:
     return _spectral_result(
         matrix,
@@ -127,11 +158,16 @@ def hermitian_sqrt(
         function_id="hermitian-sqrt",
         tolerance=tolerance,
         positive=False,
+        precision=precision,
     )
 
 
 def hermitian_inverse_sqrt(
-    matrix: ArrayLike, /, *, tolerance: float = 1e-10
+    matrix: ArrayLike,
+    /,
+    *,
+    tolerance: float = 1e-10,
+    precision: HermitianPrecisionPolicy | None = None,
 ) -> HermitianFunctionResult:
     return _spectral_result(
         matrix,
@@ -139,11 +175,16 @@ def hermitian_inverse_sqrt(
         function_id="hermitian-inverse-sqrt",
         tolerance=tolerance,
         positive=True,
+        precision=precision,
     )
 
 
 def hermitian_log(
-    matrix: ArrayLike, /, *, tolerance: float = 1e-10
+    matrix: ArrayLike,
+    /,
+    *,
+    tolerance: float = 1e-10,
+    precision: HermitianPrecisionPolicy | None = None,
 ) -> HermitianFunctionResult:
     return _spectral_result(
         matrix,
@@ -151,11 +192,16 @@ def hermitian_log(
         function_id="hermitian-log",
         tolerance=tolerance,
         positive=True,
+        precision=precision,
     )
 
 
 def hermitian_exp(
-    matrix: ArrayLike, /, *, tolerance: float = 1e-10
+    matrix: ArrayLike,
+    /,
+    *,
+    tolerance: float = 1e-10,
+    precision: HermitianPrecisionPolicy | None = None,
 ) -> HermitianFunctionResult:
     return _spectral_result(
         matrix,
@@ -163,6 +209,7 @@ def hermitian_exp(
         function_id="hermitian-exp",
         tolerance=tolerance,
         positive=False,
+        precision=precision,
     )
 
 
@@ -171,6 +218,7 @@ class SylvesterSolveResult(StrictModule):
     residual_norm: Array
     minimum_denominator: Array
     valid: Array
+    precision_evidence: PrecisionEvidenceEnvelope
 
     def __init__(
         self,
@@ -178,12 +226,16 @@ class SylvesterSolveResult(StrictModule):
         residual_norm: ArrayLike,
         minimum_denominator: ArrayLike,
         valid: ArrayLike,
+        precision_evidence: PrecisionEvidenceEnvelope,
         /,
     ):
         self.value = jnp.asarray(value)
         self.residual_norm = jnp.asarray(residual_norm)
         self.minimum_denominator = jnp.asarray(minimum_denominator)
         self.valid = jnp.asarray(valid, dtype=bool)
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        self.precision_evidence = precision_evidence
 
 
 class HermitianSylvesterOperator(StrictModule):
@@ -192,11 +244,27 @@ class HermitianSylvesterOperator(StrictModule):
     matrix: Array
     spectrum: HermitianSpectrum
     tolerance: float = eqx.field(static=True)
+    precision: HermitianPrecisionPolicy
 
-    def __init__(self, matrix: ArrayLike, /, *, tolerance: float = 1e-10):
-        spectrum = HermitianSpectrum(matrix, tolerance=tolerance)
+    def __init__(
+        self,
+        matrix: ArrayLike,
+        /,
+        *,
+        tolerance: float = 1e-10,
+        precision: HermitianPrecisionPolicy | None = None,
+    ):
+        precision_ = HermitianPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, HermitianPrecisionPolicy):
+            raise TypeError("precision must be a HermitianPrecisionPolicy or None.")
+        spectrum = HermitianSpectrum(
+            matrix,
+            tolerance=tolerance,
+            precision=precision_,
+        )
         self.matrix = spectrum.reconstruct()
         self.spectrum = spectrum
+        self.precision = precision_
         self.tolerance = float(tolerance)
 
     def mv(self, value: ArrayLike, /) -> Array:
@@ -206,7 +274,7 @@ class HermitianSylvesterOperator(StrictModule):
         return self.matrix @ operand + operand @ self.matrix
 
     def solve(self, right_hand_side: ArrayLike, /) -> SylvesterSolveResult:
-        right = jnp.asarray(right_hand_side)
+        right = self.precision.factorization(right_hand_side)
         if right.shape != self.matrix.shape:
             raise ValueError("Sylvester right-hand side must match the matrix shape.")
         vectors = self.spectrum.eigenvectors
@@ -217,13 +285,19 @@ class HermitianSylvesterOperator(StrictModule):
         )
         minimum = jnp.min(jnp.abs(denominators), axis=(-2, -1))
         safe = jnp.where(jnp.abs(denominators) > self.tolerance, denominators, jnp.inf)
-        solution = vectors @ (local / safe) @ _adjoint(vectors)
-        residual = self.mv(solution) - right
-        residual_norm = jnp.linalg.norm(residual, axis=(-2, -1))
+        solution = self.precision.output(vectors @ (local / safe) @ _adjoint(vectors))
+        residual = self.precision.accumulation(self.mv(solution) - right)
+        residual_norm = self.precision.decision(jnp.linalg.norm(residual, axis=(-2, -1)))
         valid = (
             self.spectrum.valid & (minimum > self.tolerance) & jnp.isfinite(residual_norm)
         )
-        return SylvesterSolveResult(solution, residual_norm, minimum, valid)
+        return SylvesterSolveResult(
+            solution,
+            residual_norm,
+            self.precision.decision(minimum),
+            valid,
+            self.precision.evidence_for(right),
+        )
 
 
 class TracelessHermitianSpace(StrictModule):
