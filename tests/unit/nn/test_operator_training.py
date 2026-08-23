@@ -461,7 +461,7 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
     manifest_path = path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["format"] == "phydrax-operator-training-checkpoint"
-    assert manifest["version"] == 2
+    assert manifest["version"] == 3
     manifest.pop("version")
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="current canonical fields"):
@@ -624,10 +624,6 @@ def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
                 weight=1e-3,
                 identity="tests.prediction_energy.v1",
             ),
-        ),
-        mixed_precision=phx.nn.operator.training.OperatorMixedPrecisionPolicy(
-            initial_scale=128.0,
-            growth_interval=1,
         ),
     )
 

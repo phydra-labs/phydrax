@@ -61,7 +61,9 @@ class RusanovFluxPlan(AbstractNumericalFluxPlan):
         if not np.isfinite(epsilon) or epsilon < 0.0:
             raise ValueError("smooth_epsilon must be finite and non-negative.")
         self.smooth_epsilon = epsilon
-        self.differentiability = "almost_everywhere" if epsilon == 0.0 else "smooth_surrogate"
+        self.differentiability = (
+            "almost_everywhere" if epsilon == 0.0 else "smooth_surrogate"
+        )
         self.flux_id = canonical_fingerprint(
             {"kind": "rusanov-flux", "smooth_epsilon": epsilon}
         )
@@ -85,6 +87,7 @@ class RusanovFluxPlan(AbstractNumericalFluxPlan):
             + system.physical_flux(right_, int(axis), args)
         ) - 0.5 * speed[..., None] * (right_ - left_)
         return NumericalFluxResult(flux, speed)
+
     def normal_face_flux(
         self,
         system: Any,
@@ -105,7 +108,6 @@ class RusanovFluxPlan(AbstractNumericalFluxPlan):
             + system.physical_normal_flux(right_, normal_, args)
         ) - 0.5 * speed[..., None] * (right_ - left_)
         return NumericalFluxResult(flux, speed)
-
 
 
 class HLLFluxPlan(AbstractNumericalFluxPlan):
@@ -144,6 +146,7 @@ class HLLFluxPlan(AbstractNumericalFluxPlan):
         )
         speed = jnp.maximum(jnp.abs(lower), jnp.abs(upper))
         return NumericalFluxResult(flux, speed)
+
     def normal_face_flux(
         self,
         system: Any,
@@ -172,10 +175,7 @@ class HLLFluxPlan(AbstractNumericalFluxPlan):
             left_flux,
             jnp.where((upper <= 0.0)[..., None], right_flux, middle),
         )
-        return NumericalFluxResult(
-            flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper))
-        )
-
+        return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
 
 
 class HLLCFluxPlan(AbstractNumericalFluxPlan):
@@ -210,9 +210,8 @@ class HLLCFluxPlan(AbstractNumericalFluxPlan):
         normal_left = velocity_left[..., axis_]
         normal_right = velocity_right[..., axis_]
         lower, upper = system.signal_bounds(left_, right_, axis_, args)
-        denominator = (
-            density_left * (lower - normal_left)
-            - density_right * (upper - normal_right)
+        denominator = density_left * (lower - normal_left) - density_right * (
+            upper - normal_right
         )
         contact = (
             pressure_right
@@ -229,19 +228,13 @@ class HLLCFluxPlan(AbstractNumericalFluxPlan):
             signal: Array,
             normal_velocity: Array,
         ) -> Array:
-            star_density = density * (signal - normal_velocity) / (
-                signal - contact
-            )
+            star_density = density * (signal - normal_velocity) / (signal - contact)
             star_velocity = velocity.at[..., axis_].set(contact)
             specific_energy = state[..., -1] / density
             star_energy = star_density * (
                 specific_energy
                 + (contact - normal_velocity)
-                * (
-                    contact
-                    + pressure
-                    / (density * (signal - normal_velocity))
-                )
+                * (contact + pressure / (density * (signal - normal_velocity)))
             )
             return jnp.concatenate(
                 (
@@ -268,9 +261,7 @@ class HLLCFluxPlan(AbstractNumericalFluxPlan):
             jnp.where(
                 (contact >= 0.0)[..., None],
                 left_star_flux,
-                jnp.where(
-                    (upper > 0.0)[..., None], right_star_flux, right_flux
-                ),
+                jnp.where((upper > 0.0)[..., None], right_star_flux, right_flux),
             ),
         )
         speed = jnp.maximum(jnp.abs(lower), jnp.abs(upper))
@@ -288,9 +279,7 @@ class RoeFluxPlan(AbstractNumericalFluxPlan):
             raise ValueError("entropy_fix must be finite and positive.")
         self.entropy_fix = fix
         self.differentiability = "almost_everywhere"
-        self.flux_id = canonical_fingerprint(
-            {"kind": "roe-flux", "entropy_fix": fix}
-        )
+        self.flux_id = canonical_fingerprint({"kind": "roe-flux", "entropy_fix": fix})
 
     def face_flux(
         self,
@@ -317,9 +306,7 @@ class RoeFluxPlan(AbstractNumericalFluxPlan):
         )
         jump = right_ - left_
         characteristic = jnp.einsum("...ij,...j->...i", left_matrix, jump)
-        dissipation = jnp.einsum(
-            "...ij,...j->...i", right_matrix, fixed * characteristic
-        )
+        dissipation = jnp.einsum("...ij,...j->...i", right_matrix, fixed * characteristic)
         flux = 0.5 * (
             system.physical_flux(left_, int(axis), args)
             + system.physical_flux(right_, int(axis), args)
@@ -344,9 +331,7 @@ class EntropyConservativeEulerFluxPlan(AbstractNumericalFluxPlan):
 
     def __init__(self):
         self.differentiability = "smooth_discrete"
-        self.flux_id = canonical_fingerprint(
-            {"kind": "entropy-conservative-euler-flux"}
-        )
+        self.flux_id = canonical_fingerprint({"kind": "entropy-conservative-euler-flux"})
 
     def face_flux(
         self,
@@ -364,7 +349,10 @@ class EntropyConservativeEulerFluxPlan(AbstractNumericalFluxPlan):
         primitive_left = system.conserved_to_primitive(left)
         primitive_right = system.conserved_to_primitive(right)
         rho_left, rho_right = primitive_left[..., 0], primitive_right[..., 0]
-        velocity_left, velocity_right = primitive_left[..., 1:-1], primitive_right[..., 1:-1]
+        velocity_left, velocity_right = (
+            primitive_left[..., 1:-1],
+            primitive_right[..., 1:-1],
+        )
         pressure_left, pressure_right = primitive_left[..., -1], primitive_right[..., -1]
         beta_left = rho_left / (2.0 * pressure_left)
         beta_right = rho_right / (2.0 * pressure_right)
@@ -416,16 +404,19 @@ class EntropyStableEulerFluxPlan(AbstractNumericalFluxPlan):
         /,
     ) -> NumericalFluxResult:
         central = self.central.face_flux(system, left, right, axis, args)
-        flux = central.normal_flux - 0.5 * self.dissipation * central.max_speed[..., None] * (
-            right - left
-        )
+        flux = central.normal_flux - 0.5 * self.dissipation * central.max_speed[
+            ..., None
+        ] * (right - left)
         return NumericalFluxResult(flux, central.max_speed)
 
     def entropy_dissipation(self, system: Any, left: Array, right: Array, /) -> Array:
         speed = system.max_wave_speed(left, right, 0, None)
         entropy_jump = system.entropy_variables(right) - system.entropy_variables(left)
-        return -0.5 * self.dissipation * speed * jnp.sum(
-            entropy_jump * (right - left), axis=-1
+        return (
+            -0.5
+            * self.dissipation
+            * speed
+            * jnp.sum(entropy_jump * (right - left), axis=-1)
         )
 
 

@@ -8,8 +8,14 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from ..linalg import TracelessHermitianSpace
+from ..linalg import (
+    HermitianPrecisionPolicy,
+    HermitianSpectrum,
+    TracelessHermitianSpace,
+)
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -22,6 +28,10 @@ class QuantumPOVM(StrictModule):
     hermiticity_residual: Array
     completeness_residual: Array
     minimum_eigenvalue: Array
+    precision: GeometryPrecisionPolicy
+    hermitian_precision: HermitianPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope
+    hermitian_precision_evidence: PrecisionEvidenceEnvelope
     outcome_count: int = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
     povm_id: str = eqx.field(static=True)
@@ -33,17 +43,47 @@ class QuantumPOVM(StrictModule):
         *,
         povm_id: str,
         tolerance: float = 1e-9,
+        precision: GeometryPrecisionPolicy | None = None,
+        hermitian_precision: HermitianPrecisionPolicy | None = None,
     ):
-        values = jnp.asarray(effects)
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        hermitian_ = (
+            HermitianPrecisionPolicy()
+            if hermitian_precision is None
+            else hermitian_precision
+        )
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+        if not isinstance(hermitian_, HermitianPrecisionPolicy):
+            raise TypeError(
+                "hermitian_precision must be a HermitianPrecisionPolicy or None."
+            )
+        original = jnp.asarray(effects)
+        precision_.validate_coordinates(original)
+        values = precision_.compute(original)
         if values.ndim != 3 or values.shape[-2] != values.shape[-1]:
             raise ValueError("POVM effects must have shape (outcomes, n, n).")
         dimension = values.shape[-1]
-        hermitian = 0.5 * (values + _adjoint(values))
-        asymmetry = jnp.max(jnp.abs(values - _adjoint(values)))
-        eigenvalues = jnp.linalg.eigvalsh(hermitian)
-        minimum = jnp.min(eigenvalues)
-        completeness = jnp.max(
-            jnp.abs(jnp.sum(hermitian, axis=0) - jnp.eye(dimension, dtype=values.dtype))
+        hermitian = hermitian_.factorization(0.5 * (values + _adjoint(values)))
+        asymmetry = precision_.decision(
+            jnp.max(jnp.abs(precision_.accumulation(values - _adjoint(values))))
+        )
+        spectrum = HermitianSpectrum(
+            hermitian,
+            tolerance=tolerance,
+            precision=hermitian_,
+        )
+        eigenvalues = spectrum.eigenvalues
+        minimum = precision_.decision(jnp.min(eigenvalues))
+        completeness = precision_.decision(
+            jnp.max(
+                jnp.abs(
+                    precision_.accumulation(
+                        jnp.sum(precision_.accumulation(hermitian), axis=0)
+                        - jnp.eye(dimension, dtype=values.dtype)
+                    )
+                )
+            )
         )
         identifier = str(povm_id)
         if not identifier:
@@ -52,6 +92,10 @@ class QuantumPOVM(StrictModule):
         self.hermiticity_residual = asymmetry
         self.completeness_residual = completeness
         self.minimum_eigenvalue = minimum
+        self.precision = precision_
+        self.hermitian_precision = hermitian_
+        self.precision_evidence = precision_.evidence_for(original)
+        self.hermitian_precision_evidence = spectrum.precision_evidence
         self.valid = (
             jnp.all(jnp.isfinite(values))
             & (asymmetry <= tolerance)
@@ -63,11 +107,17 @@ class QuantumPOVM(StrictModule):
         self.povm_id = identifier
 
     def probabilities(self, density: ArrayLike, /) -> Array:
-        rho = jnp.asarray(density)
+        rho = self.precision.accumulation(self.precision.compute(density))
         if rho.shape != (self.dimension, self.dimension):
             raise ValueError("Density shape does not match POVM dimension.")
-        probabilities = jnp.real(jnp.einsum("kij,ji->k", self.effects, rho))
-        return probabilities
+        probabilities = jnp.real(
+            jnp.einsum(
+                "kij,ji->k",
+                self.precision.accumulation(self.effects),
+                rho,
+            )
+        )
+        return self.precision.output(probabilities)
 
     def identifiability_rank(self, /, *, tolerance: float = 1e-9) -> Array:
         space = TracelessHermitianSpace(self.dimension)
@@ -94,8 +144,11 @@ class QuantumPOVM(StrictModule):
                 for effect in self.effects
             ]
         )
-        singular_values = jnp.linalg.svd(design, compute_uv=False)
-        return jnp.sum(singular_values > tolerance)
+        singular_values = jnp.linalg.svd(
+            self.hermitian_precision.factorization(design),
+            compute_uv=False,
+        )
+        return jnp.sum(singular_values > self.precision.decision(tolerance))
 
 
 class QuantumTomographyData(StrictModule):
@@ -122,6 +175,7 @@ class TomographyLikelihoodResult(StrictModule):
     probabilities: Array
     normalization_residual: Array
     valid: Array
+    precision_evidence: PrecisionEvidenceEnvelope
 
     def __init__(
         self,
@@ -129,12 +183,16 @@ class TomographyLikelihoodResult(StrictModule):
         probabilities: ArrayLike,
         normalization_residual: ArrayLike,
         valid: ArrayLike,
+        precision_evidence: PrecisionEvidenceEnvelope,
         /,
     ):
         self.log_likelihood = jnp.asarray(log_likelihood)
         self.probabilities = jnp.asarray(probabilities)
         self.normalization_residual = jnp.asarray(normalization_residual)
         self.valid = jnp.asarray(valid, dtype=bool)
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        self.precision_evidence = precision_evidence
 
 
 def tomography_log_likelihood(
@@ -142,13 +200,24 @@ def tomography_log_likelihood(
     data: QuantumTomographyData,
     density: ArrayLike,
     /,
+    *,
+    precision: GeometryPrecisionPolicy | None = None,
 ) -> TomographyLikelihoodResult:
     if data.counts.shape != (povm.outcome_count,):
         raise ValueError("Tomography counts must match POVM outcomes.")
-    probabilities = povm.probabilities(density)
-    normalization = jnp.abs(jnp.sum(probabilities) - 1.0)
+    precision_ = povm.precision if precision is None else precision
+    if not isinstance(precision_, GeometryPrecisionPolicy):
+        raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+    if precision_.policy_id != povm.precision.policy_id:
+        raise ValueError("Tomography likelihood precision must match the POVM.")
+    probabilities = precision_.accumulation(povm.probabilities(density))
+    normalization = precision_.decision(jnp.abs(jnp.sum(probabilities) - 1.0))
     safe = jnp.maximum(probabilities, jnp.finfo(probabilities.dtype).tiny)
-    log_likelihood = jnp.sum(data.counts * jnp.log(safe))
+    log_likelihood = precision_.decision(
+        jnp.sum(
+            precision_.accumulation(precision_.accumulation(data.counts) * jnp.log(safe))
+        )
+    )
     valid = (
         povm.valid
         & data.valid
@@ -156,7 +225,13 @@ def tomography_log_likelihood(
         & (normalization <= 1e-8)
         & jnp.isfinite(log_likelihood)
     )
-    return TomographyLikelihoodResult(log_likelihood, probabilities, normalization, valid)
+    return TomographyLikelihoodResult(
+        log_likelihood,
+        precision_.output(probabilities),
+        normalization,
+        valid,
+        precision_.evidence_for(probabilities),
+    )
 
 
 def tetrahedral_qubit_povm() -> QuantumPOVM:

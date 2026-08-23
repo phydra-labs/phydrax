@@ -33,16 +33,16 @@ def _cell_gradient(
         previous_coordinate = jnp.roll(coordinate, 1).at[0].add(-period)
         next_coordinate = jnp.roll(coordinate, -1).at[-1].add(period)
         denominator = next_coordinate - previous_coordinate
-        gradient = (jnp.roll(moved, -1, axis=0) - jnp.roll(moved, 1, axis=0)) / denominator.reshape(
-            (denominator.size,) + (1,) * (moved.ndim - 1)
-        )
+        gradient = (
+            jnp.roll(moved, -1, axis=0) - jnp.roll(moved, 1, axis=0)
+        ) / denominator.reshape((denominator.size,) + (1,) * (moved.ndim - 1))
     else:
         if moved.shape[0] == 1:
             gradient = jnp.zeros_like(moved)
         else:
-            forward = (moved[1:] - moved[:-1]) / (coordinate[1:] - coordinate[:-1]).reshape(
-                (-1,) + (1,) * (moved.ndim - 1)
-            )
+            forward = (moved[1:] - moved[:-1]) / (
+                coordinate[1:] - coordinate[:-1]
+            ).reshape((-1,) + (1,) * (moved.ndim - 1))
             interior = (
                 0.5 * (forward[:-1] + forward[1:])
                 if moved.shape[0] > 2
@@ -71,15 +71,18 @@ def _ghosted_center_gradient(
     /,
 ) -> Array:
     moved = jnp.moveaxis(values, axis, 0)
-    denominator = coordinates[
-        depth + 1 : depth + interior_count + 1
-    ] - coordinates[depth - 1 : depth + interior_count - 1]
+    denominator = (
+        coordinates[depth + 1 : depth + interior_count + 1]
+        - coordinates[depth - 1 : depth + interior_count - 1]
+    )
     shape = (interior_count,) + (1,) * (moved.ndim - 1)
     gradient = (
         moved[depth + 1 : depth + interior_count + 1]
         - moved[depth - 1 : depth + interior_count - 1]
     ) / denominator.reshape(shape)
     return jnp.moveaxis(gradient, 0, axis)
+
+
 def _mapped_cell_gradient(values: Array, centers: Array, /) -> Array:
     spatial_shape = centers.shape[:-1]
     dimension = centers.shape[-1]
@@ -112,8 +115,7 @@ def _mapped_cell_gradient(values: Array, centers: Array, /) -> Array:
             difference = neighbor_values - components
             matrix = matrix + displacement[..., :, None] * displacement[..., None, :]
             right_hand_side = (
-                right_hand_side
-                + difference[..., :, None] * displacement[..., None, :]
+                right_hand_side + difference[..., :, None] * displacement[..., None, :]
             )
     regularization = jnp.finfo(value.dtype).eps * jnp.eye(dimension)
     gradient = jnp.linalg.solve(
@@ -122,7 +124,6 @@ def _mapped_cell_gradient(values: Array, centers: Array, /) -> Array:
     )
     gradient = jnp.swapaxes(gradient, -1, -2)
     return gradient[..., 0, :] if scalar else gradient
-
 
 
 def _mapped_halo_gradient(
@@ -147,9 +148,7 @@ def _mapped_halo_gradient(
         dtype=state.dtype,
     )
     for axis in range(dimension):
-        ghosted = halo.materialize_axis(
-            system, time, state, axis, args
-        )
+        ghosted = halo.materialize_axis(system, time, state, axis, args)
         primitive = system.conserved_to_primitive(ghosted.values)
         values = (
             system.temperature(ghosted.values)[..., None]
@@ -163,26 +162,13 @@ def _mapped_halo_gradient(
         current_values = moved_values[depth : depth + count]
         current_centers = moved_centers[depth : depth + count]
         for offset in (-1, 1):
-            neighbor_values = moved_values[
-                depth + offset : depth + count + offset
-            ]
-            neighbor_centers = moved_centers[
-                depth + offset : depth + count + offset
-            ]
-            displacement = jnp.moveaxis(
-                neighbor_centers - current_centers, 0, axis
-            )
-            difference = jnp.moveaxis(
-                neighbor_values - current_values, 0, axis
-            )
-            matrix = (
-                matrix
-                + displacement[..., :, None]
-                * displacement[..., None, :]
-            )
+            neighbor_values = moved_values[depth + offset : depth + count + offset]
+            neighbor_centers = moved_centers[depth + offset : depth + count + offset]
+            displacement = jnp.moveaxis(neighbor_centers - current_centers, 0, axis)
+            difference = jnp.moveaxis(neighbor_values - current_values, 0, axis)
+            matrix = matrix + displacement[..., :, None] * displacement[..., None, :]
             right_hand_side = (
-                right_hand_side
-                + difference[..., :, None] * displacement[..., None, :]
+                right_hand_side + difference[..., :, None] * displacement[..., None, :]
             )
     regularization = jnp.finfo(state.dtype).eps * jnp.eye(dimension)
     gradient = jnp.linalg.solve(
@@ -209,13 +195,13 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
 
     def __init__(self):
         self.plan_id = canonical_fingerprint({"kind": "material-viscous-flux"})
+
     def _apply_prescribed_heat_flux(
         self,
         system: Any,
         time: Array,
         state: Array,
-        discretization: FiniteVolumeDiscretization
-        | MappedFiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         halo: PreparedFiniteVolumeHaloPlan,
         fluxes: tuple[Array, ...],
         args: Any,
@@ -229,16 +215,10 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 ("lower", pair.lower),
                 ("upper", pair.upper),
             ):
-                if not isinstance(
-                    boundary, PrescribedHeatFluxWallBoundary
-                ):
+                if not isinstance(boundary, PrescribedHeatFluxWallBoundary):
                     continue
-                face_index = (
-                    0 if side == "lower" else output[axis].shape[axis] - 1
-                )
-                cell_index = (
-                    0 if side == "lower" else state.shape[axis] - 1
-                )
+                face_index = 0 if side == "lower" else output[axis].shape[axis] - 1
+                cell_index = 0 if side == "lower" else state.shape[axis] - 1
                 interior = jnp.take(state, cell_index, axis=axis)
                 coordinates = jnp.take(
                     discretization.face_centers[axis],
@@ -251,20 +231,13 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 )
                 face_flux = jnp.take(output[axis], face_index, axis=axis)
                 traction = face_flux[..., 1 : 1 + system.dimension]
-                mechanical = jnp.sum(
-                    boundary.wall_velocity * traction, axis=-1
-                )
+                mechanical = jnp.sum(boundary.wall_velocity * traction, axis=-1)
                 sign = -1.0 if side == "lower" else 1.0
-                replacement = face_flux.at[..., -1].set(
-                    mechanical + sign * outward_heat
-                )
+                replacement = face_flux.at[..., -1].set(mechanical + sign * outward_heat)
                 index: list[slice | int] = [slice(None)] * output[axis].ndim
                 index[axis] = face_index
-                output[axis] = output[axis].at[tuple(index)].set(
-                    replacement
-                )
+                output[axis] = output[axis].at[tuple(index)].set(replacement)
         return tuple(output)
-
 
     def _mapped_face_fluxes(
         self,
@@ -294,14 +267,10 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         identity = jnp.eye(system.dimension, dtype=value.dtype)
         stress = (
             transport.dynamic_viscosity[..., None, None]
-            * (
-                velocity_gradient
-                + jnp.swapaxes(velocity_gradient, -1, -2)
-            )
-            + (
-                transport.bulk_viscosity
-                - 2.0 * transport.dynamic_viscosity / 3.0
-            )[..., None, None]
+            * (velocity_gradient + jnp.swapaxes(velocity_gradient, -1, -2))
+            + (transport.bulk_viscosity - 2.0 * transport.dynamic_viscosity / 3.0)[
+                ..., None, None
+            ]
             * divergence[..., None, None]
             * identity
         )
@@ -309,9 +278,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         for axis in range(system.dimension):
             stress_face = _cell_to_faces(stress, axis, False)
             velocity_face = _cell_to_faces(velocity, axis, False)
-            temperature_gradient_face = _cell_to_faces(
-                temperature_gradient, axis, False
-            )
+            temperature_gradient_face = _cell_to_faces(temperature_gradient, axis, False)
             conductivity_face = _cell_to_faces(
                 transport.thermal_conductivity, axis, False
             )
@@ -319,9 +286,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 discretization.face_area_vectors[axis]
                 / discretization.face_measures[axis][..., None]
             )
-            traction = jnp.einsum(
-                "...ij,...j->...i", stress_face, normal
-            )
+            traction = jnp.einsum("...ij,...j->...i", stress_face, normal)
             normal_temperature_gradient = jnp.sum(
                 temperature_gradient_face * normal, axis=-1
             )
@@ -348,8 +313,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         system: Any,
         time: Array,
         state: ArrayLike,
-        discretization: FiniteVolumeDiscretization
-        | MappedFiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         halo: PreparedFiniteVolumeHaloPlan,
         args: Any = None,
         /,
@@ -360,9 +324,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 system, time, value, discretization, halo, args
             )
         if system.component_count != system.dimension + 2:
-            raise TypeError(
-                "Viscous flux requires a compressible-flow state layout."
-            )
+            raise TypeError("Viscous flux requires a compressible-flow state layout.")
         primitive = system.conserved_to_primitive(value)
         velocity = primitive[..., 1:-1]
         temperature = system.temperature(value)
@@ -371,12 +333,8 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         velocity_gradients = []
         temperature_gradients = []
         for axis in range(dimension):
-            ghosted = halo.materialize_axis(
-                system, time, value, axis, args
-            )
-            ghosted_primitive = system.conserved_to_primitive(
-                ghosted.values
-            )
+            ghosted = halo.materialize_axis(system, time, value, axis, args)
+            ghosted_primitive = system.conserved_to_primitive(ghosted.values)
             velocity_gradients.append(
                 _ghosted_center_gradient(
                     ghosted_primitive[..., 1:-1],
@@ -399,10 +357,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         temperature_gradients = tuple(temperature_gradients)
         divergence = jnp.sum(
             jnp.stack(
-                tuple(
-                    velocity_gradients[axis][..., axis]
-                    for axis in range(dimension)
-                ),
+                tuple(velocity_gradients[axis][..., axis] for axis in range(dimension)),
                 axis=0,
             ),
             axis=0,
@@ -415,9 +370,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             viscosity_face = _cell_to_faces(
                 transport.dynamic_viscosity, normal_axis, periodic
             )
-            bulk_face = _cell_to_faces(
-                transport.bulk_viscosity, normal_axis, periodic
-            )
+            bulk_face = _cell_to_faces(transport.bulk_viscosity, normal_axis, periodic)
             conductivity_face = _cell_to_faces(
                 transport.thermal_conductivity, normal_axis, periodic
             )
@@ -434,9 +387,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                     normal_axis,
                     periodic,
                 )
-                stress = viscosity_face * (
-                    derivative_normal + derivative_component
-                )
+                stress = viscosity_face * (derivative_normal + derivative_component)
                 if component == normal_axis:
                     stress = stress + lambda_face * divergence_face
                 stress_components.append(stress)
@@ -466,8 +417,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         self,
         system: Any,
         state: ArrayLike,
-        discretization: FiniteVolumeDiscretization
-        | MappedFiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         args: Any = None,
         /,
         *,
@@ -479,44 +429,27 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         pressure = primitive[..., -1]
         temperature = system.temperature(value)
         transport = system.transport.properties(temperature, value, args)
-        heat_capacity = system.material.specific_heat_cp(
-            density, pressure
-        )
+        heat_capacity = system.material.specific_heat_cp(density, pressure)
         momentum_diffusivity = transport.dynamic_viscosity / density
-        thermal_diffusivity = (
-            transport.thermal_conductivity / (density * heat_capacity)
-        )
+        thermal_diffusivity = transport.thermal_conductivity / (density * heat_capacity)
         momentum_rate = jnp.zeros(discretization.cell_shape, dtype=value.dtype)
         thermal_rate = jnp.zeros_like(momentum_rate)
         for axis in range(system.dimension):
             periodic = discretization.grid.structured_axes[axis].periodic
-            momentum_face = _cell_to_faces(
-                momentum_diffusivity, axis, periodic
-            )
-            thermal_face = _cell_to_faces(
-                thermal_diffusivity, axis, periodic
-            )
+            momentum_face = _cell_to_faces(momentum_diffusivity, axis, periodic)
+            thermal_face = _cell_to_faces(thermal_diffusivity, axis, periodic)
             measure = discretization.face_measures[axis]
             if periodic:
-                widths = discretization.grid.structured_axes[
-                    axis
-                ].interval_widths
+                widths = discretization.grid.structured_axes[axis].interval_widths
                 distance = 0.5 * (widths + jnp.roll(widths, 1))
                 shape = [1] * measure.ndim
                 shape[axis] = distance.size
-                distance = jnp.broadcast_to(
-                    distance.reshape(tuple(shape)), measure.shape
-                )
+                distance = jnp.broadcast_to(distance.reshape(tuple(shape)), measure.shape)
             else:
-                centers = jnp.moveaxis(
-                    discretization.cell_centers, axis, 0
-                )
-                face_centers = jnp.moveaxis(
-                    discretization.face_centers[axis], axis, 0
-                )
+                centers = jnp.moveaxis(discretization.cell_centers, axis, 0)
+                face_centers = jnp.moveaxis(discretization.face_centers[axis], axis, 0)
                 normals = jnp.moveaxis(
-                    discretization.face_area_vectors[axis]
-                    / measure[..., None],
+                    discretization.face_area_vectors[axis] / measure[..., None],
                     axis,
                     0,
                 )
@@ -570,20 +503,16 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 lower[axis] = slice(0, measure.shape[axis] - 1)
                 upper[axis] = slice(1, measure.shape[axis])
                 momentum_contribution = (
-                    momentum_weight[tuple(lower)]
-                    + momentum_weight[tuple(upper)]
+                    momentum_weight[tuple(lower)] + momentum_weight[tuple(upper)]
                 )
                 thermal_contribution = (
-                    thermal_weight[tuple(lower)]
-                    + thermal_weight[tuple(upper)]
+                    thermal_weight[tuple(lower)] + thermal_weight[tuple(upper)]
                 )
             momentum_rate = (
-                momentum_rate
-                + momentum_contribution / discretization.cell_volumes
+                momentum_rate + momentum_contribution / discretization.cell_volumes
             )
             thermal_rate = (
-                thermal_rate
-                + thermal_contribution / discretization.cell_volumes
+                thermal_rate + thermal_contribution / discretization.cell_volumes
             )
         maximum_momentum = jnp.max(momentum_rate)
         maximum_thermal = jnp.max(thermal_rate)
@@ -612,8 +541,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         self,
         system: Any,
         state: ArrayLike,
-        discretization: FiniteVolumeDiscretization
-        | MappedFiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         args: Any = None,
         /,
         *,
@@ -628,15 +556,12 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         system: Any,
         time: Array,
         state: ArrayLike,
-        discretization: FiniteVolumeDiscretization
-        | MappedFiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         halo: PreparedFiniteVolumeHaloPlan,
         args: Any = None,
         /,
     ) -> Array:
-        fluxes = self.face_fluxes(
-            system, time, state, discretization, halo, args
-        )
+        fluxes = self.face_fluxes(system, time, state, discretization, halo, args)
         residual = jnp.zeros_like(jnp.asarray(state))
         for axis, flux in enumerate(fluxes):
             integrated = flux * discretization.face_measures[axis][..., None]
@@ -648,10 +573,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 lower[axis] = slice(0, integrated.shape[axis] - 1)
                 upper[axis] = slice(1, integrated.shape[axis])
                 difference = integrated[tuple(upper)] - integrated[tuple(lower)]
-            residual = (
-                residual
-                + difference / discretization.cell_volumes[..., None]
-            )
+            residual = residual + difference / discretization.cell_volumes[..., None]
         return residual
 
 

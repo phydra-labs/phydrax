@@ -42,7 +42,7 @@ from ._results import (
     LinearSolveResult,
     LinearSolveStatus,
 )
-from ._spaces import RHSLayout
+from ._spaces import _coordinate_dtype, RHSLayout
 from ._subspaces import KernelCertificate, LinearSubspace, NullspacePolicy
 from .backends._jax_dense import (
     DenseBackendOutput,
@@ -365,22 +365,34 @@ def _precision_provenance(prepared: PreparedLinearSolve, /) -> dict[str, Any]:
         return {}
     state = prepared.state
     if isinstance(state, DenseMixedPrecisionLUState):
+        operator_dtype = state.matrix.dtype
+        factorization_dtype = state.factor.dtype.name
+        preconditioner_dtype = None
         condition_limit = state.condition_limit
         maximum_refinement_steps = state.maximum_refinement_steps
     elif isinstance(state, DenseLUState):
+        operator_dtype = state.matrix.dtype
+        factorization_dtype = state.factor.dtype.name
+        preconditioner_dtype = None
         condition_limit = None
         maximum_refinement_steps = 0
     else:
-        raise TypeError(
-            "A capability-checked MixedPrecisionPolicy requires dense LU state."
+        operator_dtype = _coordinate_dtype(prepared.problem.operator.source)
+        factorization_dtype = None
+        preconditioner_dtype = (
+            None
+            if prepared.preconditioning_state is None
+            else prepared.preconditioning_state.plan.compute_dtype
         )
+        condition_limit = None
+        maximum_refinement_steps = 0
     evidence = LinearPrecisionEvidence(
-        operator_dtype=state.matrix.dtype.name,
-        factorization_dtype=state.factor.dtype.name,
-        preconditioner_dtype=None,
-        krylov_dtype=None,
-        residual_dtype=state.matrix.dtype.name,
-        accumulation_dtype=state.matrix.dtype.name,
+        operator_dtype=operator_dtype.name,
+        factorization_dtype=factorization_dtype,
+        preconditioner_dtype=preconditioner_dtype,
+        krylov_dtype=requested.krylov_dtype,
+        residual_dtype=operator_dtype.name,
+        accumulation_dtype=operator_dtype.name,
         condition_limit=condition_limit,
         maximum_refinement_steps=maximum_refinement_steps,
     )

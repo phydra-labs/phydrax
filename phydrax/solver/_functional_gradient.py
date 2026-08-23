@@ -27,6 +27,7 @@ from .._training import (
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
+from ..optim._composite import CompositeLeastSquaresProblem
 from ..optim._iterative import (
     AbstractCompositeLeastSquaresMethod,
     AbstractLeastSquaresMethod,
@@ -34,7 +35,6 @@ from ..optim._iterative import (
     OptimizationStatus,
     OptimizationTermination,
 )
-from ..optim._composite import CompositeLeastSquaresProblem
 from ..optim._least_squares import LeastSquaresState
 from ..optim._riemannian import (
     AbstractRiemannianLineSearchOptimizer,
@@ -46,6 +46,7 @@ from ._functional_objective import (
     evaluate_prepared_scalar_remainder,
     prepared_data_metrics,
 )
+from ._functional_precision import FunctionalPrecisionPolicy
 from ._functional_reporting import (
     best_display_value as _best_display_value,
     log_tensorboard_scalars as _log_tensorboard_scalars,
@@ -93,6 +94,7 @@ def solve_gradient(
     tensorboard_flush_every: int = 10,
     profile_adaptive: bool = False,
     train_term_sample_size: int | None = None,
+    precision: FunctionalPrecisionPolicy | None = None,
 ) -> "FunctionalSolver":
     if num_iter == 0:
         return self
@@ -132,6 +134,8 @@ def solve_gradient(
             "optim must be a Phydrax least-squares, iterative, or Riemannian "
             "optimizer, or an Optax transformation."
         )
+    if precision is not None and not isinstance(precision, FunctionalPrecisionPolicy):
+        raise TypeError("precision must be a FunctionalPrecisionPolicy or None.")
     optimizer_label = (
         _opt_composite.method_id
         if _opt_composite is not None
@@ -158,6 +162,34 @@ def solve_gradient(
 
     with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         params, non_trainable = partition_trainable(self.functions)
+        preinitialized_opt_state = None
+        if _opt_linesearch is not None:
+            preinitialized_opt_state = _opt_linesearch.init(params)
+            line_search_state_types = (
+                optax.ScaleByBacktrackingLinesearchState,
+                optax.ScaleByZoomLinesearchState,
+            )
+            state_leaves = jax.tree.leaves(
+                preinitialized_opt_state,
+                is_leaf=lambda value: isinstance(value, line_search_state_types),
+            )
+            if not any(
+                isinstance(value, line_search_state_types) for value in state_leaves
+            ):
+                _opt_standard = _opt_linesearch
+                _opt_linesearch = None
+        if precision is not None and _opt_standard is None:
+            raise ValueError(
+                "Functional precision currently supports standard Optax transforms only."
+            )
+        parameter_dtypes = {
+            leaf.dtype for leaf in jax.tree.leaves(params) if eqx.is_inexact_array(leaf)
+        }
+        if precision is not None and len(parameter_dtypes) != 1:
+            raise ValueError(
+                "Functional precision requires one uniform trainable parameter dtype."
+            )
+        precision_dtype = None if precision is None else next(iter(parameter_dtypes))
         log_every_ = int(log_every)
         if log_every_ < 0:
             raise ValueError("log_every must be >= 0.")
@@ -172,10 +204,7 @@ def solve_gradient(
         log_terms_ = bool(log_terms)
         term_names = tuple(_term_label(c) for c in self.terms)
         model_loss_names = function_model_loss_labels(self.functions)
-        if (
-            _opt_least_squares is not None
-            and model_loss_names
-        ):
+        if _opt_least_squares is not None and model_loss_names:
             raise ValueError(
                 "Least-squares FunctionalSolver methods require a pure "
                 "ResidualPenalty objective without model-level scalar losses."
@@ -186,22 +215,32 @@ def solve_gradient(
             num_terms=len(self.terms),
         )
 
+        def _precision_context():
+            return (
+                nullcontext()
+                if precision is None
+                else jax.default_matmul_precision(precision.matmul_precision)
+            )
+
         def _loss_wrt_params(params_, non_trainable_, prepared_):
             functions = combine_trainable(params_, non_trainable_)
-            values = evaluate_prepared_objective(prepared_, functions)
+            with _precision_context():
+                values = evaluate_prepared_objective(prepared_, functions)
             return values.total, values.flat_values
 
         def _term_values_wrt_params(params_, non_trainable_, prepared_):
             functions = combine_trainable(params_, non_trainable_)
-            return evaluate_prepared_objective(
-                prepared_,
-                functions,
-                include_model_losses=False,
-            ).term_values
+            with _precision_context():
+                return evaluate_prepared_objective(
+                    prepared_,
+                    functions,
+                    include_model_losses=False,
+                ).term_values
 
         def _data_metrics_wrt_terms(params_, non_trainable_, prepared_):
             functions = combine_trainable(params_, non_trainable_)
-            return prepared_data_metrics(prepared_, functions)
+            with _precision_context():
+                return prepared_data_metrics(prepared_, functions)
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
@@ -442,7 +481,11 @@ def solve_gradient(
         )
         if opt is None:
             raise ValueError("Optimizer is not configured.")
-        opt_state = opt.init(params)
+        opt_state = (
+            opt.init(params)
+            if preinitialized_opt_state is None
+            else preinitialized_opt_state
+        )
         current_evaluation_params = resolve_evaluation_parameters(
             evaluation_parameters,
             opt_state,
@@ -1006,13 +1049,13 @@ def solve_gradient(
             or _opt_least_squares is not None
             or _opt_iterative is not None
         ):
-            final_iterative_metrics = (
-                _opt_composite.step_metrics(opt_state)
-                if _opt_composite is not None
-                else _opt_least_squares.step_metrics(opt_state)
-                if _opt_least_squares is not None
-                else _opt_iterative.step_metrics(opt_state)
-            )
+            if _opt_composite is not None:
+                final_iterative_metrics = _opt_composite.step_metrics(opt_state)
+            elif _opt_least_squares is not None:
+                final_iterative_metrics = _opt_least_squares.step_metrics(opt_state)
+            else:
+                assert _opt_iterative is not None
+                final_iterative_metrics = _opt_iterative.step_metrics(opt_state)
             iterative_diagnostics = {
                 "optimizer/iterative/objective": final_iterative_metrics.objective,
                 "optimizer/iterative/residual_objective": (
@@ -1099,11 +1142,12 @@ def solve_gradient(
                 }
         functions = combine_trainable(chosen, non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
-        objective = objective.settle(
-            functions,
-            key=jr.fold_in(control.key, 991),
-            iter_=completed + 1,
-        )
+        with _precision_context():
+            objective = objective.settle(
+                functions,
+                key=jr.fold_in(control.key, 991),
+                iter_=completed + 1,
+            )
         if profile_adaptive:
             jax.block_until_ready(objective)
             refresh_wall_time += time.perf_counter() - settle_started
@@ -1111,6 +1155,13 @@ def solve_gradient(
             self,
             functions=functions,
             objective=objective,
+        )
+        precision_evidence = (
+            None if precision is None else precision.evidence(precision_dtype)
+        )
+        result = result._with_precision_evidence(
+            precision,
+            precision_evidence,
         )
         diagnostics = frozendict(
             {

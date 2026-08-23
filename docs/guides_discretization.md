@@ -244,17 +244,26 @@ records and the realized internal-time record.
 `DiscreteFieldSpace.field_space_id`:
 
 ```python
+noise_precision = phx.stochastic.SpatialNoisePrecisionPolicy(
+    construction_dtype="float64",
+    basis_storage_dtype="float32",
+    runtime_dtype="float32",
+    certification_dtype="float64",
+)
 noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     space,
     lambda eigenvalue: 0.02 * jnp.exp(-0.05 * eigenvalue),
     rank=8,
+    precision=noise_precision,
 )
 ```
 
 `StochasticCouplingPlan` retains solver/observable coupling semantics and owns a
 generic `DiscretizationHierarchy` whose levels contain complete bundles. Stochastic
 realization identity, coupling identity, spatial field identity, noise basis identity,
-and refinement identity remain separate.
+and refinement identity remain separate. A nested-noise edge is accepted only with
+a passing `NoiseCouplingWitness`; equal seeds or a matching family label alone are
+not numerical projection evidence.
 
 ## PINNs and operator learning
 

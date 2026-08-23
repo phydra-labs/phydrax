@@ -12,7 +12,15 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve as solve_linear,
+)
 from ._certificates import (
     certify_constrained_physical,
     reconcile_optimization_status,
@@ -120,6 +128,8 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
     maximum_line_search_steps: int = eqx.field(static=True)
     maximum_restoration_steps: int = eqx.field(static=True)
     max_dense_dimension: int = eqx.field(static=True)
+    linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -130,6 +140,8 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
         maximum_line_search_steps: int = 24,
         maximum_restoration_steps: int = 3,
         max_dense_dimension: int = 512,
+        linear: LinearSolvePolicy | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         values = tuple(
             float(value)
@@ -144,10 +156,18 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             raise ValueError("Fraction-to-boundary and filter margin must be below one.")
         if search < 1 or restoration < 1 or dimension < 1:
             raise ValueError("Interior-point step and dimension limits must be positive.")
+        linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.fraction_to_boundary, self.minimum_barrier, self.filter_margin = values
         self.maximum_line_search_steps = search
         self.maximum_restoration_steps = restoration
         self.max_dense_dimension = dimension
+        self.linear = linear_
+        self.precision = precision_
 
     @property
     def method_id(self):
@@ -174,7 +194,10 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
     ) -> MinimizationResult:
         if not isinstance(problem, MinimizationProblem):
             raise TypeError("problem must be MinimizationProblem.")
-        parameters = validate_real_inexact_tree(initial_parameters, name="parameters")
+        self.precision.validate_tolerance(termination.absolute_optimality)
+        parameters = self.precision.state(
+            validate_real_inexact_tree(initial_parameters, name="parameters")
+        )
         model = prepare_constrained_model(problem, parameters, args=args)
         if model.template_coordinates.size > self.max_dense_dimension:
             raise ValueError("FilterInteriorPoint exceeds max_dense_dimension.")
@@ -262,6 +285,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 condensed_hessian,
                 equality_jacobian,
                 kkt_plan,
+                precision=self.precision,
             )
             factorizations += 1
             affine = _condensed_kkt_direction(
@@ -392,11 +416,22 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
                 restoration_rhs = -jnp.concatenate(
                     [equality_residual, inequality_residual]
                 )
-                restoration_direction = jnp.linalg.lstsq(
-                    constraint_matrix, restoration_rhs, rcond=None
-                )[0]
+                restoration_direction = self.precision.direction(
+                    solve_linear(
+                        LeastSquaresProblem(
+                            DenseLinearOperator(
+                                self.precision.accumulation(constraint_matrix)
+                            )
+                        ),
+                        self.precision.accumulation(restoration_rhs),
+                        policy=self.precision.bind_linear(self.linear),
+                    ).value
+                )
                 parameters = model.unflatten(
-                    evaluation.coordinates + 0.5 * restoration_direction
+                    jnp.asarray(
+                        evaluation.coordinates + 0.5 * restoration_direction,
+                        dtype=evaluation.coordinates.dtype,
+                    )
                 )
                 restored = model.evaluate(parameters, args)
                 slack = jnp.maximum(restored.inequality_slacks, 1e-8)
@@ -447,6 +482,10 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             complementarity=final_complementarity,
             equality_sources=model.equality_sources,
             inequality_sources=model.inequality_sources,
+            precision_evidence=self.precision.evidence_for(
+                parameters,
+                model.unflatten(dual_residual),
+            ),
         )
         certificate = certify_constrained_physical(
             model,
@@ -455,6 +494,8 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             termination.absolute_optimality,
             kind="active-kkt",
             args=args,
+            linear=self.linear,
+            precision=self.precision,
         )
         status_evidence = reconcile_optimization_status(
             status,
@@ -501,6 +542,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             globalization="objective-feasibility-filter",
             matrix_free=False,
             implicit_differentiation=True,
+            precision_policy_id=self.precision.policy_id,
             notes=(
                 f"restorations={restorations};"
                 f"kkt-plan={kkt_plan.plan_id};"
@@ -508,9 +550,19 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             ),
         )
         objective, auxiliary = problem.value(parameters, args)
-        return MinimizationResult(
+        output_parameters = jax.tree.map(self.precision.output, parameters)
+        precision_evidence = self.precision.evidence_for(
             parameters,
-            objective,
+            model.unflatten(dual_residual),
+            children={
+                "canonical-kkt": canonical.precision_evidence,
+                "physical-certificate": certificate.precision_evidence,
+            },
+            output_value=output_parameters,
+        )
+        return MinimizationResult(
+            output_parameters,
+            self.precision.output(objective),
             auxiliary,
             status_evidence.public_status,
             diagnostics,
@@ -519,6 +571,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             optimality_certificate=certificate,
             status_evidence=status_evidence,
             method_evidence=evidence,
+            precision_evidence=precision_evidence,
         )
 
 

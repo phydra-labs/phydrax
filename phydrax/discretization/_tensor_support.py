@@ -10,6 +10,7 @@ from math import prod
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -328,7 +329,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
         location: GridLocation | None = None,
         entity_layout: TensorEntityLayout | None = None,
         component_shape: Sequence[int] = (),
-        dtype: object = float,
+        dtype: DTypeLike = float,
         representation: str = "point_value",
         conformity: str = "unrestricted",
     ) -> DiscreteFieldSpace:
@@ -358,7 +359,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
             raise ValueError("component_shape dimensions must be positive.")
         value_shape = layout_.shape + components
         pairing_weights = layout_.measure.reshape(layout_.shape + (1,) * len(components))
-        pairing_weights = jnp.broadcast_to(pairing_weights, value_shape)
+        pairing_weights = jnp.broadcast_to(pairing_weights, value_shape).astype(dtype)
         dof_layout = TensorDofLayout(
             self.axis_names,
             layout_.shape,

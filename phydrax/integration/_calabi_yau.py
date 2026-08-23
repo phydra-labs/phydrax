@@ -11,9 +11,11 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..geometry.complex import ProjectiveHypersurface, ProjectiveLineSamples
 from ..geometry.complex._hypersurface_patch import HypersurfacePatchGeometry
+from ._precision import IntegrationPrecisionPolicy
 
 
 ProjectiveMeasureKind: TypeAlias = Literal["fubini-study", "canonical"]
@@ -26,6 +28,8 @@ class ProjectiveMeasureTarget(StrictModule):
     physical_mass: Array
     effective_sample_size: Array
     valid: Array
+    precision: IntegrationPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope
     measure_kind: ProjectiveMeasureKind
 
     def __init__(
@@ -35,22 +39,30 @@ class ProjectiveMeasureTarget(StrictModule):
         /,
         *,
         measure_kind: ProjectiveMeasureKind,
+        precision: IntegrationPrecisionPolicy | None = None,
     ):
-        weights = jnp.asarray(log_weights)
+        precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, IntegrationPrecisionPolicy):
+            raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
+        weights = precision_.evaluation(log_weights)
         if weights.shape != samples.valid.shape:
             raise ValueError("log_weights must match the projective sample axis.")
         masked = jnp.where(samples.valid, weights, -jnp.inf)
-        maximum = jnp.max(masked)
-        scaled = jnp.where(samples.valid, jnp.exp(masked - maximum), 0.0)
+        maximum = precision_.decision(jnp.max(masked))
+        scaled = precision_.accumulation(
+            jnp.where(samples.valid, jnp.exp(masked - maximum), 0.0)
+        )
         scaled_mass = jnp.sum(scaled)
-        normalized = scaled / scaled_mass
-        mass = jnp.exp(maximum) * scaled_mass / float(weights.shape[0])
-        ess = 1.0 / jnp.sum(normalized**2)
+        normalized = precision_.accumulation(scaled / scaled_mass)
+        mass = precision_.output(jnp.exp(maximum) * scaled_mass / float(weights.shape[0]))
+        ess = precision_.decision(1.0 / jnp.sum(precision_.accumulation(normalized**2)))
         self.samples = samples
         self.log_weights = weights
         self.normalized_weights = normalized
         self.physical_mass = mass
         self.effective_sample_size = ess
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence_for(weights)
         self.valid = (
             jnp.any(samples.valid)
             & jnp.all(jnp.isfinite(jnp.where(samples.valid, weights, 0.0)))
@@ -65,6 +77,7 @@ class ProjectiveIntegralResult(StrictModule):
     physical_value: Array
     effective_sample_size: Array
     valid: Array
+    precision_evidence: PrecisionEvidenceEnvelope
 
     def __init__(
         self,
@@ -72,12 +85,16 @@ class ProjectiveIntegralResult(StrictModule):
         physical_value: ArrayLike,
         effective_sample_size: ArrayLike,
         valid: ArrayLike,
+        precision_evidence: PrecisionEvidenceEnvelope,
         /,
     ):
         self.normalized_value = jnp.asarray(normalized_value)
         self.physical_value = jnp.asarray(physical_value)
         self.effective_sample_size = jnp.asarray(effective_sample_size)
         self.valid = jnp.asarray(valid, dtype=bool)
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        self.precision_evidence = precision_evidence
 
 
 def projective_measure_target(
@@ -86,6 +103,7 @@ def projective_measure_target(
     /,
     *,
     measure_kind: ProjectiveMeasureKind,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> ProjectiveMeasureTarget:
     if measure_kind not in ("fubini-study", "canonical"):
         raise ValueError("Unknown projective measure kind.")
@@ -106,6 +124,7 @@ def projective_measure_target(
         samples,
         jnp.stack(log_weights),
         measure_kind=measure_kind,
+        precision=precision,
     )
 
 
@@ -113,23 +132,38 @@ def integrate_projective_samples(
     target: ProjectiveMeasureTarget,
     function: Callable[[Array], Array],
     /,
+    *,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> ProjectiveIntegralResult:
     if not isinstance(target, ProjectiveMeasureTarget):
         raise TypeError("target must be a ProjectiveMeasureTarget.")
     if not callable(function):
         raise TypeError("function must be callable.")
-    values = jax.vmap(function)(target.samples.homogeneous_points)
+    precision_ = target.precision if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
+    if precision_.policy_id != target.precision.policy_id:
+        raise ValueError("Projective integral precision must match its target.")
+    values = jax.vmap(lambda point: precision_.evaluation(function(point)))(
+        precision_.evaluation(target.samples.homogeneous_points)
+    )
     if values.shape[0] != target.normalized_weights.shape[0]:
         raise ValueError("Integrand must preserve the projective sample axis.")
     shape = (values.shape[0],) + (1,) * (values.ndim - 1)
-    normalized = jnp.sum(target.normalized_weights.reshape(shape) * values, axis=0)
-    physical = target.physical_mass * normalized
+    normalized = jnp.sum(
+        precision_.accumulation(target.normalized_weights.reshape(shape) * values),
+        axis=0,
+    )
+    physical = precision_.output(
+        precision_.accumulation(target.physical_mass) * normalized
+    )
     valid = target.valid & jnp.all(jnp.isfinite(values))
     return ProjectiveIntegralResult(
-        normalized,
+        precision_.output(normalized),
         physical,
-        target.effective_sample_size,
+        precision_.decision(target.effective_sample_size),
         valid,
+        precision_.evidence_for(values),
     )
 
 

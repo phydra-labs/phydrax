@@ -24,7 +24,7 @@ from ._normalization import OperatorNormalizationPolicy
 
 
 _OPERATOR_TRAINING_CHECKPOINT_FORMAT = "phydrax-operator-training-checkpoint"
-_OPERATOR_TRAINING_CHECKPOINT_VERSION = 2
+_OPERATOR_TRAINING_CHECKPOINT_VERSION = 3
 
 
 def _sha256(path: Path, /) -> str:

@@ -9,8 +9,10 @@ from collections.abc import Callable, Sequence
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..metrix import AtlasCover
+from ._precision import IntegrationPrecisionPolicy
 
 
 class AtlasPatchQuadrature(StrictModule):
@@ -97,6 +99,7 @@ class AtlasIntegrationResult(StrictModule):
     represented_weight: Array
     valid: Array
     target_id: str
+    precision_evidence: PrecisionEvidenceEnvelope
 
     def __init__(
         self,
@@ -107,11 +110,15 @@ class AtlasIntegrationResult(StrictModule):
         *,
         valid: ArrayLike,
         target_id: str,
+        precision_evidence: PrecisionEvidenceEnvelope,
     ):
         self.value = jnp.asarray(value)
         self.patch_values = jnp.asarray(patch_values)
         self.represented_weight = jnp.asarray(represented_weight)
         self.valid = jnp.asarray(valid, dtype=bool)
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        self.precision_evidence = precision_evidence
         self.target_id = str(target_id)
 
 
@@ -119,6 +126,8 @@ def integrate_atlas_scalar(
     target: AtlasIntegrationTarget,
     local_fields: Sequence[Callable[[Array], Array]],
     /,
+    *,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> AtlasIntegrationResult:
     """Integrate scalar local representatives with explicit overlap weights."""
     if not isinstance(target, AtlasIntegrationTarget):
@@ -128,31 +137,43 @@ def integrate_atlas_scalar(
         not callable(field) for field in fields
     ):
         raise ValueError("One callable local field is required per atlas chart.")
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
     contributions = []
-    represented = jnp.asarray(0.0)
+    represented = precision_.accumulation(0.0)
     valid = jnp.asarray(True)
     for patch in target.patches:
-        support = target.cover.support(patch.chart_index, patch.coordinates)
-        values = jnp.asarray(fields[patch.chart_index](patch.coordinates))
+        coordinates = precision_.evaluation(patch.coordinates)
+        support = target.cover.support(patch.chart_index, coordinates)
+        values = precision_.evaluation(fields[patch.chart_index](coordinates))
         if values.shape != (patch.coordinates.shape[0],):
             raise ValueError("Atlas scalar field must return one value per sample.")
-        effective = patch.weights * patch.ownership_weights
-        contributions.append(jnp.sum(jnp.where(support, effective * values, 0.0)))
-        represented = represented + jnp.sum(jnp.where(support, effective, 0.0))
+        effective = precision_.accumulation(patch.weights * patch.ownership_weights)
+        contributions.append(
+            jnp.sum(precision_.accumulation(jnp.where(support, effective * values, 0.0)))
+        )
+        represented = precision_.accumulation(
+            represented
+            + jnp.sum(precision_.accumulation(jnp.where(support, effective, 0.0)))
+        )
         valid = (
             valid
             & jnp.all(jnp.isfinite(values))
             & jnp.all(jnp.isfinite(effective) & (effective >= 0.0))
             & jnp.all((patch.ownership_weights >= 0.0) & (patch.ownership_weights <= 1.0))
         )
-    patch_values = jnp.stack(contributions)
-    value = jnp.sum(patch_values)
-    valid = valid & jnp.isfinite(value) & (represented > 0.0)
+    patch_values = precision_.accumulation(jnp.stack(contributions))
+    accumulated_value = jnp.sum(patch_values)
+    value = precision_.output(accumulated_value)
+    represented = precision_.decision(represented)
+    valid = valid & jnp.isfinite(accumulated_value) & (represented > 0.0)
     return AtlasIntegrationResult(
         value,
         patch_values,
         represented,
         valid=valid,
+        precision_evidence=precision_.evidence_for(patch_values),
         target_id=target.target_id,
     )
 

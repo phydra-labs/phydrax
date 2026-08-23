@@ -3,7 +3,8 @@
 #
 
 from ._core import LocallyPurifiedDensity, MatrixProductOperator, MatrixProductState
-from ._evolution import TensorTruncationEvidence, apply_two_site_gate, product_mps
+from ._evolution import apply_two_site_gate, product_mps, TensorTruncationEvidence
+from ._precision import TensorNetworkPrecisionPolicy
 from ._process_tensor import (
     markov_process_tensor,
     ProcessTensorMPO,
@@ -19,6 +20,7 @@ __all__ = [
     "MatrixProductOperator",
     "MatrixProductState",
     "TensorTruncationEvidence",
+    "TensorNetworkPrecisionPolicy",
     "ProcessTensorMPO",
     "ProcessTensorPhysicality",
     "ProcessTomographyResult",

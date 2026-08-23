@@ -17,6 +17,15 @@ from jaxtyping import Array, ArrayLike
 from ..._bounds import Bounds
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve as solve_linear,
+)
 from ._policy import (
     ConvexDifferentiationPolicy,
     ConvexSolvePolicy,
@@ -471,9 +480,11 @@ def _solve_saddle(
     equalities = constraint.shape[0]
     zeros = jnp.zeros((equalities, equalities), dtype=matrix.dtype)
     kkt = jnp.block([[matrix, constraint.T], [constraint, zeros]])
-    solution, _, _, _ = jnp.linalg.lstsq(
-        kkt, jnp.concatenate((primal_rhs, constraint_rhs)), rcond=None
-    )
+    solution = solve_linear(
+        LeastSquaresProblem(DenseLinearOperator(kkt)),
+        jnp.concatenate((primal_rhs, constraint_rhs)),
+        policy=LinearSolvePolicy(DenseSVD()),
+    ).value
     return solution[:variables], solution[variables:]
 
 
@@ -528,8 +539,8 @@ def _newton_direction(
             ],
         ]
     )
-    solution = jnp.linalg.solve(
-        kkt,
+    solution = solve_linear(
+        LinearSystem(DenseLinearOperator(kkt)),
         -jnp.concatenate(
             (
                 dual_residual,
@@ -538,7 +549,8 @@ def _newton_direction(
                 centering_residual,
             )
         ),
-    )
+        policy=LinearSolvePolicy(DenseLU()),
+    ).value
     equality_end = variables + equalities
     inequality_end = equality_end + inequalities
     primal_direction = solution[:variables]
@@ -601,8 +613,14 @@ def _dense_constrained_single(
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     variables = quadratic.shape[0]
     inequalities = inequality_matrix.shape[0]
-    equality_candidate, _, _, _ = jnp.linalg.lstsq(
-        equality_matrix, equality_rhs, rcond=None
+    equality_candidate = (
+        solve_linear(
+            LeastSquaresProblem(DenseLinearOperator(equality_matrix)),
+            equality_rhs,
+            policy=LinearSolvePolicy(DenseSVD()),
+        ).value
+        if equality_matrix.shape[0]
+        else jnp.zeros((variables,), dtype=quadratic.dtype)
     )
     default_primal = jnp.where(
         equality_matrix.shape[0] == 0,
@@ -1176,7 +1194,11 @@ def _diagnostics(
     def equality_infeasibility_candidate(matrix: Array, rhs: Array) -> Array:
         if matrix.shape[0] == 0:
             return jnp.empty((0,), dtype=matrix.dtype)
-        candidate, _, _, _ = jnp.linalg.lstsq(matrix, rhs, rcond=None)
+        candidate = solve_linear(
+            LeastSquaresProblem(DenseLinearOperator(matrix)),
+            rhs,
+            policy=LinearSolvePolicy(DenseSVD()),
+        ).value
         return matrix @ candidate - rhs
 
     flat_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
@@ -1594,11 +1616,11 @@ def _active_set_adjoint_single(
     )
     # Degenerate active sets may contain dependent rows even when the primal
     # sensitivity is unique; select the consistent minimum-norm adjoint.
-    adjoint = jnp.linalg.lstsq(
-        kkt.T,
+    adjoint = solve_linear(
+        LeastSquaresProblem(DenseLinearOperator(kkt.T)),
         jnp.concatenate((cotangent, jnp.zeros_like(inactive_diagonal))),
-        rcond=None,
-    )[0]
+        policy=LinearSolvePolicy(DenseSVD()),
+    ).value
     primal_adjoint = adjoint[:variables]
     constraint_adjoint = adjoint[variables:]
     equality_adjoint = constraint_adjoint[:equalities]

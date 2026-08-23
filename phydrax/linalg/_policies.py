@@ -14,6 +14,7 @@ from jax import core as jax_core
 from jax.typing import DTypeLike
 from jaxtyping import Array
 
+from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from ._materialization import MaterializationPolicy
 from ._preconditioning import PreconditioningPolicy
@@ -478,8 +479,7 @@ def _precision_dtype(
 ) -> PrecisionDType | None:
     if value is None:
         return None
-    dtype = jnp.dtype(value)
-    precision = dtype.name
+    precision = precision_dtype_name(value)
     supported = (
         "float16",
         "bfloat16",

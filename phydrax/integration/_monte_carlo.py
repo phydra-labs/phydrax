@@ -71,6 +71,7 @@ from ._plans import (
     StratifiedDesign,
     StratifiedMonteCarloPlan,
 )
+from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget, ProbabilityTarget
 
@@ -465,6 +466,7 @@ def _sample_values(
     *,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    precision: IntegrationPrecisionPolicy,
 ) -> tuple[Array, Array, Array | None, Array, tuple[Any, ...]]:
     domain = _target_domain(target)
     function = _as_domain_function(integrand, domain)
@@ -472,6 +474,7 @@ def _sample_values(
     if not isinstance(value_field, cx.Field):
         raise TypeError("Monte Carlo integrands must evaluate to coordax.Field.")
     values, output_dims = _expand_and_flatten(value_field, batch)
+    values = precision.accumulation(precision.evaluation(values))
     base = target.base if isinstance(target, DensityTarget) else target
     if isinstance(base, ComponentTarget):
         if isinstance(base.component, ComponentSum):
@@ -488,8 +491,10 @@ def _sample_values(
     if isinstance(target, DensityTarget):
         density_function = _as_domain_function(target.log_density, domain)
         log_density = density_function(batch.points, key=key, **kwargs)
+        log_data = precision.evaluation(log_density.data)
         factor_field = factor_field * cx.Field(
-            jnp.exp(jnp.asarray(log_density.data)), dims=log_density.dims
+            jnp.exp(log_data),
+            dims=log_density.dims,
         )
     normalizer_field = None
     if isinstance(target, DensityTarget):
@@ -500,14 +505,18 @@ def _sample_values(
     elif isinstance(target, (ComponentTarget, ProbabilityTarget)) and target.normalized:
         normalizer_field = base_factor_field
     factors, factor_dims = _expand_and_flatten(factor_field, batch)
+    factors = precision.accumulation(factors)
     if factor_dims or factors.ndim != 1:
         raise ValueError("Stochastic target weights must be scalar per sample.")
     normalizer_factors = None
     if normalizer_field is not None:
         normalizer_factors, normalizer_dims = _expand_and_flatten(normalizer_field, batch)
+        normalizer_factors = precision.accumulation(normalizer_factors)
         if normalizer_dims or normalizer_factors.ndim != 1:
             raise ValueError("Stochastic normalizers must be scalar per sample.")
-    base_weights = jnp.reshape(jnp.asarray(batch.weights.data), (-1,))
+    base_weights = precision.accumulation(
+        jnp.reshape(jnp.asarray(batch.weights.data), (-1,))
+    )
     return values, factors, normalizer_factors, base_weights, output_dims
 
 
@@ -519,13 +528,14 @@ def _control_values(
     *,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    precision: IntegrationPrecisionPolicy,
 ) -> Array:
     function = _as_domain_function(control, _target_domain(target))
     field = function(batch.points, key=key, **kwargs)
     values, dims = _expand_and_flatten(field, batch)
     if dims or values.ndim != 1:
         raise ValueError("Each control variate must be scalar-valued.")
-    return values
+    return precision.accumulation(precision.evaluation(values))
 
 
 def _apply_control_variate(
@@ -538,15 +548,23 @@ def _apply_control_variate(
     independent_pilot: bool,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    precision: IntegrationPrecisionPolicy,
 ) -> tuple[Array, int]:
     controls = jnp.stack(
         tuple(
-            _control_values(item, target, batch, key=key, kwargs=kwargs)
+            _control_values(
+                item,
+                target,
+                batch,
+                key=key,
+                kwargs=kwargs,
+                precision=precision,
+            )
             for item in control.controls
         ),
         axis=1,
     )
-    expected = jnp.asarray(control.expectations, dtype=controls.dtype)
+    expected = precision.accumulation(control.expectations)
     flat_values = jnp.reshape(values, (values.shape[0], -1))
     production_start = 0
     if control.coefficients is None:
@@ -568,9 +586,9 @@ def _apply_control_variate(
             fit_values = flat_values[:production_start]
         centered_controls = fit_controls - jnp.mean(fit_controls, axis=0, keepdims=True)
         centered_values = fit_values - jnp.mean(fit_values, axis=0, keepdims=True)
-        solve_dtype = jnp.result_type(centered_controls, centered_values)
-        centered_controls = centered_controls.astype(solve_dtype)
-        centered_values = centered_values.astype(solve_dtype)
+        centered_controls = precision.accumulation(centered_controls)
+        centered_values = precision.accumulation(centered_values)
+        solve_dtype = centered_controls.dtype
         operator = DenseLinearOperator(centered_controls)
         regularizer = (
             None
@@ -590,7 +608,7 @@ def _apply_control_variate(
             policy=LinearSolvePolicy(DenseSVD()),
         ).value
     else:
-        coefficients = jnp.asarray(control.coefficients, dtype=flat_values.dtype)
+        coefficients = precision.accumulation(control.coefficients)
         if coefficients.ndim == 0:
             coefficients = coefficients.reshape((1, 1))
         if coefficients.ndim == 1:
@@ -601,7 +619,9 @@ def _apply_control_variate(
             )
     production_values = flat_values[production_start:]
     production_controls = controls[production_start:]
-    corrected = production_values - (production_controls - expected) @ coefficients
+    corrected = precision.accumulation(
+        production_values - (production_controls - expected) @ coefficients
+    )
     output_shape = (corrected.shape[0],) + values.shape[1:]
     return jnp.reshape(corrected, output_shape), production_start
 
@@ -651,12 +671,18 @@ def _integrate_stratified_samples(
     batch: PointIntegrationBatch,
     output_dims: tuple[Any, ...],
     /,
+    *,
+    precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
     if batch.stratum_indices is None or batch.num_strata is None:
         raise RuntimeError("Stratified batch is missing stratum metadata.")
     strata = batch.stratum_indices
     count = batch.num_strata
-    membership = jax.nn.one_hot(strata, count, dtype=float).T
+    membership = jax.nn.one_hot(
+        strata,
+        count,
+        dtype=jnp.dtype(precision.accumulation_dtype),
+    ).T
     counts = jnp.sum(membership, axis=1)
     masses = membership @ base_weights
     factor_shape = (-1,) + (1,) * (values.ndim - 1)
@@ -686,7 +712,7 @@ def _integrate_stratified_samples(
         / jnp.maximum(counts - 1.0, 1.0)[expand]
     )
     variance = jnp.sum(masses[expand] ** 2 * stratum_variances / counts[expand], axis=0)
-    standard_error = jnp.sqrt(variance)
+    standard_error = precision.decision(jnp.sqrt(variance))
     contributions = masses[expand] * stratum_means
     if normalized:
         contributions = contributions / denominator
@@ -730,7 +756,7 @@ def _integrate_stratified_samples(
         cx.Field(estimate, dims=output_dims),
         status=status,
         num_evaluations=values.shape[0],
-        error_estimate=_error_norm(standard_error),
+        error_estimate=precision.decision(_error_norm(standard_error)),
         error_kind="stratified-standard-error",
         diagnostics=diagnostics,
         provenance=IntegrationProvenance(
@@ -748,6 +774,7 @@ def _integrate_antithetic_samples(
     /,
     *,
     uncertainty_supported: bool,
+    precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
     count = values.shape[0]
     pairs = count // 2
@@ -763,8 +790,8 @@ def _integrate_antithetic_samples(
     else:
         if batch.target_mass is None:
             raise RuntimeError("Antithetic component batches require target_mass.")
-        denominator = jnp.asarray(1.0)
-        observations = batch.target_mass * effective
+        denominator = precision.accumulation(jnp.asarray(1.0))
+        observations = precision.accumulation(batch.target_mass) * effective
         estimate = jnp.mean(observations, axis=0)
     first = observations[:pairs]
     second = observations[pairs:]
@@ -774,7 +801,7 @@ def _integrate_antithetic_samples(
         pair_variance = jnp.sum(
             jnp.real(centered_pairs * jnp.conj(centered_pairs)), axis=0
         ) / (pairs - 1)
-        standard_error = jnp.sqrt(pair_variance / pairs)
+        standard_error = precision.decision(jnp.sqrt(pair_variance / pairs))
         centered_first = first - jnp.mean(first, axis=0)
         centered_second = second - jnp.mean(second, axis=0)
         covariance = jnp.sum(
@@ -787,9 +814,10 @@ def _integrate_antithetic_samples(
         ordinary_estimator_variance = ordinary_variance / count
         antithetic_estimator_variance = pair_variance / pairs
         reduction = ordinary_estimator_variance / jnp.maximum(
-            antithetic_estimator_variance, jnp.finfo(float).tiny
+            antithetic_estimator_variance,
+            jnp.finfo(antithetic_estimator_variance.dtype).tiny,
         )
-        reported_error = _error_norm(standard_error)
+        reported_error = precision.decision(_error_norm(standard_error))
         error_kind = "antithetic-pair-standard-error"
     else:
         standard_error = None
@@ -847,11 +875,20 @@ def integrate_monte_carlo_batch(
     plan: MonteCarloPlan | QuasiMonteCarloPlan | StratifiedMonteCarloPlan | None = None,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Reduce a materialized stochastic point batch with method-correct error."""
     callback_kwargs = {} if kwargs is None else kwargs
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     values, factors, normalizer_factors, base_weights, output_dims = _sample_values(
-        integrand, target, batch, key=key, kwargs=callback_kwargs
+        integrand,
+        target,
+        batch,
+        key=key,
+        kwargs=callback_kwargs,
+        precision=precision_,
     )
     if (
         isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan))
@@ -865,6 +902,7 @@ def integrate_monte_carlo_batch(
             independent_pilot=isinstance(plan.design, IIDDesign),
             key=key,
             kwargs=callback_kwargs,
+            precision=precision_,
         )
         if production_start:
             original_mass = jnp.sum(base_weights)
@@ -881,6 +919,7 @@ def integrate_monte_carlo_batch(
             base_weights,
             batch,
             output_dims,
+            precision=precision_,
         )
     if batch.provenance == "monte-carlo:antithetic":
         design = plan.design if isinstance(plan, MonteCarloPlan) else None
@@ -896,8 +935,11 @@ def integrate_monte_carlo_batch(
             batch,
             output_dims,
             uncertainty_supported=uncertainty_supported,
+            precision=precision_,
         )
-    mass = jnp.asarray(1.0) if batch.target_mass is None else batch.target_mass
+    mass = precision_.accumulation(
+        jnp.asarray(1.0) if batch.target_mass is None else batch.target_mass
+    )
     estimate, standard_error, valid_mass = _mean_and_error(
         values,
         factors,
@@ -930,9 +972,11 @@ def integrate_monte_carlo_batch(
     uncertainty_supported = qmc_design is None and not isinstance(
         design, LatinHypercubeDesign
     )
-    reported_standard_error = standard_error if uncertainty_supported else None
+    reported_standard_error = (
+        precision_.decision(standard_error) if uncertainty_supported else None
+    )
     reported_error = (
-        _error_norm(reported_standard_error)
+        precision_.decision(_error_norm(reported_standard_error))
         if reported_standard_error is not None
         else None
     )
@@ -985,11 +1029,21 @@ def integrate_monte_carlo(
     plan: MonteCarloPlan | QuasiMonteCarloPlan | StratifiedMonteCarloPlan | None = None,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Reduce one sample batch or independent randomized-QMC replicates."""
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     if not isinstance(realization, tuple):
         return integrate_monte_carlo_batch(
-            integrand, target, realization, plan=plan, key=key, kwargs=kwargs
+            integrand,
+            target,
+            realization,
+            plan=plan,
+            key=key,
+            kwargs=kwargs,
+            precision=precision_,
         )
     batches = tuple(_require_point_batch(batch) for batch in realization)
     keys = jr.split(key, len(batches))
@@ -1001,15 +1055,20 @@ def integrate_monte_carlo(
             plan=plan,
             key=keys[index],
             kwargs=kwargs,
+            precision=precision_,
         )
         for index, batch in enumerate(batches)
     )
-    replicate_values = jnp.stack(tuple(estimate.value.data for estimate in estimates))
+    replicate_values = precision_.accumulation(
+        jnp.stack(tuple(estimate.value.data for estimate in estimates))
+    )
     count = len(estimates)
     mean = jnp.mean(replicate_values, axis=0)
     if count > 1:
-        standard_error = jnp.std(replicate_values, axis=0, ddof=1) / jnp.sqrt(count)
-        error = _error_norm(standard_error)
+        standard_error = precision_.decision(
+            jnp.std(replicate_values, axis=0, ddof=1) / jnp.sqrt(count)
+        )
+        error = precision_.decision(_error_norm(standard_error))
     else:
         standard_error = None
         error = None

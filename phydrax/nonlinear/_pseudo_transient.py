@@ -22,6 +22,7 @@ from ..linalg import (
     SumLinearOperator,
 )
 from ._linearization import JacobianPolicy, prepare_jacobian
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
     NonlinearCapabilities,
@@ -66,6 +67,7 @@ class PseudoTransient(AbstractNonlinearMethod):
     maximum_step: float = eqx.field(static=True)
     growth_limit: float = eqx.field(static=True)
     rejection_shrink: float = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -77,6 +79,7 @@ class PseudoTransient(AbstractNonlinearMethod):
         maximum_step: float = 1e12,
         growth_limit: float = 10.0,
         rejection_shrink: float = 0.25,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         jacobian_ = JacobianPolicy() if jacobian is None else jacobian
         linear_ = LinearSolvePolicy() if linear is None else linear
@@ -84,6 +87,9 @@ class PseudoTransient(AbstractNonlinearMethod):
             raise TypeError("jacobian must be JacobianPolicy or None.")
         if not isinstance(linear_, LinearSolvePolicy):
             raise TypeError("linear must be LinearSolvePolicy or None.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         values = tuple(
             float(value)
             for value in (
@@ -111,6 +117,7 @@ class PseudoTransient(AbstractNonlinearMethod):
             self.growth_limit,
             self.rejection_shrink,
         ) = values
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -135,6 +142,7 @@ class PseudoTransient(AbstractNonlinearMethod):
         args: Any = None,
         _initial_evaluation=None,
     ) -> NonlinearResult:
+        self.precision.validate_tolerance(termination.absolute_residual)
         if _initial_evaluation is None:
             state = problem.validate_state(initial_state)
             residual, auxiliary = problem.evaluate(state, args)
@@ -151,12 +159,10 @@ class PseudoTransient(AbstractNonlinearMethod):
             raise ValueError(
                 "Pseudo-transient mass identity requires compatible state/residual spaces."
             )
-        norm = jnp.sqrt(
-            jnp.maximum(
-                jnp.real(problem_.residual_space.inner(residual, residual)),
-                0.0,
-            )
-        )
+        self.precision.validate_trees(state, residual)
+        self.precision.validate_accumulation_space(problem_.state_space)
+        self.precision.validate_accumulation_space(problem_.residual_space)
+        norm = self.precision.norm(problem_.residual_space, residual)
         finite = tree_allfinite(state) & tree_allfinite(residual)
         valid = problem_.valid(state, residual, auxiliary, args)
         converged = finite & valid & (norm <= termination.residual_threshold(norm))
@@ -167,7 +173,10 @@ class PseudoTransient(AbstractNonlinearMethod):
             initial_norm=jnp.maximum(norm, 1e-30),
             norm=norm,
             step_norm=jnp.asarray(0.0, dtype=norm.dtype),
-            pseudo_step=jnp.asarray(self.initial_step, dtype=norm.dtype),
+            pseudo_step=jnp.asarray(
+                self.initial_step,
+                dtype=jnp.real(jax.tree.leaves(state)[0]).dtype,
+            ),
             iteration=jnp.asarray(0, dtype=jnp.int32),
             residual_evaluations=jnp.asarray(
                 initial_evaluations,
@@ -221,24 +230,21 @@ class PseudoTransient(AbstractNonlinearMethod):
             linear_result = solve_linear(
                 LinearSystem(operator),
                 jax.tree.map(jnp.negative, jacobian.residual),
-                policy=self.linear,
+                policy=self.precision.bind_linear(self.linear),
             )
             direction = linear_result.value
             candidate = jax.tree.map(
-                lambda value, delta: value + delta,
+                lambda value, delta: jnp.asarray(
+                    value + delta,
+                    dtype=value.dtype,
+                ),
                 current.state,
                 direction,
             )
             candidate_residual, candidate_auxiliary = problem_.evaluate(candidate, args)
-            candidate_norm = jnp.sqrt(
-                jnp.maximum(
-                    jnp.real(
-                        problem_.residual_space.inner(
-                            candidate_residual, candidate_residual
-                        )
-                    ),
-                    0.0,
-                )
+            candidate_norm = self.precision.norm(
+                problem_.residual_space,
+                candidate_residual,
             )
             candidate_finite = tree_allfinite(candidate) & tree_allfinite(
                 candidate_residual
@@ -254,20 +260,18 @@ class PseudoTransient(AbstractNonlinearMethod):
             )
             ratio = current.norm / jnp.maximum(candidate_norm, 1e-30)
             grown = current.pseudo_step * jnp.minimum(ratio, self.growth_limit)
-            next_pseudo_step = jnp.where(
-                accepted,
-                jnp.clip(grown, self.minimum_step, self.maximum_step),
-                jnp.maximum(
-                    self.minimum_step,
-                    self.rejection_shrink * current.pseudo_step,
+            next_pseudo_step = jnp.asarray(
+                jnp.where(
+                    accepted,
+                    jnp.clip(grown, self.minimum_step, self.maximum_step),
+                    jnp.maximum(
+                        self.minimum_step,
+                        self.rejection_shrink * current.pseudo_step,
+                    ),
                 ),
+                dtype=current.pseudo_step.dtype,
             )
-            step_norm = jnp.sqrt(
-                jnp.maximum(
-                    jnp.real(problem_.state_space.inner(direction, direction)),
-                    0.0,
-                )
-            )
+            step_norm = self.precision.norm(problem_.state_space, direction)
             converged = accepted & (
                 candidate_norm <= termination.residual_threshold(current.initial_norm)
             )
@@ -277,16 +281,7 @@ class PseudoTransient(AbstractNonlinearMethod):
                 & (
                     step_norm
                     <= termination.step_threshold(
-                        jnp.sqrt(
-                            jnp.maximum(
-                                jnp.real(
-                                    problem_.state_space.inner(
-                                        current.state, current.state
-                                    )
-                                ),
-                                0.0,
-                            )
-                        )
+                        self.precision.norm(problem_.state_space, current.state)
                     )
                 )
             )
@@ -383,8 +378,9 @@ class PseudoTransient(AbstractNonlinearMethod):
             final_trust_radius=run.pseudo_step,
             final_linear_status=run.final_linear_status,
         )
+        output_state = jax.tree.map(self.precision.output, run.state)
         return NonlinearResult(
-            state=run.state,
+            state=output_state,
             residual=run.residual,
             auxiliary=run.auxiliary,
             status=status,
@@ -394,6 +390,12 @@ class PseudoTransient(AbstractNonlinearMethod):
                 method_id=self.method_id,
                 derivative_id=self.jacobian.mode,
                 globalization_id="pseudo-time-ser",
+                precision_policy_id=self.precision.policy_id,
+            ),
+            precision_evidence=self.precision.evidence_for(
+                run.state,
+                run.residual,
+                output_value=output_state,
             ),
         )
 

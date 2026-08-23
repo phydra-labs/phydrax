@@ -29,6 +29,8 @@ class InteriorStencilKernel(StrictModule, NonTrainableState):
     target_start: int = eqx.field(static=True)
     target_stop: int = eqx.field(static=True)
     periodic: bool = eqx.field(static=True)
+    accumulation_dtype: str = eqx.field(static=True)
+    output_dtype: str = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
     def __init__(
@@ -42,6 +44,8 @@ class InteriorStencilKernel(StrictModule, NonTrainableState):
         *,
         periodic: bool,
         stencil_id: str,
+        accumulation_dtype: str,
+        output_dtype: str,
     ):
         weights_ = jnp.asarray(weights)
         start = int(target_start)
@@ -55,12 +59,16 @@ class InteriorStencilKernel(StrictModule, NonTrainableState):
             raise ValueError(
                 "Interior stencil offsets, weights, or target range are invalid."
             )
+        accumulation = jnp.dtype(accumulation_dtype)
+        output = jnp.dtype(output_dtype)
         self.axis = int(axis)
         self.offsets = tuple(int(value) for value in offsets)
         self.weights = weights_
         self.target_start = start
         self.target_stop = stop
         self.periodic = bool(periodic)
+        self.accumulation_dtype = accumulation.name
+        self.output_dtype = output.name
         self.kernel_id = canonical_fingerprint(
             {
                 "kind": "interior-stencil-kernel",
@@ -75,21 +83,31 @@ class InteriorStencilKernel(StrictModule, NonTrainableState):
     def apply(self, source: Array, target_shape: tuple[int, ...], /) -> Array:
         moved = jnp.moveaxis(source, self.axis, 0)
         target_axis = target_shape[self.axis]
+        accumulation_dtype = jnp.dtype(self.accumulation_dtype)
         output_shape = (target_axis,) + moved.shape[1:]
-        output = jnp.zeros(output_shape, dtype=jnp.result_type(source, self.weights))
+        output = jnp.zeros(output_shape, dtype=accumulation_dtype)
+        moved_accumulation = moved.astype(accumulation_dtype)
         if self.periodic:
             result = jnp.zeros_like(output)
             for offset, weight in zip(self.offsets, self.weights, strict=True):
-                result = result + weight * jnp.roll(moved, -offset, axis=0)
+                result = result + weight.astype(accumulation_dtype) * jnp.roll(
+                    moved_accumulation,
+                    -offset,
+                    axis=0,
+                )
             output = result
         else:
             count = self.target_stop - self.target_start
-            result = jnp.zeros((count,) + moved.shape[1:], dtype=output.dtype)
+            result = jnp.zeros((count,) + moved.shape[1:], dtype=accumulation_dtype)
             for offset, weight in zip(self.offsets, self.weights, strict=True):
                 start = self.target_start + offset
-                result = result + weight * moved[start : start + count]
+                result = (
+                    result
+                    + weight.astype(accumulation_dtype)
+                    * moved_accumulation[start : start + count]
+                )
             output = output.at[self.target_start : self.target_stop].set(result)
-        return jnp.moveaxis(output, 0, self.axis)
+        return jnp.moveaxis(output, 0, self.axis).astype(self.output_dtype)
 
 
 class ClosureStencilKernel(StrictModule, NonTrainableState):
@@ -101,6 +119,8 @@ class ClosureStencilKernel(StrictModule, NonTrainableState):
     weights: Array
     valid: Array
     kernel_id: str = eqx.field(static=True)
+    accumulation_dtype: str = eqx.field(static=True)
+    output_dtype: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -112,6 +132,8 @@ class ClosureStencilKernel(StrictModule, NonTrainableState):
         /,
         *,
         stencil_id: str,
+        accumulation_dtype: str,
+        output_dtype: str,
     ):
         targets = jnp.asarray(target_indices, dtype=jnp.int32)
         sources = jnp.asarray(source_indices, dtype=jnp.int32)
@@ -125,11 +147,15 @@ class ClosureStencilKernel(StrictModule, NonTrainableState):
             or sources.shape[0] != targets.size
         ):
             raise ValueError("Closure stencil rows and targets must align.")
+        accumulation = jnp.dtype(accumulation_dtype)
+        output = jnp.dtype(output_dtype)
         self.axis = int(axis)
         self.target_indices = targets
         self.source_indices = sources
         self.weights = weights_
         self.valid = valid_
+        self.accumulation_dtype = accumulation.name
+        self.output_dtype = output.name
         self.kernel_id = canonical_fingerprint(
             {
                 "kind": "closure-stencil-kernel",
@@ -145,18 +171,23 @@ class ClosureStencilKernel(StrictModule, NonTrainableState):
         safe_indices = jnp.where(self.valid, self.source_indices, 0)
         gathered = moved[safe_indices]
         mask_shape = self.valid.shape + (1,) * (gathered.ndim - 2)
+        accumulation_dtype = jnp.dtype(self.accumulation_dtype)
         safe_values = jnp.where(
             self.valid.reshape(mask_shape),
-            gathered,
-            jnp.zeros((), dtype=gathered.dtype),
+            gathered.astype(accumulation_dtype),
+            jnp.zeros((), dtype=accumulation_dtype),
         )
         safe_weights = jnp.where(self.valid, self.weights, 0.0)
         weight_shape = safe_weights.shape + (1,) * (gathered.ndim - 2)
-        rows = jnp.sum(safe_weights.reshape(weight_shape) * safe_values, axis=1)
+        rows = jnp.sum(
+            safe_weights.reshape(weight_shape).astype(accumulation_dtype) * safe_values,
+            axis=1,
+            dtype=accumulation_dtype,
+        )
         target_axis = target_shape[self.axis]
-        output = jnp.zeros((target_axis,) + moved.shape[1:], dtype=rows.dtype)
+        output = jnp.zeros((target_axis,) + moved.shape[1:], dtype=accumulation_dtype)
         output = output.at[self.target_indices].set(rows)
-        return jnp.moveaxis(output, 0, self.axis)
+        return jnp.moveaxis(output, 0, self.axis).astype(self.output_dtype)
 
 
 class StencilExecutionReport(StrictModule, NonTrainableState):
@@ -237,6 +268,8 @@ class StencilExecutionPlan(StrictModule, NonTrainableState):
                 np.asarray(operator.weights)[closure_rows],
                 np.asarray(operator.valid)[closure_rows],
                 stencil_id=stencil.stencil_id,
+                accumulation_dtype=operator.precision.accumulation_dtype,
+                output_dtype=operator.precision.field_dtype,
             )
         )
         self.reference_operator = operator
@@ -294,7 +327,7 @@ class StencilExecutionPlan(StrictModule, NonTrainableState):
         source = self.reference_operator.source.validate(jnp.asarray(values))
         output = jnp.zeros(
             self.reference_operator.target.shape,
-            dtype=jnp.result_type(source, self.reference_operator.weights),
+            dtype=self.reference_operator.target.dtype,
         )
         if self.interior is not None:
             output = output + self.interior.apply(
@@ -351,6 +384,8 @@ def _prepare_interior(
         int(rows[-1] + 1),
         periodic=periodic,
         stencil_id=operator.stencil_set.stencil.stencil_id,
+        accumulation_dtype=operator.precision.accumulation_dtype,
+        output_dtype=operator.precision.field_dtype,
     )
 
 

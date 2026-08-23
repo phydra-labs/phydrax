@@ -31,13 +31,18 @@ from ._distributional import (
     operator_distribution_nll,
     OperatorDistributionNLL,
 )
-from ._dtype import DTypeName, OperatorDTypePolicy
+from ._dtype import (
+    ComplexDTypeName,
+    DTypeName,
+    MatmulPrecisionName,
+    OperatorDTypePolicy,
+    OperatorPrecisionEvidence,
+)
 from ._fingerprint import operator_batch_schema, operator_dataset_fingerprint
 from ._fit import (
     fit_operator,
     OperatorFitHistory,
     OperatorFitResult,
-    OperatorMixedPrecisionPolicy,
     OperatorValidationPolicy,
 )
 from ._flow_matching import OperatorFlowMatchingMetric
@@ -48,6 +53,7 @@ from ._loader import (
     OperatorEpochPlan,
     OperatorTrainingBatch,
 )
+from ._loss_scale import OperatorLossScalePolicy, OperatorLossScaleState
 from ._losses import (
     AbstractOperatorLossTerm,
     CochainResidualInput,
@@ -165,7 +171,9 @@ __all__ = [
     "operator_weak_form_loss",
     "project_operator_conservation",
     "WeakOperatorLoss",
+    "ComplexDTypeName",
     "DTypeName",
+    "MatmulPrecisionName",
     "fit_operator_normalization",
     "fit_operator",
     "fit_operator_pod",
@@ -177,12 +185,14 @@ __all__ = [
     "OperatorDataset",
     "OperatorDatasetSplit",
     "OperatorDTypePolicy",
+    "OperatorPrecisionEvidence",
     "OperatorFitHistory",
     "OperatorFitResult",
     "OperatorFlowMatchingMetric",
     "OperatorLossContext",
     "OperatorLossTerm",
-    "OperatorMixedPrecisionPolicy",
+    "OperatorLossScalePolicy",
+    "OperatorLossScaleState",
     "OperatorRollout",
     "OperatorSplitPolicy",
     "OperatorEpochPlan",

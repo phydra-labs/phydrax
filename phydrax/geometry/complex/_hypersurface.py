@@ -38,7 +38,9 @@ class ProjectiveHypersurface(StrictModule):
         dimension = int(projective_dimension)
         degree_ = int(degree)
         if dimension < 1 or degree_ < 1:
-            raise ValueError("Projective dimension and polynomial degree must be positive.")
+            raise ValueError(
+                "Projective dimension and polynomial degree must be positive."
+            )
         identifier = str(hypersurface_id)
         if not identifier:
             raise ValueError("hypersurface_id must be non-empty.")

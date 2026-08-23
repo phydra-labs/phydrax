@@ -629,6 +629,18 @@ post-resampling particles, ancestor indices, transition validity, effective samp
 sizes, and likelihood increments. Ancestor tracing and backward simulation provide two
 explicit smoothing semantics.
 
+`ParticlePrecisionPolicy` separates particle-state storage, log-weight/statistical
+accumulation, resampling and ESS decisions, and optional output placement.
+Transition samples are stored in state precision; likelihood normalization,
+evidence, and cumulative log likelihood use statistics precision; ESS thresholds
+and resampling CDFs use decision precision. Results retain precision evidence.
+Particle checkpoint kind `particle-filter-state-v2` includes the policy identity
+and rejects state/statistic dtype mismatches on restore.
+
+::: phydrax.uq.ParticlePrecisionPolicy
+
+---
+
 ::: phydrax.uq.initialize_particle_filter
 
 ---

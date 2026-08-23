@@ -133,3 +133,24 @@ def test_randomized_moment_batch_requires_two_equal_groups():
             (realization, realization),
             (realization, realization, realization),
         )
+
+
+def test_randomized_moment_precision_widens_and_nests_integration_evidence():
+    _component, condition, _target, source, functions = _problem()
+    precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float32",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+        output_dtype="float64",
+    )
+    objective = phx.terms.RandomizedMomentPenalty(
+        condition,
+        source,
+        num_realizations=4,
+        precision=precision,
+    )
+    diagnostics = objective.diagnostics(functions, key=jr.key(11))
+
+    assert diagnostics.objective.dtype == jnp.float64
+    assert dict(diagnostics.precision_evidence.observed)["accumulation"] == "float64"
+    assert len(diagnostics.precision_evidence.children) == 4

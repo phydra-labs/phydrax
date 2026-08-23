@@ -29,12 +29,13 @@ from .._numerics import LogWeightedAccumulator
 from .._strict import StrictModule
 from ._estimates import IntegrationEstimate, IntegrationProvenance
 from ._plans import MultilevelMonteCarloPlan
+from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
 from ._targets import MultilevelTarget
 
 
 _ACTIVE_STATUS = -1
-_RESULT_FORMAT = "phydrax-multilevel-result"
+_RESULT_FORMAT = "phydrax-multilevel-result-v2"
 _CHECKPOINT_KIND = "multilevel-monte-carlo"
 
 
@@ -80,9 +81,13 @@ def _host_float(value: ArrayLike, /) -> float:
     return float(np.asarray(jax.device_get(value)))
 
 
-def _norm(value: ArrayLike, /) -> float:
-    array = jnp.asarray(value)
-    return _host_float(jnp.max(jnp.abs(array)))
+def _norm(
+    value: ArrayLike,
+    precision: IntegrationPrecisionPolicy,
+    /,
+) -> float:
+    array = precision.accumulation(value)
+    return _host_float(precision.decision(jnp.max(jnp.abs(array))))
 
 
 class MultilevelSampleBatch(StrictModule):
@@ -166,10 +171,12 @@ class MultilevelRealization(StrictModule):
 
     target: MultilevelTarget
     plan: MultilevelMonteCarloPlan
+    precision: IntegrationPrecisionPolicy
     root_key: Array
     initial_samples: tuple[int, ...] = eqx.field(static=True)
     maximum_samples: tuple[int, ...] = eqx.field(static=True)
     fixed_samples: tuple[int, ...] | None = eqx.field(static=True)
+    precision_contract_id: str = eqx.field(static=True)
     realization_id: str = eqx.field(static=True)
     plan_fingerprint: str = eqx.field(static=True)
 
@@ -189,6 +196,19 @@ class MultilevelEstimatorState(StrictModule):
     realization_id: str = eqx.field(static=True)
 
 
+class MLMCErrorLedger(StrictModule):
+    """Separated statistical, bias, discretization, model, and roundoff evidence."""
+
+    sampling_standard_error: Array
+    bias_estimate: Array
+    spatial_error: Array | None
+    temporal_error: Array | None
+    covariance_approximation_error: Array | None
+    solver_error: Array | None
+    roundoff_error: Array | None
+    combined_sampling_bias_rmse: Array
+
+
 class MultilevelDiagnostics(StrictModule):
     """Per-level moments, allocation, cost, failure, bias, and RMSE diagnostics."""
 
@@ -204,6 +224,7 @@ class MultilevelDiagnostics(StrictModule):
     sampling_standard_error: Array
     bias_estimate: Array
     rmse_estimate: Array
+    error_ledger: MLMCErrorLedger
     weak_convergence_order: Array
     rounds: int = eqx.field(static=True)
     hierarchy_id: str = eqx.field(static=True)
@@ -229,12 +250,17 @@ def materialize_multilevel(
     plan: MultilevelMonteCarloPlan,
     key: Key[Array, ""],
     /,
+    *,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> MultilevelRealization:
     """Validate and bind one hierarchy, allocation plan, and random root key."""
     if not isinstance(target, MultilevelTarget):
         raise TypeError("target must be a MultilevelTarget.")
     if not isinstance(plan, MultilevelMonteCarloPlan):
         raise TypeError("plan must be a MultilevelMonteCarloPlan.")
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     key_data = jr.key_data(key)
     if key_data.shape != (2,):
         raise ValueError("MLMC materialization requires one scalar JAX key.")
@@ -259,15 +285,18 @@ def materialize_multilevel(
         target.hierarchy.fingerprint,
         target.sampler_id,
         fingerprint,
+        precision_.policy_id,
         key_tuple,
     )
     return MultilevelRealization(
         target,
         plan,
+        precision_,
         key,
         initial,
         maximum,
         fixed,
+        precision_.policy_id,
         realization_id,
         fingerprint,
     )
@@ -284,7 +313,10 @@ def initialize_multilevel(
         (None,) * num_levels,
         jnp.zeros((num_levels,), dtype=jnp.int64),
         jnp.zeros((num_levels,), dtype=jnp.int64),
-        jnp.zeros((num_levels,), dtype=float),
+        jnp.zeros(
+            (num_levels,),
+            dtype=jnp.dtype(realization.precision.accumulation_dtype or float),
+        ),
         jnp.zeros((num_levels,), dtype=jnp.int64),
         jnp.asarray(realization.initial_samples, dtype=jnp.int64),
         0,
@@ -350,12 +382,13 @@ def _statistics(
 def _bias_diagnostics(
     hierarchy: Any,
     means: tuple[Array, ...],
+    precision: IntegrationPrecisionPolicy,
     /,
 ) -> tuple[float, float]:
-    finest = _norm(means[-1])
+    finest = _norm(means[-1], precision)
     if len(means) < 3 or finest == 0.0:
         return finest, float("inf")
-    previous = _norm(means[-2])
+    previous = _norm(means[-2], precision)
     coarse = hierarchy.levels[-2]
     fine = hierarchy.levels[-1]
     ratios = tuple(
@@ -389,7 +422,9 @@ def _allocation(
     if any(count < target for count, target in zip(counts, realization.initial_samples)):
         return realization.initial_samples, None
     means, variances, standard_errors = _statistics(state)
-    variance_norms = tuple(max(_norm(variance), 1e-30) for variance in variances)
+    variance_norms = tuple(
+        max(_norm(variance, realization.precision), 1e-30) for variance in variances
+    )
     mean_costs = tuple(
         max(
             _host_float(state.total_costs[index])
@@ -404,7 +439,11 @@ def _allocation(
             for variance, count in zip(variance_norms, counts, strict=True)
         )
     )
-    bias, _ = _bias_diagnostics(realization.target.hierarchy, means)
+    bias, _ = _bias_diagnostics(
+        realization.target.hierarchy,
+        means,
+        realization.precision,
+    )
     rmse = sqrt(sampling_error * sampling_error + bias * bias)
     target_rmse = realization.plan.target_rmse
     assert target_rmse is not None
@@ -456,18 +495,22 @@ def _evaluate_batch(
         raise TypeError("The MLMC integrand must be a callable observable.")
     hierarchy = realization.target.hierarchy
     fine_level = hierarchy.levels[level_index]
-    fine = jnp.asarray(observable(batch.fine_samples, fine_level))
+    fine = realization.precision.accumulation(
+        realization.precision.evaluation(observable(batch.fine_samples, fine_level))
+    )
     if fine.shape[:1] != (batch.num_samples,):
         raise ValueError("Fine observables must begin with the batch sample axis.")
     valid = batch.fine_valid & _finite_sample_mask(fine)
     if level_index == 0:
         return fine, valid
     coarse_level = hierarchy.levels[level_index - 1]
-    coarse = jnp.asarray(observable(batch.coarse_samples, coarse_level))
+    coarse = realization.precision.accumulation(
+        realization.precision.evaluation(observable(batch.coarse_samples, coarse_level))
+    )
     if coarse.shape != fine.shape:
         raise ValueError("Paired fine and coarse observables must have identical shapes.")
     valid = valid & batch.coarse_valid & _finite_sample_mask(coarse)
-    return fine - coarse, valid
+    return realization.precision.accumulation(fine - coarse), valid
 
 
 def _sample_level(
@@ -499,15 +542,21 @@ def _sample_level(
     )
     chunk = LogWeightedAccumulator.from_values(
         correction,
-        jnp.zeros((count,), dtype=float),
+        jnp.zeros(
+            (count,),
+            dtype=jnp.dtype(realization.precision.accumulation_dtype or float),
+        ),
         mask=valid,
+        accumulation_dtype=realization.precision.accumulation_dtype,
     )
     accumulators = list(state.accumulators)
     current = accumulators[level_index]
     accumulators[level_index] = chunk if current is None else current.merge(chunk)
     attempted = state.attempted_counts.at[level_index].add(count)
     failed = state.failed_counts.at[level_index].add(count - jnp.sum(valid))
-    costs = state.total_costs.at[level_index].add(jnp.sum(batch.costs))
+    costs = state.total_costs.at[level_index].add(
+        jnp.sum(realization.precision.accumulation(batch.costs))
+    )
     next_indices = state.next_indices.at[level_index].set(start + count)
     return _replace_state(
         state,
@@ -586,11 +635,44 @@ def _final_diagnostics(
 ) -> MultilevelDiagnostics:
     means, variances, standard_errors = _statistics(state)
     counts = jnp.asarray(_sample_counts(state), dtype=jnp.int64)
-    variance_norms = jnp.asarray(tuple(_norm(value) for value in variances))
-    sampling_error = jnp.sqrt(jnp.sum(variance_norms / jnp.maximum(counts, 1)))
-    bias, order = _bias_diagnostics(realization.target.hierarchy, means)
-    rmse = jnp.sqrt(sampling_error * sampling_error + bias * bias)
+    variance_norms = realization.precision.decision(
+        jnp.asarray(tuple(_norm(value, realization.precision) for value in variances))
+    )
+    sampling_error = realization.precision.decision(
+        jnp.sqrt(jnp.sum(variance_norms / jnp.maximum(counts, 1)))
+    )
+    bias, order = _bias_diagnostics(
+        realization.target.hierarchy,
+        means,
+        realization.precision,
+    )
+    rmse = realization.precision.decision(
+        jnp.sqrt(sampling_error * sampling_error + bias * bias)
+    )
     mean_costs = state.total_costs / jnp.maximum(state.attempted_counts, 1)
+    accumulation_dtype = jnp.dtype(
+        realization.precision.accumulation_dtype or jnp.real(jnp.asarray(means[0])).dtype
+    )
+    roundoff = realization.precision.decision(
+        jnp.finfo(accumulation_dtype).eps
+        * sum(
+            (
+                jnp.max(jnp.abs(realization.precision.accumulation(mean)))
+                for mean in means
+            ),
+            start=jnp.asarray(0.0, dtype=accumulation_dtype),
+        )
+    )
+    ledger = MLMCErrorLedger(
+        sampling_error,
+        realization.precision.decision(jnp.asarray(bias)),
+        None,
+        None,
+        None,
+        None,
+        roundoff,
+        rmse,
+    )
     return MultilevelDiagnostics(
         means,
         variances,
@@ -602,9 +684,10 @@ def _final_diagnostics(
         state.allocation_target,
         variance_norms,
         sampling_error,
-        jnp.asarray(bias),
+        realization.precision.decision(jnp.asarray(bias)),
         rmse,
-        jnp.asarray(order),
+        ledger,
+        realization.precision.decision(jnp.asarray(order)),
         state.rounds,
         realization.target.hierarchy.hierarchy_id,
         realization.target.hierarchy.fingerprint,
@@ -624,7 +707,9 @@ def finalize_multilevel(
     if any(count < 2 for count in counts):
         raise ValueError("Every MLMC level requires at least two valid corrections.")
     diagnostics = _final_diagnostics(realization, state)
-    value = sum(diagnostics.correction_means[1:], start=diagnostics.correction_means[0])
+    value = diagnostics.correction_means[0]
+    for correction_mean in diagnostics.correction_means[1:]:
+        value = realization.precision.accumulation(value + correction_mean)
     status = (
         state.status if state.finished else int(IntegrationStatus.REFINEMENT_STAGNATION)
     )
@@ -641,6 +726,7 @@ def finalize_multilevel(
             realization.target.hierarchy.hierarchy_id,
             realization.realization_id,
         ),
+        precision_evidence=realization.precision.evidence_for(value),
     )
 
 
@@ -669,6 +755,7 @@ def _checkpoint_compatibility(realization: MultilevelRealization, /) -> dict[str
         "hierarchy_fingerprint": realization.target.hierarchy.fingerprint,
         "plan_fingerprint": realization.plan_fingerprint,
         "sampler_id": realization.target.sampler_id,
+        "precision_contract_id": realization.precision_contract_id,
     }
 
 
@@ -793,6 +880,14 @@ def write_multilevel_result(
         "bias_estimate": diagnostics.bias_estimate,
         "rmse_estimate": diagnostics.rmse_estimate,
         "weak_convergence_order": diagnostics.weak_convergence_order,
+        "ledger/sampling_standard_error": (
+            diagnostics.error_ledger.sampling_standard_error
+        ),
+        "ledger/bias_estimate": diagnostics.error_ledger.bias_estimate,
+        "ledger/roundoff_error": diagnostics.error_ledger.roundoff_error,
+        "ledger/combined_sampling_bias_rmse": (
+            diagnostics.error_ledger.combined_sampling_bias_rmse
+        ),
     }
     for index, (mean, variance, standard_error) in enumerate(
         zip(
@@ -819,6 +914,33 @@ def write_multilevel_result(
                 "sampler_id": diagnostics.sampler_id,
                 "rounds": diagnostics.rounds,
                 "num_levels": len(diagnostics.correction_means),
+                "precision_evidence": (
+                    None
+                    if estimate.precision_evidence is None
+                    else estimate.precision_evidence.to_dict()
+                ),
+                "unavailable_error_terms": [
+                    name
+                    for name, value in (
+                        (
+                            "spatial",
+                            diagnostics.error_ledger.spatial_error,
+                        ),
+                        (
+                            "temporal",
+                            diagnostics.error_ledger.temporal_error,
+                        ),
+                        (
+                            "covariance_approximation",
+                            diagnostics.error_ledger.covariance_approximation_error,
+                        ),
+                        (
+                            "solver",
+                            diagnostics.error_ledger.solver_error,
+                        ),
+                    )
+                    if value is None
+                ],
             },
         },
         arrays=arrays,

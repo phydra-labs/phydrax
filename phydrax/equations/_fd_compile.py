@@ -753,6 +753,8 @@ class CompiledFiniteDifferenceDynamics(StrictModule):
                     type(discretization).__name__,
                     discretization.prepared_id,
                     numeric_version=discretization.numeric_version,
+                    precision_evidence_id=discretization.precision_evidence_id,
+                    resource_evidence_id=discretization.resource_evidence_id,
                 ),
                 DiscretizationRecord(
                     residual_key,

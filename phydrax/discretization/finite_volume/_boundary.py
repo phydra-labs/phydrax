@@ -25,7 +25,9 @@ def _boundary_value(value: ArrayLike, shape: tuple[int, ...], /) -> Array:
     if array.shape == () or array.shape == (shape[-1],):
         return jnp.broadcast_to(array, shape)
     if array.shape != shape:
-        raise ValueError(f"Boundary state must have shape {shape}, scalar, or components.")
+        raise ValueError(
+            f"Boundary state must have shape {shape}, scalar, or components."
+        )
     return array
 
 
@@ -78,7 +80,9 @@ class ConstantStateBoundary(AbstractFiniteVolumeBoundary):
     def __init__(self, value: ArrayLike, /):
         value_ = jnp.asarray(value)
         if value_.ndim > 1:
-            raise ValueError("Constant boundary state must be scalar or component vector.")
+            raise ValueError(
+                "Constant boundary state must be scalar or component vector."
+            )
         self.value = value_
         self.boundary_id = canonical_fingerprint(
             {"kind": "fv-constant-state", "value": array_tree_fingerprint(value_)}
@@ -176,7 +180,9 @@ class PrescribedNormalFluxBoundary(AbstractFiniteVolumeBoundary):
         /,
     ) -> Array:
         del system, time, interior, coordinates, outward_normal, axis, args
-        raise ValueError("PrescribedNormalFluxBoundary supplies flux, not exterior state.")
+        raise ValueError(
+            "PrescribedNormalFluxBoundary supplies flux, not exterior state."
+        )
 
     def normal_flux(
         self,

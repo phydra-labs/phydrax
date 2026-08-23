@@ -51,7 +51,7 @@ from ._policies import (
     SparseQR,
     StructuredDirect,
 )
-from ._preconditioning import PreconditionerPlan
+from ._preconditioning import JacobiPreconditionerBuilder, PreconditionerPlan
 from ._problems import (
     _problem_structure,
     AbstractLinearProblem,
@@ -342,6 +342,90 @@ def _validate_precision_policy(
         return
 
     rejection = "MixedPrecisionPolicy is capability-rejected"
+    iterative_methods = (
+        PCG,
+        ProjectedPCG,
+        MINRES,
+        ConjugateGradient,
+        BlockCG,
+        GMRES,
+        FGMRES,
+        BiCGStab,
+        BlockGMRES,
+    )
+    if isinstance(method, iterative_methods):
+        if backend not in ("native-krylov", "native-block-krylov"):
+            raise LinearCapabilityError(
+                f"{rejection}: iterative mixed precision requires a native Krylov provider."
+            )
+        coordinate_dtype = _coordinate_dtype(problem.operator.source)
+        requested_operator = (
+            coordinate_dtype
+            if precision.operator_dtype is None
+            else jnp.dtype(precision.operator_dtype)
+        )
+        residual_dtype = (
+            coordinate_dtype
+            if precision.residual_dtype is None
+            else jnp.dtype(precision.residual_dtype)
+        )
+        accumulation_dtype = (
+            coordinate_dtype
+            if precision.accumulation_dtype is None
+            else jnp.dtype(precision.accumulation_dtype)
+        )
+        if requested_operator != coordinate_dtype:
+            raise LinearCapabilityError(
+                f"{rejection}: operator_dtype must match stored coordinates."
+            )
+        if residual_dtype != coordinate_dtype or accumulation_dtype != coordinate_dtype:
+            raise LinearCapabilityError(
+                f"{rejection}: native Krylov residual and accumulation must remain "
+                "in the stored coordinate precision."
+            )
+        if precision.factorization_dtype is not None:
+            raise LinearCapabilityError(
+                f"{rejection}: iterative methods have no factorization stage."
+            )
+        if precision.preconditioner_dtype is None and precision.krylov_dtype is None:
+            raise LinearCapabilityError(
+                f"{rejection}: iterative precision requires a preconditioner or "
+                "Krylov basis dtype."
+            )
+        if precision.krylov_dtype is not None:
+            if not isinstance(method, (GMRES, FGMRES)):
+                raise LinearCapabilityError(
+                    f"{rejection}: compressed basis storage currently supports "
+                    "GMRES/FGMRES only."
+                )
+            krylov_dtype = jnp.dtype(precision.krylov_dtype)
+            same_kind = jnp.issubdtype(
+                coordinate_dtype, jnp.complexfloating
+            ) == jnp.issubdtype(krylov_dtype, jnp.complexfloating)
+            if not same_kind or krylov_dtype.itemsize > coordinate_dtype.itemsize:
+                raise LinearCapabilityError(
+                    f"{rejection}: Krylov dtype must have the coordinate kind and "
+                    "no greater precision."
+                )
+        if precision.preconditioner_dtype is not None:
+            if policy.preconditioning is None:
+                raise LinearCapabilityError(
+                    f"{rejection}: preconditioner_dtype requires preconditioning."
+                )
+            preconditioner_dtype = jnp.dtype(precision.preconditioner_dtype)
+            same_kind = jnp.issubdtype(
+                coordinate_dtype, jnp.complexfloating
+            ) == jnp.issubdtype(preconditioner_dtype, jnp.complexfloating)
+            if not same_kind or preconditioner_dtype.itemsize > coordinate_dtype.itemsize:
+                raise LinearCapabilityError(
+                    f"{rejection}: preconditioner dtype must have the coordinate kind "
+                    "and no greater precision."
+                )
+        if precision.maximum_refinement_steps or precision.condition_limit is not None:
+            raise LinearCapabilityError(
+                f"{rejection}: iterative refinement controls apply only to DenseLU."
+            )
+        return
     if backend != "jax-dense" or not isinstance(method, DenseLU):
         raise LinearCapabilityError(
             f"{rejection}: only the jax-dense DenseLU provider is supported."
@@ -445,6 +529,16 @@ def _make_preconditioner_plan(
     preconditioning = policy.preconditioning
     if preconditioning is None:
         return None
+    preconditioner_dtype = (
+        None if policy.precision is None else policy.precision.preconditioner_dtype
+    )
+    if preconditioner_dtype is not None and not isinstance(
+        preconditioning.builder,
+        JacobiPreconditionerBuilder,
+    ):
+        raise LinearCapabilityError(
+            "Lower-precision preconditioning currently supports Jacobi builders only."
+        )
     if isinstance(method, (PCG, ProjectedPCG, MINRES, ConjugateGradient, BlockCG)):
         required_side: Literal["left", "right"] = "left"
     elif isinstance(method, (GMRES, FGMRES, BiCGStab, BlockGMRES)):
@@ -461,6 +555,7 @@ def _make_preconditioner_plan(
         problem.operator,
         side=required_side,
         materialization=policy.materialization,
+        compute_dtype=preconditioner_dtype,
     )
 
 
@@ -1366,12 +1461,19 @@ def _krylov_storage_bytes(
     columns = problem.operator.source.size
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         rows += problem.regularizer.target.size
-    if isinstance(method, FGMRES):
+    if isinstance(method, (FGMRES, GMRES)):
         restart = method.restart
-        primal = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
-    elif isinstance(method, GMRES):
-        restart = method.restart
-        primal = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
+        basis_itemsize = (
+            itemsize
+            if policy.precision is None or policy.precision.krylov_dtype is None
+            else jnp.dtype(policy.precision.krylov_dtype).itemsize
+        )
+        preconditioned_entries = (
+            0 if policy.preconditioning is None else restart * columns
+        )
+        basis_entries = (restart + 1) * columns + preconditioned_entries
+        hessenberg_entries = (restart + 1) * restart
+        primal = basis_entries * basis_itemsize + hessenberg_entries * itemsize
     elif isinstance(method, BlockGMRES):
         max_steps = policy.tolerance.max_steps or columns
         restart = min(method.restart, max_steps)

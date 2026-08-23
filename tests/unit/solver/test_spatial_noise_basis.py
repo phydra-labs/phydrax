@@ -11,7 +11,8 @@ def _periodic_grid(size=8):
         endpoint=False,
         periodic=True,
     ).materialize(0.0, 1.0)
-    return phx.discretization.SeparableSpectralDiscretization((axis,))
+    grid = phx.discretization.PreparedTensorGrid((axis,))
+    return phx.discretization.periodic_finite_difference(grid)
 
 
 def test_spectral_noise_modes_are_weighted_orthonormal_and_scaled():

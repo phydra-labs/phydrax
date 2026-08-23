@@ -33,12 +33,7 @@ def _graph_axis(batch: GraphBatch, /) -> str:
 def _entity_indices(batch: GraphBatch, /) -> jnp.ndarray:
     field = batch.points.get(GRAPH_ENTITY_INDEX_KEY)
     if not isinstance(field, cx.Field):
-        if batch.component_kind == "nodes":
-            size = int(batch.graph.num_nodes)
-        elif batch.component_kind == "edges":
-            size = int(batch.graph.num_edges)
-        else:
-            size = int(batch.graph.num_graphs)
+        size = _num_entities(batch.graph, batch.component_kind)
         return jnp.arange(size, dtype=jnp.int32)
     return jnp.asarray(field.data, dtype=jnp.int32)
 
@@ -46,7 +41,13 @@ def _entity_indices(batch: GraphBatch, /) -> jnp.ndarray:
 def _num_nodes(graph: GraphIR, /) -> int:
     if graph.node_mask is not None:
         return int(graph.node_mask.shape[0])
-    return int(graph.num_nodes)
+    if graph.nodes is not None:
+        leaves = jax.tree.leaves(graph.nodes)
+        if leaves:
+            return int(jnp.asarray(leaves[0]).shape[0])
+    raise RuntimeError(
+        "A featureless dynamic GraphIR does not expose a static total node count."
+    )
 
 
 def _num_entities(graph: GraphIR, kind: GraphComponentKind, /) -> int:
@@ -55,10 +56,10 @@ def _num_entities(graph: GraphIR, kind: GraphComponentKind, /) -> int:
     if kind == "edges":
         if graph.edge_mask is not None:
             return int(graph.edge_mask.shape[0])
-        return int(graph.num_edges)
+        return 0 if graph.senders is None else int(graph.senders.shape[0])
     if graph.graph_mask is not None:
         return int(graph.graph_mask.shape[0])
-    return int(graph.num_graphs)
+    return int(graph.n_node.shape[0])
 
 
 def _pad_ids_to_length(ids: jnp.ndarray, size: int, /) -> jnp.ndarray:

@@ -15,7 +15,11 @@ from .._fingerprint import canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import DiscretizationBundle
+from ..discretization import (
+    DiscretizationBundle,
+    FDExecutionPrecisionPolicy,
+    FiniteVolumePrecisionPolicy,
+)
 from ..dynamics import TimeGrid
 from ._differential import DifferentialSolution, DifferentialVectorField
 from ._state_partition import StatePartition
@@ -24,6 +28,7 @@ from ._temporal_method import (
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
+from ._temporal_precision import TemporalPrecisionPolicy
 
 
 class PartitionedDifferentialProblem(StrictModule):
@@ -155,11 +160,18 @@ class MultiratePartitionedRK(StrictModule, NonTrainableState):
         )
 
 
-def _rk2_step(function, time, state, step_size, args):
-    first = jnp.asarray(function(time, state, args))
-    predictor = state + step_size * first
-    second = jnp.asarray(function(time + step_size, predictor, args))
-    return state + 0.5 * step_size * (first + second)
+def _rk2_step(function, time, state, step_size, args, precision):
+    staged_state = precision.stage(state)
+    step = precision.coefficient(jnp.asarray(step_size, dtype=staged_state.real.dtype))
+    first = precision.stage(function(time, staged_state, args))
+    predictor = precision.stage(
+        precision.accumulation(staged_state) + precision.accumulation(step * first)
+    )
+    second = precision.stage(function(time + step, predictor, args))
+    result = precision.accumulation(staged_state) + precision.accumulation(
+        0.5 * step * precision.accumulation(first + second)
+    )
+    return jnp.asarray(result, dtype=state.dtype)
 
 
 def solve_multirate(
@@ -169,6 +181,7 @@ def solve_multirate(
     *,
     method: MultiratePartitionedRK | None = None,
     args: Any = None,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> DifferentialSolution:
     """Integrate a partitioned problem with fixed-ratio synchronized subcycling."""
     if not isinstance(problem, PartitionedDifferentialProblem):
@@ -184,6 +197,10 @@ def solve_multirate(
     selected = MultiratePartitionedRK() if method is None else method
     if not isinstance(selected, MultiratePartitionedRK):
         raise TypeError("method must be MultiratePartitionedRK or None.")
+    precision_ = TemporalPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, TemporalPrecisionPolicy):
+        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+    precision_.validate_state(problem.initial_state)
     runtime_args = problem.args if args is None else args
 
     def macro_step(state, values):
@@ -194,7 +211,12 @@ def solve_multirate(
             micro_time = time + index * micro_width
             if selected.order == 2:
                 return _rk2_step(
-                    problem.drift, micro_time, current, micro_width, runtime_args
+                    problem.drift,
+                    micro_time,
+                    current,
+                    micro_width,
+                    runtime_args,
+                    precision_,
                 )
             return ssprk33_step(
                 problem.drift,
@@ -202,6 +224,7 @@ def solve_multirate(
                 current,
                 micro_width,
                 runtime_args,
+                precision=precision_,
             )
 
         next_state = lax.fori_loop(0, selected.refinement_ratio, micro_step, state)
@@ -225,7 +248,12 @@ def solve_multirate(
         equation_form="partitioned",
         backend_id="backend:phydrax:multirate-rk",
         configuration_id=configuration_id(
-            (selected, problem.partition.partition_id, time_grid.time_id),
+            (
+                selected,
+                problem.partition.partition_id,
+                precision_.policy_id,
+                time_grid.time_id,
+            ),
             prefix="temporal-configuration",
         ),
         controller_id=f"controller:fixed-grid:{time_grid.time_id}",
@@ -234,10 +262,12 @@ def solve_multirate(
         adaptive=False,
         dense=False,
         maximum_steps=time_grid.num_steps * selected.refinement_ratio,
+        precision_evidence=precision_.evidence_for(problem.initial_state, times),
     )
+    output_states = precision_.output(states)
     return DifferentialSolution(
         times=times,
-        states=states,
+        states=output_states,
         valid=valid,
         backend_result=jnp.where(successful, 0, 1),
         stats={
@@ -261,15 +291,26 @@ def solve_multirate(
 def multirate_amr_subcycling_plan(
     method: MultiratePartitionedRK,
     /,
+    *,
+    precision: FDExecutionPrecisionPolicy | FiniteVolumePrecisionPolicy | None = None,
 ):
-    """Bind one multirate ratio and method identity to conservative AMR."""
+    """Bind one multirate ratio, method identity, and spatial precision to AMR."""
     from ..discretization.amr import ConservativeAMRSubcyclingPlan
 
     if not isinstance(method, MultiratePartitionedRK):
         raise TypeError("method must be MultiratePartitionedRK.")
+    if precision is not None and not isinstance(
+        precision,
+        (FDExecutionPrecisionPolicy, FiniteVolumePrecisionPolicy),
+    ):
+        raise TypeError(
+            "precision must be an FDExecutionPrecisionPolicy, "
+            "FiniteVolumePrecisionPolicy, or None."
+        )
     return ConservativeAMRSubcyclingPlan(
         method.refinement_ratio,
         temporal_method_id=method.method_id,
+        precision=precision,
     )
 
 

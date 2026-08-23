@@ -11,6 +11,12 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from .._precision import (
+    precision_dtype_name,
+    PrecisionEvidenceEnvelope,
+    PrecisionRequest,
+    PrecisionResolution,
+)
 from .._strict import StrictModule
 from ..discretization import (
     AbstractStrongFormDiscretization,
@@ -176,6 +182,8 @@ class SemidiscreteSPDE(StrictModule):
     noise_shape: tuple[int, ...] = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
     basis_id: str | None = eqx.field(static=True)
+    precision_evidence_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
     def __init__(
         self,
@@ -250,12 +258,48 @@ class SemidiscreteSPDE(StrictModule):
         self.noise_shape = noise
         self.discretization_id = spatial_discretization.discretization_id
         self.basis_id = basis_id
+        spatial_precision = spatial_discretization.precision_evidence
+        spatial_precision_id = (
+            None if spatial_precision is None else spatial_precision.evidence_id
+        )
+        noise_precision = None if noise_basis is None else noise_basis.precision_evidence
+        noise_precision_id = (
+            None if noise_precision is None else noise_precision.evidence_id
+        )
+        state_dtype = precision_dtype_name(jnp.asarray(problem.initial_state).dtype)
+        request = PrecisionRequest(
+            "semidiscrete-spde",
+            {
+                "storage": state_dtype,
+                "compute": state_dtype,
+                "output": state_dtype,
+            },
+        )
+        resolution = PrecisionResolution(
+            request,
+            "phydrax-spde",
+            dict(request.requested),
+        )
+        children = {}
+        if spatial_precision is not None:
+            children["spatial"] = spatial_precision
+        if noise_precision is not None:
+            children["noise"] = noise_precision
+        precision_evidence = PrecisionEvidenceEnvelope(
+            resolution,
+            dict(resolution.effective),
+            children=children,
+        )
+        self.precision_evidence = precision_evidence
+        self.precision_evidence_id = precision_evidence.evidence_id
         records = [
             DiscretizationRecord(
                 spatial_discretization.key,
                 type(spatial_discretization).__name__,
                 spatial_discretization.prepared_id,
                 numeric_version=spatial_discretization.numeric_version,
+                precision_evidence_id=spatial_precision_id,
+                resource_evidence_id=spatial_discretization.resource_evidence_id,
             )
         ]
         dependencies = [spatial_discretization.key.key_id]
@@ -271,6 +315,7 @@ class SemidiscreteSPDE(StrictModule):
                     "spatial-noise-basis",
                     noise_basis.basis_id,
                     dependency_key_ids=(spatial_discretization.key.key_id,),
+                    precision_evidence_id=noise_precision_id,
                 )
             )
             dependencies.append(noise_key.key_id)
@@ -285,6 +330,7 @@ class SemidiscreteSPDE(StrictModule):
                 "semidiscrete-spde",
                 f"spde:{spatial_discretization.prepared_id}:{basis_id or 'deterministic'}",
                 dependency_key_ids=tuple(dependencies),
+                precision_evidence_id=self.precision_evidence_id,
             )
         )
         self.discretization_bundle = DiscretizationBundle(records)
@@ -580,7 +626,8 @@ def semidiscretize_reaction_diffusion(
         )
         semilinear = None
     else:
-        coefficient = jnp.asarray(kappa)
+        state_dtype = jnp.asarray(initial_state).dtype
+        coefficient = jnp.asarray(kappa, dtype=state_dtype)
         if coefficient.shape not in ((), state_shape):
             raise ValueError("kappa must be scalar or have exact initial-state shape.")
         linear_operator = _ScaledLaplacianOperator(
@@ -599,7 +646,7 @@ def semidiscretize_reaction_diffusion(
         expanded_weights = jnp.broadcast_to(
             weights.reshape(weights.shape + (1,) * (len(state_shape) - weights.ndim)),
             state_shape,
-        )
+        ).astype(state_dtype)
         pairing = (
             DiagonalPairing(
                 expanded_weights,
@@ -610,7 +657,7 @@ def semidiscretize_reaction_diffusion(
         )
         operator_space = ArraySpace(
             state_shape,
-            dtype=jnp.asarray(initial_state).dtype,
+            dtype=state_dtype,
             pairing=pairing,
         )
         canonical_operator = FunctionLinearOperator(

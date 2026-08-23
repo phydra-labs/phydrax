@@ -50,8 +50,7 @@ class FiniteVolumeHaloPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        discretization: FiniteVolumeDiscretization
-        | MappedFiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         reconstruction: Any,
         boundaries: FiniteVolumeBoundarySet,
         /,
@@ -64,9 +63,7 @@ class FiniteVolumeHaloPlan(StrictModule, NonTrainableState):
         if not isinstance(boundaries, FiniteVolumeBoundarySet):
             raise TypeError("boundaries must be a FiniteVolumeBoundarySet.")
         if boundaries.axis_names != discretization.grid.axis_names:
-            raise ValueError(
-                "Halo boundary axes must match finite-volume geometry."
-            )
+            raise ValueError("Halo boundary axes must match finite-volume geometry.")
         depth = reconstruction_ghost_width(reconstruction)
         for axis, count in enumerate(discretization.cell_shape):
             if count < 2 * depth:
@@ -77,9 +74,7 @@ class FiniteVolumeHaloPlan(StrictModule, NonTrainableState):
             periodic = discretization.grid.structured_axes[axis].periodic
             pair = boundaries.pairs[axis]
             if periodic != (pair is None):
-                raise ValueError(
-                    "Grid periodicity and halo boundary ownership disagree."
-                )
+                raise ValueError("Grid periodicity and halo boundary ownership disagree.")
         self.discretization = discretization
         self.reconstruction = reconstruction
         self.boundaries = boundaries
@@ -128,9 +123,7 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
         self.depth_by_axis = depths
         self.interior_slices = tuple(
             slice(depth, depth + count)
-            for depth, count in zip(
-                depths, plan.discretization.cell_shape, strict=True
-            )
+            for depth, count in zip(depths, plan.discretization.cell_shape, strict=True)
         )
         self.needs_edge_halos = dimension > 1 and plan.depth > 1
         self.needs_vertex_halos = dimension == 3 and plan.depth > 1
@@ -163,9 +156,7 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
             raise ValueError("Bounded halo axis is missing a boundary pair.")
         lower_interior = jnp.take(state, 0, axis=axis_)
         upper_interior = jnp.take(state, state.shape[axis_] - 1, axis=axis_)
-        lower_coordinates = jnp.take(
-            discretization.face_centers[axis_], 0, axis=axis_
-        )
+        lower_coordinates = jnp.take(discretization.face_centers[axis_], 0, axis=axis_)
         upper_coordinates = jnp.take(
             discretization.face_centers[axis_],
             discretization.face_layouts[axis_].shape[axis_] - 1,
@@ -212,9 +203,7 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
         axis_ = int(axis)
         depth = self.depth_by_axis[axis_]
         moved = jnp.moveaxis(values, axis_, 0)
-        center_values = jnp.moveaxis(
-            self.plan.discretization.cell_centers, axis_, 0
-        )
+        center_values = jnp.moveaxis(self.plan.discretization.cell_centers, axis_, 0)
         structured_axis = self.plan.discretization.grid.structured_axes[axis_]
         centers = structured_axis.interval_centers
         if structured_axis.periodic:
@@ -272,36 +261,22 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
                         args,
                     )
                 )
-                lower_center_layers.append(
-                    2.0 * lower_face - center_values[lower_index]
-                )
-                upper_center_layers.append(
-                    2.0 * upper_face - center_values[upper_index]
-                )
+                lower_center_layers.append(2.0 * lower_face - center_values[lower_index])
+                upper_center_layers.append(2.0 * upper_face - center_values[upper_index])
             lower = jnp.stack(tuple(reversed(lower_layers)), axis=0)
             upper = jnp.stack(tuple(upper_layers), axis=0)
-            lower_physical = jnp.stack(
-                tuple(reversed(lower_center_layers)), axis=0
-            )
+            lower_physical = jnp.stack(tuple(reversed(lower_center_layers)), axis=0)
             upper_physical = jnp.stack(tuple(upper_center_layers), axis=0)
-            lower_coordinates = (
-                2.0 * structured_axis.bounds[0] - centers[:depth]
-            )[::-1]
-            upper_coordinates = (
-                2.0 * structured_axis.bounds[1] - centers[-depth:]
-            )[::-1]
+            lower_coordinates = (2.0 * structured_axis.bounds[0] - centers[:depth])[::-1]
+            upper_coordinates = (2.0 * structured_axis.bounds[1] - centers[-depth:])[::-1]
         ghosted = jnp.concatenate((lower, moved, upper), axis=0)
-        coordinates = jnp.concatenate(
-            (lower_coordinates, centers, upper_coordinates)
-        )
+        coordinates = jnp.concatenate((lower_coordinates, centers, upper_coordinates))
         physical_centers = jnp.concatenate(
             (lower_physical, center_values, upper_physical), axis=0
         )
         return FiniteVolumeGhostedAxis(
             values=jnp.moveaxis(ghosted, 0, axis_),
-            physical_centers=jnp.moveaxis(
-                physical_centers, 0, axis_
-            ),
+            physical_centers=jnp.moveaxis(physical_centers, 0, axis_),
             axis_coordinates=coordinates,
             axis=axis_,
             depth=depth,
@@ -317,9 +292,7 @@ class PreparedFiniteVolumeHaloPlan(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> Array:
-        return self.materialize_axis(
-            system, time, state, axis, args
-        ).values
+        return self.materialize_axis(system, time, state, axis, args).values
 
 
 __all__ = [

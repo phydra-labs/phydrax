@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import complex_precision_dtype, real_precision_dtype_name
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DiagonalPairing, EuclideanPairing
@@ -231,6 +232,7 @@ def certify_stencil_consistency(
         )
         scale = max(1.0, float(factorial(report.derivative_order)))
         maximum_residual = max(maximum_residual, residual / scale)
+        maximum_condition = max(maximum_condition, plan.condition_estimate)
         if residual > tolerance_ * scale:
             failed_rows.append(row)
     request = stencil_set.stencil.request
@@ -247,12 +249,35 @@ def certify_stencil_consistency(
     )
 
 
-def _pairing_inner(space: Any, left: Array, right: Array, /) -> Array:
+def _certification_value(value: Array, dtype: Any | None, /) -> Array:
+    array = jnp.asarray(value)
+    if dtype is None:
+        return array
+    real_dtype = real_precision_dtype_name(dtype)
+    target = (
+        complex_precision_dtype(real_dtype)
+        if jnp.issubdtype(array.dtype, jnp.complexfloating)
+        else real_dtype
+    )
+    return array.astype(target)
+
+
+def _pairing_inner(
+    space: Any,
+    left: Array,
+    right: Array,
+    /,
+    *,
+    certification_dtype: Any | None,
+) -> Array:
+    left_ = _certification_value(left, certification_dtype)
+    right_ = _certification_value(right, certification_dtype)
     pairing = space.pairing
     if isinstance(pairing, DiagonalPairing):
-        return jnp.sum(jnp.conj(left) * pairing.weights * right)
+        weights = _certification_value(pairing.weights, certification_dtype)
+        return jnp.sum(jnp.conj(left_) * weights * right_)
     if isinstance(pairing, EuclideanPairing):
-        return jnp.sum(jnp.conj(left) * right)
+        return jnp.sum(jnp.conj(left_) * right_)
     raise ValueError("FD certification requires Euclidean or diagonal pairings.")
 
 
@@ -261,6 +286,7 @@ def certify_operator_adjoint(
     /,
     *,
     tolerance: float = 1e-10,
+    certification_dtype: Any | None = None,
 ) -> FDAdjointReport:
     """Probe transpose and weighted-adjoint identities matrix-free."""
     tolerance_ = float(tolerance)
@@ -276,8 +302,12 @@ def certify_operator_adjoint(
     )
     action = operator.mv(source)
     transpose = operator.transpose_mv(target)
-    left_coordinate = jnp.sum(target * action)
-    right_coordinate = jnp.sum(transpose * source)
+    target_cert = _certification_value(target, certification_dtype)
+    action_cert = _certification_value(action, certification_dtype)
+    transpose_cert = _certification_value(transpose, certification_dtype)
+    source_cert = _certification_value(source, certification_dtype)
+    left_coordinate = jnp.sum(target_cert * action_cert)
+    right_coordinate = jnp.sum(transpose_cert * source_cert)
     coordinate_scale = jnp.maximum(
         1.0,
         jnp.maximum(jnp.abs(left_coordinate), jnp.abs(right_coordinate)),
@@ -286,8 +316,18 @@ def certify_operator_adjoint(
         np.asarray(jnp.abs(left_coordinate - right_coordinate) / coordinate_scale)
     )
     adjoint = operator.adjoint_mv(target)
-    left_pairing = _pairing_inner(operator.target, target, action)
-    right_pairing = _pairing_inner(operator.source, adjoint, source)
+    left_pairing = _pairing_inner(
+        operator.target,
+        target,
+        action,
+        certification_dtype=certification_dtype,
+    )
+    right_pairing = _pairing_inner(
+        operator.source,
+        adjoint,
+        source,
+        certification_dtype=certification_dtype,
+    )
     pairing_scale = jnp.maximum(
         1.0,
         jnp.maximum(jnp.abs(left_pairing), jnp.abs(right_pairing)),
@@ -309,22 +349,31 @@ def certify_operator_conservation(
     *,
     periodic: bool,
     tolerance: float = 1e-10,
+    certification_dtype: Any | None = None,
 ) -> FDConservationReport:
     """Probe constant annihilation and periodic global derivative balance."""
     tolerance_ = float(tolerance)
     constant = jnp.ones(operator.source.shape, dtype=operator.source.dtype)
-    constant_residual = float(np.asarray(jnp.max(jnp.abs(operator.mv(constant)))))
+    constant_action = _certification_value(
+        operator.mv(constant),
+        certification_dtype,
+    )
+    constant_residual = float(np.asarray(jnp.max(jnp.abs(constant_action))))
     balance_residual = None
     if periodic:
         index = jnp.arange(operator.source.size, dtype=operator.source.dtype)
         probe = (jnp.sin(0.31 * index) + 0.1 * jnp.cos(0.07 * index)).reshape(
             operator.source.shape
         )
-        action = operator.mv(probe)
+        action = _certification_value(operator.mv(probe), certification_dtype)
         pairing = operator.target.pairing
         if isinstance(pairing, DiagonalPairing):
-            balance = jnp.sum(pairing.weights * action)
-            balance_scale = jnp.maximum(1.0, jnp.sum(jnp.abs(pairing.weights * action)))
+            weights = _certification_value(
+                pairing.weights,
+                certification_dtype,
+            )
+            balance = jnp.sum(weights * action)
+            balance_scale = jnp.maximum(1.0, jnp.sum(jnp.abs(weights * action)))
         elif isinstance(pairing, EuclideanPairing):
             balance = jnp.sum(action)
             balance_scale = jnp.maximum(1.0, jnp.sum(jnp.abs(action)))

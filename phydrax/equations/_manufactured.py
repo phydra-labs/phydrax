@@ -139,7 +139,9 @@ class ManufacturedSpatialOperator(StrictModule):
         ):
             raise TypeError("Manufactured operator requires array source/target spaces.")
         if operator.source.shape != grid.shape or operator.target.shape != grid.shape:
-            raise ValueError("Manufactured operator must preserve the primary grid shape.")
+            raise ValueError(
+                "Manufactured operator must preserve the primary grid shape."
+            )
         if boundary_mask is None:
             layout = grid.primary_entity_layout
             mask = jnp.zeros(grid.shape, dtype=bool)

@@ -24,16 +24,16 @@ from .._training import (
     TensorBoardLogger,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
+from ..optim._iterative._globalization import (
+    armijo_backtracking,
+    ArmijoLineSearch,
+)
 from ..optim._kfac._blocks import (
     solve_block_direction,
     update_block_state_from_observations,
 )
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import KFACMetrics, KFACState
-from ..optim._iterative._globalization import (
-    ArmijoLineSearch,
-    armijo_backtracking,
-)
 from ._functional_objective import (
     evaluate_prepared_objective,
     prepared_data_metrics,

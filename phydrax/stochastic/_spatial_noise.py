@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import cast, Literal
+from typing import Any, cast, Literal
 
 import equinox as eqx
 import jax
@@ -18,12 +18,19 @@ from jaxtyping import Array, ArrayLike
 from matfree.low_rank import cholesky_partial_pivot
 from matfree.stochtrace import nystrom_eigh
 
+from .._precision import (
+    precision_itemsize,
+    PrecisionEvidenceEnvelope,
+    PrecisionRequest,
+    PrecisionResolution,
+    real_precision_dtype_name,
+)
 from .._strict import StrictModule
 from ..discretization._tensor import AbstractStrongFormDiscretization
 
 
 def _canonicalize_signs(modes: np.ndarray, /) -> np.ndarray:
-    out = np.array(modes, dtype=float, copy=True)
+    out = np.array(modes, copy=True)
     for column in range(out.shape[1]):
         pivot = int(np.argmax(np.abs(out[:, column])))
         if out[pivot, column] < 0.0:
@@ -148,9 +155,11 @@ def _factor_eigenpairs(
     /,
     *,
     rank: int,
+    dtype: Any = np.float64,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Convert a weighted covariance factor into weighted KL eigenpairs."""
-    factor_host = np.asarray(factor, dtype=float)
+    factor_host = np.asarray(factor, dtype=np.dtype(dtype))
+    weights_host = np.asarray(weights, dtype=np.dtype(dtype))
     count = int(prod(state_shape))
     if factor_host.ndim != 2 or factor_host.shape[0] != count:
         raise ValueError(f"Covariance factor must have {count} rows.")
@@ -160,7 +169,7 @@ def _factor_eigenpairs(
     retained = int(rank)
     if retained > singular_values.size:
         raise ValueError("Covariance factor has fewer columns than the requested rank.")
-    root = np.sqrt(weights.reshape((-1,)))
+    root = np.sqrt(weights_host.reshape((-1,)))
     eigenvalues = singular_values[:retained] ** 2
     modes = left[:, :retained] / root[:, None]
     modes = _canonicalize_signs(modes)
@@ -174,6 +183,85 @@ def _factor_eigenpairs(
 
 def _key_seed(key: ArrayLike, /) -> tuple[int, ...]:
     return tuple(int(value) for value in np.asarray(jr.key_data(key)).reshape((-1,)))
+
+
+class SpatialNoisePrecisionPolicy(StrictModule):
+    """Covariance construction, retained basis, runtime, and certification precision."""
+
+    construction_dtype: str = eqx.field(static=True)
+    basis_storage_dtype: str = eqx.field(static=True)
+    runtime_dtype: str = eqx.field(static=True)
+    certification_dtype: str = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        construction_dtype: Any = np.float64,
+        basis_storage_dtype: Any | None = None,
+        runtime_dtype: Any | None = None,
+        certification_dtype: Any | None = None,
+    ):
+        construction = real_precision_dtype_name(construction_dtype)
+        basis = (
+            construction
+            if basis_storage_dtype is None
+            else real_precision_dtype_name(basis_storage_dtype)
+        )
+        runtime = (
+            basis if runtime_dtype is None else real_precision_dtype_name(runtime_dtype)
+        )
+        certification = (
+            construction
+            if certification_dtype is None
+            else real_precision_dtype_name(certification_dtype)
+        )
+        if any(
+            value in ("float16", "bfloat16")
+            for value in (construction, basis, runtime, certification)
+        ):
+            raise ValueError("Spatial-noise precision initially supports float32/64.")
+        if precision_itemsize(certification) < max(
+            precision_itemsize(construction),
+            precision_itemsize(runtime),
+        ):
+            raise ValueError(
+                "Spatial-noise certification cannot be narrower than construction "
+                "or runtime."
+            )
+        request = PrecisionRequest(
+            "spatial-noise",
+            {
+                "factorization": construction,
+                "storage": basis,
+                "compute": runtime,
+                "certification": certification,
+                "output": runtime,
+            },
+        )
+        self.construction_dtype = construction
+        self.basis_storage_dtype = basis
+        self.runtime_dtype = runtime
+        self.certification_dtype = certification
+        self.policy_id = request.request_id
+
+    def evidence(self) -> PrecisionEvidenceEnvelope:
+        request = PrecisionRequest(
+            "spatial-noise",
+            {
+                "factorization": self.construction_dtype,
+                "storage": self.basis_storage_dtype,
+                "compute": self.runtime_dtype,
+                "certification": self.certification_dtype,
+                "output": self.runtime_dtype,
+            },
+        )
+        resolution = PrecisionResolution(
+            request,
+            "phydrax-spatial-noise",
+            dict(request.requested),
+        )
+        return PrecisionEvidenceEnvelope(resolution, dict(resolution.effective))
 
 
 class SpatialNoiseBasis(StrictModule):
@@ -192,6 +280,8 @@ class SpatialNoiseBasis(StrictModule):
     field_space_id: str | None = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
     approximation: SpatialNoiseApproximation | None = eqx.field(static=True)
+    precision: SpatialNoisePrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
     def __init__(
         self,
@@ -206,11 +296,18 @@ class SpatialNoiseBasis(StrictModule):
         approximation: SpatialNoiseApproximation | None = None,
         orthonormal_rtol: float = 1e-6,
         orthonormal_atol: float = 1e-7,
+        precision: SpatialNoisePrecisionPolicy | None = None,
     ):
+        precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, SpatialNoisePrecisionPolicy):
+            raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
         raw_modes = jnp.asarray(modes)
         if jnp.iscomplexobj(raw_modes):
             raise ValueError("SpatialNoiseBasis modes must be real-valued.")
-        modes_array = jnp.asarray(raw_modes, dtype=float)
+        modes_array = jnp.asarray(
+            raw_modes,
+            dtype=precision_.basis_storage_dtype,
+        )
         if modes_array.ndim < 2:
             raise ValueError("modes must have shape state_shape + (rank,).")
         inferred_shape = tuple(int(size) for size in modes_array.shape[:-1])
@@ -228,18 +325,27 @@ class SpatialNoiseBasis(StrictModule):
         rank = int(modes_array.shape[-1])
         if rank <= 0 or rank > int(prod(resolved_shape)):
             raise ValueError("Noise rank must lie between one and the state size.")
-        eigenvalue_array = jnp.asarray(eigenvalues, dtype=float).reshape((-1,))
+        eigenvalue_array = jnp.asarray(
+            eigenvalues,
+            dtype=precision_.basis_storage_dtype,
+        ).reshape((-1,))
         if eigenvalue_array.shape != (rank,):
             raise ValueError("eigenvalues must contain one value per noise mode.")
-        weights = jnp.asarray(quadrature_weights, dtype=float)
+        weights = jnp.asarray(
+            quadrature_weights,
+            dtype=precision_.certification_dtype,
+        )
         if tuple(weights.shape) != resolved_shape:
             raise ValueError(
                 "quadrature_weights must have exact state_shape "
                 f"{resolved_shape}; got {weights.shape}."
             )
-        modes_host = np.asarray(modes_array, dtype=float)
-        eigenvalues_host = np.asarray(eigenvalue_array, dtype=float)
-        weights_host = np.asarray(weights, dtype=float)
+        modes_host = np.asarray(modes_array, dtype=precision_.certification_dtype)
+        eigenvalues_host = np.asarray(
+            eigenvalue_array,
+            dtype=precision_.certification_dtype,
+        )
+        weights_host = np.asarray(weights, dtype=precision_.certification_dtype)
         if np.any(~np.isfinite(modes_host)):
             raise ValueError("Noise modes must be finite.")
         if np.any(~np.isfinite(eigenvalues_host)) or np.any(eigenvalues_host < 0.0):
@@ -281,10 +387,10 @@ class SpatialNoiseBasis(StrictModule):
         self.quadrature_weights = weights
         self.state_shape = resolved_shape
         self.mode_ids = identifiers
-        self.field_space_id = (
-            None if field_space_id is None else str(field_space_id)
-        )
+        self.field_space_id = None if field_space_id is None else str(field_space_id)
         self.approximation = approximation
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence()
         self.basis_id = _basis_digest(
             state_shape=resolved_shape,
             modes=modes_host,
@@ -304,10 +410,10 @@ class SpatialNoiseBasis(StrictModule):
 
     @property
     def diffusion(self) -> Array:
-        scale = jnp.sqrt(self.eigenvalues).reshape(
-            (1,) * len(self.state_shape) + (self.rank,)
-        )
-        return self.modes * scale
+        eigenvalues = self.eigenvalues.astype(self.precision.runtime_dtype)
+        modes = self.modes.astype(self.precision.runtime_dtype)
+        scale = jnp.sqrt(eigenvalues).reshape((1,) * len(self.state_shape) + (self.rank,))
+        return modes * scale
 
     @property
     def diffusion_matrix(self) -> Array:
@@ -328,6 +434,7 @@ class SpatialNoiseBasis(StrictModule):
         state_shape: Sequence[int] | None = None,
         mode_ids: Sequence[str] | None = None,
         field_space_id: str | None = None,
+        precision: SpatialNoisePrecisionPolicy | None = None,
     ) -> "SpatialNoiseBasis":
         """Validate explicit weighted-orthonormal modes and eigenvalues."""
         return cls(
@@ -337,6 +444,7 @@ class SpatialNoiseBasis(StrictModule):
             state_shape=state_shape,
             mode_ids=mode_ids,
             field_space_id=field_space_id,
+            precision=precision,
         )
 
     @classmethod
@@ -347,6 +455,7 @@ class SpatialNoiseBasis(StrictModule):
         /,
         *,
         rank: int,
+        precision: SpatialNoisePrecisionPolicy | None = None,
     ) -> "SpatialNoiseBasis":
         r"""Select low Laplacian modes and evaluate a spectral covariance law.
 
@@ -363,10 +472,18 @@ class SpatialNoiseBasis(StrictModule):
             values = spectrum_function(laplacian_eigenvalues)
         else:
             values = spectrum
-        covariance_eigenvalues = jnp.asarray(values, dtype=float)
+        precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, SpatialNoisePrecisionPolicy):
+            raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
+        covariance_eigenvalues = jnp.asarray(
+            values,
+            dtype=precision_.construction_dtype,
+        )
         if covariance_eigenvalues.shape == ():
             covariance_eigenvalues = jnp.full(
-                (int(rank),), covariance_eigenvalues, dtype=float
+                (int(rank),),
+                covariance_eigenvalues,
+                dtype=precision_.construction_dtype,
             )
         covariance_eigenvalues = covariance_eigenvalues.reshape((-1,))
         mode_ids = tuple(
@@ -380,6 +497,7 @@ class SpatialNoiseBasis(StrictModule):
             state_shape=discretization.state_shape,
             mode_ids=mode_ids,
             field_space_id=discretization.field_spaces[0].field_space_id,
+            precision=precision_,
         )
 
     @classmethod
@@ -393,26 +511,45 @@ class SpatialNoiseBasis(StrictModule):
         rank: int,
         field_space_id: str | None = None,
         psd_tolerance: float = 1e-10,
+        precision: SpatialNoisePrecisionPolicy | None = None,
     ) -> "SpatialNoiseBasis":
         """Factor a nodal covariance matrix using its quadrature-weighted KL basis."""
+        precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, SpatialNoisePrecisionPolicy):
+            raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
         shape = tuple(int(size) for size in state_shape)
         count = int(prod(shape))
         retained = int(rank)
         if retained <= 0 or retained > count:
             raise ValueError(f"rank must lie in [1, {count}].")
-        tolerance = float(psd_tolerance)
+        tolerance = max(
+            float(psd_tolerance),
+            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+        )
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("psd_tolerance must be finite and non-negative.")
-        covariance_host = np.asarray(covariance, dtype=float)
+        covariance_host = np.asarray(
+            covariance,
+            dtype=np.dtype(precision_.construction_dtype),
+        )
         if covariance_host.shape != (count, count):
             raise ValueError(
-                f"covariance must have shape {(count, count)}; got {covariance_host.shape}."
+                f"covariance must have shape {(count, count)}; "
+                f"got {covariance_host.shape}."
             )
         if np.any(~np.isfinite(covariance_host)):
             raise ValueError("covariance must be finite.")
-        if not np.allclose(covariance_host, covariance_host.T, rtol=1e-8, atol=1e-10):
+        if not np.allclose(
+            covariance_host,
+            covariance_host.T,
+            rtol=max(1e-8, tolerance),
+            atol=max(1e-10, tolerance),
+        ):
             raise ValueError("covariance must be symmetric.")
-        weights_host = np.asarray(quadrature_weights, dtype=float)
+        weights_host = np.asarray(
+            quadrature_weights,
+            dtype=np.dtype(precision_.construction_dtype),
+        )
         if weights_host.shape != shape:
             raise ValueError(
                 f"quadrature_weights must have shape {shape}; got {weights_host.shape}."
@@ -448,11 +585,12 @@ class SpatialNoiseBasis(StrictModule):
         return cls(
             modes.reshape(shape + (retained,)),
             selected,
-            quadrature_weights=weights_host,
+            quadrature_weights=quadrature_weights,
             state_shape=shape,
             mode_ids=tuple(f"covariance:{index}" for index in range(retained)),
             field_space_id=field_space_id,
             approximation=approximation,
+            precision=precision_,
         )
 
     @classmethod
@@ -465,6 +603,7 @@ class SpatialNoiseBasis(StrictModule):
         rank: int,
         points: ArrayLike | None = None,
         tolerance: float = 1e-6,
+        precision: SpatialNoisePrecisionPolicy | None = None,
     ) -> "SpatialNoiseBasis":
         r"""Factor a kernel covariance with Matfree pivoted Cholesky.
 
@@ -477,11 +616,17 @@ class SpatialNoiseBasis(StrictModule):
             raise TypeError(
                 "discretization must implement AbstractStrongFormDiscretization."
             )
+        precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, SpatialNoisePrecisionPolicy):
+            raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
         count = discretization.num_points
         retained = int(rank)
         if retained <= 0 or retained > count:
             raise ValueError(f"rank must lie in [1, {count}].")
-        threshold = float(tolerance)
+        threshold = max(
+            float(tolerance),
+            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+        )
         if not np.isfinite(threshold) or threshold < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
 
@@ -490,7 +635,10 @@ class SpatialNoiseBasis(StrictModule):
             raise ValueError(
                 "points are required when the spatial discretization has no coordinates."
             )
-        point_array = jnp.asarray(resolved_points, dtype=float)
+        point_array = jnp.asarray(
+            resolved_points,
+            dtype=precision_.construction_dtype,
+        )
         if point_array.ndim != 2 or int(point_array.shape[0]) != count:
             raise ValueError(
                 "points must have shape (discretization.num_points, coordinate_dim)."
@@ -498,14 +646,20 @@ class SpatialNoiseBasis(StrictModule):
         if np.any(~np.isfinite(np.asarray(point_array))):
             raise ValueError("points must be finite.")
 
-        weights_host = np.asarray(discretization.quadrature_weights, dtype=float)
+        weights_host = np.asarray(
+            discretization.quadrature_weights,
+            dtype=np.dtype(precision_.construction_dtype),
+        )
         if weights_host.shape != discretization.state_shape:
             raise ValueError("discretization quadrature weights have an invalid shape.")
         if np.any(~np.isfinite(weights_host)) or np.any(weights_host <= 0.0):
             raise ValueError("Quadrature weights must be finite and positive.")
         root = jnp.sqrt(jnp.asarray(weights_host).reshape((-1,)))
 
-        sample = jnp.asarray(kernel(point_array[0], point_array[0]), dtype=float)
+        sample = jnp.asarray(
+            kernel(point_array[0], point_array[0]),
+            dtype=precision_.construction_dtype,
+        )
         if sample.shape != ():
             raise ValueError("kernel must return one scalar for a pair of points.")
         if not bool(jnp.isfinite(sample)):
@@ -514,7 +668,7 @@ class SpatialNoiseBasis(StrictModule):
         def matrix_element(left_index, right_index):
             value = jnp.asarray(
                 kernel(point_array[left_index], point_array[right_index]),
-                dtype=float,
+                dtype=precision_.construction_dtype,
             )
             if value.shape != ():
                 raise ValueError("kernel must return one scalar for a pair of points.")
@@ -538,14 +692,19 @@ class SpatialNoiseBasis(StrictModule):
             weights_host,
             discretization.state_shape,
             rank=retained,
+            dtype=precision_.construction_dtype,
         )
         diagonal = np.asarray(
             jax.vmap(lambda index: matrix_element(index, index))(jnp.arange(count)),
-            dtype=float,
+            dtype=np.dtype(precision_.certification_dtype),
         )
         residual_diagonal = diagonal - np.sum(weighted_factor**2, axis=1)
         diagonal_scale = max(1.0, float(np.max(np.abs(diagonal))))
-        roundoff = 100.0 * np.finfo(float).eps * diagonal_scale
+        roundoff = (
+            100.0
+            * np.finfo(np.dtype(precision_.certification_dtype)).eps
+            * diagonal_scale
+        )
         if float(np.min(residual_diagonal)) < -max(roundoff, threshold * diagonal_scale):
             raise ValueError(
                 "Pivoted Cholesky produced an invalid negative residual diagonal."
@@ -566,11 +725,12 @@ class SpatialNoiseBasis(StrictModule):
         return cls(
             modes,
             eigenvalues,
-            quadrature_weights=weights_host,
+            quadrature_weights=discretization.quadrature_weights,
             state_shape=discretization.state_shape,
             mode_ids=tuple(f"kernel-pivot:{index}" for index in range(retained)),
             field_space_id=discretization.field_spaces[0].field_space_id,
             approximation=approximation,
+            precision=precision_,
         )
 
     @classmethod
@@ -585,6 +745,7 @@ class SpatialNoiseBasis(StrictModule):
         oversampling: int = 8,
         tolerance: float = 1e-6,
         diagnostic_probes: int = 8,
+        precision: SpatialNoisePrecisionPolicy | None = None,
     ) -> "SpatialNoiseBasis":
         r"""Randomize a matrix-free covariance with Matfree Nyström.
 
@@ -598,6 +759,9 @@ class SpatialNoiseBasis(StrictModule):
             raise TypeError(
                 "discretization must implement AbstractStrongFormDiscretization."
             )
+        precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, SpatialNoisePrecisionPolicy):
+            raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
         count = discretization.num_points
         retained = int(rank)
         if retained <= 0 or retained > count:
@@ -610,12 +774,18 @@ class SpatialNoiseBasis(StrictModule):
         if probes_count <= 0:
             raise ValueError("diagnostic_probes must be positive.")
         probes_count = min(count, probes_count)
-        threshold = float(tolerance)
+        threshold = max(
+            float(tolerance),
+            256.0 * np.finfo(np.dtype(precision_.construction_dtype)).eps,
+        )
         if not np.isfinite(threshold) or threshold < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
         seed = _key_seed(key)
 
-        weights_host = np.asarray(discretization.quadrature_weights, dtype=float)
+        weights_host = np.asarray(
+            discretization.quadrature_weights,
+            dtype=np.dtype(precision_.construction_dtype),
+        )
         if weights_host.shape != discretization.state_shape:
             raise ValueError("discretization quadrature weights have an invalid shape.")
         if np.any(~np.isfinite(weights_host)) or np.any(weights_host <= 0.0):
@@ -624,7 +794,10 @@ class SpatialNoiseBasis(StrictModule):
 
         def weighted_matvec(vector):
             state = discretization.unflatten(root * vector)
-            result = jnp.asarray(covariance_operator(state), dtype=float)
+            result = jnp.asarray(
+                covariance_operator(state),
+                dtype=precision_.construction_dtype,
+            )
             if tuple(result.shape) != discretization.state_shape:
                 raise ValueError(
                     "covariance_operator must preserve discretization.state_shape."
@@ -636,15 +809,27 @@ class SpatialNoiseBasis(StrictModule):
                 )
             return root * flattened
 
-        preflight = np.asarray(weighted_matvec(jnp.zeros((count,), dtype=float)))
+        preflight = np.asarray(
+            weighted_matvec(jnp.zeros((count,), dtype=precision_.construction_dtype)),
+            dtype=np.dtype(precision_.certification_dtype),
+        )
         if np.any(~np.isfinite(preflight)):
             raise ValueError("covariance_operator must return finite values.")
 
         sketch_key = jr.fold_in(key, 0)
-        omega = jr.normal(sketch_key, (count, sketch_size), dtype=float)
+        omega = jr.normal(
+            sketch_key,
+            (count, sketch_size),
+            dtype=precision_.construction_dtype,
+        )
         omega, _ = jnp.linalg.qr(omega, mode="reduced")
         nystrom = nystrom_eigh(
-            eigenvalues_rtol=max(threshold, np.finfo(float).eps),
+            eigenvalues_rtol=float(
+                max(
+                    threshold,
+                    np.finfo(np.dtype(precision_.construction_dtype)).eps,
+                )
+            ),
         )
         raw_factor, _, _ = nystrom(weighted_matvec, omega)
         eigenvalues, modes, weighted_factor = _factor_eigenpairs(
@@ -652,6 +837,7 @@ class SpatialNoiseBasis(StrictModule):
             weights_host,
             discretization.state_shape,
             rank=retained,
+            dtype=precision_.construction_dtype,
         )
 
         diagnostic_key = jr.fold_in(key, 1)
@@ -661,7 +847,7 @@ class SpatialNoiseBasis(StrictModule):
                 diagnostic_key,
                 0.5,
                 (count, probes_count),
-            ).astype(float)
+            ).astype(precision_.construction_dtype)
             - 1.0
         )
         operator_images = jax.vmap(
@@ -670,8 +856,14 @@ class SpatialNoiseBasis(StrictModule):
             out_axes=1,
         )(probes)
         approximation_images = weighted_factor @ (weighted_factor.T @ probes)
-        residual_images = np.asarray(operator_images - approximation_images)
-        operator_images_host = np.asarray(operator_images)
+        residual_images = np.asarray(
+            operator_images - approximation_images,
+            dtype=np.dtype(precision_.certification_dtype),
+        )
+        operator_images_host = np.asarray(
+            operator_images,
+            dtype=np.dtype(precision_.certification_dtype),
+        )
         absolute_residual = float(
             np.linalg.vector_norm(residual_images) / np.sqrt(float(probes_count))
         )
@@ -697,12 +889,17 @@ class SpatialNoiseBasis(StrictModule):
         return cls(
             modes,
             eigenvalues,
-            quadrature_weights=weights_host,
+            quadrature_weights=discretization.quadrature_weights,
             state_shape=discretization.state_shape,
             mode_ids=tuple(f"nystrom:{seed_label}:{index}" for index in range(retained)),
             field_space_id=discretization.field_spaces[0].field_space_id,
             approximation=approximation,
+            precision=precision_,
         )
 
 
-__all__ = ["SpatialNoiseApproximation", "SpatialNoiseBasis"]
+__all__ = [
+    "SpatialNoiseApproximation",
+    "SpatialNoiseBasis",
+    "SpatialNoisePrecisionPolicy",
+]

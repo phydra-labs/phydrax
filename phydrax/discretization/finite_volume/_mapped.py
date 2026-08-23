@@ -33,11 +33,16 @@ from ._structured import FiniteVolumeDiscretization
 CoordinateMap = Callable[[Array], ArrayLike]
 
 
-def _mapped_vertices(base: FiniteVolumeDiscretization, coordinate_map: CoordinateMap, /) -> Array:
+def _mapped_vertices(
+    base: FiniteVolumeDiscretization, coordinate_map: CoordinateMap, /
+) -> Array:
     edge_axes = tuple(
         axis.bounds[0]
         + jnp.concatenate(
-            (jnp.zeros((1,), dtype=axis.interval_widths.dtype), jnp.cumsum(axis.interval_widths))
+            (
+                jnp.zeros((1,), dtype=axis.interval_widths.dtype),
+                jnp.cumsum(axis.interval_widths),
+            )
         )
         for axis in base.grid.structured_axes
     )
@@ -49,7 +54,9 @@ def _mapped_vertices(base: FiniteVolumeDiscretization, coordinate_map: Coordinat
     return mapped.reshape(reference.shape)
 
 
-def _corner(vertices: Array, bits: tuple[int, ...], cell_shape: tuple[int, ...], /) -> Array:
+def _corner(
+    vertices: Array, bits: tuple[int, ...], cell_shape: tuple[int, ...], /
+) -> Array:
     index = tuple(slice(bit, bit + cell_shape[axis]) for axis, bit in enumerate(bits))
     return vertices[index]
 
@@ -58,7 +65,9 @@ def _cross2(left: Array, right: Array, /) -> Array:
     return left[..., 0] * right[..., 1] - left[..., 1] * right[..., 0]
 
 
-def _cell_geometry(vertices: Array, cell_shape: tuple[int, ...], /) -> tuple[Array, Array]:
+def _cell_geometry(
+    vertices: Array, cell_shape: tuple[int, ...], /
+) -> tuple[Array, Array]:
     dimension = len(cell_shape)
     corners = {
         bits: _corner(vertices, bits, cell_shape)
@@ -79,10 +88,7 @@ def _cell_geometry(vertices: Array, cell_shape: tuple[int, ...], /) -> tuple[Arr
         p11 = corners[(1, 1)]
         p01 = corners[(0, 1)]
         signed = 0.5 * (
-            _cross2(p00, p10)
-            + _cross2(p10, p11)
-            + _cross2(p11, p01)
-            + _cross2(p01, p00)
+            _cross2(p00, p10) + _cross2(p10, p11) + _cross2(p11, p01) + _cross2(p01, p00)
         )
         volume = eqx.error_if(
             signed,
@@ -183,6 +189,8 @@ def _face_geometry(
         "Mapped finite-volume faces require finite positive measure.",
     )
     return center, measure, area_vector
+
+
 def evaluate_mapped_finite_volume_geometry(
     reference: FiniteVolumeDiscretization,
     coordinate_map: CoordinateMap,
@@ -199,7 +207,9 @@ def evaluate_mapped_finite_volume_geometry(
     if not isinstance(reference, FiniteVolumeDiscretization) or not callable(
         coordinate_map
     ):
-        raise TypeError("Mapped geometry evaluation requires reference geometry and a map.")
+        raise TypeError(
+            "Mapped geometry evaluation requires reference geometry and a map."
+        )
     vertices = _mapped_vertices(reference, coordinate_map)
     cell_centers, cell_volumes = _cell_geometry(vertices, reference.cell_shape)
     face_geometry = tuple(
@@ -214,7 +224,6 @@ def evaluate_mapped_finite_volume_geometry(
         tuple(value[1] for value in face_geometry),
         tuple(value[2] for value in face_geometry),
     )
-
 
 
 class MappedFiniteVolumePlan(AbstractDiscretizationPlan):
@@ -312,9 +321,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             face_centers,
             face_measures,
             face_area_vectors,
-        ) = evaluate_mapped_finite_volume_geometry(
-            reference, plan.coordinate_map
-        )
+        ) = evaluate_mapped_finite_volume_geometry(reference, plan.coordinate_map)
         component_count = reference.component_count
         cell_shape = reference.cell_shape + (component_count,)
         cell_space = DiscreteFieldSpace(
@@ -433,6 +440,7 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         self.reference = reference
         self.mapped_vertices = vertices
         self.mapping_id = plan.mapping_id
+
     @property
     def cell_shape(self) -> tuple[int, ...]:
         return self.cell_layout.shape
@@ -457,7 +465,6 @@ class MappedFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         measure = jnp.take(self.face_measures[axis_], index, axis=axis_)
         sign = -1.0 if side == "lower" else 1.0
         return sign * area_vector / measure[..., None]
-
 
 
 __all__ = [

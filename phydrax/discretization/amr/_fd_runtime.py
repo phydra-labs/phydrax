@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax
@@ -14,13 +14,71 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._fd_precision import FDExecutionPrecisionPolicy
+from .._fv_precision import FiniteVolumePrecisionPolicy
 from ._core import BlockHierarchyPlan, BlockHierarchyState, BlockLevelState
 from ._fd_halo import FDAMRHaloPlan, FDAMRHaloWorkspace
 from ._fd_transfer import AMREntityTransferPlan
 from ._refinement import FixedCapacityRefinementPlan, RefinementDecision
 from ._reflux import FluxRegister
+
+
+ConservativePrecisionPolicy: TypeAlias = (
+    FDExecutionPrecisionPolicy | FiniteVolumePrecisionPolicy
+)
+
+
+def _conservative_storage(
+    precision: ConservativePrecisionPolicy,
+    value: Any,
+    /,
+) -> Array:
+    if isinstance(precision, FDExecutionPrecisionPolicy):
+        return precision.field(value)
+    return precision.storage(value)
+
+
+def _conservative_reduction(
+    precision: ConservativePrecisionPolicy,
+    value: Any,
+    /,
+) -> Array:
+    if isinstance(precision, FDExecutionPrecisionPolicy):
+        return precision.accumulation(value)
+    return precision.reduction(value)
+
+
+def _conservative_reduction_dtype(
+    precision: ConservativePrecisionPolicy,
+    /,
+) -> str:
+    if isinstance(precision, FDExecutionPrecisionPolicy):
+        return precision.accumulation_dtype
+    return precision.reduction_dtype
+
+
+def _conservative_storage_dtype(
+    precision: ConservativePrecisionPolicy,
+    /,
+) -> str:
+    if isinstance(precision, FDExecutionPrecisionPolicy):
+        return precision.field_dtype
+    return precision.storage_dtype
+
+
+def _validate_level_state_precision(
+    state: BlockLevelState,
+    precision: FDExecutionPrecisionPolicy,
+    /,
+) -> None:
+    expected = jnp.dtype(precision.field_dtype)
+    if state.values.dtype != expected:
+        raise TypeError(
+            f"FD AMR state has dtype {state.values.dtype}; expected {expected}."
+        )
 
 
 class AMRSubcycleResult(StrictModule):
@@ -29,6 +87,7 @@ class AMRSubcycleResult(StrictModule):
     flux_register: FluxRegister
     substeps: int = eqx.field(static=True)
     temporal_method_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope
 
 
 class ConservativeAMRSubcyclingPlan(StrictModule, NonTrainableState):
@@ -37,6 +96,7 @@ class ConservativeAMRSubcyclingPlan(StrictModule, NonTrainableState):
     refinement_ratio: int = eqx.field(static=True)
     temporal_method_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    precision: ConservativePrecisionPolicy
 
     def __init__(
         self,
@@ -44,20 +104,32 @@ class ConservativeAMRSubcyclingPlan(StrictModule, NonTrainableState):
         /,
         *,
         temporal_method_id: str = "temporal:caller-supplied",
+        precision: ConservativePrecisionPolicy | None = None,
     ):
         ratio = int(refinement_ratio)
         method_id = str(temporal_method_id)
+        precision_ = FiniteVolumePrecisionPolicy() if precision is None else precision
         if ratio <= 1:
             raise ValueError("AMR subcycling refinement ratio must exceed one.")
         if not method_id:
             raise ValueError("temporal_method_id must be non-empty.")
+        if not isinstance(
+            precision_,
+            (FDExecutionPrecisionPolicy, FiniteVolumePrecisionPolicy),
+        ):
+            raise TypeError(
+                "precision must be an FDExecutionPrecisionPolicy or "
+                "FiniteVolumePrecisionPolicy."
+            )
         self.refinement_ratio = ratio
         self.temporal_method_id = method_id
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "conservative-amr-subcycling",
                 "refinement_ratio": ratio,
                 "temporal_method_id": method_id,
+                "precision": precision_.policy_id,
             }
         )
 
@@ -84,22 +156,44 @@ class ConservativeAMRSubcyclingPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "AMR subcycling steps, fluxes, and restriction must be callable."
             )
-        time_ = jnp.asarray(time)
-        dt = jnp.asarray(step_size)
-        coarse = jnp.asarray(coarse_state)
-        fine = jnp.asarray(fine_state)
+        time_ = _conservative_reduction(self.precision, time)
+        dt = _conservative_reduction(self.precision, step_size)
+        coarse = _conservative_storage(self.precision, coarse_state)
+        fine = _conservative_storage(self.precision, fine_state)
         fine_dt = dt / self.refinement_ratio
-        coarse_new = coarse_step(time_, coarse, dt, args)
-        fine_flux_integral = jnp.zeros_like(jnp.asarray(coarse_flux(coarse, args)))
+        coarse_new = _conservative_storage(
+            self.precision,
+            coarse_step(time_, coarse, dt, args),
+        )
+        coarse_flux_value = _conservative_reduction(
+            self.precision,
+            coarse_flux(coarse, args),
+        )
+        fine_flux_integral = jnp.zeros_like(coarse_flux_value)
         fine_time = time_
         fine_new = fine
         for _ in range(self.refinement_ratio):
-            fine_new = fine_step(fine_time, fine_new, fine_dt, args)
-            fine_flux_integral = fine_flux_integral + fine_dt * restrict_flux(
-                fine_flux(fine_new, args)
+            fine_new = _conservative_storage(
+                self.precision,
+                fine_step(fine_time, fine_new, fine_dt, args),
+            )
+            restricted_flux = _conservative_reduction(
+                self.precision,
+                restrict_flux(fine_flux(fine_new, args)),
+            )
+            fine_flux_integral = _conservative_reduction(
+                self.precision,
+                fine_flux_integral + fine_dt * restricted_flux,
             )
             fine_time = fine_time + fine_dt
-        coarse_flux_integral = dt * coarse_flux(coarse_new, args)
+        coarse_flux_integral = _conservative_reduction(
+            self.precision,
+            dt
+            * _conservative_reduction(
+                self.precision,
+                coarse_flux(coarse_new, args),
+            ),
+        )
         register = FluxRegister(
             coarse_flux_integral,
             fine_flux_integral,
@@ -115,13 +209,19 @@ class ConservativeAMRSubcyclingPlan(StrictModule, NonTrainableState):
                 }
             ),
         )
-        coarse_refluxed = register.apply(coarse_new, coarse_volume)
+        coarse_refluxed = register.apply(
+            coarse_new,
+            coarse_volume,
+            accumulation_dtype=_conservative_reduction_dtype(self.precision),
+            output_dtype=_conservative_storage_dtype(self.precision),
+        )
         return AMRSubcycleResult(
             coarse_state=coarse_refluxed,
             fine_state=fine_new,
             flux_register=register,
             substeps=self.refinement_ratio,
             temporal_method_id=self.temporal_method_id,
+            precision_evidence=self.precision.evidence(),
         )
 
 
@@ -129,6 +229,7 @@ class FDRegridResult(StrictModule):
     decision: RefinementDecision
     child_values: Array
     regrid_trace_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope
 
 
 class FDRegridPlan(StrictModule, NonTrainableState):
@@ -138,6 +239,7 @@ class FDRegridPlan(StrictModule, NonTrainableState):
     transfer: AMREntityTransferPlan
     child_offsets: Array
     plan_id: str = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
@@ -145,11 +247,16 @@ class FDRegridPlan(StrictModule, NonTrainableState):
         transfer: AMREntityTransferPlan,
         child_offsets: ArrayLike,
         /,
+        *,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         if not isinstance(refinement, FixedCapacityRefinementPlan) or not isinstance(
             transfer, AMREntityTransferPlan
         ):
             raise TypeError("FD regrid requires refinement and entity-transfer plans.")
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         offsets = np.asarray(child_offsets, dtype=np.int32)
         if offsets.shape != refinement.parent_to_children.shape + (
             len(transfer.axis_entities),
@@ -160,12 +267,14 @@ class FDRegridPlan(StrictModule, NonTrainableState):
         self.refinement = refinement
         self.transfer = transfer
         self.child_offsets = jnp.asarray(offsets)
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "fd-regrid-plan",
                 "refinement": refinement.plan_id,
                 "transfer": transfer.transfer_id,
                 "child_offsets": array_tree_fingerprint(offsets),
+                "precision": precision_.policy_id,
             }
         )
 
@@ -177,17 +286,21 @@ class FDRegridPlan(StrictModule, NonTrainableState):
         threshold: ArrayLike,
         /,
     ) -> FDRegridResult:
+        _validate_level_state_precision(parent_state, self.precision)
+        _validate_level_state_precision(child_state, self.precision)
         decision = self.refinement.decide(
             parent_state.metadata,
             child_state.metadata,
-            indicators,
-            threshold,
+            self.precision.certification(indicators),
+            self.precision.certification(threshold),
         )
-        parent_values = parent_state.safe_values()
-        child_values = child_state.safe_values()
+        parent_values = self.precision.field(parent_state.safe_values())
+        child_values = self.precision.field(child_state.safe_values())
         mapping = self.refinement.parent_to_children
         for parent_slot in range(mapping.shape[0]):
-            prolonged = self.transfer.prolong(parent_values[parent_slot])
+            prolonged = self.precision.field(
+                self.transfer.prolong(parent_values[parent_slot])
+            )
             for child_route in range(mapping.shape[1]):
                 route = mapping[parent_slot, child_route]
                 valid_route = (route >= 0) & (route < child_state.plan.maximum_blocks)
@@ -219,6 +332,7 @@ class FDRegridPlan(StrictModule, NonTrainableState):
             child_values,
             0.0,
         )
+        child_values = self.precision.field(child_values)
         trace_id = canonical_fingerprint(
             {
                 "kind": "fd-regrid-trace",
@@ -231,6 +345,7 @@ class FDRegridPlan(StrictModule, NonTrainableState):
             decision=decision,
             child_values=child_values,
             regrid_trace_id=trace_id,
+            precision_evidence=self.precision.evidence(),
         )
 
 
@@ -340,13 +455,19 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
     hierarchy: BlockHierarchyPlan
     transfers: tuple[AMREntityTransferPlan, ...]
     plan_id: str = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
         hierarchy: BlockHierarchyPlan,
         transfers: Sequence[AMREntityTransferPlan],
         /,
+        *,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         transfers_ = tuple(transfers)
         if (
             not isinstance(hierarchy, BlockHierarchyPlan)
@@ -362,11 +483,13 @@ class FDAMRHierarchyPlan(StrictModule, NonTrainableState):
             raise ValueError("FD AMR transfer ratios must match level plans.")
         self.hierarchy = hierarchy
         self.transfers = transfers_
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "fd-amr-hierarchy-plan",
                 "hierarchy": hierarchy.plan_id,
                 "transfers": [value.transfer_id for value in transfers_],
+                "precision": precision_.policy_id,
             }
         )
 
@@ -385,7 +508,10 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
             raise TypeError("plan must be FDAMRHierarchyPlan.")
         halos = tuple(FDAMRHaloPlan(level) for level in plan.hierarchy.levels)
         subcycling = tuple(
-            ConservativeAMRSubcyclingPlan(level.refinement_ratio)
+            ConservativeAMRSubcyclingPlan(
+                level.refinement_ratio,
+                precision=plan.precision,
+            )
             for level in plan.hierarchy.levels[:-1]
         )
         self.plan = plan
@@ -400,6 +526,10 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def precision_evidence(self):
+        return self.plan.precision.evidence()
+
     def fill_same_level(
         self,
         state: BlockHierarchyState,
@@ -410,6 +540,8 @@ class PreparedFDAMRHierarchy(StrictModule, NonTrainableState):
             or state.plan.plan_id != self.plan.hierarchy.plan_id
         ):
             raise ValueError("FD AMR hierarchy state does not match its plan.")
+        for level in state.levels:
+            _validate_level_state_precision(level, self.plan.precision)
         return tuple(
             halo.fill_same_level(level)
             for halo, level in zip(self.halo_plans, state.levels, strict=True)

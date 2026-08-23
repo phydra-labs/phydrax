@@ -15,6 +15,7 @@ from .._exponential_family import (
     MeanCoordinates,
     NaturalCoordinates,
 )
+from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
 from ..linalg import LinearSolvePlan, LinearSolvePolicy, LinearSolveResult
 from ..metrix import (
@@ -27,11 +28,33 @@ class ExponentialFamilyInformationGeometry(StrictModule):
     """Dually-flat Fisher geometry of one regular exponential family."""
 
     family: AbstractExponentialFamily
+    precision: GeometryPrecisionPolicy
 
-    def __init__(self, family: AbstractExponentialFamily, /):
+    def __init__(
+        self,
+        family: AbstractExponentialFamily,
+        /,
+        *,
+        precision: GeometryPrecisionPolicy | None = None,
+    ):
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
         self.family = family
+        self.precision = precision_
+
+    def _computed_natural(
+        self,
+        natural: NaturalCoordinates,
+        /,
+    ) -> NaturalCoordinates:
+        self.precision.validate_coordinates(natural.values)
+        return NaturalCoordinates(
+            self.precision.compute(natural.values),
+            self.family.signature,
+        )
 
     def fisher_action(
         self,
@@ -39,7 +62,12 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         direction: ArrayLike,
         /,
     ) -> Array:
-        return self.family.fisher_action(natural, direction)
+        computed = self._computed_natural(natural)
+        value = self.family.fisher_action(
+            computed,
+            self.precision.compute(direction),
+        )
+        return self.precision.output(value)
 
     def information_operator(
         self,
@@ -48,17 +76,28 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         *,
         damping: ArrayLike = 0.0,
     ) -> InformationMetricOperator:
-        domain = self.family.natural_domain(natural)
-        if natural.batch_shape:
+        computed = self._computed_natural(natural)
+        domain = self.family.natural_domain(computed)
+        if computed.batch_shape:
             raise ValueError(
                 "information_operator currently requires unbatched coordinates."
             )
         values = jnp.where(domain.valid[..., None], natural.values, jnp.nan)
+
+        def action(direction: Array) -> Array:
+            return self.precision.compute(
+                self.family.fisher_action(
+                    computed,
+                    self.precision.compute(direction),
+                )
+            )
+
         return InformationMetricOperator(
-            lambda direction: self.family.fisher_action(natural, direction),
+            action,
             values,
-            damping=damping,
+            damping=self.precision.compute(damping),
             metric_id=f"fisher:{self.family.signature.family_id}",
+            precision=self.precision,
         )
 
     def fisher_matrix(
@@ -69,7 +108,8 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         maximum_size: int = 256,
     ) -> Array:
         """Materialize a bounded unbatched Fisher matrix."""
-        return self.information_operator(natural).materialize(maximum_size=maximum_size)
+        matrix = self.information_operator(natural).materialize(maximum_size=maximum_size)
+        return self.precision.output(matrix)
 
     def natural_gradient_result(
         self,
@@ -84,7 +124,7 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         if cotangent_.shape != natural.values.shape:
             raise ValueError("Natural-gradient cotangent must match coordinates.")
         return self.information_operator(natural, damping=damping).solve(
-            cotangent_,
+            self.precision.compute(cotangent_),
             policy=policy,
         )
 
@@ -98,15 +138,20 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         policy: LinearSolvePolicy | LinearSolvePlan | None = None,
     ) -> Array:
         """Solve the Fisher duality equation through the linear runtime."""
-        return self.natural_gradient_result(
+        result = self.natural_gradient_result(
             natural,
             cotangent,
             damping=damping,
             policy=policy,
-        ).value
+        )
+        return self.precision.output(result.value)
 
     def dual_coordinates(self, natural: NaturalCoordinates, /) -> MeanCoordinates:
-        return self.family.mean_from_natural(natural)
+        computed = self.family.mean_from_natural(self._computed_natural(natural))
+        return MeanCoordinates(
+            self.precision.output(computed.values),
+            self.family.signature,
+        )
 
     def kl_divergence(
         self,
@@ -114,7 +159,9 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         right: NaturalCoordinates,
         /,
     ) -> Array:
-        return self.family.kl_divergence(left, right)
+        left_ = self._computed_natural(left)
+        right_ = self._computed_natural(right)
+        return self.precision.decision(self.family.kl_divergence(left_, right_))
 
     def exponential_interpolate(
         self,
@@ -125,11 +172,16 @@ class ExponentialFamilyInformationGeometry(StrictModule):
     ) -> NaturalCoordinates:
         self.family.natural_domain(left)
         self.family.natural_domain(right)
-        weight_ = jnp.asarray(weight, dtype=left.values.dtype)
+        self.precision.validate_coordinates(left.values)
+        self.precision.validate_coordinates(right.values)
+        weight_ = self.precision.compute(jnp.asarray(weight, dtype=left.values.dtype))
         if weight_.shape != ():
             raise ValueError("Interpolation weight must be scalar.")
         candidate = NaturalCoordinates(
-            (1.0 - weight_) * left.values + weight_ * right.values,
+            self.precision.output(
+                (1.0 - weight_) * self.precision.compute(left.values)
+                + weight_ * self.precision.compute(right.values)
+            ),
             self.family.signature,
         )
         domain = self.family.natural_domain(candidate)
@@ -143,13 +195,16 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         weight: ArrayLike,
         /,
     ) -> ExponentialFamilyConversionResult:
-        left_mean = self.family.mean_from_natural(left)
-        right_mean = self.family.mean_from_natural(right)
-        weight_ = jnp.asarray(weight, dtype=left.values.dtype)
+        left_mean = self.family.mean_from_natural(self._computed_natural(left))
+        right_mean = self.family.mean_from_natural(self._computed_natural(right))
+        weight_ = self.precision.compute(jnp.asarray(weight, dtype=left.values.dtype))
         if weight_.shape != ():
             raise ValueError("Interpolation weight must be scalar.")
         mean = MeanCoordinates(
-            (1.0 - weight_) * left_mean.values + weight_ * right_mean.values,
+            self.precision.output(
+                (1.0 - weight_) * self.precision.compute(left_mean.values)
+                + weight_ * self.precision.compute(right_mean.values)
+            ),
             self.family.signature,
         )
         return self.family.natural_from_mean(mean)
@@ -164,7 +219,7 @@ class ExponentialFamilyInformationGeometry(StrictModule):
     ) -> InformationMetricOperator:
         if not callable(natural_function):
             raise TypeError("natural_function must be callable.")
-        parameters_ = jnp.asarray(parameters)
+        parameters_ = self.precision.compute(parameters)
         natural = natural_function(parameters_)
         if not isinstance(natural, NaturalCoordinates):
             raise TypeError("natural_function must return NaturalCoordinates.")
@@ -173,8 +228,9 @@ class ExponentialFamilyInformationGeometry(StrictModule):
             lambda value: natural_function(value).values,
             parameters_,
             target,
-            damping=damping,
+            damping=self.precision.compute(damping),
             metric_id=f"pullback-fisher:{self.family.signature.family_id}",
+            precision=self.precision,
         )
 
 

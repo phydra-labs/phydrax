@@ -16,6 +16,13 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve as solve_linear,
+)
 from ._bounds import ProjectedLBFGS
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
@@ -1437,9 +1444,13 @@ def _filter_backtracking(
                     dtype=correction_matrix.dtype,
                 )
             )
-            correction = correction_matrix.T @ jnp.linalg.solve(
-                normal,
-                correction_rhs,
+            correction = (
+                correction_matrix.T
+                @ solve_linear(
+                    LinearSystem(DenseLinearOperator(normal)),
+                    correction_rhs,
+                    policy=LinearSolvePolicy(DenseLU()),
+                ).value
             )
             correction_finite = jnp.all(jnp.isfinite(correction)) & (
                 jnp.linalg.norm(correction)

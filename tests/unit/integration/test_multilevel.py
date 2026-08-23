@@ -207,3 +207,41 @@ def test_multilevel_result_archive_is_checked_and_read_only(tmp_path):
     assert not archive.array("value").flags.writeable
     with pytest.raises(KeyError):
         archive.array("missing")
+
+
+def test_mlmc_precision_ledger_and_archive_preserve_numerical_contract(tmp_path):
+    precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float32",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+        output_dtype="float32",
+    )
+    estimate = phx.integration.integrate(
+        lambda samples, level: samples,
+        _target(),
+        phx.integration.MultilevelMonteCarloPlan(
+            samples_per_level=(64, 64, 64),
+            batch_size=64,
+        ),
+        key=jr.key(29),
+        precision=precision,
+    )
+    ledger = estimate.diagnostics.error_ledger
+
+    assert estimate.value.dtype == jnp.float32
+    assert estimate.error_estimate.dtype == jnp.float64
+    assert estimate.diagnostics.correction_means[0].dtype == jnp.float64
+    assert ledger.roundoff_error.dtype == jnp.float64
+    assert ledger.roundoff_error > 0.0
+    assert ledger.spatial_error is None
+    assert estimate.precision_evidence.evidence_id
+
+    path = phx.integration.write_multilevel_result(
+        tmp_path / "mlmc-result.phx",
+        estimate,
+    )
+    archive = phx.integration.read_multilevel_result(path)
+    assert archive.metadata["precision_evidence"]["evidence_id"] == (
+        estimate.precision_evidence.evidence_id
+    )
+    assert archive.array("ledger/roundoff_error").dtype == np.float64

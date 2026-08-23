@@ -39,6 +39,7 @@ from ._estimates import (
 )
 from ._lowering import component_factor_fields, sum_over
 from ._plans import AdaptiveTrianglePlan
+from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
 
@@ -53,6 +54,7 @@ class _TriangleIntegrand(StrictModule):
     kwargs: frozendict[str, Any]
     label: str = eqx.field(static=True)
     axis: str = eqx.field(static=True)
+    precision: IntegrationPrecisionPolicy
 
     def field(self, coordinates: Array, /) -> cx.Field:
         point_values = dict(self.fixed_points.items())
@@ -66,21 +68,36 @@ class _TriangleIntegrand(StrictModule):
         values = self.integrand(points, key=self.key, **self.kwargs)
         if not isinstance(values, cx.Field):
             raise TypeError("Adaptive triangle integrands must return coordax.Field.")
+        values = cx.Field(
+            self.precision.evaluation(values.data),
+            dims=values.dims,
+        )
         mask, modifier = component_factor_fields(
             self.component,
             points,
             key=self.key,
             kwargs=dict(self.kwargs.items()),
         )
-        result = values * mask * modifier
+        weight = mask * modifier
+        result = cx.Field(
+            self.precision.accumulation((values * weight).data),
+            dims=(values * weight).dims,
+        )
         if self.log_density is not None:
             log_values = self.log_density(points, key=self.key, **self.kwargs)
             if not isinstance(log_values, cx.Field):
                 raise TypeError(
                     "Adaptive triangle log_density must return coordax.Field."
                 )
-            result = result * cx.Field(
-                jnp.exp(jnp.asarray(log_values.data)), dims=log_values.dims
+            density = cx.Field(
+                self.precision.accumulation(
+                    jnp.exp(self.precision.evaluation(log_values.data))
+                ),
+                dims=log_values.dims,
+            )
+            result = cx.Field(
+                self.precision.accumulation((result * density).data),
+                dims=(result * density).dims,
             )
         return result
 
@@ -199,8 +216,10 @@ def _run_triangle_raw(
     log_density: Any | None,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
     label, axis, structure, fixed, initial_triangles = _resolve_triangles(component)
+    initial_triangles = precision.accumulation(initial_triangles)
     initial_count = int(initial_triangles.shape[0])
     if initial_count > plan.max_cells:
         raise ValueError("max_cells cannot hold every initial triangle chart.")
@@ -218,6 +237,7 @@ def _run_triangle_raw(
         kwargs=frozendict(kwargs),
         label=label,
         axis=axis,
+        precision=precision,
     )
     low_data = plan.low_rule.materialize()
     high_data = plan.high_rule.materialize()
@@ -236,23 +256,36 @@ def _run_triangle_raw(
         origin = vertices[0]
         first = vertices[1] - origin
         second = vertices[2] - origin
-        reference = rule_data.points
+        reference = precision.accumulation(rule_data.points)
         physical = origin + reference[:, :1] * first + reference[:, 1:2] * second
         values = callback.field(physical)
         weights = cx.Field(
-            physical_jacobian(vertices) * rule_data.weights,
+            precision.accumulation(
+                physical_jacobian(vertices) * precision.accumulation(rule_data.weights)
+            ),
             dims=(axis,),
         )
         weighted = values * weights
-        return sum_over(weighted, axis)
+        return sum_over(
+            weighted,
+            axis,
+            accumulation_dtype=precision.accumulation_dtype,
+        )
 
     initial_cost = initial_count * (
         int(low_data.weights.shape[0]) + int(high_data.weights.shape[0])
     )
     if plan.max_evaluations is not None and plan.max_evaluations < initial_cost:
         centroid = jnp.mean(initial_triangles[0], axis=0, keepdims=True)
-        prototype = callback.field(centroid) * cx.Field(jnp.ones((1,)), dims=(axis,))
-        reduced = sum_over(prototype, axis)
+        prototype = callback.field(centroid) * cx.Field(
+            precision.accumulation(jnp.ones((1,))),
+            dims=(axis,),
+        )
+        reduced = sum_over(
+            prototype,
+            axis,
+            accumulation_dtype=precision.accumulation_dtype,
+        )
         value_data = jnp.zeros_like(jnp.asarray(reduced.data))
         status = jnp.asarray(
             int(IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED), dtype=jnp.int32
@@ -266,7 +299,7 @@ def _run_triangle_raw(
         diagnostics = AdaptiveTriangleDiagnostics(
             status=status,
             num_evaluations=jnp.asarray(1, dtype=jnp.int32),
-            estimated_error=jnp.asarray(jnp.inf),
+            estimated_error=precision.decision(jnp.asarray(jnp.inf)),
             partition=None,
             low_rule=plan.low_rule.rule_id,
             high_rule=plan.high_rule.rule_id,
@@ -275,7 +308,7 @@ def _run_triangle_raw(
             cx.Field(value_data, dims=reduced.dims),
             status=status,
             num_evaluations=1,
-            error_estimate=jnp.asarray(jnp.inf),
+            error_estimate=precision.decision(jnp.asarray(jnp.inf)),
             error_kind="paired-reference-rule",
             diagnostics=diagnostics,
             provenance=IntegrationProvenance(
@@ -296,7 +329,9 @@ def _run_triangle_raw(
     low_estimates = jax.vmap(
         lambda vertices: jnp.asarray(evaluate_field(vertices, low_data).data)
     )(initial_triangles)
-    initial_errors = jax.vmap(_error_norm)(high_estimates - low_estimates)
+    initial_errors = precision.decision(
+        jax.vmap(_error_norm)(high_estimates - low_estimates)
+    )
     finite = (
         jnp.all(jnp.isfinite(high_estimates))
         & jnp.all(jnp.isfinite(low_estimates))
@@ -320,22 +355,23 @@ def _run_triangle_raw(
         .set(initial_errors)
     )
     active = jnp.arange(capacity) < initial_count
-    total = jnp.sum(high_estimates, axis=0)
-    total_error = jnp.sum(initial_errors)
-    real_dtype = jnp.real(total).dtype
+    total = precision.accumulation(jnp.sum(high_estimates, axis=0))
+    total_error = precision.decision(jnp.sum(initial_errors))
+    decision_dtype = total_error.dtype
     absolute = (
-        jnp.sqrt(jnp.finfo(real_dtype).eps)
+        jnp.sqrt(jnp.finfo(decision_dtype).eps)
         if plan.absolute_tolerance is None
-        else jnp.asarray(plan.absolute_tolerance, dtype=real_dtype)
+        else jnp.asarray(plan.absolute_tolerance, dtype=decision_dtype)
     )
     relative = (
-        jnp.sqrt(jnp.finfo(real_dtype).eps)
+        jnp.sqrt(jnp.finfo(decision_dtype).eps)
         if plan.relative_tolerance is None
-        else jnp.asarray(plan.relative_tolerance, dtype=real_dtype)
+        else jnp.asarray(plan.relative_tolerance, dtype=decision_dtype)
     )
 
     def converged(value: Array, error: Array) -> Array:
-        return error <= absolute + relative * _error_norm(value)
+        magnitude = precision.decision(_error_norm(value))
+        return precision.decision(error) <= absolute + relative * magnitude
 
     done = (~finite) | converged(total, total_error)
     status = jnp.where(
@@ -420,7 +456,9 @@ def _run_triangle_raw(
                 child_low = jax.vmap(
                     lambda child: jnp.asarray(evaluate_field(child, low_data).data)
                 )(children)
-                child_errors = jax.vmap(_error_norm)(child_high - child_low)
+                child_errors = precision.decision(
+                    jax.vmap(_error_norm)(child_high - child_low)
+                )
                 finite_children = (
                     jnp.all(jnp.isfinite(child_high))
                     & jnp.all(jnp.isfinite(child_low))
@@ -434,10 +472,10 @@ def _run_triangle_raw(
                 next_errors = errors___.at[selected].set(child_errors[0])
                 next_errors = next_errors.at[append].set(child_errors[1:])
                 next_active = active___.at[append].set(True)
-                next_total = (
+                next_total = precision.accumulation(
                     total___ - estimates___[selected] + jnp.sum(child_high, axis=0)
                 )
-                next_total_error = (
+                next_total_error = precision.decision(
                     total_error___ - errors___[selected] + jnp.sum(child_errors)
                 )
                 next_count = count___ + 3
@@ -528,9 +566,10 @@ def _ratio_estimate(
     numerator: IntegrationEstimate,
     denominator: IntegrationEstimate,
     plan: AdaptiveTrianglePlan,
+    precision: IntegrationPrecisionPolicy,
     /,
 ) -> IntegrationEstimate:
-    denominator_data = jnp.asarray(denominator.value.data)
+    denominator_data = precision.accumulation(denominator.value.data)
     valid_mass = jnp.all(jnp.isfinite(denominator_data)) & jnp.all(
         denominator_data != 0.0
     )
@@ -540,17 +579,22 @@ def _ratio_estimate(
         jnp.where(numerator.successful, denominator.status, numerator.status),
         int(IntegrationStatus.INVALID_NORMALIZATION_MASS),
     ).astype(jnp.int32)
-    value = numerator.value / denominator.value
-    denominator_norm = jnp.maximum(
-        _error_norm(denominator_data), jnp.finfo(jnp.real(denominator_data).dtype).tiny
+    value_data = precision.accumulation(
+        precision.accumulation(numerator.value.data) / denominator_data
     )
-    error = (
+    value = cx.Field(value_data, dims=numerator.value.dims)
+    denominator_norm = precision.decision(
+        jnp.maximum(
+            _error_norm(denominator_data),
+            jnp.finfo(jnp.real(denominator_data).dtype).tiny,
+        )
+    )
+    error = precision.decision(
         numerator.error_estimate / denominator_norm
-        + _error_norm(numerator.value.data)
+        + precision.decision(_error_norm(numerator.value.data))
         * denominator.error_estimate
         / denominator_norm**2
     )
-    value_data = jnp.asarray(value.data)
     if plan.throw:
         value_data = eqx.error_if(
             value_data,
@@ -586,9 +630,13 @@ def integrate_adaptive_triangle(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Integrate over affine triangle charts with bounded adaptive refinement."""
     callback_kwargs = {} if kwargs is None else kwargs
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ComponentTarget) or isinstance(base.component, ComponentSum):
         raise TypeError("AdaptiveTrianglePlan requires one component-based target.")
@@ -604,6 +652,7 @@ def integrate_adaptive_triangle(
         log_density=log_density,
         key=key,
         kwargs=callback_kwargs,
+        precision=precision_,
     )
     if isinstance(target, DensityTarget) and target.normalized:
         denominator = _run_triangle_raw(
@@ -613,8 +662,9 @@ def integrate_adaptive_triangle(
             log_density=target.log_density,
             key=key,
             kwargs=callback_kwargs,
+            precision=precision_,
         )
-        return _ratio_estimate(numerator, denominator, plan)
+        return _ratio_estimate(numerator, denominator, plan, precision_)
     if isinstance(target, DensityTarget) and base.normalized:
         denominator = _run_triangle_raw(
             1.0,
@@ -623,18 +673,20 @@ def integrate_adaptive_triangle(
             log_density=None,
             key=key,
             kwargs=callback_kwargs,
+            precision=precision_,
         )
-        return _ratio_estimate(numerator, denominator, plan)
+        return _ratio_estimate(numerator, denominator, plan, precision_)
     if isinstance(target, ComponentTarget) and target.normalized:
         denominator = _run_triangle_raw(
             1.0,
-            target.component,
+            base.component,
             plan,
             log_density=None,
             key=key,
             kwargs=callback_kwargs,
+            precision=precision_,
         )
-        return _ratio_estimate(numerator, denominator, plan)
+        return _ratio_estimate(numerator, denominator, plan, precision_)
     return numerator
 
 

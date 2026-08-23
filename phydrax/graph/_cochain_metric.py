@@ -11,6 +11,8 @@ from typing import Literal, TypeAlias
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+
 
 CochainMetricReduction: TypeAlias = Literal[
     "graph_mean",
@@ -29,6 +31,7 @@ def cochain_metric_reduce(
     reduction: CochainMetricReduction = "graph_mean",
     segment_weight: ArrayLike | None = None,
     entity_mask: ArrayLike | None = None,
+    precision: GeometryPrecisionPolicy | None = None,
 ) -> Array:
     """Reduce per-cell scalar values without allowing mesh size to bias cases.
 
@@ -45,9 +48,14 @@ def cochain_metric_reduce(
     count = int(n_graph)
     if count <= 0:
         raise ValueError("n_graph must be positive.")
+    precision_ = GeometryPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, GeometryPrecisionPolicy):
+        raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
 
     value_array = jnp.asarray(values)
-    metric = jnp.asarray(hodge_star, dtype=value_array.real.dtype)
+    precision_.validate_coordinates(value_array)
+    value_array = precision_.compute(value_array)
+    metric = precision_.compute(jnp.asarray(hodge_star, dtype=value_array.real.dtype))
     graph_id = jnp.asarray(graph_index, dtype=jnp.int32)
     if value_array.ndim != 1:
         raise ValueError(f"values must be rank-1, got shape {value_array.shape!r}.")
@@ -70,32 +78,36 @@ def cochain_metric_reduce(
             )
         active = active & (graph_id >= 0)
     safe_graph_id = jnp.where(active, graph_id, 0)
-    active_weight = active.astype(metric.dtype)
+    active_weight = precision_.accumulation(active.astype(metric.dtype))
 
     if segment_weight is None:
-        time_weight = jnp.ones_like(metric)
+        time_weight = precision_.accumulation(jnp.ones_like(metric))
     else:
-        time_weight = jnp.asarray(segment_weight, dtype=metric.dtype)
+        time_weight = precision_.accumulation(
+            jnp.asarray(segment_weight, dtype=metric.dtype)
+        )
         if time_weight.shape != value_array.shape:
             raise ValueError(
                 "segment_weight shape must match values; "
                 f"got {time_weight.shape!r} and {value_array.shape!r}."
             )
 
+    reduced_values = precision_.accumulation(value_array)
+    reduced_metric = precision_.accumulation(metric)
     cells = jnp.bincount(safe_graph_id, weights=active_weight, length=count)
     unweighted_sum = jnp.bincount(
         safe_graph_id,
-        weights=value_array * active_weight,
+        weights=reduced_values * active_weight,
         length=count,
     )
     metric_mass = jnp.bincount(
         safe_graph_id,
-        weights=metric * active_weight,
+        weights=reduced_metric * active_weight,
         length=count,
     )
     metric_sum = jnp.bincount(
         safe_graph_id,
-        weights=metric * value_array * active_weight,
+        weights=reduced_metric * reduced_values * active_weight,
         length=count,
     )
     time_sum = jnp.bincount(
@@ -114,7 +126,9 @@ def cochain_metric_reduce(
 
     per_graph_weight = time_sum / jnp.maximum(cells, 1)
     weighted = jnp.where(valid, per_graph * per_graph_weight, 0)
-    return jnp.sum(weighted) / jnp.maximum(jnp.sum(valid), 1)
+    return precision_.decision(
+        precision_.sum(weighted) / jnp.maximum(precision_.sum(valid), 1)
+    )
 
 
 __all__ = ["CochainMetricReduction", "cochain_metric_reduce"]
