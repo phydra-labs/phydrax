@@ -43,6 +43,7 @@ from ._execution import (
     per_step,
     PerStepIntegration,
 )
+from ._markov import markov_chain_measure
 from ._multilevel import (
     advance_multilevel,
     finalize_multilevel,
@@ -262,6 +263,7 @@ __all__ = [
     "replicate_adaptive_multilevel_splitting",
     "integrate",
     "interval_rule_data",
+    "markov_chain_measure",
     "mapped",
     "materialize",
     "mean_over",

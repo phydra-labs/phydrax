@@ -164,6 +164,7 @@ def _all_capabilities() -> tuple[str, ...]:
         "optimization.unconstrained",
         "optimization.constrained",
         "optimization.proximal",
+        "optimization.bounded-least-squares",
         "optimization.linear-program",
         "optimization.quadratic-program",
         "optimization.conic-program",

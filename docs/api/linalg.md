@@ -1209,6 +1209,23 @@ old and new plan identities.
 
 ::: phydrax.linalg.estimate_operator_action_cost
 
+### Empirical feature geometry
+
+`EmpiricalGramLinearOperator` applies a weighted feature Gram or centered covariance
+without materializing a parameter-by-parameter matrix. Its feature operator maps a
+parameter tangent into an array with one leading sample axis. Zero weights are valid
+masks; weights are normalized internally, and damping is applied in the declared
+source-space pairing.
+
+For centered features `J`, weights `W`, and sample-centering map `C`, the action is
+`J† C† W C J + λI`. The result is an ordinary `AbstractLinearOperator` and therefore
+uses the existing linear-system, minimum-norm, nullspace, planning, and diagnostic
+runtime.
+
+::: phydrax.linalg.EmpiricalGramLinearOperator
+
+---
+
 
 ### Problems, policies, and runtime
 

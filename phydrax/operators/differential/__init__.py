@@ -74,6 +74,12 @@ from ._fractional_ops import (
     riesz_fractional_derivative_gl_mc,
 )
 from ._lie_ops import lie_bracket
+from ._map_ops import (
+    riemannian_map_conformality_residual,
+    riemannian_map_energy,
+    riemannian_map_isometry_residual,
+    riemannian_map_tension,
+)
 from ._riemannian_ops import (
     covariant_derivative,
     covariant_hessian,
@@ -95,6 +101,7 @@ from ._stochastic_estimators import (
     directional_stratonovich_correction,
     estimate_kolmogorov_generator,
     estimate_stochastic_trace,
+    exact_state_divergence,
     factor_hvp_contraction,
     ProbeDistribution,
     stochastic_divergence_samples,
@@ -162,6 +169,7 @@ __all__ = [
     "directional_stratonovich_correction",
     "diffusion_covariance",
     "estimate_kolmogorov_generator",
+    "exact_state_divergence",
     "estimate_stochastic_trace",
     "factor_hvp_contraction",
     "fokker_planck_operator",
@@ -173,6 +181,10 @@ __all__ = [
     "riemannian_div",
     "riemannian_div_tensor",
     "riemannian_grad",
+    "riemannian_map_conformality_residual",
+    "riemannian_map_energy",
+    "riemannian_map_isometry_residual",
+    "riemannian_map_tension",
     "laplacian",
     "linear_elastic_cauchy_stress_2d",
     "linear_elastic_orthotropic_stress_2d",

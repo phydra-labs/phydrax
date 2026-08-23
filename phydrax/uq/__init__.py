@@ -300,6 +300,7 @@ from ._guided_particle import (
     ParticleProposalSample,
 )
 from ._inducing import InducingPointSelection, select_inducing_points
+from ._information_geometry import ExponentialFamilyInformationGeometry
 from ._integration import particle_posterior_measure
 from ._kalman import (
     initialize_kalman_filter,
@@ -457,11 +458,8 @@ from ._particle_genealogical_score import (
     StateSpaceModelScore,
 )
 from ._particle_mcmc import (
-    AbstractParameterProposal,
-    CallableParameterProposal,
     conditional_particle_filter,
     ConditionalParticleFilterResult,
-    GaussianRandomWalkProposal,
     particle_gibbs,
     particle_marginal_metropolis_hastings,
     ParticleGibbsResult,
@@ -864,6 +862,7 @@ __all__ = [
     "ExponentialFamilyDomainResult",
     "ExponentialFamilyEstimateResult",
     "ExponentialFamilyLaw",
+    "ExponentialFamilyInformationGeometry",
     "GammaFamily",
     "GammaPoissonConjugacy",
     "GammaPoissonStatistics",
@@ -1050,11 +1049,8 @@ __all__ = [
     "sample_particle_ancestry_paths",
     "sample_particle_backward_paths",
     "write_particle_filter_checkpoint",
-    "AbstractParameterProposal",
-    "CallableParameterProposal",
     "conditional_particle_filter",
     "ConditionalParticleFilterResult",
-    "GaussianRandomWalkProposal",
     "particle_gibbs",
     "ParticleGibbsResult",
     "particle_marginal_metropolis_hastings",

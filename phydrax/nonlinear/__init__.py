@@ -5,6 +5,7 @@
 """Nonlinear algebraic systems, fixed points, and implicit root calculus."""
 
 from .._bounds import Bounds
+from ._aspin import ASPIN
 from ._causal import (
     CausalLevenbergMarquardt,
     CausalLinearizationMode,
@@ -16,6 +17,14 @@ from ._causal import (
     CausalRecurrenceResult,
     solve_causal_recurrence,
 )
+from ._composition import CompositeNonlinearUpdate, NonlinearCompositionKind
+from ._decomposition import (
+    AbstractNonlinearSchwarz,
+    NonlinearAdditiveSchwarz,
+    NonlinearGaussSeidel,
+    NonlinearMultiplicativeSchwarz,
+    NonlinearSubdomain,
+)
 from ._fas import (
     fas_cycle,
     FASCycleKind,
@@ -26,7 +35,12 @@ from ._fas import (
     FASNonlinearPreconditioner,
     FASResult,
 )
-from ._fixed_point import AndersonAcceleration, FixedPointIteration, PicardIteration
+from ._fixed_point import (
+    AndersonAcceleration,
+    FixedPointIteration,
+    PicardIteration,
+    PicardUpdate,
+)
 from ._implicit import implicit_root, implicit_root_result
 from ._linearization import (
     JacobianMode,
@@ -63,6 +77,7 @@ from ._prepared import (
     refresh_nonlinear,
     solve_prepared_nonlinear,
 )
+from ._richardson import NonlinearRichardson
 from ._types import (
     AbstractNonlinearMethod,
     FixedPointProblem,
@@ -76,12 +91,35 @@ from ._types import (
     NonlinearTermination,
     NonlinearTransformationEvidence,
 )
+from ._updates import (
+    AbstractNonlinearUpdate,
+    apply_prepared_nonlinear_update,
+    FunctionNonlinearUpdate,
+    NewtonStepUpdate,
+    nonlinear_update_status_message,
+    NonlinearUpdateCapabilities,
+    NonlinearUpdateControl,
+    NonlinearUpdateDiagnostics,
+    NonlinearUpdatePlan,
+    NonlinearUpdateProvenance,
+    NonlinearUpdateResult,
+    NonlinearUpdateStatus,
+    plan_nonlinear_update,
+    prepare_nonlinear_update,
+    PreparedNonlinearUpdate,
+    refresh_nonlinear_update,
+)
 from ._vi import (
     complementarity_certificate,
     ComplementarityCertificate,
     ComplementarityFormulation,
     GeneralizedDerivativePolicy,
+    prepare_variational_inequality,
+    PreparedVariationalInequalitySolve,
+    refresh_variational_inequality,
     SemismoothNewton,
+    solve_prepared_variational_inequality,
+    VariationalInequalityFeasibility,
     VariationalInequalityProblem,
     VariationalInequalityResult,
 )
@@ -90,7 +128,10 @@ from ._vi import (
 __all__ = [
     "AbstractNonlinearMethod",
     "AbstractLeftNonlinearPreconditioner",
+    "AbstractNonlinearSchwarz",
     "AbstractNonlinearSystemTransformation",
+    "AbstractNonlinearUpdate",
+    "ASPIN",
     "AndersonAcceleration",
     "AbstractRightNonlinearPreconditioner",
     "Bounds",
@@ -98,6 +139,7 @@ __all__ = [
     "CausalLinearizationMode",
     "CausalLinearizationPolicy",
     "CausalNewton",
+    "CompositeNonlinearUpdate",
     "CausalProbeDistribution",
     "CausalRecurrenceDiagnostics",
     "CausalRecurrenceProblem",
@@ -115,6 +157,7 @@ __all__ = [
     "FixedPointProblem",
     "FunctionLeftNonlinearPreconditioner",
     "FunctionRightNonlinearPreconditioner",
+    "FunctionNonlinearUpdate",
     "GeneralizedDerivativePolicy",
     "JacobianRefreshPolicy",
     "JacobianRefreshStrategy",
@@ -125,35 +168,61 @@ __all__ = [
     "NewtonTrustRegion",
     "NewtonForcingPolicy",
     "NewtonForcingStrategy",
+    "NewtonStepUpdate",
     "NonlinearCapabilities",
     "NonlinearGMRES",
     "NonlinearDiagnostics",
     "NonlinearProvenance",
     "NonlinearTransformationEvidence",
+    "NonlinearAdditiveSchwarz",
+    "NonlinearGaussSeidel",
+    "NonlinearMultiplicativeSchwarz",
+    "NonlinearSubdomain",
+    "NonlinearCompositionKind",
     "NonlinearResult",
+    "NonlinearRichardson",
     "NonlinearStatus",
     "NonlinearSystemProblem",
     "NonlinearTermination",
+    "NonlinearUpdateCapabilities",
+    "NonlinearUpdateControl",
+    "NonlinearUpdateDiagnostics",
+    "NonlinearUpdatePlan",
+    "NonlinearUpdateProvenance",
+    "NonlinearUpdateResult",
+    "NonlinearUpdateStatus",
     "PicardIteration",
+    "PicardUpdate",
     "PreparedJacobian",
     "PreparedNonlinearSolve",
+    "PreparedNonlinearUpdate",
+    "PreparedVariationalInequalitySolve",
     "RightPreconditionedSystem",
     "RootLineSearch",
     "RootTrustRegion",
     "SemismoothNewton",
     "VariationalInequalityProblem",
     "VariationalInequalityResult",
+    "VariationalInequalityFeasibility",
     "complementarity_certificate",
+    "apply_prepared_nonlinear_update",
     "fas_cycle",
     "implicit_root",
     "implicit_root_result",
     "left_precondition",
     "nonlinear_status_message",
+    "nonlinear_update_status_message",
     "prepare_jacobian",
+    "plan_nonlinear_update",
     "prepare_nonlinear",
+    "prepare_nonlinear_update",
+    "prepare_variational_inequality",
     "root",
     "refresh_nonlinear",
+    "refresh_nonlinear_update",
+    "refresh_variational_inequality",
     "right_precondition",
     "solve_prepared_nonlinear",
+    "solve_prepared_variational_inequality",
     "solve_causal_recurrence",
 ]

@@ -138,6 +138,10 @@ from ._mesh import (
     MeshCotangentLaplacian,
     MeshLaplacianSign,
 )
+from ._metric_assembly import (
+    assemble_metric_cochain_complex,
+    MetricCochainAssembly,
+)
 from ._models import (
     DeepSets,
     GAT,
@@ -457,6 +461,8 @@ __all__ = [
     "query_graph_from_edges",
     "radius_graph",
     "radius_query_graph",
+    "assemble_metric_cochain_complex",
+    "MetricCochainAssembly",
     "ContinuousCochainBridge",
     "ContinuousCochainProjection",
     "OrientedCellParameterization",

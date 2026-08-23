@@ -269,6 +269,7 @@ def test_public_phydrax_adapter_declares_every_representative_family():
             "optimization.unconstrained",
             "optimization.constrained",
             "optimization.proximal",
+            "optimization.bounded-least-squares",
             "optimization.linear-program",
             "optimization.quadratic-program",
         }
@@ -290,6 +291,7 @@ def test_capabilities_cli_emits_all_common_solver_families(capsys):
         "optimization.unconstrained",
         "optimization.constrained",
         "optimization.proximal",
+        "optimization.bounded-least-squares",
         "optimization.linear-program",
         "optimization.quadratic-program",
         "optimization.conic-program",

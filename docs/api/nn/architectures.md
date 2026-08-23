@@ -2562,6 +2562,10 @@ optional channel metric. `linearize_operator` fixes every source except the name
 one and returns a matrix-free derivative. Its Hilbert adjoint uses independent
 source/output measures and therefore is distinct from the raw Euclidean
 pullback.
+`OperatorFlowMatchingMetric` applies the same measure to one fixed-query velocity
+event. It rejects per-case query geometry and changed event shape; using it does not
+claim arbitrary-query density or resolution transfer.
+
 
 ---
 
@@ -2574,6 +2578,10 @@ pullback.
 ---
 
 ::: phydrax.nn.operator.training.operator_hilbert_relative_error
+
+---
+
+::: phydrax.nn.operator.training.OperatorFlowMatchingMetric
 
 ---
 

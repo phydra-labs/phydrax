@@ -395,6 +395,11 @@ from ._stencil_evolution import (
     StaggeredAcousticPlan,
     StaggeredAcousticState,
 )
+from ._symplectic import (
+    integrate_stormer_verlet,
+    SeparableHamiltonianResult,
+    stormer_verlet_step,
+)
 from ._temporal_method import (
     NoiseRequirement,
     TemporalEquationForm,
@@ -403,9 +408,36 @@ from ._temporal_method import (
     TemporalSolveEvidence,
 )
 from ._theta import ThetaMethod
+from ._variational_monte_carlo import (
+    evaluate_variational_monte_carlo,
+    read_variational_monte_carlo_checkpoint,
+    solve_variational_monte_carlo,
+    VariationalMonteCarloEstimate,
+    VariationalMonteCarloPolicy,
+    VariationalMonteCarloProblem,
+    VariationalMonteCarloResult,
+    VariationalMonteCarloState,
+    VMC_IMAGINARY_ENERGY,
+    VMC_INVALID_SAMPLES,
+    VMC_LINEAR_FAILURE,
+    VMC_NONFINITE,
+    vmc_status_name,
+    VMC_SUCCESS,
+    VMCStatus,
+    write_variational_monte_carlo_checkpoint,
+)
+from ._variational_tdvp import (
+    solve_variational_tdvp,
+    TDVPMode,
+    VariationalTDVPPolicy,
+    VariationalTDVPResult,
+)
 
 
 __all__ = [
+    "SeparableHamiltonianResult",
+    "integrate_stormer_verlet",
+    "stormer_verlet_step",
     "AbstractDifferentiableDrivingPath",
     "AbstractGeometricSolver",
     "AbstractBSDERegressionBasis",
@@ -701,5 +733,25 @@ __all__ = [
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
     "FunctionalSolver",
+    "solve_variational_tdvp",
+    "TDVPMode",
+    "VariationalTDVPPolicy",
+    "VariationalTDVPResult",
+    "evaluate_variational_monte_carlo",
+    "read_variational_monte_carlo_checkpoint",
+    "solve_variational_monte_carlo",
+    "write_variational_monte_carlo_checkpoint",
+    "VariationalMonteCarloEstimate",
+    "VariationalMonteCarloPolicy",
+    "VariationalMonteCarloProblem",
+    "VariationalMonteCarloResult",
+    "VariationalMonteCarloState",
+    "VMC_IMAGINARY_ENERGY",
+    "VMC_INVALID_SAMPLES",
+    "VMC_LINEAR_FAILURE",
+    "VMC_NONFINITE",
+    "VMC_SUCCESS",
+    "VMCStatus",
+    "vmc_status_name",
     "train_neural_cde",
 ]

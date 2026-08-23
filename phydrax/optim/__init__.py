@@ -5,7 +5,12 @@
 """Phydrax-owned optimization algorithms and workflow configurations."""
 
 from .._model import KFACAffineBlock, KFACLayoutProvider
-from ._bounds import ActiveSetNewton, ProjectedGradient, ProjectedLBFGS
+from ._bounds import (
+    ActiveSetNewton,
+    BoundedNewtonTrustRegion,
+    ProjectedGradient,
+    ProjectedLBFGS,
+)
 from ._composite import (
     composite_least_squares,
     CompositeLeastSquaresProblem,
@@ -45,6 +50,9 @@ from ._iterative import (
 )
 from ._kfac._config import kfac
 from ._least_squares import (
+    AbstractBoundedLeastSquaresMethod,
+    BoundedGaussNewton,
+    BoundedLevenbergMarquardt,
     GaussNewton,
     least_squares,
     LeastSquaresState,
@@ -160,8 +168,18 @@ from ._stochastic import (
     StochasticProblem,
     StochasticResult,
 )
+from ._trust_region import (
+    solve_trust_region_subproblem,
+    SteihaugToint,
+    TrustRegionQuadraticProblem,
+    TrustRegionSubproblemDiagnostics,
+    TrustRegionSubproblemResult,
+    TrustRegionSubproblemStatus,
+)
 from ._unconstrained import (
     BetaMethod,
+    DenseNewtonDogleg,
+    DenseNewtonDoglegState,
     NewtonTrustRegion,
     NewtonTrustRegionState,
     NonlinearConjugateGradient,
@@ -208,6 +226,7 @@ __all__ = [
     "solve_conic_program",
     "solve_prepared_convex_program",
     "solve_linear_program",
+    "AbstractBoundedLeastSquaresMethod",
     "AbstractCompositeLeastSquaresMethod",
     "AbstractProximalFunctional",
     "AbstractProximalMethod",
@@ -225,6 +244,9 @@ __all__ = [
     "AugmentedLagrangian",
     "Bounds",
     "BetaMethod",
+    "BoundedNewtonTrustRegion",
+    "BoundedGaussNewton",
+    "BoundedLevenbergMarquardt",
     "BoxIndicator",
     "CVaRRisk",
     "ChanceConstraint",
@@ -233,6 +255,8 @@ __all__ = [
     "ConsensusADMM",
     "ConstrainedOptimalityCertificate",
     "DifferentialEvolutionSearch",
+    "DenseNewtonDogleg",
+    "DenseNewtonDoglegState",
     "EntropicRisk",
     "ElasticNetFunctional",
     "ExpectationRisk",
@@ -303,9 +327,14 @@ __all__ = [
     "StateDesignProblem",
     "StateDesignResult",
     "StateEquationResult",
+    "SteihaugToint",
     "StochasticAdam",
     "StochasticProblem",
     "StochasticResult",
+    "TrustRegionQuadraticProblem",
+    "TrustRegionSubproblemDiagnostics",
+    "TrustRegionSubproblemResult",
+    "TrustRegionSubproblemStatus",
     "composite_least_squares",
     "proximal_minimize",
     "riemannian_adam",
@@ -316,6 +345,7 @@ __all__ = [
     "solve_quadratic_program",
     "solve_quadratic_program_primal",
     "solve_state_design",
+    "solve_trust_region_subproblem",
     "strong_wolfe_line_search",
     "minimize_stochastic",
 ]

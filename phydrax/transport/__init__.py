@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import dynamic
+from . import continuous, dynamic
 from ._barycenters import (
     BarycenterDiagnostics,
     BarycenterProblemProvenance,
@@ -19,6 +19,7 @@ from ._barycenters import (
 )
 from ._costs import (
     AbstractGroundCost,
+    IntrinsicSquaredDistanceCost,
     PeriodicSquaredEuclideanCost,
     PrecomputedCost,
     SquaredEuclideanCost,
@@ -96,6 +97,19 @@ from ._unbalanced_results import (
 )
 from ._unbalanced_sinkhorn import UnbalancedSinkhorn
 from ._univariate import wasserstein_distance_1d
+from .continuous import (
+    AbstractEndpointInterpolant,
+    ContinuousFlowDensityResult,
+    ContinuousFlowLaw,
+    ContinuousTransport,
+    ContinuousTransportSample,
+    EndpointCouplingSample,
+    EndpointInterpolantEvaluation,
+    estimate_continuous_flow_log_prob,
+    independent_endpoint_coupling,
+    LinearEndpointInterpolant,
+    transport_plan_endpoint_coupling,
+)
 from .dynamic import (
     bridge_path_law_diagnostics,
     bridge_path_log_prob,
@@ -124,6 +138,7 @@ __all__ = [
     "AbstractBalancedTransportPlan",
     "AbstractBalancedTransportSolver",
     "AbstractGroundCost",
+    "AbstractEndpointInterpolant",
     "BarycenterDiagnostics",
     "BarycenterProblemProvenance",
     "BarycenterProvenance",
@@ -134,6 +149,12 @@ __all__ = [
     "BridgeProblemProvenance",
     "BridgeProvenance",
     "ControlledTransitionKernel",
+    "ContinuousFlowDensityResult",
+    "ContinuousFlowLaw",
+    "ContinuousTransport",
+    "ContinuousTransportSample",
+    "EndpointCouplingSample",
+    "EndpointInterpolantEvaluation",
     "DiscreteTransportProblem",
     "FixedSupportBarycenterProblem",
     "FreeSupportBarycenter",
@@ -143,12 +164,14 @@ __all__ = [
     "FiniteBridgeTarget",
     "GaussianPositiveFeatures",
     "KernelApproximationStatus",
+    "IntrinsicSquaredDistanceCost",
     "PeriodicSquaredEuclideanCost",
     "PrecomputedCost",
     "PreparedSinkhornReference",
     "PreparedUnbalancedSinkhornReference",
     "PositiveFeatureSinkhorn",
     "PositiveFeatureSinkhornResult",
+    "LinearEndpointInterpolant",
     "PositiveKernelApproximationDiagnostics",
     "PositiveKernelFactors",
     "SemidiscreteIntegrationDiagnostics",
@@ -184,10 +207,13 @@ __all__ = [
     "TerminalDistributionControlAdapter",
     "fixed_support_barycenter_problem",
     "bridge_path_law_diagnostics",
+    "estimate_continuous_flow_log_prob",
     "bridge_path_log_prob",
     "discrete_problem",
+    "continuous",
     "dynamic",
     "fast_soft_rank",
+    "independent_endpoint_coupling",
     "fast_soft_sort",
     "semidiscrete_problem",
     "sliced_wasserstein_distance",
@@ -216,6 +242,7 @@ __all__ = [
     "unbalanced_problem",
     "unbalanced_sinkhorn_divergence",
     "unbalanced_sinkhorn_divergence_against",
+    "transport_plan_endpoint_coupling",
     "status_message",
     "wasserstein_distance_1d",
 ]

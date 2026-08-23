@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from collections.abc import Callable
 from math import prod
 from typing import Any
@@ -13,10 +12,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-import numpy as np
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._sampling import AbstractProposal
+from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
 from ._particle import (
     bootstrap_particle_filter,
@@ -77,105 +76,6 @@ class ParticleGibbsResult(StrictModule):
     @property
     def movement_rate(self) -> Array:
         return jnp.mean(self.moved.astype(float))
-
-
-class AbstractParameterProposal(StrictModule):
-    """Normalized parameter-space proposal used by particle MCMC."""
-
-    proposal_id: AbstractAttribute[str]
-
-    @abstractmethod
-    def sample(self, key: Key[Array, ""], current: PyTree[Any], /) -> PyTree[Array]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def log_prob(self, proposed: PyTree[Any], current: PyTree[Any], /) -> Array:
-        raise NotImplementedError
-
-
-class GaussianRandomWalkProposal(AbstractParameterProposal):
-    """Isotropic Gaussian random walk over every inexact parameter leaf."""
-
-    scale: float = eqx.field(static=True)
-    proposal_id: str = eqx.field(static=True)
-
-    def __init__(self, scale: float, /, *, proposal_id: str = "gaussian-random-walk"):
-        value = float(scale)
-        if not np.isfinite(value) or value <= 0.0:
-            raise ValueError("scale must be finite and positive.")
-        if not isinstance(proposal_id, str) or not proposal_id:
-            raise ValueError("proposal_id must be a non-empty string.")
-        self.scale = value
-        self.proposal_id = proposal_id
-
-    def sample(self, key, current, /) -> PyTree[Array]:
-        leaves, structure = jax.tree_util.tree_flatten(current)
-        if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
-            raise TypeError("Parameters must be a non-empty PyTree of inexact arrays.")
-        keys = jr.split(key, len(leaves))
-        return structure.unflatten(
-            jnp.asarray(leaf)
-            + self.scale * jr.normal(leaf_key, leaf.shape, dtype=jnp.asarray(leaf).dtype)
-            for leaf, leaf_key in zip(leaves, keys, strict=True)
-        )
-
-    def log_prob(self, proposed, current, /) -> Array:
-        proposed_leaves, proposed_structure = jax.tree_util.tree_flatten(proposed)
-        current_leaves, current_structure = jax.tree_util.tree_flatten(current)
-        if proposed_structure != current_structure:
-            raise ValueError("Proposed and current parameter structures must agree.")
-        dimension = sum(int(leaf.size) for leaf in current_leaves)
-        squared = sum(
-            (
-                jnp.sum(
-                    (
-                        (jnp.asarray(proposed_leaf) - jnp.asarray(current_leaf))
-                        / self.scale
-                    )
-                    ** 2
-                )
-                for proposed_leaf, current_leaf in zip(
-                    proposed_leaves, current_leaves, strict=True
-                )
-            ),
-            jnp.zeros(()),
-        )
-        return -0.5 * (squared + dimension * jnp.log(2.0 * jnp.pi * self.scale**2))
-
-
-class CallableParameterProposal(AbstractParameterProposal):
-    """Normalized user-defined parameter proposal."""
-
-    sample_fn: Callable[[Array, PyTree[Any]], PyTree[Any]] = eqx.field(static=True)
-    log_prob_fn: Callable[[PyTree[Any], PyTree[Any]], ArrayLike] = eqx.field(static=True)
-    proposal_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        sample: Callable[[Array, PyTree[Any]], PyTree[Any]],
-        log_prob: Callable[[PyTree[Any], PyTree[Any]], ArrayLike],
-        /,
-        *,
-        proposal_id: str,
-    ):
-        if not callable(sample) or not callable(log_prob):
-            raise TypeError("sample and log_prob must be callable.")
-        if not isinstance(proposal_id, str) or not proposal_id:
-            raise ValueError("proposal_id must be a non-empty string.")
-        self.sample_fn = sample
-        self.log_prob_fn = log_prob
-        self.proposal_id = proposal_id
-
-    def sample(self, key, current, /) -> PyTree[Array]:
-        proposed = self.sample_fn(key, current)
-        if jax.tree_util.tree_structure(proposed) != jax.tree_util.tree_structure(
-            current
-        ):
-            raise ValueError("Parameter proposal must preserve PyTree structure.")
-        return jax.tree_util.tree_map(jnp.asarray, proposed)
-
-    def log_prob(self, proposed, current, /) -> Array:
-        return jnp.asarray(self.log_prob_fn(proposed, current), dtype=float).reshape(())
 
 
 class ParticleMarginalMetropolisHastingsResult(StrictModule):
@@ -620,7 +520,7 @@ def particle_marginal_metropolis_hastings(
     initial_parameters: PyTree[Any],
     problem: Callable[[PyTree[Any]], StateSpaceProblem],
     log_prior: Callable[[PyTree[Any]], ArrayLike],
-    proposal: AbstractParameterProposal,
+    proposal: AbstractProposal,
     /,
     *,
     num_particles: int,
@@ -632,8 +532,8 @@ def particle_marginal_metropolis_hastings(
     """Run pseudo-marginal Metropolis-Hastings with a particle likelihood."""
     if not callable(problem) or not callable(log_prior):
         raise TypeError("problem and log_prior must be callable.")
-    if not isinstance(proposal, AbstractParameterProposal):
-        raise TypeError("proposal must implement AbstractParameterProposal.")
+    if not isinstance(proposal, AbstractProposal):
+        raise TypeError("proposal must implement AbstractProposal.")
     count = int(num_particles)
     samples_count = int(num_samples)
     warmup_count = int(num_warmup)
@@ -741,11 +641,8 @@ def particle_marginal_metropolis_hastings(
 
 
 __all__ = [
-    "AbstractParameterProposal",
-    "CallableParameterProposal",
     "conditional_particle_filter",
     "ConditionalParticleFilterResult",
-    "GaussianRandomWalkProposal",
     "particle_gibbs",
     "ParticleGibbsResult",
     "particle_marginal_metropolis_hastings",

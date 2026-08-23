@@ -1,10 +1,10 @@
 # Solver
 
-Phydrax has two separate solver paths: functional minimization over physics/data
-terms and direct finite-dimensional integration. Direct solvers cover explicit
-ODE/SDE, differential-algebraic, differentiable controlled, probabilistic ODE,
-Lyapunov, finite-activity jump, hybrid jump-differential, and semidiscrete spatial
-systems.
+Phydrax separates functional minimization over physics/data terms, persistent-chain
+variational Monte Carlo, and direct finite-dimensional integration. Direct solvers
+cover explicit ODE/SDE, differential-algebraic, differentiable controlled,
+probabilistic ODE, Lyapunov, finite-activity jump, hybrid jump-differential, and
+semidiscrete spatial systems.
 
 For a conceptual overview (loss evaluation, exact enforcement, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).
@@ -25,6 +25,12 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   global collocation for future arguments.
 - [Functional solver](functional_solver.md) assembles training terms, evaluation
   terms, exact enforcement, and model-attached losses for optimization.
+- [Variational Monte Carlo](variational_monte_carlo.md) combines persistent Markov
+  chains, connected local observables, centered score geometry, and the existing
+  linear runtime for discrete amplitude optimization.
+- [Variational TDVP](variational_tdvp.md) reuses the same chains, connected
+  observables, and score geometry for fixed-step real- or imaginary-time parameter
+  evolution.
 
 !!! note
     Key notes:
@@ -37,6 +43,12 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
       to take an unbiased fixed-size subset of training terms per optimizer step.
     - `phydrax.optim.kfac(...)` accepts quadratic `ResidualPenalty` terms and freezes
       each active term realization across its gradient, curvature update, and line search.
+    - Use `VariationalMonteCarloProblem` and `solve_variational_monte_carlo` for a
+      discrete connected operator and user-defined log amplitude. The VMC path is not
+      a `FunctionalSolver` optimizer because its target-dependent chains and covariance
+      gradient have a separate state transition.
+    - Use `VariationalTDVPPolicy` and `solve_variational_tdvp` when the same amplitude
+      manifold must evolve under projected Schrödinger or imaginary-time dynamics.
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.
     - Use `DifferentialAlgebraicProblem`, a `TimeGrid`, and `solve_dae` for regular
       fixed-grid or adaptive index-one residuals `F(t, y, ydot, args) = 0`.

@@ -274,6 +274,61 @@ quantum operators preserve JAX tracing and parameter gradients. Include a learne
 Hamiltonian, state, observable, or density factor in `FunctionalSolver.functions` to
 expose its trainable leaves. Identifiability remains a responsibility of the model.
 
+## Discrete variational Monte Carlo
+
+Finite-configuration VMC is separate from `DomainFunction` residual learning. A user
+amplitude model maps one discrete configuration to `LogAmplitude(log_abs, phase)`;
+the sampler targets the real log density `2 * log_abs`, while the phase remains
+available to connected local observables.
+
+`AbstractDiscreteQuantumOperator` fixes the local-estimator convention
+
+$$
+E_{\mathrm{loc}}(x)=\sum_{x'}H_{x,x'}\frac{\psi(x')}{\psi(x)}.
+$$
+
+`connections(x)` returns fixed-capacity connected configurations, `H[x, x']`
+matrix elements, and a validity mask. A downstream fermionic operator is responsible
+for including its ordering signs in those matrix elements. Padded slots are ignored;
+active invalid ratios or nonfinite elements invalidate the estimator.
+
+`VariationalMonteCarloProblem` combines the amplitude model, connected operator,
+fixed `MetropolisHastings` kernel, initial chains, and explicit complex-parameter
+mode. `solve_variational_monte_carlo` preserves chain state across updates, but
+refreshes stored target values after every parameter change. It constructs centered
+score geometry through `EmpiricalGramLinearOperator` and solves the damped SR system
+through the ordinary `phydrax.linalg` runtime.
+
+The parameter modes are mathematically distinct:
+
+- `real`: real trainable coordinates; complex score outputs are represented by real
+  and imaginary feature channels;
+- `holomorphic`: complex coordinates with a declared holomorphic amplitude;
+- `nonholomorphic`: complex model parameters split into independent real coordinates.
+
+`FiniteSignedPermutationSymmetry` defines an immutable finite group of site
+permutations and sign actions together with a unit-modulus one-dimensional character.
+Construction validates identity, uniqueness, closure, and the character
+representation law. `SymmetryProjectedAmplitude` evaluates every group image and
+forms the stable character-weighted amplitude projection without materializing a
+state vector. Translation, reflection, global spin-flip, parity, and momentum sectors
+can therefore wrap a user model without changing the sampler or VMC solver.
+
+`solve_variational_tdvp` reuses this exact sampling and geometry substrate for
+fixed-step real- or imaginary-time evolution. Holomorphic coordinates solve the
+complex Dirac--Frenkel force directly; real and non-holomorphic coordinates use the
+corresponding real/imaginary covariance projections. TDVP records the entire parameter,
+energy, variance, acceptance, velocity, and linear-solve trajectory without claiming
+adaptive time-discretization or exact unitarity.
+
+Samples are correlated. `markov_chain_measure` sets `independent=False`, so integration
+does not manufacture an IID standard error. Training diagnostics record energy,
+variance, imaginary mean residue, acceptance, metric solve status, and update norm.
+A separate frozen-model chain run produces the final estimate.
+
+See the [VMC cookbook](cookbook/quantum_vmc.md) and
+[solver API](api/solver/variational_monte_carlo.md).
+
 ## Scope
 
 The current quantum API intentionally excludes non-Markovian master equations,

@@ -17,6 +17,7 @@ from ._manifold import (
     _finite_residual,
     _real_inner,
     _same_shape,
+    AbstractGeodesicManifold,
     AbstractRiemannianManifold,
 )
 from ._state_geometry import (
@@ -646,7 +647,7 @@ class SpecialOrthogonalManifold(AbstractRiemannianManifold):
         return self.project_tangent(target, vector)
 
 
-class AffineInvariantSPDManifold(AbstractRiemannianManifold):
+class AffineInvariantSPDManifold(AbstractGeodesicManifold):
     """SPD(n) with the affine-invariant metric and exact geodesic transport."""
 
     dimension: int = eqx.field(static=True)
@@ -732,6 +733,28 @@ class AffineInvariantSPDManifold(AbstractRiemannianManifold):
         _same_shape(step, value, "SPD(n) tangent step")
         local = self.state_geometry.to_local(value, step)
         return self.state_geometry.retract(value, local)
+
+    def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        return self.retract(point, tangent)
+
+    def log(self, point: ArrayLike, destination: ArrayLike, /) -> Array:
+        value = self._point(point, "SPD(n) point")
+        target = self._point(destination, "SPD(n) destination")
+        _same_shape(target, value, "SPD(n) destination")
+        local = self.state_geometry.inverse_retract(value, target)
+        return self.state_geometry.from_local(value, local)
+
+    def squared_distance(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        value = self._point(left, "SPD(n) point")
+        target = self._point(right, "SPD(n) destination")
+        _same_shape(target, value, "SPD(n) destination")
+        local = self.state_geometry.inverse_retract(value, target)
+        return jnp.real(jnp.sum(local * local))
 
     def transport(
         self,

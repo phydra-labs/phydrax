@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from math import isfinite
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
@@ -24,6 +24,12 @@ from ._types import (
     NonlinearStatus,
     NonlinearSystemProblem,
     NonlinearTermination,
+)
+from ._updates import (
+    AbstractNonlinearUpdate,
+    apply_prepared_nonlinear_update,
+    prepare_nonlinear_update,
+    PreparedNonlinearUpdate,
 )
 
 
@@ -44,27 +50,33 @@ class _NGMRESRun(StrictModule):
     history_residuals: Array
     history_count: Array
     status: Array
+    prepared_update: PreparedNonlinearUpdate
+    jvp_evaluations: Array
+    vjp_evaluations: Array
+    jacobian_preparations: Array
+    linear_solves: Array
+    linear_iterations: Array
 
 
 class NonlinearGMRES(AbstractNonlinearMethod):
     """Nonlinear-preconditioned residual-minimizing affine acceleration."""
 
-    preconditioner: Callable[[PyTree[Any], Any], PyTree[Any]]
+    update: AbstractNonlinearUpdate
     history: int
     regularization: float
     safeguard_factor: float
 
     def __init__(
         self,
-        preconditioner: Callable[[PyTree[Any], Any], PyTree[Any]],
+        update: AbstractNonlinearUpdate,
         /,
         *,
         history: int = 8,
         regularization: float = 1e-10,
         safeguard_factor: float = 1.0,
     ):
-        if not callable(preconditioner):
-            raise TypeError("preconditioner must be callable.")
+        if not isinstance(update, AbstractNonlinearUpdate):
+            raise TypeError("update must be AbstractNonlinearUpdate.")
         history_ = int(history)
         regularization_ = float(regularization)
         safeguard_ = float(safeguard_factor)
@@ -74,7 +86,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             raise ValueError("regularization must be finite and non-negative.")
         if not isfinite(safeguard_) or safeguard_ < 1.0:
             raise ValueError("safeguard_factor must be finite and at least one.")
-        self.preconditioner = preconditioner
+        self.update = update
         self.history = history_
         self.regularization = regularization_
         self.safeguard_factor = safeguard_
@@ -87,7 +99,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
     def capabilities(self) -> NonlinearCapabilities:
         return NonlinearCapabilities(
             matrix_free=True,
-            prepared_refresh=False,
+            prepared_refresh=True,
             jit=True,
             implicit_differentiation=False,
             nonlinear_preconditioning=True,
@@ -131,6 +143,16 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             & initial_valid
             & (initial_norm <= termination.residual_threshold(initial_norm))
         )
+        prepared_update = prepare_nonlinear_update(
+            problem,
+            initial,
+            self.update,
+            args=args,
+        )
+        prepared_dynamic, prepared_static = eqx.partition(
+            prepared_update,
+            eqx.is_array,
+        )
         run = _NGMRESRun(
             state=initial_coordinates,
             residual=initial_residual,
@@ -147,6 +169,12 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             history_states=history_states,
             history_residuals=history_residuals,
             history_count=jnp.asarray(0, dtype=jnp.int32),
+            prepared_update=prepared_dynamic,
+            jvp_evaluations=jnp.asarray(0, dtype=jnp.int32),
+            vjp_evaluations=jnp.asarray(0, dtype=jnp.int32),
+            jacobian_preparations=jnp.asarray(0, dtype=jnp.int32),
+            linear_solves=jnp.asarray(0, dtype=jnp.int32),
+            linear_iterations=jnp.asarray(0, dtype=jnp.int32),
             status=jnp.where(
                 initial_converged,
                 int(NonlinearStatus.SUCCESS),
@@ -176,16 +204,27 @@ class NonlinearGMRES(AbstractNonlinearMethod):
 
         def body(current):
             state_tree = source.unflatten(current.state)
-            base_tree = self.preconditioner(state_tree, args)
+            combined_prepared = eqx.combine(
+                current.prepared_update,
+                prepared_static,
+            )
+            base_result, next_prepared_update = apply_prepared_nonlinear_update(
+                combined_prepared,
+                state_tree,
+                args=args,
+            )
+            next_prepared_dynamic, _ = eqx.partition(
+                next_prepared_update,
+                eqx.is_array,
+            )
+            base_tree = base_result.state
             base = source.flatten(base_tree)
-            base_residual_tree, base_auxiliary = problem.evaluate(base_tree, args)
+            base_residual_tree = base_result.residual
             base_residual = target.flatten(base_residual_tree)
             base_finite = jnp.all(jnp.isfinite(base)) & jnp.all(
                 jnp.isfinite(base_residual)
             )
-            base_valid = problem.valid(
-                base_tree, base_residual_tree, base_auxiliary, args
-            )
+            base_valid = base_result.applied
 
             indices = jnp.arange(self.history)
             active = indices >= (self.history - current.history_count)
@@ -323,24 +362,39 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 residual_norm=accepted_norm,
                 step_norm=step_norm,
                 iteration=current.iteration + accepted.astype(jnp.int32),
-                residual_evaluations=current.residual_evaluations + 2,
+                residual_evaluations=(
+                    current.residual_evaluations
+                    + base_result.diagnostics.residual_evaluations
+                    + 1
+                ),
                 accepted_steps=current.accepted_steps + accepted.astype(jnp.int32),
                 rejected_steps=current.rejected_steps
                 + rejected_acceleration.astype(jnp.int32)
                 + (~accepted).astype(jnp.int32),
                 domain_failures=current.domain_failures
-                + (
-                    (base_finite & ~base_valid)
-                    | (accelerated_finite & ~accelerated_valid)
-                ).astype(jnp.int32),
+                + base_result.diagnostics.domain_failures
+                + (accelerated_finite & ~accelerated_valid).astype(jnp.int32),
                 nonfinite_trials=current.nonfinite_trials
-                + (~base_finite).astype(jnp.int32)
+                + base_result.diagnostics.nonfinite_trials
                 + (~accelerated_finite).astype(jnp.int32),
                 restarts=current.restarts + rejected_acceleration.astype(jnp.int32),
                 history_states=next_history_states,
                 history_residuals=next_history_residuals,
                 history_count=next_history_count,
                 status=status,
+                prepared_update=next_prepared_dynamic,
+                jvp_evaluations=current.jvp_evaluations,
+                vjp_evaluations=current.vjp_evaluations,
+                jacobian_preparations=(
+                    current.jacobian_preparations
+                    + base_result.diagnostics.jacobian_preparations
+                ),
+                linear_solves=(
+                    current.linear_solves + base_result.diagnostics.linear_solves
+                ),
+                linear_iterations=(
+                    current.linear_iterations + base_result.diagnostics.linear_iterations
+                ),
             )
 
         run = jax.lax.while_loop(condition, body, run)
@@ -387,6 +441,11 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             final_step_norm=run.step_norm,
             iterations=run.iteration,
             residual_evaluations=run.residual_evaluations + 1,
+            jvp_evaluations=run.jvp_evaluations,
+            vjp_evaluations=run.vjp_evaluations,
+            jacobian_preparations=run.jacobian_preparations,
+            linear_solves=run.linear_solves,
+            linear_iterations=run.linear_iterations,
             accepted_steps=run.accepted_steps,
             rejected_steps=run.rejected_steps,
             domain_failures=run.domain_failures
@@ -395,6 +454,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
             ),
             nonfinite_trials=run.nonfinite_trials,
             acceleration_restarts=run.restarts,
+            counts_complete=self.update.capabilities.counts_complete,
         )
         return NonlinearResult(
             state=final_state,
@@ -407,6 +467,7 @@ class NonlinearGMRES(AbstractNonlinearMethod):
                 method_id=self.method_id,
                 derivative_id="residual-affine-model",
                 globalization_id="preconditioner-safeguard",
+                notes=f"update={self.update.update_id}",
             ),
         )
 

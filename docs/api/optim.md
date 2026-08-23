@@ -465,8 +465,11 @@ latter returns `NONFINITE_EVALUATION` while preserving the last accepted point.
 matrix-free Hessian-vector products, the shared linear-solve policy layer,
 Eisenstat--Walker style inexact forcing, and frozen-objective Armijo globalization.
 Indefinite or unusable Newton directions fall back to steepest descent and record that
-decision. `NewtonTrustRegion` instead solves a damped Newton model and updates its
-radius from the actual-to-predicted reduction ratio. `NonlinearConjugateGradient`
+decision. `NewtonTrustRegion` builds a matrix-free Hessian action and solves its
+self-adjoint quadratic model with `SteihaugToint`; negative curvature and trust-boundary
+termination are explicit evidence. It has no dense dimension cap. `DenseNewtonDogleg`
+retains the former bounded-dimension dense eigendecomposition and dogleg route as an
+explicit small-system method. `NonlinearConjugateGradient`
 supports Fletcher--Reeves, Polak--Ribière+, Hestenes--Stiefel+, and Dai--Yuan beta
 rules, with periodic, orthogonality, and lost-descent restarts. Its
 `StrongWolfeLineSearch` reports the Armijo and curvature inequalities independently.
@@ -479,13 +482,20 @@ objective-evaluation counts. Adapter diagnostics therefore set
 `counts_complete=False`, and `maximum_evaluations` is rejected rather than silently
 approximated.
 
-`least_squares` accepts `GaussNewton`, `LevenbergMarquardt`, and
-`FiniteDifferenceGaussNewton`. The differentiated methods use matrix-free Jacobian
+`least_squares` accepts `GaussNewton`, `LevenbergMarquardt`,
+`FiniteDifferenceGaussNewton`, `BoundedGaussNewton`, and
+`BoundedLevenbergMarquardt`. The differentiated methods use matrix-free Jacobian
 products over arbitrary real array PyTrees. Levenberg--Marquardt accepts or rejects
 trial steps by the actual-to-predicted reduction ratio and updates damping accordingly;
 rejected steps do not mutate the accepted iterate. The finite-difference method
 constructs a deterministic coordinate Jacobian, accounts for every residual evaluation,
 and does not advertise implicit differentiation.
+
+Bounds on `NonlinearLeastSquaresProblem` are never converted to residual penalties.
+Unbounded methods reject them. The bounded methods mask the active set, solve a
+matrix-free free-variable Gauss--Newton trust model, project every candidate before
+residual evaluation, and recompute predicted reduction for the actual projected
+displacement.
 
 !!! example
     ```python
@@ -535,10 +545,13 @@ root of an already reduced scalar objective.
 
 `Bounds` materializes scalar or PyTree lower and upper values against the parameter tree,
 broadcasts each bound to its corresponding leaf, and rejects incompatible or inverted
-bounds. `ProjectedGradient`, `ProjectedLBFGS`, and `ActiveSetNewton` all preserve the
-closed box at every accepted iterate. Projected L-BFGS stores curvature only from
-accepted projected steps. Active-set Newton solves over free variables and reports
-active-set size, primal feasibility, complementarity, and direction fallbacks.
+bounds. `ProjectedGradient`, `ProjectedLBFGS`, `ActiveSetNewton`, and
+`BoundedNewtonTrustRegion` all preserve the closed box at every accepted iterate.
+Projected L-BFGS stores curvature only from accepted projected steps. Active-set Newton
+solves over free variables and reports active-set size, primal feasibility,
+complementarity, and direction fallbacks. `BoundedNewtonTrustRegion` uses the shared
+Steihaug--Toint kernel over a masked Hessian action, detects negative curvature, and
+recomputes the local model for the displacement after projection.
 
 `NonlinearConstraint` represents any differentiable residual bounded componentwise by
 `lower <= c(x) <= upper`; equal finite bounds are equalities. `AugmentedLagrangian`
@@ -798,6 +811,26 @@ single-process measurements, not backend-independent performance claims.
 
 ---
 
+::: phydrax.optim.DenseNewtonDogleg
+
+---
+
+::: phydrax.optim.SteihaugToint
+
+---
+
+::: phydrax.optim.TrustRegionQuadraticProblem
+
+---
+
+::: phydrax.optim.solve_trust_region_subproblem
+
+---
+
+::: phydrax.optim.BoundedNewtonTrustRegion
+
+---
+
 ::: phydrax.optim.NonlinearConjugateGradient
 
 ---
@@ -821,6 +854,15 @@ single-process measurements, not backend-independent performance claims.
 ::: phydrax.optim.FiniteDifferenceGaussNewton
 
 ---
+
+::: phydrax.optim.BoundedGaussNewton
+
+---
+
+::: phydrax.optim.BoundedLevenbergMarquardt
+
+---
+
 
 ::: phydrax.optim.ProximalProblem
 
