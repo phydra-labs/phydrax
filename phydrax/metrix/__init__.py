@@ -31,6 +31,11 @@ from ._atlas import (
 )
 from ._atlas_cover import AtlasCover, AtlasOverlap, ChartSupport
 from ._bigraded_forms import bigraded_wedge, BigradedForm, partial, partial_bar
+from ._bosonic_gaussian import (
+    BosonicGaussianChannel,
+    BosonicGaussianState,
+    canonical_commutation_matrix,
+)
 from ._boundary import (
     induced_boundary_density,
     induced_boundary_metric,
@@ -540,5 +545,8 @@ __all__ = [
     "faithful_density_from_generator",
     "principal_purification",
     "uhlmann_alignment",
+    "BosonicGaussianChannel",
+    "BosonicGaussianState",
+    "canonical_commutation_matrix",
     "PatchwiseTensorField",
 ]
