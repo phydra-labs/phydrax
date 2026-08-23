@@ -18,6 +18,13 @@ from ._batches import (
     SeparableIntegrationBatch,
     WeightedSampleBatch,
 )
+from ._calabi_yau import (
+    integrate_projective_samples,
+    projective_measure_target,
+    ProjectiveIntegralResult,
+    ProjectiveMeasureKind,
+    ProjectiveMeasureTarget,
+)
 from ._calibration import calibrate, MeasureCalibrationDiagnostics
 from ._compression import compress, MeasureCompressionDiagnostics
 from ._discrete_support import spatial_measure
@@ -177,6 +184,11 @@ __all__ = [
     "AdaptiveSplittingDiagnostics",
     "AdaptiveSplittingStatus",
     "AdaptiveSplittingEnsembleResult",
+    "ProjectiveIntegralResult",
+    "ProjectiveMeasureKind",
+    "ProjectiveMeasureTarget",
+    "integrate_projective_samples",
+    "projective_measure_target",
     "advance_multilevel",
     "finalize_multilevel",
     "initialize_multilevel",
