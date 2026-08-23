@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._precision import precision_dtype_name
 from ..._strict import StrictModule
 
 
@@ -43,7 +44,9 @@ class FluxRegister(StrictModule):
         if coarse.shape != fine.shape or mask.shape != coarse.shape[: mask.ndim]:
             raise ValueError("Flux register coarse/fine/mask shapes must align.")
         if orientation_ not in (-1, 1) or ratio <= 0:
-            raise ValueError("Flux-register orientation and refinement ratio are invalid.")
+            raise ValueError(
+                "Flux-register orientation and refinement ratio are invalid."
+            )
         coarse = eqx.error_if(
             coarse,
             jnp.any(~jnp.isfinite(coarse)) | jnp.any(~jnp.isfinite(fine)),
@@ -62,6 +65,8 @@ class FluxRegister(StrictModule):
                     "mask_shape": list(mask.shape),
                     "orientation": orientation_,
                     "refinement_ratio": ratio,
+                    "dtype": coarse.dtype.name,
+                    "fine_dtype": fine.dtype.name,
                 }
             )
             if register_id is None
@@ -85,9 +90,20 @@ class FluxRegister(StrictModule):
         difference = self.orientation * (self.fine_flux - self.coarse_flux)
         return jnp.where(mask, difference, 0.0)
 
-    def correction(self, cell_volume: ArrayLike, /) -> Array:
-        volume = jnp.asarray(cell_volume)
-        mismatch = self.mismatch()
+    def correction(
+        self,
+        cell_volume: ArrayLike,
+        /,
+        *,
+        accumulation_dtype: object | None = None,
+    ) -> Array:
+        dtype = (
+            None
+            if accumulation_dtype is None
+            else jnp.dtype(precision_dtype_name(accumulation_dtype))
+        )
+        volume = jnp.asarray(cell_volume, dtype=dtype)
+        mismatch = jnp.asarray(self.mismatch(), dtype=dtype)
         if volume.shape != mismatch.shape[: volume.ndim]:
             raise ValueError("Cell volume must align with reflux correction.")
         volume = eqx.error_if(
@@ -98,12 +114,30 @@ class FluxRegister(StrictModule):
         reshape = volume.shape + (1,) * (mismatch.ndim - volume.ndim)
         return mismatch / volume.reshape(reshape)
 
-    def apply(self, coarse_state: ArrayLike, cell_volume: ArrayLike, /) -> Array:
+    def apply(
+        self,
+        coarse_state: ArrayLike,
+        cell_volume: ArrayLike,
+        /,
+        *,
+        accumulation_dtype: object | None = None,
+        output_dtype: object | None = None,
+    ) -> Array:
         state = jnp.asarray(coarse_state)
-        correction = self.correction(cell_volume)
+        if accumulation_dtype is not None:
+            state = state.astype(jnp.dtype(precision_dtype_name(accumulation_dtype)))
+        correction = self.correction(
+            cell_volume,
+            accumulation_dtype=accumulation_dtype,
+        )
         if state.shape != correction.shape:
             raise ValueError("Coarse state and reflux correction must align.")
-        return state + correction
+        result = state + correction
+        return (
+            result
+            if output_dtype is None
+            else result.astype(jnp.dtype(precision_dtype_name(output_dtype)))
+        )
 
 
 __all__ = ["FluxRegister"]

@@ -15,7 +15,17 @@ from jaxtyping import Array, PyTree
 
 from .._linear_refresh import LinearRefreshState
 from .._strict import StrictModule
-from ..linalg import FunctionLinearOperator, OperatorProperties, PyTreeSpace
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FunctionLinearOperator,
+    HermitianSpectrum,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    PyTreeSpace,
+    solve as solve_linear,
+)
 from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._globalization import (
     strong_wolfe_line_search,
@@ -713,11 +723,16 @@ class DenseNewtonDogleg(AbstractScalarIterativeMethod):
         def trust_region_step(_):
             hessian = jax.hessian(flat_objective)(flat_parameters)
             hessian = 0.5 * (hessian + hessian.T)
-            eigenvalues = jnp.linalg.eigvalsh(hessian)
-            positive_definite = jnp.all(jnp.isfinite(eigenvalues)) & (
+            spectrum = HermitianSpectrum(hessian)
+            eigenvalues = spectrum.eigenvalues
+            positive_definite = spectrum.valid & (
                 jnp.min(eigenvalues) >= self.minimum_curvature
             )
-            newton_direction = jnp.linalg.solve(hessian, -flat_gradient)
+            newton_direction = solve_linear(
+                LinearSystem(DenseLinearOperator(hessian)),
+                -flat_gradient,
+                policy=LinearSolvePolicy(DenseLU()),
+            ).value
             newton_usable = positive_definite & jnp.all(jnp.isfinite(newton_direction))
             gradient_squared = jnp.vdot(flat_gradient, flat_gradient).real
             gradient_norm = jnp.sqrt(gradient_squared)

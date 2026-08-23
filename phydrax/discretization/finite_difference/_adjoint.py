@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._precision import FDExecutionPrecisionPolicy
 
 
 FDCheckpointingMode: TypeAlias = Literal["full", "recompute"]
@@ -56,6 +57,7 @@ class FDActionAdjointPlan(StrictModule):
 
     action: Callable[..., Array]
     action_id: str = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
@@ -63,9 +65,13 @@ class FDActionAdjointPlan(StrictModule):
         /,
         *,
         action_id: str | None = None,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         if not callable(action):
             raise TypeError("FD adjoint action must be callable.")
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         identifier = (
             canonical_fingerprint({"kind": "fd-action-adjoint", "action": repr(action)})
             if action_id is None
@@ -75,6 +81,7 @@ class FDActionAdjointPlan(StrictModule):
             raise ValueError("action_id must be non-empty.")
         self.action = action
         self.action_id = identifier
+        self.precision = precision_
 
     def transpose(
         self,
@@ -83,7 +90,7 @@ class FDActionAdjointPlan(StrictModule):
         /,
     ) -> tuple[Any, ...]:
         output, pullback = jax.vjp(self.action, *primals)
-        cotangent_ = jnp.asarray(cotangent)
+        cotangent_ = self.precision.field(cotangent)
         if cotangent_.shape != output.shape:
             raise ValueError("FD adjoint cotangent must match action output shape.")
         return pullback(cotangent_)
@@ -101,20 +108,29 @@ class FDActionAdjointPlan(StrictModule):
         index = int(tangent_index)
         if index < 0 or index >= len(primals):
             raise ValueError("tangent_index is outside the action primals.")
-        tangent_ = jnp.asarray(tangent)
+        tangent_ = self.precision.field(tangent)
         tangents = tuple(
             tangent_ if position == index else jax.tree.map(jnp.zeros_like, primal)
             for position, primal in enumerate(primals)
         )
         output, forward = jax.jvp(self.action, primals, tangents)
-        cotangent_ = jnp.asarray(cotangent)
+        cotangent_ = self.precision.field(cotangent)
         if cotangent_.shape != output.shape:
             raise ValueError("FD adjoint test cotangent must match action output shape.")
         pullback = self.transpose(primals, cotangent_)[index]
-        left = jnp.vdot(cotangent_, forward)
-        right = jnp.vdot(tangent_, pullback)
+        accumulation_dtype = jnp.dtype(self.precision.accumulation_dtype)
+        left = jnp.vdot(
+            cotangent_.astype(accumulation_dtype),
+            jnp.asarray(forward, dtype=accumulation_dtype),
+        )
+        right = jnp.vdot(
+            tangent_.astype(accumulation_dtype),
+            jnp.asarray(pullback, dtype=accumulation_dtype),
+        )
         scale = jnp.maximum(1.0, jnp.maximum(jnp.abs(left), jnp.abs(right)))
-        residual = float(np.asarray(jnp.abs(left - right) / scale))
+        residual = float(
+            np.asarray(self.precision.certification(jnp.abs(left - right) / scale))
+        )
         return FDAdjointIdentityReport(
             residual,
             tolerance,
@@ -127,6 +143,7 @@ class FDTimeAdjointResult(StrictModule):
     loss: Array
     initial_gradient: Array
     parameter_gradient: PyTree[Array]
+    precision_evidence: Any = eqx.field(static=True)
 
 
 class CheckpointedFDAdjointPlan(StrictModule):
@@ -135,6 +152,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
     step: Callable[[Array, Array, Array, Any], Array]
     steps: int = eqx.field(static=True)
     checkpointing: FDCheckpointingMode = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -144,6 +162,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
         /,
         *,
         checkpointing: FDCheckpointingMode = "recompute",
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         count = int(steps)
         if (
@@ -156,15 +175,20 @@ class CheckpointedFDAdjointPlan(StrictModule):
             )
         ):
             raise ValueError("FD adjoint step/count/checkpointing is invalid.")
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         self.step = step
         self.steps = count
         self.checkpointing = checkpointing
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "checkpointed-fd-adjoint",
                 "step": repr(step),
                 "steps": count,
                 "checkpointing": checkpointing,
+                "precision": precision_.policy_id,
             }
         )
 
@@ -176,13 +200,15 @@ class CheckpointedFDAdjointPlan(StrictModule):
         step_size: ArrayLike,
         /,
     ) -> Array:
-        initial = jnp.asarray(initial_state)
+        initial = self.precision.field(initial_state)
         time_ = jnp.asarray(time)
         dt = jnp.asarray(step_size)
         indices = jnp.arange(self.steps)
 
         def body(state: Array, index: Array):
-            next_state = self.step(time_ + index * dt, state, dt, parameters)
+            next_state = self.precision.field(
+                self.step(time_ + index * dt, state, dt, parameters)
+            )
             return next_state, None
 
         selected_body = (
@@ -222,6 +248,7 @@ class CheckpointedFDAdjointPlan(StrictModule):
             loss=loss_value,
             initial_gradient=gradients[0],
             parameter_gradient=gradients[1],
+            precision_evidence=self.precision.evidence(),
         )
 
 

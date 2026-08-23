@@ -14,6 +14,7 @@ from jax import core as jax_core
 from jaxtyping import Array, PyTree
 
 from .._linear_refresh import LinearRefreshState, prepare_refresh_state
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled,
@@ -83,9 +84,35 @@ def _usable_linear_status(status: Any, /) -> Array:
     )
 
 
-def _space_norm(space, vector: PyTree[Any], /) -> Array:
-    squared = jnp.real(space.inner(vector, vector))
-    return jnp.sqrt(jnp.maximum(squared, 0.0))
+def _space_inner(
+    space,
+    left: PyTree[Any],
+    right: PyTree[Any],
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    return precision.inner(space, left, right)
+
+
+def _space_norm(
+    space,
+    vector: PyTree[Any],
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    return precision.norm(space, vector)
+
+
+def _tree_cast_like(
+    value: PyTree[Any],
+    reference: PyTree[Any],
+    /,
+) -> PyTree[Array]:
+    return jax.tree.map(
+        lambda item, template: jnp.asarray(item, dtype=template.dtype),
+        value,
+        reference,
+    )
 
 
 def _bound_space(
@@ -450,10 +477,16 @@ def _root_line_search(
     maximum_evaluations: Array,
     args: Any,
     policy: RootLineSearch,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> _SearchResult:
     merit = 0.5 * jnp.real(
-        _bound_space(problem.residual_space, "residual").inner(residual, residual)
+        _space_inner(
+            _bound_space(problem.residual_space, "residual"),
+            residual,
+            residual,
+            precision,
+        )
     )
     scalar_dtype = merit.dtype
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
@@ -483,15 +516,21 @@ def _root_line_search(
         ) = carry
 
         def attempt(__):
-            candidate = tree_add_scaled(state, direction, rate)
+            candidate = _tree_cast_like(
+                tree_add_scaled(state, direction, rate),
+                state,
+            )
             candidate_residual, candidate_auxiliary = problem.evaluate(candidate, args)
             finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
             valid = problem.valid(
                 candidate, candidate_residual, candidate_auxiliary, args
             )
             candidate_merit = 0.5 * jnp.real(
-                _bound_space(problem.residual_space, "residual").inner(
-                    candidate_residual, candidate_residual
+                _space_inner(
+                    _bound_space(problem.residual_space, "residual"),
+                    candidate_residual,
+                    candidate_residual,
+                    precision,
                 )
             )
             sufficient = candidate_merit <= (
@@ -548,24 +587,38 @@ def _dogleg_step(
     newton_direction: PyTree[Any],
     cauchy_direction: PyTree[Any],
     radius: Array,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> tuple[PyTree[Array], Array]:
-    newton_norm = jnp.sqrt(
-        jnp.maximum(jnp.real(state_space.inner(newton_direction, newton_direction)), 0.0)
+    newton_norm = _space_norm(state_space, newton_direction, precision)
+    cauchy_norm = _space_norm(state_space, cauchy_direction, precision)
+    scaled_cauchy = tree_scale(
+        radius / jnp.maximum(cauchy_norm, 1e-30),
+        cauchy_direction,
     )
-    cauchy_norm = jnp.sqrt(
-        jnp.maximum(jnp.real(state_space.inner(cauchy_direction, cauchy_direction)), 0.0)
-    )
-    scaled_cauchy = tree_scale(radius / jnp.maximum(cauchy_norm, 1e-30), cauchy_direction)
+    scaled_cauchy = _tree_cast_like(scaled_cauchy, cauchy_direction)
     difference = tree_add_scaled(newton_direction, cauchy_direction, -1.0)
-    quadratic = jnp.real(state_space.inner(difference, difference))
-    linear = 2.0 * jnp.real(state_space.inner(cauchy_direction, difference))
-    constant = jnp.real(state_space.inner(cauchy_direction, cauchy_direction)) - radius**2
+    quadratic = jnp.real(_space_inner(state_space, difference, difference, precision))
+    linear = 2.0 * jnp.real(
+        _space_inner(state_space, cauchy_direction, difference, precision)
+    )
+    constant = (
+        jnp.real(
+            _space_inner(
+                state_space,
+                cauchy_direction,
+                cauchy_direction,
+                precision,
+            )
+        )
+        - radius**2
+    )
     discriminant = jnp.maximum(linear**2 - 4.0 * quadratic * constant, 0.0)
     interpolation = (-linear + jnp.sqrt(discriminant)) / jnp.maximum(
         2.0 * quadratic, 1e-30
     )
     dogleg = tree_add_scaled(cauchy_direction, difference, interpolation)
+    dogleg = _tree_cast_like(dogleg, newton_direction)
     use_newton = newton_norm <= radius
     use_scaled_cauchy = (~use_newton) & (cauchy_norm >= radius)
     step = tree_where(
@@ -573,6 +626,7 @@ def _dogleg_step(
         newton_direction,
         tree_where(use_scaled_cauchy, scaled_cauchy, dogleg),
     )
+    step = _tree_cast_like(step, newton_direction)
     return step, ~use_newton
 
 
@@ -588,10 +642,16 @@ def _root_trust_region(
     maximum_evaluations: Array,
     args: Any,
     policy: RootTrustRegion,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> _TrustResult:
     merit = 0.5 * jnp.real(
-        _bound_space(problem.residual_space, "residual").inner(residual, residual)
+        _space_inner(
+            _bound_space(problem.residual_space, "residual"),
+            residual,
+            residual,
+            precision,
+        )
     )
     scalar_dtype = merit.dtype
     zero_step = jax.tree.map(jnp.zeros_like, newton_direction)
@@ -628,6 +688,7 @@ def _root_trust_region(
                 newton_direction,
                 cauchy_direction,
                 current_radius,
+                precision,
             )
             model_residual = jax.tree.map(
                 lambda value, change: value + change,
@@ -635,19 +696,28 @@ def _root_trust_region(
                 jacobian.mv(step),
             )
             predicted = merit - 0.5 * jnp.real(
-                _bound_space(problem.residual_space, "residual").inner(
-                    model_residual, model_residual
+                _space_inner(
+                    _bound_space(problem.residual_space, "residual"),
+                    model_residual,
+                    model_residual,
+                    precision,
                 )
             )
-            candidate = tree_add_scaled(state, step, 1.0)
+            candidate = _tree_cast_like(
+                tree_add_scaled(state, step, 1.0),
+                state,
+            )
             candidate_residual, candidate_auxiliary = problem.evaluate(candidate, args)
             finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
             valid = problem.valid(
                 candidate, candidate_residual, candidate_auxiliary, args
             )
             actual = merit - 0.5 * jnp.real(
-                _bound_space(problem.residual_space, "residual").inner(
-                    candidate_residual, candidate_residual
+                _space_inner(
+                    _bound_space(problem.residual_space, "residual"),
+                    candidate_residual,
+                    candidate_residual,
+                    precision,
                 )
             )
             ratio = actual / jnp.maximum(
@@ -721,6 +791,7 @@ def _initial_root_state(
     forcing_policy: NewtonForcingPolicy,
     trust_radius: float,
     args: Any,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]:
     state = problem.validate_state(initial_state)
@@ -729,14 +800,12 @@ def _initial_root_state(
         raise ValueError("Newton methods require a square Jacobian coordinate map.")
     residual = prepared_jacobian.residual
     problem = problem.bind_spaces(state, residual)
-    residual_norm = jnp.sqrt(
-        jnp.maximum(
-            jnp.real(
-                _bound_space(problem.residual_space, "residual").inner(residual, residual)
-            ),
-            0.0,
-        )
-    )
+    state_space = _bound_space(problem.state_space, "state")
+    residual_space = _bound_space(problem.residual_space, "residual")
+    precision.validate_trees(state, residual)
+    precision.validate_accumulation_space(state_space)
+    precision.validate_accumulation_space(residual_space)
+    residual_norm = _space_norm(residual_space, residual, precision)
     linear_operator = _jacobian_solve_operator(prepared_jacobian.operator)
     prepared_linear, refresh_state = prepare_refresh_state(
         LinearSystem(linear_operator),
@@ -1087,18 +1156,13 @@ def _package_result(
     refresh_policy: JacobianRefreshPolicy,
     globalization_id: str,
     args: Any,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> NonlinearResult:
     residual = run.residual
     auxiliary = run.auxiliary
-    residual_norm = jnp.sqrt(
-        jnp.maximum(
-            jnp.real(
-                _bound_space(problem.residual_space, "residual").inner(residual, residual)
-            ),
-            0.0,
-        )
-    )
+    residual_space = _bound_space(problem.residual_space, "residual")
+    residual_norm = _space_norm(residual_space, residual, precision)
     finite = tree_allfinite(state) & tree_allfinite(residual)
     valid = problem.valid(state, residual, auxiliary, args)
     certified = (
@@ -1151,7 +1215,7 @@ def _package_result(
         final_linear_converged=run.final_linear_converged,
     )
     return NonlinearResult(
-        state=state,
+        state=jax.tree.map(precision.output, state),
         residual=residual,
         auxiliary=auxiliary,
         status=status,
@@ -1162,11 +1226,13 @@ def _package_result(
             derivative_id=jacobian_policy.policy_id,
             globalization_id=globalization_id,
             linear_plan_id=run.refresh_state.template.plan.plan_id,
+            precision_policy_id=precision.policy_id,
             notes=(
                 f"linear-method={run.refresh_state.template.plan.method};"
                 f"linear-backend={run.refresh_state.template.plan.backend}"
             ),
         ),
+        precision_evidence=precision.evidence_for(state, residual),
     )
 
 
@@ -1233,6 +1299,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
         *,
         termination: NonlinearTermination,
         args: Any = None,
+        precision: NonlinearPrecisionPolicy | None = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
         _return_internal: bool = False,
@@ -1241,15 +1308,19 @@ class NewtonKrylov(AbstractNonlinearMethod):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be a NonlinearTermination.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
         if _prepared_start is None:
             problem, state, run, prepared_jacobian = _initial_root_state(
                 problem,
                 initial_state,
                 self.jacobian_policy,
-                self.linear_policy,
+                precision_.bind_linear(self.linear_policy),
                 self.forcing_policy,
                 jnp.nan,
                 args,
+                precision_,
             )
         else:
             problem, state, run, prepared_jacobian = _prepared_start
@@ -1266,6 +1337,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 self.jacobian_refresh,
                 "residual-armijo",
                 args,
+                precision_,
             )
             return (result, state, run, prepared_jacobian) if _return_internal else result
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
@@ -1325,7 +1397,9 @@ class NewtonKrylov(AbstractNonlinearMethod):
                     refreshed, selected_jacobian.auxiliary, auxiliary
                 )
                 current_residual_norm = _space_norm(
-                    problem.residual_space, current_residual
+                    problem.residual_space,
+                    current_residual,
+                    precision_,
                 )
                 refresh_evaluations = refreshed.astype(jnp.int32) * (
                     selected_jacobian.residual_evaluations
@@ -1348,8 +1422,11 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 )
                 image = selected_jacobian.operator.mv(direction)
                 directional = jnp.real(
-                    _bound_space(problem.residual_space, "residual").inner(
-                        current_residual, image
+                    _space_inner(
+                        _bound_space(problem.residual_space, "residual"),
+                        current_residual,
+                        image,
+                        precision_,
                     )
                 )
                 usable = (
@@ -1374,6 +1451,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                         search_budget,
                         args,
                         self.line_search,
+                        precision_,
                     )
 
                 def failed_direction(__):
@@ -1381,7 +1459,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
                         state=current,
                         residual=current_residual,
                         auxiliary=current_auxiliary,
-                        rate=jnp.asarray(0.0, dtype=current_residual_norm.dtype),
+                        rate=jnp.asarray(0.0, dtype=directional.dtype),
                         evaluations=jnp.asarray(0, dtype=jnp.int32),
                         rejections=jnp.asarray(0, dtype=jnp.int32),
                         accepted=jnp.asarray(False),
@@ -1396,12 +1474,20 @@ class NewtonKrylov(AbstractNonlinearMethod):
                     failed_direction,
                     operand=None,
                 )
-                step_norm = search.rate * _space_norm(problem.state_space, direction)
-                candidate_norm = _space_norm(problem.residual_space, search.residual)
+                step_norm = search.rate * _space_norm(
+                    problem.state_space,
+                    direction,
+                    precision_,
+                )
+                candidate_norm = _space_norm(
+                    problem.residual_space,
+                    search.residual,
+                    precision_,
+                )
                 stagnated = search.accepted & (
                     step_norm
                     <= termination.step_threshold(
-                        _space_norm(problem.state_space, current)
+                        _space_norm(problem.state_space, current, precision_)
                     )
                 )
                 diverged = candidate_norm > (
@@ -1540,10 +1626,14 @@ class NewtonKrylov(AbstractNonlinearMethod):
                     recycling=recycling,
                     final_linear_status=linear_result.status,
                     final_linear_rank=linear_result.diagnostics.rank,
-                    final_linear_condition_estimate=(
-                        linear_result.diagnostics.condition_estimate
+                    final_linear_condition_estimate=jnp.asarray(
+                        linear_result.diagnostics.condition_estimate,
+                        dtype=current_run.final_linear_condition_estimate.dtype,
                     ),
-                    final_linear_residual_norm=linear_result.diagnostics.residual_norm,
+                    final_linear_residual_norm=jnp.asarray(
+                        linear_result.diagnostics.residual_norm,
+                        dtype=current_run.final_linear_residual_norm.dtype,
+                    ),
                     final_linear_converged=linear_result.diagnostics.converged,
                 )
                 return (
@@ -1573,6 +1663,7 @@ class NewtonKrylov(AbstractNonlinearMethod):
             self.jacobian_refresh,
             "residual-armijo",
             args,
+            precision_,
         )
         return (result, state, run, jacobian) if _return_internal else result
 
@@ -1640,6 +1731,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
         *,
         termination: NonlinearTermination,
         args: Any = None,
+        precision: NonlinearPrecisionPolicy | None = None,
         _prepared_start: tuple[NonlinearSystemProblem, PyTree[Array], _RootState, Any]
         | None = None,
         _return_internal: bool = False,
@@ -1648,15 +1740,19 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
             raise TypeError("problem must be a NonlinearSystemProblem.")
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be a NonlinearTermination.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
         if _prepared_start is None:
             problem, state, run, prepared_jacobian = _initial_root_state(
                 problem,
                 initial_state,
                 self.jacobian_policy,
-                self.linear_policy,
+                precision_.bind_linear(self.linear_policy),
                 self.forcing_policy,
                 self.trust_region.initial_radius,
                 args,
+                precision_,
             )
         else:
             problem, state, run, prepared_jacobian = _prepared_start
@@ -1673,6 +1769,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 self.jacobian_refresh,
                 "dogleg-residual-trust-region",
                 args,
+                precision_,
             )
             return (result, state, run, prepared_jacobian) if _return_internal else result
         dynamic_run, static_run = eqx.partition(run, eqx.is_array)
@@ -1732,7 +1829,9 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                     refreshed, selected_jacobian.auxiliary, auxiliary
                 )
                 current_residual_norm = _space_norm(
-                    problem.residual_space, current_residual
+                    problem.residual_space,
+                    current_residual,
+                    precision_,
                 )
                 refresh_evaluations = refreshed.astype(jnp.int32) * (
                     selected_jacobian.residual_evaluations
@@ -1756,22 +1855,38 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 gradient = selected_jacobian.operator.adjoint_mv(current_residual)
                 gradient_image = selected_jacobian.operator.mv(gradient)
                 gradient_scale = jnp.real(
-                    _bound_space(problem.state_space, "state").inner(gradient, gradient)
+                    _space_inner(
+                        _bound_space(problem.state_space, "state"),
+                        gradient,
+                        gradient,
+                        precision_,
+                    )
                 ) / jnp.maximum(
                     jnp.real(
-                        _bound_space(problem.residual_space, "residual").inner(
-                            gradient_image, gradient_image
+                        _space_inner(
+                            _bound_space(problem.residual_space, "residual"),
+                            gradient_image,
+                            gradient_image,
+                            precision_,
                         )
                     ),
                     1e-30,
                 )
-                cauchy_direction = tree_scale(-gradient_scale, gradient)
+                cauchy_direction = _tree_cast_like(
+                    tree_scale(-gradient_scale, gradient),
+                    gradient,
+                )
                 usable_newton = _usable_linear_status(
                     linear_result.status
                 ) & tree_allfinite(raw_newton)
                 newton_direction = tree_where(usable_newton, raw_newton, cauchy_direction)
                 usable = tree_allfinite(cauchy_direction) & (
-                    _space_norm(problem.state_space, cauchy_direction) > 0.0
+                    _space_norm(
+                        problem.state_space,
+                        cauchy_direction,
+                        precision_,
+                    )
+                    > 0.0
                 )
                 used_before_search = (
                     current_run.residual_evaluations + refresh_evaluations
@@ -1791,6 +1906,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                         search_budget,
                         args,
                         self.trust_region,
+                        precision_,
                     )
 
                 def failed_direction(__):
@@ -1814,12 +1930,20 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                     failed_direction,
                     operand=None,
                 )
-                step_norm = _space_norm(problem.state_space, search.step)
-                candidate_norm = _space_norm(problem.residual_space, search.residual)
+                step_norm = _space_norm(
+                    problem.state_space,
+                    search.step,
+                    precision_,
+                )
+                candidate_norm = _space_norm(
+                    problem.residual_space,
+                    search.residual,
+                    precision_,
+                )
                 stagnated = search.accepted & (
                     step_norm
                     <= termination.step_threshold(
-                        _space_norm(problem.state_space, current)
+                        _space_norm(problem.state_space, current, precision_)
                     )
                 )
                 diverged = candidate_norm > (
@@ -1959,10 +2083,14 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                     recycling=recycling,
                     final_linear_status=linear_result.status,
                     final_linear_rank=linear_result.diagnostics.rank,
-                    final_linear_condition_estimate=(
-                        linear_result.diagnostics.condition_estimate
+                    final_linear_condition_estimate=jnp.asarray(
+                        linear_result.diagnostics.condition_estimate,
+                        dtype=current_run.final_linear_condition_estimate.dtype,
                     ),
-                    final_linear_residual_norm=linear_result.diagnostics.residual_norm,
+                    final_linear_residual_norm=jnp.asarray(
+                        linear_result.diagnostics.residual_norm,
+                        dtype=current_run.final_linear_residual_norm.dtype,
+                    ),
                     final_linear_converged=linear_result.diagnostics.converged,
                 )
                 return (
@@ -1992,6 +2120,7 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
             self.jacobian_refresh,
             "dogleg-residual-trust-region",
             args,
+            precision_,
         )
         return (result, state, run, jacobian) if _return_internal else result
 
@@ -2004,6 +2133,7 @@ def root(
     method: AbstractNonlinearMethod | None = None,
     termination: NonlinearTermination | None = None,
     args: Any = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> NonlinearResult:
     """Solve one physical nonlinear system with explicit transformation semantics."""
     method_ = NewtonKrylov() if method is None else method
@@ -2012,6 +2142,35 @@ def root(
         raise TypeError("method must be an AbstractNonlinearMethod or None.")
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be a NonlinearTermination or None.")
+    if precision is not None and not isinstance(
+        method_,
+        (NewtonKrylov, NewtonTrustRegion),
+    ):
+        raise ValueError(
+            "A root precision override requires NewtonKrylov or NewtonTrustRegion; "
+            "configure precision on other nonlinear methods directly."
+        )
+
+    def solve_selected(
+        current_problem: NonlinearSystemProblem,
+        current_termination: NonlinearTermination,
+        /,
+    ) -> NonlinearResult:
+        if isinstance(method_, (NewtonKrylov, NewtonTrustRegion)):
+            return method_.solve(
+                current_problem,
+                initial_state,
+                termination=current_termination,
+                args=args,
+                precision=precision,
+            )
+        return method_.solve(
+            current_problem,
+            initial_state,
+            termination=current_termination,
+            args=args,
+        )
+
     if isinstance(problem, AbstractNonlinearSystemTransformation):
         if (
             termination_.maximum_evaluations is not None
@@ -2035,12 +2194,7 @@ def root(
             maximum_linear_iterations=termination_.maximum_linear_iterations,
             divergence_factor=termination_.divergence_factor,
         )
-        transformed = method_.solve(
-            problem.problem,
-            initial_state,
-            termination=inner_termination,
-            args=args,
-        )
+        transformed = solve_selected(problem.problem, inner_termination)
         return problem.finalize_result(
             transformed,
             initial_state,
@@ -2051,7 +2205,7 @@ def root(
         raise TypeError(
             "problem must be a NonlinearSystemProblem or nonlinear transformation."
         )
-    return method_.solve(problem, initial_state, termination=termination_, args=args)
+    return solve_selected(problem, termination_)
 
 
 __all__ = [

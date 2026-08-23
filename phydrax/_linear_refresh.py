@@ -74,7 +74,6 @@ class LinearRefreshState(StrictModule):
             else str(preconditioner_refresh_kind)
         )
 
-
     @property
     def template(self) -> LinearSolveTemplate:
         return eqx.combine(self.template_arrays, self.template_static)

@@ -174,7 +174,9 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
             shape = [1] * len(cell_layout.shape)
             shape[axis_index] = int(axis.interval_widths.size)
             cell_volumes = cell_volumes * axis.interval_widths.reshape(tuple(shape))
-        face_measures = tuple(_face_measure(grid, axis) for axis in range(len(grid.shape)))
+        face_measures = tuple(
+            _face_measure(grid, axis) for axis in range(len(grid.shape))
+        )
         dimension = len(grid.shape)
         face_area_vectors = tuple(
             measure[..., None]

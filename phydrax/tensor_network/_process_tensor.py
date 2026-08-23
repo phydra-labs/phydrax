@@ -10,25 +10,36 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
 from ..solver._memory_kernel import DynamicalMapPhysicality
+from ._precision import TensorNetworkPrecisionPolicy
 
 
-def _superoperator_from_kraus(kraus: Array) -> Array:
+def _superoperator_from_kraus(
+    kraus: Array,
+    precision: TensorNetworkPrecisionPolicy,
+    /,
+) -> Array:
     dimension = kraus.shape[-1]
     basis = jnp.eye(dimension * dimension, dtype=kraus.dtype).reshape(
         (dimension * dimension, dimension, dimension)
     )
+    operators = precision.contraction(kraus)
     outputs = jnp.stack(
         [
-            sum(
-                operator @ value @ jnp.conj(operator.T)
-                for operator in kraus
+            precision.sum(
+                jnp.stack(
+                    [operator @ value @ jnp.conj(operator.T) for operator in operators]
+                ),
+                axis=0,
             ).reshape(-1)
             for value in basis
         ]
     )
-    return jnp.swapaxes(outputs, -1, -2)
+    return precision.output(jnp.swapaxes(outputs, -1, -2))
 
 
 class QuantumIntervention(StrictModule):
@@ -37,21 +48,68 @@ class QuantumIntervention(StrictModule):
     completeness_residual: Array
     trace_nonincreasing: Array
     valid: Array
+    precision: TensorNetworkPrecisionPolicy
+    hermitian_precision: HermitianPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     intervention_id: str = eqx.field(static=True)
 
-    def __init__(self, kraus_operators: ArrayLike, /, *, intervention_id: str):
-        kraus = jnp.asarray(kraus_operators)
+    def __init__(
+        self,
+        kraus_operators: ArrayLike,
+        /,
+        *,
+        intervention_id: str,
+        precision: TensorNetworkPrecisionPolicy | None = None,
+        hermitian_precision: HermitianPrecisionPolicy | None = None,
+    ):
+        precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
+        hermitian_ = (
+            HermitianPrecisionPolicy()
+            if hermitian_precision is None
+            else hermitian_precision
+        )
+        if not isinstance(precision_, TensorNetworkPrecisionPolicy):
+            raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
+        if not isinstance(hermitian_, HermitianPrecisionPolicy):
+            raise TypeError(
+                "hermitian_precision must be HermitianPrecisionPolicy or None."
+            )
+        kraus = precision_.storage(jnp.asarray(kraus_operators))
+        precision_.validate_storage(kraus)
         if kraus.ndim != 3 or kraus.shape[-2] != kraus.shape[-1]:
             raise ValueError("Kraus operators require shape (count,n,n).")
         dimension = kraus.shape[-1]
-        completeness = sum(jnp.conj(operator.T) @ operator for operator in kraus)
+        operators = precision_.contraction(kraus)
+        completeness = precision_.sum(
+            jnp.stack([jnp.conj(operator.T) @ operator for operator in operators]),
+            axis=0,
+        )
         difference = jnp.eye(dimension, dtype=kraus.dtype) - completeness
-        minimum = jnp.min(jnp.linalg.eigvalsh(0.5 * (difference + jnp.conj(difference.T))))
+        spectrum = HermitianSpectrum(difference, precision=hermitian_)
+        minimum = precision_.decision(spectrum.minimum_eigenvalue)
+        residual = precision_.decision(
+            jnp.max(
+                jnp.abs(
+                    precision_.accumulation(
+                        completeness - jnp.eye(dimension, dtype=kraus.dtype)
+                    )
+                )
+            )
+        )
         self.kraus_operators = kraus
-        self.superoperator = _superoperator_from_kraus(kraus)
-        self.completeness_residual = jnp.max(jnp.abs(completeness - jnp.eye(dimension)))
+        self.superoperator = _superoperator_from_kraus(kraus, precision_)
+        self.completeness_residual = residual
         self.trace_nonincreasing = minimum >= -1e-9
-        self.valid = jnp.all(jnp.isfinite(kraus)) & self.trace_nonincreasing
+        self.valid = (
+            jnp.all(jnp.isfinite(kraus)) & spectrum.valid & self.trace_nonincreasing
+        )
+        self.precision = precision_
+        self.hermitian_precision = hermitian_
+        self.precision_evidence = precision_.evidence_for(
+            kraus,
+            children={"completeness-spectrum": spectrum.precision_evidence},
+            output_value=self.superoperator,
+        )
         self.intervention_id = str(intervention_id)
 
     @property
@@ -59,14 +117,21 @@ class QuantumIntervention(StrictModule):
         return int(self.kraus_operators.shape[-1])
 
     def apply(self, density: ArrayLike, /) -> tuple[Array, Array]:
-        rho = jnp.asarray(density)
-        output = sum(
-            operator @ rho @ jnp.conj(operator.T)
-            for operator in self.kraus_operators
+        rho = self.precision.contraction(density)
+        output = self.precision.sum(
+            jnp.stack(
+                [
+                    operator @ rho @ jnp.conj(operator.T)
+                    for operator in self.precision.contraction(self.kraus_operators)
+                ]
+            ),
+            axis=0,
         )
-        probability = jnp.real(jnp.trace(output))
+        probability = self.precision.decision(
+            jnp.real(self.precision.sum(jnp.diag(output)))
+        )
         normalized = jnp.where(probability > 0.0, output / probability, output)
-        return normalized, probability
+        return self.precision.output(normalized), probability
 
 
 class ProcessTensorPhysicality(StrictModule):
@@ -74,6 +139,7 @@ class ProcessTensorPhysicality(StrictModule):
     local_tp_residuals: Array
     causality_residual: Array
     valid: Array
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     status: str = eqx.field(static=True)
 
     def __init__(
@@ -83,20 +149,27 @@ class ProcessTensorPhysicality(StrictModule):
         /,
         *,
         status: str,
+        precision_evidence: PrecisionEvidenceEnvelope,
     ):
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.local_cp_margins = jnp.asarray(local_cp_margins)
         self.local_tp_residuals = jnp.asarray(local_tp_residuals)
         self.causality_residual = jnp.max(self.local_tp_residuals)
-        self.valid = (
-            jnp.all(self.local_cp_margins >= -1e-8)
-            & jnp.all(self.local_tp_residuals <= 1e-8)
+        self.valid = jnp.all(self.local_cp_margins >= -1e-8) & jnp.all(
+            self.local_tp_residuals <= 1e-8
         )
+        self.precision_evidence = precision_evidence
         self.status = str(status)
 
 
 class ProcessTensorMPO(StrictModule):
     tensors: tuple[Array, ...]
     initial_density: Array
+    precision: TensorNetworkPrecisionPolicy
+    geometry_precision: GeometryPrecisionPolicy
+    hermitian_precision: HermitianPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
     temporal_bond_dimensions: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
@@ -108,9 +181,35 @@ class ProcessTensorMPO(StrictModule):
         /,
         *,
         process_id: str,
+        precision: TensorNetworkPrecisionPolicy | None = None,
+        geometry_precision: GeometryPrecisionPolicy | None = None,
+        hermitian_precision: HermitianPrecisionPolicy | None = None,
     ):
-        values = tuple(jnp.asarray(tensor) for tensor in tensors)
-        density = jnp.asarray(initial_density)
+        precision_ = TensorNetworkPrecisionPolicy() if precision is None else precision
+        geometry_ = (
+            GeometryPrecisionPolicy()
+            if geometry_precision is None
+            else geometry_precision
+        )
+        hermitian_ = (
+            HermitianPrecisionPolicy()
+            if hermitian_precision is None
+            else hermitian_precision
+        )
+        if not isinstance(precision_, TensorNetworkPrecisionPolicy):
+            raise TypeError("precision must be TensorNetworkPrecisionPolicy or None.")
+        if not isinstance(geometry_, GeometryPrecisionPolicy):
+            raise TypeError("geometry_precision must be GeometryPrecisionPolicy or None.")
+        if not isinstance(hermitian_, HermitianPrecisionPolicy):
+            raise TypeError(
+                "hermitian_precision must be HermitianPrecisionPolicy or None."
+            )
+        density = precision_.storage(jnp.asarray(initial_density))
+        values = tuple(
+            precision_.storage(jnp.asarray(tensor, dtype=density.dtype))
+            for tensor in tensors
+        )
+        precision_.validate_storage(values + (density,))
         if density.ndim != 2 or density.shape[0] != density.shape[1]:
             raise ValueError("Initial process state must be square.")
         physical = density.size
@@ -124,8 +223,16 @@ class ProcessTensorMPO(StrictModule):
         for left, right in zip(values[:-1], values[1:], strict=True):
             if left.shape[-1] != right.shape[0]:
                 raise ValueError("Adjacent process-tensor bonds must match.")
+        density_spectrum = HermitianSpectrum(density, precision=hermitian_)
         self.tensors = values
         self.initial_density = density
+        self.precision = precision_
+        self.geometry_precision = geometry_
+        self.hermitian_precision = hermitian_
+        self.precision_evidence = precision_.evidence_for(
+            values + (density,),
+            children={"initial-density": density_spectrum.precision_evidence},
+        )
         self.dimension = density.shape[0]
         self.temporal_bond_dimensions = tuple(
             int(tensor.shape[-1]) for tensor in values[:-1]
@@ -142,24 +249,38 @@ class ProcessTensorMPO(StrictModule):
             if interventions is not None
             else tuple(
                 QuantumIntervention(
-                    jnp.eye(self.dimension, dtype=self.initial_density.dtype)[None, ...],
+                    jnp.eye(
+                        self.dimension,
+                        dtype=self.initial_density.dtype,
+                    )[None, ...],
                     intervention_id=f"identity:{index}",
+                    precision=self.precision,
+                    hermitian_precision=self.hermitian_precision,
                 )
                 for index in range(len(self.tensors))
             )
         )
         if len(operations) != len(self.tensors):
             raise ValueError("One intervention is required per process time slot.")
-        state = self.initial_density.reshape((1, -1))
-        probability = jnp.asarray(1.0)
+        state = self.precision.contraction(self.initial_density.reshape((1, -1)))
+        probability = self.precision.decision(1.0)
         for tensor, intervention in zip(self.tensors, operations, strict=True):
-            state = jnp.einsum("li,loir->ro", state, tensor)
-            state = jnp.einsum("oi,ri->ro", intervention.superoperator, state)
-            density = state.sum(axis=0).reshape((self.dimension, self.dimension))
-            trace = jnp.real(jnp.trace(density))
-            probability = probability * trace
+            tensor_ = self.precision.contraction(tensor)
+            superoperator = self.precision.contraction(intervention.superoperator)
+            state = jnp.einsum("li,loir->ro", state, tensor_)
+            state = jnp.einsum("oi,ri->ro", superoperator, state)
+            density = self.precision.sum(state, axis=0).reshape(
+                (self.dimension, self.dimension)
+            )
+            trace = self.precision.decision(
+                jnp.real(self.precision.sum(jnp.diag(density)))
+            )
+            probability = self.precision.decision(probability * trace)
             state = state / jnp.maximum(trace, 1e-30)
-        return state[0].reshape((self.dimension, self.dimension)), probability
+        return (
+            self.precision.output(state[0].reshape((self.dimension, self.dimension))),
+            probability,
+        )
 
     def physicality(self) -> ProcessTensorPhysicality:
         if any(tensor.shape[0] != 1 or tensor.shape[-1] != 1 for tensor in self.tensors):
@@ -167,15 +288,29 @@ class ProcessTensorMPO(StrictModule):
                 jnp.asarray([jnp.nan]),
                 jnp.asarray([jnp.nan]),
                 status="unknown-general-temporal-bond",
+                precision_evidence=self.precision_evidence,
             )
         reports = [
-            DynamicalMapPhysicality(tensor[0, :, :, 0], self.dimension)
+            DynamicalMapPhysicality(
+                tensor[0, :, :, 0],
+                self.dimension,
+                geometry_precision=self.geometry_precision,
+                hermitian_precision=self.hermitian_precision,
+            )
             for tensor in self.tensors
         ]
+        evidence = self.precision.evidence_for(
+            self.tensors,
+            children={
+                f"local-map-{index}": report.precision_evidence
+                for index, report in enumerate(reports)
+            },
+        )
         return ProcessTensorPhysicality(
             jnp.stack([report.cp_margin for report in reports]),
             jnp.stack([report.trace_preservation_residual for report in reports]),
             status="local-markov-factorization",
+            precision_evidence=evidence,
         )
 
 
@@ -185,15 +320,28 @@ def markov_process_tensor(
     /,
     *,
     process_id: str = "markov-process",
+    precision: TensorNetworkPrecisionPolicy | None = None,
+    geometry_precision: GeometryPrecisionPolicy | None = None,
+    hermitian_precision: HermitianPrecisionPolicy | None = None,
 ) -> ProcessTensorMPO:
-    tensors = tuple(jnp.asarray(operator)[None, :, :, None] for operator in superoperators)
-    return ProcessTensorMPO(tensors, initial_density, process_id=process_id)
+    tensors = tuple(
+        jnp.asarray(operator)[None, :, :, None] for operator in superoperators
+    )
+    return ProcessTensorMPO(
+        tensors,
+        initial_density,
+        process_id=process_id,
+        precision=precision,
+        geometry_precision=geometry_precision,
+        hermitian_precision=hermitian_precision,
+    )
 
 
 class ProcessTomographyResult(StrictModule):
     process_tensor: ProcessTensorMPO
     reconstruction_residual: Array
     valid: Array
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
     def __init__(
         self,
@@ -201,12 +349,14 @@ class ProcessTomographyResult(StrictModule):
         reconstruction_residual: ArrayLike,
         /,
     ):
+        if not isinstance(process_tensor, ProcessTensorMPO):
+            raise TypeError("process_tensor must be ProcessTensorMPO.")
         self.process_tensor = process_tensor
         self.reconstruction_residual = jnp.asarray(reconstruction_residual)
-        self.valid = (
-            process_tensor.physicality().valid
-            & jnp.isfinite(self.reconstruction_residual)
+        self.valid = process_tensor.physicality().valid & jnp.isfinite(
+            self.reconstruction_residual
         )
+        self.precision_evidence = process_tensor.precision_evidence
 
 
 def reconstruct_markov_process_tensor(
@@ -215,19 +365,29 @@ def reconstruct_markov_process_tensor(
     /,
     *,
     process_id: str = "reconstructed-markov-process",
+    precision: TensorNetworkPrecisionPolicy | None = None,
+    geometry_precision: GeometryPrecisionPolicy | None = None,
+    hermitian_precision: HermitianPrecisionPolicy | None = None,
 ) -> ProcessTomographyResult:
     process = markov_process_tensor(
-        observed_superoperators, initial_density, process_id=process_id
+        observed_superoperators,
+        initial_density,
+        process_id=process_id,
+        precision=precision,
+        geometry_precision=geometry_precision,
+        hermitian_precision=hermitian_precision,
     )
-    residual = jnp.max(
-        jnp.stack(
-            [
-                jnp.linalg.norm(
-                    process.tensors[index][0, :, :, 0]
-                    - jnp.asarray(observed_superoperators[index])
-                )
-                for index in range(len(process.tensors))
-            ]
+    residual = process.precision.decision(
+        jnp.max(
+            jnp.stack(
+                [
+                    process.precision.norm(
+                        process.tensors[index][0, :, :, 0]
+                        - jnp.asarray(observed_superoperators[index])
+                    )
+                    for index in range(len(process.tensors))
+                ]
+            )
         )
     )
     return ProcessTomographyResult(process, residual)

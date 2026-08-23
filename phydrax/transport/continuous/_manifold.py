@@ -7,6 +7,7 @@ from __future__ import annotations
 from jaxtyping import ArrayLike
 
 from ..._flow_matching_metric import ManifoldFlowMatchingMetric
+from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ...metrix import AbstractGeodesicManifold, GeodesicManifoldStateGeometry
 from ._geodesic_interpolant import GeodesicEndpointInterpolant
@@ -27,6 +28,7 @@ class ManifoldTransportGeometry(StrictModule):
         *,
         source_coordinate: ArrayLike = 0.0,
         target_coordinate: ArrayLike = 1.0,
+        precision: GeometryPrecisionPolicy | None = None,
     ):
         if not isinstance(manifold, AbstractGeodesicManifold):
             raise TypeError("manifold must be an AbstractGeodesicManifold.")
@@ -36,7 +38,10 @@ class ManifoldTransportGeometry(StrictModule):
             source_coordinate=source_coordinate,
             target_coordinate=target_coordinate,
         )
-        self.metric = ManifoldFlowMatchingMetric(manifold)
+        self.metric = ManifoldFlowMatchingMetric(
+            manifold,
+            precision=precision,
+        )
         self.state_geometry = GeodesicManifoldStateGeometry(manifold)
 
     @property

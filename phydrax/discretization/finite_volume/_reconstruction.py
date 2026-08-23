@@ -165,8 +165,8 @@ class VanLeerLimiter(AbstractSlopeLimiter):
 
     def limit(self, backward: Array, forward: Array, /) -> Array:
         denominator = backward + forward
-        harmonic = 2.0 * backward * forward / jnp.where(
-            denominator == 0.0, 1.0, denominator
+        harmonic = (
+            2.0 * backward * forward / jnp.where(denominator == 0.0, 1.0, denominator)
         )
         return jnp.where(backward * forward > 0.0, harmonic, 0.0)
 

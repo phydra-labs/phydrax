@@ -15,6 +15,7 @@ from jaxtyping import Array, PyTree
 from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree
 from ..linalg import PyTreeSpace
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
     NonlinearCapabilities,
@@ -32,6 +33,10 @@ from ._updates import (
     prepare_nonlinear_update,
     PreparedNonlinearUpdate,
 )
+
+
+def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
 
 
 class _RichardsonSearch(StrictModule):
@@ -73,6 +78,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
     contraction: float = eqx.field(static=True)
     minimum_rate: float = eqx.field(static=True)
     maximum_search_steps: int = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -83,7 +89,11 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         contraction: float = 0.5,
         minimum_rate: float = 1e-8,
         maximum_search_steps: int = 20,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
         if not isinstance(update, AbstractNonlinearUpdate):
             raise TypeError("update must be AbstractNonlinearUpdate.")
         decrease = float(sufficient_decrease)
@@ -103,6 +113,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         self.contraction = contraction_
         self.minimum_rate = minimum
         self.maximum_search_steps = steps
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -138,7 +149,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         target = PyTreeSpace(residual)
         state_coordinates = source.flatten(initial)
         residual_coordinates = target.flatten(residual)
-        initial_norm = jnp.linalg.norm(residual_coordinates)
+        initial_norm = _coordinate_norm(residual_coordinates, self.precision)
         finite = jnp.all(jnp.isfinite(state_coordinates)) & jnp.all(
             jnp.isfinite(residual_coordinates)
         )
@@ -237,7 +248,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             proposed_state = source.flatten(update_result.state)
             proposed_residual = target.flatten(update_result.residual)
             direction = proposed_state - current.state
-            proposed_norm = jnp.linalg.norm(proposed_residual)
+            proposed_norm = _coordinate_norm(proposed_residual, self.precision)
             proposed_finite = jnp.all(jnp.isfinite(proposed_state)) & jnp.all(
                 jnp.isfinite(proposed_residual)
             )
@@ -289,7 +300,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 trial_state = source.unflatten(trial_coordinates)
                 trial_residual_tree, trial_auxiliary = problem.evaluate(trial_state, args)
                 trial_residual = target.flatten(trial_residual_tree)
-                trial_norm = jnp.linalg.norm(trial_residual)
+                trial_norm = _coordinate_norm(trial_residual, self.precision)
                 trial_finite = jnp.all(jnp.isfinite(trial_coordinates)) & jnp.all(
                     jnp.isfinite(trial_residual)
                 )
@@ -336,7 +347,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 search.residual_norm,
                 current.residual_norm,
             )
-            step_norm = jnp.linalg.norm(accepted_state - current.state)
+            step_norm = _coordinate_norm(accepted_state - current.state, self.precision)
             converged = search.accepted & (
                 accepted_norm
                 <= termination.residual_threshold(current.initial_residual_norm)
@@ -346,7 +357,9 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 & ~converged
                 & (
                     step_norm
-                    <= termination.step_threshold(jnp.linalg.norm(current.state))
+                    <= termination.step_threshold(
+                        _coordinate_norm(current.state, self.precision)
+                    )
                 )
             )
             status = jnp.where(
@@ -412,7 +425,7 @@ class NonlinearRichardson(AbstractNonlinearMethod):
         final_state = source.unflatten(run.state)
         final_residual, final_auxiliary = problem.evaluate(final_state, args)
         final_coordinates = target.flatten(final_residual)
-        final_norm = jnp.linalg.norm(final_coordinates)
+        final_norm = _coordinate_norm(final_coordinates, self.precision)
         final_finite = jnp.all(jnp.isfinite(run.state)) & jnp.all(
             jnp.isfinite(final_coordinates)
         )
@@ -446,6 +459,10 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             nonfinite_trials=run.nonfinite_trials,
             counts_complete=self.update.capabilities.counts_complete,
         )
+        precision_evidence = self.precision.evidence_for(
+            final_state,
+            final_residual,
+        )
         return NonlinearResult(
             state=final_state,
             residual=final_residual,
@@ -457,8 +474,10 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 method_id=self.method_id,
                 derivative_id="none",
                 globalization_id="physical-residual-armijo",
+                precision_policy_id=self.precision.policy_id,
                 notes=f"update={self.update.update_id}",
             ),
+            precision_evidence=precision_evidence,
         )
 
 

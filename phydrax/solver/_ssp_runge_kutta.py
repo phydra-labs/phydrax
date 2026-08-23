@@ -11,6 +11,7 @@ import equinox as eqx
 
 from .._numerics._ssp_runge_kutta import ssprk33_step, ssprk54_step
 from ._temporal_method import TemporalMethodCapabilities
+from ._temporal_precision import TemporalPrecisionPolicy
 
 
 class SSPRK33(dfx.AbstractSolver):
@@ -19,9 +20,14 @@ class SSPRK33(dfx.AbstractSolver):
     term_structure: ClassVar = dfx.AbstractTerm
     interpolation_cls: ClassVar = dfx.LocalLinearInterpolation
     capabilities: TemporalMethodCapabilities = eqx.field(static=True)
+    precision: TemporalPrecisionPolicy
     solver_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self, *, precision: TemporalPrecisionPolicy | None = None):
+        precision_ = TemporalPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, TemporalPrecisionPolicy):
+            raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+        self.precision = precision_
         self.solver_id = "temporal:ssprk:3:3"
         self.capabilities = TemporalMethodCapabilities(
             equation_forms=("explicit-ode",),
@@ -41,12 +47,20 @@ class SSPRK33(dfx.AbstractSolver):
         return 3
 
     def init(self, terms, t0, t1, y0, args):
-        del terms, t0, t1, y0, args
+        del terms, t0, t1, args
+        self.precision.validate_state(y0)
         return None
 
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         del solver_state, made_jump
-        y1 = ssprk33_step(terms.vf, t0, y0, t1 - t0, args)
+        y1 = ssprk33_step(
+            terms.vf,
+            t0,
+            y0,
+            t1 - t0,
+            args,
+            precision=self.precision,
+        )
         return y1, None, {"y0": y0, "y1": y1}, None, dfx.RESULTS.successful
 
     def func(self, terms, t0, y0, args):
@@ -59,9 +73,14 @@ class SSPRK54(dfx.AbstractSolver):
     term_structure: ClassVar = dfx.AbstractTerm
     interpolation_cls: ClassVar = dfx.LocalLinearInterpolation
     capabilities: TemporalMethodCapabilities = eqx.field(static=True)
+    precision: TemporalPrecisionPolicy
     solver_id: str = eqx.field(static=True)
 
-    def __init__(self):
+    def __init__(self, *, precision: TemporalPrecisionPolicy | None = None):
+        precision_ = TemporalPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, TemporalPrecisionPolicy):
+            raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+        self.precision = precision_
         self.solver_id = "temporal:ssprk:5:4"
         self.capabilities = TemporalMethodCapabilities(
             equation_forms=("explicit-ode",),
@@ -87,12 +106,20 @@ class SSPRK54(dfx.AbstractSolver):
         return 4
 
     def init(self, terms, t0, t1, y0, args):
-        del terms, t0, t1, y0, args
+        del terms, t0, t1, args
+        self.precision.validate_state(y0)
         return None
 
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         del solver_state, made_jump
-        y1 = ssprk54_step(terms.vf, t0, y0, t1 - t0, args)
+        y1 = ssprk54_step(
+            terms.vf,
+            t0,
+            y0,
+            t1 - t0,
+            args,
+            precision=self.precision,
+        )
         return y1, None, {"y0": y0, "y1": y1}, None, dfx.RESULTS.successful
 
     def func(self, terms, t0, y0, args):

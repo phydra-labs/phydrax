@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._linear_refresh import LinearRefreshState
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import (
@@ -48,6 +49,7 @@ class PreparedNonlinearSolve(StrictModule):
     method: NewtonKrylov | NewtonTrustRegion
     termination: NonlinearTermination
     args: Any
+    precision: NonlinearPrecisionPolicy
     jacobian: PreparedJacobian
     run: _RootState
     provenance: NonlinearProvenance
@@ -60,6 +62,7 @@ class PreparedNonlinearSolve(StrictModule):
         method: NewtonKrylov | NewtonTrustRegion,
         termination: NonlinearTermination,
         args: Any,
+        precision: NonlinearPrecisionPolicy,
         jacobian: PreparedJacobian,
         run: _RootState,
         provenance: NonlinearProvenance,
@@ -77,6 +80,8 @@ class PreparedNonlinearSolve(StrictModule):
             raise TypeError("method must be NewtonKrylov or NewtonTrustRegion.")
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be a NonlinearTermination.")
+        if not isinstance(precision, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be a NonlinearPrecisionPolicy.")
         if not isinstance(jacobian, PreparedJacobian):
             raise TypeError("jacobian must be a PreparedJacobian.")
         if not isinstance(run, _RootState):
@@ -87,6 +92,8 @@ class PreparedNonlinearSolve(StrictModule):
             raise ValueError("Prepared nonlinear provenance must match the problem.")
         if provenance.method_id != method.method_id:
             raise ValueError("Prepared nonlinear provenance must match the method.")
+        if provenance.precision_policy_id != precision.policy_id:
+            raise ValueError("Prepared nonlinear provenance must match the precision.")
         if provenance.linear_plan_id != run.refresh_state.template.plan.plan_id:
             raise ValueError("Prepared nonlinear provenance must match the linear plan.")
         self.problem = problem
@@ -94,6 +101,7 @@ class PreparedNonlinearSolve(StrictModule):
         self.method = method
         self.termination = termination
         self.args = args
+        self.precision = precision
         self.jacobian = jacobian
         self.run = run
         self.provenance = provenance
@@ -130,6 +138,7 @@ def _prepared_provenance(
     problem: NonlinearSystemProblem,
     method: NewtonKrylov | NewtonTrustRegion,
     refresh_state: LinearRefreshState,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> NonlinearProvenance:
     plan = refresh_state.template.plan
@@ -139,6 +148,7 @@ def _prepared_provenance(
         derivative_id=method.jacobian_policy.policy_id,
         globalization_id=_globalization_id(method),
         linear_plan_id=plan.plan_id,
+        precision_policy_id=precision.policy_id,
         notes=f"linear-method={plan.method};linear-backend={plan.backend}",
     )
 
@@ -160,12 +170,16 @@ def _refreshed_run(
     /,
 ) -> _RootState:
     residual = jacobian.residual
+    state_space = problem.state_space
     residual_space = problem.residual_space
-    if residual_space is None:
-        raise ValueError("A refreshed nonlinear problem must have a residual space.")
-    residual_norm = jnp.sqrt(
-        jnp.maximum(jnp.real(residual_space.inner(residual, residual)), 0.0)
-    )
+    if state_space is None or residual_space is None:
+        raise ValueError(
+            "A refreshed nonlinear problem must have bound state and residual spaces."
+        )
+    prepared.precision.validate_trees(state, residual)
+    prepared.precision.validate_accumulation_space(state_space)
+    prepared.precision.validate_accumulation_space(residual_space)
+    residual_norm = prepared.precision.norm(residual_space, residual)
     finite = tree_allfinite(state) & tree_allfinite(residual)
     valid = problem.valid(state, residual, jacobian.auxiliary, args)
     status = jnp.where(
@@ -238,6 +252,7 @@ def prepare_nonlinear(
     method: AbstractNonlinearMethod | None = None,
     termination: NonlinearTermination | None = None,
     args: Any = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> PreparedNonlinearSolve:
     """Bind one Newton solve and retain its reusable symbolic linear template."""
     if not isinstance(problem, NonlinearSystemProblem):
@@ -252,22 +267,32 @@ def prepare_nonlinear(
         )
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be a NonlinearTermination or None.")
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be a NonlinearPrecisionPolicy or None.")
     problem_, state, run, jacobian = _initial_root_state(
         problem,
         initial_state,
         method_.jacobian_policy,
-        method_.linear_policy,
+        precision_.bind_linear(method_.linear_policy),
         method_.forcing_policy,
         _initial_trust_radius(method_),
         args,
+        precision_,
     )
-    provenance = _prepared_provenance(problem_, method_, run.refresh_state)
+    provenance = _prepared_provenance(
+        problem_,
+        method_,
+        run.refresh_state,
+        precision_,
+    )
     return PreparedNonlinearSolve(
         problem_,
         state,
         method_,
         termination_,
         args,
+        precision_,
         jacobian,
         run,
         provenance,
@@ -292,6 +317,7 @@ def refresh_nonlinear(
         raise ValueError("Nonlinear refreshes must preserve problem_id.")
     state = problem.validate_state(initial_state)
     jacobian = prepare_jacobian(problem, state, prepared.method.jacobian_policy, args)
+    prepared.precision.validate_trees(state, jacobian.residual)
     problem_ = problem.bind_spaces(state, jacobian.residual)
     old_state_space = prepared.problem.state_space
     old_residual_space = prepared.problem.residual_space
@@ -304,6 +330,8 @@ def refresh_nonlinear(
         or new_residual_space is None
     ):
         raise ValueError("Prepared nonlinear refresh requires bound vector spaces.")
+    prepared.precision.validate_accumulation_space(new_state_space)
+    prepared.precision.validate_accumulation_space(new_residual_space)
     if not old_state_space.compatible(new_state_space):
         raise ValueError("Nonlinear refresh changed the state space.")
     if not old_residual_space.compatible(new_residual_space):
@@ -344,6 +372,7 @@ def refresh_nonlinear(
         prepared.method,
         prepared.termination,
         args,
+        prepared.precision,
         jacobian,
         run,
         prepared.provenance,
@@ -368,6 +397,7 @@ def solve_prepared_nonlinear(
         prepared.state,
         termination=termination_,
         args=prepared.args,
+        precision=prepared.precision,
         _prepared_start=(
             prepared.problem,
             prepared.state,
@@ -404,6 +434,7 @@ def step_prepared_nonlinear(
         prepared.state,
         termination=one_step,
         args=prepared.args,
+        precision=prepared.precision,
         _prepared_start=(
             prepared.problem,
             prepared.state,
@@ -418,6 +449,7 @@ def step_prepared_nonlinear(
         prepared.method,
         prepared.termination,
         prepared.args,
+        prepared.precision,
         jacobian,
         run,
         prepared.provenance,
@@ -501,6 +533,7 @@ def _seed_nonlinear_continuation(
         prepared.method,
         prepared.termination,
         args,
+        prepared.precision,
         jacobian,
         run,
         prepared.provenance,
@@ -525,6 +558,7 @@ def _solve_prepared_nonlinear_stateful(
         prepared.state,
         termination=termination_,
         args=prepared.args,
+        precision=prepared.precision,
         _prepared_start=(
             prepared.problem,
             prepared.state,
@@ -539,6 +573,7 @@ def _solve_prepared_nonlinear_stateful(
         prepared.method,
         termination_,
         prepared.args,
+        prepared.precision,
         jacobian,
         run,
         result.provenance,

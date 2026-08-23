@@ -14,9 +14,7 @@ import phydrax as phx
 def _cell_grid(shape):
     dimension = len(shape)
     return phx.discretization.TensorGridPlan(
-        tuple(
-            phx.discretization.UniformCellAxisSpec(count) for count in shape
-        ),
+        tuple(phx.discretization.UniformCellAxisSpec(count) for count in shape),
         axis_names=tuple("xyz"[:dimension]),
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
 
@@ -28,7 +26,6 @@ def test_portable_fd_checkpoint_roundtrips_fields_auxiliary_and_identity(tmp_pat
         boundary_program_id="boundary-id",
         amr_trace_id="amr-trace",
         partition_id="partition-id",
-        numeric_policy="float64",
     )
     path = tmp_path / "state.phydrax"
     fields = {
@@ -136,10 +133,7 @@ def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient():
     amplification = (1.0 + dt * parameter) ** steps
     expected_initial = amplification**2 * initial
     expected_parameter = (
-        jnp.sum(initial**2)
-        * steps
-        * dt
-        * (1.0 + dt * parameter) ** (2 * steps - 1)
+        jnp.sum(initial**2) * steps * dt * (1.0 + dt * parameter) ** (2 * steps - 1)
     )
 
     np.testing.assert_allclose(
@@ -158,9 +152,7 @@ def test_checkpointed_time_discrete_adjoint_matches_closed_form_gradient():
 
 @pytest.mark.parametrize("dimension", [1, 2, 3])
 def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(dimension):
-    bridge = phx.discretization.StructuredCochainBridge(
-        _cell_grid((3,) * dimension)
-    )
+    bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3,) * dimension))
     values = jnp.arange(bridge.cochain.cell_counts[0], dtype=float)
 
     first = bridge.exterior_derivative(0, values)
@@ -194,12 +186,8 @@ def test_maxwell_constraint_elastic_energy_and_incompressible_projection_are_com
         bridge,
         wave_speed=1.3,
     )
-    displacement = jnp.sin(
-        jnp.arange(bridge.cochain.cell_counts[0], dtype=float) / 7.0
-    )
-    velocity = jnp.cos(
-        jnp.arange(bridge.cochain.cell_counts[0], dtype=float) / 5.0
-    )
+    displacement = jnp.sin(jnp.arange(bridge.cochain.cell_counts[0], dtype=float) / 7.0)
+    velocity = jnp.cos(jnp.arange(bridge.cochain.cell_counts[0], dtype=float) / 5.0)
     elastic_state = elasticity.pack(displacement, velocity)
     elastic_drift = elasticity.drift(elastic_state)
     energy_gradient = jax.grad(
@@ -214,9 +202,7 @@ def test_maxwell_constraint_elastic_energy_and_incompressible_projection_are_com
     np.testing.assert_allclose(energy_rate, 0.0, rtol=0.0, atol=2e-9)
 
     projection = phx.solver.CompatibleIncompressibleProjection(bridge)
-    raw_velocity = jnp.sin(
-        jnp.arange(bridge.cochain.cell_counts[1], dtype=float) / 3.0
-    )
+    raw_velocity = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype=float) / 3.0)
     projected = eqx.filter_jit(projection.project)(raw_velocity)
 
     assert jnp.linalg.norm(projected.divergence_before) > 1e-3

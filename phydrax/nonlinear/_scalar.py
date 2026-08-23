@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     NonlinearDiagnostics,
     NonlinearProvenance,
@@ -23,6 +24,21 @@ from ._types import (
 
 
 BracketMethod: TypeAlias = Literal["bisection", "brent", "ridder", "toms748"]
+
+
+def _scalar_abs(value: Any, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.decision(jnp.abs(precision.accumulation(value)))
+
+
+def _sign_product(
+    left: Any,
+    right: Any,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    return precision.decision(
+        precision.accumulation(left) * precision.accumulation(right)
+    )
 
 
 class ScalarRootProblem(StrictModule):
@@ -131,6 +147,7 @@ class AbstractScalarRootMethod(StrictModule):
         *,
         termination: NonlinearTermination,
         args: Any = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ) -> ScalarRootResult:
         raise NotImplementedError
 
@@ -206,13 +223,16 @@ def _bracket_candidate(kind, run):
     return _safe_candidate(candidate, run.lower, run.upper)
 
 
-def _update_bracket(run, candidate, value):
-    replace_upper = run.lower_value * value <= 0.0
+def _update_bracket(run, candidate, value, precision, /):
+    replace_upper = _sign_product(run.lower_value, value, precision) <= 0.0
     lower = jnp.where(replace_upper, run.lower, candidate)
     lower_value = jnp.where(replace_upper, run.lower_value, value)
     upper = jnp.where(replace_upper, candidate, run.upper)
     upper_value = jnp.where(replace_upper, value, run.upper_value)
-    choose_candidate = jnp.abs(value) < jnp.abs(run.best_value)
+    choose_candidate = _scalar_abs(value, precision) < _scalar_abs(
+        run.best_value,
+        precision,
+    )
     return (
         lower,
         upper,
@@ -229,29 +249,39 @@ def _solve_bracketed(
     kind: BracketMethod,
     termination: NonlinearTermination,
     args: Any,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> ScalarRootResult:
+    precision.validate_tolerance(termination.absolute_residual)
     if problem.lower is None or problem.upper is None:
         raise ValueError(f"{method_id} requires a bracket.")
-    lower = problem.lower
-    upper = problem.upper
-    lower_value = problem.evaluate(lower, args)
-    upper_value = problem.evaluate(upper, args)
+    lower = precision.state(problem.lower)
+    upper = precision.state(problem.upper)
+    lower_value = precision.residual(problem.evaluate(lower, args))
+    upper_value = precision.residual(problem.evaluate(upper, args))
+    precision.validate_trees(lower, lower_value)
     lower_valid = problem.valid(lower, lower_value, args)
     upper_valid = problem.valid(upper, upper_value, args)
     finite = (
         jnp.isfinite(lower_value) & jnp.isfinite(upper_value) & lower_valid & upper_valid
     )
-    bracket_valid = finite & (lower_value * upper_value <= 0.0)
-    lower_best = jnp.abs(lower_value) <= jnp.abs(upper_value)
+    bracket_valid = finite & (_sign_product(lower_value, upper_value, precision) <= 0.0)
+    lower_best = _scalar_abs(lower_value, precision) <= _scalar_abs(
+        upper_value,
+        precision,
+    )
     best = jnp.where(lower_best, lower, upper)
     best_value = jnp.where(lower_best, lower_value, upper_value)
     initial_residual = jnp.maximum(
-        jnp.minimum(jnp.abs(lower_value), jnp.abs(upper_value)),
-        1e-30,
+        jnp.minimum(
+            _scalar_abs(lower_value, precision),
+            _scalar_abs(upper_value, precision),
+        ),
+        precision.decision(1e-30),
     )
     endpoint_success = bracket_valid & (
-        jnp.abs(best_value) <= termination.residual_threshold(initial_residual)
+        _scalar_abs(best_value, precision)
+        <= termination.residual_threshold(initial_residual)
     )
     run = _BracketRun(
         lower=lower,
@@ -293,7 +323,8 @@ def _solve_bracketed(
         )
 
     def one_candidate(current, candidate):
-        value = problem.evaluate(candidate, args)
+        candidate = precision.state(candidate)
+        value = precision.residual(problem.evaluate(candidate, args))
         valid = problem.valid(candidate, value, args)
         finite_value = jnp.isfinite(value)
         usable = finite_value & valid
@@ -304,7 +335,7 @@ def _solve_bracketed(
             next_upper_value,
             next_best,
             next_best_value,
-        ) = _update_bracket(current, candidate, value)
+        ) = _update_bracket(current, candidate, value, precision)
         return _BracketRun(
             lower=jnp.where(usable, next_lower, current.lower),
             upper=jnp.where(usable, next_upper, current.upper),
@@ -334,10 +365,14 @@ def _solve_bracketed(
     def body(current):
         if kind == "ridder":
             midpoint = 0.5 * (current.lower + current.upper)
-            midpoint_value = problem.evaluate(midpoint, args)
+            midpoint_value = precision.residual(problem.evaluate(midpoint, args))
             discriminant = jnp.maximum(
-                midpoint_value * midpoint_value
-                - current.lower_value * current.upper_value,
+                precision.accumulation(midpoint_value) ** 2
+                - _sign_product(
+                    current.lower_value,
+                    current.upper_value,
+                    precision,
+                ),
                 0.0,
             )
             candidate = midpoint + (
@@ -366,8 +401,9 @@ def _solve_bracketed(
         else:
             candidate = _bracket_candidate(kind, current)
             updated = one_candidate(current, candidate)
-        residual_converged = jnp.abs(
-            updated.best_value
+        residual_converged = _scalar_abs(
+            updated.best_value,
+            precision,
         ) <= termination.residual_threshold(updated.initial_residual)
         bracket_width = updated.upper - updated.lower
         bracket_stagnated = bracket_width <= termination.step_threshold(
@@ -403,19 +439,35 @@ def _solve_bracketed(
         ),
         run.status,
     ).astype(jnp.int32)
+    certificate_state = precision.certificate(run.best)
+    certificate_value = precision.certificate(problem.evaluate(certificate_state, args))
+    certificate_norm = _scalar_abs(certificate_value, precision)
+    threshold = precision.decision(termination.residual_threshold(run.initial_residual))
+    certified = (
+        jnp.isfinite(certificate_state)
+        & jnp.isfinite(certificate_value)
+        & problem.valid(certificate_state, certificate_value, args)
+        & (certificate_norm <= threshold)
+    )
+    status = jnp.where(
+        (status == int(NonlinearStatus.SUCCESS)) & ~certified,
+        int(NonlinearStatus.TRANSFORMATION_CERTIFICATION_FAILED),
+        status,
+    ).astype(jnp.int32)
     diagnostics = NonlinearDiagnostics(
         initial_residual_norm=run.initial_residual,
-        final_residual_norm=jnp.abs(run.best_value),
-        final_step_norm=run.upper - run.lower,
+        final_residual_norm=certificate_norm,
+        final_step_norm=precision.decision(run.upper - run.lower),
         iterations=run.iterations,
-        residual_evaluations=run.evaluations,
+        residual_evaluations=run.evaluations + 1,
         accepted_steps=run.iterations,
         domain_failures=run.domain_failures,
         nonfinite_trials=run.nonfinite,
     )
+    output_state = precision.output(certificate_state)
     nonlinear = NonlinearResult(
-        state=run.best,
-        residual=run.best_value,
+        state=output_state,
+        residual=certificate_value,
         auxiliary=None,
         status=status,
         diagnostics=diagnostics,
@@ -424,6 +476,12 @@ def _solve_bracketed(
             method_id=method_id,
             derivative_id="function-values",
             globalization_id="certified-bracket",
+            precision_policy_id=precision.policy_id,
+        ),
+        precision_evidence=precision.evidence_for(
+            run.best,
+            run.best_value,
+            output_value=output_state,
         ),
     )
     return ScalarRootResult(
@@ -432,7 +490,7 @@ def _solve_bracketed(
         run.upper,
         run.lower_value,
         run.upper_value,
-        run.lower_value * run.upper_value <= 0.0,
+        _sign_product(run.lower_value, run.upper_value, precision) <= 0.0,
     )
 
 
@@ -442,13 +500,17 @@ class AbstractBracketedScalarRoot(AbstractScalarRootMethod):
     def kind(self) -> BracketMethod:
         raise NotImplementedError
 
-    def solve(self, problem, /, *, termination, args=None):
+    def solve(self, problem, /, *, termination, args=None, precision=None):
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         return _solve_bracketed(
             problem,
             self.method_id,
             self.kind,
             termination,
             args,
+            precision_,
         )
 
 
@@ -523,7 +585,11 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
     def method_id(self):
         return "safeguarded-halley" if self.order == 2 else "safeguarded-newton"
 
-    def solve(self, problem, /, *, termination, args=None):
+    def solve(self, problem, /, *, termination, args=None, precision=None):
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+        precision_.validate_tolerance(termination.absolute_residual)
         if problem.lower is None or problem.upper is None:
             raise ValueError("Safeguarded derivative roots require a bracket.")
         derivative = (
@@ -540,19 +606,26 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
                 lambda point: derivative(point, current_args)
             )(value)
         )
-        lower = problem.lower
-        upper = problem.upper
-        lower_value = problem.evaluate(lower, args)
-        upper_value = problem.evaluate(upper, args)
+        lower = precision_.state(problem.lower)
+        upper = precision_.state(problem.upper)
+        lower_value = precision_.residual(problem.evaluate(lower, args))
+        upper_value = precision_.residual(problem.evaluate(upper, args))
+        precision_.validate_trees(lower, lower_value)
         bracket_valid = (
             jnp.isfinite(lower_value)
             & jnp.isfinite(upper_value)
-            & (lower_value * upper_value <= 0.0)
+            & (_sign_product(lower_value, upper_value, precision_) <= 0.0)
         )
-        choose_lower = jnp.abs(lower_value) <= jnp.abs(upper_value)
+        choose_lower = _scalar_abs(lower_value, precision_) <= _scalar_abs(
+            upper_value,
+            precision_,
+        )
         current = jnp.where(choose_lower, lower, upper)
         current_value = jnp.where(choose_lower, lower_value, upper_value)
-        initial = jnp.maximum(jnp.abs(current_value), 1e-30)
+        initial = jnp.maximum(
+            _scalar_abs(current_value, precision_),
+            precision_.decision(1e-30),
+        )
         run = _OpenRun(
             current=current,
             current_value=current_value,
@@ -579,39 +652,48 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
             )
 
         def body(value):
-            first = jnp.asarray(derivative(value.current, args))
+            first = precision_.direction(derivative(value.current, args))
+            first_ = precision_.accumulation(first)
+            residual_ = precision_.accumulation(value.current_value)
             if self.order == 2:
-                second_value = jnp.asarray(second(value.current, args))
-                denominator = 2.0 * first * first - value.current_value * second_value
+                second_value = precision_.direction(second(value.current, args))
+                second_ = precision_.accumulation(second_value)
+                denominator = 2.0 * first_ * first_ - residual_ * second_
                 raw_step = (
                     2.0
-                    * value.current_value
-                    * first
+                    * residual_
+                    * first_
                     / jnp.where(denominator == 0.0, 1.0, denominator)
                 )
                 derivative_count = 2
             else:
-                raw_step = value.current_value / jnp.where(first == 0.0, 1.0, first)
+                raw_step = residual_ / jnp.where(first_ == 0.0, 1.0, first_)
                 derivative_count = 1
-            candidate = _safe_candidate(
-                value.current - raw_step,
-                value.lower,
-                value.upper,
+            candidate = precision_.state(
+                _safe_candidate(
+                    value.current - raw_step,
+                    value.lower,
+                    value.upper,
+                )
             )
-            candidate_value = problem.evaluate(candidate, args)
+            candidate_value = precision_.residual(problem.evaluate(candidate, args))
             valid = problem.valid(candidate, candidate_value, args)
             finite_value = jnp.isfinite(candidate_value) & valid
-            replace_upper = value.lower_value * candidate_value <= 0.0
+            replace_upper = (
+                _sign_product(value.lower_value, candidate_value, precision_) <= 0.0
+            )
             lower = jnp.where(replace_upper, value.lower, candidate)
             lower_value = jnp.where(replace_upper, value.lower_value, candidate_value)
             upper = jnp.where(replace_upper, candidate, value.upper)
             upper_value = jnp.where(replace_upper, candidate_value, value.upper_value)
-            residual_converged = jnp.abs(
-                candidate_value
+            residual_converged = _scalar_abs(
+                candidate_value,
+                precision_,
             ) <= termination.residual_threshold(value.initial_residual)
-            step_stagnated = jnp.abs(
-                candidate - value.current
-            ) <= termination.step_threshold(jnp.abs(value.current))
+            step_stagnated = _scalar_abs(
+                candidate - value.current,
+                precision_,
+            ) <= termination.step_threshold(_scalar_abs(value.current, precision_))
             status = jnp.where(
                 ~finite_value,
                 int(NonlinearStatus.NONFINITE_EVALUATION),
@@ -649,18 +731,38 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
             int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
             run.status,
         ).astype(jnp.int32)
+        certificate_state = precision_.certificate(run.current)
+        certificate_value = precision_.certificate(
+            problem.evaluate(certificate_state, args)
+        )
+        certificate_norm = _scalar_abs(certificate_value, precision_)
+        certified = (
+            jnp.isfinite(certificate_state)
+            & jnp.isfinite(certificate_value)
+            & problem.valid(certificate_state, certificate_value, args)
+            & (certificate_norm <= termination.residual_threshold(run.initial_residual))
+        )
+        status = jnp.where(
+            (status == int(NonlinearStatus.SUCCESS)) & ~certified,
+            int(NonlinearStatus.TRANSFORMATION_CERTIFICATION_FAILED),
+            status,
+        ).astype(jnp.int32)
         diagnostics = NonlinearDiagnostics(
             initial_residual_norm=run.initial_residual,
-            final_residual_norm=jnp.abs(run.current_value),
-            final_step_norm=jnp.abs(run.current - run.previous),
+            final_residual_norm=certificate_norm,
+            final_step_norm=_scalar_abs(
+                run.current - run.previous,
+                precision_,
+            ),
             iterations=run.iterations,
-            residual_evaluations=run.evaluations,
+            residual_evaluations=run.evaluations + 1,
             jvp_evaluations=run.derivative_evaluations,
             accepted_steps=run.iterations,
         )
+        output_state = precision_.output(certificate_state)
         nonlinear = NonlinearResult(
-            state=run.current,
-            residual=run.current_value,
+            state=output_state,
+            residual=certificate_value,
             auxiliary=None,
             status=status,
             diagnostics=diagnostics,
@@ -669,6 +771,12 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
                 method_id=self.method_id,
                 derivative_id="first-and-second" if self.order == 2 else "first",
                 globalization_id="certified-bracket",
+                precision_policy_id=precision_.policy_id,
+            ),
+            precision_evidence=precision_.evidence_for(
+                run.current,
+                run.current_value,
+                output_value=output_state,
             ),
         )
         return ScalarRootResult(
@@ -677,7 +785,7 @@ class AbstractSafeguardedDerivativeRoot(AbstractScalarRootMethod):
             run.upper,
             run.lower_value,
             run.upper_value,
-            run.lower_value * run.upper_value <= 0.0,
+            _sign_product(run.lower_value, run.upper_value, precision_) <= 0.0,
         )
 
 
@@ -700,16 +808,25 @@ def scalar_root(
     method: AbstractScalarRootMethod | None = None,
     termination: NonlinearTermination | None = None,
     args: Any = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> ScalarRootResult:
     if not isinstance(problem, ScalarRootProblem):
         raise TypeError("problem must be ScalarRootProblem.")
     method_ = TOMS748() if method is None else method
     termination_ = NonlinearTermination() if termination is None else termination
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
     if not isinstance(method_, AbstractScalarRootMethod):
         raise TypeError("method must be AbstractScalarRootMethod or None.")
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be NonlinearTermination or None.")
-    return method_.solve(problem, termination=termination_, args=args)
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    return method_.solve(
+        problem,
+        termination=termination_,
+        args=args,
+        precision=precision_,
+    )
 
 
 __all__ = [

@@ -7,10 +7,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import asdict
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 
 from ...._doc import DOC_KEY0
@@ -31,7 +33,7 @@ from ..sharding import (
     shard_operator_batch,
 )
 from ..task import OperatorTask
-from ._dtype import OperatorDTypePolicy
+from ._dtype import OperatorDTypePolicy, OperatorPrecisionEvidence
 from ._normalization import OperatorNormalizationPolicy
 from ._physics import OperatorOutputPipeline
 
@@ -242,16 +244,23 @@ def operator_normalization_fingerprint(
     return _canonical_hash(None if normalization is None else normalization.to_dict())
 
 
-def _eager_operator_prediction(
+def _operator_prediction(
     model: AbstractOperatorModel,
     batch: OperatorBatch,
     key: EvalKey,
+    dtype_policy: OperatorDTypePolicy,
     /,
 ) -> OperatorPrediction:
-    return model.predict_prevalidated(batch, key=key)
+    compute_model = dtype_policy.compute_model(model)
+    precision = dtype_policy.matmul_precision
+    precision_context = (
+        nullcontext() if precision is None else jax.default_matmul_precision(precision)
+    )
+    with precision_context:
+        return compute_model.predict_prevalidated(batch, key=key)
 
 
-_compiled_operator_prediction = eqx.filter_jit(_eager_operator_prediction)
+_compiled_operator_prediction = eqx.filter_jit(_operator_prediction)
 
 
 class PreparedOperatorInput(StrictModule):
@@ -285,12 +294,19 @@ class OperatorExecutionPlan(StrictModule):
     output_pipeline: OperatorOutputPipeline | None
     normalization: OperatorNormalizationPolicy | None
     dtype_policy: OperatorDTypePolicy
+    precision_evidence: OperatorPrecisionEvidence
     training_evidence: OperatorTrainingEvidence
     sharding_policy: OperatorShardingPolicy | None
     compilation_strategy: OperatorCompilationStrategy
     padding_policy: OperatorPaddingPolicy
     lowered_callable: Callable[
-        [AbstractOperatorModel, OperatorBatch, EvalKey], OperatorPrediction
+        [
+            AbstractOperatorModel,
+            OperatorBatch,
+            EvalKey,
+            OperatorDTypePolicy,
+        ],
+        OperatorPrediction,
     ] = eqx.field(static=True)
 
     def __init__(
@@ -419,6 +435,7 @@ class OperatorExecutionPlan(StrictModule):
         self.output_pipeline = output_pipeline
         self.normalization = normalization
         self.dtype_policy = policy
+        self.precision_evidence = policy.precision_evidence
         self.training_evidence = training_evidence
         self.sharding_policy = sharding_policy
         self.compilation_strategy = compilation_strategy
@@ -426,7 +443,7 @@ class OperatorExecutionPlan(StrictModule):
         self.lowered_callable = (
             _compiled_operator_prediction
             if compilation_strategy == "compiled"
-            else _eager_operator_prediction
+            else _operator_prediction
         )
 
     @property
@@ -461,6 +478,7 @@ class OperatorExecutionPlan(StrictModule):
                 "contract": self.contract_fingerprint,
                 "normalization": self.normalization_fingerprint,
                 "dtype": self.dtype_policy.to_dict(),
+                "precision_evidence": self.precision_evidence.to_dict(),
                 "training_evidence": asdict(self.training_evidence),
                 "compilation": self.compilation_strategy,
                 "padding": self.padding_policy,
@@ -540,6 +558,7 @@ class OperatorExecutionPlan(StrictModule):
             self.execution_model,
             prepared.execution_batch,
             model_key,
+            self.dtype_policy,
         )
         prediction = physicalize_prediction(
             raw,

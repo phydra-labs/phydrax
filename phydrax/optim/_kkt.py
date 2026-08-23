@@ -13,7 +13,32 @@ import jax.scipy as jsp
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
+from .._nonlinear_precision import NonlinearPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
+
+
+def _spectral_precision(
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> HermitianPrecisionPolicy:
+    compute = (
+        precision.residual_dtype
+        if precision.residual_dtype is not None
+        else precision.state_dtype
+    )
+    accumulation = (
+        precision.accumulation_dtype
+        if precision.accumulation_dtype is not None
+        else compute
+    )
+    return HermitianPrecisionPolicy(
+        compute_dtype=compute,
+        factorization_dtype=accumulation,
+        accumulation_dtype=accumulation,
+        decision_dtype=precision.decision_dtype,
+    )
 
 
 KKTForm: TypeAlias = Literal["augmented", "null-space", "range-space"]
@@ -24,6 +49,7 @@ class KKTInertia(StrictModule):
     negative: Array
     zero: Array
     tolerance: Array
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
 
 class KKTPlan(StrictModule):
@@ -47,6 +73,8 @@ class KKTSolveResult(StrictModule):
     inertia_matches: Array
     finite: Array
 
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+
 
 class KKTFactorization(StrictModule):
     """Reusable factorization of one regularized canonical KKT matrix."""
@@ -60,19 +88,35 @@ class KKTFactorization(StrictModule):
     dual_regularization: Array
     inertia_matches: Array
     finite: Array
+    precision: NonlinearPrecisionPolicy
 
 
-def kkt_inertia(matrix: Any, /, *, tolerance: float = 1e-10) -> KKTInertia:
-    value = jnp.asarray(matrix)
+def kkt_inertia(
+    matrix: Any,
+    /,
+    *,
+    tolerance: float = 1e-10,
+    precision: NonlinearPrecisionPolicy | None = None,
+) -> KKTInertia:
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    value = precision_.accumulation(matrix)
     if value.ndim != 2 or value.shape[0] != value.shape[1]:
         raise ValueError("KKT inertia requires one square matrix.")
-    eigenvalues = jnp.linalg.eigvalsh(0.5 * (value + jnp.conj(value.T)))
-    threshold = jnp.asarray(tolerance, dtype=eigenvalues.real.dtype)
+    spectrum = HermitianSpectrum(
+        value,
+        tolerance=tolerance,
+        precision=_spectral_precision(precision_),
+    )
+    eigenvalues = spectrum.eigenvalues
+    threshold = precision_.decision(tolerance)
     return KKTInertia(
         jnp.sum(eigenvalues > threshold, dtype=jnp.int32),
         jnp.sum(eigenvalues < -threshold, dtype=jnp.int32),
         jnp.sum(jnp.abs(eigenvalues) <= threshold, dtype=jnp.int32),
         threshold,
+        spectrum.precision_evidence,
     )
 
 
@@ -146,12 +190,17 @@ def factor_kkt(
     jacobian: Any,
     plan: KKTPlan,
     /,
+    *,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> KKTFactorization:
     """Factor one canonical KKT matrix for one or more right-hand sides."""
     if not isinstance(plan, KKTPlan):
         raise TypeError("plan must be KKTPlan.")
-    hessian_ = jnp.asarray(hessian)
-    jacobian_ = jnp.asarray(jacobian)
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    hessian_ = precision_.accumulation(hessian)
+    jacobian_ = precision_.accumulation(jacobian)
     if hessian_.shape != (plan.primal_dimension, plan.primal_dimension):
         raise ValueError("Hessian shape does not match KKT plan.")
     if jacobian_.shape != (plan.constraint_dimension, plan.primal_dimension):
@@ -164,7 +213,7 @@ def factor_kkt(
         primal_regularization,
         dual_regularization,
     )
-    inertia = kkt_inertia(matrix)
+    inertia = kkt_inertia(matrix, precision=precision_)
     for _ in range(16):
         matches = (
             (inertia.positive == plan.expected_positive)
@@ -187,7 +236,7 @@ def factor_kkt(
             primal_regularization,
             dual_regularization,
         )
-        inertia = kkt_inertia(matrix)
+        inertia = kkt_inertia(matrix, precision=precision_)
     factor, pivots = jsp.linalg.lu_factor(matrix)
     matches = (
         (inertia.positive == plan.expected_positive)
@@ -205,6 +254,7 @@ def factor_kkt(
         dual_regularization,
         matches,
         finite,
+        precision_,
     )
 
 
@@ -218,8 +268,8 @@ def solve_factored_kkt(
     if not isinstance(factorization, KKTFactorization):
         raise TypeError("factorization must be KKTFactorization.")
     plan = factorization.plan
-    primal_rhs = jnp.asarray(primal_residual)
-    constraint_rhs = jnp.asarray(constraint_residual)
+    primal_rhs = factorization.precision.accumulation(primal_residual)
+    constraint_rhs = factorization.precision.accumulation(constraint_residual)
     if primal_rhs.shape != (plan.primal_dimension,):
         raise ValueError("Primal residual shape does not match KKT plan.")
     if constraint_rhs.shape != (plan.constraint_dimension,):
@@ -234,14 +284,15 @@ def solve_factored_kkt(
     residual = factorization.matrix @ solution - rhs
     finite = factorization.finite & jnp.all(jnp.isfinite(solution))
     return KKTSolveResult(
-        primal_step,
-        dual_step,
+        factorization.precision.direction(primal_step),
+        factorization.precision.direction(dual_step),
         factorization.inertia,
         factorization.primal_regularization,
         factorization.dual_regularization,
-        jnp.linalg.norm(residual),
+        factorization.precision.decision(jnp.linalg.norm(residual)),
         factorization.inertia_matches,
         finite,
+        factorization.inertia.precision_evidence,
     )
 
 
@@ -252,9 +303,16 @@ def solve_kkt(
     constraint_residual: Any,
     plan: KKTPlan,
     /,
+    *,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> KKTSolveResult:
     """Factor and solve one canonical KKT system."""
-    factorization = factor_kkt(hessian, jacobian, plan)
+    factorization = factor_kkt(
+        hessian,
+        jacobian,
+        plan,
+        precision=precision,
+    )
     return solve_factored_kkt(
         factorization,
         primal_residual,

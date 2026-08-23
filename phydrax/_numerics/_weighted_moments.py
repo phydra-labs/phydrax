@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 from math import prod
+from typing import Any
 
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._precision import complex_precision_dtype, real_precision_dtype_name
 from .._strict import StrictModule
 
 
@@ -37,8 +39,17 @@ def _canonical_weights(
     sample_axes: int | tuple[int, ...],
     mask: Array | None,
     /,
+    *,
+    accumulation_dtype: Any | None = None,
 ) -> tuple[Array, Array, tuple[int, ...], tuple[int, ...]]:
-    weights = jnp.asarray(log_weights, dtype=float)
+    weights = jnp.asarray(
+        log_weights,
+        dtype=(
+            float
+            if accumulation_dtype is None
+            else jnp.dtype(real_precision_dtype_name(accumulation_dtype))
+        ),
+    )
     axes = _resolved_axes(sample_axes, weights.ndim)
     batch_axes = tuple(axis for axis in range(weights.ndim) if axis not in axes)
     permutation = axes + batch_axes
@@ -66,16 +77,37 @@ def _canonical_values(
     sample_axes: int | tuple[int, ...],
     mask: Array | None,
     /,
+    *,
+    accumulation_dtype: Any | None = None,
 ) -> tuple[Array, Array, Array]:
     values_ = jnp.asarray(values)
-    weights_ = jnp.asarray(log_weights, dtype=float)
+    weights_ = jnp.asarray(
+        log_weights,
+        dtype=(
+            float
+            if accumulation_dtype is None
+            else jnp.dtype(real_precision_dtype_name(accumulation_dtype))
+        ),
+    )
+    if accumulation_dtype is not None:
+        value_dtype = (
+            complex_precision_dtype(accumulation_dtype)
+            if jnp.issubdtype(values_.dtype, jnp.complexfloating)
+            else real_precision_dtype_name(accumulation_dtype)
+        )
+        values_ = values_.astype(jnp.dtype(value_dtype))
     if weights_.ndim > values_.ndim:
         raise ValueError("log_weights rank cannot exceed values rank.")
     if values_.shape[: weights_.ndim] != weights_.shape:
         raise ValueError(
             "Canonical values must begin with the complete log_weights shape."
         )
-    weights, included, axes, batch_axes = _canonical_weights(weights_, sample_axes, mask)
+    weights, included, axes, batch_axes = _canonical_weights(
+        weights_,
+        sample_axes,
+        mask,
+        accumulation_dtype=weights_.dtype,
+    )
     output_axes = tuple(range(weights_.ndim, values_.ndim))
     permutation = axes + batch_axes + output_axes
     transposed = jnp.transpose(values_, permutation)
@@ -135,9 +167,14 @@ class LogWeightedAccumulator(StrictModule):
         *,
         sample_axes: int | tuple[int, ...] = 0,
         mask: Array | None = None,
+        accumulation_dtype: Any | None = None,
     ) -> "LogWeightedAccumulator":
         values_, log_weights_, included = _canonical_values(
-            values, log_weights, sample_axes, mask
+            values,
+            log_weights,
+            sample_axes,
+            mask,
+            accumulation_dtype=accumulation_dtype,
         )
         finite = jnp.isfinite(log_weights_)
         active = included & finite
@@ -210,7 +247,10 @@ class LogWeightedAccumulator(StrictModule):
 
     @property
     def normalized_mean(self) -> Array:
-        denominator = jnp.maximum(self.weight_sum, jnp.finfo(float).tiny)
+        denominator = jnp.maximum(
+            self.weight_sum,
+            jnp.finfo(self.weight_sum.dtype).tiny,
+        )
         return self.weighted_value_sum / _expand_batch(denominator, self.output_ndim)
 
     @property
@@ -239,7 +279,10 @@ class LogWeightedAccumulator(StrictModule):
 
     @property
     def weight_ess(self) -> Array:
-        denominator = jnp.maximum(self.squared_weight_sum, jnp.finfo(float).tiny)
+        denominator = jnp.maximum(
+            self.squared_weight_sum,
+            jnp.finfo(self.squared_weight_sum.dtype).tiny,
+        )
         return self.weight_sum * self.weight_sum / denominator
 
     @property
@@ -250,7 +293,11 @@ class LogWeightedAccumulator(StrictModule):
     def maximum_normalized_weight(self) -> Array:
         return jnp.where(
             self.weight_sum > 0.0,
-            1.0 / jnp.maximum(self.weight_sum, jnp.finfo(float).tiny),
+            1.0
+            / jnp.maximum(
+                self.weight_sum,
+                jnp.finfo(self.weight_sum.dtype).tiny,
+            ),
             0.0,
         )
 
@@ -327,7 +374,12 @@ def weighted_diagnostics(
     sample_axes: int | tuple[int, ...] = 0,
     mask: Array | None = None,
 ) -> WeightedMomentsDiagnostics:
-    log_weights_, included, _, _ = _canonical_weights(log_weights, sample_axes, mask)
+    log_weights_, included, _, _ = _canonical_weights(
+        log_weights,
+        sample_axes,
+        mask,
+        accumulation_dtype=accumulator.log_scale.dtype,
+    )
     finite = jnp.isfinite(log_weights_)
     active = included & finite
     finite_count = jnp.sum(active, axis=0, dtype=jnp.int32)
@@ -337,7 +389,10 @@ def weighted_diagnostics(
     normalized = jnp.where(
         active,
         jnp.exp(log_weights_ - safe_scale[None, ...])
-        / jnp.maximum(accumulator.weight_sum[None, ...], jnp.finfo(float).tiny),
+        / jnp.maximum(
+            accumulator.weight_sum[None, ...],
+            jnp.finfo(accumulator.weight_sum.dtype).tiny,
+        ),
         0.0,
     )
     entropy = -jnp.sum(
@@ -354,7 +409,7 @@ def weighted_diagnostics(
     coefficient = jnp.sqrt(
         jnp.maximum(
             jnp.asarray(accumulator.count)
-            / jnp.maximum(weight_ess, jnp.finfo(float).tiny)
+            / jnp.maximum(weight_ess, jnp.finfo(weight_ess.dtype).tiny)
             - 1.0,
             0.0,
         )

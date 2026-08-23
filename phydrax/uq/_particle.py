@@ -25,6 +25,7 @@ from ._checkpoint import (
     read_checkpoint_archive,
     write_checkpoint_archive,
 )
+from ._precision import ParticlePrecisionPolicy
 from ._predictive import PredictiveField, SampleAxis
 
 
@@ -54,9 +55,17 @@ def particle_filter_status_name(value: int, /) -> ParticleFilterStatus:
     raise ValueError(f"Unknown particle-filter status code {code}.")
 
 
-def normalize_log_weights(log_weights: Array, /) -> tuple[Array, Array, Array]:
+def normalize_log_weights(
+    log_weights: Array,
+    /,
+    *,
+    statistics_dtype: Any | None = None,
+) -> tuple[Array, Array, Array]:
     """Normalize the final axis and explicitly report all-invalid weight sets."""
-    values = jnp.asarray(log_weights, dtype=float)
+    values = jnp.asarray(
+        log_weights,
+        dtype=float if statistics_dtype is None else statistics_dtype,
+    )
     if values.ndim < 1 or values.shape[-1] < 1:
         raise ValueError("log_weights must have a non-empty particle axis.")
     log_normalizer = jax.scipy.special.logsumexp(values, axis=-1)
@@ -67,15 +76,31 @@ def normalize_log_weights(log_weights: Array, /) -> tuple[Array, Array, Array]:
     return normalized, log_normalizer, valid
 
 
-def effective_sample_size(log_weights: Array, /) -> Array:
+def effective_sample_size(
+    log_weights: Array,
+    /,
+    *,
+    statistics_dtype: Any | None = None,
+) -> Array:
     """Effective sample size of normalized or unnormalized log weights."""
-    normalized, _, valid = normalize_log_weights(log_weights)
+    normalized, _, valid = normalize_log_weights(
+        log_weights,
+        statistics_dtype=statistics_dtype,
+    )
     value = 1.0 / jnp.sum(jnp.exp(2.0 * normalized), axis=-1)
     return jnp.where(valid, value, 0.0)
 
 
-def _normalized_probabilities(log_weights: Array, /) -> Array:
-    normalized, _, valid = normalize_log_weights(log_weights)
+def _normalized_probabilities(
+    log_weights: Array,
+    /,
+    *,
+    decision_dtype: Any | None = None,
+) -> Array:
+    normalized, _, valid = normalize_log_weights(
+        log_weights,
+        statistics_dtype=decision_dtype,
+    )
     normalized = eqx.error_if(
         normalized,
         ~jnp.all(valid),
@@ -95,24 +120,40 @@ def resample_indices(
     /,
     *,
     method: ResamplingMethod = "systematic",
+    decision_dtype: Any | None = None,
 ) -> Array:
     """Draw one fixed-size ancestry vector from a one-dimensional weight set."""
-    values = jnp.asarray(log_weights, dtype=float)
+    values = jnp.asarray(
+        log_weights,
+        dtype=float if decision_dtype is None else decision_dtype,
+    )
     if values.ndim != 1 or values.shape[0] < 1:
         raise ValueError("log_weights must be a non-empty one-dimensional vector.")
     if method not in ("systematic", "stratified", "multinomial", "residual"):
         raise ValueError(f"Unknown resampling method {method!r}.")
     count = int(values.shape[0])
-    probabilities = _normalized_probabilities(values)
+    probabilities = _normalized_probabilities(
+        values,
+        decision_dtype=decision_dtype,
+    )
     if method == "multinomial":
         return _stop_indices(jr.categorical(key, jnp.log(probabilities), shape=(count,)))
     cumulative = jnp.cumsum(probabilities).at[-1].set(1.0)
     if method == "systematic":
-        offset = jr.uniform(key, (), minval=0.0, maxval=1.0 / count)
-        positions = offset + jnp.arange(count, dtype=float) / count
+        offset = jr.uniform(
+            key,
+            (),
+            minval=0.0,
+            maxval=1.0 / count,
+            dtype=probabilities.dtype,
+        )
+        positions = offset + jnp.arange(count, dtype=probabilities.dtype) / count
         return _stop_indices(jnp.searchsorted(cumulative, positions, side="right"))
     if method == "stratified":
-        positions = (jnp.arange(count, dtype=float) + jr.uniform(key, (count,))) / count
+        positions = (
+            jnp.arange(count, dtype=probabilities.dtype)
+            + jr.uniform(key, (count,), dtype=probabilities.dtype)
+        ) / count
         return _stop_indices(jnp.searchsorted(cumulative, positions, side="right"))
     expected = count * probabilities
     deterministic_counts = jnp.floor(expected).astype(jnp.int32)
@@ -130,7 +171,12 @@ def resample_indices(
     )
     random_indices = jr.categorical(
         key,
-        jnp.log(jnp.maximum(remainder_probabilities, jnp.finfo(float).tiny)),
+        jnp.log(
+            jnp.maximum(
+                remainder_probabilities,
+                jnp.finfo(probabilities.dtype).tiny,
+            )
+        ),
         shape=(count,),
     ).astype(jnp.int32)
     positions = jnp.arange(count, dtype=jnp.int32)
@@ -190,6 +236,7 @@ class ParticleFilterState(StrictModule):
     resampling_method: ResamplingMethod = eqx.field(static=True)
     resampling_policy: ResamplingPolicy = eqx.field(static=True)
     resampling_threshold: float = eqx.field(static=True)
+    precision: ParticlePrecisionPolicy
 
 
 class ParticleFilterStep(StrictModule):
@@ -245,6 +292,8 @@ class ParticleFilterResult(StrictModule):
     resampling_method: ResamplingMethod = eqx.field(static=True)
     resampling_policy: ResamplingPolicy = eqx.field(static=True)
     resampling_threshold: float = eqx.field(static=True)
+    precision: ParticlePrecisionPolicy
+    precision_evidence: Any = eqx.field(static=True)
 
     @property
     def successful(self) -> Array:
@@ -369,12 +418,16 @@ def initialize_particle_filter(
     resampling_method: ResamplingMethod = "systematic",
     resampling_policy: ResamplingPolicy = "ess",
     resampling_threshold: float = 0.5,
+    precision: ParticlePrecisionPolicy | None = None,
 ) -> ParticleFilterState:
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
     count, method, policy, threshold = _configuration(
         num_particles, resampling_method, resampling_policy, resampling_threshold
     )
+    precision_ = ParticlePrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, ParticlePrecisionPolicy):
+        raise TypeError("precision must be a ParticlePrecisionPolicy.")
     case_shape = problem.observations.case_shape
     case_count = _case_count(problem)
     draws = []
@@ -387,8 +440,10 @@ def initialize_particle_filter(
             complete_draw = problem.model.prior.sample(draw_key)
             case_draws.append(_case_value(complete_draw, case_index, case_shape))
         draws.append(jnp.stack(case_draws, axis=0))
-    particles = jnp.stack(draws, axis=0).reshape(
-        case_shape + (count,) + problem.model.state_shape
+    particles = precision_.state(
+        jnp.stack(draws, axis=0).reshape(
+            case_shape + (count,) + problem.model.state_shape
+        )
     )
     finite_axes = tuple(range(len(case_shape) + 1, particles.ndim))
     particle_finite = jnp.all(jnp.isfinite(particles), axis=finite_axes)
@@ -399,10 +454,12 @@ def initialize_particle_filter(
     return ParticleFilterState(
         particles=particles,
         log_weights=jnp.full(
-            case_shape + (count,), -jnp.log(float(count)), dtype=particles.dtype
+            case_shape + (count,),
+            -jnp.log(float(count)),
+            dtype=precision_.statistics_dtype,
         ),
         time=problem.initial_time,
-        log_likelihood=jnp.zeros(case_shape, dtype=particles.dtype),
+        log_likelihood=jnp.zeros(case_shape, dtype=precision_.statistics_dtype),
         valid=valid,
         status=status,
         root_key=jnp.asarray(key),
@@ -412,6 +469,7 @@ def initialize_particle_filter(
         resampling_method=method,
         resampling_policy=policy,
         resampling_threshold=threshold,
+        precision=precision_,
     )
 
 
@@ -455,9 +513,10 @@ def _propagate_particles(
                     context,
                 )
                 sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
+                sampled_values = state.precision.state(sample.values)
                 values = jnp.where(
                     sample_valid,
-                    sample.values,
+                    sampled_values,
                     previous_particle,
                 )
                 return values, sample_valid
@@ -509,16 +568,18 @@ def _observation_log_likelihoods(
         def evaluate(particle):
             return jax.lax.cond(
                 active_flat[case_index],
-                lambda _: jnp.asarray(
-                    problem.model.observation.log_prob(
-                        flat_values[case_index],
-                        particle,
-                        flat_times[case_index],
-                        flat_mask[case_index],
-                        context,
-                    )
-                ).reshape(()),
-                lambda _: jnp.zeros((), dtype=predicted_particles.dtype),
+                lambda _: state.precision.statistics(
+                    jnp.asarray(
+                        problem.model.observation.log_prob(
+                            flat_values[case_index],
+                            particle,
+                            flat_times[case_index],
+                            flat_mask[case_index],
+                            context,
+                        )
+                    ).reshape(())
+                ),
+                lambda _: jnp.zeros((), dtype=state.precision.statistics_dtype),
                 operand=None,
             )
 
@@ -557,15 +618,24 @@ def particle_filter_step(
     predicted, transition_valid = _propagate_particles(
         problem, state, active, target_time
     )
-    likelihoods = _observation_log_likelihoods(
-        problem, state, predicted, active, target_time, values, mask
+    predicted = state.precision.state(predicted)
+    likelihoods = state.precision.statistics(
+        _observation_log_likelihoods(
+            problem, state, predicted, active, target_time, values, mask
+        )
     )
     likelihoods = jnp.where(transition_valid, likelihoods, -jnp.inf)
-    candidates = state.log_weights + likelihoods
+    candidates = state.precision.statistics(state.log_weights) + likelihoods
     posterior_log_weights, log_normalizers, weights_valid = normalize_log_weights(
-        candidates
+        candidates,
+        statistics_dtype=state.precision.statistics_dtype,
     )
-    ess = effective_sample_size(posterior_log_weights)
+    ess = state.precision.decision(
+        effective_sample_size(
+            posterior_log_weights,
+            statistics_dtype=state.precision.statistics_dtype,
+        )
+    )
     transition_case_valid = jnp.any(transition_valid, axis=-1)
     finite_particles = jnp.all(
         jnp.isfinite(predicted),
@@ -606,13 +676,14 @@ def particle_filter_step(
                     resampling_key,
                     flat_posterior[case_index],
                     method=state.resampling_method,
+                    decision_dtype=state.precision.decision_dtype,
                 )
                 return (
                     flat_predicted[case_index, selected],
                     jnp.full(
                         (count,),
                         -jnp.log(float(count)),
-                        dtype=predicted.dtype,
+                        dtype=state.precision.statistics_dtype,
                     ),
                     selected,
                     jnp.asarray(True),
@@ -697,6 +768,7 @@ def particle_filter_step(
         resampling_method=state.resampling_method,
         resampling_policy=state.resampling_policy,
         resampling_threshold=state.resampling_threshold,
+        precision=state.precision,
     )
     record = ParticleFilterStep(
         predicted_particles=predicted,
@@ -726,6 +798,7 @@ def bootstrap_particle_filter(
     resampling_policy: ResamplingPolicy = "ess",
     resampling_threshold: float = 0.5,
     raise_on_failure: bool = False,
+    precision: ParticlePrecisionPolicy | None = None,
 ) -> ParticleFilterResult:
     """Run a bootstrap filter as one JAX-compatible temporal scan."""
     state = initialize_particle_filter(
@@ -735,6 +808,7 @@ def bootstrap_particle_filter(
         resampling_method=resampling_method,
         resampling_policy=resampling_policy,
         resampling_threshold=resampling_threshold,
+        precision=precision,
     )
     initial_state = state
 
@@ -788,6 +862,8 @@ def bootstrap_particle_filter(
         resampling_method=state.resampling_method,
         resampling_policy=state.resampling_policy,
         resampling_threshold=state.resampling_threshold,
+        precision=state.precision,
+        precision_evidence=state.precision.evidence(state.particles.dtype),
     )
     if raise_on_failure:
         checked = eqx.error_if(
@@ -1530,6 +1606,7 @@ def _particle_checkpoint_compatibility(
     resampling_method: ResamplingMethod,
     resampling_policy: ResamplingPolicy,
     resampling_threshold: float,
+    precision: ParticlePrecisionPolicy,
 ) -> dict[str, object]:
     count, method, policy, threshold = _configuration(
         num_particles,
@@ -1552,6 +1629,7 @@ def _particle_checkpoint_compatibility(
         "resampling_method": method,
         "resampling_policy": policy,
         "resampling_threshold": threshold,
+        "precision_policy_id": precision.policy_id,
         "problem_arrays": array_tree_fingerprint(problem),
     }
 
@@ -1575,10 +1653,11 @@ def write_particle_filter_checkpoint(
         resampling_method=state.resampling_method,
         resampling_policy=state.resampling_policy,
         resampling_threshold=state.resampling_threshold,
+        precision=state.precision,
     )
     return write_checkpoint_archive(
         path,
-        kind="particle-filter-state-v1",
+        kind="particle-filter-state-v2",
         compatibility=compatibility,
         state={"step_index": int(state.step_index)},
         arrays={
@@ -1602,6 +1681,7 @@ def read_particle_filter_checkpoint(
     resampling_method: ResamplingMethod = "systematic",
     resampling_policy: ResamplingPolicy = "ess",
     resampling_threshold: float = 0.5,
+    precision: ParticlePrecisionPolicy | None = None,
 ) -> ParticleFilterState:
     """Load a particle state only when its problem and algorithm contract match."""
     if not isinstance(problem, StateSpaceProblem):
@@ -1612,16 +1692,20 @@ def read_particle_filter_checkpoint(
         resampling_policy,
         resampling_threshold,
     )
+    precision_ = ParticlePrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, ParticlePrecisionPolicy):
+        raise TypeError("precision must be a ParticlePrecisionPolicy.")
     compatibility = _particle_checkpoint_compatibility(
         problem,
         num_particles=count,
         resampling_method=method,
         resampling_policy=policy,
         resampling_threshold=threshold,
+        precision=precision_,
     )
     state_data, arrays = read_checkpoint_archive(
         path,
-        kind="particle-filter-state-v1",
+        kind="particle-filter-state-v2",
         compatibility=compatibility,
     )
     if set(state_data) != {"step_index"}:
@@ -1648,6 +1732,21 @@ def read_particle_filter_checkpoint(
                 f"Particle-filter checkpoint array {name!r} has shape "
                 f"{arrays[name].shape}; expected {shape}."
             )
+    expected_state_dtype = (
+        arrays["particles"].dtype
+        if precision_.state_storage_dtype is None
+        else jnp.dtype(precision_.state_storage_dtype)
+    )
+    if arrays["particles"].dtype != expected_state_dtype:
+        raise TypeError(
+            "Particle checkpoint state dtype disagrees with precision policy."
+        )
+    if arrays["log_weights"].dtype != jnp.dtype(precision_.statistics_dtype) or arrays[
+        "log_likelihood"
+    ].dtype != jnp.dtype(precision_.statistics_dtype):
+        raise TypeError(
+            "Particle checkpoint statistic dtypes disagree with precision policy."
+        )
     return ParticleFilterState(
         particles=arrays["particles"],
         log_weights=arrays["log_weights"],
@@ -1662,6 +1761,7 @@ def read_particle_filter_checkpoint(
         resampling_method=method,
         resampling_policy=policy,
         resampling_threshold=threshold,
+        precision=precision_,
     )
 
 

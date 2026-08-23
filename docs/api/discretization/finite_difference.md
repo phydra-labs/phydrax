@@ -254,11 +254,24 @@ positivity policies belong to the [structured finite-volume API](finite_volume.m
 
 ---
 
+`FDExecutionPrecisionPolicy` is executable: coefficient banks use
+`coefficient_dtype`, field spaces/halo payloads/checkpoints use `field_dtype`,
+stencil contractions reduce in `accumulation_dtype`, and host/device numerical
+certification uses `certification_dtype`. The policy identity is included in
+prepared operators, AMR/subcycling/reflux plans, distributed schedules,
+multigrid hierarchies, adjoints, checkpoints, and preflight estimates. Resource
+preflight derives byte counts from the same policy's explicit item-size
+assumptions and rejects operators prepared under a different policy.
+
 ::: phydrax.discretization.FDExecutionPreflightPlan
 
 ---
 
-::: phydrax.discretization.FDPrecisionPolicy
+::: phydrax.discretization.FDExecutionPrecisionPolicy
+
+---
+
+::: phydrax.discretization.FDResourceEstimate
 
 ## Checkpointing, adjoints, and compatible systems
 

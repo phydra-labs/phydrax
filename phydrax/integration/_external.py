@@ -15,6 +15,7 @@ from phydrax.domain import DomainFunction, PointBatch
 
 from .._doc import DOC_KEY0
 from .._numerics import LogWeightedAccumulator, weighted_diagnostics
+from .._precision import complex_precision_dtype, real_precision_dtype_name
 from ._batches import (
     PointIntegrationBatch,
     SeparableIntegrationBatch,
@@ -256,6 +257,19 @@ def _finite_values(values: Array, active: Array, /) -> Array:
     return jnp.all(~active | finite, axis=0)
 
 
+def _cast_precision(value: Any, dtype: Any | None, /) -> Array:
+    array = jnp.asarray(value)
+    if dtype is None or not jnp.issubdtype(array.dtype, jnp.inexact):
+        return array
+    real_dtype = real_precision_dtype_name(dtype)
+    target = (
+        complex_precision_dtype(real_dtype)
+        if jnp.issubdtype(array.dtype, jnp.complexfloating)
+        else real_dtype
+    )
+    return array.astype(target)
+
+
 def _error_norm(error: Array, /) -> Array:
     return jnp.max(jnp.asarray(error))
 
@@ -269,6 +283,8 @@ def integrate_weighted_samples(
     normalized: bool | None = None,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    evaluation_dtype: Any | None = None,
+    accumulation_dtype: Any | None = None,
 ) -> IntegrationEstimate:
     """Reduce masked log-weighted samples over explicit sample axes."""
     callback_kwargs = {} if kwargs is None else kwargs
@@ -279,6 +295,7 @@ def integrate_weighted_samples(
         kwargs=callback_kwargs,
     )
     values, log_weights, included, output_dims = _canonical_weighted(evaluated, batch)
+    values = _cast_precision(values, evaluation_dtype)
     output_ndim = values.ndim - log_weights.ndim
     sample_count = int(log_weights.shape[0])
     accumulator = LogWeightedAccumulator.from_values(
@@ -286,6 +303,7 @@ def integrate_weighted_samples(
         log_weights,
         sample_axes=0,
         mask=included,
+        accumulation_dtype=accumulation_dtype,
     )
     normalized_ = target.normalized if normalized is None else bool(normalized)
     normalizer = accumulator.raw_normalizer
@@ -454,6 +472,9 @@ def _integrate_separable_discrete(
     target: DiscreteMeasureTarget,
     batch: SeparableIntegrationBatch,
     /,
+    *,
+    evaluation_dtype: Any | None,
+    accumulation_dtype: Any | None,
 ) -> IntegrationEstimate:
     base_included = (
         cx.Field(jnp.asarray(True), dims=()) if batch.mask is None else batch.mask
@@ -491,6 +512,10 @@ def _integrate_separable_discrete(
         )
     active = included * admissible * positive
     field = _separable_value_field(evaluated, batch)
+    field = cx.Field(
+        _cast_precision(field.data, evaluation_dtype),
+        dims=field.dims,
+    )
     expanded = field
     for axis in batch.axes:
         if axis not in expanded.named_dims:
@@ -500,14 +525,14 @@ def _integrate_separable_discrete(
                 dims=(axis,),
             )
     active_values = jnp.asarray(active.broadcast_like(expanded).data, dtype=bool)
-    expanded_data = jnp.asarray(expanded.data)
+    expanded_data = _cast_precision(expanded.data, accumulation_dtype)
     safe_values = cx.Field(
         jnp.where(active_values, expanded_data, 0),
         dims=expanded.dims,
     )
     numerator = safe_values
     mass = cx.Field(
-        jnp.asarray(base_included.data, dtype=float),
+        _cast_precision(base_included.data, accumulation_dtype),
         dims=base_included.dims,
     )
     if batch.coupled_weight is not None:
@@ -534,8 +559,16 @@ def _integrate_separable_discrete(
             ),
             dims=(axis,),
         )
-        numerator = sum_over(numerator * safe_weight, axis)
-        mass = sum_over(mass * safe_weight, axis)
+        numerator = sum_over(
+            numerator * safe_weight,
+            axis,
+            accumulation_dtype=accumulation_dtype,
+        )
+        mass = sum_over(
+            mass * safe_weight,
+            axis,
+            accumulation_dtype=accumulation_dtype,
+        )
     mass_data = jnp.asarray(mass.data)
     estimate_field = numerator / mass if target.normalized else numerator
     estimate = jnp.asarray(estimate_field.data)
@@ -597,6 +630,8 @@ def integrate_discrete_measure(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    evaluation_dtype: Any | None = None,
+    accumulation_dtype: Any | None = None,
 ) -> IntegrationEstimate:
     """Reduce an externally supplied deterministic nonnegative measure."""
     callback_kwargs = {} if kwargs is None else kwargs
@@ -607,7 +642,13 @@ def integrate_discrete_measure(
         kwargs=callback_kwargs,
     )
     if isinstance(batch, SeparableIntegrationBatch):
-        return _integrate_separable_discrete(evaluated, target, batch)
+        return _integrate_separable_discrete(
+            evaluated,
+            target,
+            batch,
+            evaluation_dtype=evaluation_dtype,
+            accumulation_dtype=accumulation_dtype,
+        )
     weights = batch.weights
     values, canonical_weights, included, output_dims = _canonical_named(
         evaluated,
@@ -615,6 +656,9 @@ def integrate_discrete_measure(
         batch.axes,
         batch.mask,
     )
+    values = _cast_precision(values, evaluation_dtype)
+    canonical_weights = _cast_precision(canonical_weights, accumulation_dtype)
+    values = _cast_precision(values, accumulation_dtype)
     output_ndim = values.ndim - canonical_weights.ndim
     sample_count = int(canonical_weights.shape[0])
     admissible = jnp.isfinite(canonical_weights) & (canonical_weights >= 0.0)

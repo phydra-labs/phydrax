@@ -30,6 +30,7 @@ from phydrax.nn.operator.training import (
     fit_operator,
     OperatorDataset,
     OperatorDTypePolicy,
+    OperatorLossScalePolicy,
     OperatorValidationPolicy,
     SupervisedOperatorLoss,
 )
@@ -155,6 +156,9 @@ class OperatorBenchmarkResult:
     resumed_from_step: int = 0
     size_scale: float = 1.0
     architecture_configuration: tuple[tuple[str, str], ...] = ()
+    precision_configuration: tuple[tuple[str, str], ...] = ()
+    final_loss_scale: float | None = None
+    nonfinite_microsteps: int = 0
 
     def to_dict(self):
         return asdict(self)
@@ -317,6 +321,8 @@ def _train_operator_with_trace(
     resume: bool = False,
     checkpoint_metadata: Mapping[str, object] | None = None,
     checkpoint_key: jax.Array | None = None,
+    dtype_policy: OperatorDTypePolicy | None = None,
+    loss_scale_policy: OperatorLossScalePolicy | None = None,
 ):
     """Adapt an immutable benchmark scenario to the production operator fitter."""
     if int(steps) < 0:
@@ -404,11 +410,16 @@ def _train_operator_with_trace(
         shuffle=False,
         seed=int(scenario.seed),
         key=jr.key(0) if checkpoint_key is None else checkpoint_key,
-        dtype_policy=OperatorDTypePolicy(
-            parameter_dtype=dtype_name,
-            compute_dtype=dtype_name,
-            reduction_dtype=dtype_name,
+        dtype_policy=(
+            OperatorDTypePolicy(
+                parameter_dtype=dtype_name,
+                compute_dtype=dtype_name,
+                reduction_dtype=dtype_name,
+            )
+            if dtype_policy is None
+            else dtype_policy
         ),
+        loss_scale_policy=loss_scale_policy,
         validation_policy=OperatorValidationPolicy(
             every=int(validation_interval),
             patience=patience,
@@ -435,6 +446,20 @@ def _train_operator_with_trace(
         result.progress.stopped_early,
         result.progress.stopped_early or not trainable,
         result.resumed_from_step,
+        tuple(
+            (name, "none" if value is None else str(value))
+            for name, value in result.dtype_policy.to_dict().items()
+        ),
+        (
+            None
+            if result.loss_scale_state is None
+            else float(jax.device_get(result.loss_scale_state.scale))
+        ),
+        (
+            0
+            if result.loss_scale_state is None
+            else int(jax.device_get(result.loss_scale_state.nonfinite_microsteps))
+        ),
     )
 
 
@@ -454,6 +479,8 @@ def train_operator(
     resume: bool = False,
     checkpoint_metadata: Mapping[str, object] | None = None,
     checkpoint_key: jax.Array | None = None,
+    dtype_policy: OperatorDTypePolicy | None = None,
+    loss_scale_policy: OperatorLossScalePolicy | None = None,
 ):
     """Train an operator and return the stable five-element public result tuple."""
     result = _train_operator_with_trace(
@@ -470,6 +497,8 @@ def train_operator(
         resume=resume,
         checkpoint_metadata=checkpoint_metadata,
         checkpoint_key=checkpoint_key,
+        dtype_policy=dtype_policy,
+        loss_scale_policy=loss_scale_policy,
     )
     return result[:5]
 
@@ -864,6 +893,8 @@ def run_operator_benchmark(
     resume: bool = False,
     checkpoint_metadata: Mapping[str, object] | None = None,
     checkpoint_key: jax.Array | None = None,
+    dtype_policy: OperatorDTypePolicy | None = None,
+    loss_scale_policy: OperatorLossScalePolicy | None = None,
     run_evaluations: bool = True,
 ) -> tuple[object, OperatorBenchmarkResult]:
     (
@@ -877,6 +908,9 @@ def run_operator_benchmark(
         stopped_early,
         converged,
         resumed_from_step,
+        precision_configuration,
+        final_loss_scale,
+        nonfinite_microsteps,
     ) = _train_operator_with_trace(
         model,
         scenario,
@@ -891,6 +925,8 @@ def run_operator_benchmark(
         resume=resume,
         checkpoint_metadata=checkpoint_metadata,
         checkpoint_key=checkpoint_key,
+        dtype_policy=dtype_policy,
+        loss_scale_policy=loss_scale_policy,
     )
     evaluations = (
         tuple(
@@ -932,6 +968,9 @@ def run_operator_benchmark(
         converged=converged,
         resumed_from_step=resumed_from_step,
         architecture_configuration=tuple(architecture_configuration),
+        precision_configuration=precision_configuration,
+        final_loss_scale=final_loss_scale,
+        nonfinite_microsteps=nonfinite_microsteps,
     )
     return trained, result
 

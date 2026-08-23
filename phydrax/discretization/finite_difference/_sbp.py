@@ -123,9 +123,7 @@ def _normalized_sbp_matrix(
     boundary_width = family.boundary_width
     minimum_count = 2 * boundary_width + 2 * half_order + 1
     if count < minimum_count:
-        raise ValueError(
-            f"SBP order {order} requires at least {minimum_count} nodes."
-        )
+        raise ValueError(f"SBP order {order} requires at least {minimum_count} nodes.")
     norm = np.ones((count,), dtype=float)
     boundary_norm = np.asarray(family.norm_boundary_weights)
     norm[:boundary_width] = boundary_norm
@@ -257,6 +255,7 @@ class SBPDerivativePlan(StrictModule, NonTrainableState):
 
 class CompatibleSBPSecondDerivative(AbstractLinearOperator):
     """Matrix-free compatible second derivative using the first-derivative norm."""
+
     source: ArraySpace
     target: ArraySpace
 
@@ -337,9 +336,7 @@ class CompatibleSBPSecondDerivative(AbstractLinearOperator):
         upper_index[axis] = scaled.shape[axis] - 1
         boundary = boundary.at[tuple(lower_index)].set(-scaled[tuple(lower_index)])
         boundary = boundary.at[tuple(upper_index)].set(scaled[tuple(upper_index)])
-        covector = self.coefficient * (
-            -self.norm_weights * derivative + boundary
-        )
+        covector = self.coefficient * (-self.norm_weights * derivative + boundary)
         return first.transpose_mv(covector)
 
     def adjoint_mv(self, vector: ArrayLike, /) -> Array:

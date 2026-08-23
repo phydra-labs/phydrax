@@ -60,6 +60,28 @@ measures, and composed space/time/stochastic reductions.
 ---
 
 
+## Precision placement
+
+`IntegrationPrecisionPolicy` independently controls integrand evaluation,
+reduction accumulation, adaptive/statistical decisions, and returned output.
+Fixed, mapped, cubature, sparse-grid, product, weighted, Monte Carlo, adaptive
+interval, adaptive triangle, MLMC, atlas-patch, weighted Riemannian, and
+projective Calabi--Yau reductions all consume the same policy. Rule, atlas,
+measure, and cubature identities remain mathematical identities and do not
+change with execution precision.
+
+Every `IntegrationEstimate` carries a content-addressed
+`precision_evidence` envelope. Error estimates use decision precision; values
+use output precision. MLMC checkpoint compatibility includes the precision
+contract, so an accumulator cannot resume under a different dtype placement.
+Atlas, metric-measure, and projective results retain the same evidence and cast
+integrands before reduction; a completed low-precision scalar is never relabeled
+as widened accumulation.
+
+::: phydrax.integration.IntegrationPrecisionPolicy
+
+---
+
 ## Measure calibration
 
 `calibrate` reweights an already materialized finite positive measure to exact or
@@ -274,8 +296,11 @@ A `MultilevelTarget` supplies paired fine/coarse samples from one validated stoc
 hierarchy. `MultilevelMonteCarloPlan` allocates work from measured correction variance
 and cost, in batches, while retaining attempted and valid counts independently. The
 estimator is resumable: initialization, advancement, and finalization expose the same
-state used by the one-shot `integrate` call. Checkpoints and portable result archives
-are checksummed and reject hierarchy, sampler, observable, or plan mismatches.
+state used by the one-shot `integrate` call. Checkpoints and version-2 portable result
+archives are checksummed and reject hierarchy, sampler, observable, plan, or precision
+mismatches. `MLMCErrorLedger` separates sampling standard error, truncation bias,
+roundoff, and unavailable spatial, temporal, covariance, or solver error terms instead
+of folding unmeasured contributions into the statistical RMSE.
 
 ::: phydrax.integration.MultilevelMonteCarloPlan
 
@@ -290,6 +315,10 @@ are checksummed and reject hierarchy, sampler, observable, or plan mismatches.
 ---
 
 ::: phydrax.integration.MultilevelDiagnostics
+
+---
+
+::: phydrax.integration.MLMCErrorLedger
 
 ---
 

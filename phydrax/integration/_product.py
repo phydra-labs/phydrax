@@ -64,6 +64,7 @@ from ._plans import (
     RandomizedQMCDesign,
     SparseGridPlan,
 )
+from ._precision import IntegrationPrecisionPolicy
 from ._rules import (
     ClenshawCurtisRule,
     CubatureRule,
@@ -510,6 +511,7 @@ def _reduce_stochastic_product(
     *,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    precision: IntegrationPrecisionPolicy,
 ) -> tuple[cx.Field, Array | None, Array, int]:
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ComponentTarget):
@@ -519,17 +521,27 @@ def _reduce_stochastic_product(
         raise TypeError("Product component unions are unsupported.")
     function = _as_function(integrand, component)
     values = function(batch.points, key=key, **kwargs)
+    if not isinstance(values, cx.Field):
+        raise TypeError("Product integrands must evaluate to coordax.Field.")
+    values = cx.Field(
+        precision.evaluation(values.data),
+        dims=values.dims,
+    )
     mask, modifier = component_factor_fields(
         component, batch.points, key=key, kwargs=kwargs
     )
     base_weight = batch.weights * mask * modifier
+    base_weight = cx.Field(
+        precision.accumulation(base_weight.data),
+        dims=base_weight.dims,
+    )
     weight = base_weight
     if isinstance(target, DensityTarget):
         density_function = _as_function(target.log_density, component)
         log_density = density_function(batch.points, key=key, **kwargs)
-        weight = weight * cx.Field(
-            jnp.exp(jnp.asarray(log_density.data)), dims=log_density.dims
-        )
+        log_data = precision.evaluation(log_density.data)
+        weight = weight * cx.Field(jnp.exp(log_data), dims=log_density.dims)
+    weight = cx.Field(precision.accumulation(weight.data), dims=weight.dims)
     normalizer_weight = None
     if isinstance(target, DensityTarget):
         if target.normalized:
@@ -542,23 +554,37 @@ def _reduce_stochastic_product(
     for axis in batch.axes:
         if axis == stochastic_axis:
             continue
-        numerator = sum_over(numerator, axis)
+        numerator = sum_over(
+            numerator,
+            axis,
+            accumulation_dtype=precision.accumulation_dtype,
+        )
         if normalizer_weight is not None:
-            normalizer_weight = sum_over(normalizer_weight, axis)
+            normalizer_weight = sum_over(
+                normalizer_weight,
+                axis,
+                accumulation_dtype=precision.accumulation_dtype,
+            )
     sample_position = numerator.dims.index(stochastic_axis)
-    numerator_samples = jnp.moveaxis(jnp.asarray(numerator.data), sample_position, 0)
-    numerator_total = jnp.sum(numerator_samples, axis=0)
+    numerator_samples = precision.accumulation(
+        jnp.moveaxis(jnp.asarray(numerator.data), sample_position, 0)
+    )
+    numerator_total = precision.accumulation(jnp.sum(numerator_samples, axis=0))
     normalized = normalizer_weight is not None
     if normalizer_weight is not None:
         denominator_position = normalizer_weight.dims.index(stochastic_axis)
-        denominator_samples = jnp.moveaxis(
-            jnp.asarray(normalizer_weight.data), denominator_position, 0
+        denominator_samples = precision.accumulation(
+            jnp.moveaxis(
+                jnp.asarray(normalizer_weight.data),
+                denominator_position,
+                0,
+            )
         )
-        denominator_total = jnp.sum(denominator_samples, axis=0)
+        denominator_total = precision.accumulation(jnp.sum(denominator_samples, axis=0))
         value_data = numerator_total / denominator_total
     else:
         denominator_samples = None
-        denominator_total = jnp.asarray(1.0)
+        denominator_total = precision.accumulation(jnp.asarray(1.0))
         value_data = numerator_total
     count = numerator_samples.shape[0]
     if denominator_samples is not None:
@@ -587,14 +613,14 @@ def _reduce_stochastic_product(
         variance = jnp.sum(
             jnp.real(centered_pairs * jnp.conj(centered_pairs)), axis=0
         ) / (pairs - 1)
-        standard_error = jnp.sqrt(variance / pairs)
-        error = jnp.max(standard_error)
+        standard_error = precision.decision(jnp.sqrt(variance / pairs))
+        error = precision.decision(jnp.max(standard_error))
     elif isinstance(design, IIDDesign):
         variance = jnp.sum(jnp.real(centered * jnp.conj(centered)), axis=0) / max(
             count - 1, 1
         )
-        standard_error = jnp.sqrt(variance / count)
-        error = jnp.max(standard_error)
+        standard_error = precision.decision(jnp.sqrt(variance / count))
+        error = precision.decision(jnp.max(standard_error))
     else:
         error = None
     valid_mass = jnp.all(jnp.isfinite(denominator_total)) & jnp.all(
@@ -627,9 +653,13 @@ def integrate_product(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Reduce a deterministic or mixed deterministic/stochastic product plan."""
     callback_kwargs = {} if kwargs is None else kwargs
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     if not realization.stochastic_axes:
         if isinstance(target, DensityTarget):
             estimate = integrate_fixed_density(
@@ -638,6 +668,7 @@ def integrate_product(
                 realization.batches[0],
                 key=key,
                 kwargs=callback_kwargs,
+                precision=precision_,
             )
         else:
             estimate = integrate_fixed_component(
@@ -646,6 +677,7 @@ def integrate_product(
                 realization.batches[0],
                 key=key,
                 kwargs=callback_kwargs,
+                precision=precision_,
             )
         diagnostics = ProductIntegrationDiagnostics(
             status=estimate.status,
@@ -671,6 +703,7 @@ def integrate_product(
                     batch,
                     key=jr.fold_in(key, index),
                     kwargs=callback_kwargs,
+                    precision=precision_,
                 )
                 if isinstance(target, DensityTarget)
                 else integrate_fixed_component(
@@ -679,16 +712,19 @@ def integrate_product(
                     batch,
                     key=jr.fold_in(key, index),
                     kwargs=callback_kwargs,
+                    precision=precision_,
                 )
             )
             for index, batch in enumerate(realization.batches)
         )
-        values = jnp.stack(
-            tuple(jnp.asarray(estimate.value.data) for estimate in estimates)
+        values = precision_.accumulation(
+            jnp.stack(tuple(jnp.asarray(estimate.value.data) for estimate in estimates))
         )
         if len(estimates) > 1:
             value_data = jnp.mean(values, axis=0)
-            error = jnp.max(jnp.std(values, axis=0, ddof=1) / jnp.sqrt(len(estimates)))
+            error = precision_.decision(
+                jnp.max(jnp.std(values, axis=0, ddof=1) / jnp.sqrt(len(estimates)))
+            )
             error_kind = "randomized-qmc-replicate-error"
         else:
             value_data = estimates[0].value.data
@@ -730,13 +766,18 @@ def integrate_product(
             design,
             key=jr.fold_in(key, index),
             kwargs=callback_kwargs,
+            precision=precision_,
         )
         for index, batch in enumerate(realization.batches)
     )
-    values = jnp.stack(tuple(jnp.asarray(item[0].data) for item in reductions))
+    values = precision_.accumulation(
+        jnp.stack(tuple(jnp.asarray(item[0].data) for item in reductions))
+    )
     if len(reductions) > 1:
         value_data = jnp.mean(values, axis=0)
-        error = jnp.max(jnp.std(values, axis=0, ddof=1) / jnp.sqrt(len(reductions)))
+        error = precision_.decision(
+            jnp.max(jnp.std(values, axis=0, ddof=1) / jnp.sqrt(len(reductions)))
+        )
         error_kind = "randomized-qmc-replicate-error"
     else:
         value_data = reductions[0][0].data

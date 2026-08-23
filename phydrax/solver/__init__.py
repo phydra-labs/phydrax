@@ -271,6 +271,7 @@ from ._functional_differential import (
     FunctionalDifferentialSolution,
     solve_functional_differential,
 )
+from ._functional_precision import FunctionalMatmulPrecision, FunctionalPrecisionPolicy
 from ._functional_solver import FunctionalSolver
 from ._gaussian_lindblad import (
     damped_thermal_oscillator,
@@ -518,6 +519,7 @@ from ._temporal_method import (
     TemporalMethodClass,
     TemporalSolveEvidence,
 )
+from ._temporal_precision import TemporalPrecisionPolicy
 from ._theta import ThetaMethod
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
@@ -847,6 +849,7 @@ __all__ = [
     "TemporalMethodCapabilities",
     "TemporalMethodClass",
     "TemporalSolveEvidence",
+    "TemporalPrecisionPolicy",
     "ThetaMethod",
     "VolterraFreeTerm",
     "VolterraKernel",
@@ -944,5 +947,7 @@ __all__ = [
     "VMC_SUCCESS",
     "VMCStatus",
     "vmc_status_name",
+    "FunctionalMatmulPrecision",
+    "FunctionalPrecisionPolicy",
     "train_neural_cde",
 ]

@@ -67,9 +67,7 @@ class EinfeldtHLLFluxPlan(AbstractNumericalFluxPlan):
             left_flux,
             jnp.where((upper <= 0.0)[..., None], right_flux, flux),
         )
-        return NumericalFluxResult(
-            flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper))
-        )
+        return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
 
 
 class FiniteVolumeAdmissibilityReport(StrictModule):
@@ -131,9 +129,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             valid = jnp.all(system.admissible(fallback + midpoint * direction))
-            return jnp.where(valid, midpoint, lower), jnp.where(
-                valid, upper, midpoint
-            )
+            return jnp.where(valid, midpoint, lower), jnp.where(valid, upper, midpoint)
 
         lower, _ = jax.lax.fori_loop(
             0,
@@ -157,14 +153,13 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 minimum_density=jnp.min(state[..., 0]),
                 limited_state_valid=jnp.all(system.admissible(state)),
                 secondary_reduction_applied=jnp.asarray(False),
-                secondary_reduction_factor=jnp.asarray(
-                    1.0, dtype=state.dtype
-                ),
+                secondary_reduction_factor=jnp.asarray(1.0, dtype=state.dtype),
             ),
             normal_fluxes=(),
             integrated_fluxes=(),
             face_blend_factors=(),
         )
+
     def limit_face_fluxes(
         self,
         system: Any,
@@ -173,8 +168,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
         fallback_fluxes: tuple[Array, ...],
         common_residual: Array,
         step_size: Array,
-        discretization: FiniteVolumeDiscretization
-        | MappedFiniteVolumeDiscretization,
+        discretization: FiniteVolumeDiscretization | MappedFiniteVolumeDiscretization,
         /,
     ) -> PositivityBlendResult:
         if len(high_order_fluxes) != len(fallback_fluxes):
@@ -208,9 +202,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             midpoint = 0.5 * (lower + upper)
             candidate = fallback_state + midpoint[..., None] * direction
             valid = system.admissible(candidate)
-            return jnp.where(valid, midpoint, lower), jnp.where(
-                valid, upper, midpoint
-            )
+            return jnp.where(valid, midpoint, lower), jnp.where(valid, upper, midpoint)
 
         cell_factor, _ = jax.lax.fori_loop(
             0,
@@ -229,9 +221,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             zip(high_order_fluxes, fallback_fluxes, strict=True)
         ):
             if discretization.grid.structured_axes[axis].periodic:
-                factor = jnp.minimum(
-                    jnp.roll(cell_factor, 1, axis=axis), cell_factor
-                )
+                factor = jnp.minimum(jnp.roll(cell_factor, 1, axis=axis), cell_factor)
             else:
                 moved = jnp.moveaxis(cell_factor, axis, 0)
                 interior = jnp.minimum(moved[:-1], moved[1:])
@@ -239,9 +229,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                     jnp.concatenate((moved[:1], interior, moved[-1:])), 0, axis
                 )
             face_factors.append(factor)
-            limited_fluxes.append(
-                low_flux + factor[..., None] * (high_flux - low_flux)
-            )
+            limited_fluxes.append(low_flux + factor[..., None] * (high_flux - low_flux))
         preliminary_fluxes = tuple(limited_fluxes)
         preliminary_state = base_state + step_size * (
             residual(preliminary_fluxes) + common_residual
@@ -252,8 +240,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             lower, upper = bounds
             midpoint = 0.5 * (lower + upper)
             candidate_fluxes = tuple(
-                low_flux
-                + midpoint * (preliminary_flux - low_flux)
+                low_flux + midpoint * (preliminary_flux - low_flux)
                 for preliminary_flux, low_flux in zip(
                     preliminary_fluxes, fallback_fluxes, strict=True
                 )
@@ -262,9 +249,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 residual(candidate_fluxes) + common_residual
             )
             valid = jnp.all(system.admissible(candidate_state))
-            return jnp.where(valid, midpoint, lower), jnp.where(
-                valid, upper, midpoint
-            )
+            return jnp.where(valid, midpoint, lower), jnp.where(valid, upper, midpoint)
 
         secondary_factor, _ = jax.lax.fori_loop(
             0,
@@ -275,15 +260,10 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
                 jnp.asarray(1.0, dtype=base_state.dtype),
             ),
         )
-        secondary_factor = jnp.where(
-            preliminary_valid, 1.0, secondary_factor
-        )
-        secondary_factor = jnp.where(
-            jnp.all(fallback_valid_cells), secondary_factor, 0.0
-        )
+        secondary_factor = jnp.where(preliminary_valid, 1.0, secondary_factor)
+        secondary_factor = jnp.where(jnp.all(fallback_valid_cells), secondary_factor, 0.0)
         limited_fluxes_ = tuple(
-            low_flux
-            + secondary_factor * (preliminary_flux - low_flux)
+            low_flux + secondary_factor * (preliminary_flux - low_flux)
             for preliminary_flux, low_flux in zip(
                 preliminary_fluxes, fallback_fluxes, strict=True
             )
@@ -292,9 +272,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             residual(limited_fluxes_) + common_residual
         )
         limited_valid = jnp.all(system.admissible(limited_state))
-        final_face_factors = tuple(
-            secondary_factor * factor for factor in face_factors
-        )
+        final_face_factors = tuple(secondary_factor * factor for factor in face_factors)
         integrated_fluxes = tuple(
             flux * measure[..., None]
             for flux, measure in zip(
@@ -306,11 +284,8 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             report=FiniteVolumeAdmissibilityReport(
                 high_order_valid=jnp.all(high_valid_cells),
                 fallback_valid=jnp.all(fallback_valid_cells),
-                blend_factor=jnp.minimum(
-                    jnp.min(cell_factor), secondary_factor
-                ),
-                activated=jnp.any(cell_factor < 1.0)
-                | (secondary_factor < 1.0),
+                blend_factor=jnp.minimum(jnp.min(cell_factor), secondary_factor),
+                activated=jnp.any(cell_factor < 1.0) | (secondary_factor < 1.0),
                 minimum_density=jnp.min(limited_state[..., 0]),
                 limited_state_valid=limited_valid,
                 secondary_reduction_applied=~preliminary_valid,

@@ -10,8 +10,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree
-from ..linalg import PyTreeSpace
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    PyTreeSpace,
+    solve as solve_linear,
+)
 from ._certificates import (
     certify_least_squares_physical,
     reconcile_optimization_status,
@@ -35,6 +43,10 @@ from ._iterative import (
 from ._least_squares import LeastSquaresState
 
 
+def _coordinate_norm(value, precision: NonlinearPrecisionPolicy, /):
+    return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
+
+
 class POUNDERSEvidence(eqx.Module):
     interpolation_rank: jax.Array
     poisedness_condition: jax.Array
@@ -52,6 +64,8 @@ class POUNDERS(AbstractLeastSquaresMethod):
     maximum_radius: float = eqx.field(static=True)
     maximum_dimension: int = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
+    linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -61,6 +75,8 @@ class POUNDERS(AbstractLeastSquaresMethod):
         maximum_radius: float = 1e3,
         maximum_dimension: int = 64,
         regularization: float = 1e-10,
+        linear: LinearSolvePolicy | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         values = tuple(
             float(value)
@@ -76,9 +92,17 @@ class POUNDERS(AbstractLeastSquaresMethod):
             raise ValueError("POUNDERS controls must be finite and positive.")
         if not values[1] <= values[0] <= values[2] or dimension < 1:
             raise ValueError("POUNDERS radius ordering or maximum_dimension is invalid.")
+        linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.initial_radius, self.minimum_radius, self.maximum_radius = values[:3]
         self.regularization = values[3]
         self.maximum_dimension = dimension
+        self.linear = linear_
+        self.precision = precision_
 
     @property
     def method_id(self):
@@ -148,8 +172,12 @@ class POUNDERS(AbstractLeastSquaresMethod):
     def solve(self, problem, initial_parameters, /, *, termination, args):
         if not isinstance(problem, NonlinearLeastSquaresProblem):
             raise TypeError("problem must be NonlinearLeastSquaresProblem.")
-        parameters = validate_real_inexact_tree(
-            initial_parameters, name="initial_parameters"
+        self.precision.validate_tolerance(termination.absolute_optimality)
+        parameters = self.precision.state(
+            validate_real_inexact_tree(
+                initial_parameters,
+                name="initial_parameters",
+            )
         )
         if problem.bounds is not None:
             parameters = problem.bounds.project(parameters)
@@ -157,13 +185,16 @@ class POUNDERS(AbstractLeastSquaresMethod):
         if space.size > self.maximum_dimension:
             raise ValueError("POUNDERS dimension exceeds maximum_dimension.")
         center = space.flatten(parameters)
+        coordinate_dtype = center.dtype
 
         def evaluate(coordinates):
+            coordinates = jnp.asarray(coordinates, dtype=coordinate_dtype)
             value = space.unflatten(coordinates)
             if problem.bounds is not None:
                 value = problem.bounds.project(value)
                 coordinates = space.flatten(value)
             residual, auxiliary = problem.value(value, args)
+            residual = self.precision.residual(residual)
             return coordinates, PyTreeSpace(residual).flatten(residual), auxiliary
 
         raw_points = coordinate_interpolation_points(center, self.initial_radius)
@@ -180,11 +211,22 @@ class POUNDERS(AbstractLeastSquaresMethod):
             evaluations=evaluations,
         )
         model = fit_quadratic_residual_model(
-            interpolation, regularization=self.regularization
+            interpolation,
+            regularization=self.regularization,
+            precision=self.precision,
         )
         center_residual = evaluate(center)[1]
         evaluations += 1
-        objective = 0.5 * jnp.real(jnp.vdot(center_residual, center_residual))
+        self.precision.validate_trees(parameters, center_residual)
+        objective = self.precision.decision(
+            0.5
+            * jnp.real(
+                jnp.sum(
+                    jnp.conj(self.precision.accumulation(center_residual))
+                    * self.precision.accumulation(center_residual)
+                )
+            )
+        )
         initial_objective = objective
         accepted = rejected = iterations = 0
         step_norm = 0.0
@@ -198,9 +240,11 @@ class POUNDERS(AbstractLeastSquaresMethod):
         ):
             jacobian = model.jacobian(center)
             model_residual = model.residual(center)
-            gradient = jnp.conj(jacobian.T) @ model_residual
-            normal = jnp.conj(jacobian.T) @ jacobian
-            optimality = jnp.linalg.norm(gradient, ord=jnp.inf)
+            jacobian_ = self.precision.accumulation(jacobian)
+            model_residual_ = self.precision.accumulation(model_residual)
+            gradient = jnp.conj(jacobian_.T) @ model_residual_
+            normal = jnp.conj(jacobian_.T) @ jacobian_
+            optimality = self.precision.decision(jnp.linalg.norm(gradient, ord=jnp.inf))
             if initial_optimality is None:
                 initial_optimality = optimality
             if float(optimality) <= float(
@@ -209,14 +253,24 @@ class POUNDERS(AbstractLeastSquaresMethod):
                 status = int(OptimizationStatus.SUCCESS)
                 break
             regularized = normal + 1e-10 * jnp.eye(space.size, dtype=normal.dtype)
-            step = jnp.linalg.solve(regularized, -gradient)
+            linear_result = solve_linear(
+                LinearSystem(DenseLinearOperator(regularized)),
+                -gradient,
+                policy=self.precision.bind_linear(self.linear),
+            )
+            step = self.precision.direction(linear_result.value)
             step = (
-                jnp.minimum(1.0, radius / jnp.maximum(jnp.linalg.norm(step), 1e-30))
+                jnp.minimum(
+                    1.0,
+                    radius / jnp.maximum(_coordinate_norm(step, self.precision), 1e-30),
+                )
                 * step
             )
             candidate, candidate_residual, candidate_auxiliary = evaluate(center + step)
-            candidate_objective = 0.5 * jnp.real(
-                jnp.vdot(candidate_residual, candidate_residual)
+            candidate_residual_ = self.precision.accumulation(candidate_residual)
+            candidate_objective = self.precision.decision(
+                0.5
+                * jnp.real(jnp.sum(jnp.conj(candidate_residual_) * candidate_residual_))
             )
             predicted = objective - model.objective(candidate)
             actual = objective - candidate_objective
@@ -231,13 +285,23 @@ class POUNDERS(AbstractLeastSquaresMethod):
                 accepted += 1
             else:
                 rejected += 1
-            distances = jnp.linalg.norm(points - center[None, :], axis=1)
+            distances = jnp.linalg.norm(
+                self.precision.accumulation(points - center[None, :]),
+                axis=1,
+            )
             replace = int(jnp.argmax(distances))
             points = points.at[replace].set(candidate)
             residuals = residuals.at[replace].set(candidate_residual)
             if ratio < 0.25 or not finite:
                 radius = max(self.minimum_radius, 0.25 * radius)
-            elif ratio > 0.75 and jnp.linalg.norm(step) >= 0.9 * radius:
+            elif (
+                ratio > 0.75
+                and _coordinate_norm(
+                    step,
+                    self.precision,
+                )
+                >= 0.9 * radius
+            ):
                 radius = min(self.maximum_radius, 2.0 * radius)
             interpolation = InterpolationSet(
                 points,
@@ -247,13 +311,15 @@ class POUNDERS(AbstractLeastSquaresMethod):
                 evaluations=evaluations + 1,
             )
             model = fit_quadratic_residual_model(
-                interpolation, regularization=self.regularization
+                interpolation,
+                regularization=self.regularization,
+                precision=self.precision,
             )
             evaluations += 1
             iterations += 1
-            step_norm = float(jnp.linalg.norm(step))
+            step_norm = float(_coordinate_norm(step, self.precision))
             if accept and step_norm <= float(
-                termination.step_threshold(jnp.linalg.norm(center))
+                termination.step_threshold(_coordinate_norm(center, self.precision))
             ):
                 status = int(OptimizationStatus.STAGNATION)
             elif not accept and radius <= self.minimum_radius:
@@ -273,6 +339,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
             termination,
             certificate_step=min(max(radius, 1e-8), 1e-4),
             kind="derivative-free-stationarity",
+            precision=self.precision,
         )
         status_evidence = reconcile_optimization_status(
             status,
@@ -285,7 +352,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
             model.interpolation_rank,
             model.condition_estimate,
             jnp.asarray(radius),
-            jnp.linalg.norm(model_gradient, ord=jnp.inf),
+            _coordinate_norm(model_gradient, self.precision),
             certificate.projected_stationarity,
             certificate.evaluation_work,
         )
@@ -313,15 +380,27 @@ class POUNDERS(AbstractLeastSquaresMethod):
             globalization="residual-interpolation-trust-region",
             matrix_free=False,
             implicit_differentiation=False,
+            precision_policy_id=self.precision.policy_id,
             notes=(
                 f"poisedness-condition={float(model.condition_estimate):.6g};"
-                f"internal-status={status}"
+                f"internal-status={status};"
+                f"linear-plan={model.linear_plan_id}"
             ),
         )
-        return LeastSquaresResult(
+        output_parameters = jax.tree.map(self.precision.output, parameters)
+        precision_evidence = self.precision.evidence_for(
             parameters,
+            space.unflatten(center_residual),
+            children={
+                "certificate": certificate.precision_evidence,
+                "interpolation-model": model.precision_evidence,
+            },
+            output_value=output_parameters,
+        )
+        return LeastSquaresResult(
+            output_parameters,
             center_residual,
-            objective,
+            self.precision.output(objective),
             last_auxiliary,
             status_evidence.public_status,
             diagnostics,
@@ -329,6 +408,7 @@ class POUNDERS(AbstractLeastSquaresMethod):
             optimality_certificate=certificate,
             status_evidence=status_evidence,
             method_evidence=evidence,
+            precision_evidence=precision_evidence,
         )
 
 

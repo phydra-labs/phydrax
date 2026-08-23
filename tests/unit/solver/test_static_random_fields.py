@@ -6,9 +6,7 @@ import phydrax as phx
 
 
 def _periodic_basis(size, mode_names):
-    axis = phx.discretization.UniformAxisSpec(
-        size, endpoint=False, periodic=True
-    ).materialize(0.0, 1.0)
+    axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
     spatial = phx.discretization.SeparableSpectralDiscretization((axis,))
     available = {
         "constant": jnp.ones((size,)),

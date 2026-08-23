@@ -10,6 +10,14 @@ import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve as solve_linear,
+)
 from ._constrained_model import PreparedConstrainedModel
 from ._iterative import (
     ConstrainedOptimalityCertificate,
@@ -19,6 +27,23 @@ from ._iterative import (
     OptimizationStatusEvidence,
     OptimizationTermination,
 )
+
+
+def _least_squares_solve(
+    matrix,
+    right_hand_side,
+    precision: NonlinearPrecisionPolicy,
+    linear: LinearSolvePolicy | None,
+    /,
+):
+    linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
+    if not isinstance(linear_, LinearSolvePolicy):
+        raise TypeError("linear must be LinearSolvePolicy or None.")
+    return solve_linear(
+        LeastSquaresProblem(DenseLinearOperator(precision.accumulation(matrix))),
+        precision.accumulation(right_hand_side),
+        policy=precision.bind_linear(linear_),
+    )
 
 
 def reconcile_optimization_status(
@@ -85,10 +110,11 @@ def _least_squares_objective(
     parameters: Any,
     args: Any,
     /,
+    precision: NonlinearPrecisionPolicy,
 ):
     residual, _ = problem.value(parameters, args)
-    flat, _ = ravel_pytree(residual)
-    return 0.5 * jnp.real(jnp.vdot(flat, flat))
+    flat = precision.accumulation(ravel_pytree(residual)[0])
+    return precision.decision(0.5 * jnp.real(jnp.sum(jnp.conj(flat) * flat)))
 
 
 def certify_least_squares_physical(
@@ -102,18 +128,37 @@ def certify_least_squares_physical(
     kind: Literal[
         "least-squares-normal", "derivative-free-stationarity"
     ] = "derivative-free-stationarity",
+    linear: LinearSolvePolicy | None = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> OptimizationCertificate:
     if not isinstance(problem, NonlinearLeastSquaresProblem):
         raise TypeError("problem must be NonlinearLeastSquaresProblem.")
     if not isinstance(termination, OptimizationTermination):
         raise TypeError("termination must be OptimizationTermination.")
-    coordinates, unflatten = ravel_pytree(parameters)
-    objective = _least_squares_objective(problem, parameters, args)
-    epsilon = jnp.finfo(coordinates.real.dtype).eps
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    precision_.validate_tolerance(termination.absolute_optimality)
+    model_parameters = precision_.state(parameters)
+    physical_parameters = precision_.certificate(parameters)
+    coordinates, unflatten = ravel_pytree(physical_parameters)
+    physical_residual, _ = problem.value(physical_parameters, args)
+    objective = _least_squares_objective(
+        problem,
+        physical_parameters,
+        args,
+        precision_,
+    )
+    epsilon_dtype = (
+        coordinates.real.dtype
+        if precision_.certificate_dtype is None
+        else jnp.dtype(precision_.certificate_dtype)
+    )
+    epsilon = jnp.finfo(epsilon_dtype).eps
     lower = jnp.full_like(coordinates, -jnp.inf)
     upper = jnp.full_like(coordinates, jnp.inf)
     if problem.bounds is not None:
-        lower_tree, upper_tree = problem.bounds.materialize(parameters)
+        lower_tree, upper_tree = problem.bounds.materialize(physical_parameters)
         lower = ravel_pytree(lower_tree)[0]
         upper = ravel_pytree(upper_tree)[0]
     gradients = []
@@ -153,11 +198,13 @@ def certify_least_squares_physical(
                 problem,
                 unflatten(coordinates + direction),
                 args,
+                precision_,
             )
             minus = _least_squares_objective(
                 problem,
                 unflatten(coordinates - direction),
                 args,
+                precision_,
             )
             gradient_value = (plus - minus) / (2.0 * central_step)
             used = 2
@@ -167,11 +214,13 @@ def certify_least_squares_physical(
                 problem,
                 unflatten(coordinates + direction),
                 args,
+                precision_,
             )
             plus_two = _least_squares_objective(
                 problem,
                 unflatten(coordinates + 2.0 * direction),
                 args,
+                precision_,
             )
             gradient_value = (-3.0 * objective + 4.0 * plus - plus_two) / (
                 2.0 * forward_step
@@ -183,11 +232,13 @@ def certify_least_squares_physical(
                 problem,
                 unflatten(coordinates - direction),
                 args,
+                precision_,
             )
             minus_two = _least_squares_objective(
                 problem,
                 unflatten(coordinates - 2.0 * direction),
                 args,
+                precision_,
             )
             gradient_value = (3.0 * objective - 4.0 * minus + minus_two) / (
                 2.0 * backward_step
@@ -203,24 +254,26 @@ def certify_least_squares_physical(
     projected = (
         gradient
         if problem.bounds is None
-        else problem.bounds.projected_gradient(parameters, gradient)
+        else problem.bounds.projected_gradient(physical_parameters, gradient)
     )
     projected_coordinates = ravel_pytree(projected)[0]
-    stationarity = jnp.linalg.norm(projected_coordinates, ord=jnp.inf)
+    stationarity = precision_.decision(
+        jnp.linalg.norm(
+            precision_.accumulation(projected_coordinates),
+            ord=jnp.inf,
+        )
+    )
     feasibility = (
         jnp.asarray(0.0, dtype=objective.dtype)
         if problem.bounds is None
-        else problem.bounds.violation(parameters)
+        else problem.bounds.violation(physical_parameters)
     )
     finite = (
         jnp.isfinite(objective)
         & jnp.all(jnp.isfinite(gradient_coordinates))
         & jnp.isfinite(feasibility)
     )
-    tolerance = jnp.asarray(
-        termination.absolute_optimality,
-        dtype=objective.dtype,
-    )
+    tolerance = precision_.decision(termination.absolute_optimality)
     certified = finite & (stationarity <= tolerance) & (feasibility <= tolerance)
     return OptimizationCertificate(
         kind=kind,
@@ -233,6 +286,10 @@ def certify_least_squares_physical(
         certified=certified,
         evaluation_work=evaluations,
         certificate_id=f"{problem.problem_id}/{kind}",
+        precision_evidence=precision_.evidence_for(
+            model_parameters,
+            precision_.residual(physical_residual),
+        ),
     )
 
 
@@ -241,6 +298,8 @@ def _independent_active_multipliers(
     equality_jacobian,
     inequality_jacobian,
     active_mask,
+    precision,
+    linear,
 ):
     active_indices = [
         int(index) for index in jax.device_get(jnp.where(active_mask)[0]).tolist()
@@ -258,11 +317,13 @@ def _independent_active_multipliers(
             axis=1,
         )
         if multiplier_matrix.shape[1]:
-            multipliers = jnp.linalg.lstsq(
+            multiplier_result = _least_squares_solve(
                 multiplier_matrix,
                 -gradient,
-                rcond=None,
-            )[0]
+                precision,
+                linear,
+            )
+            multipliers = precision.direction(multiplier_result.value)
         else:
             multipliers = jnp.empty((0,), dtype=gradient.dtype)
         selected_multipliers = multipliers[equality_count:]
@@ -293,12 +354,19 @@ def certify_constrained_physical(
     *,
     kind: Literal["active-kkt", "barrier-kkt"] = "active-kkt",
     args: Any = None,
+    linear: LinearSolvePolicy | None = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> OptimizationCertificate:
     if not isinstance(prepared, PreparedConstrainedModel):
         raise TypeError("prepared must be PreparedConstrainedModel.")
     if not isinstance(canonical, ConstrainedOptimalityCertificate):
         raise TypeError("canonical must be ConstrainedOptimalityCertificate.")
-    evaluation = prepared.evaluate(parameters, args)
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    model_parameters = precision_.state(parameters)
+    physical_parameters = precision_.certificate(parameters)
+    evaluation = prepared.evaluate(physical_parameters, args)
     equality_jacobian = evaluation.constraint_jacobian[prepared.equality_indices]
     lower_jacobian = evaluation.constraint_jacobian[prepared.lower_indices]
     upper_jacobian = -evaluation.constraint_jacobian[prepared.upper_indices]
@@ -306,10 +374,7 @@ def certify_constrained_physical(
         [lower_jacobian, upper_jacobian],
         axis=0,
     )
-    tolerance_ = jnp.asarray(
-        tolerance,
-        dtype=evaluation.objective.real.dtype,
-    )
+    tolerance_ = precision_.decision(tolerance)
     active_mask = evaluation.inequality_slacks <= jnp.sqrt(tolerance_)
     if kind == "active-kkt":
         equality_multipliers, inequality_multipliers = _independent_active_multipliers(
@@ -317,18 +382,24 @@ def certify_constrained_physical(
             equality_jacobian,
             inequality_jacobian,
             active_mask,
+            precision_,
+            linear,
         )
     else:
         equality_multipliers = canonical.equality_multipliers
         inequality_multipliers = canonical.inequality_multipliers
+    gradient_ = precision_.accumulation(evaluation.gradient)
+    equality_jacobian_ = precision_.accumulation(equality_jacobian)
+    inequality_jacobian_ = precision_.accumulation(inequality_jacobian)
+    equality_multipliers_ = precision_.accumulation(equality_multipliers)
+    inequality_multipliers_ = precision_.accumulation(inequality_multipliers)
     stationarity_coordinates = (
-        evaluation.gradient
-        + jnp.conj(equality_jacobian.T) @ equality_multipliers
-        - jnp.conj(inequality_jacobian.T) @ inequality_multipliers
+        gradient_
+        + jnp.conj(equality_jacobian_.T) @ equality_multipliers_
+        - jnp.conj(inequality_jacobian_.T) @ inequality_multipliers_
     )
-    stationarity = jnp.linalg.norm(
-        stationarity_coordinates,
-        ord=jnp.inf,
+    stationarity = precision_.decision(
+        jnp.linalg.norm(stationarity_coordinates, ord=jnp.inf)
     )
     physical_slacks = jnp.maximum(evaluation.inequality_slacks, 0.0)
     physical_complementarity = jnp.max(
@@ -363,14 +434,18 @@ def certify_constrained_physical(
         ],
         axis=0,
     )
-    singular_values = jnp.linalg.svd(active_rows, compute_uv=False)
-    regular = (
-        jnp.asarray(True)
-        if active_rows.shape[0] == 0
-        else (
-            (active_rows.shape[0] <= active_rows.shape[1]) & (singular_values[-1] > 1e-10)
+    if active_rows.shape[0] == 0:
+        regular = jnp.asarray(True)
+    else:
+        regularity_result = _least_squares_solve(
+            jnp.conj(active_rows.T),
+            jnp.zeros((active_rows.shape[1],), dtype=active_rows.dtype),
+            precision_,
+            linear,
         )
-    )
+        regular = (
+            regularity_result.diagnostics.rank >= active_rows.shape[0]
+        ) & jnp.isfinite(regularity_result.diagnostics.condition_estimate)
     finite = (
         evaluation.finite
         & jnp.all(jnp.isfinite(equality_multipliers))
@@ -404,6 +479,15 @@ def certify_constrained_physical(
         certified=certified,
         evaluation_work=1,
         certificate_id=f"{prepared.problem.problem_id}/{kind}",
+        precision_evidence=precision_.evidence_for(
+            model_parameters,
+            precision_.residual(evaluation.gradient),
+            children=(
+                {}
+                if canonical.precision_evidence is None
+                else {"canonical-kkt": canonical.precision_evidence}
+            ),
+        ),
     )
 
 

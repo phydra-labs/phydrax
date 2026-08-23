@@ -434,6 +434,11 @@ def _square_solve(
                 tolerance[1],
                 step_limit=max_steps,
                 identity_preconditioner=preconditioner is None,
+                basis_dtype=(
+                    None
+                    if plan.policy.precision is None
+                    else plan.policy.precision.krylov_dtype
+                ),
             )
             *auxiliary, executed_cycles = auxiliary
             matvec_count = auxiliary[0] + executed_cycles + 1
@@ -740,6 +745,7 @@ def _fgmres_raw(
     *,
     step_limit: Array | None = None,
     identity_preconditioner: bool = False,
+    basis_dtype=None,
 ):
     if step_limit is None:
         step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
@@ -809,12 +815,20 @@ def _fgmres_raw(
                 _,
                 previous_cycles,
             ) = operand
+            stored_basis_dtype = (
+                rhs.dtype if basis_dtype is None else jnp.dtype(basis_dtype)
+            )
             safe_norm = jnp.where(cycle_norm > 0.0, cycle_norm, 1.0)
-            basis = jnp.zeros((restart + 1, rhs.size), dtype=rhs.dtype)
-            basis = basis.at[0].set(cycle_residual / safe_norm)
+            basis = jnp.zeros(
+                (restart + 1, rhs.size),
+                dtype=stored_basis_dtype,
+            )
+            basis = basis.at[0].set(
+                (cycle_residual / safe_norm).astype(stored_basis_dtype)
+            )
             preconditioned_basis = jnp.zeros(
                 (0 if identity_preconditioner else restart, rhs.size),
-                dtype=rhs.dtype,
+                dtype=stored_basis_dtype,
             )
             hessenberg = jnp.zeros((restart + 1, restart), dtype=rhs.dtype)
             cosines = jnp.zeros((restart,), dtype=rhs.real.dtype)
@@ -867,7 +881,7 @@ def _fgmres_raw(
                         best_i,
                         stagnant_i,
                     ) = inner_operand
-                    vector = basis_i[local_index]
+                    vector = basis_i[local_index].astype(rhs.dtype)
                     transformed = (
                         vector
                         if identity_preconditioner
@@ -878,9 +892,10 @@ def _fgmres_raw(
 
                     def orthogonalize(index, state):
                         remainder, coefficients = state
-                        coefficient = inner(basis_i[index], remainder)
+                        basis_vector = basis_i[index].astype(rhs.dtype)
+                        coefficient = inner(basis_vector, remainder)
                         return (
-                            remainder - coefficient * basis_i[index],
+                            remainder - coefficient * basis_vector,
                             coefficients.at[index].add(coefficient),
                         )
 
@@ -901,11 +916,13 @@ def _fgmres_raw(
                         jnp.finfo(rhs.real.dtype).eps
                     ) * jnp.maximum(_norm(image, inner), 1.0)
                     basis_i = basis_i.at[local_index + 1].set(
-                        orthogonal / jnp.where(near_breakdown, 1.0, next_norm)
+                        (orthogonal / jnp.where(near_breakdown, 1.0, next_norm)).astype(
+                            stored_basis_dtype
+                        )
                     )
                     if not identity_preconditioner:
                         preconditioned_i = preconditioned_i.at[local_index].set(
-                            transformed
+                            transformed.astype(stored_basis_dtype)
                         )
                     column = hessenberg_i[:, local_index]
                     column = column.at[:-1].set(projection)

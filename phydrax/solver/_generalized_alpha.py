@@ -12,6 +12,8 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import DiscretizationBundle
@@ -27,6 +29,7 @@ from ..nonlinear import (
     refresh_nonlinear,
 )
 from ._temporal_method import TemporalMethodCapabilities
+from ._temporal_precision import TemporalPrecisionPolicy
 
 
 _DEFAULT_ARGS = object()
@@ -108,18 +111,21 @@ class GeneralizedAlphaMethod(StrictModule, NonTrainableState):
 
 class _InitialAccelerationResidual(eqx.Module):
     problem: SecondOrderDifferentialProblem
+    precision: TemporalPrecisionPolicy
     time: Array
     args: Any
 
     def __call__(self, acceleration: Array, unused: Any, /) -> Array:
         del unused
         system = self.problem.system
-        return system.scaled_residual(
-            self.time,
-            self.problem.initial_configuration,
-            self.problem.initial_velocity,
-            acceleration,
-            self.args,
+        return self.precision.residual(
+            system.scaled_residual(
+                self.time,
+                self.problem.initial_configuration,
+                self.problem.initial_velocity,
+                acceleration,
+                self.args,
+            )
         )
 
 
@@ -135,34 +141,52 @@ class _GeneralizedAlphaArguments(StrictModule):
 class _GeneralizedAlphaResidual(eqx.Module):
     problem: SecondOrderDifferentialProblem
     method: GeneralizedAlphaMethod
+    precision: TemporalPrecisionPolicy
 
     def kinematics(
         self, next_acceleration: Array, arguments: _GeneralizedAlphaArguments, /
     ) -> tuple[Array, Array, Array, Array, Array, Array]:
-        h = arguments.step_size
-        method = self.method
-        next_configuration = (
-            arguments.configuration
-            + h * arguments.velocity
-            + h**2
-            * (
-                (0.5 - method.beta) * arguments.acceleration
-                + method.beta * next_acceleration
+        h = self.precision.coefficient(
+            jnp.asarray(
+                arguments.step_size,
+                dtype=arguments.configuration.real.dtype,
             )
         )
-        next_velocity = arguments.velocity + h * (
-            (1.0 - method.gamma) * arguments.acceleration
-            + method.gamma * next_acceleration
-        )
+        method = self.method
+        configuration = self.precision.stage(arguments.configuration)
+        velocity = self.precision.stage(arguments.velocity)
+        acceleration = self.precision.stage(arguments.acceleration)
+        next_acceleration_ = self.precision.stage(next_acceleration)
+        next_configuration = (
+            self.precision.accumulation(configuration)
+            + self.precision.accumulation(h * velocity)
+            + self.precision.accumulation(
+                h**2
+                * ((0.5 - method.beta) * acceleration + method.beta * next_acceleration_)
+            )
+        ).astype(arguments.configuration.dtype)
+        next_velocity = (
+            self.precision.accumulation(velocity)
+            + self.precision.accumulation(
+                h
+                * (
+                    (1.0 - method.gamma) * acceleration
+                    + method.gamma * next_acceleration_
+                )
+            )
+        ).astype(arguments.velocity.dtype)
         weighted_configuration = (
-            1.0 - method.alpha_f
-        ) * next_configuration + method.alpha_f * arguments.configuration
+            self.precision.accumulation((1.0 - method.alpha_f) * next_configuration)
+            + self.precision.accumulation(method.alpha_f * configuration)
+        ).astype(arguments.configuration.dtype)
         weighted_velocity = (
-            1.0 - method.alpha_f
-        ) * next_velocity + method.alpha_f * arguments.velocity
+            self.precision.accumulation((1.0 - method.alpha_f) * next_velocity)
+            + self.precision.accumulation(method.alpha_f * velocity)
+        ).astype(arguments.velocity.dtype)
         weighted_acceleration = (
-            1.0 - method.alpha_m
-        ) * next_acceleration + method.alpha_m * arguments.acceleration
+            self.precision.accumulation((1.0 - method.alpha_m) * next_acceleration_)
+            + self.precision.accumulation(method.alpha_m * acceleration)
+        ).astype(arguments.acceleration.dtype)
         weighted_time = (1.0 - method.alpha_f) * arguments.time + method.alpha_f * (
             arguments.time - h
         )
@@ -184,12 +208,14 @@ class _GeneralizedAlphaResidual(eqx.Module):
         _, _, time, configuration, velocity, acceleration = self.kinematics(
             next_acceleration, arguments
         )
-        return self.problem.system.scaled_residual(
-            time,
-            configuration,
-            velocity,
-            acceleration,
-            arguments.args,
+        return self.precision.residual(
+            self.problem.system.scaled_residual(
+                time,
+                configuration,
+                velocity,
+                acceleration,
+                arguments.args,
+            )
         )
 
 
@@ -204,6 +230,7 @@ class GeneralizedAlphaSolution(StrictModule):
     stage_residual_norm: Array
     nonlinear_iterations: Array
     discretization_bundle: DiscretizationBundle | None
+    precision_evidence: PrecisionEvidenceEnvelope
     method_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     time_id: str = eqx.field(static=True)
@@ -220,6 +247,7 @@ class GeneralizedAlphaSolution(StrictModule):
         stage_residual_norm: Array,
         nonlinear_iterations: Array,
         discretization_bundle: DiscretizationBundle | None,
+        precision_evidence: PrecisionEvidenceEnvelope,
         method_id: str,
         problem_id: str,
         time_id: str,
@@ -234,6 +262,8 @@ class GeneralizedAlphaSolution(StrictModule):
             or stage_residual_norm.shape != prefix
         ):
             raise ValueError("Generalized-alpha solution arrays do not align.")
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.times = jnp.asarray(times)
         self.configurations = jnp.asarray(configurations)
         self.velocities = jnp.asarray(velocities)
@@ -241,6 +271,7 @@ class GeneralizedAlphaSolution(StrictModule):
         self.valid = jnp.asarray(valid, dtype=bool)
         self.stage_residual_norm = jnp.asarray(stage_residual_norm)
         self.nonlinear_iterations = jnp.asarray(nonlinear_iterations, dtype=jnp.int32)
+        self.precision_evidence = precision_evidence
         self.discretization_bundle = discretization_bundle
         self.method_id = str(method_id)
         self.problem_id = str(problem_id)
@@ -263,6 +294,7 @@ def solve_generalized_alpha(
     nonlinear_method: NewtonKrylov | None = None,
     termination: NonlinearTermination | None = None,
     args: Any = _DEFAULT_ARGS,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> GeneralizedAlphaSolution:
     """Solve one fixed-grid second-order residual problem."""
     if not isinstance(problem, SecondOrderDifferentialProblem):
@@ -284,14 +316,31 @@ def solve_generalized_alpha(
         raise TypeError("nonlinear_method must be NewtonKrylov or None.")
     if not isinstance(root_termination, NonlinearTermination):
         raise TypeError("termination must be NonlinearTermination or None.")
+    precision_ = TemporalPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, TemporalPrecisionPolicy):
+        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+    precision_.validate_implicit_state(problem.initial_configuration)
+    precision_.validate_implicit_state(problem.initial_velocity)
+    precision_.validate_implicit_state(problem.initial_acceleration)
     runtime_args = problem.args if args is _DEFAULT_ARGS else args
     state = problem.initial_configuration
     space = ArraySpace(state.shape, dtype=state.dtype)
     initial_problem = NonlinearSystemProblem(
-        _InitialAccelerationResidual(problem, time_grid.times[0], runtime_args),
+        _InitialAccelerationResidual(
+            problem,
+            precision_,
+            time_grid.times[0],
+            runtime_args,
+        ),
         state_space=space,
         residual_space=space,
         problem_id=f"{problem.system.system_id}:initial-acceleration",
+    )
+    nonlinear_precision = NonlinearPrecisionPolicy(
+        state_dtype=state.dtype,
+        residual_dtype=state.dtype,
+        accumulation_dtype=precision_.accumulation_dtype,
+        decision_dtype=precision_.decision_dtype,
     )
     initial_prepared = prepare_nonlinear(
         initial_problem,
@@ -299,6 +348,7 @@ def solve_generalized_alpha(
         method=root_method,
         termination=root_termination,
         args=None,
+        precision=nonlinear_precision,
     )
     initial_result = implicit_root_result(initial_prepared)
     initial_acceleration = jnp.asarray(initial_result.state)
@@ -311,7 +361,7 @@ def solve_generalized_alpha(
         initial_acceleration,
         runtime_args,
     )
-    stage_residual = _GeneralizedAlphaResidual(problem, selected)
+    stage_residual = _GeneralizedAlphaResidual(problem, selected, precision_)
     stage_problem = NonlinearSystemProblem(
         stage_residual,
         state_space=space,
@@ -324,6 +374,7 @@ def solve_generalized_alpha(
         method=root_method,
         termination=root_termination,
         args=first_arguments,
+        precision=nonlinear_precision,
     )
 
     def advance(carry, values):
@@ -350,8 +401,10 @@ def solve_generalized_alpha(
             next_configuration, next_velocity, *_ = stage_residual.kinematics(
                 next_acceleration, arguments
             )
-            residual = stage_residual(next_acceleration, arguments)
-            residual_norm = jnp.sqrt(jnp.mean(jnp.abs(residual) ** 2))
+            residual = precision_.residual(stage_residual(next_acceleration, arguments))
+            residual_norm = precision_.decision(
+                jnp.sqrt(jnp.mean(jnp.abs(precision_.accumulation(residual)) ** 2))
+            )
             finite = (
                 jnp.all(jnp.isfinite(next_configuration))
                 & jnp.all(jnp.isfinite(next_velocity))
@@ -394,31 +447,45 @@ def solve_generalized_alpha(
         (time_grid.times[1:], time_grid.durations),
     )
     step_q, step_v, step_a, step_valid, residuals, iterations = outputs
-    initial_residual = problem.system.scaled_residual(
-        time_grid.times[0],
-        problem.initial_configuration,
-        problem.initial_velocity,
-        initial_acceleration,
-        runtime_args,
+    initial_residual = precision_.residual(
+        problem.system.scaled_residual(
+            time_grid.times[0],
+            problem.initial_configuration,
+            problem.initial_velocity,
+            initial_acceleration,
+            runtime_args,
+        )
+    )
+    initial_residual_norm = precision_.decision(
+        jnp.sqrt(jnp.mean(jnp.abs(precision_.accumulation(initial_residual)) ** 2))
+    )
+    configurations = jnp.concatenate(
+        (problem.initial_configuration[None, ...], step_q),
+        axis=0,
+    )
+    velocities = jnp.concatenate(
+        (problem.initial_velocity[None, ...], step_v),
+        axis=0,
+    )
+    accelerations = jnp.concatenate(
+        (initial_acceleration[None, ...], step_a),
+        axis=0,
     )
     return GeneralizedAlphaSolution(
         times=time_grid.times,
-        configurations=jnp.concatenate(
-            (problem.initial_configuration[None, ...], step_q), axis=0
-        ),
-        velocities=jnp.concatenate((problem.initial_velocity[None, ...], step_v), axis=0),
-        accelerations=jnp.concatenate((initial_acceleration[None, ...], step_a), axis=0),
+        configurations=precision_.output(configurations),
+        velocities=precision_.output(velocities),
+        accelerations=precision_.output(accelerations),
         valid=jnp.concatenate((initial_valid[None], step_valid)),
-        stage_residual_norm=jnp.concatenate(
-            (
-                jnp.sqrt(jnp.mean(jnp.abs(initial_residual) ** 2))[None],
-                residuals,
-            )
-        ),
+        stage_residual_norm=jnp.concatenate((initial_residual_norm[None], residuals)),
         nonlinear_iterations=jnp.concatenate(
             (initial_result.diagnostics.iterations[None], iterations)
         ),
         discretization_bundle=problem.discretization_bundle,
+        precision_evidence=precision_.evidence_for(
+            problem.initial_configuration,
+            time_grid.times,
+        ),
         method_id=selected.method_id,
         problem_id=problem.problem_id,
         time_id=time_grid.time_id,

@@ -11,8 +11,34 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve as solve_linear,
+)
+from ._precision import NonlinearPrecisionPolicy
 from ._types import NonlinearStatus
+
+
+def _axis_norm(
+    value: Array,
+    axis: int,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    accumulated = precision.accumulation(value)
+    return precision.decision(
+        jnp.sqrt(
+            jnp.sum(
+                jnp.real(jnp.conj(accumulated) * accumulated),
+                axis=axis,
+            )
+        )
+    )
 
 
 class BatchedRootResult(StrictModule):
@@ -24,6 +50,8 @@ class BatchedRootResult(StrictModule):
     jacobian_evaluations: Array
     accepted_steps: Array
     residual_norm: Array
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
 
     @property
     def successful(self):
@@ -39,6 +67,7 @@ class SmallRootKernel(StrictModule):
     absolute_tolerance: float = eqx.field(static=True)
     relative_tolerance: float = eqx.field(static=True)
     minimum_damping: float = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -50,6 +79,7 @@ class SmallRootKernel(StrictModule):
         absolute_tolerance: float = 1e-8,
         relative_tolerance: float = 1e-8,
         minimum_damping: float = 1e-4,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         if not callable(residual):
             raise TypeError("residual must be callable.")
@@ -57,15 +87,20 @@ class SmallRootKernel(StrictModule):
         steps = int(maximum_steps)
         if dimension < 1 or steps < 1:
             raise ValueError("Small-root dimensions and steps must be positive.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+        precision_.validate_tolerance(absolute_tolerance)
         self.residual = residual
         self.maximum_dimension = dimension
         self.maximum_steps = steps
         self.absolute_tolerance = float(absolute_tolerance)
         self.relative_tolerance = float(relative_tolerance)
         self.minimum_damping = float(minimum_damping)
+        self.precision = precision_
 
     def solve(self, initial_states: Any, args: Any, /) -> BatchedRootResult:
-        states = jnp.asarray(initial_states)
+        states = self.precision.state(jnp.asarray(initial_states))
         if states.ndim != 2:
             raise ValueError("initial_states must have shape (batch, dimension).")
         if states.shape[1] > self.maximum_dimension:
@@ -73,11 +108,13 @@ class SmallRootKernel(StrictModule):
         residual_function = self.residual
         evaluate = jax.vmap(residual_function)
         jacobian = jax.vmap(jax.jacfwd(residual_function))
-        residuals = evaluate(states, args)
+        residuals = self.precision.residual(evaluate(states, args))
         if residuals.shape != states.shape:
             raise ValueError("Small-root residual shape must match state shape.")
-        initial_norms = jnp.linalg.norm(residuals, axis=1)
-        thresholds = self.absolute_tolerance + self.relative_tolerance * initial_norms
+        initial_norms = _axis_norm(residuals, 1, self.precision)
+        thresholds = self.precision.decision(
+            self.absolute_tolerance + self.relative_tolerance * initial_norms
+        )
         active = jnp.isfinite(initial_norms) & (initial_norms > thresholds)
         iterations = jnp.zeros((states.shape[0],), dtype=jnp.int32)
         evaluations = jnp.ones_like(iterations)
@@ -109,24 +146,32 @@ class SmallRootKernel(StrictModule):
                 matrices
                 + 1e-12 * jnp.eye(states.shape[1], dtype=states.dtype)[None, :, :]
             )
-            directions = jax.vmap(jnp.linalg.solve)(regularized, -current.residuals)
+            directions = self.precision.direction(
+                solve_linear(
+                    LinearSystem(DenseLinearOperator(regularized)),
+                    -current.residuals,
+                    policy=self.precision.bind_linear(LinearSolvePolicy(DenseLU())),
+                ).value
+            )
             rates = jnp.asarray(
                 [1.0, 0.5, 0.25, 0.125, 0.0625],
                 dtype=states.dtype,
             )
-            trial_states = (
-                current.states[None, :, :] + rates[:, None, None] * directions[None, :, :]
+            trial_states = jnp.asarray(
+                current.states[None, :, :]
+                + rates[:, None, None] * directions[None, :, :],
+                dtype=states.dtype,
             )
-            trial_residuals = jax.vmap(lambda candidates: evaluate(candidates, args))(
-                trial_states
+            trial_residuals = self.precision.residual(
+                jax.vmap(lambda candidates: evaluate(candidates, args))(trial_states)
             )
-            trial_norms = jnp.linalg.norm(trial_residuals, axis=2)
+            trial_norms = _axis_norm(trial_residuals, 2, self.precision)
             trial_norms = jnp.where(
                 jnp.isfinite(trial_norms),
                 trial_norms,
                 jnp.inf,
             )
-            current_norms = jnp.linalg.norm(current.residuals, axis=1)
+            current_norms = _axis_norm(current.residuals, 1, self.precision)
             best_index = jnp.argmin(trial_norms, axis=0)
             selected_states = jnp.take_along_axis(
                 trial_states,
@@ -150,7 +195,7 @@ class SmallRootKernel(StrictModule):
             next_residuals = jnp.where(
                 current.active[:, None], selected_residuals, current.residuals
             )
-            norms = jnp.linalg.norm(next_residuals, axis=1)
+            norms = _axis_norm(next_residuals, 1, self.precision)
             next_active = current.active & accepted & (norms > thresholds)
             return _Run(
                 next_states,
@@ -163,7 +208,7 @@ class SmallRootKernel(StrictModule):
             )
 
         run = jax.lax.fori_loop(0, self.maximum_steps, body, run)
-        norms = jnp.linalg.norm(run.residuals, axis=1)
+        norms = _axis_norm(run.residuals, 1, self.precision)
         finite = jnp.all(jnp.isfinite(run.states), axis=1) & jnp.all(
             jnp.isfinite(run.residuals), axis=1
         )
@@ -180,15 +225,22 @@ class SmallRootKernel(StrictModule):
                 ),
             ),
         ).astype(jnp.int32)
+        output_states = self.precision.output(run.states)
         return BatchedRootResult(
-            run.states,
-            run.residuals,
-            status,
-            run.iterations,
-            run.evaluations,
-            run.jacobian_evaluations,
-            run.accepted_steps,
-            norms,
+            state=output_states,
+            residual=run.residuals,
+            status=status,
+            iterations=run.iterations,
+            residual_evaluations=run.evaluations,
+            jacobian_evaluations=run.jacobian_evaluations,
+            accepted_steps=run.accepted_steps,
+            residual_norm=norms,
+            precision_evidence=self.precision.evidence_for(
+                run.states,
+                run.residuals,
+                output_value=output_states,
+            ),
+            precision_policy_id=self.precision.policy_id,
         )
 
 

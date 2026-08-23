@@ -17,10 +17,18 @@ from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled,
     tree_allfinite,
-    tree_norm,
     validate_inexact_tree,
 )
-from ..linalg import AbstractPreconditioner, PyTreeSpace
+from ..linalg import (
+    AbstractPreconditioner,
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    PyTreeSpace,
+    solve as solve_linear,
+)
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     FixedPointProblem,
     NonlinearCapabilities,
@@ -44,6 +52,10 @@ from ._updates import (
 from ._work import NonlinearWork
 
 
+def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
+
+
 class AndersonAcceleration(StrictModule):
     """Fixed-capacity regularized Type-I or Type-II Anderson acceleration."""
 
@@ -52,6 +64,7 @@ class AndersonAcceleration(StrictModule):
     regularization: float = eqx.field(static=True)
     safeguard_factor: float = eqx.field(static=True)
     restart_condition: float = eqx.field(static=True)
+    linear: LinearSolvePolicy
 
     def __init__(
         self,
@@ -61,6 +74,7 @@ class AndersonAcceleration(StrictModule):
         regularization: float = 1e-10,
         safeguard_factor: float = 2.0,
         restart_condition: float = 1e12,
+        linear: LinearSolvePolicy | None = None,
     ):
         history_ = int(history)
         regularization_ = float(regularization)
@@ -76,11 +90,15 @@ class AndersonAcceleration(StrictModule):
             raise ValueError("Anderson safeguard_factor must be finite and at least one.")
         if not isfinite(condition_) or condition_ <= 1.0:
             raise ValueError("Anderson restart_condition must be finite and exceed one.")
+        linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
         self.history = history_
         self.kind = kind
         self.regularization = regularization_
         self.safeguard_factor = safeguard_
         self.restart_condition = condition_
+        self.linear = linear_
 
 
 class _FixedPointRun(StrictModule):
@@ -106,6 +124,7 @@ def _anderson_candidate(
     residual: Array,
     run: _FixedPointRun,
     policy: AndersonAcceleration,
+    precision: NonlinearPrecisionPolicy,
     /,
 ) -> tuple[Array, Array, Array]:
     capacity = policy.history
@@ -120,15 +139,18 @@ def _anderson_candidate(
     delta_residuals = next_residuals - previous_residuals
     delta_states = jnp.where(active[:, None], delta_states, 0.0)
     delta_residuals = jnp.where(active[:, None], delta_residuals, 0.0)
+    delta_states_ = precision.accumulation(delta_states)
+    delta_residuals_ = precision.accumulation(delta_residuals)
+    residual_ = precision.accumulation(residual)
     if policy.kind == "type-ii":
-        gram = delta_residuals @ jnp.conj(delta_residuals.T)
-        right = delta_residuals @ jnp.conj(residual)
-        correction_basis = delta_states + delta_residuals
+        gram = delta_residuals_ @ jnp.conj(delta_residuals_.T)
+        right = delta_residuals_ @ jnp.conj(residual_)
+        correction_basis = delta_states_ + delta_residuals_
         sign = -1.0
     else:
-        gram = delta_states @ jnp.conj(delta_residuals.T)
-        right = delta_states @ jnp.conj(residual)
-        correction_basis = delta_states - delta_residuals
+        gram = delta_states_ @ jnp.conj(delta_residuals_.T)
+        right = delta_states_ @ jnp.conj(residual_)
+        correction_basis = delta_states_ - delta_residuals_
         sign = 1.0
     diagonal = jnp.where(
         active,
@@ -136,17 +158,21 @@ def _anderson_candidate(
         jnp.asarray(1.0, dtype=gram.real.dtype),
     )
     gram = gram + jnp.diag(diagonal.astype(gram.dtype))
-    coefficients = jnp.linalg.solve(gram, right)
-    coefficients = jnp.where(active, coefficients, 0.0)
+    linear_result = solve_linear(
+        LeastSquaresProblem(DenseLinearOperator(gram)),
+        right,
+        policy=precision.bind_linear(policy.linear),
+    )
+    coefficients = jnp.where(active, linear_result.value, 0.0)
     correction = jnp.sum(
         coefficients[:, None] * correction_basis,
         axis=0,
     )
-    candidate = mapped + sign * correction
-    singular_values = jnp.linalg.svd(gram, compute_uv=False)
-    condition = singular_values[0] / jnp.maximum(singular_values[-1], 1e-30)
+    candidate = jnp.asarray(mapped + sign * correction, dtype=mapped.dtype)
+    condition = precision.decision(linear_result.diagnostics.condition_estimate)
     usable = (
-        (active_count > 0)
+        linear_result.diagnostics.converged
+        & (active_count > 0)
         & jnp.all(jnp.isfinite(candidate))
         & jnp.isfinite(condition)
         & (condition <= policy.restart_condition)
@@ -159,12 +185,14 @@ class FixedPointIteration(StrictModule):
 
     damping: float = eqx.field(static=True)
     acceleration: AndersonAcceleration | None
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
         *,
         damping: float = 1.0,
         acceleration: AndersonAcceleration | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         damping_ = float(damping)
         if not isfinite(damping_) or not 0.0 < damping_ <= 1.0:
@@ -173,8 +201,12 @@ class FixedPointIteration(StrictModule):
             acceleration, AndersonAcceleration
         ):
             raise TypeError("acceleration must be AndersonAcceleration or None.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.damping = damping_
         self.acceleration = acceleration
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -204,13 +236,15 @@ class FixedPointIteration(StrictModule):
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
+        self.precision.validate_tolerance(termination_.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
         space = PyTreeSpace(initial)
         flat_initial = space.flatten(initial)
         mapped = problem.mapping(initial, args)
         flat_mapped = space.flatten(mapped)
         residual = flat_mapped - flat_initial
-        residual_norm = jnp.linalg.norm(residual)
+        self.precision.validate_trees(initial, residual)
+        residual_norm = _coordinate_norm(residual, self.precision)
         capacity = 1 if self.acceleration is None else self.acceleration.history + 1
         history_states = (
             jnp.zeros((capacity, space.size), dtype=flat_initial.dtype)
@@ -274,18 +308,19 @@ class FixedPointIteration(StrictModule):
                     raw - current.state,
                     current,
                     self.acceleration,
+                    self.precision,
                 )
             proposed_tree = space.unflatten(proposed)
             next_mapped = space.flatten(problem.mapping(proposed_tree, args))
             next_residual = next_mapped - proposed
-            next_norm = jnp.linalg.norm(next_residual)
+            next_norm = _coordinate_norm(next_residual, self.precision)
             if self.acceleration is None:
                 raw_residual = next_residual
                 raw_norm = next_norm
             else:
                 raw_mapped = space.flatten(problem.mapping(space.unflatten(raw), args))
                 raw_residual = raw_mapped - raw
-                raw_norm = jnp.linalg.norm(raw_residual)
+                raw_norm = _coordinate_norm(raw_residual, self.precision)
             safeguard = (
                 jnp.asarray(True)
                 if self.acceleration is None
@@ -298,7 +333,10 @@ class FixedPointIteration(StrictModule):
             finite = jnp.all(jnp.isfinite(accepted_state)) & jnp.all(
                 jnp.isfinite(accepted_residual)
             )
-            step_norm = jnp.linalg.norm(accepted_state - current.state)
+            step_norm = _coordinate_norm(
+                accepted_state - current.state,
+                self.precision,
+            )
             converged = finite & (
                 accepted_norm
                 <= termination_.residual_threshold(current.initial_residual_norm)
@@ -308,7 +346,9 @@ class FixedPointIteration(StrictModule):
                 & ~converged
                 & (
                     step_norm
-                    <= termination_.step_threshold(jnp.linalg.norm(current.state))
+                    <= termination_.step_threshold(
+                        _coordinate_norm(current.state, self.precision)
+                    )
                 )
             )
             diverged = accepted_norm > (
@@ -407,8 +447,9 @@ class FixedPointIteration(StrictModule):
             nonfinite_trials=run.nonfinite_trials,
             acceleration_restarts=run.restarts,
         )
+        output_state = jax.tree.map(self.precision.output, final_state)
         return NonlinearResult(
-            state=final_state,
+            state=output_state,
             residual=final_residual,
             auxiliary=None,
             status=status,
@@ -418,6 +459,12 @@ class FixedPointIteration(StrictModule):
                 method_id=self.method_id,
                 derivative_id="none",
                 globalization_id="fixed-point-safeguard",
+                precision_policy_id=self.precision.policy_id,
+            ),
+            precision_evidence=self.precision.evidence_for(
+                final_state,
+                final_residual,
+                output_value=output_state,
             ),
         )
 
@@ -442,12 +489,14 @@ class SteffensenIteration(StrictModule):
 
     denominator_tolerance: float = eqx.field(static=True)
     safeguard_factor: float = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
         *,
         denominator_tolerance: float = 1e-12,
         safeguard_factor: float = 1.0,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         tolerance = float(denominator_tolerance)
         safeguard = float(safeguard_factor)
@@ -455,8 +504,12 @@ class SteffensenIteration(StrictModule):
             raise ValueError("denominator_tolerance must be finite and positive.")
         if not isfinite(safeguard) or safeguard < 1.0:
             raise ValueError("safeguard_factor must be finite and at least one.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.denominator_tolerance = tolerance
         self.safeguard_factor = safeguard
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -486,12 +539,14 @@ class SteffensenIteration(StrictModule):
         termination_ = NonlinearTermination() if termination is None else termination
         if not isinstance(termination_, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination or None.")
+        self.precision.validate_tolerance(termination_.absolute_residual)
         initial = validate_inexact_tree(initial_state, name="initial fixed-point state")
         space = PyTreeSpace(initial)
         state = space.flatten(initial)
         first = space.flatten(problem.mapping(initial, args))
         residual = first - state
-        norm = jnp.linalg.norm(residual)
+        self.precision.validate_trees(initial, residual)
+        norm = _coordinate_norm(residual, self.precision)
         finite = jnp.all(jnp.isfinite(state)) & jnp.all(jnp.isfinite(residual))
         run = _SteffensenRun(
             state=state,
@@ -533,19 +588,29 @@ class SteffensenIteration(StrictModule):
             first_coordinates = space.flatten(problem.mapping(current_tree, args))
             first_tree = space.unflatten(first_coordinates)
             second_coordinates = space.flatten(problem.mapping(first_tree, args))
-            denominator = second_coordinates - 2.0 * first_coordinates + current.state
+            second_ = self.precision.accumulation(second_coordinates)
+            first_ = self.precision.accumulation(first_coordinates)
+            current_ = self.precision.accumulation(current.state)
+            denominator = second_ - 2.0 * first_ + current_
             usable = jnp.abs(denominator) >= self.denominator_tolerance
-            accelerated = current.state - jnp.where(
-                usable,
-                (first_coordinates - current.state) ** 2 / denominator,
-                0.0,
+            accelerated = jnp.asarray(
+                current_
+                - jnp.where(
+                    usable,
+                    (first_ - current_) ** 2 / denominator,
+                    0.0,
+                ),
+                dtype=current.state.dtype,
             )
             accelerated_tree = space.unflatten(accelerated)
             mapped_accelerated = space.flatten(problem.mapping(accelerated_tree, args))
             accelerated_residual = mapped_accelerated - accelerated
             plain_residual = second_coordinates - first_coordinates
-            accelerated_norm = jnp.linalg.norm(accelerated_residual)
-            plain_norm = jnp.linalg.norm(plain_residual)
+            accelerated_norm = _coordinate_norm(
+                accelerated_residual,
+                self.precision,
+            )
+            plain_norm = _coordinate_norm(plain_residual, self.precision)
             finite_accelerated = jnp.all(jnp.isfinite(accelerated)) & jnp.all(
                 jnp.isfinite(accelerated_residual)
             )
@@ -564,13 +629,19 @@ class SteffensenIteration(StrictModule):
                 accelerated_residual,
                 plain_residual,
             )
-            candidate_norm = jnp.linalg.norm(candidate_residual)
-            step_norm = jnp.linalg.norm(candidate - current.state)
+            candidate_norm = _coordinate_norm(candidate_residual, self.precision)
+            step_norm = _coordinate_norm(
+                candidate - current.state,
+                self.precision,
+            )
             converged = candidate_norm <= termination_.residual_threshold(
                 current.initial_norm
             )
             stagnated = ~converged & (
-                step_norm <= termination_.step_threshold(jnp.linalg.norm(current.state))
+                step_norm
+                <= termination_.step_threshold(
+                    _coordinate_norm(current.state, self.precision)
+                )
             )
             finite_candidate = jnp.all(jnp.isfinite(candidate)) & jnp.all(
                 jnp.isfinite(candidate_residual)
@@ -617,8 +688,9 @@ class SteffensenIteration(StrictModule):
             final_mapped,
             final_state,
         )
+        output_state = jax.tree.map(self.precision.output, final_state)
         return NonlinearResult(
-            state=final_state,
+            state=output_state,
             residual=final_residual,
             auxiliary=final_mapped,
             status=status,
@@ -638,6 +710,12 @@ class SteffensenIteration(StrictModule):
                 method_id=self.method_id,
                 derivative_id="none",
                 globalization_id="residual-safeguard",
+                precision_policy_id=self.precision.policy_id,
+            ),
+            precision_evidence=self.precision.evidence_for(
+                final_state,
+                final_residual,
+                output_value=output_state,
             ),
         )
 
@@ -662,6 +740,7 @@ class PicardUpdate(AbstractNonlinearUpdate):
 
     inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner
     damping: float = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -669,6 +748,7 @@ class PicardUpdate(AbstractNonlinearUpdate):
         /,
         *,
         damping: float = 1.0,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         if not callable(inverse_action) and not isinstance(
             inverse_action, AbstractPreconditioner
@@ -677,8 +757,12 @@ class PicardUpdate(AbstractNonlinearUpdate):
         damping_ = float(damping)
         if not isfinite(damping_) or not 0.0 < damping_ <= 1.0:
             raise ValueError("Picard damping must lie in (0, 1].")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.inverse_action = inverse_action
         self.damping = damping_
+        self.precision = precision_
 
     @property
     def update_id(self) -> str:
@@ -737,6 +821,7 @@ class PicardUpdate(AbstractNonlinearUpdate):
                         problem_id=problem.problem_id,
                         update_id=self.update_id,
                         plan_id=prepared.plan.plan_id,
+                        notes=f"precision-policy={self.precision.policy_id}",
                     ),
                 ),
                 prepared.internal_state,
@@ -744,16 +829,10 @@ class PicardUpdate(AbstractNonlinearUpdate):
 
         def execute(_):
             residual, _ = problem.evaluate(state_, args)
-            initial_norm = jnp.sqrt(
-                jnp.maximum(
-                    jnp.real(
-                        prepared.plan.residual_space.inner(
-                            residual,
-                            residual,
-                        )
-                    ),
-                    0.0,
-                )
+            self.precision.validate_trees(state_, residual)
+            initial_norm = self.precision.norm(
+                prepared.plan.residual_space,
+                residual,
             )
             candidate = prepared.plan.state_space.validate(
                 _picard_candidate(
@@ -767,16 +846,9 @@ class PicardUpdate(AbstractNonlinearUpdate):
                 candidate,
                 args,
             )
-            final_norm = jnp.sqrt(
-                jnp.maximum(
-                    jnp.real(
-                        prepared.plan.residual_space.inner(
-                            candidate_residual,
-                            candidate_residual,
-                        )
-                    ),
-                    0.0,
-                )
+            final_norm = self.precision.norm(
+                prepared.plan.residual_space,
+                candidate_residual,
             )
             finite = tree_allfinite(candidate) & tree_allfinite(candidate_residual)
             valid = problem.valid(
@@ -802,11 +874,9 @@ class PicardUpdate(AbstractNonlinearUpdate):
             diagnostics = NonlinearUpdateDiagnostics(
                 initial_residual_norm=initial_norm,
                 final_residual_norm=final_norm,
-                step_norm=jnp.sqrt(
-                    jnp.maximum(
-                        jnp.real(prepared.plan.state_space.inner(step, step)),
-                        0.0,
-                    )
+                step_norm=self.precision.norm(
+                    prepared.plan.state_space,
+                    step,
                 ),
                 work=self.maximum_work,
                 accepted_steps=(status == int(NonlinearUpdateStatus.APPLIED)).astype(
@@ -829,6 +899,7 @@ class PicardUpdate(AbstractNonlinearUpdate):
                         problem_id=problem.problem_id,
                         update_id=self.update_id,
                         plan_id=prepared.plan.plan_id,
+                        notes=f"precision-policy={self.precision.policy_id}",
                     ),
                 ),
                 prepared.internal_state,
@@ -848,6 +919,7 @@ class PicardIteration(StrictModule):
     inverse_action: Callable[[PyTree[Any]], PyTree[Any]] | AbstractPreconditioner
     damping: float = eqx.field(static=True)
     acceleration: AndersonAcceleration | None
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -856,6 +928,7 @@ class PicardIteration(StrictModule):
         *,
         damping: float = 1.0,
         acceleration: AndersonAcceleration | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         if not callable(inverse_action) and not isinstance(
             inverse_action, AbstractPreconditioner
@@ -867,9 +940,13 @@ class PicardIteration(StrictModule):
             acceleration, AndersonAcceleration
         ):
             raise TypeError("acceleration must be AndersonAcceleration or None.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.inverse_action = inverse_action
         self.damping = float(damping)
         self.acceleration = acceleration
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -886,6 +963,10 @@ class PicardIteration(StrictModule):
     ) -> NonlinearResult:
         if not isinstance(problem, NonlinearSystemProblem):
             raise TypeError("problem must be a NonlinearSystemProblem.")
+        termination_ = NonlinearTermination() if termination is None else termination
+        if not isinstance(termination_, NonlinearTermination):
+            raise TypeError("termination must be NonlinearTermination or None.")
+        self.precision.validate_tolerance(termination_.absolute_residual)
 
         def mapping(state, current_args):
             residual = problem.residual(state, current_args)
@@ -903,10 +984,20 @@ class PicardIteration(StrictModule):
         result = FixedPointIteration(
             damping=1.0,
             acceleration=self.acceleration,
-        ).solve(fixed_problem, initial_state, termination=termination, args=args)
-        physical_residual, auxiliary = problem.evaluate(result.state, args)
-        physical_norm = tree_norm(physical_residual)
-        termination_ = NonlinearTermination() if termination is None else termination
+            precision=self.precision,
+        ).solve(
+            fixed_problem,
+            initial_state,
+            termination=termination_,
+            args=args,
+        )
+        model_state = self.precision.state(result.state)
+        physical_residual, auxiliary = problem.evaluate(model_state, args)
+        self.precision.validate_trees(model_state, physical_residual)
+        physical_norm = self.precision.norm(
+            PyTreeSpace(physical_residual),
+            physical_residual,
+        )
         successful = physical_norm <= termination_.residual_threshold(
             result.diagnostics.initial_residual_norm
         )
@@ -924,8 +1015,14 @@ class PicardIteration(StrictModule):
             result.diagnostics,
             (physical_norm, result.diagnostics.residual_evaluations + 1),
         )
+        output_state = jax.tree.map(self.precision.output, model_state)
+        children = (
+            {}
+            if result.precision_evidence is None
+            else {"fixed-point": result.precision_evidence}
+        )
         return NonlinearResult(
-            state=result.state,
+            state=output_state,
             residual=physical_residual,
             auxiliary=auxiliary,
             status=status,
@@ -935,6 +1032,13 @@ class PicardIteration(StrictModule):
                 method_id=self.method_id,
                 derivative_id="preconditioned-residual-map",
                 globalization_id="fixed-point-safeguard",
+                precision_policy_id=self.precision.policy_id,
+            ),
+            precision_evidence=self.precision.evidence_for(
+                model_state,
+                physical_residual,
+                children=children,
+                output_value=output_state,
             ),
             attempts=result.attempts,
         )

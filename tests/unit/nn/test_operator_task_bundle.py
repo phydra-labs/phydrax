@@ -199,6 +199,9 @@ def test_normalized_output_pipeline_enforces_physical_conservation(tmp_path):
     manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
     assert jnp.allclose(restored_total, source_total)
     assert "format_version" not in manifest.to_dict()
+    assert manifest.version == 4
+    assert manifest.precision_evidence == trained.precision_evidence.to_dict()
+    assert restored.precision_evidence == trained.precision_evidence
     assert manifest.output_pipeline_fingerprint == pipeline.fingerprint
     assert restored.output_pipeline is not None
     assert restored.output_pipeline.fingerprint == pipeline.fingerprint
@@ -396,6 +399,22 @@ def test_operator_artifact_manifest_rejects_noncanonical_fields(tmp_path):
         phx.nn.operator.training.load_trained_operator(tmp_path)
 
 
+def test_operator_artifact_rejects_inconsistent_precision_evidence(tmp_path):
+    trained = _trained(
+        dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
+            compute_dtype="bfloat16"
+        )
+    )
+    phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
+    manifest_path = tmp_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["precision_evidence"]["compute_dtype"] = "float32"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="precision evidence disagrees"):
+        phx.nn.operator.training.load_trained_operator(tmp_path)
+
+
 def test_operator_artifact_rejects_unknown_architecture_codec(tmp_path):
     phx.nn.operator.training.save_operator_artifact(tmp_path, _trained())
     manifest_path = tmp_path / "manifest.json"
@@ -418,7 +437,7 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     )
     manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
     assert manifest.format == "phydrax-operator-artifact"
-    assert manifest.version == 3
+    assert manifest.version == 4
     assert manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
     recipe = json.dumps(manifest.execution_model_recipe, sort_keys=True)
     assert "phydrax.nn." not in recipe

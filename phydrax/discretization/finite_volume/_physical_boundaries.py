@@ -53,12 +53,11 @@ class SlipWallBoundary(AbstractFiniteVolumeBoundary):
         del time, coordinates, axis, args
         primitive = system.conserved_to_primitive(interior)
         velocity = primitive[..., 1:-1]
-        reflected = velocity - 2.0 * _normal_velocity(
-            velocity, outward_normal
-        )[..., None] * outward_normal
-        return system.primitive_to_conserved(
-            primitive.at[..., 1:-1].set(reflected)
+        reflected = (
+            velocity
+            - 2.0 * _normal_velocity(velocity, outward_normal)[..., None] * outward_normal
         )
+        return system.primitive_to_conserved(primitive.at[..., 1:-1].set(reflected))
 
 
 class NoSlipAdiabaticWallBoundary(AbstractFiniteVolumeBoundary):
@@ -156,11 +155,7 @@ class NoSlipIsothermalWallBoundary(AbstractFiniteVolumeBoundary):
             "Isothermal ghost temperature became non-positive.",
         )
         density = primitive[..., 0]
-        pressure = (
-            density
-            * system.material.gas_constant
-            * exterior_temperature
-        )
+        pressure = density * system.material.gas_constant * exterior_temperature
         exterior_velocity = 2.0 * self.wall_velocity - primitive[..., 1:-1]
         exterior_primitive = primitive.at[..., 1:-1].set(exterior_velocity)
         exterior_primitive = exterior_primitive.at[..., -1].set(pressure)
@@ -188,9 +183,7 @@ class PrescribedHeatFluxWallBoundary(AbstractFiniteVolumeBoundary):
             or not callable(heat_flux_target)
             or not str(boundary_id)
         ):
-            raise ValueError(
-                "Heat-flux wall requires velocity, target, and boundary_id."
-            )
+            raise ValueError("Heat-flux wall requires velocity, target, and boundary_id.")
         self.wall_velocity = velocity
         self.heat_flux_target = heat_flux_target
         self.boundary_id = str(boundary_id)
@@ -208,9 +201,7 @@ class PrescribedHeatFluxWallBoundary(AbstractFiniteVolumeBoundary):
     ) -> Array:
         del time, coordinates, outward_normal, axis, args
         primitive = system.conserved_to_primitive(interior)
-        exterior_velocity = (
-            2.0 * self.wall_velocity - primitive[..., 1:-1]
-        )
+        exterior_velocity = 2.0 * self.wall_velocity - primitive[..., 1:-1]
         return system.primitive_to_conserved(
             primitive.at[..., 1:-1].set(exterior_velocity)
         )
@@ -264,18 +255,14 @@ class SupersonicInflowBoundary(AbstractFiniteVolumeBoundary):
             args,
         )
         del axis
-        return system.primitive_to_conserved(
-            _boundary_value(primitive, interior.shape)
-        )
+        return system.primitive_to_conserved(_boundary_value(primitive, interior.shape))
 
 
 class SupersonicOutflowBoundary(AbstractFiniteVolumeBoundary):
     """Pure extrapolation when every characteristic leaves the domain."""
 
     def __init__(self):
-        self.boundary_id = canonical_fingerprint(
-            {"kind": "fv-supersonic-outflow"}
-        )
+        self.boundary_id = canonical_fingerprint({"kind": "fv-supersonic-outflow"})
 
     def exterior_state(
         self,
@@ -321,15 +308,11 @@ class CharacteristicInflowBoundary(AbstractFiniteVolumeBoundary):
             outward_normal,
             args,
         )
-        target = system.primitive_to_conserved(
-            _boundary_value(primitive, interior.shape)
-        )
+        target = system.primitive_to_conserved(_boundary_value(primitive, interior.shape))
         left_matrix, right_matrix, speeds = system.eigensystem(
             interior, target, axis, args
         )
-        amplitudes = jnp.einsum(
-            "...ij,...j->...i", left_matrix, target - interior
-        )
+        amplitudes = jnp.einsum("...ij,...j->...i", left_matrix, target - interior)
         outward_sign = jnp.sign(outward_normal[..., axis])
         incoming = speeds * outward_sign[..., None] < 0.0
         correction = jnp.einsum(
@@ -379,9 +362,7 @@ class CharacteristicOutflowBoundary(AbstractFiniteVolumeBoundary):
         left_matrix, right_matrix, speeds = system.eigensystem(
             interior, target, axis, args
         )
-        amplitudes = jnp.einsum(
-            "...ij,...j->...i", left_matrix, target - interior
-        )
+        amplitudes = jnp.einsum("...ij,...j->...i", left_matrix, target - interior)
         outward_sign = jnp.sign(outward_normal[..., axis])
         incoming = speeds * outward_sign[..., None] < 0.0
         correction = jnp.einsum(
@@ -398,9 +379,7 @@ class FarFieldBoundary(AbstractFiniteVolumeBoundary):
     projector: CharacteristicInflowBoundary
 
     def __init__(self, target: PrimitiveBoundaryTarget, /, *, boundary_id: str):
-        projector = CharacteristicInflowBoundary(
-            target, boundary_id=boundary_id
-        )
+        projector = CharacteristicInflowBoundary(target, boundary_id=boundary_id)
         self.projector = projector
         self.boundary_id = projector.boundary_id
 

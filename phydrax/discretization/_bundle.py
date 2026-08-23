@@ -23,6 +23,8 @@ class DiscretizationRecord(StrictModule, NonTrainableState):
     numeric_version: str | None = eqx.field(static=True)
     dependency_key_ids: tuple[str, ...] = eqx.field(static=True)
     realization_id: str | None = eqx.field(static=True)
+    precision_evidence_id: str | None = eqx.field(static=True)
+    resource_evidence_id: str | None = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
     def __init__(
@@ -35,6 +37,8 @@ class DiscretizationRecord(StrictModule, NonTrainableState):
         numeric_version: str | None = None,
         dependency_key_ids: Sequence[str] = (),
         realization_id: str | None = None,
+        precision_evidence_id: str | None = None,
+        resource_evidence_id: str | None = None,
         record_id: str | None = None,
     ):
         if not isinstance(key, DiscretizationKey):
@@ -58,12 +62,24 @@ class DiscretizationRecord(StrictModule, NonTrainableState):
             if realization_id is None
             else nonempty_identifier("realization_id", realization_id)
         )
+        precision_evidence = (
+            None
+            if precision_evidence_id is None
+            else nonempty_identifier("precision_evidence_id", precision_evidence_id)
+        )
+        resource_evidence = (
+            None
+            if resource_evidence_id is None
+            else nonempty_identifier("resource_evidence_id", resource_evidence_id)
+        )
         self.key = key
         self.artifact_kind = kind
         self.artifact_id = artifact
         self.numeric_version = version
         self.dependency_key_ids = dependencies
         self.realization_id = realization
+        self.precision_evidence_id = precision_evidence
+        self.resource_evidence_id = resource_evidence
         self.record_id = resolved_identifier(
             "record_id",
             record_id,
@@ -75,6 +91,8 @@ class DiscretizationRecord(StrictModule, NonTrainableState):
                 "numeric_version": version,
                 "dependencies": list(dependencies),
                 "realization": realization,
+                "precision_evidence": precision_evidence,
+                "resource_evidence": resource_evidence,
             },
         )
 

@@ -69,6 +69,7 @@ def materialize_frozen_terms(
         )
     return tuple(frozen)
 
+
 def materialize_frozen_residual_terms(
     prepared: _PreparedObjective,
     /,
@@ -84,9 +85,7 @@ def materialize_frozen_residual_terms(
             prepared_term.payload,
             IntegrationRealization,
         ):
-            raise TypeError(
-                "Residual terms require a prepared IntegrationRealization."
-            )
+            raise TypeError("Residual terms require a prepared IntegrationRealization.")
         frozen.append(
             FrozenResidualTerm(
                 term=term,
@@ -95,7 +94,6 @@ def materialize_frozen_residual_terms(
             )
         )
     return tuple(frozen)
-
 
 
 def validate_derivative_coverage(
@@ -114,7 +112,7 @@ def validate_derivative_coverage(
         trace_derivative_requests(term.condition.residual, functions)
 
 
-def _scaled_residual_data(data, /, *, scale: float) -> Array:
+def _scaled_residual_data(data, /, *, scale: Any) -> Array:
     pieces: list[Array] = []
     for residual, coefficient in zip(
         data.residuals,

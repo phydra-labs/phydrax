@@ -38,6 +38,7 @@ from ..finite_volume._diffusion import (
     PreparedConservativeDiffusion,
 )
 from ._coefficients import fornberg_weights
+from ._precision import FDExecutionPrecisionPolicy
 
 
 StructuredMGCompatibility: TypeAlias = Literal["error", "project_rhs"]
@@ -54,6 +55,7 @@ class StructuredTransferReport(StrictModule, NonTrainableState):
     coarse_shape: tuple[int, ...] = eqx.field(static=True)
     constant_residual: float = eqx.field(static=True)
     conservation_residual: float | None = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
     passed: bool = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
 
@@ -65,6 +67,7 @@ class StructuredTransferReport(StrictModule, NonTrainableState):
         constant_residual: float,
         conservation_residual: float | None,
         transfer_id: str,
+        tolerance: float,
     ):
         constant = float(constant_residual)
         conservation = (
@@ -74,8 +77,9 @@ class StructuredTransferReport(StrictModule, NonTrainableState):
         self.coarse_shape = coarse_shape
         self.constant_residual = constant
         self.conservation_residual = conservation
-        self.passed = constant <= 1e-12 and (
-            conservation is None or conservation <= 1e-12
+        self.tolerance = float(tolerance)
+        self.passed = constant <= self.tolerance and (
+            conservation is None or conservation <= self.tolerance
         )
         self.report_id = canonical_fingerprint(
             {
@@ -85,6 +89,7 @@ class StructuredTransferReport(StrictModule, NonTrainableState):
                 "coarse_shape": list(coarse_shape),
                 "constant_residual": constant,
                 "conservation_residual": conservation,
+                "tolerance": self.tolerance,
             }
         )
 
@@ -95,6 +100,7 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
     source: ArraySpace
     target: ArraySpace
     axis_matrices: tuple[Array, ...]
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
@@ -103,12 +109,25 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
         axis_matrices: Sequence[ArrayLike],
         transfer_kind: str,
         /,
+        *,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         if not isinstance(source, ArraySpace) or not isinstance(target, ArraySpace):
             raise TypeError("Structured transfers require ArraySpace source and target.")
-        matrices = tuple(
-            jnp.asarray(value, dtype=source.dtype) for value in axis_matrices
+        precision_ = (
+            FDExecutionPrecisionPolicy(
+                coefficient_dtype=source.dtype,
+                field_dtype=source.dtype,
+            )
+            if precision is None
+            else precision
         )
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
+        expected_dtype = jnp.dtype(precision_.field_dtype)
+        if source.dtype != expected_dtype or target.dtype != expected_dtype:
+            raise TypeError("Structured transfer spaces must match field precision.")
+        matrices = tuple(precision_.coefficient(value) for value in axis_matrices)
         if len(matrices) != len(source.shape) or len(target.shape) != len(source.shape):
             raise ValueError("Structured transfer matrices must align with tensor rank.")
         if any(
@@ -133,18 +152,30 @@ class StructuredTensorTransferOperator(AbstractLinearOperator):
                 "source": source.space_id,
                 "target": target.space_id,
                 "matrices": [array_tree_fingerprint(value) for value in matrices],
+                "precision": precision_.policy_id,
             }
         )
         self.axis_matrices = matrices
+        self.precision = precision_
 
     def mv(self, vector: ArrayLike, /) -> Array:
         value = self.source.validate(jnp.asarray(vector))
-        return self.target.validate(_apply_axis_matrices(value, self.axis_matrices))
+        result = _apply_axis_matrices(
+            value,
+            self.axis_matrices,
+            accumulation_dtype=self.precision.accumulation_dtype,
+        )
+        return self.target.validate(self.precision.field(result))
 
     def transpose_mv(self, vector: ArrayLike, /) -> Array:
         value = self.target.validate(jnp.asarray(vector))
         matrices = tuple(jnp.swapaxes(value_, 0, 1) for value_ in self.axis_matrices)
-        return self.source.validate(_apply_axis_matrices(value, matrices))
+        result = _apply_axis_matrices(
+            value,
+            matrices,
+            accumulation_dtype=self.precision.accumulation_dtype,
+        )
+        return self.source.validate(self.precision.field(result))
 
     def adjoint_mv(self, vector: ArrayLike, /) -> Array:
         value = self.target.validate(jnp.asarray(vector))
@@ -171,11 +202,15 @@ def _apply_axis_matrices(
     value: Array,
     matrices: Sequence[Array],
     /,
+    *,
+    accumulation_dtype: object | None = None,
 ) -> Array:
-    result = value
+    dtype = None if accumulation_dtype is None else jnp.dtype(accumulation_dtype)
+    result = jnp.asarray(value, dtype=dtype)
     for axis, matrix in enumerate(matrices):
+        matrix_ = jnp.asarray(matrix, dtype=dtype)
         moved = jnp.moveaxis(result, axis, 0)
-        moved = jnp.tensordot(matrix, moved, axes=((1,), (0,)))
+        moved = jnp.tensordot(matrix_, moved, axes=((1,), (0,)))
         result = jnp.moveaxis(moved, 0, axis)
     return result
 
@@ -189,13 +224,19 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
     prolongation_matrices: tuple[Array, ...]
     report: StructuredTransferReport
     plan_id: str = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
         fine_grid: PreparedTensorGrid,
         coarse_grid: PreparedTensorGrid,
         /,
+        *,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         if not isinstance(fine_grid, PreparedTensorGrid) or not isinstance(
             coarse_grid, PreparedTensorGrid
         ):
@@ -235,25 +276,38 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
                         np.asarray(fine_axis.point_coordinates),
                     )
                 )
-        restriction_ = tuple(jnp.asarray(value) for value in restriction)
-        prolongation_ = tuple(jnp.asarray(value) for value in prolongation)
+        restriction_ = tuple(precision_.coefficient(value) for value in restriction)
+        prolongation_ = tuple(precision_.coefficient(value) for value in prolongation)
+        certification_dtype = np.dtype(precision_.certification_dtype)
+        certified_restriction = tuple(
+            np.asarray(value, dtype=certification_dtype) for value in restriction_
+        )
+        certified_prolongation = tuple(
+            np.asarray(value, dtype=certification_dtype) for value in prolongation_
+        )
         constant_residual = max(
             max(
                 float(np.max(np.abs(np.asarray(matrix) @ np.ones(matrix.shape[1]) - 1.0)))
-                for matrix in restriction_
+                for matrix in certified_restriction
             ),
             max(
                 float(np.max(np.abs(np.asarray(matrix) @ np.ones(matrix.shape[1]) - 1.0)))
-                for matrix in prolongation_
+                for matrix in certified_prolongation
             ),
         )
         conservation_residual = None
         if conservative:
-            fine_measure = np.asarray(fine_grid.quadrature_weights).reshape((-1,))
-            coarse_measure = np.asarray(coarse_grid.quadrature_weights).reshape((-1,))
-            global_restriction = np.asarray(restriction_[0])
-            for matrix in restriction_[1:]:
-                global_restriction = np.kron(global_restriction, np.asarray(matrix))
+            fine_measure = np.asarray(
+                fine_grid.quadrature_weights,
+                dtype=certification_dtype,
+            ).reshape((-1,))
+            coarse_measure = np.asarray(
+                coarse_grid.quadrature_weights,
+                dtype=certification_dtype,
+            ).reshape((-1,))
+            global_restriction = certified_restriction[0]
+            for matrix in certified_restriction[1:]:
+                global_restriction = np.kron(global_restriction, matrix)
             conservation_residual = float(
                 np.max(np.abs(coarse_measure @ global_restriction - fine_measure))
             )
@@ -264,7 +318,12 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
                 "coarse": coarse_grid.prepared_id,
                 "restriction_shapes": [list(value.shape) for value in restriction_],
                 "prolongation_shapes": [list(value.shape) for value in prolongation_],
+                "precision": precision_.policy_id,
             }
+        )
+        tolerance = max(
+            1e-12,
+            256.0 * np.finfo(np.dtype(precision_.coefficient_dtype)).eps,
         )
         report = StructuredTransferReport(
             fine_shape=fine_grid.shape,
@@ -272,6 +331,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
             constant_residual=constant_residual,
             conservation_residual=conservation_residual,
             transfer_id=identifier,
+            tolerance=tolerance,
         )
         if not report.passed:
             raise RuntimeError(
@@ -282,6 +342,7 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
         self.restriction_matrices = restriction_
         self.prolongation_matrices = prolongation_
         self.report = report
+        self.precision = precision_
         self.plan_id = identifier
 
     def prepare(
@@ -295,20 +356,37 @@ class StructuredTransferPlan(StrictModule, NonTrainableState):
             coarse_space,
             self.restriction_matrices,
             "restriction",
+            precision=self.precision,
         )
         prolongation = StructuredTensorTransferOperator(
             coarse_space,
             fine_space,
             self.prolongation_matrices,
             "prolongation",
+            precision=self.precision,
         )
         return restriction, prolongation
 
-    def restrict_array(self, values: ArrayLike, /) -> Array:
+    def restrict_array(
+        self,
+        values: ArrayLike,
+        /,
+        *,
+        role: Literal["field", "coefficient"] = "field",
+    ) -> Array:
         value = jnp.asarray(values)
         if value.shape[: len(self.fine_grid.shape)] != self.fine_grid.shape:
             raise ValueError("Restricted array must begin with the fine-grid shape.")
-        return _apply_axis_matrices(value, self.restriction_matrices)
+        result = _apply_axis_matrices(
+            value,
+            self.restriction_matrices,
+            accumulation_dtype=self.precision.accumulation_dtype,
+        )
+        if role == "field":
+            return self.precision.field(result)
+        if role == "coefficient":
+            return self.precision.coefficient(result)
+        raise ValueError("Structured transfer role must be 'field' or 'coefficient'.")
 
 
 def _cell_edges(axis, /) -> np.ndarray:
@@ -398,13 +476,23 @@ class StructuredMultigridResult(StrictModule, NonTrainableState):
     residual_norms: Array
     converged: Array
     cycles: int = eqx.field(static=True)
+    precision_evidence: object = eqx.field(static=True)
 
-    def __init__(self, value: Array, residual_norms: Array, tolerance: float, /):
+    def __init__(
+        self,
+        value: Array,
+        residual_norms: Array,
+        tolerance: float,
+        /,
+        *,
+        precision_evidence: object,
+    ):
         self.value = value
         self.residual_norms = residual_norms
         scale = jnp.maximum(1.0, residual_norms[0])
         self.converged = residual_norms[-1] <= float(tolerance) * scale
         self.cycles = int(residual_norms.size - 1)
+        self.precision_evidence = precision_evidence
 
 
 class _RedBlackPreconditioner(AbstractPreconditioner):
@@ -627,6 +715,7 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
     post_smoothing: int = eqx.field(static=True)
     cycle_kind: MultigridCycleKind = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
@@ -644,10 +733,34 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         pre_smoothing: int = 2,
         post_smoothing: int = 2,
         cycle_kind: MultigridCycleKind = "v",
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         if not isinstance(finest_operator, PreparedConservativeDiffusion):
             raise TypeError(
                 "Structured multigrid requires PreparedConservativeDiffusion."
+            )
+        finite_volume_precision = finest_operator.precision
+        precision_ = (
+            FDExecutionPrecisionPolicy(
+                coefficient_dtype=finite_volume_precision.flux_dtype,
+                field_dtype=finite_volume_precision.storage_dtype,
+                accumulation_dtype=finite_volume_precision.reduction_dtype,
+                certification_dtype=finite_volume_precision.reduction_dtype,
+            )
+            if precision is None
+            else precision
+        )
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
+        if (
+            precision_.coefficient_dtype != finite_volume_precision.flux_dtype
+            or precision_.field_dtype != finite_volume_precision.storage_dtype
+            or precision_.accumulation_dtype != finite_volume_precision.reduction_dtype
+            or precision_.certification_dtype != finite_volume_precision.reduction_dtype
+        ):
+            raise ValueError(
+                "Structured multigrid precision must match the finite-volume "
+                "operator's flux, storage, and reduction placements."
             )
         minimum = int(minimum_coarse_points)
         maximum = int(maximum_levels)
@@ -688,6 +801,7 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
         self.pre_smoothing = int(pre_smoothing)
         self.post_smoothing = int(post_smoothing)
         self.cycle_kind = cycle_kind
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "structured-multigrid-plan",
@@ -702,6 +816,7 @@ class StructuredMultigridPlan(StrictModule, NonTrainableState):
                 "cycle": cycle_kind,
                 "compatibility": compatibility,
                 "gauge": gauge,
+                "precision": precision_.policy_id,
             }
         )
 
@@ -735,8 +850,15 @@ class PreparedStructuredMultigrid(StrictModule, NonTrainableState):
             )
             if coarse_grid is None:
                 break
-            transfer = StructuredTransferPlan(grids[-1], coarse_grid)
-            coefficient = transfer.restrict_array(coefficient)
+            transfer = StructuredTransferPlan(
+                grids[-1],
+                coarse_grid,
+                precision=plan.precision,
+            )
+            coefficient = transfer.restrict_array(
+                coefficient,
+                role="coefficient",
+            )
             boundaries = {
                 axis: pair
                 for axis, pair in zip(
@@ -749,13 +871,15 @@ class PreparedStructuredMultigrid(StrictModule, NonTrainableState):
                 coarse_grid,
                 boundaries=boundaries,
                 interpolation=diffusions[-1].plan.interpolation.kind,
+                precision=diffusions[-1].precision,
             ).prepare(coefficient)
             grids.append(coarse_grid)
             transfers.append(transfer)
             diffusions.append(coarse_diffusion)
         if len(grids) < 2:
             raise ValueError("Structured multigrid could not construct a coarse level.")
-        level_operators = tuple(-1.0 * value for value in diffusions)
+        sign = jnp.asarray(-1.0, dtype=jnp.dtype(plan.precision.field_dtype))
+        level_operators = tuple(sign * value for value in diffusions)
         transfer_operators = tuple(
             transfer.prepare(fine.source, coarse.source)
             for transfer, fine, coarse in zip(
@@ -851,39 +975,54 @@ class PreparedStructuredMultigrid(StrictModule, NonTrainableState):
             operator.target, ArraySpace
         ):
             raise RuntimeError("Structured multigrid lost its array level space.")
+        precision = self.plan.precision
         rhs = operator.target.validate(jnp.asarray(right_hand_side))
+
+        def residual_norm(value: Array, /) -> Array:
+            coordinates = precision.accumulation(operator.target.flatten(value))
+            return precision.certification(jnp.linalg.norm(coordinates))
+
         if self.nullspace_dimension:
-            measure = self.grids[0].quadrature_weights
+            measure = precision.accumulation(self.grids[0].quadrature_weights)
+            rhs_accumulation = precision.accumulation(rhs)
             mass = jnp.sum(measure)
-            incompatible = jnp.sum(measure * rhs)
-            scale = jnp.maximum(1.0, jnp.sum(jnp.abs(measure * rhs)))
+            incompatible = jnp.sum(measure * rhs_accumulation)
+            scale = jnp.maximum(
+                1.0,
+                jnp.sum(jnp.abs(measure * rhs_accumulation)),
+            )
             if self.plan.compatibility == "error":
                 rhs = eqx.error_if(
                     rhs,
-                    jnp.abs(incompatible) > tolerance * scale,
+                    precision.certification(jnp.abs(incompatible))
+                    > tolerance * precision.certification(scale),
                     "Structured multigrid RHS is incompatible with its nullspace.",
                 )
             else:
-                rhs = rhs - incompatible / mass
+                rhs = precision.field(rhs_accumulation - incompatible / mass)
         value = jnp.zeros(operator.source.shape, dtype=operator.source.dtype)
-        norms = [jnp.linalg.norm(operator.target.flatten(rhs))]
+        norms = [residual_norm(rhs)]
         for _ in range(count):
             residual = rhs - operator.mv(value)
-            value = value + self.preconditioner.apply(residual)
+            value = precision.field(value + self.preconditioner.apply(residual))
             if self.nullspace_dimension:
+                value_accumulation = precision.accumulation(value)
                 if self.plan.gauge == "zero_mean":
-                    value = value - jnp.sum(
-                        self.grids[0].quadrature_weights * value
-                    ) / jnp.sum(self.grids[0].quadrature_weights)
+                    measure = precision.accumulation(self.grids[0].quadrature_weights)
+                    value = precision.field(
+                        value_accumulation
+                        - jnp.sum(measure * value_accumulation) / jnp.sum(measure)
+                    )
                 else:
-                    value = value - jnp.mean(value)
-            norms.append(
-                jnp.linalg.norm(operator.target.flatten(rhs - operator.mv(value)))
-            )
+                    value = precision.field(
+                        value_accumulation - jnp.mean(value_accumulation)
+                    )
+            norms.append(residual_norm(rhs - operator.mv(value)))
         return StructuredMultigridResult(
             value,
-            jnp.asarray(norms),
+            jnp.asarray(norms, dtype=jnp.dtype(precision.certification_dtype)),
             tolerance,
+            precision_evidence=precision.evidence(),
         )
 
 

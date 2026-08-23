@@ -199,6 +199,7 @@ def transformed_weighted_realization(
         batch,
         realization.key,
         realization.transformations + (record,),
+        precision=realization.precision,
     )
 
 

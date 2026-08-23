@@ -405,7 +405,9 @@ class SeparableSpectralDiscretization(AbstractStrongFormDiscretization):
     ):
         axes_value = tuple(axes)
         if not axes_value:
-            raise ValueError("SeparableSpectralDiscretization requires at least one axis.")
+            raise ValueError(
+                "SeparableSpectralDiscretization requires at least one axis."
+            )
         basis: list[_TensorBasis] = []
         boundary: list[str] = []
         for index, axis in enumerate(axes_value):

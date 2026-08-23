@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 
 
@@ -47,6 +48,8 @@ class OpenSystemApproximationEvidence(StrictModule):
     statistical_error: Array
     valid: Array
     representation_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
+    precision_policy_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -57,12 +60,25 @@ class OpenSystemApproximationEvidence(StrictModule):
         local_error: ArrayLike = 0.0,
         statistical_error: ArrayLike = 0.0,
         valid: ArrayLike = True,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
+        precision_policy_ids: Sequence[str] = (),
     ):
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         self.representation_id = str(representation_id)
         self.axes = tuple(axes)
         self.local_error = jnp.asarray(local_error)
         self.statistical_error = jnp.asarray(statistical_error)
         self.valid = jnp.asarray(valid, dtype=bool)
+        self.precision_evidence = precision_evidence
+        self.precision_policy_ids = tuple(
+            str(identifier) for identifier in precision_policy_ids
+        )
 
 
 class OpenSystemPhysicalityEvidence(StrictModule):
@@ -72,6 +88,7 @@ class OpenSystemPhysicalityEvidence(StrictModule):
     channel_cp_margin: Array
     valid: Array
     status: PhysicalityStatus = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -82,7 +99,15 @@ class OpenSystemPhysicalityEvidence(StrictModule):
         positivity_margin: ArrayLike = jnp.nan,
         channel_cp_margin: ArrayLike = jnp.nan,
         status: PhysicalityStatus = "unknown",
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         if status not in ("valid", "invalid", "unknown"):
             raise ValueError("Unknown physicality status.")
         self.trace_residual = jnp.asarray(trace_residual)
@@ -91,6 +116,7 @@ class OpenSystemPhysicalityEvidence(StrictModule):
         self.channel_cp_margin = jnp.asarray(channel_cp_margin)
         self.status = status
         self.valid = jnp.asarray(status == "valid")
+        self.precision_evidence = precision_evidence
 
 
 class QuantumGeneratorAction(StrictModule):

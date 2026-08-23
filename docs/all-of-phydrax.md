@@ -85,6 +85,25 @@ participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md) and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
+### Precision is an execution contract
+
+Precision is attached to executable stages, not inferred from one global dtype.
+Finite differences separate coefficient storage, field storage, accumulation,
+certification, communication, checkpoint, and output placement. Integration
+separates integrand evaluation, reduction accumulation, adaptive/statistical
+decisions, and output. Neural operators retain master parameters while creating
+transient compute views, preserve geometry arrays, and record contraction and FFT
+behavior. Spatial noise, predictive summaries, particle filters, and linear
+solvers expose their own stage vocabulary.
+
+Every supported policy resolves to content-addressed precision evidence. Parent
+computations can retain child evidence—for example, an SPDE combines its spatial
+discretization and noise-basis envelopes—and persistence compatibility includes
+the effective precision contract. Static resource estimates use separate dtype
+item-size assumptions; they are not presented as evidence that execution occurred.
+Unsupported dtype placements fail during planning or preparation rather than
+silently widening, narrowing, or changing real/complex kind.
+
 ### Differentiation: AD / jets / FD / basis
 
 Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"`) and autodiff modes

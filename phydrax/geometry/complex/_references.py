@@ -10,10 +10,10 @@ from ..._strict import StrictModule
 from ...metrix import (
     ComplexCoordinateConvention,
     CoordinateChart,
+    euclidean_metric,
     HermitianStructure,
     KahlerStructure,
     RiemannianMetric,
-    euclidean_metric,
     standard_complex_structure,
 )
 

@@ -86,6 +86,49 @@ def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
         "higher_resolution",
     }
     assert all(jnp.isfinite(evaluation.relative_l2) for evaluation in result.evaluations)
+    assert dict(result.precision_configuration) == {
+        "parameter_dtype": "float64",
+        "compute_dtype": "float64",
+        "reduction_dtype": "float64",
+        "matmul_precision": "none",
+    }
+    assert result.final_loss_scale is None
+    assert result.nonfinite_microsteps == 0
+
+
+def test_benchmark_runner_records_explicit_bfloat16_precision():
+    scenario = periodic_burgers_scenario(
+        train_resolution=8,
+        test_resolution=12,
+        num_cases=2,
+    )
+    model = phx.nn.operator.architectures.FNO(
+        width=4,
+        depth=1,
+        n_modes=(3,),
+        coordinate_embedding=False,
+        key=jr.key(0),
+    )
+    trained, result = run_operator_benchmark(
+        model,
+        scenario,
+        steps=1,
+        repeats=1,
+        dtype_policy=phx.nn.operator.training.OperatorDTypePolicy(
+            parameter_dtype="float32",
+            compute_dtype="bfloat16",
+            reduction_dtype="float32",
+        ),
+    )
+
+    assert dict(result.precision_configuration)["compute_dtype"] == "bfloat16"
+    assert result.final_loss_scale is None
+    assert result.nonfinite_microsteps == 0
+    assert all(
+        leaf.dtype in (jnp.float32, jnp.complex64)
+        for leaf in jax.tree_util.tree_leaves(trained)
+        if isinstance(leaf, jax.Array) and jnp.issubdtype(leaf.dtype, jnp.inexact)
+    )
 
 
 def test_benchmark_runner_records_validation_plateau_early_stopping():

@@ -89,11 +89,15 @@ class AxisDiscretization(StrictModule):
         bounds_ = (
             None if bounds is None else jnp.asarray(bounds, dtype=float).reshape((-1,))
         )
-        if bounds_ is not None and (
-            bounds_.shape != (2,) or not bool(bounds_[1] > bounds_[0])
-        ):
-            raise ValueError(
-                "AxisDiscretization bounds must be increasing with shape (2,)."
+        if bounds_ is not None:
+            if bounds_.shape != (2,):
+                raise ValueError(
+                    "AxisDiscretization bounds must be increasing with shape (2,)."
+                )
+            bounds_ = eqx.error_if(
+                bounds_,
+                ~(jnp.all(jnp.isfinite(bounds_)) & (bounds_[1] > bounds_[0])),
+                "AxisDiscretization bounds must be increasing with shape (2,).",
             )
         if primary_entity == "interval" and bounds_ is None:
             raise ValueError("Interval-primary axes require explicit bounds.")

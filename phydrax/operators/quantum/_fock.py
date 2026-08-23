@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ._open_contracts import ApproximationAxis, OpenSystemApproximationEvidence
 
@@ -27,9 +28,14 @@ class FockCutoffEvidence(StrictModule):
         boundary_amplitude: ArrayLike,
         cutoffs: Sequence[int],
         /,
+        precision: GeometryPrecisionPolicy | None = None,
+        coordinates: ArrayLike | None = None,
     ):
-        top = jnp.asarray(top_level_probability)
-        boundary = jnp.asarray(boundary_amplitude)
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be GeometryPrecisionPolicy or None.")
+        top = precision_.decision(top_level_probability)
+        boundary = precision_.output(boundary_amplitude)
         self.top_level_probability = top
         self.boundary_amplitude = boundary
         self.valid = jnp.all(jnp.isfinite(top)) & jnp.all(top >= 0.0)
@@ -41,6 +47,10 @@ class FockCutoffEvidence(StrictModule):
             ),
             local_error=jnp.max(top),
             valid=self.valid,
+            precision_evidence=precision_.evidence_for(
+                boundary if coordinates is None else coordinates
+            ),
+            precision_policy_ids=(precision_.policy_id,),
         )
 
 
@@ -49,15 +59,26 @@ class BosonicFockSpace(StrictModule):
     mode_count: int = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
     space_id: str = eqx.field(static=True)
+    precision: GeometryPrecisionPolicy
 
-    def __init__(self, cutoffs: Sequence[int], /):
+    def __init__(
+        self,
+        cutoffs: Sequence[int],
+        /,
+        *,
+        precision: GeometryPrecisionPolicy | None = None,
+    ):
         cutoffs_ = tuple(int(value) for value in cutoffs)
         if not cutoffs_ or any(value < 2 for value in cutoffs_):
             raise ValueError("Every Fock cutoff must be at least two.")
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be GeometryPrecisionPolicy or None.")
         self.cutoffs = cutoffs_
         self.mode_count = len(cutoffs_)
         self.dimension = prod(cutoffs_)
         self.space_id = "fock:" + "x".join(str(value) for value in cutoffs_)
+        self.precision = precision_
 
     def occupations(self) -> Array:
         indices = jnp.arange(self.dimension)
@@ -132,11 +153,12 @@ class BosonicFockSpace(StrictModule):
         vector = jnp.asarray(state)
         if vector.shape != (self.dimension,):
             raise ValueError("Fock state-vector dimension is invalid.")
-        probabilities = jnp.abs(vector) ** 2
+        self.precision.validate_coordinates(vector)
+        probabilities = jnp.abs(self.precision.accumulation(vector)) ** 2
         occupations = self.occupations()
         top = jnp.stack(
             [
-                jnp.sum(
+                self.precision.sum(
                     jnp.where(
                         occupations[:, mode] == cutoff - 1,
                         probabilities,
@@ -146,7 +168,13 @@ class BosonicFockSpace(StrictModule):
                 for mode, cutoff in enumerate(self.cutoffs)
             ]
         )
-        return FockCutoffEvidence(top, jnp.sqrt(top), self.cutoffs)
+        return FockCutoffEvidence(
+            top,
+            jnp.sqrt(top),
+            self.cutoffs,
+            precision=self.precision,
+            coordinates=vector,
+        )
 
     def embed(self, state: ArrayLike, fine: BosonicFockSpace, /) -> Array:
         vector = jnp.asarray(state)

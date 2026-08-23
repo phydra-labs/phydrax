@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array
 
 from phydrax._model import AbstractArrayModel, FrozenModel, register_artifact_value
@@ -36,6 +37,14 @@ FUNCTION_PROJECTION_SUCCESS = 0
 FUNCTION_PROJECTION_INSUFFICIENT_SUPPORT = 1
 FUNCTION_PROJECTION_RANK_DEFICIENT = 2
 FUNCTION_PROJECTION_NONFINITE = 3
+
+
+def _raise_or_error(value: Array, predicate: Array, message: str, /) -> Array:
+    if not isinstance(predicate, jax_core.Tracer) and bool(predicate):
+        raise eqx.EquinoxRuntimeError(message)
+    return eqx.error_if(value, predicate, message)
+
+
 FUNCTION_PROJECTION_INVALID_MEASURE = 4
 FUNCTION_PROJECTION_REGULARIZED = 5
 
@@ -209,7 +218,7 @@ class FunctionProjectionReport(StrictModule):
 
     def require_coefficients(self) -> Array:
         """Return coefficients or raise at runtime if any case is invalid."""
-        return eqx.error_if(
+        return _raise_or_error(
             self.coefficients,
             jnp.any(~self.valid),
             "Function projection has invalid coefficients; inspect its report.",
@@ -568,7 +577,7 @@ class LearnedFunctionFrame(_AbstractBasisTrunk):
         ).astype(jnp.int32)
 
         if resolved_policy.rank_policy == "error":
-            coefficients = eqx.error_if(
+            coefficients = _raise_or_error(
                 coefficients,
                 jnp.any(rank_deficient & ~invalid_measure & ~nonfinite),
                 "Observed function samples do not identify the learned frame.",

@@ -73,6 +73,11 @@ U-statistic, independent-product, or explicit plug-in policy after integration.
 This avoids silently adding parameter-dependent estimator variance to a squared
 moment objective.
 
+Both randomized term families accept `IntegrationPrecisionPolicy`. Realization
+values are widened before event and ensemble reductions; U-statistic signs are
+preserved in decision precision. Diagnostics retain a parent reduction envelope
+and, for randomized moments, one child envelope per integration realization.
+
 ::: phydrax.terms.RandomizedMomentPenalty
 
 ---
@@ -94,6 +99,11 @@ Fixed endpoint samples retain common random numbers while resampling interpolati
 times on every optimizer update. With `sampling_mode="resample"`, the endpoint
 provider itself is called exactly once per update. Masks and log weights are
 normalized over valid pairs only.
+
+The metric's `GeometryPrecisionPolicy` also controls term-level event norms,
+weighted objectives, RMS diagnostics, and effective-sample decisions. Euclidean,
+coordinate-Riemannian, operator, and intrinsic-manifold metrics therefore share
+one evidence-bearing reduction contract.
 
 `EuclideanFlowMatchingMetric` uses the squared norm of the complete event. The
 `normalize_event` option is explicit rather than silently changing loss scale.

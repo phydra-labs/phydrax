@@ -3,6 +3,7 @@ import phydrax as phx
 
 PUBLIC_TERM_API = {
     "AbstractEvaluatedScalarTerm",
+    "AbstractFlowMatchingMetric",
     "AbstractSamplingTerm",
     "AbstractScalarTerm",
     "BSDETerm",
@@ -21,6 +22,7 @@ PUBLIC_TERM_API = {
     "DeepSplittingRegressionTerm",
     "DifferentialPhysicsInformedOperatorTerm",
     "EmpiricalSinkhornDivergenceTerm",
+    "EuclideanFlowMatchingMetric",
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
     "AbstractFlowMatchingMetric",
@@ -60,6 +62,7 @@ PUBLIC_TERM_API = {
     "RandomizedResidualTerm",
     "ResidualEvaluator",
     "ResidualPenalty",
+    "RiemannianFlowMatchingMetric",
     "ScoreMatchingBatch",
     "ScoreMatchingDiagnostics",
     "ScoreMatchingMethod",
