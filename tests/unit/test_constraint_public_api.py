@@ -39,6 +39,7 @@ PUBLIC_TERM_API = {
     "GraphTrajectorySupervisedTerm",
     "IntegralFunctional",
     "LabelProvider",
+    "ManifoldFlowMatchingMetric",
     "MomentPenalty",
     "ObservationPenalty",
     "OperatorDatasetTerm",
@@ -85,6 +86,7 @@ PUBLIC_TERM_API = {
     "deep_splitting_labels",
     "evaluate",
     "operator_term_suite",
+    "ricci_flat_kahler_term",
 }
 
 LEGACY_TERMS = {

@@ -205,6 +205,7 @@ nav:
             - Array manifolds: "api/metrix/manifolds.md"
             - Intrinsic endpoint geometry: "api/metrix/intrinsic_geometry.md"
             - Complex and Kähler geometry: "api/metrix/complex_geometry.md"
+            - Global projective and Ricci-flat geometry: "api/metrix/global_complex.md"
             - Lie groups: "api/metrix/lie_groups.md"
             - Symplectic and Poisson geometry: "api/metrix/symplectic_poisson.md"
             - Sub-Riemannian geometry: "api/metrix/subriemannian.md"

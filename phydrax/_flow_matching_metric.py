@@ -12,7 +12,7 @@ from jaxtyping import Array
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import AbstractAttribute, StrictModule
-from .metrix import RiemannianMetric
+from .metrix import AbstractRiemannianManifold, RiemannianMetric
 
 
 class AbstractFlowMatchingMetric(StrictModule):
@@ -101,8 +101,50 @@ class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
         ).reshape(())
 
 
+class ManifoldFlowMatchingMetric(AbstractFlowMatchingMetric):
+    """Intrinsic tangent error under an array-manifold metric."""
+
+    geometry: AbstractRiemannianManifold
+    metric_id: str = eqx.field(static=True)
+
+    def __init__(self, geometry: AbstractRiemannianManifold, /):
+        if not isinstance(geometry, AbstractRiemannianManifold):
+            raise TypeError("geometry must be an AbstractRiemannianManifold.")
+        self.geometry = geometry
+        self.metric_id = canonical_fingerprint(
+            {
+                "kind": "manifold-flow-matching-metric-v1",
+                "geometry": geometry.manifold_id,
+            }
+        )
+
+    def __call__(
+        self,
+        state: Array,
+        predicted_velocity: Array,
+        target_velocity: Array,
+        /,
+    ) -> Array:
+        if not (
+            state.shape
+            == predicted_velocity.shape
+            == target_velocity.shape
+            == self.geometry.point_shape
+        ):
+            raise ValueError(
+                "Manifold flow matching requires one point-shaped state and tangents."
+            )
+        difference = self.geometry.project_tangent(
+            state, predicted_velocity - target_velocity
+        )
+        return jnp.asarray(
+            self.geometry.inner(state, difference, difference), dtype=float
+        ).reshape(())
+
+
 __all__ = [
     "AbstractFlowMatchingMetric",
     "EuclideanFlowMatchingMetric",
+    "ManifoldFlowMatchingMetric",
     "RiemannianFlowMatchingMetric",
 ]

@@ -147,7 +147,7 @@ def test_complex_projective_unitary_and_hpd_geometry():
     assert jnp.allclose(hpd.log(matrix, destination), step, atol=2e-5)
 
 
-def test_flat_kahler_local_calabi_yau_and_wirtinger_calculus():
+def test_flat_kahler_local_su_and_wirtinger_calculus():
     chart = phx.metrix.CoordinateChart("complex-line", ("x", "y"))
     convention = phx.metrix.ComplexCoordinateConvention(chart)
     complex_structure = phx.metrix.standard_complex_structure(convention)
@@ -170,8 +170,8 @@ def test_flat_kahler_local_calabi_yau_and_wirtinger_calculus():
         chart=chart,
         degree=1,
     )
-    structure = phx.metrix.LocalCalabiYauStructure(kahler, volume)
-    report = phx.metrix.validate_local_calabi_yau_structure(structure, points)
+    structure = phx.metrix.LocalSUNStructure(kahler, volume, volume_bidegree=(1, 0))
+    report = phx.metrix.validate_local_su_structure(structure, points)
     assert bool(report.valid)
     assert report.maximum_ricci_residual < 1e-8
 

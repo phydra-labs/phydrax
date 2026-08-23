@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from math import factorial
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -26,20 +27,23 @@ class _ConjugateFormCoefficients(StrictModule):
         return jnp.conj(self.form._coefficients_point(coordinates))
 
 
-class LocalCalabiYauStructure(StrictModule):
+class LocalSUNStructure(StrictModule):
     """Local Ricci-flat Kähler candidate with a complex volume form."""
 
     kahler: KahlerStructure
     holomorphic_volume: DifferentialForm
+    volume_bidegree: tuple[int, int] = eqx.field(static=True)
 
     def __init__(
         self,
         kahler: KahlerStructure,
         holomorphic_volume: DifferentialForm,
         /,
+        *,
+        volume_bidegree: tuple[int, int],
     ):
         if not isinstance(kahler, KahlerStructure):
-            raise TypeError("LocalCalabiYauStructure requires a KahlerStructure.")
+            raise TypeError("LocalSUNStructure requires a KahlerStructure.")
         if not isinstance(holomorphic_volume, DifferentialForm):
             raise TypeError("holomorphic_volume must be a DifferentialForm.")
         if not kahler.chart.compatible_with(holomorphic_volume.chart):
@@ -49,8 +53,12 @@ class LocalCalabiYauStructure(StrictModule):
             raise ValueError(
                 "Holomorphic volume form degree must equal the complex dimension."
             )
+        bidegree = (int(volume_bidegree[0]), int(volume_bidegree[1]))
+        if bidegree != (complex_dimension, 0):
+            raise ValueError("Local SU(n) volume form must declare bidegree (n, 0).")
         self.kahler = kahler
         self.holomorphic_volume = holomorphic_volume
+        self.volume_bidegree = bidegree
 
     @property
     def complex_dimension(self) -> int:
@@ -70,7 +78,7 @@ class LocalCalabiYauStructure(StrictModule):
         return result
 
 
-class LocalCalabiYauValidationReport(StrictModule):
+class LocalSUNValidationReport(StrictModule):
     valid: Array
     kahler_valid: Array
     volume_closed: Array
@@ -107,8 +115,8 @@ class LocalCalabiYauValidationReport(StrictModule):
         self.maximum_ricci_residual = jnp.asarray(maximum_ricci_residual)
 
 
-def validate_local_calabi_yau_structure(
-    structure: LocalCalabiYauStructure,
+def validate_local_su_structure(
+    structure: LocalSUNStructure,
     points: ArrayLike,
     /,
     *,
@@ -118,10 +126,10 @@ def validate_local_calabi_yau_structure(
     normalization_tolerance: float = 1e-7,
     ricci_tolerance: float = 1e-7,
     raise_on_error: bool = True,
-) -> LocalCalabiYauValidationReport:
+) -> LocalSUNValidationReport:
     """Validate local SU(n)-structure and Ricci-flat residuals."""
-    if not isinstance(structure, LocalCalabiYauStructure):
-        raise TypeError("structure must be a LocalCalabiYauStructure.")
+    if not isinstance(structure, LocalSUNStructure):
+        raise TypeError("structure must be a LocalSUNStructure.")
     if (
         min(
             closure_tolerance,
@@ -132,7 +140,7 @@ def validate_local_calabi_yau_structure(
         )
         < 0.0
     ):
-        raise ValueError("Local Calabi–Yau tolerances must be non-negative.")
+        raise ValueError("Local SU(n) tolerances must be non-negative.")
     kahler_report = validate_kahler_structure(
         structure.kahler,
         points,
@@ -177,7 +185,7 @@ def validate_local_calabi_yau_structure(
         & (normalization_residual <= normalization_tolerance)
         & (ricci_residual <= ricci_tolerance)
     )
-    report = LocalCalabiYauValidationReport(
+    report = LocalSUNValidationReport(
         valid=valid,
         kahler_valid=kahler_report.valid,
         volume_closed=closed,
@@ -190,7 +198,7 @@ def validate_local_calabi_yau_structure(
     )
     if raise_on_error and not bool(jax.device_get(valid)):
         raise ValueError(
-            "Local Calabi–Yau validation failed: "
+            "Local SU(n) validation failed: "
             f"closure={float(jax.device_get(closure_residual))}, "
             f"compatibility={float(jax.device_get(compatibility_residual))}, "
             f"normalization={float(jax.device_get(normalization_residual))}, "
@@ -200,7 +208,7 @@ def validate_local_calabi_yau_structure(
 
 
 __all__ = [
-    "LocalCalabiYauStructure",
-    "LocalCalabiYauValidationReport",
-    "validate_local_calabi_yau_structure",
+    "LocalSUNStructure",
+    "LocalSUNValidationReport",
+    "validate_local_su_structure",
 ]

@@ -29,6 +29,8 @@ from ._atlas import (
     PatchwiseScalarField,
     validate_coordinate_atlas,
 )
+from ._atlas_cover import AtlasCover, AtlasOverlap, ChartSupport
+from ._bigraded_forms import bigraded_wedge, BigradedForm, partial, partial_bar
 from ._boundary import (
     induced_boundary_density,
     induced_boundary_metric,
@@ -42,6 +44,7 @@ from ._bundle import (
     VectorBundleConnection,
 )
 from ._chart import ChartTransition, CoordinateChart
+from ._chern import ChernConnection, HolomorphicBundleFrame, HolomorphicBundleTransition
 from ._classical_manifold import (
     HyperboloidManifold,
     PoincareBallManifold,
@@ -112,6 +115,10 @@ from ._forms import (
 )
 from ._geodesic_problem import integrate_metric_geodesic, MetricGeodesicResult
 from ._hessian_geometry import HessianGeometry, validate_hessian_geometry
+from ._information_operator import (
+    InformationMetricOperator,
+    pulled_back_information_operator,
+)
 from ._jet import metric_jet, MetricJet
 from ._kahler import (
     HermitianStructure,
@@ -121,9 +128,11 @@ from ._kahler import (
     validate_hermitian_structure,
     validate_kahler_structure,
 )
+from ._kahler_potential import KahlerPotentialGeometry
 from ._lie_group import (
     AbstractLieGroup,
     LieGroupStateGeometry,
+    RightLieGroupStateGeometry,
     SpecialEuclideanGroup,
     SpecialOrthogonalGroup,
 )
@@ -134,6 +143,7 @@ from ._manifold import (
     EuclideanManifold,
     SphereManifold,
 )
+from ._manifold_state_geometry import GeodesicManifoldStateGeometry
 from ._manifold_validation import (
     ManifoldValidationReport,
     StateGeometryValidationReport,
@@ -186,6 +196,12 @@ from ._operators import (
     gradient,
     laplace_beltrami,
 )
+from ._patchwise import (
+    PatchwiseDensity,
+    PatchwiseDifferentialForm,
+    PatchwiseMetric,
+    PatchwiseTensorField,
+)
 from ._product_spectrum import product_laplacian_eigenbasis
 from ._semi_riemannian import (
     causal_character,
@@ -201,9 +217,9 @@ from ._signed_validation import (
     validate_semi_riemannian_metric,
 )
 from ._special_holonomy import (
-    LocalCalabiYauStructure,
-    LocalCalabiYauValidationReport,
-    validate_local_calabi_yau_structure,
+    LocalSUNStructure,
+    LocalSUNValidationReport,
+    validate_local_su_structure,
 )
 from ._state_geometry import (
     AbstractStateGeometry,
@@ -315,8 +331,8 @@ __all__ = [
     "LorentzianMetric",
     "KahlerStructure",
     "KahlerValidationReport",
-    "LocalCalabiYauStructure",
-    "LocalCalabiYauValidationReport",
+    "LocalSUNStructure",
+    "LocalSUNValidationReport",
     "ManifoldValidationReport",
     "MetricGeodesicResult",
     "MetricJet",
@@ -430,7 +446,7 @@ __all__ = [
     "validate_coordinate_atlas",
     "validate_hermitian_structure",
     "validate_kahler_structure",
-    "validate_local_calabi_yau_structure",
+    "validate_local_su_structure",
     "validate_hessian_geometry",
     "validate_immersion",
     "validate_lorentzian_metric",
@@ -482,4 +498,23 @@ __all__ = [
     "nonmetricity_tensor",
     "pullback_affine_connection",
     "torsion_tensor",
+    "AtlasCover",
+    "AtlasOverlap",
+    "ChartSupport",
+    "BigradedForm",
+    "bigraded_wedge",
+    "partial",
+    "partial_bar",
+    "ChernConnection",
+    "HolomorphicBundleFrame",
+    "HolomorphicBundleTransition",
+    "InformationMetricOperator",
+    "pulled_back_information_operator",
+    "KahlerPotentialGeometry",
+    "RightLieGroupStateGeometry",
+    "GeodesicManifoldStateGeometry",
+    "PatchwiseDensity",
+    "PatchwiseDifferentialForm",
+    "PatchwiseMetric",
+    "PatchwiseTensorField",
 ]

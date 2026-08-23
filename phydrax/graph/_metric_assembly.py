@@ -24,6 +24,11 @@ class MetricCochainAssembly(StrictModule):
     primal_measures: tuple[Array, ...]
     dual_measures: tuple[Array, ...]
     hodge_stars: tuple[Array, ...]
+    valid: Array
+    finite: Array
+    minimum_primal_measure: Array
+    minimum_dual_measure: Array
+    minimum_hodge_star: Array
 
     def __init__(
         self,
@@ -37,6 +42,23 @@ class MetricCochainAssembly(StrictModule):
         self.primal_measures = primal_measures
         self.dual_measures = dual_measures
         self.hodge_stars = hodge_stars
+        primal = jnp.concatenate(primal_measures)
+        dual = jnp.concatenate(dual_measures)
+        stars = jnp.concatenate(hodge_stars)
+        self.finite = (
+            jnp.all(jnp.isfinite(primal))
+            & jnp.all(jnp.isfinite(dual))
+            & jnp.all(jnp.isfinite(stars))
+        )
+        self.minimum_primal_measure = jnp.min(primal)
+        self.minimum_dual_measure = jnp.min(dual)
+        self.minimum_hodge_star = jnp.min(stars)
+        self.valid = (
+            self.finite
+            & (self.minimum_primal_measure > 0.0)
+            & (self.minimum_dual_measure > 0.0)
+            & (self.minimum_hodge_star > 0.0)
+        )
 
 
 def _parameterized_measures(

@@ -106,8 +106,10 @@ from .continuous import (
     EndpointCouplingSample,
     EndpointInterpolantEvaluation,
     estimate_continuous_flow_log_prob,
+    GeodesicEndpointInterpolant,
     independent_endpoint_coupling,
     LinearEndpointInterpolant,
+    ManifoldTransportGeometry,
     transport_plan_endpoint_coupling,
 )
 from .dynamic import (
@@ -155,6 +157,8 @@ __all__ = [
     "ContinuousTransportSample",
     "EndpointCouplingSample",
     "EndpointInterpolantEvaluation",
+    "GeodesicEndpointInterpolant",
+    "ManifoldTransportGeometry",
     "DiscreteTransportProblem",
     "FixedSupportBarycenterProblem",
     "FreeSupportBarycenter",
