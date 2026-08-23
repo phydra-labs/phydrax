@@ -502,7 +502,11 @@ class DifferentialControlDynamics(StrictModule):
             dynamics_id=self.dynamics_id,
             control_id=parameterization.parameterization_id,
             backend_id="backend:diffrax",
-            method_id=solution.solver_id,
+            method_id=(
+                solution.solver_id
+                if solution.temporal_evidence is None
+                else solution.temporal_evidence.configuration_id
+            ),
             discretization_id=time_grid.time_id,
             approximation_id=parameterization.approximation_id,
         )

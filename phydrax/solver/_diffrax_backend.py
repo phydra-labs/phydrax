@@ -4,19 +4,36 @@
 
 from __future__ import annotations
 
-from math import prod
+from math import isfinite, prod
 from typing import Any, Protocol
 
 import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import optimistix as optx
 from jaxtyping import Array, ArrayLike
 
 from ..stochastic import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
-from ._geometric import AbstractGeometricSolver, RKMK, SRKMK
+from ._differential_ir import lower_deterministic_problem
+from ._geometric import (
+    AbstractGeometricSolver,
+    CommutatorFreeSolver,
+    GeometricEuler,
+    RKMK,
+    SRKMK,
+    StormerVerlet,
+)
 from ._save_schedule import validate_save_times
+from ._split_differential import SplitDifferentialProblem
+from ._ssp_runge_kutta import SSPRK33, SSPRK54
+from ._temporal_method import (
+    configuration_id,
+    diffrax_method_capabilities,
+    TemporalMethodCapabilities,
+    TemporalSolveEvidence,
+)
 
 
 class _StochasticProblemContract(Protocol):
@@ -190,6 +207,21 @@ def _validated_stochastic_solver(
                 f"{type(solver).__name__} requires {required.__name__}, but the "
                 f"Wiener realization provides {provided.__name__}."
             )
+    if isinstance(problem, DifferentialProblem):
+        capabilities = _method_capabilities(solver)
+        structures = tuple(term.structure for term in problem.wiener_terms)
+        if capabilities.noise_requirement == "additive" and any(
+            structure != "additive" for structure in structures
+        ):
+            raise ValueError(
+                f"{type(solver).__name__} requires explicitly additive noise."
+            )
+        if capabilities.noise_requirement == "commutative" and any(
+            structure == "general" for structure in structures
+        ):
+            raise ValueError(
+                f"{type(solver).__name__} requires explicitly commutative noise."
+            )
 
 
 def _validated_realization_interval(
@@ -221,7 +253,7 @@ def _validated_realization_interval(
 
 
 def _validated_state_geometry_solver(
-    problem: DifferentialProblem,
+    problem: DifferentialProblem | SplitDifferentialProblem,
     solver: Any,
     /,
 ) -> None:
@@ -255,6 +287,102 @@ def _validated_state_geometry_solver(
         raise ValueError("SRKMK requires a stochastic DifferentialProblem.")
 
 
+def _method_capabilities(solver: Any, /) -> TemporalMethodCapabilities:
+    if isinstance(solver, (SSPRK33, SSPRK54)):
+        return solver.capabilities
+    if isinstance(solver, GeometricEuler):
+        return TemporalMethodCapabilities(
+            equation_forms=("explicit-ode", "geometric-ode"),
+            method_class="geometric",
+            order=1,
+            dense_order=1,
+            adaptive=False,
+            stage_abscissae=solver.stage_abscissae,
+            causal_stage_extent=solver.causal_stage_extent,
+            verified=True,
+            method_id=solver.solver_id,
+        )
+    if isinstance(solver, StormerVerlet):
+        return TemporalMethodCapabilities(
+            equation_forms=("explicit-ode", "geometric-ode"),
+            method_class="geometric",
+            order=2,
+            dense_order=1,
+            adaptive=False,
+            stage_abscissae=solver.stage_abscissae,
+            causal_stage_extent=solver.causal_stage_extent,
+            symplectic=True,
+            reversible=True,
+            verified=True,
+            method_id=solver.solver_id,
+        )
+    if isinstance(solver, RKMK):
+        return TemporalMethodCapabilities(
+            equation_forms=("explicit-ode", "geometric-ode"),
+            method_class="geometric",
+            order=2 if solver.method == "midpoint" else 4,
+            dense_order=1,
+            adaptive=False,
+            stage_abscissae=solver.stage_abscissae,
+            causal_stage_extent=solver.causal_stage_extent,
+            verified=True,
+            method_id=solver.solver_id,
+        )
+    if isinstance(solver, CommutatorFreeSolver):
+        return TemporalMethodCapabilities(
+            equation_forms=("explicit-ode", "geometric-ode"),
+            method_class="geometric",
+            order=solver.tableau.order,
+            dense_order=1,
+            adaptive=False,
+            stage_abscissae=solver.stage_abscissae,
+            causal_stage_extent=solver.causal_stage_extent,
+            verified=solver.tableau.tableau_id == "tableau:commutator-free-midpoint",
+            method_id=solver.solver_id,
+        )
+    if isinstance(solver, SRKMK):
+        return TemporalMethodCapabilities(
+            equation_forms=("sde", "geometric-sde"),
+            method_class="geometric",
+            order=1,
+            dense_order=1,
+            strong_orders=(("general", 0.5),),
+            adaptive=False,
+            stage_abscissae=solver.stage_abscissae,
+            causal_stage_extent=solver.causal_stage_extent,
+            noise_requirement="general",
+            verified=True,
+            method_id=solver.solver_id,
+        )
+    return diffrax_method_capabilities(solver)
+
+
+def _equation_form(problem: DifferentialProblem | SplitDifferentialProblem, /) -> str:
+    if isinstance(problem, SplitDifferentialProblem):
+        return "additive-ode"
+    geometry = problem.state_geometry
+    nontrivial_geometry = geometry is not None and not geometry.trivial
+    if problem.stochastic:
+        return "geometric-sde" if nontrivial_geometry else "sde"
+    return "geometric-ode" if nontrivial_geometry else "explicit-ode"
+
+
+def _validated_method_form(
+    problem: DifferentialProblem | SplitDifferentialProblem,
+    solver: Any,
+    /,
+) -> None:
+    if not isinstance(solver, dfx.AbstractSolver):
+        raise TypeError("solver must be a Diffrax AbstractSolver or None.")
+    form = _equation_form(problem)
+    capabilities = _method_capabilities(solver)
+    if form not in capabilities.equation_forms:
+        raise ValueError(
+            f"{type(solver).__name__} does not accept temporal equation form "
+            f"{form!r}; supported forms are {capabilities.equation_forms}."
+        )
+
+
 def _solver_provenance(solver: Any, /) -> tuple[str, str]:
     if isinstance(solver, AbstractGeometricSolver):
         return solver.solver_id, solver.resolved_method
@@ -262,9 +390,15 @@ def _solver_provenance(solver: Any, /) -> tuple[str, str]:
     return f"solver:diffrax:{name}", name
 
 
-def _resolved_solver(problem: DifferentialProblem, solver: Any | None, /) -> Any:
+def _resolved_solver(
+    problem: DifferentialProblem | SplitDifferentialProblem,
+    solver: Any | None,
+    /,
+) -> Any:
     if solver is not None:
         return solver
+    if isinstance(problem, SplitDifferentialProblem):
+        return dfx.KenCarp4(root_finder=optx.Newton(rtol=1e-8, atol=1e-10))
     if problem.state_geometry is not None and not problem.state_geometry.trivial:
         if problem.stochastic:
             if problem.interpretation == "ito":
@@ -282,7 +416,7 @@ def _resolved_solver(problem: DifferentialProblem, solver: Any | None, /) -> Any
 
 
 def _resolved_controller(
-    problem: DifferentialProblem,
+    problem: DifferentialProblem | SplitDifferentialProblem,
     solver: Any,
     controller: Any | None,
     /,
@@ -290,21 +424,116 @@ def _resolved_controller(
     rtol: float,
     atol: float,
 ) -> Any:
+    if controller is not None and not isinstance(
+        controller, dfx.AbstractStepSizeController
+    ):
+        raise TypeError("stepsize_controller must be a Diffrax controller or None.")
     if (
         isinstance(solver, AbstractGeometricSolver)
         and controller is not None
         and not isinstance(controller, dfx.ConstantStepSize)
     ):
         raise ValueError("Geometric solvers require diffrax.ConstantStepSize.")
-    if controller is not None:
-        return controller
-    if problem.stochastic or isinstance(solver, AbstractGeometricSolver):
-        return dfx.ConstantStepSize()
-    return dfx.PIDController(rtol=float(rtol), atol=float(atol))
+    if controller is None:
+        if isinstance(solver, AbstractGeometricSolver) or not isinstance(
+            solver, dfx.AbstractAdaptiveSolver
+        ):
+            resolved = dfx.ConstantStepSize()
+        else:
+            resolved = dfx.PIDController(rtol=float(rtol), atol=float(atol))
+    else:
+        resolved = controller
+    if isinstance(resolved, dfx.AbstractAdaptiveStepSizeController) and not isinstance(
+        solver, dfx.AbstractAdaptiveSolver
+    ):
+        raise ValueError(
+            f"{type(solver).__name__} does not provide an error estimate required "
+            "by an adaptive step-size controller."
+        )
+    return resolved
+
+
+def _validate_step_configuration(
+    controller: Any,
+    dt0: ArrayLike | None,
+    /,
+    *,
+    rtol: float,
+    atol: float,
+) -> None:
+    relative = float(rtol)
+    absolute = float(atol)
+    if (
+        not isfinite(relative)
+        or not isfinite(absolute)
+        or relative <= 0.0
+        or absolute <= 0.0
+    ):
+        raise ValueError("rtol and atol must be finite and positive.")
+    if (
+        not isinstance(controller, dfx.AbstractAdaptiveStepSizeController)
+        and not isinstance(controller, dfx.StepTo)
+        and dt0 is None
+    ):
+        raise ValueError("Fixed-step Diffrax controllers require an explicit dt0.")
+
+
+def _solve_evidence(
+    problem: DifferentialProblem | SplitDifferentialProblem,
+    solver: Any,
+    controller: Any,
+    adjoint: Any,
+    event: Any | None,
+    /,
+    *,
+    rtol: float,
+    atol: float,
+    dt0: ArrayLike | None,
+    dense: bool,
+    max_steps: int | None,
+    explicit_configuration_id: str | None,
+) -> TemporalSolveEvidence:
+    if explicit_configuration_id is not None and (
+        not isinstance(explicit_configuration_id, str) or not explicit_configuration_id
+    ):
+        raise ValueError("solver_configuration_id must be non-empty or None.")
+    controller_id = configuration_id(controller, prefix="controller")
+    adjoint_id = configuration_id(adjoint, prefix="adjoint")
+    event_id = None if event is None else configuration_id(event, prefix="event")
+    resolved_configuration_id = (
+        explicit_configuration_id
+        if explicit_configuration_id is not None
+        else configuration_id(
+            (
+                solver,
+                controller,
+                adjoint,
+                event,
+                float(rtol),
+                float(atol),
+                None if dt0 is None else repr(dt0),
+                bool(dense),
+                max_steps,
+            ),
+            prefix="temporal-configuration",
+        )
+    )
+    return TemporalSolveEvidence(
+        _method_capabilities(solver),
+        equation_form=_equation_form(problem),
+        backend_id="backend:diffrax",
+        configuration_id=resolved_configuration_id,
+        controller_id=controller_id,
+        adjoint_id=adjoint_id,
+        event_id=event_id,
+        adaptive=isinstance(controller, dfx.AbstractAdaptiveStepSizeController),
+        dense=dense,
+        maximum_steps=max_steps,
+    )
 
 
 def _native_solution(
-    problem: DifferentialProblem,
+    problem: DifferentialProblem | SplitDifferentialProblem,
     save_times: Array,
     *,
     realization: WienerRealization | None,
@@ -319,8 +548,19 @@ def _native_solution(
     max_steps: int | None,
     throw: bool,
 ):
-    drift_term = dfx.ODETerm(_vector_field(problem.drift))
-    if problem.stochastic:
+    if isinstance(problem, SplitDifferentialProblem):
+        if realization is not None or path_key is not None or path_sign is not None:
+            raise ValueError("Split differential problems do not accept Wiener paths.")
+        lowered = lower_deterministic_problem(problem)
+        assert lowered.implicit_rhs is not None
+        terms = dfx.MultiTerm(
+            dfx.ODETerm(_vector_field(lowered.explicit_rhs)),
+            dfx.ODETerm(_vector_field(lowered.implicit_rhs)),
+        )
+        start = problem.t0
+        end = problem.t1
+        resolved_dt0 = dt0
+    elif problem.stochastic:
         if realization is None or path_key is None or path_sign is None:
             raise ValueError("Stochastic problems require a WienerRealization.")
         start, end = _validated_realization_interval(problem, realization)
@@ -346,7 +586,7 @@ def _native_solution(
             real_dtype,
         )
         terms = dfx.MultiTerm(
-            drift_term,
+            dfx.ODETerm(_vector_field(problem.drift)),
             dfx.ControlTerm(
                 _combined_diffusion(problem, signed_path),
                 brownian,
@@ -358,7 +598,8 @@ def _native_solution(
         start = problem.t0
         end = problem.t1
         resolved_dt0 = dt0
-        terms = drift_term
+        lowered = lower_deterministic_problem(problem)
+        terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs))
     return dfx.diffeqsolve(
         terms,
         solver,
@@ -408,7 +649,7 @@ def _reshape_native_sample_shape(native: Any, sample_shape: tuple[int, ...], /) 
 
 
 def solve_diffrax(
-    problem: DifferentialProblem,
+    problem: DifferentialProblem | SplitDifferentialProblem,
     /,
     *,
     save_times: ArrayLike,
@@ -423,10 +664,13 @@ def solve_diffrax(
     dense: bool = False,
     max_steps: int | None = 4096,
     throw: bool = False,
+    solver_configuration_id: str | None = None,
 ) -> DifferentialSolution:
-    """Solve one finite-dimensional ODE or globally defined SDE realization."""
-    if not isinstance(problem, DifferentialProblem):
-        raise TypeError("solve_diffrax requires a DifferentialProblem.")
+    """Solve one explicit, additive-split, or stochastic differential problem."""
+    if not isinstance(problem, (DifferentialProblem, SplitDifferentialProblem)):
+        raise TypeError(
+            "solve_diffrax requires DifferentialProblem or SplitDifferentialProblem."
+        )
     if realization is not None and not isinstance(realization, WienerRealization):
         raise TypeError("realization must be a WienerRealization or None.")
     if not isinstance(dense, bool):
@@ -449,6 +693,7 @@ def solve_diffrax(
         raise ValueError("Geometric solvers require an explicit fixed dt0.")
     if realization is not None:
         _validated_stochastic_solver(problem, selected_solver, realization)
+    _validated_method_form(problem, selected_solver)
     controller = _resolved_controller(
         problem,
         selected_solver,
@@ -456,7 +701,21 @@ def solve_diffrax(
         rtol=rtol,
         atol=atol,
     )
+    _validate_step_configuration(controller, dt0, rtol=rtol, atol=atol)
     selected_adjoint = dfx.RecursiveCheckpointAdjoint() if adjoint is None else adjoint
+    evidence = _solve_evidence(
+        problem,
+        selected_solver,
+        controller,
+        selected_adjoint,
+        event,
+        rtol=rtol,
+        atol=atol,
+        dt0=dt0,
+        dense=dense,
+        max_steps=max_steps,
+        explicit_configuration_id=solver_configuration_id,
+    )
     native = _native_solution(
         problem,
         times,
@@ -490,6 +749,11 @@ def solve_diffrax(
         state_geometry_id=problem.state_geometry_id,
         solver_id=solver_id,
         resolved_method=resolved_method,
+        discretization_bundle=problem.discretization_bundle,
+        backend_successful=dfx.is_okay(native.result),
+        event_terminated=dfx.is_event(native.result),
+        temporal_evidence=evidence,
+        problem_id=problem.problem_id,
     )
 
 
@@ -509,6 +773,7 @@ def solve_diffrax_ensemble(
     max_steps: int | None = 4096,
     dense: bool = False,
     throw: bool = False,
+    solver_configuration_id: str | None = None,
 ) -> DifferentialSolution:
     """Solve the coupled SDE batch encoded by one Wiener realization."""
     if not isinstance(problem, DifferentialProblem):
@@ -527,6 +792,7 @@ def solve_diffrax_ensemble(
     selected_solver = _resolved_solver(problem, solver)
     _validated_state_geometry_solver(problem, selected_solver)
     _validated_stochastic_solver(problem, selected_solver, realization)
+    _validated_method_form(problem, selected_solver)
     controller = _resolved_controller(
         problem,
         selected_solver,
@@ -534,7 +800,21 @@ def solve_diffrax_ensemble(
         rtol=rtol,
         atol=atol,
     )
+    _validate_step_configuration(controller, dt0, rtol=rtol, atol=atol)
     selected_adjoint = dfx.RecursiveCheckpointAdjoint() if adjoint is None else adjoint
+    evidence = _solve_evidence(
+        problem,
+        selected_solver,
+        controller,
+        selected_adjoint,
+        event,
+        rtol=rtol,
+        atol=atol,
+        dt0=dt0,
+        dense=dense,
+        max_steps=max_steps,
+        explicit_configuration_id=solver_configuration_id,
+    )
     count = realization.num_paths
     key_shape = tuple(realization.root_key.shape)
     keys = realization.path_keys.reshape((count,) + key_shape)
@@ -586,6 +866,11 @@ def solve_diffrax_ensemble(
         state_geometry_id=problem.state_geometry_id,
         solver_id=solver_id,
         resolved_method=resolved_method,
+        discretization_bundle=problem.discretization_bundle,
+        backend_successful=dfx.is_okay(native.result),
+        event_terminated=dfx.is_event(native.result),
+        temporal_evidence=evidence,
+        problem_id=problem.problem_id,
     )
 
 

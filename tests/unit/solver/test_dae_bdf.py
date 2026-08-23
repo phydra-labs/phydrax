@@ -37,7 +37,7 @@ def test_bdf1_and_bdf2_follow_their_fixed_grid_discrete_maps():
         problem,
         grid,
         policy=phx.solver.DAESolvePolicy(
-            integration_method="bdf1",
+            method=phx.solver.BDFMethod(1),
             nonlinear_termination=_strict_termination(),
         ),
     )
@@ -45,7 +45,7 @@ def test_bdf1_and_bdf2_follow_their_fixed_grid_discrete_maps():
         problem,
         grid,
         policy=phx.solver.DAESolvePolicy(
-            integration_method="bdf2",
+            method=phx.solver.BDFMethod(2),
             nonlinear_termination=_strict_termination(),
         ),
     )
@@ -80,7 +80,7 @@ def test_prepared_bdf_is_jittable_vmappable_and_implicitly_differentiable():
     problem = _decay_problem()
     grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 0.4, 5), time_id="bdf-gradient")
     policy = phx.solver.DAESolvePolicy(
-        integration_method="bdf1",
+        method=phx.solver.BDFMethod(1),
         nonlinear_termination=_strict_termination(),
     )
     prepared = phx.solver.prepare_dae(problem, grid, policy=policy)
@@ -128,7 +128,7 @@ def test_prepared_solve_reports_native_nonlinear_lifecycle_and_provenance():
         problem,
         grid,
         policy=phx.solver.DAESolvePolicy(
-            integration_method="bdf2",
+            method=phx.solver.BDFMethod(2),
             nonlinear_termination=_strict_termination(),
         ),
     )
@@ -175,7 +175,7 @@ def test_failed_bdf_stage_is_reported_once_and_later_nodes_are_not_run():
         problem,
         grid,
         policy=phx.solver.DAESolvePolicy(
-            integration_method="bdf1",
+            method=phx.solver.BDFMethod(1),
             nonlinear_termination=_strict_termination(maximum_steps=1),
         ),
     )
@@ -211,7 +211,7 @@ def test_bdf2_rejects_grid_ratios_outside_declared_stability_contract():
             problem,
             grid,
             policy=phx.solver.DAESolvePolicy(
-                integration_method="bdf2",
+                method=phx.solver.BDFMethod(2),
                 max_step_ratio=2.0,
             ),
         )

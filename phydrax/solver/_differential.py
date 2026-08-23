@@ -14,6 +14,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
@@ -21,6 +22,7 @@ from ..discretization import DiscretizationBundle
 from ..metrix import AbstractStateGeometry
 from ..stochastic import WienerRealization
 from ._solution_validation import validate_solution_arrays
+from ._temporal_method import TemporalSolveEvidence
 
 
 DifferentialInterpretation: TypeAlias = Literal["ito", "stratonovich"]
@@ -109,6 +111,40 @@ def _noise_identity(terms: tuple[WienerTerm, ...], /) -> str | None:
     return digest.hexdigest()
 
 
+def _problem_identifier(
+    value: str | None,
+    drift: DifferentialVectorField,
+    state: Array,
+    terms: tuple[WienerTerm, ...],
+    geometry_id: str | None,
+    bundle_id: str | None,
+    /,
+) -> str:
+    if value is not None:
+        if not isinstance(value, str) or not value:
+            raise ValueError("DifferentialProblem problem_id must be non-empty or None.")
+        return value
+    drift_type = type(drift)
+    payload = {
+        "kind": "differential-problem",
+        "drift": f"{drift_type.__module__}.{drift_type.__qualname__}",
+        "state_shape": list(state.shape),
+        "state_dtype": str(state.dtype),
+        "wiener_terms": [
+            {
+                "name": term.name,
+                "noise_shape": list(term.noise_shape),
+                "structure": term.structure,
+                "basis_id": term.basis_id,
+            }
+            for term in terms
+        ],
+        "geometry_id": geometry_id,
+        "discretization_bundle_id": bundle_id,
+    }
+    return f"differential-problem:{canonical_fingerprint(payload)}"
+
+
 class DifferentialProblem(StrictModule):
     """Finite-dimensional initial-value problem with named stochastic forcing."""
 
@@ -124,6 +160,9 @@ class DifferentialProblem(StrictModule):
     interpretation: DifferentialInterpretation = eqx.field(static=True)
     state_geometry_id: str | None = eqx.field(static=True)
     state_geometry: AbstractStateGeometry | None
+    problem_id: str = eqx.field(static=True)
+    discretization_bundle: DiscretizationBundle | None
+    discretization_bundle_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -137,6 +176,8 @@ class DifferentialProblem(StrictModule):
         wiener_terms: Sequence[WienerTerm] = (),
         interpretation: DifferentialInterpretation = "ito",
         state_geometry: AbstractStateGeometry | None = None,
+        discretization_bundle: DiscretizationBundle | None = None,
+        problem_id: str | None = None,
     ):
         if not callable(drift):
             raise TypeError("DifferentialProblem drift must be callable.")
@@ -187,6 +228,16 @@ class DifferentialProblem(StrictModule):
             slices[term.name] = (offset, offset + term.noise_size)
             offset += term.noise_size
 
+        if discretization_bundle is not None and not isinstance(
+            discretization_bundle, DiscretizationBundle
+        ):
+            raise TypeError(
+                "discretization_bundle must be a DiscretizationBundle or None."
+            )
+        geometry_id = None if state_geometry is None else state_geometry.geometry_id
+        bundle_id = (
+            None if discretization_bundle is None else discretization_bundle.bundle_id
+        )
         self.drift = drift
         self.initial_state = state
         self.t0 = start
@@ -197,10 +248,18 @@ class DifferentialProblem(StrictModule):
         self.noise_shape = (offset,) if terms else ()
         self.noise_id = _noise_identity(terms)
         self.interpretation = interpretation
-        self.state_geometry_id = (
-            None if state_geometry is None else state_geometry.geometry_id
-        )
+        self.state_geometry_id = geometry_id
         self.state_geometry = state_geometry
+        self.discretization_bundle = discretization_bundle
+        self.discretization_bundle_id = bundle_id
+        self.problem_id = _problem_identifier(
+            problem_id,
+            drift,
+            state,
+            terms,
+            geometry_id,
+            bundle_id,
+        )
 
     @property
     def stochastic(self) -> bool:
@@ -227,12 +286,17 @@ class DifferentialSolution(StrictModule):
     event_mask: Any
     realization: WienerRealization | None
     discretization_bundle: DiscretizationBundle | None
+    backend_successful: Array
+    event_terminated: Array
+    temporal_evidence: TemporalSolveEvidence | None
     wiener_term_slices: frozendict[str, tuple[int, int]] = eqx.field(static=True)
     solver_name: str = eqx.field(static=True)
     interpretation: DifferentialInterpretation = eqx.field(static=True)
     state_geometry_id: str | None = eqx.field(static=True)
     solver_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
+    problem_id: str | None = eqx.field(static=True)
+    discretization_bundle_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -255,6 +319,10 @@ class DifferentialSolution(StrictModule):
         solver_id: str | None = None,
         resolved_method: str | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
+        backend_successful: ArrayLike = True,
+        event_terminated: ArrayLike = False,
+        temporal_evidence: TemporalSolveEvidence | None = None,
+        problem_id: str | None = None,
     ):
         arrays = validate_solution_arrays(
             times,
@@ -304,6 +372,21 @@ class DifferentialSolution(StrictModule):
             raise TypeError(
                 "discretization_bundle must be a DiscretizationBundle or None."
             )
+        backend_ok = jnp.asarray(backend_successful, dtype=bool)
+        event_stop = jnp.asarray(event_terminated, dtype=bool)
+        if backend_ok.shape not in ((), samples) or event_stop.shape not in ((), samples):
+            raise ValueError(
+                "backend_successful and event_terminated must be scalar or have "
+                f"sample shape {samples}."
+            )
+        backend_ok = jnp.broadcast_to(backend_ok, samples)
+        event_stop = jnp.broadcast_to(event_stop, samples)
+        if temporal_evidence is not None and not isinstance(
+            temporal_evidence, TemporalSolveEvidence
+        ):
+            raise TypeError("temporal_evidence must be TemporalSolveEvidence or None.")
+        if problem_id is not None and (not isinstance(problem_id, str) or not problem_id):
+            raise ValueError("problem_id must be non-empty or None.")
         self.times = times_array
         self.states = states_array
         self.valid = valid_array
@@ -322,6 +405,13 @@ class DifferentialSolution(StrictModule):
         self.solver_id = resolved_solver_id
         self.resolved_method = resolved_solver_method
         self.discretization_bundle = discretization_bundle
+        self.backend_successful = backend_ok
+        self.event_terminated = event_stop
+        self.temporal_evidence = temporal_evidence
+        self.problem_id = problem_id
+        self.discretization_bundle_id = (
+            None if discretization_bundle is None else discretization_bundle.bundle_id
+        )
 
     @property
     def num_times(self) -> int:
@@ -329,8 +419,13 @@ class DifferentialSolution(StrictModule):
 
     @property
     def successful(self) -> Array:
-        """Whether every requested saved value is finite for each realization."""
-        return jnp.all(self.valid, axis=-1)
+        """Whether the backend succeeded and every requested value is finite."""
+        return self.backend_successful & jnp.all(self.valid, axis=-1)
+
+    @property
+    def completed(self) -> Array:
+        """Whether the solve succeeded without an intentional event termination."""
+        return self.successful & ~self.event_terminated
 
     @property
     def has_dense_interpolation(self) -> bool:

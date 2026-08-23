@@ -202,7 +202,7 @@ def test_differential_rollout_is_differentiable_and_propagates_backend_failure()
     assert np.allclose(np.asarray(trajectory.states[:, 0]), [0.0, 0.5, 1.0])
     assert int(trajectory.status) == CONTROL_SUCCESS
     assert trajectory.backend_id == "backend:diffrax"
-    assert trajectory.method_id == "solver:diffrax:Tsit5"
+    assert trajectory.method_id.startswith("temporal-configuration:")
 
     batched_problem = ControlProblem(
         dynamics,

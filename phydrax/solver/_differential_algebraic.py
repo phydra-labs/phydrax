@@ -37,6 +37,12 @@ from ..nonlinear import (
     PreparedNonlinearSolve,
     refresh_nonlinear,
 )
+from ._bdf_method import (
+    bdf_predict as _general_bdf_predict,
+    bdf_rate as _general_bdf_rate,
+    bdf_shift_offset as _general_bdf_shift_offset,
+    BDFMethod,
+)
 from ._dae_initialization import (
     _DAEInitializationArguments,
     _initialize_dae,
@@ -48,10 +54,15 @@ from ._dae_initialization import (
     DAEInitializationResult,
     DAEInitializationSpec,
 )
+from ._implicit_stage import ImplicitStageArguments, ImplicitStageResidual
 from ._solution_validation import validate_solution_arrays
+from ._theta import (
+    endpoint_theta_rate,
+    endpoint_theta_stage_arguments,
+    ThetaMethod,
+)
 
 
-DAEIntegrationMethod: TypeAlias = Literal["bdf1", "bdf2"]
 DAEFailureMode: TypeAlias = Literal["status", "error"]
 DAEReplayMode: TypeAlias = Literal["full", "chunked"]
 DAERegularityMode: TypeAlias = Literal["solver-evidence", "periodic"]
@@ -378,7 +389,7 @@ class DAERegularityPolicy(StrictModule):
 
 
 class DAESolvePolicy(StrictModule):
-    """Fixed or adaptive BDF integration with explicit numerical policies."""
+    """Fixed or adaptive implicit integration with explicit numerical policies."""
 
     nonlinear_method: NewtonKrylov | NewtonTrustRegion
     nonlinear_termination: NonlinearTermination
@@ -388,14 +399,14 @@ class DAESolvePolicy(StrictModule):
     temporal_reuse: DAETemporalReusePolicy
     replay: DAEReplayPolicy
     regularity: DAERegularityPolicy
-    integration_method: DAEIntegrationMethod = eqx.field(static=True)
+    method: BDFMethod | ThetaMethod
     max_step_ratio: float = eqx.field(static=True)
     failure: DAEFailureMode = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        integration_method: DAEIntegrationMethod = "bdf2",
+        method: BDFMethod | ThetaMethod | None = None,
         nonlinear_method: AbstractNonlinearMethod | None = None,
         nonlinear_termination: NonlinearTermination | None = None,
         initialization_method: AbstractNonlinearMethod | None = None,
@@ -407,8 +418,9 @@ class DAESolvePolicy(StrictModule):
         max_step_ratio: float = 2.0,
         failure: DAEFailureMode = "status",
     ):
-        if integration_method not in ("bdf1", "bdf2"):
-            raise ValueError("integration_method must be 'bdf1' or 'bdf2'.")
+        temporal_method = BDFMethod() if method is None else method
+        if not isinstance(temporal_method, (BDFMethod, ThetaMethod)):
+            raise TypeError("method must be BDFMethod, ThetaMethod, or None.")
         stage_method = NewtonKrylov() if nonlinear_method is None else nonlinear_method
         initial_method = (
             NewtonKrylov() if initialization_method is None else initialization_method
@@ -473,7 +485,7 @@ class DAESolvePolicy(StrictModule):
         self.temporal_reuse = reuse_policy
         self.replay = replay_policy
         self.regularity = regularity_policy
-        self.integration_method = integration_method
+        self.method = temporal_method
         self.max_step_ratio = ratio
         self.failure = failure
 
@@ -619,10 +631,20 @@ class DAESolvePlan(StrictModule):
             raise TypeError("time_grid must be a TimeGrid.")
         if not isinstance(policy, DAESolvePolicy):
             raise TypeError("policy must be a DAESolvePolicy.")
+        if isinstance(policy.method, ThetaMethod):
+            if policy.adaptive is not None:
+                raise ValueError("ThetaMethod currently requires a fixed TimeGrid.")
+            if not policy.method.endpoint:
+                raise ValueError(
+                    "Native residual integration requires the stiffly accurate "
+                    "endpoint theta form; implicit midpoint is provided by "
+                    "GaussLegendreIRK."
+                )
         durations = np.asarray(time_grid.durations, dtype=float)
         if (
-            policy.adaptive is None
-            and policy.integration_method == "bdf2"
+            isinstance(policy.method, BDFMethod)
+            and policy.adaptive is None
+            and policy.method.maximum_order >= 2
             and durations.size > 1
         ):
             ratios = durations[1:] / durations[:-1]
@@ -725,7 +747,7 @@ class DAESolvePlan(StrictModule):
                 self.discretization_bundle_id,
                 self.state_shape,
                 self.state_dtype,
-                policy.integration_method,
+                policy.method.method_id,
                 policy.max_step_ratio,
                 _method_identity(policy.nonlinear_method),
                 _termination_identity(policy.nonlinear_termination),
@@ -741,6 +763,30 @@ class DAESolvePlan(StrictModule):
         )
 
 
+def _bdf_affine_rate(
+    previous: Array,
+    previous_previous: Array,
+    step_size: Array,
+    previous_step_size: Array,
+    order: Array,
+    /,
+) -> tuple[Array, Array]:
+    def first_order(_):
+        shift = 1.0 / step_size
+        return shift, -shift * previous
+
+    def second_order(_):
+        ratio = step_size / previous_step_size
+        shift = ((1.0 + 2.0 * ratio) / (1.0 + ratio)) / step_size
+        offset = (
+            -(1.0 + ratio) * previous
+            + (ratio * ratio / (1.0 + ratio)) * previous_previous
+        ) / step_size
+        return shift, offset
+
+    return lax.cond(order == 1, first_order, second_order, operand=None)
+
+
 def _bdf_rate(
     state: Array,
     previous: Array,
@@ -750,18 +796,14 @@ def _bdf_rate(
     order: Array,
     /,
 ) -> Array:
-    def first_order(_):
-        return (state - previous) / step_size
-
-    def second_order(_):
-        ratio = step_size / previous_step_size
-        return (
-            ((1.0 + 2.0 * ratio) / (1.0 + ratio)) * state
-            - (1.0 + ratio) * previous
-            + (ratio * ratio / (1.0 + ratio)) * previous_previous
-        ) / step_size
-
-    return lax.cond(order == 1, first_order, second_order, operand=None)
+    shift, offset = _bdf_affine_rate(
+        previous,
+        previous_previous,
+        step_size,
+        previous_step_size,
+        order,
+    )
+    return shift * state + offset
 
 
 def _predict(
@@ -783,42 +825,6 @@ def _predict(
     )
 
 
-class _DAEStageArguments(StrictModule):
-    time: Array
-    previous: Array
-    previous_previous: Array
-    step_size: Array
-    previous_step_size: Array
-    order: Array
-    active: Array
-    model_args: Any
-
-
-class _DAEStageResidual(StrictModule):
-    system: DifferentialAlgebraicSystem
-
-    def __call__(self, state: Array, arguments: _DAEStageArguments, /) -> Array:
-        state_rate = _bdf_rate(
-            state,
-            arguments.previous,
-            arguments.previous_previous,
-            arguments.step_size,
-            arguments.previous_step_size,
-            arguments.order,
-        )
-        physical_residual = self.system.scaled_residual(
-            arguments.time,
-            state,
-            state_rate,
-            arguments.model_args,
-        )
-        return jnp.where(
-            arguments.active,
-            physical_residual,
-            state - arguments.previous,
-        )
-
-
 def _stage_arguments(
     *,
     time: Array,
@@ -829,21 +835,53 @@ def _stage_arguments(
     order: Array,
     model_args: Any,
     active: ArrayLike = True,
-) -> _DAEStageArguments:
-    return _DAEStageArguments(
-        time,
+) -> ImplicitStageArguments:
+    shift, offset = _bdf_affine_rate(
         previous,
         previous_previous,
         step_size,
         previous_step_size,
         order,
-        jnp.asarray(active, dtype=bool),
-        model_args,
+    )
+    return ImplicitStageArguments(
+        time=time,
+        shift=shift,
+        rate_offset=offset,
+        explicit_value=jnp.zeros_like(previous),
+        fallback_state=previous,
+        active=active,
+        model_args=model_args,
+    )
+
+
+def _history_stage_arguments(
+    *,
+    target_time: Array,
+    state_history: Array,
+    history_times: Array,
+    order: Array,
+    model_args: Any,
+    active: ArrayLike = True,
+) -> ImplicitStageArguments:
+    shift, offset = _general_bdf_shift_offset(
+        state_history,
+        history_times,
+        target_time,
+        order,
+    )
+    return ImplicitStageArguments(
+        time=target_time,
+        shift=shift,
+        rate_offset=offset,
+        explicit_value=jnp.zeros_like(state_history[0]),
+        fallback_state=state_history[0],
+        active=active,
+        model_args=model_args,
     )
 
 
 class PreparedDAESolve(StrictModule):
-    """DAE problem, grid, consistency root, and reusable BDF-stage root."""
+    """DAE problem, grid, consistency root, and reusable implicit-stage root."""
 
     problem: DifferentialAlgebraicProblem
     time_grid: TimeGrid
@@ -1121,7 +1159,7 @@ class DAEContinuation(StrictModule):
     system_id: str = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     state_dtype: str = eqx.field(static=True)
-    integration_method: DAEIntegrationMethod = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
     initialization_id: str = eqx.field(static=True)
     nonlinear_method_id: str = eqx.field(static=True)
     stage_linear_plan_id: str = eqx.field(static=True)
@@ -1143,16 +1181,16 @@ class DAEContinuation(StrictModule):
         nonlinear_solve: PreparedNonlinearSolve | None,
         problem_id: str,
         system_id: str,
-        integration_method: DAEIntegrationMethod,
+        method_id: str,
         initialization_id: str,
         nonlinear_method_id: str,
         stage_linear_plan_id: str,
     ):
         states_ = jnp.asarray(states)
         rates_ = jnp.asarray(state_rates)
-        if states_.shape != rates_.shape or states_.shape[0] != 3:
-            raise ValueError("DAE continuation must retain three state/rate slots.")
-        if jnp.asarray(times).shape != (3,) or jnp.asarray(step_sizes).shape != (2,):
+        if states_.shape != rates_.shape or states_.shape[0] != 6:
+            raise ValueError("DAE continuation must retain six state/rate slots.")
+        if jnp.asarray(times).shape != (6,) or jnp.asarray(step_sizes).shape != (5,):
             raise ValueError("DAE continuation time history has invalid shape.")
         if nonlinear_solve is not None and not isinstance(
             nonlinear_solve, PreparedNonlinearSolve
@@ -1174,7 +1212,7 @@ class DAEContinuation(StrictModule):
         self.system_id = str(system_id)
         self.state_shape = tuple(states_.shape[1:])
         self.state_dtype = np.dtype(states_.dtype).str
-        self.integration_method = integration_method
+        self.method_id = str(method_id)
         self.initialization_id = str(initialization_id)
         self.nonlinear_method_id = str(nonlinear_method_id)
         self.stage_linear_plan_id = str(stage_linear_plan_id)
@@ -1222,7 +1260,7 @@ class DifferentialAlgebraicSolution(StrictModule):
     nonlinear_method_id: str = eqx.field(static=True)
     stage_linear_plan_id: str = eqx.field(static=True)
     initialization_linear_plan_id: str = eqx.field(static=True)
-    integration_method: DAEIntegrationMethod = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
     differentiation_mode: str = eqx.field(static=True)
     grid_origin: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
@@ -1256,7 +1294,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         nonlinear_method_id: str,
         stage_linear_plan_id: str,
         initialization_linear_plan_id: str,
-        integration_method: DAEIntegrationMethod,
+        method_id: str,
         adaptive: bool,
     ):
         validated = validate_solution_arrays(
@@ -1374,18 +1412,15 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.nonlinear_method_id = str(nonlinear_method_id)
         self.stage_linear_plan_id = str(stage_linear_plan_id)
         self.initialization_linear_plan_id = str(initialization_linear_plan_id)
-        self.integration_method = integration_method
+        self.method_id = str(method_id)
         self.differentiation_mode = (
             "frozen-accepted-grid-discrete-implicit"
             if adaptive
             else "fixed-grid-discrete-implicit"
         )
         self.grid_origin = "controller" if adaptive else "user"
-        self.approximation_id = (
-            f"frozen-accepted-grid-{integration_method}"
-            if adaptive
-            else f"fixed-grid-{integration_method}"
-        )
+        mesh_kind = "frozen-accepted-grid" if adaptive else "fixed-grid"
+        self.approximation_id = f"{mesh_kind}:{self.method_id}"
 
     @property
     def successful(self) -> Array:
@@ -1430,41 +1465,52 @@ def prepare_dae(
         termination=resolved_policy.initialization_termination,
     )
     step_size = time_grid.durations[0]
-    order = jnp.asarray(1, dtype=jnp.int32)
-    predictor = _predict(
-        problem.initial_state,
-        problem.initial_state,
-        problem.initial_state_rate,
-        step_size,
-        step_size,
-        order,
-    )
-    stage_arguments = _stage_arguments(
-        time=time_grid.times[1],
-        previous=problem.initial_state,
-        previous_previous=problem.initial_state,
-        step_size=step_size,
-        previous_step_size=step_size,
-        order=order,
-        model_args=problem.args,
-    )
+    if isinstance(resolved_policy.method, ThetaMethod):
+        predictor = problem.initial_state + step_size * problem.initial_state_rate
+        stage_arguments = endpoint_theta_stage_arguments(
+            resolved_policy.method,
+            target_time=time_grid.times[1],
+            previous=problem.initial_state,
+            previous_rate=problem.initial_state_rate,
+            step_size=step_size,
+            model_args=problem.args,
+        )
+    else:
+        order = jnp.asarray(1, dtype=jnp.int32)
+        predictor = _predict(
+            problem.initial_state,
+            problem.initial_state,
+            problem.initial_state_rate,
+            step_size,
+            step_size,
+            order,
+        )
+        stage_arguments = _stage_arguments(
+            time=time_grid.times[1],
+            previous=problem.initial_state,
+            previous_previous=problem.initial_state,
+            step_size=step_size,
+            previous_step_size=step_size,
+            order=order,
+            model_args=problem.args,
+        )
     state_space = _scaled_space(
         problem.system.state_shape,
         problem.initial_state.dtype,
         problem.system.state_scale,
-        space_id=f"{problem.system.system_id}:bdf-state",
+        space_id=f"{problem.system.system_id}:implicit-state",
     )
     residual_space = _scaled_space(
         problem.system.state_shape,
         problem.initial_state.dtype,
         jnp.ones_like(problem.system.residual_scale),
-        space_id=f"{problem.system.system_id}:bdf-residual",
+        space_id=f"{problem.system.system_id}:implicit-residual",
     )
     stage_problem = NonlinearSystemProblem(
-        _DAEStageResidual(problem.system),
+        ImplicitStageResidual(problem.system),
         state_space=state_space,
         residual_space=residual_space,
-        problem_id=f"{problem.system.system_id}:bdf-stage-root",
+        problem_id=f"{problem.system.system_id}:implicit-stage-root",
     )
     stage_solve = prepare_nonlinear(
         stage_problem,
@@ -1699,32 +1745,46 @@ def _solve_prepared(
             previous_rate,
             previous_step,
             prior_valid,
+            state_history,
+            rate_history,
+            history_times,
         ) = carry
         index, target_time, step_size = inputs
-        order = (
-            jnp.asarray(1, dtype=jnp.int32)
-            if policy.integration_method == "bdf1"
-            else jnp.where(index == 0, 1, 2).astype(jnp.int32)
-        )
-        predictor = _predict(
-            previous,
-            previous_previous,
-            previous_rate,
-            step_size,
-            previous_step,
-            order,
-        )
+        if isinstance(policy.method, ThetaMethod):
+            order = jnp.asarray(policy.method.capabilities.order, dtype=jnp.int32)
+            predictor = previous + step_size * previous_rate
+        else:
+            order = jnp.minimum(
+                jnp.asarray(policy.method.maximum_order, dtype=jnp.int32),
+                index + 1,
+            )
+            predictor = _general_bdf_predict(
+                state_history,
+                rate_history,
+                history_times,
+                target_time,
+                order,
+                index + 1,
+            )
 
         def solve_step(_):
-            arguments = _stage_arguments(
-                time=target_time,
-                previous=previous,
-                previous_previous=previous_previous,
-                step_size=step_size,
-                previous_step_size=previous_step,
-                order=order,
-                model_args=args,
-            )
+            if isinstance(policy.method, ThetaMethod):
+                arguments = endpoint_theta_stage_arguments(
+                    policy.method,
+                    target_time=target_time,
+                    previous=previous,
+                    previous_rate=previous_rate,
+                    step_size=step_size,
+                    model_args=args,
+                )
+            else:
+                arguments = _history_stage_arguments(
+                    target_time=target_time,
+                    state_history=state_history,
+                    history_times=history_times,
+                    order=order,
+                    model_args=args,
+                )
             refreshed = refresh_nonlinear(
                 prepared.stage_solve,
                 prepared.stage_problem,
@@ -1733,14 +1793,22 @@ def _solve_prepared(
             )
             nonlinear_result = implicit_root_result(refreshed)
             state = jnp.asarray(nonlinear_result.state)
-            state_rate = _bdf_rate(
-                state,
-                previous,
-                previous_previous,
-                step_size,
-                previous_step,
-                order,
-            )
+            if isinstance(policy.method, ThetaMethod):
+                state_rate = endpoint_theta_rate(
+                    policy.method,
+                    state,
+                    previous,
+                    previous_rate,
+                    step_size,
+                )
+            else:
+                state_rate = _general_bdf_rate(
+                    state,
+                    state_history,
+                    history_times,
+                    target_time,
+                    order,
+                )
             scaled = system.scaled_residual(
                 target_time,
                 state,
@@ -1841,22 +1909,46 @@ def _solve_prepared(
 
         output = lax.cond(prior_valid, solve_step, skip_step, operand=None)
         state, state_rate, valid, *_ = output
+        next_state_history = jnp.concatenate(
+            (state[None, ...], state_history[:-1]), axis=0
+        )
+        next_rate_history = jnp.concatenate(
+            (state_rate[None, ...], rate_history[:-1]), axis=0
+        )
+        next_history_times = jnp.concatenate(
+            (target_time[None], history_times[:-1]), axis=0
+        )
         next_carry = (
             state,
             previous,
             state_rate,
             step_size,
             valid,
+            next_state_history,
+            next_rate_history,
+            next_history_times,
         )
         return next_carry, output
 
     initial_step = step_sizes[0]
+    state_history = jnp.broadcast_to(
+        initialization.state,
+        (5,) + initialization.state.shape,
+    )
+    rate_history = jnp.broadcast_to(
+        initialization.state_rate,
+        (5,) + initialization.state_rate.shape,
+    )
+    history_times = jnp.full((5,), times[0], dtype=times.dtype)
     initial_carry = (
         initialization.state,
         initialization.state,
         initialization.state_rate,
         initial_step,
         initialization.valid,
+        state_history,
+        rate_history,
+        history_times,
     )
     _, outputs = lax.scan(
         scan_step,
@@ -1927,11 +2019,13 @@ def _solve_prepared(
         (initialization.rate_valid[None, ...], step_rate_valid),
         axis=0,
     )
-    orders = (
-        jnp.ones_like(indices)
-        if policy.integration_method == "bdf1"
-        else jnp.where(indices == 0, 1, 2).astype(jnp.int32)
-    )
+    if isinstance(policy.method, ThetaMethod):
+        orders = jnp.full_like(indices, policy.method.capabilities.order)
+    else:
+        orders = jnp.minimum(
+            jnp.asarray(policy.method.maximum_order, dtype=jnp.int32),
+            indices + 1,
+        )
     accepted_count = jnp.sum(step_valid, dtype=jnp.int32)
     save_step_indices = jnp.concatenate(
         (
@@ -2079,44 +2173,55 @@ def _solve_prepared(
         stage_condition_estimate=stage_regularity_condition,
         stage_valid=stage_regularity_valid,
         consistency_operator="configured-consistency-coordinate-jacobian",
-        stage_operator="bdf-stage:F_y+alpha*F_ydot",
+        stage_operator="implicit-stage:F_y+shift*F_ydot",
     )
     valid_count = jnp.sum(valid, dtype=jnp.int32)
     last_node = jnp.maximum(valid_count - 1, 0)
     history_indices = jnp.maximum(
-        last_node - jnp.arange(3, dtype=jnp.int32),
+        last_node - jnp.arange(6, dtype=jnp.int32),
         0,
     )
+    history_step_indices = jnp.maximum(
+        last_node - 1 - jnp.arange(5, dtype=jnp.int32),
+        0,
+    )
+    history_steps = step_sizes[history_step_indices]
+    history_steps = jnp.where(
+        jnp.arange(5, dtype=jnp.int32) < last_node,
+        history_steps,
+        initial_step,
+    )
     last_step_index = jnp.maximum(last_node - 1, 0)
-    previous_step_index = jnp.maximum(last_node - 2, 0)
     last_step = jnp.where(
         last_node > 0,
         step_sizes[last_step_index],
         initial_step,
-    )
-    previous_step = jnp.where(
-        last_node > 1,
-        step_sizes[previous_step_index],
-        last_step,
     )
     accepted_order = jnp.where(
         last_node > 0,
         orders[last_step_index],
         jnp.asarray(1, dtype=jnp.int32),
     )
-    ratio = last_step / previous_step
-    last_alpha = jnp.where(
-        accepted_order == 1,
-        1.0 / last_step,
-        ((1.0 + 2.0 * ratio) / (1.0 + ratio)) / last_step,
-    )
+    if isinstance(policy.method, ThetaMethod):
+        last_alpha = 1.0 / (policy.method.theta * last_step)
+    else:
+        prior_indices = jnp.maximum(
+            last_node - 1 - jnp.arange(5, dtype=jnp.int32),
+            0,
+        )
+        last_alpha, _ = _general_bdf_shift_offset(
+            states[prior_indices],
+            times[prior_indices],
+            times[last_node],
+            accepted_order,
+        )
     continuation = DAEContinuation(
         time=times[last_node],
         states=states[history_indices],
         state_rates=state_rates[history_indices],
         times=times[history_indices],
-        step_sizes=jnp.stack((last_step, previous_step)),
-        history_depth=jnp.minimum(valid_count, 3),
+        step_sizes=history_steps,
+        history_depth=jnp.minimum(valid_count, 6),
         accepted_order=accepted_order,
         previous_error_ratio=jnp.asarray(1.0, dtype=states.real.dtype),
         proposed_step_size=last_step,
@@ -2125,7 +2230,7 @@ def _solve_prepared(
         nonlinear_solve=None,
         problem_id=problem.problem_id,
         system_id=system.system_id,
-        integration_method=policy.integration_method,
+        method_id=policy.method.method_id,
         initialization_id=problem.initialization.initialization_id,
         nonlinear_method_id=policy.nonlinear_method.method_id,
         stage_linear_plan_id=prepared.stage_linear_plan_id,
@@ -2187,7 +2292,7 @@ def _solve_prepared(
         nonlinear_method_id=policy.nonlinear_method.method_id,
         stage_linear_plan_id=prepared.stage_linear_plan_id,
         initialization_linear_plan_id=prepared.initialization_linear_plan_id,
-        integration_method=policy.integration_method,
+        method_id=policy.method.method_id,
         adaptive=False,
     )
 
@@ -2247,7 +2352,6 @@ __all__ = [
     "DAEAttemptStatus",
     "DAEContinuation",
     "DAEFailureMode",
-    "DAEIntegrationMethod",
     "DAERegularityEvidence",
     "DAERegularityFailureMode",
     "DAERegularityMode",

@@ -21,6 +21,11 @@ from ..nonlinear._prepared import (
     _seed_nonlinear_continuation,
     _solve_prepared_nonlinear_stateful,
 )
+from ._bdf_method import (
+    bdf_predict as _general_bdf_predict,
+    bdf_rate as _general_bdf_rate,
+    bdf_shift_offset as _general_bdf_shift_offset,
+)
 from ._dae_initialization import (
     _initialize_dae,
     _masked_rms,
@@ -28,13 +33,12 @@ from ._dae_initialization import (
     DAEInitializationStatus,
 )
 from ._differential_algebraic import (
-    _bdf_rate,
     _dense_initial_regularity,
     _dense_stage_regularity,
+    _history_stage_arguments,
     _initial_regularity,
     _linear_failure,
     _regularity_status,
-    _stage_arguments,
     DAEAttemptHistory,
     DAEAttemptStatus,
     DAEContinuation,
@@ -128,59 +132,6 @@ class _AdaptiveCarry(StrictModule):
     regularity: _RegularityArchive
 
 
-def _adaptive_predict(
-    states: Array,
-    rates: Array,
-    step_sizes: Array,
-    step_size: Array,
-    order: Array,
-    /,
-) -> Array:
-    def first_order(_):
-        return states[0] + step_size * rates[0]
-
-    def second_order(_):
-        previous_step = step_sizes[0]
-        previous_previous_step = step_sizes[1]
-        total_previous = previous_step + previous_previous_step
-        coefficient_0 = (
-            (step_size + previous_step)
-            * (step_size + total_previous)
-            / (previous_step * total_previous)
-        )
-        coefficient_1 = -(
-            step_size
-            * (step_size + total_previous)
-            / (previous_step * previous_previous_step)
-        )
-        coefficient_2 = (
-            step_size
-            * (step_size + previous_step)
-            / (total_previous * previous_previous_step)
-        )
-        return (
-            coefficient_0 * states[0]
-            + coefficient_1 * states[1]
-            + coefficient_2 * states[2]
-        )
-
-    return jax.lax.cond(order == 1, first_order, second_order, operand=None)
-
-
-def _bdf_alpha(
-    step_size: Array,
-    previous_step_size: Array,
-    order: Array,
-    /,
-) -> Array:
-    ratio = step_size / previous_step_size
-    return jnp.where(
-        order == 1,
-        1.0 / step_size,
-        ((1.0 + 2.0 * ratio) / (1.0 + ratio)) / step_size,
-    )
-
-
 def _error_coefficient(
     step_size: Array,
     previous_step_size: Array,
@@ -191,7 +142,8 @@ def _error_coefficient(
     alpha_1 = step_size / (step_size + previous_step_size)
     alpha_2 = step_size / (step_size + previous_step_size + previous_previous_step_size)
     second = jnp.maximum(jnp.abs(alpha_1 + alpha_2 - 0.5), alpha_2)
-    return jnp.where(order == 1, alpha_1, second)
+    higher = jnp.reciprocal(order.astype(step_size.dtype) + 1.0)
+    return jnp.where(order == 1, alpha_1, jnp.where(order == 2, second, higher))
 
 
 def _initial_step_size(
@@ -397,8 +349,8 @@ def _validate_continuation(
         observed = str(jnp.dtype(continuation.state.dtype))
         if observed != expected:
             raise ValueError("DAE continuation state dtype does not match.")
-    if continuation.integration_method != policy.integration_method:
-        raise ValueError("DAE continuation integration method does not match.")
+    if continuation.method_id != policy.method.method_id:
+        raise ValueError("DAE continuation temporal method does not match.")
     if continuation.initialization_id != problem.initialization.initialization_id:
         raise ValueError("DAE continuation initialization contract does not match.")
     if continuation.nonlinear_method_id != policy.nonlinear_method.method_id:
@@ -601,14 +553,14 @@ def _adaptive_primal(
         )
         history_states = jnp.broadcast_to(
             initialization.state,
-            (3,) + system.state_shape,
+            (6,) + system.state_shape,
         )
         history_rates = jnp.broadcast_to(
             initialization.state_rate,
-            (3,) + system.state_shape,
+            (6,) + system.state_shape,
         )
-        history_times = jnp.full((3,), save_times[0], dtype=save_times.dtype)
-        history_steps = jnp.full((2,), initial_step, dtype=save_times.dtype)
+        history_times = jnp.full((6,), save_times[0], dtype=save_times.dtype)
+        history_steps = jnp.full((5,), initial_step, dtype=save_times.dtype)
         history_depth = jnp.asarray(1, dtype=jnp.int32)
         accepted_order = jnp.asarray(1, dtype=jnp.int32)
         previous_error = jnp.asarray(1.0, dtype=save_times.dtype)
@@ -742,22 +694,31 @@ def _adaptive_primal(
             candidate_step,
         )
         ratio = step_size / current.step_sizes[0]
-        second_order = (
-            (policy.integration_method == "bdf2")
-            & (current.history_depth >= 3)
-            & (ratio >= 1.0 / policy.max_step_ratio)
+        ratio_valid = (
+            (ratio >= 1.0 / policy.max_step_ratio)
             & (ratio <= policy.max_step_ratio)
             & (current.consecutive_rejections == 0)
         )
-        order = jnp.where(second_order, 2, 1).astype(jnp.int32)
-        predictor = _adaptive_predict(
-            current.states,
-            current.rates,
-            current.step_sizes,
-            step_size,
+        available_order = jnp.minimum(
+            jnp.asarray(policy.method.maximum_order, dtype=jnp.int32),
+            jnp.maximum(current.history_depth - 1, 1),
+        )
+        order = jnp.where(ratio_valid, available_order, 1).astype(jnp.int32)
+        stage_time = current.time + step_size
+        predictor = _general_bdf_predict(
+            current.states[:5],
+            current.rates[:5],
+            current.times[:5],
+            stage_time,
+            order,
+            current.history_depth,
+        )
+        alpha, _ = _general_bdf_shift_offset(
+            current.states[:5],
+            current.times[:5],
+            stage_time,
             order,
         )
-        alpha = _bdf_alpha(step_size, current.step_sizes[0], order)
         alpha_ratio = jnp.maximum(
             alpha / current.last_alpha,
             current.last_alpha / alpha,
@@ -778,12 +739,10 @@ def _adaptive_primal(
             & (alpha_ratio <= policy.temporal_reuse.maximum_alpha_ratio)
             & ~iteration_refresh
         )
-        arguments = _stage_arguments(
-            time=current.time + step_size,
-            previous=current.states[0],
-            previous_previous=current.states[1],
-            step_size=step_size,
-            previous_step_size=current.step_sizes[0],
+        arguments = _history_stage_arguments(
+            target_time=stage_time,
+            state_history=current.states[:5],
+            history_times=current.times[:5],
             order=order,
             model_args=args,
         )
@@ -814,12 +773,11 @@ def _adaptive_primal(
         nonlinear_result, retained = _solve_prepared_nonlinear_stateful(seeded)
         retained_dynamic_, _ = eqx.partition(retained, eqx.is_array)
         state = jnp.asarray(nonlinear_result.state)
-        state_rate = _bdf_rate(
+        state_rate = _general_bdf_rate(
             state,
-            current.states[0],
-            current.states[1],
-            step_size,
-            current.step_sizes[0],
+            current.states[:5],
+            current.times[:5],
+            stage_time,
             order,
         )
         scaled = system.scaled_residual(
@@ -1012,11 +970,15 @@ def _adaptive_primal(
                 next_step = jnp.minimum(next_step, adaptive.maximum_step)
             return _AdaptiveCarry(
                 time=accepted_time,
-                states=jnp.stack((state, current.states[0], current.states[1])),
-                rates=jnp.stack((state_rate, current.rates[0], current.rates[1])),
-                times=jnp.stack((accepted_time, current.times[0], current.times[1])),
-                step_sizes=jnp.stack((step_size, current.step_sizes[0])),
-                history_depth=jnp.minimum(current.history_depth + 1, 3),
+                states=jnp.concatenate((state[None, ...], current.states[:-1]), axis=0),
+                rates=jnp.concatenate(
+                    (state_rate[None, ...], current.rates[:-1]), axis=0
+                ),
+                times=jnp.concatenate((accepted_time[None], current.times[:-1]), axis=0),
+                step_sizes=jnp.concatenate(
+                    (step_size[None], current.step_sizes[:-1]), axis=0
+                ),
+                history_depth=jnp.minimum(current.history_depth + 1, 6),
                 accepted_order=order,
                 previous_error_ratio=jnp.maximum(error_ratio, 1e-12),
                 proposed_step_size=next_step,
@@ -1127,7 +1089,7 @@ def _adaptive_primal(
         nonlinear_solve=carry.retained_nonlinear,
         problem_id=problem.problem_id,
         system_id=system.system_id,
-        integration_method=policy.integration_method,
+        method_id=policy.method.method_id,
         initialization_id=problem.initialization.initialization_id,
         nonlinear_method_id=policy.nonlinear_method.method_id,
         stage_linear_plan_id=prepared.stage_linear_plan_id,
@@ -1141,7 +1103,7 @@ def _adaptive_primal(
         stage_condition_estimate=carry.regularity.condition,
         stage_valid=carry.regularity.valid,
         consistency_operator="configured-consistency-coordinate-jacobian",
-        stage_operator="bdf-stage:F_y+alpha*F_ydot",
+        stage_operator="implicit-stage:F_y+shift*F_ydot",
     )
     if policy.failure == "error":
         node_states = eqx.error_if(
@@ -1212,7 +1174,7 @@ def _adaptive_primal(
         nonlinear_method_id=policy.nonlinear_method.method_id,
         stage_linear_plan_id=prepared.stage_linear_plan_id,
         initialization_linear_plan_id=prepared.initialization_linear_plan_id,
-        integration_method=policy.integration_method,
+        method_id=policy.method.method_id,
         adaptive=True,
     )
 
@@ -1244,14 +1206,14 @@ def _replay_initial(
         )
         states = jnp.broadcast_to(
             initialization.state,
-            (3,) + prepared.problem.system.state_shape,
+            (6,) + prepared.problem.system.state_shape,
         )
         rates = jnp.broadcast_to(
             initialization.state_rate,
-            (3,) + prepared.problem.system.state_shape,
+            (6,) + prepared.problem.system.state_shape,
         )
         step_sizes = jnp.full(
-            (2,),
+            (5,),
             jax.lax.stop_gradient(
                 _initial_step_size(
                     initialization.state,
@@ -1273,7 +1235,7 @@ def _replay_initial(
             ),
             dtype=times.dtype,
         )
-        history_times = jnp.full((3,), times[0], dtype=times.dtype)
+        history_times = jnp.full((6,), times[0], dtype=times.dtype)
     else:
         initialization = _continuation_initialization(prepared, continuation, args)
         states = continuation.states
@@ -1338,19 +1300,17 @@ def _replay_solution(
         )
 
         def execute(carry):
-            predictor = _adaptive_predict(
-                carry.states,
-                carry.rates,
-                carry.step_sizes,
-                safe_step_size,
+            predictor = _general_bdf_predict(
+                carry.states[:5],
+                carry.rates[:5],
+                carry.times[:5],
+                safe_time,
                 safe_order,
             )
-            arguments = _stage_arguments(
-                time=safe_time,
-                previous=carry.states[0],
-                previous_previous=carry.states[1],
-                step_size=safe_step_size,
-                previous_step_size=carry.step_sizes[0],
+            arguments = _history_stage_arguments(
+                target_time=safe_time,
+                state_history=carry.states[:5],
+                history_times=carry.times[:5],
                 order=safe_order,
                 model_args=args,
                 active=valid,
@@ -1363,12 +1323,11 @@ def _replay_solution(
             )
             result = implicit_root_result(seeded)
             state = jnp.asarray(result.state)
-            rate = _bdf_rate(
+            rate = _general_bdf_rate(
                 state,
-                carry.states[0],
-                carry.states[1],
-                safe_step_size,
-                carry.step_sizes[0],
+                carry.states[:5],
+                carry.times[:5],
+                safe_time,
                 safe_order,
             )
             matches = save_indices == index
@@ -1387,10 +1346,12 @@ def _replay_solution(
                 carry.saved_rates,
             )
             return _ReplayCarry(
-                states=jnp.stack((state, carry.states[0], carry.states[1])),
-                rates=jnp.stack((rate, carry.rates[0], carry.rates[1])),
-                times=jnp.stack((safe_time, carry.times[0], carry.times[1])),
-                step_sizes=jnp.stack((safe_step_size, carry.step_sizes[0])),
+                states=jnp.concatenate((state[None, ...], carry.states[:-1]), axis=0),
+                rates=jnp.concatenate((rate[None, ...], carry.rates[:-1]), axis=0),
+                times=jnp.concatenate((safe_time[None], carry.times[:-1]), axis=0),
+                step_sizes=jnp.concatenate(
+                    (safe_step_size[None], carry.step_sizes[:-1]), axis=0
+                ),
                 saved_states=saved_states_,
                 saved_rates=saved_rates_,
             )

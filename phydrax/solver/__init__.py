@@ -44,6 +44,7 @@ term evaluation.
     ```
 """
 
+from ._bdf_method import BDFMethod
 from ._collocation import (
     assemble_stochastic_collocation,
     COLLOCATION_NONFINITE,
@@ -165,7 +166,6 @@ from ._differential_algebraic import (
     DAEAttemptStatus,
     DAEContinuation,
     DAEFailureMode,
-    DAEIntegrationMethod,
     DAERegularityEvidence,
     DAERegularityFailureMode,
     DAERegularityMode,
@@ -220,6 +220,11 @@ from ._functional_differential import (
     solve_functional_differential,
 )
 from ._functional_solver import FunctionalSolver
+from ._generalized_alpha import (
+    GeneralizedAlphaMethod,
+    GeneralizedAlphaSolution,
+    solve_generalized_alpha,
+)
 from ._geometric import (
     AbstractGeometricSolver,
     commutator_free_midpoint_tableau,
@@ -232,6 +237,11 @@ from ._geometric import (
     solver_state_geometry,
     SRKMK,
     StormerVerlet,
+)
+from ._implicit_runge_kutta import (
+    GaussLegendreInterpolation,
+    GaussLegendreIRK,
+    solve_implicit_runge_kutta,
 )
 from ._jump import (
     finite_state_generator,
@@ -279,6 +289,12 @@ from ._memory import (
     VolterraFreeTerm,
     VolterraKernel,
     VolterraVectorField,
+)
+from ._multirate import (
+    multirate_amr_subcycling_plan,
+    MultiratePartitionedRK,
+    PartitionedDifferentialProblem,
+    solve_multirate,
 )
 from ._neural_cde import (
     neural_cde_loss,
@@ -329,6 +345,12 @@ from ._regression_bsde import (
     predict_bsde_least_squares_value,
     solve_bsde_least_squares,
 )
+from ._rosenbrock import (
+    RosenbrockAdaptivePolicy,
+    RosenbrockWMethod,
+    solve_rosenbrock,
+    solve_rosenbrock_adaptive,
+)
 from ._rough import (
     AbstractRoughSolver,
     Davie,
@@ -360,6 +382,12 @@ from ._spde import (
     semidiscretize_semilinear_spde,
     semidiscretize_spde,
 )
+from ._split_differential import (
+    split_differential_problem,
+    SplitDifferentialProblem,
+)
+from ._ssp_runge_kutta import SSPRK33, ssprk33_step, SSPRK54, ssprk54_step
+from ._state_partition import StatePartition
 from ._stencil_evolution import (
     PreparedSplitFieldPML,
     PreparedStaggeredAcoustics,
@@ -367,6 +395,14 @@ from ._stencil_evolution import (
     StaggeredAcousticPlan,
     StaggeredAcousticState,
 )
+from ._temporal_method import (
+    NoiseRequirement,
+    TemporalEquationForm,
+    TemporalMethodCapabilities,
+    TemporalMethodClass,
+    TemporalSolveEvidence,
+)
+from ._theta import ThetaMethod
 
 
 __all__ = [
@@ -443,6 +479,7 @@ __all__ = [
     "StateDependentDelay",
     "StateDependentLag",
     "SegmentedDelayResult",
+    "BDFMethod",
     "DifferentialInterpretation",
     "DifferentialProblem",
     "DifferentialSolution",
@@ -451,7 +488,6 @@ __all__ = [
     "DAEAttemptStatus",
     "DAEContinuation",
     "DAEFailureMode",
-    "DAEIntegrationMethod",
     "DAERegularityEvidence",
     "DAERegularityFailureMode",
     "DAERegularityMode",
@@ -496,6 +532,10 @@ __all__ = [
     "evaluate_stochastic_collocation",
     "GeometricEuler",
     "GeometricLocalInterpolation",
+    "GaussLegendreInterpolation",
+    "GaussLegendreIRK",
+    "GeneralizedAlphaMethod",
+    "GeneralizedAlphaSolution",
     "NoiseStructure",
     "finite_state_generator",
     "FiniteStateGenerator",
@@ -566,6 +606,12 @@ __all__ = [
     "RoughDifferentialSolution",
     "RoughDrift",
     "RoughVectorFields",
+    "multirate_amr_subcycling_plan",
+    "MultiratePartitionedRK",
+    "NoiseRequirement",
+    "PartitionedDifferentialProblem",
+    "RosenbrockAdaptivePolicy",
+    "RosenbrockWMethod",
     "SemidiscreteSPDE",
     "SemilinearDrift",
     "SemilinearFallback",
@@ -595,6 +641,15 @@ __all__ = [
     "StochasticVolterraProblem",
     "WeakObservableEstimate",
     "WienerTerm",
+    "SplitDifferentialProblem",
+    "SSPRK33",
+    "SSPRK54",
+    "StatePartition",
+    "TemporalEquationForm",
+    "TemporalMethodCapabilities",
+    "TemporalMethodClass",
+    "TemporalSolveEvidence",
+    "ThetaMethod",
     "VolterraFreeTerm",
     "VolterraKernel",
     "VolterraVectorField",
@@ -606,11 +661,17 @@ __all__ = [
     "solve_caputo_fractional",
     "solve_convolution_volterra",
     "solve_diffrax",
+    "split_differential_problem",
     "solve_diffrax_cde",
     "fixed_delay_history_capacity",
     "solve_diffrax_delay",
     "solve_diffrax_delay_segmented",
     "solve_diffrax_ensemble",
+    "solve_generalized_alpha",
+    "solve_implicit_runge_kutta",
+    "solve_multirate",
+    "solve_rosenbrock",
+    "solve_rosenbrock_adaptive",
     "SplitFieldPMLPlan",
     "StaggeredAcousticPlan",
     "StaggeredAcousticState",
@@ -633,6 +694,8 @@ __all__ = [
     "StructuredPicardSource",
     "StructuredSourceBuilder",
     "solve_semilinear_spde",
+    "ssprk33_step",
+    "ssprk54_step",
     "solve_stochastic_volterra",
     "solve_bsde_least_squares",
     "solve_reflected_path_dependent_bsde",
