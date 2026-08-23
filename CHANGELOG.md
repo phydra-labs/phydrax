@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added fail-closed open-system evidence with quantified approximation
+  thresholds, exact pseudomode initial states, process initial-state
+  physicality, semantic trajectory keys, fixed-step probability guards,
+  Gaussian convention checks, versioned artifact tooling, generic jump-solver
+  adapters, certified local Kraus preparation, BDF HEOM diagnostics, and causal
+  process simulation.
+
 - Hardened open-system workflows with shared scalar-root event refinement,
   semantic trajectory checkpoints, environment MPS contractions,
   nonnormalizing TEBD, LPDO Strang evolution, scaled/implicit HEOM, matched

@@ -273,6 +273,7 @@ nav:
             - Non-Markovian and many-body quantum systems: "api/solver/nonmarkov_manybody.md"
             - Production open quantum systems: "api/solver/production_open_quantum.md"
             - Hardened open quantum systems: "api/solver/hardened_open_quantum.md"
+            - Final open-system closure: "api/solver/final_open_quantum.md"
             - Differential-algebraic equations: "api/solver/differential_algebraic.md"
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
