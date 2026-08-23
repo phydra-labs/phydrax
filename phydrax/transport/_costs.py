@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..metrix import AbstractGeodesicManifold
 
 
 class AbstractGroundCost(StrictModule):
@@ -113,6 +114,35 @@ class PeriodicSquaredEuclideanCost(AbstractGroundCost):
         return "periodic-squared-euclidean"
 
 
+class IntrinsicSquaredDistanceCost(AbstractGroundCost):
+    """Squared geodesic distance supplied by an intrinsic manifold."""
+
+    geometry: AbstractGeodesicManifold
+
+    def __init__(self, geometry: AbstractGeodesicManifold, /):
+        if not isinstance(geometry, AbstractGeodesicManifold):
+            raise TypeError("geometry must be an AbstractGeodesicManifold.")
+        if len(geometry.point_shape) != 1:
+            raise ValueError(
+                "Intrinsic transport currently requires vector-valued manifold points."
+            )
+        self.geometry = geometry
+
+    def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
+        left_point, right_point = _point_pair(left, right)
+        expected = self.geometry.point_shape
+        if left_point.shape != expected or right_point.shape != expected:
+            raise ValueError(f"Intrinsic ground-cost points must have shape {expected}.")
+        return jnp.asarray(
+            self.geometry.squared_distance(left_point, right_point),
+            dtype=float,
+        )
+
+    @property
+    def cost_id(self) -> str:
+        return f"intrinsic-squared-distance:{self.geometry.manifold_id}"
+
+
 class PrecomputedCost(StrictModule):
     """Validated finite nonnegative precomputed ground-cost matrix."""
 
@@ -193,6 +223,7 @@ def _as_points(value: ArrayLike, /, *, name: str) -> Array:
 __all__ = [
     "AbstractGroundCost",
     "GroundCost",
+    "IntrinsicSquaredDistanceCost",
     "PeriodicSquaredEuclideanCost",
     "PrecomputedCost",
     "SquaredEuclideanCost",

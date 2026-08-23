@@ -19,6 +19,7 @@ from ._barycenters import (
 )
 from ._costs import (
     AbstractGroundCost,
+    IntrinsicSquaredDistanceCost,
     PeriodicSquaredEuclideanCost,
     PrecomputedCost,
     SquaredEuclideanCost,
@@ -163,6 +164,7 @@ __all__ = [
     "FiniteBridgeTarget",
     "GaussianPositiveFeatures",
     "KernelApproximationStatus",
+    "IntrinsicSquaredDistanceCost",
     "PeriodicSquaredEuclideanCost",
     "PrecomputedCost",
     "PreparedSinkhornReference",

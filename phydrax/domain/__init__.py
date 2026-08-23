@@ -93,7 +93,11 @@ from ._ragged_series_dataset import (
     RaggedSeriesSampling,
 )
 from ._reference import reference_transport
-from ._riemannian_measure import with_riemannian_measure, with_volume_density
+from ._riemannian_measure import (
+    with_riemannian_measure,
+    with_volume_density,
+    with_weighted_riemannian_measure,
+)
 from ._scalar import AbstractScalarDomain, ScalarInterval
 from ._selection import (
     Boundary,
@@ -235,6 +239,7 @@ __all__ = [
     "CochainCellRegion",
     "with_riemannian_measure",
     "with_volume_density",
+    "with_weighted_riemannian_measure",
     "CochainCells",
     "ComponentSum",
     "BoundaryEdges",

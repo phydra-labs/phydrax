@@ -174,30 +174,34 @@ def _affine_covariant_derivative_point(
             f"{expected}; got {values.shape}."
         )
     derivative = jax.jacfwd(field)(coordinates)
-    if tensor_type.rank == 0:
-        return derivative
     coefficients = connection.coefficients(coordinates)
-    letters = tuple(letter for letter in ascii_lowercase if letter not in ("x", "y"))[
-        : tensor_type.rank
-    ]
-    output = "".join(letters) + "x"
     result = derivative
-    for slot, variance in enumerate(tensor_type.variance):
-        input_letters = list(letters)
-        input_letters[slot] = "y"
-        tensor_subscript = "".join(input_letters)
-        if variance == "contravariant":
-            connection_subscript = f"{letters[slot]}xy"
-            sign = 1.0
-        else:
-            connection_subscript = f"yx{letters[slot]}"
-            sign = -1.0
-        correction = oe.contract(
-            f"{connection_subscript},{tensor_subscript}->{output}",
-            coefficients,
-            values,
+    if tensor_type.rank:
+        letters = tuple(letter for letter in ascii_lowercase if letter not in ("x", "y"))[
+            : tensor_type.rank
+        ]
+        output = "".join(letters) + "x"
+        for slot, variance in enumerate(tensor_type.variance):
+            input_letters = list(letters)
+            input_letters[slot] = "y"
+            tensor_subscript = "".join(input_letters)
+            if variance == "contravariant":
+                connection_subscript = f"{letters[slot]}xy"
+                sign = 1.0
+            else:
+                connection_subscript = f"yx{letters[slot]}"
+                sign = -1.0
+            correction = oe.contract(
+                f"{connection_subscript},{tensor_subscript}->{output}",
+                coefficients,
+                values,
+            )
+            result = result + sign * correction
+    if tensor_type.density_weight != 0.0:
+        connection_trace = oe.contract("aax->x", coefficients)
+        result = (
+            result - tensor_type.density_weight * values[..., None] * connection_trace
         )
-        result = result + sign * correction
     return result
 
 

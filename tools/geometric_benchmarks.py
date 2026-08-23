@@ -128,6 +128,53 @@ def _lorentzian_case(points: jax.Array):
     return phx.metrix.dalembertian(field, metric, points)
 
 
+def _map_geometry_case(points: jax.Array):
+    dimension = points.shape[-1]
+    chart = phx.metrix.CoordinateChart(
+        f"map-{dimension}", tuple(f"q{index}" for index in range(dimension))
+    )
+    metric = phx.metrix.euclidean_metric(chart)
+    map = phx.metrix.DifferentiableMap(chart, chart, lambda q: q + 0.05 * q**2)
+    geometry = phx.metrix.RiemannianMapGeometry(map, metric, metric)
+    return geometry.energy_density(points), geometry.tension_field(points)
+
+
+def _weighted_measure_case(points: jax.Array):
+    dimension = points.shape[-1]
+    chart = phx.metrix.CoordinateChart(
+        f"measure-{dimension}", tuple(f"q{index}" for index in range(dimension))
+    )
+    measure = phx.metrix.WeightedRiemannianMeasure(
+        phx.metrix.euclidean_metric(chart),
+        lambda q: -0.5 * jnp.dot(q, q),
+    )
+    return measure.laplacian(lambda q: jnp.dot(q, q), points)
+
+
+def _kahler_case(points: jax.Array):
+    dimension = points.shape[-1]
+    chart = phx.metrix.CoordinateChart(
+        f"kahler-{dimension}", tuple(f"q{index}" for index in range(dimension))
+    )
+    convention = phx.metrix.ComplexCoordinateConvention(chart)
+    structure = phx.metrix.KahlerStructure(
+        phx.metrix.HermitianStructure(
+            phx.metrix.euclidean_metric(chart),
+            phx.metrix.standard_complex_structure(convention),
+        )
+    )
+    report = phx.metrix.validate_kahler_structure(
+        structure,
+        points,
+        raise_on_error=False,
+    )
+    return (
+        report.compatibility_residual,
+        report.closure_residual,
+        report.covariant_complex_residual,
+    )
+
+
 def run_benchmarks(
     *,
     batch_size: int = 256,
@@ -147,9 +194,12 @@ def run_benchmarks(
     records = [
         _benchmark("metric_jet", _metric_jet_case, points, repeats=repeats),
         _benchmark("differential_forms", _form_case, points, repeats=repeats),
+        _benchmark("riemannian_map", _map_geometry_case, points, repeats=repeats),
+        _benchmark("weighted_measure", _weighted_measure_case, points, repeats=repeats),
         _benchmark("horizontal_sub_laplacian", _horizontal_case, points, repeats=repeats),
         _benchmark("lorentzian_dalembertian", _lorentzian_case, points, repeats=repeats),
         _benchmark("poisson_hamiltonian", _poisson_case, phase_points, repeats=repeats),
+        _benchmark("kahler_validation", _kahler_case, phase_points, repeats=repeats),
     ]
     return {
         "jax_version": jax.__version__,

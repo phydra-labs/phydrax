@@ -12,6 +12,7 @@ from jaxtyping import Array
 
 from ._fingerprint import canonical_fingerprint
 from ._strict import AbstractAttribute, StrictModule
+from .metrix import RiemannianMetric
 
 
 class AbstractFlowMatchingMetric(StrictModule):
@@ -60,4 +61,48 @@ class EuclideanFlowMatchingMetric(AbstractFlowMatchingMetric):
         return jnp.asarray(value, dtype=float).reshape(())
 
 
-__all__ = ["AbstractFlowMatchingMetric", "EuclideanFlowMatchingMetric"]
+class RiemannianFlowMatchingMetric(AbstractFlowMatchingMetric):
+    """Pointwise metric velocity error in one coordinate chart."""
+
+    metric: RiemannianMetric
+    metric_id: str = eqx.field(static=True)
+
+    def __init__(self, metric: RiemannianMetric, /):
+        if not isinstance(metric, RiemannianMetric):
+            raise TypeError("metric must be a RiemannianMetric.")
+        self.metric = metric
+        self.metric_id = canonical_fingerprint(
+            {
+                "kind": "riemannian-flow-matching-metric-v1",
+                "chart": metric.chart.name,
+                "coordinates": metric.chart.coordinates,
+            }
+        )
+
+    def __call__(
+        self,
+        state: Array,
+        predicted_velocity: Array,
+        target_velocity: Array,
+        /,
+    ) -> Array:
+        expected = (self.metric.chart.dimension,)
+        if not (
+            state.shape == predicted_velocity.shape == target_velocity.shape == expected
+        ):
+            raise ValueError(
+                "Riemannian flow matching requires one chart-sized state and "
+                "two chart-sized tangent vectors."
+            )
+        difference = predicted_velocity - target_velocity
+        return jnp.asarray(
+            self.metric.inner(difference, difference, state),
+            dtype=float,
+        ).reshape(())
+
+
+__all__ = [
+    "AbstractFlowMatchingMetric",
+    "EuclideanFlowMatchingMetric",
+    "RiemannianFlowMatchingMetric",
+]

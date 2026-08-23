@@ -21,6 +21,7 @@ from .._fingerprint import canonical_fingerprint
 from .._flow_matching_metric import (
     AbstractFlowMatchingMetric,
     EuclideanFlowMatchingMetric,
+    RiemannianFlowMatchingMetric,
 )
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -485,6 +486,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
 __all__ = [
     "AbstractFlowMatchingMetric",
     "EuclideanFlowMatchingMetric",
+    "RiemannianFlowMatchingMetric",
     "FlowEndpointProvider",
     "FlowMatchingBatch",
     "FlowMatchingDiagnostics",

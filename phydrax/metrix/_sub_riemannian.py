@@ -22,6 +22,7 @@ class HorizontalCometric(StrictModule):
     """Positive cometric on a declared horizontal frame distribution."""
 
     frame_function: Callable[[Array], Array]
+    control_metric_function: Callable[[Array], Array] | None
     chart: CoordinateChart
     rank: int = eqx.field(static=True)
 
@@ -31,14 +32,19 @@ class HorizontalCometric(StrictModule):
         chart: CoordinateChart,
         rank: int,
         /,
+        *,
+        control_metric: Callable[[Array], Array] | None = None,
     ):
         if not callable(frame_function):
             raise TypeError("frame_function must be callable.")
+        if control_metric is not None and not callable(control_metric):
+            raise TypeError("control_metric must be callable when supplied.")
         if not isinstance(chart, CoordinateChart):
             raise TypeError("chart must be a CoordinateChart.")
         if int(rank) <= 0 or int(rank) > chart.dimension:
             raise ValueError("Horizontal rank must lie between one and chart dimension.")
         self.frame_function = frame_function
+        self.control_metric_function = control_metric
         self.chart = chart
         self.rank = int(rank)
 
@@ -55,9 +61,31 @@ class HorizontalCometric(StrictModule):
 
         return _pointwise_array(evaluate, coordinates, self.chart.dimension)
 
+    def control_metric(self, coordinates: ArrayLike, /) -> Array:
+        expected = (self.rank, self.rank)
+
+        def evaluate(point: Array) -> Array:
+            if self.control_metric_function is None:
+                return jnp.eye(self.rank, dtype=point.dtype)
+            value = jnp.asarray(self.control_metric_function(point))
+            if value.shape != expected:
+                raise ValueError(
+                    f"Horizontal control metric must have shape {expected}; "
+                    f"got {value.shape}."
+                )
+            return value
+
+        return _pointwise_array(evaluate, coordinates, self.chart.dimension)
+
     def __call__(self, coordinates: ArrayLike, /) -> Array:
         frame = self.frame(coordinates)
-        return oe.contract("...ia,...ja->...ij", frame, frame)
+        control = self.control_metric(coordinates)
+        identity = jnp.broadcast_to(
+            jnp.eye(self.rank, dtype=control.dtype),
+            control.shape,
+        )
+        inverse = jnp.linalg.solve(control, identity)
+        return oe.contract("...ia,...ab,...jb->...ij", frame, inverse, frame)
 
 
 def horizontal_gradient(
@@ -102,6 +130,38 @@ def horizontal_hamiltonian(
         cometric(coordinates),
         covector_array,
     )
+
+
+def sub_riemannian_hamiltonian_rhs(
+    cometric: HorizontalCometric,
+    state: ArrayLike,
+    /,
+) -> Array:
+    """Return canonical Hamilton equations for ``(q, p)``."""
+    if not isinstance(cometric, HorizontalCometric):
+        raise TypeError("cometric must be a HorizontalCometric.")
+    values = jnp.asarray(state)
+    dimension = cometric.chart.dimension
+    if values.shape[-1:] != (2 * dimension,):
+        raise ValueError(
+            f"Sub-Riemannian Hamiltonian state must end in {2 * dimension} values."
+        )
+    leading = values.shape[:-1]
+    flat = values.reshape((-1, 2 * dimension))
+
+    def evaluate(local_state: Array) -> Array:
+        def hamiltonian(candidate: Array) -> Array:
+            coordinates = candidate[:dimension]
+            covector = candidate[dimension:]
+            return horizontal_hamiltonian(covector, cometric, coordinates)
+
+        differential = jax.grad(hamiltonian)(local_state)
+        return jnp.concatenate(
+            (differential[dimension:], -differential[:dimension]), axis=-1
+        )
+
+    result = jax.vmap(evaluate)(flat)
+    return result.reshape(leading + (2 * dimension,))
 
 
 def sub_laplacian(
@@ -238,6 +298,7 @@ __all__ = [
     "HorizontalValidationReport",
     "horizontal_gradient",
     "horizontal_hamiltonian",
+    "sub_riemannian_hamiltonian_rhs",
     "step_two_horizontal_rank",
     "sub_laplacian",
     "validate_horizontal_cometric",

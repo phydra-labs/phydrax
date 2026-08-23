@@ -14,7 +14,7 @@ from ._manifold import (
     _array_with_trailing_shape,
     _finite_residual,
     _same_shape,
-    AbstractRiemannianManifold,
+    AbstractGeodesicManifold,
 )
 
 
@@ -32,7 +32,7 @@ def _dimension(value: int, name: str, /, *, minimum: int = 1) -> int:
     return result
 
 
-class PoincareBallManifold(AbstractRiemannianManifold):
+class PoincareBallManifold(AbstractGeodesicManifold):
     """Poincaré ball of constant sectional curvature ``-curvature``."""
 
     dimension: int = eqx.field(static=True)
@@ -131,6 +131,41 @@ class PoincareBallManifold(AbstractRiemannianManifold):
         scaled = jnp.where(norm > 0.0, scaled, jnp.zeros_like(step))
         return self._mobius_add(value, scaled)
 
+    def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        return self.retract(point, tangent)
+
+    def log(self, point: ArrayLike, destination: ArrayLike, /) -> Array:
+        value = self._point(point, "Poincare point")
+        target = self._point(destination, "Poincare destination")
+        _same_shape(target, value, "Poincare destination")
+        difference = self._mobius_add(-value, target)
+        norm = jnp.linalg.norm(difference, axis=-1, keepdims=True)
+        root = jnp.sqrt(jnp.asarray(self.curvature, dtype=value.dtype))
+        argument = jnp.minimum(
+            root * norm,
+            1.0 - jnp.finfo(value.dtype).eps,
+        )
+        conformal = self._conformal_factor(value)[..., None]
+        safe_norm = jnp.where(norm > 0.0, norm, 1.0)
+        coefficient = 2.0 * jnp.arctanh(argument) / (root * conformal * safe_norm)
+        return jnp.where(norm > 0.0, coefficient * difference, 0.0)
+
+    def squared_distance(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        value = self._point(left, "Poincare point")
+        target = self._point(right, "Poincare destination")
+        _same_shape(target, value, "Poincare destination")
+        difference = self._mobius_add(-value, target)
+        norm = jnp.linalg.norm(difference, axis=-1)
+        root = jnp.sqrt(jnp.asarray(self.curvature, dtype=value.dtype))
+        argument = jnp.minimum(root * norm, 1.0 - jnp.finfo(value.dtype).eps)
+        distance = 2.0 * jnp.arctanh(argument) / root
+        return jnp.sum(distance**2)
+
     def transport(
         self,
         point: ArrayLike,
@@ -148,7 +183,7 @@ class PoincareBallManifold(AbstractRiemannianManifold):
         return vector
 
 
-class HyperboloidManifold(AbstractRiemannianManifold):
+class HyperboloidManifold(AbstractGeodesicManifold):
     """Future sheet of the Lorentz hyperboloid with curvature ``-curvature``."""
 
     dimension: int = eqx.field(static=True)
@@ -245,6 +280,40 @@ class HyperboloidManifold(AbstractRiemannianManifold):
         )
         return jnp.cosh(argument)[..., None] * value + coefficient[..., None] * step
 
+    def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        return self.retract(point, tangent)
+
+    def log(self, point: ArrayLike, destination: ArrayLike, /) -> Array:
+        value = self._point(point, "Hyperboloid point")
+        target = self._point(destination, "Hyperboloid destination")
+        _same_shape(target, value, "Hyperboloid destination")
+        argument = jnp.maximum(
+            -self.curvature * self._lorentz_inner(value, target),
+            1.0,
+        )
+        angle = jnp.arccosh(argument)
+        tangent = target - argument[..., None] * value
+        sine = jnp.sinh(angle)
+        coefficient = jnp.where(angle > 0.0, angle / sine, 1.0)
+        return coefficient[..., None] * tangent
+
+    def squared_distance(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        value = self._point(left, "Hyperboloid point")
+        target = self._point(right, "Hyperboloid destination")
+        _same_shape(target, value, "Hyperboloid destination")
+        argument = jnp.maximum(
+            -self.curvature * self._lorentz_inner(value, target),
+            1.0,
+        )
+        root = jnp.sqrt(jnp.asarray(self.curvature, dtype=value.dtype))
+        distance = jnp.arccosh(argument) / root
+        return jnp.sum(distance**2)
+
     def transport(
         self,
         point: ArrayLike,
@@ -262,7 +331,7 @@ class HyperboloidManifold(AbstractRiemannianManifold):
         return self.project_tangent(target, vector)
 
 
-class ProbabilitySimplexManifold(AbstractRiemannianManifold):
+class ProbabilitySimplexManifold(AbstractGeodesicManifold):
     """Open probability simplex with the Fisher–Rao metric."""
 
     dimension: int = eqx.field(static=True)
@@ -338,6 +407,52 @@ class ProbabilitySimplexManifold(AbstractRiemannianManifold):
         logits = logits - jnp.max(logits, axis=-1, keepdims=True)
         candidate = jnp.exp(logits)
         return candidate / jnp.sum(candidate, axis=-1, keepdims=True)
+
+    def exp(self, point: ArrayLike, tangent: ArrayLike, /) -> Array:
+        value = self._point(point, "Simplex point")
+        step = self.project_tangent(value, tangent)
+        root = jnp.sqrt(value)
+        sphere_tangent = step / root
+        norm = jnp.linalg.norm(sphere_tangent, axis=-1, keepdims=True)
+        half_angle = 0.5 * norm
+        safe_norm = jnp.where(norm > 0.0, norm, 1.0)
+        coefficient = 2.0 * jnp.sin(half_angle) / safe_norm
+        sphere_point = 2.0 * jnp.cos(half_angle) * root + coefficient * sphere_tangent
+        candidate = 0.25 * sphere_point**2
+        return candidate / jnp.sum(candidate, axis=-1, keepdims=True)
+
+    def log(self, point: ArrayLike, destination: ArrayLike, /) -> Array:
+        value = self._point(point, "Simplex point")
+        target = self._point(destination, "Simplex destination")
+        _same_shape(target, value, "Simplex destination")
+        root = jnp.sqrt(value)
+        target_root = jnp.sqrt(target)
+        cosine = jnp.clip(
+            jnp.sum(root * target_root, axis=-1, keepdims=True),
+            -1.0,
+            1.0,
+        )
+        angle = jnp.arccos(cosine)
+        sine = jnp.sin(angle)
+        factor = jnp.where(angle > self.tolerance, angle / sine, 1.0)
+        sphere_tangent = 2.0 * factor * (target_root - cosine * root)
+        return root * sphere_tangent
+
+    def squared_distance(
+        self,
+        left: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        value = self._point(left, "Simplex point")
+        target = self._point(right, "Simplex destination")
+        _same_shape(target, value, "Simplex destination")
+        cosine = jnp.clip(
+            jnp.sum(jnp.sqrt(value * target), axis=-1),
+            -1.0,
+            1.0,
+        )
+        return jnp.sum((2.0 * jnp.arccos(cosine)) ** 2)
 
     def transport(
         self,

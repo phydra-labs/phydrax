@@ -74,6 +74,12 @@ from ._fractional_ops import (
     riesz_fractional_derivative_gl_mc,
 )
 from ._lie_ops import lie_bracket
+from ._map_ops import (
+    riemannian_map_conformality_residual,
+    riemannian_map_energy,
+    riemannian_map_isometry_residual,
+    riemannian_map_tension,
+)
 from ._riemannian_ops import (
     covariant_derivative,
     covariant_hessian,
@@ -175,6 +181,10 @@ __all__ = [
     "riemannian_div",
     "riemannian_div_tensor",
     "riemannian_grad",
+    "riemannian_map_conformality_residual",
+    "riemannian_map_energy",
+    "riemannian_map_isometry_residual",
+    "riemannian_map_tension",
     "laplacian",
     "linear_elastic_cauchy_stress_2d",
     "linear_elastic_orthotropic_stress_2d",

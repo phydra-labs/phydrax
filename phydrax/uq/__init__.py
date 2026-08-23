@@ -300,6 +300,7 @@ from ._guided_particle import (
     ParticleProposalSample,
 )
 from ._inducing import InducingPointSelection, select_inducing_points
+from ._information_geometry import ExponentialFamilyInformationGeometry
 from ._integration import particle_posterior_measure
 from ._kalman import (
     initialize_kalman_filter,
@@ -861,6 +862,7 @@ __all__ = [
     "ExponentialFamilyDomainResult",
     "ExponentialFamilyEstimateResult",
     "ExponentialFamilyLaw",
+    "ExponentialFamilyInformationGeometry",
     "GammaFamily",
     "GammaPoissonConjugacy",
     "GammaPoissonStatistics",

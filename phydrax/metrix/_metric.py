@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
 from ._chart import ChartTransition, CoordinateChart
+from ._map import DifferentiableMap, Immersion
 from ._utils import _pointwise_array
 
 
@@ -328,12 +329,12 @@ class _CholeskyMetricMap(StrictModule):
 
 class _PullbackMetricMap(StrictModule):
     target_metric: AbstractSemiRiemannianMetric
-    transition: ChartTransition
+    transition: DifferentiableMap | Immersion | ChartTransition
 
     def __init__(
         self,
         target_metric: AbstractSemiRiemannianMetric,
-        transition: ChartTransition,
+        transition: DifferentiableMap | Immersion | ChartTransition,
         /,
     ):
         self.target_metric = target_metric
@@ -389,31 +390,43 @@ def cholesky_metric(
     )
 
 
-def _validate_pullback(
+def _validate_metric_pullback(
     metric: AbstractSemiRiemannianMetric,
-    transition: ChartTransition,
+    map: DifferentiableMap | Immersion | ChartTransition,
     /,
+    *,
+    allow_immersion: bool,
 ) -> None:
-    if not transition.target.compatible_with(metric.chart):
+    if not isinstance(map, (DifferentiableMap, Immersion, ChartTransition)):
+        raise TypeError("Metric pullback requires a differentiable coordinate map.")
+    if not map.target.compatible_with(metric.chart):
         raise ValueError(
-            "Pullback transition target chart must match the metric chart; got "
-            f"{transition.target.name!r} and {metric.chart.name!r}."
+            "Pullback map target chart must match the metric chart; got "
+            f"{map.target.name!r} and {metric.chart.name!r}."
         )
-    if transition.source.dimension != transition.target.dimension:
-        raise ValueError("Nondegenerate metric pullback requires equal dimensions.")
+    if allow_immersion:
+        if map.source.dimension > map.target.dimension:
+            raise ValueError(
+                "Riemannian metric pullback requires source dimension no greater "
+                "than target dimension."
+            )
+        return
+    if map.source.dimension != map.target.dimension:
+        raise ValueError("Signed metric pullback requires equal dimensions.")
 
 
 def pullback_metric(
     metric: RiemannianMetric,
-    transition: ChartTransition,
+    map: DifferentiableMap | Immersion | ChartTransition,
     /,
 ) -> RiemannianMetric:
+    """Pull a Riemannian metric through a map or immersion candidate."""
     if not isinstance(metric, RiemannianMetric):
         raise TypeError("pullback_metric requires a RiemannianMetric.")
-    _validate_pullback(metric, transition)
+    _validate_metric_pullback(metric, map, allow_immersion=True)
     return RiemannianMetric(
-        _PullbackMetricMap(metric, transition),
-        chart=transition.source,
+        _PullbackMetricMap(metric, map),
+        chart=map.source,
     )
 
 
@@ -426,7 +439,7 @@ def pullback_semi_riemannian_metric(
         raise TypeError(
             "pullback_semi_riemannian_metric requires a SemiRiemannianMetric."
         )
-    _validate_pullback(metric, transition)
+    _validate_metric_pullback(metric, transition, allow_immersion=False)
     return SemiRiemannianMetric(
         _PullbackMetricMap(metric, transition),
         chart=transition.source,
@@ -441,7 +454,7 @@ def pullback_lorentzian_metric(
 ) -> LorentzianMetric:
     if not isinstance(metric, LorentzianMetric):
         raise TypeError("pullback_lorentzian_metric requires a LorentzianMetric.")
-    _validate_pullback(metric, transition)
+    _validate_metric_pullback(metric, transition, allow_immersion=False)
     return LorentzianMetric(
         _PullbackMetricMap(metric, transition),
         chart=transition.source,

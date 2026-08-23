@@ -122,6 +122,12 @@ def run_state_geometry_benchmarks(
         identity = jnp.eye(dimension_)
         so = phx.metrix.SpecialOrthogonalStateGeometry(dimension_)
         spd = phx.metrix.SymmetricPositiveDefiniteStateGeometry(dimension_)
+        complex_identity = jnp.eye(dimension_, dtype=complex)
+        skew_hermitian = skew.astype(complex) + 1j * symmetric
+        hermitian = symmetric.astype(complex) + 1j * skew
+        unitary = phx.metrix.UnitaryManifold(dimension_)
+        hpd = phx.metrix.AffineInvariantHPDManifold(dimension_)
+        projective = phx.metrix.ComplexProjectiveManifold(dimension_)
         so_output, so_timing = _benchmark(
             lambda local: so.retract(identity, local),
             skew,
@@ -130,6 +136,23 @@ def run_state_geometry_benchmarks(
         spd_output, spd_timing = _benchmark(
             lambda local: spd.retract(2.0 * identity, local),
             symmetric,
+            repeats=repeats,
+        )
+        unitary_output, unitary_timing = _benchmark(
+            lambda local: unitary.exp(complex_identity, local),
+            skew_hermitian,
+            repeats=repeats,
+        )
+        hpd_output, hpd_timing = _benchmark(
+            lambda local: hpd.exp(2.0 * complex_identity, local),
+            hermitian,
+            repeats=repeats,
+        )
+        projective_point = complex_identity[0]
+        projective_tangent = 1e-2 * complex_identity[1]
+        projective_output, projective_timing = _benchmark(
+            lambda local: projective.exp(projective_point, local),
+            projective_tangent,
             repeats=repeats,
         )
         records.append(
@@ -150,6 +173,34 @@ def run_state_geometry_benchmarks(
                     "geometry_id": spd.geometry_id,
                     "minimum_eigenvalue": float(
                         jax.device_get(jnp.min(jnp.linalg.eigvalsh(spd_output)))
+                    ),
+                },
+                "unitary_exponential": {
+                    **unitary_timing,
+                    "manifold_id": unitary.manifold_id,
+                    "unitarity_error": float(
+                        jax.device_get(
+                            jnp.max(
+                                jnp.abs(
+                                    jnp.conj(unitary_output.T) @ unitary_output
+                                    - complex_identity
+                                )
+                            )
+                        )
+                    ),
+                },
+                "hpd_affine_exponential": {
+                    **hpd_timing,
+                    "manifold_id": hpd.manifold_id,
+                    "minimum_eigenvalue": float(
+                        jax.device_get(jnp.min(jnp.linalg.eigvalsh(hpd_output)))
+                    ),
+                },
+                "complex_projective_exponential": {
+                    **projective_timing,
+                    "manifold_id": projective.manifold_id,
+                    "norm_error": float(
+                        jax.device_get(jnp.abs(jnp.linalg.norm(projective_output) - 1.0))
                     ),
                 },
             }

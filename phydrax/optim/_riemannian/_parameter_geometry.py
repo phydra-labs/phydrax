@@ -107,9 +107,18 @@ class ParameterGeometry(StrictModule):
                     "AbstractRiemannianManifold."
                 )
             array = jnp.asarray(leaf)
-            if not jnp.issubdtype(array.dtype, jnp.floating):
+            if manifold.scalar_field == "real":
+                valid_dtype = jnp.issubdtype(array.dtype, jnp.floating)
+            elif manifold.scalar_field == "complex":
+                valid_dtype = jnp.issubdtype(array.dtype, jnp.complexfloating)
+            else:
+                raise ValueError(
+                    f"Unknown manifold scalar field {manifold.scalar_field!r}."
+                )
+            if not valid_dtype:
                 raise TypeError(
-                    f"Manifold parameter leaf {path_name} must be real floating-point."
+                    f"Manifold parameter leaf {path_name} must use "
+                    f"{manifold.scalar_field} floating-point coordinates."
                 )
             point_shape = manifold.point_shape
             rank = len(point_shape)
@@ -132,7 +141,7 @@ class ParameterGeometry(StrictModule):
             selected_indices.append(index)
             weight = jnp.asarray(
                 requested_weights.get(path_name, 1.0),
-                dtype=array.dtype,
+                dtype=array.real.dtype,
             )
             if weight.shape != ():
                 raise ValueError(
