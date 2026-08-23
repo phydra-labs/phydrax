@@ -205,6 +205,8 @@ nav:
             - Intrinsic endpoint geometry: "api/metrix/intrinsic_geometry.md"
             - Complex and Kähler geometry: "api/metrix/complex_geometry.md"
             - Global projective and Ricci-flat geometry: "api/metrix/global_complex.md"
+            - Calabi-Yau campaigns: "api/metrix/calabi_yau_campaigns.md"
+            - Bures and quantum density geometry: "api/metrix/quantum_density.md"
             - Lie groups: "api/metrix/lie_groups.md"
             - Symplectic and Poisson geometry: "api/metrix/symplectic_poisson.md"
             - Sub-Riemannian geometry: "api/metrix/subriemannian.md"

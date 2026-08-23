@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added projective-line Calabi–Yau campaign preparation, residue and induced
+  hypersurface geometry, positivity-globalized Kähler-potential solving,
+  Hermitian spectral/Sylvester infrastructure, faithful Bures density geometry,
+  SLD quantum Fisher actions, mixed-state tomography, fixed-rank/Uhlmann
+  primitives, and finite-dimensional Lindblad channel evolution.
+
 - Added end-to-end weighted geometric diffusion semantics, right-trivialized
   unitary propagation, abelian metric-DEC gauge fields, matrix-free Fisher and
   Hessian operators, geodesic manifold flow matching, explicit atlas covers and
