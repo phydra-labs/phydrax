@@ -324,21 +324,24 @@ choices with no automatic fallback or universal differentiability claim.
 General nonlinear optimization lives in `phydrax.optim`. Scalar, residual,
 residual-plus-signed-scalar, proximal-composite, constrained, state/design, and
 stochastic problems share typed termination, status, diagnostics, provenance, and
-PyTree contracts. Native methods cover matrix-free Newton--Krylov, Newton trust
-regions, nonlinear conjugate gradients with strong-Wolfe search, Gauss--Newton,
-Levenberg--Marquardt, deterministic finite-difference least squares, proximal
-gradient/Newton methods, projected box methods, augmented Lagrangian, filter/SOC
-SQP, and primal--dual predictor--corrector KKT solves. Curvature methods prepare
-reusable symbolic linear-solve templates and report numeric refreshes separately
-from setup. Smooth stationarity, least-squares normal-equation, and strictly
-complementary active-set KKT solution maps are differentiated implicitly;
-unsuccessful, singular, or ambiguous solves fail instead of returning fabricated
-sensitivities.
+PyTree contracts. Native methods cover matrix-free Newton--Krylov, operator
+Steihaug--Toint and explicit dense-dogleg trust regions, nonlinear conjugate
+gradients with strong-Wolfe search, Gauss--Newton, Levenberg--Marquardt,
+bound-aware residual trust regions, deterministic finite-difference least
+squares, proximal gradient/Newton methods, projected box methods, augmented
+Lagrangian, filter/SOC SQP, and primal--dual predictor--corrector KKT solves.
+Curvature methods prepare reusable symbolic linear-solve templates and report
+numeric refreshes separately from setup. Smooth stationarity, least-squares
+normal-equation, and strictly complementary active-set KKT solution maps are
+differentiated implicitly; unsuccessful, singular, or ambiguous solves fail
+instead of returning fabricated sensitivities.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`, not in optimization.
-Newton--Krylov and trust-region roots, nonlinear GMRES, semismooth complementarity
-solves, fixed-point acceleration, nonlinear preconditioners, full-approximation
-multigrid, and implicit root maps share explicit status and work diagnostics.
+Complete solves are separated from prepared finite updates. Static
+additive/multiplicative/residual-optimal graphs compose Newton/Picard/FAS,
+nonlinear Schwarz and Gauss--Seidel, Richardson, NGMRES, and ASPIN while final
+success remains certified by the original physical residual. Semismooth
+complementarity offers explicit infeasible and strict box-preserving execution.
 Domain-invalid evaluations remain distinct from nonfinite trials.
 
 Generic parameterized residual curves and local bifurcation workflows live in

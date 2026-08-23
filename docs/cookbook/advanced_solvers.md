@@ -109,6 +109,54 @@ problem remains matrix-free unless the caller selects a resource-bounded explici
 Jacobian policy. Phydrax does not silently switch to a dense direct correction after
 a Krylov failure.
 
+### Compose bounded nonlinear work
+
+Use a typed update when an inner method should propose progress without claiming
+root convergence. The outer method still owns termination and certifies the
+physical residual:
+
+```python
+half_step = phx.nonlinear.FunctionNonlinearUpdate(
+    lambda state, target: jax.tree.map(
+        lambda value, expected: value + 0.5 * (expected - value),
+        state,
+        target,
+    ),
+    update_id="half-correction",
+)
+composite = phx.nonlinear.CompositeNonlinearUpdate(
+    (half_step, half_step),
+    kind="multiplicative",
+)
+accelerated = phx.nonlinear.NonlinearGMRES(composite)
+result = accelerated.solve(
+    phx.nonlinear.NonlinearSystemProblem(
+        lambda state, target: state - target
+    ),
+    jnp.asarray([0.0]),
+    args=jnp.asarray([2.0]),
+    termination=phx.nonlinear.NonlinearTermination(maximum_steps=10),
+)
+assert bool(result.successful)
+```
+
+For a complementarity operator that is undefined outside its declared bounds,
+select strict trial projection explicitly:
+
+```python
+vi = phx.nonlinear.VariationalInequalityProblem(
+    lambda state, _: jnp.where(state < 0.0, jnp.nan, state - 1.0),
+    phx.nonlinear.Bounds(0.0, jnp.inf),
+)
+vi_result = phx.nonlinear.SemismoothNewton(
+    feasibility="preserve-box"
+).solve(
+    vi,
+    jnp.asarray([-1.0]),
+)
+assert bool(vi_result.successful)
+```
+
 ## 3. Select an optimization method by contract
 
 Unconstrained second-order optimization, nonlinear least squares, bounds,

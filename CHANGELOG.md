@@ -8,6 +8,15 @@
   densities, and uncertainty-bearing Hutchinson density estimates; plus
   `FlowMatchingTerm` and fixed-query quadrature-aware operator velocity metrics.
 
+- Prepared finite nonlinear updates with typed application status, hard work
+  controls, refreshable plans, additive/multiplicative/residual-optimal
+  composition, Armijo Richardson and typed NGMRES outer methods, FAS/Picard/Newton
+  updates, nonlinear Schwarz/Gauss--Seidel decomposition, and ASPIN with
+  independently certified physical roots.
+- Strict box-preserving semismooth variational inequalities with prepared
+  topology-preserving refresh; matrix-free Steihaug--Toint quadratic trust
+  regions; large-scale unconstrained and bounded Newton trust-region methods;
+  and bound-aware Gauss--Newton and Levenberg--Marquardt residual optimization.
 - Positive certified Xiao--Gimbutas, Lebedev, periodic, radial, and Duffy
   cubature with content identity and bounded storage; measure-matched fixed
   Gauss--Hermite expectations; geometry-owned native disk, circle, ball,

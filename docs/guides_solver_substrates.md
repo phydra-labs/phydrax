@@ -5,6 +5,34 @@ solution algorithm. A tensor grid does not select finite differences or spectral
 calculus, and an FFT direct solve does not change an FD operator into a spectral
 method.
 
+```python
+import jax.numpy as jnp
+import phydrax as phx
+```
+
+## Nonlinear update graphs
+
+`phydrax.nonlinear` separates finite nonlinear work from complete root
+certification. A prepared `AbstractNonlinearUpdate` graph may contain Newton or
+Picard corrections, FAS cycles, additive/multiplicative Schwarz, or static
+composition. An outer `NonlinearRichardson` or `NonlinearGMRES` method owns
+termination and globalization. The returned `NonlinearResult` always
+re-evaluates the original physical problem.
+
+The lifecycle is:
+
+```text
+physical problem
+  -> plan and prepare a fixed update graph
+  -> apply bounded work and retain component evidence
+  -> outer method accepts or rejects the proposal
+  -> certify the original physical residual
+```
+
+Linear subspace correction and nonlinear Schwarz reuse explicit restriction and
+prolongation ideas, but not one result type: nonlinear local work owns a local
+problem, update status, domain validity, and physical reconstruction.
+
 ## Structured support
 
 `TensorGridPlan.prepare(bounds)` returns `PreparedTensorGrid`: axes, topology,
@@ -35,6 +63,7 @@ request = phx.discretization.DerivativeRequest(
     accuracy_order=4,
 )
 fd = phx.discretization.FiniteDifferencePlan(support, (request,)).prepare()
+u = fd.operator("dx").source.zeros()
 du = fd.operator("dx").mv(u)
 ```
 

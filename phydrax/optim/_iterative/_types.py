@@ -225,6 +225,7 @@ class NonlinearLeastSquaresProblem(StrictModule):
     """Residual-valued nonlinear least-squares problem."""
 
     residual: Callable[[PyTree[Any], Any], Any]
+    bounds: Bounds | None
     has_aux: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
@@ -234,14 +235,18 @@ class NonlinearLeastSquaresProblem(StrictModule):
         /,
         *,
         has_aux: bool = False,
+        bounds: Bounds | None = None,
         problem_id: str = "nonlinear-least-squares",
     ):
         if not callable(residual):
             raise TypeError("residual must be callable.")
+        if bounds is not None and not isinstance(bounds, Bounds):
+            raise TypeError("bounds must be Bounds or None.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         self.residual = residual
+        self.bounds = bounds
         self.has_aux = bool(has_aux)
         self.problem_id = identifier
 

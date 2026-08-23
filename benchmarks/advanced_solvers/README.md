@@ -46,6 +46,7 @@ contract:
 | `optimization-unconstrained` | nonquadratic Rosenbrock minimization | objective, reference gap, gradient norm, and distance |
 | `optimization-constrained` | Maratos-type equality/inequality problem | objective, feasibility, and independently estimated KKT stationarity |
 | `optimization-proximal` | smooth plus L1 composite objective | proximal-gradient stationarity and reference gap |
+| `optimization-bounded-least-squares` | unit-box residual minimization with active bounds | projected stationarity, exact feasibility, objective/reference gap |
 | `optimization-linear-program` | bounded separable LP | projected KKT stationarity, feasibility, objective/reference gap |
 | `optimization-quadratic-program` | bounded diagonal positive-definite QP | projected KKT stationarity, feasibility, objective/reference gap |
 | `optimization-conic-program` | active Lorentz-cone QP | cone feasibility, estimated KKT stationarity, objective/reference gap |

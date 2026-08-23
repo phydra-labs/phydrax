@@ -541,6 +541,13 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
             "estimated_equality_multiplier",
             "dual_stationarity_norm",
         ),
+        "optimization-bound-stationarity": (
+            "objective",
+            "objective_gap",
+            "distance_to_reference",
+            "projected_stationarity_norm",
+            "bound_feasibility",
+        ),
         "optimization-proximal-stationarity": (
             "objective",
             "objective_gap",

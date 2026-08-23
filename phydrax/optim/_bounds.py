@@ -46,6 +46,11 @@ from ._iterative._types import (
     OptimizationStatus,
     OptimizationTermination,
 )
+from ._trust_region import (
+    solve_trust_region_subproblem,
+    SteihaugToint,
+    TrustRegionQuadraticProblem,
+)
 
 
 def _default_active_set_linear_policy() -> LinearSolvePolicy:
@@ -218,6 +223,105 @@ class ActiveSetNewton(AbstractMinimizationMethod):
     @property
     def method_id(self) -> str:
         return "active-set-newton"
+
+    @property
+    def capabilities(self) -> OptimizationCapabilities:
+        return _bound_capabilities()
+
+    def solve(
+        self,
+        problem: MinimizationProblem,
+        initial_parameters: PyTree[Any],
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any,
+    ) -> MinimizationResult:
+        return _solve_bound_constrained(
+            self,
+            problem,
+            initial_parameters,
+            termination=termination,
+            args=args,
+        )
+
+
+class BoundedNewtonTrustRegion(AbstractMinimizationMethod):
+    """Projected active-set Newton method with a matrix-free trust region."""
+
+    subproblem: SteihaugToint
+    initial_radius: float = eqx.field(static=True)
+    maximum_radius: float = eqx.field(static=True)
+    minimum_radius: float = eqx.field(static=True)
+    acceptance_ratio: float = eqx.field(static=True)
+    shrink_ratio: float = eqx.field(static=True)
+    expansion_ratio: float = eqx.field(static=True)
+    shrink_factor: float = eqx.field(static=True)
+    expansion_factor: float = eqx.field(static=True)
+    active_tolerance: float = eqx.field(static=True)
+    project_initial: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        subproblem: SteihaugToint | None = None,
+        initial_radius: float = 1.0,
+        maximum_radius: float = 1e4,
+        minimum_radius: float = 1e-12,
+        acceptance_ratio: float = 1e-4,
+        shrink_ratio: float = 0.25,
+        expansion_ratio: float = 0.75,
+        shrink_factor: float = 0.25,
+        expansion_factor: float = 2.0,
+        active_tolerance: float = 1e-10,
+        project_initial: bool = True,
+    ):
+        subproblem_ = SteihaugToint() if subproblem is None else subproblem
+        if not isinstance(subproblem_, SteihaugToint):
+            raise TypeError("subproblem must be SteihaugToint or None.")
+        values = tuple(
+            float(value)
+            for value in (
+                initial_radius,
+                maximum_radius,
+                minimum_radius,
+                acceptance_ratio,
+                shrink_ratio,
+                expansion_ratio,
+                shrink_factor,
+                expansion_factor,
+                active_tolerance,
+            )
+        )
+        if any(not isfinite(value) or value <= 0.0 for value in values[:-1]):
+            raise ValueError("Bounded trust-region controls must be positive and finite.")
+        if not isfinite(values[-1]) or values[-1] < 0.0:
+            raise ValueError("active_tolerance must be finite and non-negative.")
+        if not values[2] <= values[0] <= values[1]:
+            raise ValueError(
+                "Radii must satisfy minimum_radius <= initial_radius <= maximum_radius."
+            )
+        if not 0.0 < values[3] < values[4] < values[5] < 1.0:
+            raise ValueError("Ratios must satisfy acceptance < shrink < expansion < one.")
+        if not 0.0 < values[6] < 1.0 or values[7] <= 1.0:
+            raise ValueError("Radius factors must shrink below and expand above one.")
+        self.subproblem = subproblem_
+        (
+            self.initial_radius,
+            self.maximum_radius,
+            self.minimum_radius,
+            self.acceptance_ratio,
+            self.shrink_ratio,
+            self.expansion_ratio,
+            self.shrink_factor,
+            self.expansion_factor,
+            self.active_tolerance,
+        ) = values
+        self.project_initial = bool(project_initial)
+
+    @property
+    def method_id(self) -> str:
+        return "bounded-newton-trust-region/steihaug-toint"
 
     @property
     def capabilities(self) -> OptimizationCapabilities:
@@ -452,6 +556,8 @@ class _BoundState(NamedTuple):
     numeric_refreshes: Array
     globalization_evaluations: Array
     direction_fallbacks: Array
+    trust_radius: Array
+    reduction_ratio: Array
 
 
 class _LBFGSState(NamedTuple):
@@ -689,6 +795,8 @@ def _initial_bound_state(
         numeric_refreshes=zero_count,
         globalization_evaluations=zero_count,
         direction_fallbacks=zero_count,
+        trust_radius=jnp.asarray(jnp.nan, dtype=scalar_dtype),
+        reduction_ratio=jnp.asarray(jnp.nan, dtype=scalar_dtype),
     )
 
 
@@ -1022,6 +1130,216 @@ def _run_active_set_newton(
     )
 
 
+def _run_bounded_newton_trust_region(
+    method: BoundedNewtonTrustRegion,
+    value_function,
+    bounds: Bounds,
+    initial_state: _BoundState,
+    termination: OptimizationTermination,
+    /,
+) -> _BoundState:
+    value_and_gradient = jax.value_and_grad(value_function)
+    seeded = initial_state._replace(
+        trust_radius=jnp.asarray(
+            method.initial_radius,
+            dtype=initial_state.final_step_norm.dtype,
+        )
+    )
+
+    def iteration_body(carry):
+        state, method_state = carry
+        (value, gradient), linearized = jax.linearize(
+            value_and_gradient,
+            state.parameters,
+        )
+        evaluated, _, optimality = _evaluate_bound_state(
+            state,
+            value,
+            gradient,
+            bounds,
+            termination,
+        )
+
+        def take_step(_):
+            active = bounds.active_mask(
+                evaluated.parameters,
+                gradient,
+                tolerance=method.active_tolerance,
+            )
+            free_gradient = jax.tree.map(
+                lambda value, mask: jnp.where(mask, 0.0, value),
+                gradient,
+                active,
+            )
+            space = PyTreeSpace(evaluated.parameters)
+
+            def hessian_action(direction):
+                free_direction = jax.tree.map(
+                    lambda value, mask: jnp.where(mask, 0.0, value),
+                    direction,
+                    active,
+                )
+                _, action = linearized(free_direction)
+                return jax.tree.map(
+                    lambda value, mask: jnp.where(mask, 0.0, value),
+                    action,
+                    active,
+                )
+
+            hessian = FunctionLinearOperator(
+                hessian_action,
+                source=space,
+                target=space,
+                properties=OperatorProperties(
+                    self_adjoint=True,
+                    evidence={"self_adjoint": "construction"},
+                ),
+                operator_id="bounded-objective-free-hessian",
+                closure_convert=False,
+            )
+            subproblem = solve_trust_region_subproblem(
+                TrustRegionQuadraticProblem(
+                    hessian,
+                    free_gradient,
+                    evaluated.trust_radius,
+                ),
+                method=method.subproblem,
+            )
+            unprojected = _tree_add_scaled(
+                evaluated.parameters,
+                subproblem.step,
+                1.0,
+            )
+            candidate = bounds.project(unprojected)
+            displacement = jax.tree.map(
+                lambda new, old: new - old,
+                candidate,
+                evaluated.parameters,
+            )
+            hessian_displacement = hessian.mv(displacement)
+            predicted = -(
+                _tree_inner(gradient, displacement)
+                + 0.5 * _tree_inner(displacement, hessian_displacement)
+            )
+            candidate_value, candidate_gradient = value_and_gradient(candidate)
+            actual = value - candidate_value
+            ratio = actual / jnp.maximum(predicted, 1e-30)
+            candidate_finite = (
+                jnp.isfinite(candidate_value)
+                & _tree_allfinite(candidate)
+                & _tree_allfinite(candidate_gradient)
+            )
+            accepted = (
+                subproblem.successful
+                & candidate_finite
+                & jnp.isfinite(predicted)
+                & (predicted > 0.0)
+                & jnp.isfinite(ratio)
+                & (ratio >= method.acceptance_ratio)
+            )
+            step_norm = _tree_norm(displacement)
+            shrink = (
+                ~subproblem.successful
+                | ~candidate_finite
+                | ~jnp.isfinite(ratio)
+                | (ratio < method.shrink_ratio)
+            )
+            expand = (
+                accepted
+                & (ratio > method.expansion_ratio)
+                & subproblem.diagnostics.boundary_hit
+            )
+            next_radius = jnp.where(
+                shrink,
+                jnp.maximum(
+                    method.minimum_radius,
+                    method.shrink_factor * evaluated.trust_radius,
+                ),
+                jnp.where(
+                    expand,
+                    jnp.minimum(
+                        method.maximum_radius,
+                        method.expansion_factor * evaluated.trust_radius,
+                    ),
+                    evaluated.trust_radius,
+                ),
+            )
+            accepted_parameters = _tree_where(
+                accepted,
+                candidate,
+                evaluated.parameters,
+            )
+            accepted_gradient = _tree_where(
+                accepted,
+                candidate_gradient,
+                gradient,
+            )
+            accepted_projected = bounds.projected_gradient(
+                accepted_parameters,
+                accepted_gradient,
+            )
+            accepted_optimality = _tree_norm(accepted_projected)
+            stagnated = (
+                accepted
+                & (
+                    step_norm
+                    <= termination.step_threshold(_tree_norm(accepted_parameters))
+                )
+                & (
+                    accepted_optimality
+                    > termination.optimality_threshold(evaluated.initial_optimality)
+                )
+            )
+            failed = (~accepted) & (next_radius <= method.minimum_radius)
+            status = jnp.where(
+                stagnated,
+                int(OptimizationStatus.STAGNATION),
+                jnp.where(
+                    failed,
+                    int(OptimizationStatus.TRUST_REGION_FAILED),
+                    int(OptimizationStatus.ITERATING),
+                ),
+            ).astype(jnp.int32)
+            return evaluated._replace(
+                parameters=accepted_parameters,
+                status=status,
+                iterations=evaluated.iterations + 1,
+                final_step_norm=step_norm,
+                accepted_rate=jnp.where(accepted, 1.0, 0.0),
+                accepted_steps=evaluated.accepted_steps + accepted.astype(jnp.int32),
+                rejected_steps=evaluated.rejected_steps + (~accepted).astype(jnp.int32),
+                objective_evaluations=evaluated.objective_evaluations + 1,
+                gradient_evaluations=evaluated.gradient_evaluations + 1,
+                hvp_evaluations=(
+                    evaluated.hvp_evaluations + subproblem.diagnostics.hessian_actions + 1
+                ),
+                linear_solves=evaluated.linear_solves + 1,
+                linear_iterations=(
+                    evaluated.linear_iterations + subproblem.diagnostics.iterations
+                ),
+                setup_refreshes=evaluated.setup_refreshes + 1,
+                numeric_refreshes=evaluated.numeric_refreshes + 1,
+                globalization_evaluations=evaluated.globalization_evaluations + 1,
+                trust_radius=next_radius,
+                reduction_ratio=ratio,
+            )
+
+        next_state = jax.lax.cond(
+            evaluated.status == int(OptimizationStatus.ITERATING),
+            take_step,
+            lambda _: evaluated,
+            None,
+        )
+        return next_state, method_state
+
+    return _run_bound_iterations(
+        seeded,
+        (),
+        iteration_body,
+        termination,
+    )
+
+
 def _initial_lbfgs_state(
     parameters: PyTree[Any],
     history_size: int,
@@ -1200,7 +1518,9 @@ def _run_projected_lbfgs(
 
 
 def _solve_bound_constrained(
-    method: ProjectedGradient | ActiveSetNewton | ProjectedLBFGS,
+    method: (
+        ProjectedGradient | ActiveSetNewton | BoundedNewtonTrustRegion | ProjectedLBFGS
+    ),
     problem: MinimizationProblem,
     initial_parameters: PyTree[Any],
     /,
@@ -1276,6 +1596,15 @@ def _solve_bound_constrained(
             termination,
         )
         active_tolerance = method.active_tolerance
+    elif isinstance(method, BoundedNewtonTrustRegion):
+        state = _run_bounded_newton_trust_region(
+            method,
+            value_function,
+            bounds,
+            initial_state,
+            termination,
+        )
+        active_tolerance = method.active_tolerance
     elif isinstance(method, ProjectedLBFGS):
         state = _run_projected_lbfgs(
             method,
@@ -1334,6 +1663,8 @@ def _solve_bound_constrained(
         final_optimality_norm=final_optimality,
         final_step_norm=state.final_step_norm,
         accepted_step_size=state.accepted_rate,
+        damping=state.trust_radius,
+        reduction_ratio=state.reduction_ratio,
         direction_fallbacks=state.direction_fallbacks,
         primal_feasibility=bounds.violation(state.parameters),
         dual_feasibility=final_optimality,
@@ -1349,7 +1680,11 @@ def _solve_bound_constrained(
         problem_id=problem.problem_id,
         method=method.method_id,
         backend="phydrax",
-        globalization="projected-armijo",
+        globalization=(
+            "projected-trust-region"
+            if isinstance(method, BoundedNewtonTrustRegion)
+            else "projected-armijo"
+        ),
         matrix_free=True,
         implicit_differentiation=True,
         notes="Feasible iterates maintained by projection.",
@@ -1404,4 +1739,9 @@ def _infeasible_result(
     )
 
 
-__all__ = ["ActiveSetNewton", "ProjectedGradient", "ProjectedLBFGS"]
+__all__ = [
+    "ActiveSetNewton",
+    "BoundedNewtonTrustRegion",
+    "ProjectedGradient",
+    "ProjectedLBFGS",
+]
