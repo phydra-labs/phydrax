@@ -60,7 +60,10 @@
 
 ::: phydrax.equations.compile_variational_problem
 
-## First-order finite volume
+## Structured finite volume
+
+The complete finite-volume API is documented under
+[Structured finite volume](finite_volume.md).
 
 ::: phydrax.discretization.FiniteVolumePlan
 
@@ -70,15 +73,7 @@
 
 ---
 
-::: phydrax.discretization.FirstOrderFiniteVolumeDynamics
-
----
-
-::: phydrax.equations.ConservationProblemIR
-
----
-
-::: phydrax.equations.CompiledConservationProblem
+::: phydrax.discretization.FiniteVolumeMethodPlan
 
 ---
 

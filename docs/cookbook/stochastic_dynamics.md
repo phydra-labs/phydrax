@@ -184,7 +184,7 @@ normalization_condition = phx.conditions.Moment(
     lambda p: p / num_t,
     target=jnp.full((num_t,), 1.0 / num_t),
 )
-normalization = phx.terms.MomentPenalty(
+normalization = phx.terms.RandomizedMomentPenalty(
     normalization_condition,
     phx.integration.per_step(
         phx.integration.over(normalization_condition.on, axes="x"),

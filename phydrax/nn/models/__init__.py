@@ -43,6 +43,7 @@ from ._port_hamiltonian import (
     FeatureNormPotential,
     PortHamiltonianVectorField,
 )
+from ._projective_potential import ProjectiveInvariantPotential
 from ._recurrent import (
     BidirectionalRecurrentSequenceModel,
     RecurrentSequenceModel,
@@ -77,6 +78,7 @@ from .wrappers import (
 
 
 __all__ = [
+    "ProjectiveInvariantPotential",
     "AbstractEdgeBasis",
     "BSplineEdgeBasis",
     "BSplineGrid",

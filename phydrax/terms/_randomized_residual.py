@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from hashlib import sha256
-from math import prod
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -20,6 +19,7 @@ from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..operators.differential._dimension_estimators import DimensionOperatorSamples
 from ..operators.differential._stochastic_estimators import StochasticOperatorSamples
+from ._randomized_quadratic import event_inner as _event_inner, randomized_squared_mean
 
 
 RandomizedResidualLossMode: TypeAlias = Literal[
@@ -200,23 +200,6 @@ def _operator_samples(
     raise TypeError("residual_evaluator returned an unsupported sample object.")
 
 
-def _event_inner(values: Array, event_shape: tuple[int, ...], /) -> Array:
-    if not event_shape:
-        return jnp.real(jnp.conj(values) * values)
-    event_size = prod(event_shape)
-    flattened = values.reshape(values.shape[: -len(event_shape)] + (event_size,))
-    return jnp.sum(jnp.real(jnp.conj(flattened) * flattened), axis=-1)
-
-
-def _cross_inner(left: Array, right: Array, event_shape: tuple[int, ...], /) -> Array:
-    if not event_shape:
-        return jnp.real(jnp.conj(left) * right)
-    event_size = prod(event_shape)
-    left_flat = left.reshape(left.shape[: -len(event_shape)] + (event_size,))
-    right_flat = right.reshape(right.shape[: -len(event_shape)] + (event_size,))
-    return jnp.sum(jnp.real(jnp.conj(left_flat) * right_flat), axis=-1)
-
-
 def _per_sample_loss(
     left: RandomizedResidualSamples,
     mode: RandomizedResidualLossMode,
@@ -224,8 +207,7 @@ def _per_sample_loss(
     *,
     right: RandomizedResidualSamples | None,
 ) -> Array:
-    if mode == "plug_in":
-        return _event_inner(left.mean, left.event_shape)
+    right_values = None
     if mode == "independent_product":
         if right is None:
             raise RuntimeError("Independent-product residual samples are unavailable.")
@@ -235,14 +217,13 @@ def _per_sample_loss(
             or right.values.shape != left.values.shape
         ):
             raise ValueError("Left and right residual sample shapes must match.")
-        return _cross_inner(left.mean, right.mean, left.event_shape)
-    count = left.num_realizations
-    summed = jnp.sum(left.values, axis=0)
-    total_cross = _event_inner(summed, left.event_shape) - jnp.sum(
-        _event_inner(left.values, left.event_shape),
-        axis=0,
+        right_values = right.values
+    return randomized_squared_mean(
+        left.values,
+        left.event_shape,
+        mode,
+        right=right_values,
     )
-    return total_cross / float(count * (count - 1))
 
 
 def _reduce(

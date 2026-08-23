@@ -87,31 +87,55 @@ def _fem_case(width, repeats):
 
 
 def _finite_volume_case(width, repeats):
-    vertices, faces = _triangular_grid(width)
+    grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(width),
+            phx.discretization.UniformCellAxisSpec(width),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
     started = time.perf_counter()
     discretization = phx.discretization.FiniteVolumePlan(
-        vertices,
-        faces,
-        field_name="u",
+        grid, field_name="u"
     ).prepare()
+    velocity = (0.7, -0.2)
+    system = phx.equations.ScalarConservationSystem(
+        2,
+        lambda state, axis, args: velocity[axis] * state,
+        lambda left, right, axis, args: jnp.full(
+            left.shape[:-1], abs(velocity[axis])
+        ),
+        system_id="benchmark-transport",
+    )
+    pair = phx.discretization.FiniteVolumeBoundaryPair(
+        phx.discretization.ExtrapolationBoundary(),
+        phx.discretization.ExtrapolationBoundary(),
+    )
     problem = phx.equations.ConservationProblemIR(
         "transport",
         "u",
-        lambda time, state, points, args: state[:, None] * jnp.asarray([0.7, -0.2]),
-        lambda left, right, normals, args: jnp.abs(normals @ jnp.asarray([0.7, -0.2])),
-        exterior_state=lambda time, state, points, normals, args: state,
+        system,
+        phx.discretization.FiniteVolumeBoundarySet(("x", "y"), (pair, pair)),
     )
-    compiled = phx.equations.compile_conservation_problem(problem, discretization)
+    method = phx.discretization.FiniteVolumeMethodPlan(
+        phx.discretization.MUSCLReconstruction(),
+        phx.discretization.HLLFluxPlan(),
+    )
+    compiled = phx.equations.compile_conservation_problem(
+        problem, discretization, method
+    )
     preparation = time.perf_counter() - started
-    state = jnp.sin(jnp.pi * discretization.cell_centroids[:, 0])
+    state = jnp.sin(jnp.pi * discretization.cell_centers[..., :1])
     action = eqx.filter_jit(lambda value: compiled(jnp.asarray(0.0), value))
     action(state).block_until_ready()
     value, steady = _timed(lambda: action(state), repeats)
     return {
         "preparation_seconds": preparation,
         "steady_action_seconds": steady,
-        "cells": int(faces.shape[0]),
-        "faces": int(discretization.face_lengths.shape[0]),
+        "cells": int(np.prod(discretization.cell_shape)),
+        "faces": int(
+            sum(np.prod(layout.shape) for layout in discretization.face_layouts)
+        ),
         "maximum_absolute_value": float(jnp.max(jnp.abs(value))),
     }
 
@@ -127,7 +151,7 @@ def main():
     report = {
         "tensor": _tensor_case(arguments.tensor_size, arguments.repeats),
         "p1_finite_element": _fem_case(arguments.mesh_width, arguments.repeats),
-        "first_order_finite_volume": _finite_volume_case(
+        "structured_finite_volume": _finite_volume_case(
             arguments.mesh_width,
             arguments.repeats,
         ),

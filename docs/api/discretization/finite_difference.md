@@ -125,29 +125,11 @@
 
 ::: phydrax.equations.CompiledFiniteDifferenceDynamics
 
-## Conservative operators
+## Conservative face operators
 
-::: phydrax.discretization.FaceCoefficientPlan
-
----
-
-::: phydrax.discretization.ConservativeBoundaryCondition
-
----
-
-::: phydrax.discretization.ConservativeDiffusionPlan
-
----
-
-::: phydrax.discretization.PreparedConservativeDiffusion
-
----
-
-::: phydrax.discretization.ConservativeAdvectionPlan
-
----
-
-::: phydrax.discretization.PreparedConservativeAdvection
+Cell-to-face conservative diffusion and advection now belong to the
+[structured finite-volume API](finite_volume.md). Finite-difference equation lowering
+reuses those prepared flux operators where the requested expression is conservative.
 
 ## SBP-SAT and mapped geometry
 
@@ -243,43 +225,8 @@
 
 ## High-resolution hyperbolic methods
 
-::: phydrax.discretization.HighResolutionReconstructionPlan
-
----
-
-::: phydrax.discretization.NonuniformWENOReconstructionPlan
-
----
-
-::: phydrax.discretization.CharacteristicReconstructionPlan
-
----
-
-::: phydrax.discretization.PositivityLimiterPlan
-
----
-
-::: phydrax.discretization.EntropyStableEulerFlux
-
----
-
-::: phydrax.discretization.Euler1DSystem
-
----
-
-::: phydrax.discretization.Euler1DDynamics
-
----
-
-::: phydrax.discretization.MultispeciesEuler1DSystem
-
----
-
-::: phydrax.discretization.IdealMHD1DSystem
-
----
-
-::: phydrax.discretization.UnsplitFluxDifferenceDynamics
+Cell-average reconstruction, numerical fluxes, physical conservation systems, and
+positivity policies belong to the [structured finite-volume API](finite_volume.md).
 
 ## AMR and distributed execution
 
@@ -291,7 +238,7 @@
 
 ---
 
-::: phydrax.discretization.FDAMRSubcyclingPlan
+::: phydrax.discretization.ConservativeAMRSubcyclingPlan
 
 ---
 

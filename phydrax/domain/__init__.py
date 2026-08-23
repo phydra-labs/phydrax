@@ -93,6 +93,7 @@ from ._ragged_series_dataset import (
     RaggedSeriesSampling,
 )
 from ._reference import reference_transport
+from ._referenced_density import DensityReference, ReferencedDensityField
 from ._riemannian_measure import (
     with_riemannian_measure,
     with_volume_density,
@@ -237,6 +238,8 @@ __all__ = [
     "SelectionSpec",
     "DomainComponent",
     "CochainCellRegion",
+    "DensityReference",
+    "ReferencedDensityField",
     "with_riemannian_measure",
     "with_volume_density",
     "with_weighted_riemannian_measure",

@@ -5,12 +5,25 @@
 """Measure-aware deterministic, adaptive, and stochastic integration."""
 
 from ._api import from_samples, integrate, IntegrationRealization, materialize, reduce
+from ._atlas import (
+    AtlasIntegrationResult,
+    AtlasIntegrationTarget,
+    AtlasPatchQuadrature,
+    integrate_atlas_scalar,
+)
 from ._batches import (
     IntegrationBatch,
     MappedIntegrationBatch,
     PointIntegrationBatch,
     SeparableIntegrationBatch,
     WeightedSampleBatch,
+)
+from ._calabi_yau import (
+    integrate_projective_samples,
+    projective_measure_target,
+    ProjectiveIntegralResult,
+    ProjectiveMeasureKind,
+    ProjectiveMeasureTarget,
 )
 from ._calibration import calibrate, MeasureCalibrationDiagnostics
 from ._compression import compress, MeasureCompressionDiagnostics
@@ -81,6 +94,11 @@ from ._plans import (
     StratifiedMonteCarloPlan,
 )
 from ._product import ProductIntegrationRealization
+from ._riemannian import (
+    MetricMeasureNormalization,
+    normalize_metric_measure,
+    riemannian_boundary_target,
+)
 from ._rules import (
     ClenshawCurtisRule,
     CubatureRule,
@@ -148,6 +166,10 @@ from ._transformations import (
 
 
 __all__ = [
+    "AtlasIntegrationResult",
+    "AtlasIntegrationTarget",
+    "AtlasPatchQuadrature",
+    "integrate_atlas_scalar",
     "AdaptivePartition",
     "AdaptiveIntegration",
     "AdaptiveQuadratureDiagnostics",
@@ -162,6 +184,11 @@ __all__ = [
     "AdaptiveSplittingDiagnostics",
     "AdaptiveSplittingStatus",
     "AdaptiveSplittingEnsembleResult",
+    "ProjectiveIntegralResult",
+    "ProjectiveMeasureKind",
+    "ProjectiveMeasureTarget",
+    "integrate_projective_samples",
+    "projective_measure_target",
     "advance_multilevel",
     "finalize_multilevel",
     "initialize_multilevel",
@@ -203,6 +230,9 @@ __all__ = [
     "MappedIntegrationBatch",
     "MappedIntegrationDiagnostics",
     "MappedTarget",
+    "MetricMeasureNormalization",
+    "normalize_metric_measure",
+    "riemannian_boundary_target",
     "ReferenceCellData",
     "ReferenceHexahedronRule",
     "ReferenceIntervalRule",

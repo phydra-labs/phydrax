@@ -18,6 +18,12 @@ from ._amplitude import (
     LogAmplitude,
     sampling_log_weight,
 )
+from ._berry import (
+    berry_link,
+    berry_loop_phase,
+    quantum_geometric_tensor,
+    QuantumGeometricTensorResult,
+)
 from ._composite import embed_operator, partial_trace, tensor_product
 from ._discrete import (
     AbstractDiscreteQuantumOperator,
@@ -32,6 +38,12 @@ from ._dynamics import (
     schrodinger_residual,
     von_neumann_residual,
 )
+from ._fock import (
+    BosonicFockSpace,
+    FockCutoffEvidence,
+    jaynes_cummings_hamiltonian,
+    kerr_hamiltonian,
+)
 from ._information import (
     density_fidelity,
     purity,
@@ -39,7 +51,28 @@ from ._information import (
     trace_distance,
     von_neumann_entropy,
 )
+from ._open_contracts import (
+    ApproximationAxis,
+    OpenSystemApproximationEvidence,
+    OpenSystemPhysicalityEvidence,
+    OpenSystemRefinement,
+    PhysicalityStatus,
+    QuantumGeneratorAction,
+    QuantumObservablePlan,
+)
 from ._open_system import lindblad_dissipator, lindblad_residual
+from ._propagation import (
+    apply_unitary_to_state,
+    conjugate_density,
+    density_invariant_residuals,
+    unitarity_residual,
+)
+from ._pseudomode import (
+    BathCorrelationExpansion,
+    lorentzian_pseudomode,
+    Pseudomode,
+    ReactionCoordinateMapping,
+)
 from ._states import (
     density_expectation,
     density_from_factor,
@@ -87,4 +120,27 @@ __all__ = [
     "unit_trace_residual",
     "von_neumann_residual",
     "von_neumann_entropy",
+    "QuantumGeometricTensorResult",
+    "apply_unitary_to_state",
+    "berry_link",
+    "berry_loop_phase",
+    "conjugate_density",
+    "density_invariant_residuals",
+    "quantum_geometric_tensor",
+    "unitarity_residual",
+    "ApproximationAxis",
+    "BathCorrelationExpansion",
+    "BosonicFockSpace",
+    "FockCutoffEvidence",
+    "OpenSystemApproximationEvidence",
+    "OpenSystemPhysicalityEvidence",
+    "OpenSystemRefinement",
+    "PhysicalityStatus",
+    "Pseudomode",
+    "QuantumGeneratorAction",
+    "QuantumObservablePlan",
+    "ReactionCoordinateMapping",
+    "jaynes_cummings_hamiltonian",
+    "kerr_hamiltonian",
+    "lorentzian_pseudomode",
 ]

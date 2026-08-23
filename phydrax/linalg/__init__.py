@@ -69,6 +69,17 @@ from ._factorizations import (
     PreparedFactorization,
     refresh_factorization,
 )
+from ._hermitian_spectral import (
+    hermitian_exp,
+    hermitian_inverse_sqrt,
+    hermitian_log,
+    hermitian_sqrt,
+    HermitianFunctionResult,
+    HermitianSpectrum,
+    HermitianSylvesterOperator,
+    SylvesterSolveResult,
+    TracelessHermitianSpace,
+)
 from ._incomplete_factorizations import (
     ILUPreconditionerBuilder,
     ILUTPreconditionerBuilder,
@@ -471,6 +482,15 @@ from .krylov import (
 
 
 __all__ = [
+    "HermitianFunctionResult",
+    "HermitianSpectrum",
+    "HermitianSylvesterOperator",
+    "SylvesterSolveResult",
+    "TracelessHermitianSpace",
+    "hermitian_exp",
+    "hermitian_inverse_sqrt",
+    "hermitian_log",
+    "hermitian_sqrt",
     "AbstractLinearMethod",
     "AbstractLinearOperator",
     "AbstractSparseLinearOperator",

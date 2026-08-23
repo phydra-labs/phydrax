@@ -25,10 +25,12 @@ class AbstractGroundCost(StrictModule):
 
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         """Evaluate the complete pairwise cost matrix."""
-        left_points = _as_points(left, name="left")
-        right_points = _as_points(right, name="right")
-        if left_points.shape[1] != right_points.shape[1]:
-            raise ValueError("Ground-cost point designs must have equal feature size.")
+        left_points = jnp.asarray(left)
+        right_points = jnp.asarray(right, dtype=left_points.dtype)
+        if left_points.ndim < 2 or right_points.ndim < 2:
+            raise ValueError("Ground-cost designs require a leading sample axis.")
+        if left_points.shape[1:] != right_points.shape[1:]:
+            raise ValueError("Ground-cost point designs must share point shape.")
         return jax.vmap(
             lambda point: jax.vmap(lambda other: self.pairwise(point, other))(
                 right_points
@@ -122,14 +124,11 @@ class IntrinsicSquaredDistanceCost(AbstractGroundCost):
     def __init__(self, geometry: AbstractGeodesicManifold, /):
         if not isinstance(geometry, AbstractGeodesicManifold):
             raise TypeError("geometry must be an AbstractGeodesicManifold.")
-        if len(geometry.point_shape) != 1:
-            raise ValueError(
-                "Intrinsic transport currently requires vector-valued manifold points."
-            )
         self.geometry = geometry
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
-        left_point, right_point = _point_pair(left, right)
+        left_point = jnp.asarray(left)
+        right_point = jnp.asarray(right, dtype=left_point.dtype)
         expected = self.geometry.point_shape
         if left_point.shape != expected or right_point.shape != expected:
             raise ValueError(f"Intrinsic ground-cost points must have shape {expected}.")

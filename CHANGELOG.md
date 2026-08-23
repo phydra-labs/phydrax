@@ -29,13 +29,34 @@
   backend claims separate from mathematics, enforce frozen runner identity and
   initial fingerprints, record cold/warm/steady phases in flat JSON, and form
   family-compatible performance profiles.
+- Added Gaussian bosonic Lindblad dynamics, quantum-jump ensembles, adaptive
+  bosonic Fock spaces, pseudomode/reaction-coordinate embeddings, HEOM,
+  memory-kernel and TCL evolution, tensor-network states and truncation
+  evidence, and process-tensor MPO contracts.
+
+- Added projective-line Calabi–Yau campaign preparation, residue and induced
+  hypersurface geometry, positivity-globalized Kähler-potential solving,
+  Hermitian spectral/Sylvester infrastructure, faithful Bures density geometry,
+  SLD quantum Fisher actions, mixed-state tomography, fixed-rank/Uhlmann
+  primitives, and finite-dimensional Lindblad channel evolution.
+
+- Estimator-aware `RandomizedMomentPenalty` with U-statistic,
+  independent-product, and explicit plug-in modes; deterministic causal
+  convolution and Caputo field-operator provenance; integral/nonlocal physics
+  guidance; and an accuracy, bias, and performance benchmark campaign.
+- Added end-to-end weighted geometric diffusion semantics, right-trivialized
+  unitary propagation, abelian metric-DEC gauge fields, matrix-free Fisher and
+  Hessian operators, geodesic manifold flow matching, explicit atlas covers and
+  patch integration, CP^n Fubini–Study references, Dolbeault/Chern/Berry
+  calculus, projective hypersurfaces, Kähler-potential Monge–Ampère operators,
+  and Ricci-flat Kähler optimization composition.
 - Expanded `phydrax.metrix` with immersion validation and Riemannian map
   geometry; correct tensor-density covariant derivatives; weighted metric
   measures and intrinsic hypersurface normals; exact and numerical endpoint
   geodesics with Fréchet statistics and transport/flow-matching adapters;
   complex-projective, unitary, special-unitary, and Hermitian-positive-definite
   manifolds; real-coordinate almost-complex, Hermitian, Kähler, atlas, and local
-  Calabi–Yau diagnostics; Hessian and exponential-family information geometry;
+  SU(n) diagnostics; Hessian and exponential-family information geometry;
   vector-bundle gauge curvature; metric cochain Hodge assembly; anisotropic
   horizontal cometrics; and fixed-step Störmer–Verlet integration.
 
@@ -117,6 +138,25 @@
   variable-density projection, poroelasticity, and thermoelasticity. Certified
   FFT/DCT/DST direct solves and directional split-field acoustic PML remain integrated
   with the same provenance.
+- Structured finite volume now binds cell-average and directional face spaces directly
+  to tensor support; supports uniform/nonuniform Cartesian and stationary mapped
+  geometry, typed physical boundaries, piecewise-constant/MUSCL/WENO-Z/TENO/MP5 and
+  characteristic reconstruction, Rusanov/HLL/HLLC/Roe and entropy fluxes, normal and
+  transverse wave propagation, shallow-water f-wave balancing, multidimensional
+  split/unsplit execution, Euler/multispecies/MHD systems, positivity and
+  differentiability policies, conservative diffusion and compressible viscous fluxes,
+  MAC pressure projection, matrix-free linearization, conforming/nested multiblock
+  fluxes, and fixed-capacity AMR synchronization with integrated reflux.
+- Structured finite-volume runtime hardening adds immutable ideal/stiffened-gas
+  materials and constant/Sutherland/Prandtl transport closures; material-owned viscous
+  and mapped-viscous fluxes; slip, no-slip thermal, supersonic, characteristic, and
+  far-field boundaries; one prepared halo authority; Einfeldt-HLL fallback blending;
+  bounded SSPRK retry/status runtime; versioned case, precision, checksum checkpoint,
+  optional HDF5/XDMF output, differentiable scan/rematerialization rollout, quantitative
+  verification contracts and CLI, and NamedSharding decomposition with scaling
+  benchmarks.
+
+
 
 - `phydrax.weighting` exact and quadratically reconciled relative-entropy moment
   calibration for dense, sparse, and matrix-free feature actions, with affine-rank
@@ -253,6 +293,19 @@
   resource accounting.
 
 ### Changed
+- `MomentPenalty` now rejects resampled stochastic integration rather than
+  silently optimizing a variance-biased squared estimate. `time_convolution`
+  now accepts a deterministic `IntervalRule`; randomized QMC and importance
+  modes were removed from the field-valued operator.
+  Caputo field operators now use direct deterministic Gauss--Jacobi or
+  Gauss--Legendre evaluation for both supported order intervals; stochastic
+  sampler and endpoint-regularization arguments were removed.
+- Finite-volume ownership is now structured and face-first. The triangular generic
+  `FiniteVolumePlan`, system-specific reconstruction dynamics, and the
+  `phydrax.discretization.reconstruction` owner were removed. Physical conservation
+  systems now live in `phydrax.equations`, conservative face operators live in
+  `phydrax.discretization.finite_volume`, time advancement lives in `phydrax.solver`,
+  and `FDAMRSubcyclingPlan` is now `ConservativeAMRSubcyclingPlan`.
 
 - Orthogonal-polynomial evaluation and Gaussian rule construction now pass through
   one private convention boundary. Hermite and Laguerre KAN identity/default
@@ -303,6 +356,9 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Causal interval clustering now uses the Jacobian of the original reference
+  coordinate, and zero-duration convolution and Caputo evaluations return exact
+  zeros without evaluating singular kernels.
 
 - Masked BSDE and deep-splitting losses now sanitize inactive residuals before
   nonlinear reductions, Flower sanitizes masked source and normalization state,

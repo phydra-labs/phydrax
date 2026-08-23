@@ -541,6 +541,13 @@ from ._process_validation import (
     TrajectoryScoreDiagnostics,
 )
 from ._propagation import propagate, RandomSampleBatch, sample_joint
+from ._quantum_tomography import (
+    QuantumPOVM,
+    QuantumTomographyData,
+    tetrahedral_qubit_povm,
+    tomography_log_likelihood,
+    TomographyLikelihoodResult,
+)
 from ._rao_blackwellized import (
     ConditionalLinearObservation,
     ConditionalLinearTransition,
@@ -738,6 +745,11 @@ from ._whitening import GaussianPriorWhitening
 
 
 __all__ = [
+    "QuantumPOVM",
+    "QuantumTomographyData",
+    "TomographyLikelihoodResult",
+    "tetrahedral_qubit_povm",
+    "tomography_log_likelihood",
     "BELLMAN_INITIALIZATION_CURVATURE_FAILURE",
     "BELLMAN_INITIALIZATION_OPTIMIZER_FAILURE",
     "BELLMAN_PREDICTION_CURVATURE_FAILURE",

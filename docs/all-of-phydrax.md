@@ -559,6 +559,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 
 - **Forward PDE solve (PINN-style)**: interior residual + boundary/initial terms (soft or enforced).
   Start at [Getting started](index.md) and continue with the conditions-and-terms guide.
+- **Integral and nonlocal field learning**: compose deterministic causal,
+  spatial, or fractional operators inside ordinary residuals. Use
+  `RandomizedMomentPenalty` when a squared moment is resampled rather than
+  silently squaring one stochastic estimate. See the
+  [integral-physics cookbook](cookbook/integral_physics.md).
 - **Enforced BC/IC**: declare `EnforcementSpec` values with `phx.enforcement`,
   compile them into an `EnforcementProgram`, and pass that program to the solver.
   See [API reference](api/phydrax.md).

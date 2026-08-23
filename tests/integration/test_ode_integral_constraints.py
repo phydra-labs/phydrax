@@ -43,7 +43,7 @@ def _fixed_time_source(condition, times):
 
 
 def _moment_term(condition, plan):
-    return phx.terms.MomentPenalty(
+    return phx.terms.RandomizedMomentPenalty(
         condition,
         phx.integration.per_step(phx.integration.over(condition.on), plan),
     )

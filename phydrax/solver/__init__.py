@@ -45,6 +45,21 @@ term evaluation.
 """
 
 from ._bdf_method import BDFMethod
+from ._calabi_yau import (
+    CalabiYauMetricProblem,
+    CalabiYauMetricResult,
+    CalabiYauSolvePolicy,
+    solve_calabi_yau_metric,
+)
+from ._calabi_yau_archive import CalabiYauMetricArtifact, freeze_calabi_yau_result
+from ._calabi_yau_campaigns import (
+    CalabiYauCampaign,
+    cp1_calibration,
+    prepare_elliptic_curve,
+    prepare_fermat_calabi_yau,
+    prepare_fermat_quintic,
+    prepare_quartic_k3,
+)
 from ._collocation import (
     assemble_stochastic_collocation,
     COLLOCATION_NONFINITE,
@@ -207,6 +222,43 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._finite_volume import (
+    DirectionalSplitFiniteVolumePlan,
+    FiniteVolumeStepResult,
+    SplittingKind,
+    UnsplitFiniteVolumeSSPRK3Plan,
+)
+from ._finite_volume_case import (
+    FiniteVolumeCaseSpec,
+    FiniteVolumeExecutionSpec,
+    FiniteVolumePrecisionPolicy,
+    PrecisionDType,
+)
+from ._finite_volume_case_loader import (
+    load_finite_volume_case,
+    PreparedFiniteVolumeCase,
+)
+from ._finite_volume_checkpoint import (
+    FiniteVolumeCheckpoint,
+    FiniteVolumeCheckpointPlan,
+    read_finite_volume_checkpoint,
+    write_finite_volume_checkpoint,
+)
+from ._finite_volume_output import FiniteVolumeOutputPlan
+from ._finite_volume_rollout import (
+    FiniteVolumeGradientReport,
+    FiniteVolumeRematerializationPolicy,
+    FiniteVolumeRetentionPolicy,
+    FiniteVolumeRolloutPlan,
+    FiniteVolumeRolloutResult,
+)
+from ._finite_volume_runtime import (
+    FiniteVolumeAdvanceResult,
+    FiniteVolumeRunStatus,
+    FiniteVolumeRuntimeState,
+    FiniteVolumeStepPolicy,
+    PreparedFiniteVolumeRuntime,
+)
 from ._fractional_memory import (
     CaputoFractionalProblem,
     FractionalVectorField,
@@ -220,6 +272,12 @@ from ._functional_differential import (
     solve_functional_differential,
 )
 from ._functional_solver import FunctionalSolver
+from ._gaussian_lindblad import (
+    damped_thermal_oscillator,
+    GaussianLindbladProblem,
+    GaussianLindbladSolution,
+    solve_gaussian_lindblad,
+)
 from ._generalized_alpha import (
     GeneralizedAlphaMethod,
     GeneralizedAlphaSolution,
@@ -237,6 +295,14 @@ from ._geometric import (
     solver_state_geometry,
     SRKMK,
     StormerVerlet,
+)
+from ._heom import (
+    drude_lorentz_qubit_heom,
+    HEOMHierarchy,
+    HEOMProblem,
+    HEOMSolution,
+    solve_heom,
+    thermal_drude_lorentz_qubit_heom,
 )
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -270,6 +336,13 @@ from ._levy import (
     LevySmallJumpApproximation,
     solve_levy_sde,
 )
+from ._lindblad import (
+    amplitude_damping_problem,
+    dephasing_problem,
+    LindbladProblem,
+    LindbladSolution,
+    solve_lindblad,
+)
 from ._markov_cubature import (
     MarkovCubatureDiagnostics,
     MarkovCubatureMethod,
@@ -289,6 +362,16 @@ from ._memory import (
     VolterraFreeTerm,
     VolterraKernel,
     VolterraVectorField,
+)
+from ._memory_kernel import (
+    DynamicalMapPhysicality,
+    exponential_memory_qubit_problem,
+    MemoryKernelMasterEquation,
+    OpenSystemHistorySolution,
+    QuantumMemoryKernel,
+    solve_memory_kernel,
+    solve_time_local_open_system,
+    TimeLocalOpenSystemProblem,
 )
 from ._multirate import (
     multirate_amr_subcycling_plan,
@@ -325,6 +408,34 @@ from ._probabilistic_ode import (
     ProbabilisticODEUpdate,
     solve_probabilistic_ode,
 )
+from ._pseudomode import (
+    jaynes_cummings_pseudomode_problem,
+    PseudomodeEmbeddingProblem,
+    PseudomodeSolution,
+    solve_pseudomode,
+)
+from ._quantum_jump import (
+    amplitude_damping_trajectory_problem,
+    QuantumJumpProblem,
+    QuantumTrajectoryEnsemble,
+    solve_quantum_jump_ensemble,
+    StateVectorOperator,
+)
+from ._quantum_propagation import (
+    solve_unitary_propagator,
+    UnitaryGroupKind,
+    UnitaryPropagatorProblem,
+    UnitaryPropagatorSolution,
+)
+from ._quantum_tomography import (
+    freeze_quantum_tomography,
+    QuantumTomographyArtifact,
+    QuantumTomographyPolicy,
+    QuantumTomographyProblem,
+    QuantumTomographyResult,
+    solve_quantum_tomography,
+)
+from ._quantum_tomography_campaigns import tetrahedral_qubit_tomography
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -435,9 +546,64 @@ from ._variational_tdvp import (
 
 
 __all__ = [
+    "CalabiYauCampaign",
+    "CalabiYauMetricArtifact",
+    "CalabiYauMetricProblem",
+    "CalabiYauMetricResult",
+    "CalabiYauSolvePolicy",
+    "LindbladProblem",
+    "LindbladSolution",
+    "QuantumTomographyArtifact",
+    "QuantumTomographyPolicy",
+    "QuantumTomographyProblem",
+    "QuantumTomographyResult",
+    "amplitude_damping_problem",
+    "cp1_calibration",
+    "dephasing_problem",
+    "freeze_calabi_yau_result",
+    "freeze_quantum_tomography",
+    "prepare_elliptic_curve",
+    "prepare_fermat_calabi_yau",
+    "prepare_fermat_quintic",
+    "prepare_quartic_k3",
+    "solve_calabi_yau_metric",
+    "solve_lindblad",
+    "solve_quantum_tomography",
+    "tetrahedral_qubit_tomography",
+    "DynamicalMapPhysicality",
+    "GaussianLindbladProblem",
+    "GaussianLindbladSolution",
+    "HEOMHierarchy",
+    "HEOMProblem",
+    "HEOMSolution",
+    "MemoryKernelMasterEquation",
+    "OpenSystemHistorySolution",
+    "PseudomodeEmbeddingProblem",
+    "PseudomodeSolution",
+    "QuantumJumpProblem",
+    "QuantumMemoryKernel",
+    "QuantumTrajectoryEnsemble",
+    "StateVectorOperator",
+    "TimeLocalOpenSystemProblem",
+    "amplitude_damping_trajectory_problem",
+    "damped_thermal_oscillator",
+    "drude_lorentz_qubit_heom",
+    "exponential_memory_qubit_problem",
+    "jaynes_cummings_pseudomode_problem",
+    "solve_gaussian_lindblad",
+    "solve_heom",
+    "solve_memory_kernel",
+    "solve_pseudomode",
+    "solve_quantum_jump_ensemble",
+    "solve_time_local_open_system",
+    "thermal_drude_lorentz_qubit_heom",
     "SeparableHamiltonianResult",
     "integrate_stormer_verlet",
     "stormer_verlet_step",
+    "UnitaryGroupKind",
+    "UnitaryPropagatorProblem",
+    "UnitaryPropagatorSolution",
+    "solve_unitary_propagator",
     "AbstractDifferentiableDrivingPath",
     "AbstractGeometricSolver",
     "AbstractBSDERegressionBasis",
@@ -708,6 +874,31 @@ __all__ = [
     "StaggeredAcousticPlan",
     "StaggeredAcousticState",
     "StrangSplitPlan",
+    "DirectionalSplitFiniteVolumePlan",
+    "FiniteVolumeStepResult",
+    "SplittingKind",
+    "UnsplitFiniteVolumeSSPRK3Plan",
+    "FiniteVolumeAdvanceResult",
+    "FiniteVolumeRunStatus",
+    "FiniteVolumeRuntimeState",
+    "FiniteVolumeStepPolicy",
+    "PreparedFiniteVolumeRuntime",
+    "FiniteVolumeCaseSpec",
+    "FiniteVolumeExecutionSpec",
+    "FiniteVolumePrecisionPolicy",
+    "PrecisionDType",
+    "load_finite_volume_case",
+    "PreparedFiniteVolumeCase",
+    "FiniteVolumeCheckpoint",
+    "FiniteVolumeCheckpointPlan",
+    "read_finite_volume_checkpoint",
+    "write_finite_volume_checkpoint",
+    "FiniteVolumeOutputPlan",
+    "FiniteVolumeGradientReport",
+    "FiniteVolumeRematerializationPolicy",
+    "FiniteVolumeRetentionPolicy",
+    "FiniteVolumeRolloutPlan",
+    "FiniteVolumeRolloutResult",
     "solve_direct_ssa",
     "solve_jump_differential",
     "solve_next_reaction",

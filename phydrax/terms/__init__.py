@@ -48,6 +48,7 @@ from ._flow_matching import (
     FlowMatchingPolicy,
     FlowMatchingSamplingMode,
     FlowMatchingTerm,
+    ManifoldFlowMatchingMetric,
     RiemannianFlowMatchingMetric,
 )
 from ._graph_data import (
@@ -73,6 +74,11 @@ from ._ragged_time_series import (
     RaggedTimeSeriesDataTerm,
     RaggedTimeSeriesInterpolation,
 )
+from ._randomized_moment import (
+    RandomizedMomentBatch,
+    RandomizedMomentDiagnostics,
+    RandomizedMomentPenalty,
+)
 from ._randomized_residual import (
     BatchSampler,
     RandomizedResidualBatch,
@@ -84,6 +90,7 @@ from ._randomized_residual import (
     ResidualEvaluator,
 )
 from ._residual import ResidualPenalty
+from ._ricci_flat import ricci_flat_kahler_term
 from ._score_matching import (
     ScoreMatchingBatch,
     ScoreMatchingDiagnostics,
@@ -134,6 +141,8 @@ __all__ = [
     "EmpiricalSinkhornDivergenceTerm",
     "EuclideanFlowMatchingMetric",
     "RiemannianFlowMatchingMetric",
+    "ManifoldFlowMatchingMetric",
+    "ricci_flat_kahler_term",
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
     "FlowEndpointProvider",
@@ -158,6 +167,9 @@ __all__ = [
     "RaggedTimeSeriesBatch",
     "RaggedTimeSeriesDataTerm",
     "RaggedTimeSeriesInterpolation",
+    "RandomizedMomentBatch",
+    "RandomizedMomentDiagnostics",
+    "RandomizedMomentPenalty",
     "RandomizedResidualBatch",
     "RandomizedResidualDiagnostics",
     "RandomizedResidualLossMode",

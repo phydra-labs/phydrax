@@ -37,6 +37,7 @@ from . import (
     sparse,
     special,
     stochastic,
+    tensor_network,
     terms,
     transport,
     uq,
@@ -77,5 +78,6 @@ __all__ = [
     "solver",
     "stochastic",
     "uq",
+    "tensor_network",
     "weighting",
 ]

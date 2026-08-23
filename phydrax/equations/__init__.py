@@ -39,6 +39,34 @@ from ._fd_compile import (
     CompiledFiniteDifferenceDynamics,
     FiniteDifferenceCompilationPolicy,
 )
+from ._finite_volume_verification import (
+    couette_velocity_profile,
+    double_rarefaction_verification_case,
+    euler_riemann_verification_case,
+    finite_volume_convergence_result,
+    finite_volume_error_norms,
+    FiniteVolumeConservationBudget,
+    FiniteVolumeConvergenceResult,
+    FiniteVolumeErrorNorms,
+    FiniteVolumeVerificationCase,
+    lax_verification_case,
+    periodic_advection_verification_case,
+    poiseuille_velocity_profile,
+    sod_verification_case,
+    woodward_colella_verification_case,
+)
+from ._hyperbolic_systems import (
+    AbstractAdmissibleSystem,
+    AbstractCharacteristicSystem,
+    AbstractConservationSystem,
+    AbstractEntropySystem,
+    CompressibleNavierStokesSystem,
+    EulerSystem,
+    IdealMHDSystem,
+    MultispeciesEulerSystem,
+    ScalarConservationSystem,
+    ShallowWaterSystem,
+)
 from ._ir import (
     as_expression,
     PDECondition,
@@ -61,6 +89,11 @@ from ._manufactured import (
     ManufacturedNorm,
     ManufacturedPDECase,
     ManufacturedSpatialOperator,
+)
+from ._materials import (
+    AbstractThermodynamicMaterial,
+    IdealGasMaterial,
+    StiffenedGasMaterial,
 )
 from ._randomized_compile import (
     analyze_randomized_compilation,
@@ -103,6 +136,13 @@ from ._tokens import (
     stack_pde_tokens,
     tokenize_pde_ir,
 )
+from ._transport_closures import (
+    AbstractTransportClosure,
+    ConstantTransport,
+    PrandtlTransport,
+    SutherlandTransport,
+    TransportProperties,
+)
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
 from ._variational import (
     compile_variational_problem,
@@ -112,6 +152,12 @@ from ._variational import (
 
 
 __all__ = [
+    "AbstractAdmissibleSystem",
+    "AbstractCharacteristicSystem",
+    "AbstractConservationSystem",
+    "AbstractEntropySystem",
+    "AbstractThermodynamicMaterial",
+    "AbstractTransportClosure",
     "analyze_randomized_compilation",
     "BoundaryLift",
     "CompiledPDECondition",
@@ -135,6 +181,32 @@ __all__ = [
     "SemidiscreteDAEStructuralReport",
     "DiscreteStateLayout",
     "FiniteDifferenceCompilationPolicy",
+    "CompressibleNavierStokesSystem",
+    "ConstantTransport",
+    "EulerSystem",
+    "IdealMHDSystem",
+    "IdealGasMaterial",
+    "MultispeciesEulerSystem",
+    "ScalarConservationSystem",
+    "ShallowWaterSystem",
+    "PrandtlTransport",
+    "StiffenedGasMaterial",
+    "SutherlandTransport",
+    "TransportProperties",
+    "couette_velocity_profile",
+    "finite_volume_convergence_result",
+    "double_rarefaction_verification_case",
+    "euler_riemann_verification_case",
+    "lax_verification_case",
+    "finite_volume_error_norms",
+    "FiniteVolumeConservationBudget",
+    "FiniteVolumeConvergenceResult",
+    "FiniteVolumeErrorNorms",
+    "FiniteVolumeVerificationCase",
+    "periodic_advection_verification_case",
+    "poiseuille_velocity_profile",
+    "sod_verification_case",
+    "woodward_colella_verification_case",
     "IntegralCompiler",
     "ManufacturedConvergencePlan",
     "ManufacturedConvergenceResult",

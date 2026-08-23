@@ -40,18 +40,6 @@ from ._certification import (
 )
 from ._coefficients import fornberg_weights, StencilCoefficientPlan
 from ._compact import CompactFirstDerivative
-from ._conservative import (
-    AdvectionForm,
-    AdvectionReconstruction,
-    ConservativeAdvectionPlan,
-    ConservativeBoundaryCondition,
-    ConservativeBoundaryKind,
-    ConservativeDiffusionPlan,
-    FaceCoefficientPlan,
-    FaceInterpolationKind,
-    PreparedConservativeAdvection,
-    PreparedConservativeDiffusion,
-)
 from ._diagonalization import (
     diagonalize_fd_laplacian,
     FDBoundaryKind,
@@ -149,16 +137,6 @@ from ._stencil import (
 
 __all__ = [
     "CheckpointedFDAdjointPlan",
-    "AdvectionForm",
-    "AdvectionReconstruction",
-    "ConservativeAdvectionPlan",
-    "ConservativeBoundaryCondition",
-    "ConservativeBoundaryKind",
-    "ConservativeDiffusionPlan",
-    "FaceCoefficientPlan",
-    "FaceInterpolationKind",
-    "PreparedConservativeAdvection",
-    "PreparedConservativeDiffusion",
     "AxisBoundaryPair",
     "BoundaryAffineMap",
     "BoundaryConditionKind",

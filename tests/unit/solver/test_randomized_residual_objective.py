@@ -152,6 +152,21 @@ def test_resampled_collocation_is_materialized_once_per_optimizer_update():
     assert _parameter(trained.functions) > 0.5
 
 
+def test_signed_randomized_objective_rejects_best_sample_selection():
+    objective = RandomizedResidualTerm(
+        _noisy_evaluator(num_realizations=2, scale=1.0),
+        collocation={"count": 1},
+        sampling_mode="fixed",
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions=_functions(0.0),
+        terms=(objective,),
+    )
+
+    with pytest.raises(ValueError, match="keep_best=False"):
+        solver.solve(num_iter=1, optim=optax.sgd(0.1), log_every=0)
+
+
 def test_zero_valid_mass_is_rejected():
     def evaluator(functions, batch, key):
         del functions, batch, key
