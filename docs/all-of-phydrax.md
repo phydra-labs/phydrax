@@ -597,14 +597,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Enforced BC/IC**: declare `EnforcementSpec` values with `phx.enforcement`,
   compile them into an `EnforcementProgram`, and pass that program to the solver.
   See [API reference](api/phydrax.md).
-- **Data assimilation / hybrid physics-data**: pair `Observation` conditions
-  with finite sources and `ObservationPenalty` terms; use specialized
-  `SupervisedDatasetTerm`, `SupervisedClassificationTerm`,
-  `RaggedTimeSeriesDataTerm`, and `TrajectoryCaseDataTerm` where their dataset
-  semantics apply. `SupervisedClassificationTerm` contributes Bernoulli or
-  categorical negative log likelihood alongside ordinary physics terms. Use
-  `TrajectorySignal` for fixed measured forcings/covariates on ragged trajectory
-  domains, and evaluate held-out terms for diagnostics.
+- **Data assimilation / hybrid physics-data**: pair continuous `Observation`
+  conditions with finite sources and `ObservationPenalty`; use likelihood-backed
+  binary, multiclass, multilabel, or ordinal classification terms for discrete
+  observations. Soft-target and focal terms remain explicit non-posterior scores.
+  Dense-site, ragged-trajectory, and graph classification preserve their native
+  masks/measures; Dice/Jaccard/Tversky terms aggregate one support realization before
+  forming an overlap ratio. Transform one raw logit `DomainFunction` to probabilities
+  or a physical order parameter inside physics operators rather than duplicating the
+  trainable model in `FunctionalSolver.functions`.
   See [API reference](api/phydrax.md).
 - **Inverse problems (unknown coefficients/parameters)**: represent unknowns as additional fields or domain parameters, and couple them in residual operators.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).

@@ -145,8 +145,8 @@ term = phx.terms.SupervisedDatasetTerm(
 )
 ```
 
-For binary or mutually exclusive multiclass labels on those rows, train canonical
-logits with `SupervisedClassificationTerm`:
+For binary, mutually exclusive multiclass, or independent multilabel targets on
+empirical rows, train canonical logits with `SupervisedClassificationTerm`:
 
 ```python
 labels = jnp.asarray([0, 0, 1], dtype=jnp.int32)
@@ -166,13 +166,26 @@ classification = phx.terms.SupervisedClassificationTerm(
 ```
 
 Binary fields return one scalar logit. Multiclass fields return `K` full logits on
-their final axis, and their schema must declare all `K` class labels. Targets are
-encoded integer indices; `class_labels` retains the external vocabulary. Use
-`sample_mask` for row exclusion, `indices` for train/evaluation splits, and positive
-`sample_weight` values for an explicit empirical risk. The scalar `weight` instead
-scales the complete term relative to physics terms. A dense labelled field can use
-one dataset row per site, with area or volume weights supplied explicitly as
-`sample_weight`.
+their final axis. Multilabel fields return `L` independent logits and use
+`TargetSchema("multilabel", names=...)`; their probabilities are sigmoids, never a
+simplex. Ordinal fields return one scalar latent location and use
+`SupervisedOrdinalClassificationTerm` with fixed ordered thresholds. Hard targets
+are encoded integer or Boolean values. Use `sample_mask` for complete-row exclusion,
+`target_mask` for partially observed multilabel factors, `indices` for splits, and
+positive `sample_weight` values for empirical risk. A zero scalar term `weight`
+safely disables evaluation.
+
+Use `SupervisedSoftClassificationTerm` for binary probabilities or full categorical
+simplex targets, and `SupervisedFocalClassificationTerm` only when the deliberately
+non-proper focal risk is required. Soft and focal terms are optimization scores, not
+posterior likelihoods.
+
+For native dense labels, use `DenseSiteClassificationTerm` with a fixed explicit
+site grid; raw positional targets reject stochastic/count-based site resampling.
+`DenseOverlapClassificationTerm` supplies Dice, Jaccard, or Tversky support-coupled
+risk. `TrajectoryCaseClassificationTerm` handles one outcome per trajectory, while
+`RaggedTimeSeriesClassificationTerm` handles valid time-local labels without
+flattening case/time geometry. Hard time-local targets use nearest lookup only.
 
 Use `HyperRectangle` when the feature dimensions are continuous variables of the
 problem. Use `DatasetDomain` when the empirical row distribution is the domain you

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
@@ -30,7 +31,7 @@ class IntegralFunctional(AbstractSamplingTerm):
     objective_vars: tuple[str, ...]
     target: Any
     plan: Any
-    weight: Array
+    weight: float = eqx.field(static=True)
     integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction] | DomainFunction
     fixed_realization: IntegrationRealization | None
     label: str | None = eqx.field(static=True)
@@ -82,7 +83,10 @@ class IntegralFunctional(AbstractSamplingTerm):
         self.target = target
         self.plan = plan
         self.integrand = integrand
-        self.weight = jnp.asarray(weight, dtype=float).reshape(())
+        weight_value = float(weight)
+        if not math.isfinite(weight_value):
+            raise ValueError("weight must be finite.")
+        self.weight = weight_value
         self.label = None if label is None else str(label)
         self.materialization_policy = policy
         self.fixed_realization = fixed_realization
@@ -161,11 +165,14 @@ class IntegralFunctional(AbstractSamplingTerm):
         **kwargs: Any,
     ) -> Array:
         """Execute and return the raw signed scalar integral."""
+        if self.weight == 0.0:
+            return jnp.zeros((), dtype=float)
         realization = batch
         if realization is None:
             if self.materialization_policy == "caller":
                 raise ValueError(
-                    "Caller-managed IntegralFunctional requires batch=IntegrationRealization."
+                    "Caller-managed IntegralFunctional requires "
+                    "batch=IntegrationRealization."
                 )
             realization = self.sample(key=key)
         if not isinstance(realization, IntegrationRealization):

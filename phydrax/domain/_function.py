@@ -12,6 +12,7 @@ import coordax as cx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
@@ -109,6 +110,31 @@ class UnaryFieldEvaluator(StrictModule):
 
     def __call__(self, *args, key=None, **kwargs):
         return self.op(self.func(*args, key=key, **kwargs))
+
+
+def _terminal_softmax(values: Any, /) -> Any:
+    return jax.nn.softmax(values, axis=-1)
+
+
+class _ExpectationFieldOp(StrictModule, NonTrainableState):
+    class_values: jax.Array
+
+    def __init__(self, class_values: ArrayLike):
+        self.class_values = jnp.asarray(class_values)
+
+    def __call__(self, probabilities: Any, /) -> Any:
+        probabilities_ = jnp.asarray(probabilities)
+        if probabilities_.ndim < 1:
+            raise ValueError(
+                "expectation_field requires an output with a terminal class axis."
+            )
+        if int(probabilities_.shape[-1]) != int(self.class_values.shape[0]):
+            raise ValueError(
+                "expectation_field class_values length must match the terminal "
+                f"output axis, got {self.class_values.shape[0]} and "
+                f"{probabilities_.shape[-1]}."
+            )
+        return oe.contract("...c,c->...", probabilities_, self.class_values)
 
 
 class SwapAxesFieldEvaluator(StrictModule):
@@ -652,3 +678,72 @@ class DomainFunction(StrictModule):
             key=key,
             kwargs=kwargs,
         )
+
+
+def _require_domain_function(field: DomainFunction, /) -> None:
+    if not isinstance(field, DomainFunction):
+        raise TypeError("field must be a DomainFunction.")
+
+
+def _require_terminal_axis(axis: int, /) -> None:
+    try:
+        axis_ = operator.index(axis)
+    except TypeError as error:
+        raise TypeError("axis must be an integer.") from error
+    if axis_ != -1:
+        raise ValueError("Only the terminal output axis (axis=-1) is supported.")
+
+
+def sigmoid_field(field: DomainFunction, /) -> DomainFunction:
+    r"""Return the pointwise logistic transform of a domain field.
+
+    The returned field is a derived view over ``field``: it preserves the domain,
+    dependencies, and metadata while introducing no parameters of its own.
+    """
+    _require_domain_function(field)
+    return DomainFunction(
+        domain=field.domain,
+        deps=field.deps,
+        func=UnaryFieldEvaluator(field.func, jax.nn.sigmoid),
+        metadata=field.metadata,
+    )
+
+
+def softmax_field(
+    field: DomainFunction,
+    /,
+    *,
+    axis: int = -1,
+) -> DomainFunction:
+    r"""Normalize a field's terminal event axis with softmax."""
+    _require_domain_function(field)
+    _require_terminal_axis(axis)
+    return DomainFunction(
+        domain=field.domain,
+        deps=field.deps,
+        func=UnaryFieldEvaluator(field.func, _terminal_softmax),
+        metadata=field.metadata,
+    )
+
+
+def expectation_field(
+    field: DomainFunction,
+    class_values: ArrayLike,
+    /,
+    *,
+    axis: int = -1,
+) -> DomainFunction:
+    r"""Contract a probability field with values along its terminal class axis."""
+    _require_domain_function(field)
+    _require_terminal_axis(axis)
+    values = jnp.asarray(class_values)
+    if values.ndim != 1 or int(values.shape[0]) == 0:
+        raise ValueError("class_values must be a nonempty one-dimensional vector.")
+    if not bool(jnp.all(jnp.isfinite(values))):
+        raise ValueError("class_values must contain only finite values.")
+    return DomainFunction(
+        domain=field.domain,
+        deps=field.deps,
+        func=UnaryFieldEvaluator(field.func, _ExpectationFieldOp(values)),
+        metadata=field.metadata,
+    )

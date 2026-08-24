@@ -141,12 +141,12 @@ def physicalize_prediction(
                 f"{raw_field.query_name!r}, expected {target.query_name!r}."
             )
         values = raw_field.values
-        if normalization is not None:
+        if normalization is not None and target.output_spec.classification is None:
             if target.name not in normalization.targets:
                 raise KeyError(f"Missing normalizer for target field {target.name!r}.")
             values = normalization.targets[target.name].denormalize(values)
         values = target.dimensionalize(values)
-        values = target.output_spec.validate(
+        values = target.output_spec.validate_prediction(
             values,
             physical_batch,
             query_name=target.query_name,
@@ -184,7 +184,7 @@ def executionize_prediction(
         physical_field = prediction.field(target_name)
         template_field = template.field(model_name)
         values = target.nondimensionalize(physical_field.values)
-        if normalization is not None:
+        if normalization is not None and target.output_spec.classification is None:
             if target_name not in normalization.targets:
                 raise KeyError(f"Missing normalizer for target field {target_name!r}.")
             values = normalization.targets[target_name].normalize(values)
@@ -389,10 +389,7 @@ class OperatorExecutionPlan(StrictModule):
         for target, model_spec in zip(targets, declared_specs, strict=True):
             target_spec = target.output_spec
             assert target_spec is not None
-            if (
-                model_spec.channels != target_spec.channels
-                or model_spec.component_names != target_spec.component_names
-            ):
+            if model_spec.to_dict() != target_spec.to_dict():
                 raise ValueError(
                     f"Model output contract for {target.name!r} disagrees with the task."
                 )

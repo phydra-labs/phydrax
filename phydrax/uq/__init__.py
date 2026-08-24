@@ -43,6 +43,8 @@ from .._likelihoods import (
     CategoricalExponentialFamilyLikelihood,
     GaussianLikelihood,
     GaussianLocationScaleLikelihood,
+    IndependentBernoulliLikelihood,
+    OrdinalCumulativeLinkLikelihood,
     ScalarNaturalExponentialFamilyLikelihood,
     StudentTLikelihood,
 )
@@ -1073,6 +1075,8 @@ __all__ = [
     "CategoricalExponentialFamilyLikelihood",
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
+    "IndependentBernoulliLikelihood",
+    "OrdinalCumulativeLinkLikelihood",
     "StudentTLikelihood",
     "ScalarNaturalExponentialFamilyLikelihood",
     "CovarianceBatching",

@@ -41,6 +41,7 @@ class SupervisedDatasetBatch(StrictModule):
     target: Array
     indices: Array
     sample_weight: Array | None
+    target_mask: Array | None
 
     def __init__(
         self,
@@ -49,6 +50,7 @@ class SupervisedDatasetBatch(StrictModule):
         target: ArrayLike,
         indices: ArrayLike,
         sample_weight: ArrayLike | None = None,
+        target_mask: ArrayLike | None = None,
     ):
         target_array = jnp.asarray(target)
         indices_array = jnp.asarray(indices, dtype=jnp.int32)
@@ -75,10 +77,23 @@ class SupervisedDatasetBatch(StrictModule):
                     "Supervised dataset batch sample weights must be finite and "
                     "strictly positive."
                 )
+        if target_mask is None:
+            target_mask_array = None
+        else:
+            target_mask_array = jnp.asarray(target_mask)
+            if (
+                target_mask_array.dtype != jnp.bool_
+                or target_mask_array.shape != target_array.shape
+            ):
+                raise ValueError(
+                    "Supervised dataset batch target_mask must be Boolean and "
+                    "match its targets."
+                )
         self.points = points
         self.target = target_array
         self.indices = indices_array
         self.sample_weight = weight_array
+        self.target_mask = target_mask_array
 
 
 def _validate_targets(domain: DatasetDomain, values: ArrayLike, /) -> Array:

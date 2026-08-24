@@ -266,12 +266,18 @@ ordering, and exact isotonic blocks are discrete; smooth chains and smooth
 isotonic calibration are separately named alternatives.
 
 These recipes fit complete classical estimators from `MLBatch`. To train an
-arbitrary neural or physics-composed `DomainFunction`, use
-`phydrax.terms.SupervisedClassificationTerm` with the same `TargetSchema`.
-Binary outputs are one Bernoulli logit; mutually exclusive multiclass outputs are
-full categorical logits on the final axis. Independent multilabel probabilities and
-uncalibrated margins are different mathematical objects and are not accepted by
-that term.
+arbitrary neural or physics-composed `DomainFunction`, use the classification terms
+under `phydrax.terms`. Binary outputs are one Bernoulli logit; mutually exclusive
+multiclass outputs are full categorical logits; independent multilabel outputs are
+one sigmoid logit per named label. `TargetSchema("ordinal", class_labels=...)`
+declares an ordered vocabulary for the cumulative-link term and is distinct from
+query/item ranking.
+
+`SupervisedSoftClassificationTerm` consumes explicit probability-valued targets;
+label smoothing is performed when constructing those targets, not through a hidden
+term option. Focal and overlap objectives are explicit non-likelihood risks and may
+damage probability calibration. NLL, Brier, and calibration diagnostics remain the
+probabilistic reference surfaces.
 
 ### Decomposition and latent representations
 

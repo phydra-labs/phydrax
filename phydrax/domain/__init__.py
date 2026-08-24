@@ -63,6 +63,9 @@ from ._factor_component import FactorComponent
 from ._function import (
     BinaryFieldEvaluator,
     DomainFunction,
+    expectation_field,
+    sigmoid_field,
+    softmax_field,
     SwapAxesFieldEvaluator,
     UnaryFieldEvaluator,
 )
@@ -198,6 +201,9 @@ __all__ = [
     "BinaryFieldEvaluator",
     "ConcatenatedModelEvaluator",
     "DomainFunction",
+    "expectation_field",
+    "sigmoid_field",
+    "softmax_field",
     "SwapAxesFieldEvaluator",
     "UnaryFieldEvaluator",
     "DatasetDomain",

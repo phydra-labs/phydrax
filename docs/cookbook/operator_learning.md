@@ -1304,6 +1304,31 @@ laplacian_u = phx.operators.laplacian(u_for_this_source, var="x")
 Each loss first reduces coordinates for one physical case and then averages
 cases. This avoids changing the objective merely by changing points per case.
 
+## Operator field classification
+
+Declare statistical output semantics with the JSON-safe
+`OperatorClassificationSpec`. Ordered class names are strings and therefore produce
+canonical task, dataset, fit, artifact, and exact-resume fingerprints. Classification
+is never inferred from an integer target dtype.
+
+- binary predictions/targets are scalar at each query;
+- multiclass predictions add terminal `K` logits while hard targets remain scalar;
+- multilabel predictions and targets add terminal `L` independent coordinates;
+- ordinal predictions are scalar latent locations with fixed `K-1` thresholds.
+
+Classification targets and logits bypass physical affine normalization. Query masks
+and quadrature remain authoritative. Use `OperatorClassificationNLL`,
+`OperatorSoftClassificationLoss`, `OperatorFocalClassificationLoss`, or
+`OperatorOverlapLoss`; each reduces query support before cases and fingerprints its
+classification kind, ordered names, target encoding, reduction, and objective
+parameters. Zero term weight bypasses scoring, while zero query measure follows the
+explicit configured policy.
+
+Classification fields are dimensionless and have no physical component channels in
+the initial contract. Keep continuous physical fields separate and apply cochain or
+conservation physics only to those declared fields or an explicitly decoded
+probability/order field.
+
 ## Reproducible production training
 
 Fit normalization on the training partition only, then pass the same persisted
