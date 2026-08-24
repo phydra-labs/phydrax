@@ -129,6 +129,7 @@ class BosonicGaussianChannel(StrictModule):
     hermitian_precision: HermitianPrecisionPolicy
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     mode_count: int = eqx.field(static=True)
+    hbar: float = eqx.field(static=True)
     channel_id: str = eqx.field(static=True)
 
     def __init__(
@@ -196,11 +197,14 @@ class BosonicGaussianChannel(StrictModule):
             children={"cp-spectrum": cp_spectrum.precision_evidence},
         )
         self.mode_count = modes
+        self.hbar = float(hbar)
         self.channel_id = str(channel_id)
 
     def apply(self, state: BosonicGaussianState, /) -> BosonicGaussianState:
-        if state.mode_count != self.mode_count:
-            raise ValueError("Gaussian state and channel mode counts differ.")
+        if state.mode_count != self.mode_count or state.hbar != self.hbar:
+            raise ValueError(
+                "Gaussian state and channel mode counts or hbar conventions differ."
+            )
         return BosonicGaussianState(
             self.x @ state.mean + self.displacement,
             self.x @ state.covariance @ self.x.T + self.y,
@@ -210,13 +214,14 @@ class BosonicGaussianChannel(StrictModule):
         )
 
     def compose(self, after: BosonicGaussianChannel, /) -> BosonicGaussianChannel:
-        if after.mode_count != self.mode_count:
-            raise ValueError("Gaussian channel mode counts differ.")
+        if after.mode_count != self.mode_count or after.hbar != self.hbar:
+            raise ValueError("Gaussian channel mode counts or hbar conventions differ.")
         return BosonicGaussianChannel(
             after.x @ self.x,
             after.x @ self.y @ after.x.T + after.y,
             after.x @ self.displacement + after.displacement,
             channel_id=f"{after.channel_id}∘{self.channel_id}",
+            hbar=self.hbar,
             geometry_precision=after.geometry_precision,
             hermitian_precision=after.hermitian_precision,
         )

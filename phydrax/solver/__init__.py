@@ -222,6 +222,13 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._fermionic_gaussian import (
+    damped_fermionic_mode,
+    FermionicGaussianProblem,
+    FermionicGaussianSolution,
+    open_kitaev_chain,
+    solve_fermionic_gaussian,
+)
 from ._finite_volume import (
     DirectionalSplitFiniteVolumePlan,
     FiniteVolumeStepResult,
@@ -258,6 +265,12 @@ from ._finite_volume_runtime import (
     FiniteVolumeRuntimeState,
     FiniteVolumeStepPolicy,
     PreparedFiniteVolumeRuntime,
+)
+from ._fock_continuation import (
+    FockContinuationPolicy,
+    FockContinuationResult,
+    FockContinuationStage,
+    solve_fock_continuation,
 )
 from ._fractional_memory import (
     CaputoFractionalProblem,
@@ -304,6 +317,29 @@ from ._heom import (
     HEOMSolution,
     solve_heom,
     thermal_drude_lorentz_qubit_heom,
+)
+from ._heom_implicit import (
+    HEOMAdaptiveBDFEvidence,
+    HEOMAdaptiveBDFResult,
+    HEOMBDFEvidence,
+    HEOMBDFResult,
+    HEOMImplicitEvidence,
+    HEOMImplicitResult,
+    HEOMTierBlockPreconditioner,
+    solve_heom_adaptive_bdf,
+    solve_heom_backward_euler,
+    solve_heom_bdf,
+)
+from ._heom_production import (
+    HEOMContinuationResult,
+    HEOMContinuationStage,
+    HEOMGridContinuationResult,
+    solve_heom_continuation,
+    solve_heom_continuation_grid,
+)
+from ._heom_scaled import (
+    prepare_scaled_heom_topology,
+    ScaledHEOMTopology,
 )
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -365,14 +401,22 @@ from ._memory import (
     VolterraVectorField,
 )
 from ._memory_kernel import (
+    certify_memory_kernel_map,
     DynamicalMapPhysicality,
     exponential_memory_qubit_problem,
+    MemoryKernelMapCertification,
     MemoryKernelMasterEquation,
     OpenSystemHistorySolution,
     QuantumMemoryKernel,
     solve_memory_kernel,
     solve_time_local_open_system,
     TimeLocalOpenSystemProblem,
+)
+from ._mps_quantum_jump import (
+    LocalMPSJump,
+    MPSQuantumJumpProblem,
+    MPSQuantumTrajectoryResult,
+    solve_mps_quantum_jump,
 )
 from ._multirate import (
     multirate_amr_subcycling_plan,
@@ -387,7 +431,29 @@ from ._neural_cde import (
     NeuralCDEVectorField,
     train_neural_cde,
 )
-from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
+from ._neural_quantum_jump import (
+    NeuralJumpProjectionProblem,
+    NeuralJumpProjectionResult,
+    NeuralNoJumpTDVPProblem,
+    NeuralNoJumpTDVPResult,
+    solve_neural_jump_projection,
+    solve_neural_no_jump_tdvp,
+)
+from ._neural_sampled_trajectory import (
+    audit_connected_vmc_jump_projection,
+    ConnectedVMCJumpProjectionAudit,
+    ConnectedVMCNeuralTrajectoryPolicy,
+    ConnectedVMCNeuralTrajectoryProblem,
+    ConnectedVMCNeuralTrajectoryResult,
+    NeuralRateEvidence,
+    solve_connected_vmc_neural_trajectory,
+)
+from ._nonmarkov_campaign import (
+    lorentzian_qubit_comparison,
+    NonMarkovianComparisonResult,
+    spin_boson_dephasing_comparison,
+    SpinBosonComparisonResult,
+)
 from ._particles import (
     InteractingParticleProblem,
     InteractingParticleSolution,
@@ -409,11 +475,37 @@ from ._probabilistic_ode import (
     ProbabilisticODEUpdate,
     solve_probabilistic_ode,
 )
+from ._process_tomography import (
+    CausalProcessTomographyProblem,
+    CausalProcessTomographyResult,
+    fit_causal_process_initial_state,
+    informationally_complete_process_experiments,
+    ProcessTomographyExperiment,
+    tomography_designs_disjoint,
+)
 from ._pseudomode import (
     jaynes_cummings_pseudomode_problem,
     PseudomodeEmbeddingProblem,
     PseudomodeSolution,
     solve_pseudomode,
+)
+from ._purified_lindblad import (
+    apply_local_kraus_channel,
+    local_kraus_channel_from_lindblad,
+    LocalKrausChannel,
+    PurificationTruncationEvidence,
+    PurifiedLindbladProblem,
+    PurifiedLindbladResult,
+    solve_purified_lindblad,
+)
+from ._purified_tebd import (
+    apply_lpdo_two_site_unitary,
+    diagnose_purified_stationarity,
+    LPDOBondEvidence,
+    PurifiedStationarityDiagnostic,
+    PurifiedStrangProblem,
+    PurifiedStrangResult,
+    solve_purified_strang,
 )
 from ._quantum_jump import (
     amplitude_damping_trajectory_problem,
@@ -421,6 +513,15 @@ from ._quantum_jump import (
     QuantumTrajectoryEnsemble,
     solve_quantum_jump_ensemble,
     StateVectorOperator,
+)
+from ._quantum_jump_event import (
+    EventDrivenQuantumJumpResult,
+    QuantumJumpEventTable,
+    solve_event_driven_quantum_jump,
+)
+from ._quantum_jump_generic import (
+    quantum_jump_differential_problem,
+    solve_quantum_jump_generic,
 )
 from ._quantum_propagation import (
     solve_unitary_propagator,
@@ -437,6 +538,12 @@ from ._quantum_tomography import (
     solve_quantum_tomography,
 )
 from ._quantum_tomography_campaigns import tetrahedral_qubit_tomography
+from ._quantum_trajectory_contract import (
+    QuantumTrajectoryCheckpoint,
+    QuantumTrajectoryEventTable,
+    QuantumTrajectoryPlan,
+    QuantumTrajectoryStatus,
+)
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -507,6 +614,13 @@ from ._stencil_evolution import (
     StaggeredAcousticPlan,
     StaggeredAcousticState,
 )
+from ._stinespring_tomography import (
+    fit_causal_process_memory,
+    fit_stinespring_process,
+    ProcessMemoryRefitResult,
+    StinespringTomographyProblem,
+    StinespringTomographyResult,
+)
 from ._symplectic import (
     integrate_stormer_verlet,
     SeparableHamiltonianResult,
@@ -544,6 +658,11 @@ from ._variational_tdvp import (
     TDVPMode,
     VariationalTDVPPolicy,
     VariationalTDVPResult,
+)
+from ._xxz_open import (
+    boundary_driven_xxz_problem,
+    qualify_boundary_driven_xxz,
+    XXZQualificationResult,
 )
 
 
@@ -599,6 +718,35 @@ __all__ = [
     "solve_quantum_jump_ensemble",
     "solve_time_local_open_system",
     "thermal_drude_lorentz_qubit_heom",
+    "EventDrivenQuantumJumpResult",
+    "FermionicGaussianProblem",
+    "FermionicGaussianSolution",
+    "FockContinuationPolicy",
+    "FockContinuationResult",
+    "FockContinuationStage",
+    "HEOMContinuationResult",
+    "HEOMContinuationStage",
+    "LocalKrausChannel",
+    "LocalMPSJump",
+    "MPSQuantumJumpProblem",
+    "MPSQuantumTrajectoryResult",
+    "NeuralJumpProjectionProblem",
+    "NeuralJumpProjectionResult",
+    "NonMarkovianComparisonResult",
+    "PurificationTruncationEvidence",
+    "PurifiedLindbladProblem",
+    "PurifiedLindbladResult",
+    "QuantumJumpEventTable",
+    "apply_local_kraus_channel",
+    "damped_fermionic_mode",
+    "lorentzian_qubit_comparison",
+    "solve_event_driven_quantum_jump",
+    "solve_fermionic_gaussian",
+    "solve_fock_continuation",
+    "solve_heom_continuation",
+    "solve_mps_quantum_jump",
+    "solve_neural_jump_projection",
+    "solve_purified_lindblad",
     "SeparableHamiltonianResult",
     "integrate_stormer_verlet",
     "stormer_verlet_step",
@@ -950,4 +1098,61 @@ __all__ = [
     "FunctionalMatmulPrecision",
     "FunctionalPrecisionPolicy",
     "train_neural_cde",
+    "CausalProcessTomographyProblem",
+    "CausalProcessTomographyResult",
+    "HEOMAdaptiveBDFEvidence",
+    "HEOMAdaptiveBDFResult",
+    "HEOMImplicitEvidence",
+    "HEOMImplicitResult",
+    "LPDOBondEvidence",
+    "NeuralNoJumpTDVPProblem",
+    "NeuralNoJumpTDVPResult",
+    "ProcessTomographyExperiment",
+    "PurifiedStrangProblem",
+    "PurifiedStrangResult",
+    "QuantumTrajectoryCheckpoint",
+    "QuantumTrajectoryEventTable",
+    "QuantumTrajectoryPlan",
+    "QuantumTrajectoryStatus",
+    "ScaledHEOMTopology",
+    "SpinBosonComparisonResult",
+    "apply_lpdo_two_site_unitary",
+    "boundary_driven_xxz_problem",
+    "fit_causal_process_initial_state",
+    "informationally_complete_process_experiments",
+    "tomography_designs_disjoint",
+    "open_kitaev_chain",
+    "solve_heom_adaptive_bdf",
+    "solve_heom_backward_euler",
+    "solve_neural_no_jump_tdvp",
+    "solve_purified_strang",
+    "spin_boson_dephasing_comparison",
+    "HEOMBDFEvidence",
+    "HEOMBDFResult",
+    "HEOMGridContinuationResult",
+    "HEOMTierBlockPreconditioner",
+    "ConnectedVMCJumpProjectionAudit",
+    "ConnectedVMCNeuralTrajectoryPolicy",
+    "ConnectedVMCNeuralTrajectoryProblem",
+    "ConnectedVMCNeuralTrajectoryResult",
+    "NeuralRateEvidence",
+    "audit_connected_vmc_jump_projection",
+    "PurifiedStationarityDiagnostic",
+    "XXZQualificationResult",
+    "diagnose_purified_stationarity",
+    "local_kraus_channel_from_lindblad",
+    "prepare_scaled_heom_topology",
+    "qualify_boundary_driven_xxz",
+    "quantum_jump_differential_problem",
+    "certify_memory_kernel_map",
+    "MemoryKernelMapCertification",
+    "solve_heom_bdf",
+    "solve_heom_continuation_grid",
+    "solve_quantum_jump_generic",
+    "solve_connected_vmc_neural_trajectory",
+    "fit_causal_process_memory",
+    "ProcessMemoryRefitResult",
+    "StinespringTomographyProblem",
+    "StinespringTomographyResult",
+    "fit_stinespring_process",
 ]

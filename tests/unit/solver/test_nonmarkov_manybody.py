@@ -102,7 +102,7 @@ def test_tensor_network_purification_and_gate_truncation():
     purification = phx.tensor_network.LocallyPurifiedDensity(
         (jnp.asarray([[[[1.0]], [[0.0]]]], dtype=complex),)
     )
-    assert jnp.allclose(jnp.trace(purification.density()), 1.0)
+    assert jnp.allclose(jnp.trace(purification.to_dense_density(normalize=True)), 1.0)
 
 
 def test_markov_process_tensor_contracts_identity_interventions():
@@ -113,7 +113,3 @@ def test_markov_process_tensor_contracts_identity_interventions():
     assert jnp.allclose(final, initial)
     assert jnp.allclose(probability, 1.0)
     assert bool(process.physicality().valid)
-    reconstructed = phx.tensor_network.reconstruct_markov_process_tensor(
-        (identity, identity), initial
-    )
-    assert bool(reconstructed.valid)

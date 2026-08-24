@@ -13,12 +13,17 @@ from jaxtyping import Array, ArrayLike
 
 from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
-from ._open_contracts import ApproximationAxis, OpenSystemApproximationEvidence
+from ._open_contracts import (
+    ApproximationAxis,
+    ApproximationQuantity,
+    OpenSystemApproximationEvidence,
+)
 
 
 class FockCutoffEvidence(StrictModule):
     top_level_probability: Array
     boundary_amplitude: Array
+    state_norm_residual: Array
     valid: Array
     approximation: OpenSystemApproximationEvidence
 
@@ -27,7 +32,9 @@ class FockCutoffEvidence(StrictModule):
         top_level_probability: ArrayLike,
         boundary_amplitude: ArrayLike,
         cutoffs: Sequence[int],
+        state_norm_residual: ArrayLike,
         /,
+        top_probability_tolerance: float = 1e-6,
         precision: GeometryPrecisionPolicy | None = None,
         coordinates: ArrayLike | None = None,
     ):
@@ -38,15 +45,38 @@ class FockCutoffEvidence(StrictModule):
         boundary = precision_.output(boundary_amplitude)
         self.top_level_probability = top
         self.boundary_amplitude = boundary
-        self.valid = jnp.all(jnp.isfinite(top)) & jnp.all(top >= 0.0)
+        self.state_norm_residual = jnp.asarray(state_norm_residual)
+        self.valid = (
+            jnp.all(jnp.isfinite(top))
+            & jnp.all(top >= 0.0)
+            & jnp.isfinite(self.state_norm_residual)
+            & (self.state_norm_residual <= 1e-8)
+        )
         self.approximation = OpenSystemApproximationEvidence(
             "bosonic-fock",
             tuple(
                 ApproximationAxis(f"mode-{index}-cutoff", cutoff)
                 for index, cutoff in enumerate(cutoffs)
             ),
-            local_error=jnp.max(top),
-            valid=self.valid,
+            (
+                ApproximationQuantity(
+                    "maximum-top-level-probability",
+                    jnp.max(top),
+                    top_probability_tolerance,
+                    units="probability",
+                    norm_id="maximum",
+                    estimate_kind="estimate",
+                ),
+                ApproximationQuantity(
+                    "state-norm-residual",
+                    self.state_norm_residual,
+                    1e-8,
+                    units="dimensionless",
+                    norm_id="absolute",
+                    estimate_kind="bound",
+                ),
+            ),
+            execution_valid=self.valid,
             precision_evidence=precision_.evidence_for(
                 boundary if coordinates is None else coordinates
             ),
@@ -168,10 +198,12 @@ class BosonicFockSpace(StrictModule):
                 for mode, cutoff in enumerate(self.cutoffs)
             ]
         )
+        norm_residual = jnp.abs(jnp.sum(probabilities) - 1.0)
         return FockCutoffEvidence(
             top,
             jnp.sqrt(top),
             self.cutoffs,
+            norm_residual,
             precision=self.precision,
             coordinates=vector,
         )

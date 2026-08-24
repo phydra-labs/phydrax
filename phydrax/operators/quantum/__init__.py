@@ -18,6 +18,13 @@ from ._amplitude import (
     LogAmplitude,
     sampling_log_weight,
 )
+from ._bath_decomposition import (
+    drude_lorentz_matsubara,
+    drude_lorentz_pade,
+    drude_lorentz_pade_from_poles,
+    fit_bath_exponentials,
+    underdamped_brownian_two_pole,
+)
 from ._berry import (
     berry_link,
     berry_loop_phase,
@@ -51,10 +58,19 @@ from ._information import (
     trace_distance,
     von_neumann_entropy,
 )
+from ._nonmarkovianity import (
+    analyze_dynamical_map_series,
+    blp_information_backflow,
+    DynamicalMapSeriesPhysicality,
+)
 from ._open_contracts import (
     ApproximationAxis,
+    ApproximationQuantity,
+    evaluate_open_system_promotion,
     OpenSystemApproximationEvidence,
     OpenSystemPhysicalityEvidence,
+    OpenSystemPromotionDecision,
+    OpenSystemPromotionPolicy,
     OpenSystemRefinement,
     PhysicalityStatus,
     QuantumGeneratorAction,
@@ -129,10 +145,14 @@ __all__ = [
     "quantum_geometric_tensor",
     "unitarity_residual",
     "ApproximationAxis",
+    "ApproximationQuantity",
     "BathCorrelationExpansion",
     "BosonicFockSpace",
     "FockCutoffEvidence",
     "OpenSystemApproximationEvidence",
+    "evaluate_open_system_promotion",
+    "OpenSystemPromotionDecision",
+    "OpenSystemPromotionPolicy",
     "OpenSystemPhysicalityEvidence",
     "OpenSystemRefinement",
     "PhysicalityStatus",
@@ -141,6 +161,14 @@ __all__ = [
     "QuantumObservablePlan",
     "ReactionCoordinateMapping",
     "jaynes_cummings_hamiltonian",
+    "drude_lorentz_pade",
     "kerr_hamiltonian",
     "lorentzian_pseudomode",
+    "DynamicalMapSeriesPhysicality",
+    "analyze_dynamical_map_series",
+    "blp_information_backflow",
+    "drude_lorentz_matsubara",
+    "drude_lorentz_pade_from_poles",
+    "fit_bath_exponentials",
+    "underdamped_brownian_two_pole",
 ]

@@ -19,7 +19,7 @@ from ..linalg import (
     LinearSystem,
     solve as solve_linear,
 )
-from ..metrix import BosonicGaussianState
+from ..metrix import BosonicGaussianState, canonical_commutation_matrix
 
 
 class GaussianLindbladProblem(StrictModule):
@@ -27,6 +27,8 @@ class GaussianLindbladProblem(StrictModule):
     diffusion: Array
     forcing: Array
     initial_state: BosonicGaussianState
+    generator_cp_margin: Array
+    stability_margin: Array
     linear: LinearSolvePolicy
     problem_id: str = eqx.field(static=True)
 
@@ -57,6 +59,17 @@ class GaussianLindbladProblem(StrictModule):
         self.drift = drift_
         self.diffusion = 0.5 * (diffusion_ + diffusion_.T)
         self.forcing = forcing_
+        omega = canonical_commutation_matrix(initial_state.mode_count, dtype=drift_.dtype)
+        generator_matrix = self.diffusion.astype(complex) - 0.5j * initial_state.hbar * (
+            drift_ @ omega + omega @ drift_.T
+        )
+        generator_margin = jnp.min(jnp.linalg.eigvalsh(generator_matrix))
+        if not bool(jax.device_get(generator_margin >= -1e-9)):
+            raise ValueError(
+                "Gaussian Lindblad drift/diffusion violate the CP generator condition."
+            )
+        self.generator_cp_margin = generator_margin
+        self.stability_margin = -jnp.max(jnp.real(jnp.linalg.eigvals(drift_)))
         self.initial_state = initial_state
         self.linear = linear_
         self.problem_id = str(problem_id)
@@ -68,6 +81,8 @@ class GaussianLindbladProblem(StrictModule):
         )
 
     def stationary_state(self) -> BosonicGaussianState:
+        if not bool(jax.device_get(self.stability_margin > 0.0)):
+            raise ValueError("Gaussian stationary state requires Hurwitz drift.")
         dimension = self.drift.shape[0]
         identity = jnp.eye(dimension, dtype=self.drift.dtype)
         operator = jnp.kron(identity, self.drift) + jnp.kron(self.drift, identity)
@@ -81,13 +96,19 @@ class GaussianLindbladProblem(StrictModule):
             -self.forcing,
             policy=self.linear,
         ).value
-        return BosonicGaussianState(
+        state = BosonicGaussianState(
             mean,
             covariance,
             hbar=self.initial_state.hbar,
             geometry_precision=self.initial_state.geometry_precision,
             hermitian_precision=self.initial_state.hermitian_precision,
         )
+        residual = self.initial_state.geometry_precision.norm(
+            self.drift @ covariance + covariance @ self.drift.T + self.diffusion
+        )
+        if not bool(jax.device_get(state.valid & (residual <= 1e-7))):
+            raise ValueError("Gaussian stationary-state certification failed.")
+        return state
 
 
 class GaussianLindbladSolution(StrictModule):

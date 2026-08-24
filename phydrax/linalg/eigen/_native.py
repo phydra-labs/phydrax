@@ -9,6 +9,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from .._spaces import _coordinate_pairing_matrix
@@ -161,7 +162,7 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         scale,
         jnp.finfo(residual_norms.dtype).tiny,
     )
-    gram = jnp.einsum(
+    gram = oe.contract(
         "...ni,nm,...mj->...ij",
         jnp.conj(selected_vectors),
         pairing,
@@ -224,7 +225,7 @@ def _batched_operator_images(operator: Any, vectors: Array, /) -> Array:
 
 
 def _batched_column_norms(pairing: Array, block: Array, /) -> Array:
-    squared = jnp.einsum(
+    squared = oe.contract(
         "...ni,nm,...mi->...i",
         jnp.conj(block),
         pairing,

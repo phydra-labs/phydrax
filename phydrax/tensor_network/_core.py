@@ -56,22 +56,36 @@ class MatrixProductState(StrictModule):
             state = jnp.tensordot(state, tensor, axes=(-1, 0))
         return state[..., 0].reshape(-1)
 
-    def to_dense(self) -> Array:
+    def to_dense(self, /, *, maximum_elements: int = 1_000_000) -> Array:
+        count = 1
+        for dimension in self.physical_dimensions:
+            count *= dimension
+        if int(maximum_elements) <= 0 or count > int(maximum_elements):
+            raise ValueError(
+                f"Dense MPS materialization requires {count} elements; "
+                f"capacity is {int(maximum_elements)}."
+            )
         return self.precision.output(self._contract())
 
+    def inner(self, other: MatrixProductState, /) -> Array:
+        from ._environments import mps_inner
+
+        return mps_inner(self, other)
+
     def norm(self) -> Array:
-        return self.precision.norm(self._contract())
+        from ._environments import mps_norm_squared
+
+        return self.precision.decision(jnp.sqrt(mps_norm_squared(self)))
 
     def normalized(self) -> MatrixProductState:
         norm = self.norm()
-        first = jnp.asarray(
-            self.tensors[0] / norm,
-            dtype=self.tensors[0].dtype,
+        norm = eqx.error_if(
+            norm,
+            ~jnp.isfinite(norm) | (norm <= 0.0),
+            "MPS norm must be finite and positive.",
         )
-        return MatrixProductState(
-            (first,) + self.tensors[1:],
-            precision=self.precision,
-        )
+        tensors = (self.tensors[0] / norm,) + self.tensors[1:]
+        return MatrixProductState(tensors, precision=self.precision)
 
 
 class MatrixProductOperator(StrictModule):
@@ -171,14 +185,33 @@ class LocallyPurifiedDensity(StrictModule):
             (prod(self.physical_dimensions), prod(self.purification_dimensions))
         )
 
-    def amplitude(self) -> Array:
-        return self.precision.output(self._amplitude())
+    def raw_trace(self) -> Array:
+        from ._environments import lpdo_raw_trace
 
-    def density(self) -> Array:
+        return self.precision.decision(lpdo_raw_trace(self))
+
+    def to_dense_density(self, /, *, normalize: bool = False) -> Array:
         amplitude = self.precision.contraction(self._amplitude())
-        density = amplitude @ jnp.conj(amplitude.T)
-        trace = self.precision.sum(jnp.diag(density))
+        density = self.precision.accumulation(amplitude @ jnp.conj(amplitude.T))
+        if not normalize:
+            return self.precision.output(density)
+        trace = self.precision.decision(jnp.real(self.precision.sum(jnp.diag(density))))
+        trace = eqx.error_if(
+            trace,
+            ~jnp.isfinite(trace) | (trace <= 0.0),
+            "LPDO trace must be finite and positive.",
+        )
         return self.precision.output(density / trace)
+
+    def normalized(self) -> LocallyPurifiedDensity:
+        trace = self.raw_trace()
+        trace = eqx.error_if(
+            trace,
+            ~jnp.isfinite(trace) | (trace <= 0.0),
+            "LPDO trace must be finite and positive.",
+        )
+        tensors = (self.tensors[0] / jnp.sqrt(trace),) + self.tensors[1:]
+        return LocallyPurifiedDensity(tensors, precision=self.precision)
 
 
 # Local import avoids exposing a utility dependency in public signatures.

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -111,7 +112,7 @@ class QuantumPOVM(StrictModule):
         if rho.shape != (self.dimension, self.dimension):
             raise ValueError("Density shape does not match POVM dimension.")
         probabilities = jnp.real(
-            jnp.einsum(
+            oe.contract(
                 "kij,ji->k",
                 self.precision.accumulation(self.effects),
                 rho,
@@ -249,7 +250,7 @@ def tetrahedral_qubit_povm() -> QuantumPOVM:
     identity = jnp.eye(2, dtype=complex)
     effects = jnp.stack(
         [
-            0.25 * (identity + jnp.einsum("a,aij->ij", direction, sigma))
+            0.25 * (identity + oe.contract("a,aij->ij", direction, sigma))
             for direction in directions
         ]
     )

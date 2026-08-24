@@ -18,6 +18,7 @@ from .._temporal_precision import TemporalPrecisionPolicy
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
 from ..operators.quantum import (
     ApproximationAxis,
+    ApproximationQuantity,
     BathCorrelationExpansion,
     OpenSystemApproximationEvidence,
     OpenSystemPhysicalityEvidence,
@@ -205,6 +206,7 @@ class HEOMSolution(StrictModule):
         temporal_precision: TemporalPrecisionPolicy,
         geometry_precision: GeometryPrecisionPolicy,
         hermitian_precision: HermitianPrecisionPolicy,
+        maximum_time_step: float = 0.1,
     ):
         roots = jnp.asarray(root_states)
         auxiliaries = jnp.asarray(final_auxiliaries)
@@ -268,8 +270,17 @@ class HEOMSolution(StrictModule):
                 ),
                 ApproximationAxis("time-step", step_size, units="time"),
             ),
-            local_error=temporal_precision.decision(step_size),
-            valid=valid,
+            (
+                ApproximationQuantity(
+                    "time-step",
+                    temporal_precision.decision(step_size),
+                    maximum_time_step,
+                    units="time",
+                    norm_id="absolute",
+                    estimate_kind="estimate",
+                ),
+            ),
+            execution_valid=valid,
             precision_evidence=self.precision_evidence,
             precision_policy_ids=(
                 temporal_precision.policy_id,
@@ -277,12 +288,11 @@ class HEOMSolution(StrictModule):
                 hermitian_precision.policy_id,
             ),
         )
-        status = "valid" if bool(jax.device_get(valid)) else "invalid"
         self.physicality = OpenSystemPhysicalityEvidence(
             trace_residual=trace_residual,
             hermiticity_residual=hermiticity,
             positivity_margin=positivity_margin,
-            status=status,
+            certified_properties=("trace", "hermiticity", "positivity"),
             precision_evidence=self.precision_evidence,
         )
         self.valid = valid

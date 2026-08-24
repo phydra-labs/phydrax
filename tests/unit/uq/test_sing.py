@@ -2,6 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -264,9 +265,9 @@ def test_sing_samples_are_coherent_and_recover_posterior_moments():
     samples = phx.uq.sample_sing_paths(jr.key(902), result, sample_shape=(8192,))
     sample_mean = jnp.mean(samples, axis=0)
     centered = samples - sample_mean
-    sample_covariance = jnp.einsum("toi,toj->oij", centered, centered) / samples.shape[0]
+    sample_covariance = oe.contract("toi,toj->oij", centered, centered) / samples.shape[0]
     sample_cross = (
-        jnp.einsum("toi,toj->oij", centered[:, :-1], centered[:, 1:]) / samples.shape[0]
+        oe.contract("toi,toj->oij", centered[:, :-1], centered[:, 1:]) / samples.shape[0]
     )
     observation_nodes = result.state.grid.observation_node_indices
     reference_cross = result.transition_cross_covariances[observation_nodes[:-1]]

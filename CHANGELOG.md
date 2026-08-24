@@ -3,6 +3,41 @@
 ## Unreleased
 
 ### Added
+- Added native-precision open-system campaign records, integrity-checked
+  artifacts, semantic-variate replay evidence, fail-closed promotion policies,
+  frozen campaign-matrix tooling, and cross-campaign graduation with permanent
+  unsupported-claim provenance.
+
+- Replaced Boolean archive qualification with exact campaign
+  deserialization and reproduction, added derived physicality/capacity gates,
+  adaptive preconditioned HEOM, eventful multi-event MPS jumps, analytic Padé
+  residues, direct-memory Choi certification, active-memory refit, and separate
+  neural projection-audit semantics.
+  Campaign orchestration and graduation now live under developer tooling rather
+  than the public solver API.
+
+- Added connected VMC neural trajectory execution, seeded disjoint process
+  tomography designs, count-aware held-out refit evidence, and pre-fit/post-fit
+  recovery gates for sequential-process and causal-memory campaigns.
+
+- Added fail-closed open-system evidence with quantified approximation
+  thresholds, exact pseudomode initial states, process initial-state
+  physicality, semantic trajectory keys, fixed-step probability guards,
+  Gaussian convention checks, versioned artifact tooling, generic jump-solver
+  adapters, certified local Kraus preparation, BDF HEOM diagnostics, and causal
+  process simulation.
+
+- Hardened open-system workflows with shared scalar-root event refinement,
+  semantic trajectory checkpoints, environment MPS contractions,
+  nonnormalizing TEBD, LPDO Strang evolution, scaled/implicit HEOM, matched
+  spin-boson evidence, causal process tomography, and neural no-jump TDVP.
+
+- Added event-driven quantum jumps, MPS canonicalization and TEBD, MPS jump
+  trajectories, locally purified Kraus evolution, HEOM continuation,
+  non-Markovian cross-representation diagnostics, adaptive Fock continuation,
+  fermionic Gaussian dynamics, process-comb causality, and neural jump
+  projection.
+
 - General nonlinear root families with certified scalar bracketing,
   safeguarded Newton/Halley, chord and limited-memory Broyden, DF-SANE,
   pseudo-transient continuation, vector Halley, capability-selected and robust

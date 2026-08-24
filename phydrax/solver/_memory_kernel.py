@@ -18,6 +18,7 @@ from ..integration import IntegrationPrecisionPolicy
 from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
 from ..operators.quantum import (
     ApproximationAxis,
+    ApproximationQuantity,
     OpenSystemApproximationEvidence,
     OpenSystemPhysicalityEvidence,
 )
@@ -170,9 +171,12 @@ class OpenSystemHistorySolution(StrictModule):
     trace_residuals: Array
     hermiticity_residuals: Array
     minimum_eigenvalues: Array
-    approximation: OpenSystemApproximationEvidence
+    execution_valid: Array
+    pointwise_density_valid: Array
     physicality: OpenSystemPhysicalityEvidence
     valid: Array
+    production_valid: Array
+    approximation: OpenSystemApproximationEvidence
     temporal_precision: TemporalPrecisionPolicy
     geometry_precision: GeometryPrecisionPolicy
     hermitian_precision: HermitianPrecisionPolicy
@@ -212,13 +216,13 @@ class OpenSystemHistorySolution(StrictModule):
         )
         spectrum = HermitianSpectrum(values, precision=hermitian_precision)
         minimum_eigenvalues = geometry_precision.decision(spectrum.minimum_eigenvalue)
-        valid = (
+        execution_valid = (
             jnp.all(jnp.isfinite(values))
             & jnp.all(trace_residuals <= 1e-6)
             & jnp.all(hermiticity_residuals <= 1e-6)
-            & jnp.all(minimum_eigenvalues >= -1e-6)
             & jnp.all(spectrum.valid)
         )
+        pointwise_density_valid = execution_valid & jnp.all(minimum_eigenvalues >= -1e-8)
         children = {
             "state-reduction": geometry_precision.evidence_for(values[0]),
             "state-spectrum": spectrum.precision_evidence,
@@ -235,37 +239,56 @@ class OpenSystemHistorySolution(StrictModule):
                 )
             children["memory-quadrature"] = integration_precision.evidence_for(values[0])
             policy_ids.append(integration_precision.policy_id)
+        precision_evidence = temporal_precision.evidence_for(
+            values[0],
+            times_[0],
+            children=children,
+        )
         self.states = temporal_precision.output(values)
         self.times = times_
         self.trace_residuals = trace_residuals
         self.hermiticity_residuals = hermiticity_residuals
         self.minimum_eigenvalues = minimum_eigenvalues
-        self.valid = valid
+        self.execution_valid = execution_valid
+        self.pointwise_density_valid = pointwise_density_valid
         self.temporal_precision = temporal_precision
         self.geometry_precision = geometry_precision
         self.hermitian_precision = hermitian_precision
         self.integration_precision = integration_precision
-        self.precision_evidence = temporal_precision.evidence_for(
-            values[0],
-            times_[0],
-            children=children,
-        )
+        self.precision_evidence = precision_evidence
         self.approximation = OpenSystemApproximationEvidence(
             representation_id,
             tuple(approximation_axes),
-            local_error=temporal_precision.decision(approximation_axes[-1].value),
-            valid=valid,
-            precision_evidence=self.precision_evidence,
+            (
+                ApproximationQuantity(
+                    "time-step",
+                    temporal_precision.decision(approximation_axes[-1].value),
+                    0.1,
+                    units="time",
+                    norm_id="absolute",
+                    estimate_kind="estimate",
+                ),
+                ApproximationQuantity(
+                    "maximum-pointwise-negativity",
+                    jnp.maximum(-jnp.min(minimum_eigenvalues), 0.0),
+                    1e-8,
+                    units="eigenvalue",
+                    norm_id="maximum",
+                    estimate_kind="estimate",
+                ),
+            ),
+            execution_valid=execution_valid,
+            precision_evidence=precision_evidence,
             precision_policy_ids=tuple(policy_ids),
         )
-        status = "valid" if bool(valid) else "invalid"
         self.physicality = OpenSystemPhysicalityEvidence(
             trace_residual=jnp.max(trace_residuals),
             hermiticity_residual=jnp.max(hermiticity_residuals),
             positivity_margin=jnp.min(minimum_eigenvalues),
-            status=status,
-            precision_evidence=self.precision_evidence,
+            precision_evidence=precision_evidence,
         )
+        self.valid = execution_valid & pointwise_density_valid
+        self.production_valid = self.valid & self.physicality.valid
         self.problem_id = str(problem_id)
 
 
@@ -381,8 +404,8 @@ def solve_memory_kernel(
         jnp.asarray(step_size, dtype=problem.initial_density.real.dtype)
     ).reshape(())
     count = int(steps)
-    if count < 0 or float(step) <= 0.0:
-        raise ValueError("steps and step_size must be positive.")
+    if count <= 0 or float(step) <= 0.0 or not bool(jnp.isfinite(step)):
+        raise ValueError("steps and step_size must be finite and positive.")
     states = [problem.initial_density]
     for current in range(count):
         time = step * current
@@ -454,11 +477,20 @@ def solve_time_local_open_system(
         jnp.asarray(step_size, dtype=problem.initial_density.real.dtype)
     ).reshape(())
     count = int(steps)
+    if count < 0 or float(step) <= 0.0 or not bool(jnp.isfinite(step)):
+        raise ValueError("TCL steps and step_size must be finite and positive.")
     states = [problem.initial_density]
     for index in range(count):
         time = step * index
         state = states[-1]
         derivative = temporal_.residual(temporal_.stage(problem.generator(time, state)))
+        if derivative.shape != state.shape:
+            raise ValueError("TCL generator must preserve density shape.")
+        derivative = eqx.error_if(
+            derivative,
+            jnp.any(~jnp.isfinite(derivative)),
+            "TCL generator returned nonfinite values.",
+        )
         candidate = jnp.asarray(
             state + step * temporal_.accumulation(derivative),
             dtype=state.dtype,
@@ -474,6 +506,82 @@ def solve_time_local_open_system(
         geometry_precision=geometry_,
         hermitian_precision=hermitian_,
     )
+
+
+class MemoryKernelMapCertification(StrictModule):
+    superoperators: Array
+    choi_matrices: Array
+    cp_margins: Array
+    trace_preservation_residuals: Array
+    valid: Array
+
+    def __init__(
+        self,
+        superoperators: ArrayLike,
+        certifications: tuple[DynamicalMapPhysicality, ...],
+        /,
+    ):
+        self.superoperators = jnp.asarray(superoperators)
+        self.choi_matrices = jnp.stack(
+            [value.choi_matrix for value in certifications]
+        )
+        self.cp_margins = jnp.stack(
+            [value.cp_margin for value in certifications]
+        )
+        self.trace_preservation_residuals = jnp.stack(
+            [value.trace_preservation_residual for value in certifications]
+        )
+        self.valid = (
+            jnp.all(jnp.isfinite(self.superoperators))
+            & jnp.all(jnp.stack([value.valid for value in certifications]))
+        )
+
+
+def certify_memory_kernel_map(
+    problem: MemoryKernelMasterEquation,
+    /,
+    *,
+    step_size: ArrayLike,
+    steps: int,
+) -> MemoryKernelMapCertification:
+    """Reconstruct and certify the discrete dynamical map on matrix units."""
+    dimension = problem.kernel.dimension
+    columns = []
+    for row in range(dimension):
+        for column in range(dimension):
+            basis = (
+                jnp.zeros(
+                    (dimension, dimension),
+                    dtype=problem.initial_density.dtype,
+                )
+                .at[row, column]
+                .set(1.0)
+            )
+            basis_problem = MemoryKernelMasterEquation(
+                problem.local_generator,
+                problem.kernel,
+                basis,
+                geometry_precision=problem.geometry_precision,
+                hermitian_precision=problem.hermitian_precision,
+                problem_id=f"{problem.problem_id}:basis-{row}-{column}",
+            )
+            solution = solve_memory_kernel(
+                basis_problem,
+                step_size=step_size,
+                steps=steps,
+            )
+            columns.append(solution.states.reshape((int(steps) + 1, -1)))
+    superoperators = jnp.stack(columns, axis=-1)
+    certifications = tuple(
+        DynamicalMapPhysicality(
+            superoperator,
+            dimension,
+            geometry_precision=problem.geometry_precision,
+            hermitian_precision=problem.hermitian_precision,
+        )
+        for superoperator in superoperators
+    )
+    return MemoryKernelMapCertification(superoperators, certifications)
 
 
 def exponential_memory_qubit_problem(
@@ -506,10 +614,12 @@ def exponential_memory_qubit_problem(
 
 __all__ = [
     "DynamicalMapPhysicality",
+    "MemoryKernelMapCertification",
     "MemoryKernelMasterEquation",
     "OpenSystemHistorySolution",
     "QuantumMemoryKernel",
     "TimeLocalOpenSystemProblem",
+    "certify_memory_kernel_map",
     "exponential_memory_qubit_problem",
     "solve_memory_kernel",
     "solve_time_local_open_system",

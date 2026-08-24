@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -137,6 +138,7 @@ class QuantumIntervention(StrictModule):
 class ProcessTensorPhysicality(StrictModule):
     local_cp_margins: Array
     local_tp_residuals: Array
+    initial_state_valid: Array
     causality_residual: Array
     valid: Array
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
@@ -146,6 +148,7 @@ class ProcessTensorPhysicality(StrictModule):
         self,
         local_cp_margins: ArrayLike,
         local_tp_residuals: ArrayLike,
+        initial_state_valid: ArrayLike,
         /,
         *,
         status: str,
@@ -155,9 +158,12 @@ class ProcessTensorPhysicality(StrictModule):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         self.local_cp_margins = jnp.asarray(local_cp_margins)
         self.local_tp_residuals = jnp.asarray(local_tp_residuals)
+        self.initial_state_valid = jnp.asarray(initial_state_valid, dtype=bool)
         self.causality_residual = jnp.max(self.local_tp_residuals)
-        self.valid = jnp.all(self.local_cp_margins >= -1e-8) & jnp.all(
-            self.local_tp_residuals <= 1e-8
+        self.valid = (
+            jnp.all(self.local_cp_margins >= -1e-8)
+            & jnp.all(self.local_tp_residuals <= 1e-8)
+            & self.initial_state_valid
         )
         self.precision_evidence = precision_evidence
         self.status = str(status)
@@ -267,8 +273,8 @@ class ProcessTensorMPO(StrictModule):
         for tensor, intervention in zip(self.tensors, operations, strict=True):
             tensor_ = self.precision.contraction(tensor)
             superoperator = self.precision.contraction(intervention.superoperator)
-            state = jnp.einsum("li,loir->ro", state, tensor_)
-            state = jnp.einsum("oi,ri->ro", superoperator, state)
+            state = oe.contract("li,loir->ro", state, tensor_)
+            state = oe.contract("oi,ri->ro", superoperator, state)
             density = self.precision.sum(state, axis=0).reshape(
                 (self.dimension, self.dimension)
             )
@@ -283,10 +289,17 @@ class ProcessTensorMPO(StrictModule):
         )
 
     def physicality(self) -> ProcessTensorPhysicality:
+        hermitian = 0.5 * (self.initial_density + jnp.conj(self.initial_density.T))
+        initial_valid = (
+            jnp.all(jnp.isfinite(self.initial_density))
+            & (jnp.abs(jnp.trace(self.initial_density) - 1.0) <= 1e-8)
+            & (jnp.min(jnp.linalg.eigvalsh(hermitian)) >= -1e-8)
+        )
         if any(tensor.shape[0] != 1 or tensor.shape[-1] != 1 for tensor in self.tensors):
             return ProcessTensorPhysicality(
                 jnp.asarray([jnp.nan]),
                 jnp.asarray([jnp.nan]),
+                initial_valid,
                 status="unknown-general-temporal-bond",
                 precision_evidence=self.precision_evidence,
             )
@@ -309,6 +322,7 @@ class ProcessTensorMPO(StrictModule):
         return ProcessTensorPhysicality(
             jnp.stack([report.cp_margin for report in reports]),
             jnp.stack([report.trace_preservation_residual for report in reports]),
+            initial_valid,
             status="local-markov-factorization",
             precision_evidence=evidence,
         )
@@ -337,67 +351,9 @@ def markov_process_tensor(
     )
 
 
-class ProcessTomographyResult(StrictModule):
-    process_tensor: ProcessTensorMPO
-    reconstruction_residual: Array
-    valid: Array
-    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
-
-    def __init__(
-        self,
-        process_tensor: ProcessTensorMPO,
-        reconstruction_residual: ArrayLike,
-        /,
-    ):
-        if not isinstance(process_tensor, ProcessTensorMPO):
-            raise TypeError("process_tensor must be ProcessTensorMPO.")
-        self.process_tensor = process_tensor
-        self.reconstruction_residual = jnp.asarray(reconstruction_residual)
-        self.valid = process_tensor.physicality().valid & jnp.isfinite(
-            self.reconstruction_residual
-        )
-        self.precision_evidence = process_tensor.precision_evidence
-
-
-def reconstruct_markov_process_tensor(
-    observed_superoperators: Sequence[ArrayLike],
-    initial_density: ArrayLike,
-    /,
-    *,
-    process_id: str = "reconstructed-markov-process",
-    precision: TensorNetworkPrecisionPolicy | None = None,
-    geometry_precision: GeometryPrecisionPolicy | None = None,
-    hermitian_precision: HermitianPrecisionPolicy | None = None,
-) -> ProcessTomographyResult:
-    process = markov_process_tensor(
-        observed_superoperators,
-        initial_density,
-        process_id=process_id,
-        precision=precision,
-        geometry_precision=geometry_precision,
-        hermitian_precision=hermitian_precision,
-    )
-    residual = process.precision.decision(
-        jnp.max(
-            jnp.stack(
-                [
-                    process.precision.norm(
-                        process.tensors[index][0, :, :, 0]
-                        - jnp.asarray(observed_superoperators[index])
-                    )
-                    for index in range(len(process.tensors))
-                ]
-            )
-        )
-    )
-    return ProcessTomographyResult(process, residual)
-
-
 __all__ = [
     "ProcessTensorMPO",
     "ProcessTensorPhysicality",
-    "ProcessTomographyResult",
     "QuantumIntervention",
     "markov_process_tensor",
-    "reconstruct_markov_process_tensor",
 ]

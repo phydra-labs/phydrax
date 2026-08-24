@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -148,7 +149,7 @@ class NormCompatibleInterpolationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Left trace leading size is incompatible with interpolation."
             )
-        return jnp.einsum("ij,j...->i...", self.left_to_mortar_matrix, value)
+        return oe.contract("ij,j...->i...", self.left_to_mortar_matrix, value)
 
     def right_to_mortar(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)
@@ -156,7 +157,7 @@ class NormCompatibleInterpolationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Right trace leading size is incompatible with interpolation."
             )
-        return jnp.einsum("ij,j...->i...", self.right_to_mortar_matrix, value)
+        return oe.contract("ij,j...->i...", self.right_to_mortar_matrix, value)
 
     def mortar_to_left(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)
@@ -164,7 +165,7 @@ class NormCompatibleInterpolationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mortar trace leading size is incompatible with interpolation."
             )
-        return jnp.einsum("ij,j...->i...", self.mortar_to_left_matrix, value)
+        return oe.contract("ij,j...->i...", self.mortar_to_left_matrix, value)
 
     def mortar_to_right(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)
@@ -172,7 +173,7 @@ class NormCompatibleInterpolationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Mortar trace leading size is incompatible with interpolation."
             )
-        return jnp.einsum("ij,j...->i...", self.mortar_to_right_matrix, value)
+        return oe.contract("ij,j...->i...", self.mortar_to_right_matrix, value)
 
 
 def _local_interpolation(

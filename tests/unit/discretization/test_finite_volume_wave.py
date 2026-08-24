@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 
 import phydrax as phx
 
@@ -27,10 +28,10 @@ def test_roe_wave_fluctuations_sum_to_roe_flux_jump():
     )
     _, right_matrix, eigenvalues = system.eigensystem(left, right, 0)
     left_matrix, _, _ = system.eigensystem(left, right, 0)
-    expected = jnp.einsum(
+    expected = oe.contract(
         "...ij,...j->...i",
         right_matrix,
-        eigenvalues * jnp.einsum("...ij,...j->...i", left_matrix, right - left),
+        eigenvalues * oe.contract("...ij,...j->...i", left_matrix, right - left),
     )
 
     np.testing.assert_allclose(

@@ -9,13 +9,19 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from .._temporal_precision import TemporalPrecisionPolicy
-from ..operators.quantum import ApproximationAxis, OpenSystemApproximationEvidence
+from ..operators.quantum import (
+    ApproximationAxis,
+    ApproximationQuantity,
+    OpenSystemApproximationEvidence,
+)
 
 
 class StateVectorOperator(StrictModule):
@@ -142,6 +148,8 @@ class QuantumTrajectoryEnsemble(StrictModule):
         *,
         step_size: ArrayLike,
         problem_id: str,
+        maximum_step_size: float = 0.1,
+        maximum_statistical_error: float = 0.25,
         temporal_precision: TemporalPrecisionPolicy,
         geometry_precision: GeometryPrecisionPolicy,
     ):
@@ -161,6 +169,7 @@ class QuantumTrajectoryEnsemble(StrictModule):
         self.jump_mask = jnp.asarray(jump_mask, dtype=bool)
         self.times = times_
         self.valid = jnp.all(jnp.isfinite(self.states)) & (norm_residual <= 1e-6)
+        statistical_error = 1.0 / jnp.sqrt(float(self.states.shape[0]))
         self.temporal_precision = temporal_precision
         self.geometry_precision = geometry_precision
         self.precision_evidence = temporal_precision.evidence_for(
@@ -176,11 +185,26 @@ class QuantumTrajectoryEnsemble(StrictModule):
                 ApproximationAxis("trajectory-count", self.states.shape[0]),
                 ApproximationAxis("time-step", step_size, units="time"),
             ),
-            statistical_error=geometry_precision.decision(
-                1.0 / jnp.sqrt(float(self.states.shape[0]))
+            (
+                ApproximationQuantity(
+                    "time-step",
+                    temporal_precision.decision(jnp.asarray(step_size)),
+                    maximum_step_size,
+                    units="time",
+                    norm_id="absolute",
+                    estimate_kind="estimate",
+                ),
+                ApproximationQuantity(
+                    "monte-carlo-standard-error-scale",
+                    geometry_precision.decision(statistical_error),
+                    maximum_statistical_error,
+                    units="dimensionless",
+                    norm_id="inverse-sqrt-sample-count",
+                    estimate_kind="statistical",
+                    confidence=0.682689,
+                ),
             ),
-            local_error=temporal_precision.decision(step_size),
-            valid=self.valid,
+            execution_valid=self.valid,
             precision_evidence=self.precision_evidence,
             precision_policy_ids=(
                 temporal_precision.policy_id,
@@ -228,9 +252,22 @@ def _trajectory(
     geometry_precision: GeometryPrecisionPolicy,
 ):
     channel_count = len(problem.collapse_operators)
+    decision_address = SampleAddress(
+        "quantum-trajectory",
+        "fixed-step-jump-decision",
+        target=problem.problem_id,
+        role="decision",
+    )
+    channel_address = SampleAddress(
+        "quantum-trajectory",
+        "fixed-step-jump-channel",
+        target=problem.problem_id,
+        role="channel",
+    )
 
     def advance(state, index):
-        local_key = jax.random.fold_in(key, index)
+        decision_key = derive_key(key, decision_address, index)
+        channel_key = derive_key(key, channel_address, index)
         collapsed = temporal_precision.stage(
             jnp.stack([operator(state) for operator in problem.collapse_operators])
         )
@@ -245,10 +282,15 @@ def _trajectory(
         )
         probabilities = temporal_precision.decision(step * rates)
         total = temporal_precision.decision(geometry_precision.sum(probabilities))
-        jump = jax.random.uniform(local_key) < jnp.minimum(total, 1.0)
+        probabilities = eqx.error_if(
+            probabilities,
+            total > 0.1,
+            "Fixed-step jump probability exceeds the 0.1 validity limit.",
+        )
+        jump = jax.random.uniform(decision_key) < total
         safe_total = jnp.maximum(total, jnp.finfo(probabilities.dtype).tiny)
         channel = jax.random.categorical(
-            local_key,
+            channel_key,
             jnp.log(jnp.maximum(probabilities / safe_total, 1e-30)),
         )
         selected = collapsed[jnp.minimum(channel, max(channel_count - 1, 0))]
@@ -313,6 +355,14 @@ def solve_quantum_jump_ensemble(
     trajectories = int(trajectory_count)
     if count < 0 or trajectories < 1 or float(step) <= 0.0:
         raise ValueError("Trajectory count, steps, and step size must be positive.")
+    initial_collapsed = jnp.stack(
+        [operator(problem.initial_state) for operator in problem.collapse_operators]
+    )
+    initial_rates = jnp.real(
+        oe.contract("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
+    )
+    if float(step * jnp.sum(initial_rates)) > 0.1:
+        raise ValueError("Fixed-step jump probability exceeds the 0.1 validity limit.")
     keys = jax.random.split(key, trajectories)
     states, channels, masks = jax.vmap(
         lambda local_key: _trajectory(
