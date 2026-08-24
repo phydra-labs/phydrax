@@ -12,6 +12,7 @@ from ._flowjax_process import (
     LatentFlowJAXCoefficientProcess,
     StateTimeProcessConditioner,
 )
+from ._holomorphic import HolomorphicMLP
 from ._input_convex import InputConvexNetwork, PartiallyInputConvexNetwork
 from ._kan import KAN, KANEdgeBlock
 from ._kan_adaptation import (
@@ -99,6 +100,7 @@ __all__ = [
     "IdentityCoefficientTransition",
     "InputConvexNetwork",
     "KAN",
+    "HolomorphicMLP",
     "KANCapacityAdaptationReport",
     "KANEdgeBlock",
     "KANGridAdaptationPlan",

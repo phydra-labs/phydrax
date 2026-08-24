@@ -21,6 +21,9 @@ four-layer model and integration-source choices, see
       optimizer updates.
     - `ansatz_functions()` applies the solver's precompiled `EnforcementProgram`,
       if supplied, before any term observes the fields.
+    - Certified exact PDE trial fields reject generic hard enforcement because its
+      correction need not preserve their solution space. Fit their boundary conditions
+      with residual terms.
     - `partition_functions()` exposes the trainable/non-trainable state split used
       by `solve(...)`.
     - `solve(...)` accepts standard and line-search Optax transformations, Phydrax
@@ -29,6 +32,10 @@ four-layer model and integration-source choices, see
       residual methods receive the same partitioned Equinox parameter tree returned by
       `partition_functions()`. Population-based Evosax algorithms require a separate
       finite search-space contract and are rejected.
+    - `solve_linear_trial_space(...)` assembles directly bound
+      `LinearTrefftzField` coefficients against fixed quadratic residual
+      realizations, audits residual affinity, and routes the least-squares system
+      through `phydrax.linalg`.
     - Optimizer choice changes the update backend, not objective semantics. All
       backends consume the same run controls and prepared objective lifecycle;
       `num_iter=0` is a no-op and negative values are rejected before dispatch.

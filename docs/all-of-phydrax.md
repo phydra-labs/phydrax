@@ -124,6 +124,15 @@ The enforced route is staged as boundary → initial → interior data. See:
 - [API → Solver](api/solver/index.md)
 - [Appendix → Physics-Constrained Interpolation](appendix/physics_constrained_interpolation.md)
 
+### Exact PDE trial spaces
+
+Finite Trefftz fields satisfy the homogeneous Laplace, polyharmonic, or
+constant-wavenumber Helmholtz equation by construction and fit only boundary
+conditions. Harmonic bases use a canonical exact-rational polynomial nullspace;
+Almansi and plane-wave bases extend the same certificate/audit contract. Generic
+hard boundary enforcement is rejected because it need not preserve the exact PDE
+space. See [Exact PDE trial spaces](guides_exact_trial_spaces.md).
+
 ### Models: fields vs operators
 
 - **Field learning**: learn \(u_\theta(x,t,\dots)\) directly (MLPs, separable models, etc.).

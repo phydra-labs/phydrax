@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from .._strict import StrictModule
 from .._trainable import is_non_trainable_leaf, is_trainable_leaf, NonTrainableState
 from ._derivative import (
@@ -28,6 +29,20 @@ from ._derivative import (
 from ._domain import Domain
 from ._evaluation import BatchEvaluator, evaluate_domain_function
 
+
+def _drop_model_construction_certificates(
+    metadata: Mapping[str, Any],
+    /,
+) -> frozendict[str, Any]:
+    if not any(name in metadata for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS):
+        return frozendict(metadata)
+    return frozendict(
+        {
+            name: value
+            for name, value in metadata.items()
+            if name not in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+        }
+    )
 
 def _rank1_leading_broadcast_op(
     op: Callable[[Any, Any], Any],
@@ -561,6 +576,7 @@ class DomainFunction(StrictModule):
             meta = a.metadata
         else:
             meta = frozendict({})
+        meta = _drop_model_construction_certificates(meta)
 
         left = b if reverse else a
         right = a if reverse else b
@@ -626,7 +642,7 @@ class DomainFunction(StrictModule):
             domain=self.domain,
             deps=self.deps,
             func=UnaryFieldEvaluator(self.func, operator.abs),
-            metadata=self.metadata,
+            metadata=_drop_model_construction_certificates(self.metadata),
         )
 
     @property
@@ -639,7 +655,7 @@ class DomainFunction(StrictModule):
             domain=self.domain,
             deps=self.deps,
             func=SwapAxesFieldEvaluator(self.func, -2, -1),
-            metadata=self.metadata,
+            metadata=_drop_model_construction_certificates(self.metadata),
             derivative_rule=(
                 None
                 if self.derivative_rule is None

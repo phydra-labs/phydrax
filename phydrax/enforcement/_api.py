@@ -12,6 +12,7 @@ from jaxtyping import Array, Key
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
+from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from .._strict import StrictModule
 from ..domain._base import EnforcementGateMethod
 from ._compile import EnforcementProgram, InteriorAnchors
@@ -93,6 +94,20 @@ def compile(
     )
     if missing_dependencies:
         raise KeyError(f"Unknown enforcement dependencies {missing_dependencies!r}.")
+    certified_targets = tuple(
+        spec.field
+        for spec in resolved_specs
+        if any(
+            name in resolved_functions[spec.field].metadata
+            for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+        )
+    )
+    if certified_targets:
+        raise ValueError(
+            "Hard enforcement cannot target certified exact PDE trial fields "
+            f"{certified_targets!r}; use soft ResidualPenalty terms or an explicitly "
+            "representation-preserving transform."
+        )
     resolved_options = EnforcementOptions() if options is None else options
     if not isinstance(resolved_options, EnforcementOptions):
         raise TypeError("options must be an EnforcementOptions value.")

@@ -32,6 +32,7 @@ from phydrax.domain import (
 from .._bvh import beam_select_leaf_items, build_point_bvh
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
+from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from .._strict import StrictModule
 from ..operators.differential._domain_ops import (
     cauchy_stress,
@@ -370,6 +371,18 @@ def _boundary_ansatz_normal_extension(
     return grad(psi, var=var, mode=mode)
 
 
+def _reject_certified_trial_space(u: DomainFunction, /, *, op_name: str) -> None:
+    certificates = tuple(
+        name for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS if name in u.metadata
+    )
+    if certificates:
+        raise ValueError(
+            f"{op_name} cannot transform a certified exact PDE trial field: generic "
+            "hard enforcement need not preserve its solution space. Use a soft "
+            "ResidualPenalty or an explicitly representation-preserving transform."
+        )
+
+
 def _reject_filtered_boundary(
     component: DomainComponent,
     /,
@@ -415,6 +428,7 @@ def enforce_dirichlet(
     For scalar domains (e.g. time), an appropriate vanishing factor is constructed
     directly from $(t-t_0)$, $(t-t_1)$, etc.
     """
+    _reject_certified_trial_space(u, op_name="enforce_dirichlet")
     if isinstance(component, ComponentSum):
         raise TypeError(
             "enforce_dirichlet requires a DomainComponent, not a ComponentSum."
@@ -497,6 +511,7 @@ def enforce_neumann(
     jet. The extension follows the representation's documented piecewise
     regularity away from the boundary.
     """
+    _reject_certified_trial_space(u, op_name="enforce_neumann")
     if isinstance(component, ComponentSum):
         raise TypeError("enforce_neumann requires a DomainComponent, not a ComponentSum.")
 
@@ -581,6 +596,7 @@ def enforce_traction(
     $v_n=(v\cdot n)\,n$ and $v_t=v-v_n$), making $u^*$ enforce the target traction
     to first order.
     """
+    _reject_certified_trial_space(u, op_name="enforce_traction")
     if isinstance(component, ComponentSum):
         raise TypeError(
             "enforce_traction requires a DomainComponent, not a ComponentSum."
@@ -667,6 +683,7 @@ def enforce_robin(
     mild regularity assumptions, without requiring a discontinuous unit-normal
     extension in the interior.
     """
+    _reject_certified_trial_space(u, op_name="enforce_robin")
     if isinstance(component, ComponentSum):
         raise TypeError("enforce_robin requires a DomainComponent, not a ComponentSum.")
 
@@ -752,6 +769,7 @@ def enforce_sommerfeld(
     which yields the Sommerfeld condition on $\partial\Omega$ because $\nu=n$
     there, under the same assumptions as `enforce_neumann`.
     """
+    _reject_certified_trial_space(u, op_name="enforce_sommerfeld")
     if isinstance(component, ComponentSum):
         raise TypeError(
             "enforce_sommerfeld requires a DomainComponent, not a ComponentSum."
@@ -826,6 +844,7 @@ def enforce_initial(
     that avoids unbounded polynomial growth away from the initial slice. Set
     `gate="poly"` to recover the original $(t-t_0)^{m+1}$ gate.
     """
+    _reject_certified_trial_space(u, op_name="enforce_initial")
     if isinstance(component, ComponentSum):
         raise TypeError("enforce_initial requires a DomainComponent, not a ComponentSum.")
     if var not in component.domain.labels:
@@ -995,6 +1014,7 @@ def enforce_blend(
     complement of the union of piece predicates (using `component.where[var]`), which
     prevents subset enforced constraints from leaking onto other boundary segments.
     """
+    _reject_certified_trial_space(u, op_name="enforce_blend")
     if not pieces:
         raise ValueError("enforce_blend requires at least one piece.")
 
@@ -1020,6 +1040,7 @@ def enforce_blend(
                 u_piece = DomainFunction(
                     domain=u.domain, deps=(), func=u_piece, metadata={}
                 )
+        _reject_certified_trial_space(u_piece, op_name="enforce_blend")
 
         if var not in component.domain.labels:
             raise KeyError(
