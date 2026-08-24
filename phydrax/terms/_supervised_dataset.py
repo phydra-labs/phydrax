@@ -40,6 +40,7 @@ class SupervisedDatasetBatch(StrictModule):
     points: PointBatch
     target: Array
     indices: Array
+    sample_weight: Array | None
 
     def __init__(
         self,
@@ -47,10 +48,37 @@ class SupervisedDatasetBatch(StrictModule):
         points: PointBatch,
         target: ArrayLike,
         indices: ArrayLike,
+        sample_weight: ArrayLike | None = None,
     ):
+        target_array = jnp.asarray(target)
+        indices_array = jnp.asarray(indices, dtype=jnp.int32)
+        if indices_array.ndim != 1:
+            raise ValueError("Supervised dataset batch indices must be one-dimensional.")
+        if target_array.ndim == 0 or int(target_array.shape[0]) != int(
+            indices_array.shape[0]
+        ):
+            raise ValueError(
+                "Supervised dataset batch targets must retain the sampled case axis."
+            )
+        if sample_weight is None:
+            weight_array = None
+        else:
+            weight_array = jnp.asarray(sample_weight, dtype=float)
+            if weight_array.shape != indices_array.shape:
+                raise ValueError(
+                    "Supervised dataset batch sample weights must match its indices."
+                )
+            if bool(jnp.any(~jnp.isfinite(weight_array))) or bool(
+                jnp.any(weight_array <= 0.0)
+            ):
+                raise ValueError(
+                    "Supervised dataset batch sample weights must be finite and "
+                    "strictly positive."
+                )
         self.points = points
-        self.target = jnp.asarray(target, dtype=float)
-        self.indices = jnp.asarray(indices, dtype=jnp.int32)
+        self.target = target_array
+        self.indices = indices_array
+        self.sample_weight = weight_array
 
 
 def _validate_targets(domain: DatasetDomain, values: ArrayLike, /) -> Array:

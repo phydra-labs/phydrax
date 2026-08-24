@@ -66,6 +66,31 @@ def test_categorical_full_logits_are_identified_and_support_is_explicit():
         family.natural_from_logits(jnp.ones((2,)))
 
 
+def test_categorical_gathered_log_prob_preserves_family_invalid_contract():
+    family = phx.uq.CategoricalFamily(3)
+    logits = jnp.asarray(
+        [
+            [10_000.0, -10_000.0, 0.0],
+            [0.2, 0.3, -0.4],
+            [-0.5, 0.8, 0.1],
+            [1.0, -0.7, 0.2],
+        ]
+    )
+    labels = jnp.asarray([0.0, -1.0, 3.0, 1.5])
+    natural = family.natural_from_logits(logits)
+    gathered = family.log_prob_from_logits(logits, labels)
+    generic = family.log_prob(natural, labels)
+
+    np.testing.assert_allclose(gathered, generic, atol=2e-15)
+    assert jnp.isfinite(gathered[0])
+    assert jnp.all(jnp.isneginf(gathered[1:]))
+    np.testing.assert_allclose(
+        family.log_prob_from_logits(logits + 13.0, labels),
+        gathered,
+        atol=2e-12,
+    )
+
+
 def test_categorical_mean_domain_and_projection_report_missing_categories():
     family = phx.uq.CategoricalFamily(3)
     interior = family.mean_domain(family.mean(jnp.asarray([0.2, 0.3])))
@@ -123,6 +148,16 @@ def test_categorical_likelihood_declares_coordinate_and_target_axes():
 
     np.testing.assert_allclose(full.log_prob(logits, labels), expected, atol=2e-15)
     np.testing.assert_allclose(minimal.log_prob(natural, labels), expected, atol=2e-15)
+    np.testing.assert_allclose(
+        full.class_probabilities(logits),
+        minimal.class_probabilities(natural),
+        atol=2e-15,
+    )
+    np.testing.assert_allclose(
+        jnp.sum(full.class_probabilities(logits), axis=-1),
+        jnp.ones((2,)),
+        atol=2e-15,
+    )
     assert full.sample(jr.key(4), logits).shape == labels.shape
     with pytest.raises(ValueError, match="coordinate dimension"):
         full.align_observations(jnp.ones((2, 2)), labels)

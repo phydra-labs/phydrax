@@ -145,6 +145,35 @@ term = phx.terms.SupervisedDatasetTerm(
 )
 ```
 
+For binary or mutually exclusive multiclass labels on those rows, train canonical
+logits with `SupervisedClassificationTerm`:
+
+```python
+labels = jnp.asarray([0, 0, 1], dtype=jnp.int32)
+schema = phx.ml.TargetSchema(
+    "binary",
+    names=("regime",),
+    class_labels=("laminar", "turbulent"),
+)
+
+classification = phx.terms.SupervisedClassificationTerm(
+    "regime_logit",
+    dataset_domain.component(),
+    labels,
+    schema,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
+)
+```
+
+Binary fields return one scalar logit. Multiclass fields return `K` full logits on
+their final axis, and their schema must declare all `K` class labels. Targets are
+encoded integer indices; `class_labels` retains the external vocabulary. Use
+`sample_mask` for row exclusion, `indices` for train/evaluation splits, and positive
+`sample_weight` values for an explicit empirical risk. The scalar `weight` instead
+scales the complete term relative to physics terms. A dense labelled field can use
+one dataset row per site, with area or volume weights supplied explicitly as
+`sample_weight`.
+
 Use `HyperRectangle` when the feature dimensions are continuous variables of the
 problem. Use `DatasetDomain` when the empirical row distribution is the domain you
 want to average over.

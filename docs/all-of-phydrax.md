@@ -590,8 +590,10 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API reference](api/phydrax.md).
 - **Data assimilation / hybrid physics-data**: pair `Observation` conditions
   with finite sources and `ObservationPenalty` terms; use specialized
-  `SupervisedDatasetTerm`, `RaggedTimeSeriesDataTerm`, and
-  `TrajectoryCaseDataTerm` where their dataset semantics apply. Use
+  `SupervisedDatasetTerm`, `SupervisedClassificationTerm`,
+  `RaggedTimeSeriesDataTerm`, and `TrajectoryCaseDataTerm` where their dataset
+  semantics apply. `SupervisedClassificationTerm` contributes Bernoulli or
+  categorical negative log likelihood alongside ordinary physics terms. Use
   `TrajectorySignal` for fixed measured forcings/covariates on ragged trajectory
   domains, and evaluate held-out terms for diagnostics.
   See [API reference](api/phydrax.md).

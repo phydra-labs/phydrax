@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 import coordax as cx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
@@ -18,16 +19,20 @@ from .._likelihoods import AbstractLikelihood
 from .._term import AbstractSamplingTerm
 from ._data_metrics import (
     case_sample_count,
+    configured_case_indices,
     normalize_case_sampling,
+    reduce_supervised_loss,
     sample_case_indices,
-    validate_case_indices,
+    validate_case_weights,
     validate_supervised_targets,
 )
 from ._supervised_dataset import SupervisedDatasetBatch
 
 
-class SupervisedLikelihoodTerm(AbstractSamplingTerm):
-    """Score direct or operator-transformed dataset observations by a likelihood."""
+class _AbstractSupervisedLikelihoodTerm(AbstractSamplingTerm):
+    """Shared dataset-likelihood sampling and reduction implementation."""
+
+    __strict_abstract__ = True
 
     fields: tuple[str, ...]
     location_var: str
@@ -40,6 +45,7 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
     likelihood: AbstractLikelihood
     observation_operator: Callable[[DomainFunction], DomainFunction] | None
     weight: Array
+    sample_weight: Array | None
     indices: Array | None
     label: str | None
 
@@ -55,20 +61,21 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
         scale_var: str | None = None,
         observation_operator: Callable[[DomainFunction], DomainFunction] | None = None,
         weight: ArrayLike = 1.0,
+        sample_mask: ArrayLike | None = None,
+        sample_weight: ArrayLike | None = None,
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
         label: str | None = None,
     ):
+        owner = type(self).__name__
         if not isinstance(component.domain, DatasetDomain):
-            raise TypeError(
-                "SupervisedLikelihoodTerm requires a DatasetDomain component."
-            )
+            raise TypeError(f"{owner} requires a DatasetDomain component.")
         if not isinstance(likelihood, AbstractLikelihood):
             raise TypeError("likelihood must implement AbstractLikelihood.")
         sampling_ = normalize_case_sampling(
             sampling,
             labels=component.domain.labels,
-            owner="SupervisedLikelihoodTerm",
+            owner=owner,
         )
         reduction_value = str(reduction)
         if reduction_value not in ("mean", "sum"):
@@ -100,7 +107,17 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
         if weight_array.ndim != 0 or not bool(jnp.isfinite(weight_array)):
             raise ValueError("weight must be a finite scalar.")
         self.weight = weight_array
-        self.indices = validate_case_indices(indices, size=domain.size, name="indices")
+        configured = configured_case_indices(
+            indices,
+            sample_mask,
+            size=domain.size,
+        )
+        self.sample_weight = validate_case_weights(
+            sample_weight,
+            size=domain.size,
+            indices=configured,
+        )
+        self.indices = configured
         self.label = None if label is None else str(label)
 
     @property
@@ -123,6 +140,9 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
             points=self.domain.points_from_indices(indices, structure=layout),
             target=self.values[indices],
             indices=indices,
+            sample_weight=(
+                None if self.sample_weight is None else self.sample_weight[indices]
+            ),
         )
 
     def observed_batch(self) -> SupervisedDatasetBatch:
@@ -138,6 +158,9 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
             points=self.domain.points_from_indices(indices, structure=layout),
             target=self.values[indices],
             indices=indices,
+            sample_weight=(
+                None if self.sample_weight is None else self.sample_weight[indices]
+            ),
         )
 
     def log_prob(
@@ -203,17 +226,29 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
     ) -> Array:
         del iter_
         batch_value = self.sample(key=key) if batch is None else batch
-        per_case = -self.log_prob(
-            functions,
-            key=key,
-            batch=batch_value,
-            **kwargs,
-        )
-        if self.reduction == "mean":
-            reduced = jnp.mean(per_case)
-        else:
-            reduced = jnp.sum(per_case)
-        return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+
+        def zero_loss() -> Array:
+            return jnp.zeros((), dtype=jnp.result_type(self.weight, float))
+
+        def active_loss() -> Array:
+            per_case = -self.log_prob(
+                functions,
+                key=key,
+                batch=batch_value,
+                **kwargs,
+            )
+            reduced = reduce_supervised_loss(
+                per_case,
+                reduction=self.reduction,
+                sample_weight=batch_value.sample_weight,
+            )
+            return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+
+        return jax.lax.cond(self.weight == 0.0, zero_loss, active_loss)
+
+
+class SupervisedLikelihoodTerm(_AbstractSupervisedLikelihoodTerm):
+    """Score direct or operator-transformed dataset observations by a likelihood."""
 
 
 __all__ = ["SupervisedLikelihoodTerm"]

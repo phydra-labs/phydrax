@@ -642,13 +642,22 @@ of those outputs.
 - `tensorboard_every`: TensorBoard scalar cadence. By default it follows `log_every`
   when `log_every > 0`, otherwise it writes every iteration.
 
-For data-fit terms such as `SupervisedDatasetTerm`, `RaggedTimeSeriesDataTerm`,
-or `TrajectoryCaseDataTerm`, per-term logs also include supervised-data
-diagnostics:
+Regression data-fit terms such as `SupervisedDatasetTerm`,
+`RaggedTimeSeriesDataTerm`, or `TrajectoryCaseDataTerm` report:
 
 - `data_accuracy`: `1 - data_relative_l2_error`
 - `data_relative_l2_error`: prediction-target relative L2 error
 - `data_rmse`: root mean squared prediction-target error
+
+`SupervisedClassificationTerm` instead reports classification evidence from the
+exact prepared mini-batch:
+
+- `data_negative_log_likelihood`
+- `data_accuracy`
+- `data_brier_score`
+- `data_effective_weight`
+- `data_valid`
+- `data_status`
 
 When ragged trajectory data is enforced with
 `phx.enforcement.enforce_ragged_time_series(...)`, the data is part of the ansatz

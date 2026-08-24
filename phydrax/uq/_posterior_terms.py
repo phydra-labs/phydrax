@@ -20,7 +20,7 @@ from .._strict import StrictModule
 
 if TYPE_CHECKING:
     from ..domain import DomainFunction
-    from ..terms._likelihood import SupervisedLikelihoodTerm
+    from ..terms._likelihood import _AbstractSupervisedLikelihoodTerm
     from ..terms._supervised_dataset import SupervisedDatasetBatch
     from ._gp_scalar import (
         ExactGaussianProcessDiscrepancy,
@@ -205,7 +205,7 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
 class FixedSupervisedLikelihood(AbstractPosteriorTerm):
     """Adapter from a supervised likelihood term and its frozen full batch."""
 
-    term: SupervisedLikelihoodTerm
+    term: _AbstractSupervisedLikelihoodTerm
     batch: SupervisedDatasetBatch
     functions_fn: Callable[[PyTree[Any]], Mapping[str, DomainFunction]] = eqx.field(
         static=True
@@ -213,18 +213,18 @@ class FixedSupervisedLikelihood(AbstractPosteriorTerm):
 
     def __init__(
         self,
-        term: SupervisedLikelihoodTerm,
+        term: _AbstractSupervisedLikelihoodTerm,
         functions: Callable[[PyTree[Any]], Mapping[str, DomainFunction]],
         /,
         *,
         batch: SupervisedDatasetBatch | None = None,
         label: str | None = None,
     ):
-        from ..terms._likelihood import SupervisedLikelihoodTerm
+        from ..terms._likelihood import _AbstractSupervisedLikelihoodTerm
         from ..terms._supervised_dataset import SupervisedDatasetBatch
 
-        if not isinstance(term, SupervisedLikelihoodTerm):
-            raise TypeError("term must be a SupervisedLikelihoodTerm.")
+        if not isinstance(term, _AbstractSupervisedLikelihoodTerm):
+            raise TypeError("term must be a supervised likelihood term.")
         if not callable(functions):
             raise TypeError("functions must be callable.")
         batch_value = term.observed_batch() if batch is None else batch

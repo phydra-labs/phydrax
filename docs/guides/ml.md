@@ -265,6 +265,14 @@ vocabularies, one-vs-one voting, output-code construction, classifier-chain
 ordering, and exact isotonic blocks are discrete; smooth chains and smooth
 isotonic calibration are separately named alternatives.
 
+These recipes fit complete classical estimators from `MLBatch`. To train an
+arbitrary neural or physics-composed `DomainFunction`, use
+`phydrax.terms.SupervisedClassificationTerm` with the same `TargetSchema`.
+Binary outputs are one Bernoulli logit; mutually exclusive multiclass outputs are
+full categorical logits on the final axis. Independent multilabel probabilities and
+uncalibrated margins are different mathematical objects and are not accepted by
+that term.
+
 ### Decomposition and latent representations
 
 `decomposition` provides `PCA`, `IncrementalPCA`, `POD`, `TruncatedSVD`,

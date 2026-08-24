@@ -21,6 +21,21 @@ Different sampled terms receive deterministic distinct subkeys. The sampling
 policy must remain static during a compiled training run; changing probe count, path
 count, or chunk shape requires a separate compilation.
 
+## Supervised empirical terms
+
+`SupervisedClassificationTerm` trains one Bernoulli logit for binary targets or
+full terminal-axis categorical logits for mutually exclusive multiclass targets.
+Encoded labels, case masks, statistical sample weights, and train/evaluation index
+subsets remain explicit. The generated Bernoulli or categorical likelihood is also
+available through the posterior-compatible `log_prob(...)` path.
+
+::: phydrax.terms.SupervisedClassificationTerm
+
+---
+
+::: phydrax.terms.SupervisedLikelihoodTerm
+
+
 ## Feynman--Kac regression
 
 `FeynmanKacRegressionTerm` fits value and optional control fields to frozen

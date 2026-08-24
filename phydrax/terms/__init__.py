@@ -16,6 +16,7 @@ from .._term import (
     TermEvaluation,
 )
 from ._bsde import BSDETerm
+from ._classification import SupervisedClassificationTerm
 from ._cochain import cochain_residual_field, CochainResidualTerm
 from ._deep_bsde import (
     deep_bsde_rollout,
@@ -189,6 +190,7 @@ __all__ = [
     "SpatialSinkhornDivergenceTerm",
     "SpatialUnbalancedSinkhornDivergenceTerm",
     "ScoreSampleProvider",
+    "SupervisedClassificationTerm",
     "SupervisedDatasetBatch",
     "SupervisedDatasetTerm",
     "SupervisedLikelihoodTerm",
