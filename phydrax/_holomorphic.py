@@ -91,8 +91,9 @@ class ComplexAffineNormalization(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Complex normalization expected shape ({self.dimension},); got {values.shape}."
             )
-        return self.matrix.astype(values.dtype) @ (
-            values - self.center.astype(values.dtype)
+        dtype = jnp.result_type(values, self.center, self.matrix)
+        return self.matrix.astype(dtype) @ (
+            values.astype(dtype) - self.center.astype(dtype)
         )
 
 

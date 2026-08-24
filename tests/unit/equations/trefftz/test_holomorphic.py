@@ -48,6 +48,17 @@ def test_complex_linear_uses_real_leaves_and_matches_dense_complex_oracle():
     )
 
 
+def test_complex_normalization_preserves_nonreal_data_for_real_coordinates():
+    normalization = phx.equations.ComplexAffineNormalization.scalar(
+        center=1.0 + 2.0j,
+        scale=2.0j,
+    )
+    value = normalization(jnp.asarray([3.0]))[0]
+    expected = (3.0 - (1.0 + 2.0j)) / (2.0j)
+    assert jnp.iscomplexobj(value)
+    assert jnp.allclose(value, expected)
+
+
 def test_holomorphic_polynomial_horner_jets_match_closed_form():
     potential = phx.equations.HolomorphicPolynomialPotential(1, 3)
     potential = _set_polynomial(
