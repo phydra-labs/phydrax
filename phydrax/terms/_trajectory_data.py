@@ -57,7 +57,7 @@ class TrajectoryCaseDataBatch(StrictModule):
         times: ArrayLike,
     ):
         self.points = points
-        self.target = jnp.asarray(target, dtype=float)
+        self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
         self.times = jnp.asarray(times, dtype=float)
 

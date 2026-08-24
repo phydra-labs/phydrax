@@ -23,13 +23,49 @@ count, or chunk shape requires a separate compilation.
 
 ## Supervised empirical terms
 
-`SupervisedClassificationTerm` trains one Bernoulli logit for binary targets or
-full terminal-axis categorical logits for mutually exclusive multiclass targets.
-Encoded labels, case masks, statistical sample weights, and train/evaluation index
-subsets remain explicit. The generated Bernoulli or categorical likelihood is also
-available through the posterior-compatible `log_prob(...)` path.
+`SupervisedClassificationTerm` trains hard binary, multiclass, or independent
+multilabel logits through a posterior-compatible likelihood. Ordinal targets use a
+fixed-threshold cumulative-link likelihood. Soft and focal terms are explicit
+optimization-score siblings. Dense, trajectory, and graph adapters retain their
+geometry masks, measures, and support axes.
 
 ::: phydrax.terms.SupervisedClassificationTerm
+
+---
+
+::: phydrax.terms.SupervisedSoftClassificationTerm
+
+---
+
+::: phydrax.terms.SupervisedFocalClassificationTerm
+
+---
+
+::: phydrax.terms.SupervisedOrdinalClassificationTerm
+
+---
+
+::: phydrax.terms.DenseSiteClassificationTerm
+
+---
+
+::: phydrax.terms.DenseOverlapClassificationTerm
+
+---
+
+::: phydrax.terms.TrajectoryCaseClassificationTerm
+
+---
+
+::: phydrax.terms.RaggedTimeSeriesClassificationTerm
+
+---
+
+::: phydrax.terms.GraphClassificationTerm
+
+---
+
+::: phydrax.terms.GraphTrajectoryClassificationTerm
 
 ---
 

@@ -14,6 +14,13 @@ import jax.random as jr
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
+from ._classification import (
+    categorical_probabilities_from_logits,
+    independent_bernoulli_log_prob_from_logits,
+    independent_bernoulli_probabilities_from_logits,
+    ordinal_class_probabilities_from_location,
+    ordinal_log_prob_from_location,
+)
 from ._exponential_family import AbstractExponentialFamily, CategoricalFamily
 from ._strict import StrictModule
 
@@ -180,7 +187,10 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
 
     def class_probabilities(self, location: ArrayLike, /) -> Array:
         """Return conventional probabilities on the complete category simplex."""
-        return jax.nn.softmax(self._full_logits(location), axis=-1)
+        return categorical_probabilities_from_logits(
+            self._full_logits(location),
+            class_count=self.family.num_categories,
+        )
 
     def log_prob(
         self, location: ArrayLike, target: ArrayLike, /, **parameters: Any
@@ -203,6 +213,147 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
                 f"{tuple(parameters)!r}."
             )
         return self.family.sample(key, self._natural(location))
+
+
+class IndependentBernoulliLikelihood(AbstractLikelihood):
+    """Vector-event likelihood for conditionally independent binary labels."""
+
+    label_count: int = eqx.field(static=True)
+
+    def __init__(self, label_count: int):
+        count = int(label_count)
+        if count <= 0:
+            raise ValueError("label_count must be positive.")
+        self.label_count = count
+
+    def align_observations(
+        self, location: ArrayLike, target: ArrayLike, /
+    ) -> tuple[Array, Array]:
+        location_array = jnp.asarray(location)
+        target_array = jnp.asarray(target)
+        if (
+            location_array.ndim == 0
+            or int(location_array.shape[-1]) != self.label_count
+            or target_array.shape != location_array.shape
+        ):
+            raise ValueError(
+                "Independent Bernoulli prediction and target shapes must match and "
+                f"end in label_count={self.label_count}; got "
+                f"prediction={location_array.shape}, target={target_array.shape}."
+            )
+        return location_array, target_array
+
+    def positive_probabilities(self, location: ArrayLike, /) -> Array:
+        values = jnp.asarray(location)
+        if values.ndim == 0 or int(values.shape[-1]) != self.label_count:
+            raise ValueError(
+                f"Multilabel logits must end in label_count={self.label_count}."
+            )
+        return independent_bernoulli_probabilities_from_logits(values)
+
+    def log_prob(
+        self, location: ArrayLike, target: ArrayLike, /, **parameters: Any
+    ) -> Array:
+        target_mask = parameters.pop("target_mask", None)
+        if parameters:
+            raise TypeError(
+                "IndependentBernoulliLikelihood received unknown parameters "
+                f"{tuple(parameters)!r}."
+            )
+        location_array, target_array = self.align_observations(location, target)
+        return independent_bernoulli_log_prob_from_logits(
+            location_array,
+            target_array,
+            target_mask=target_mask,
+        )
+
+    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+        if parameters:
+            raise TypeError(
+                "IndependentBernoulliLikelihood received unknown parameters "
+                f"{tuple(parameters)!r}."
+            )
+        return jr.bernoulli(key, self.positive_probabilities(location)).astype(jnp.int32)
+
+
+class OrdinalCumulativeLinkLikelihood(AbstractLikelihood):
+    """Ordered-logistic likelihood with fixed strictly increasing thresholds."""
+
+    thresholds: Array
+
+    def __init__(self, thresholds: ArrayLike):
+        values = jnp.asarray(thresholds, dtype=float)
+        if values.ndim != 1 or int(values.shape[0]) < 2:
+            raise ValueError(
+                "Ordinal thresholds must contain at least two ordered values."
+            )
+        if bool(jnp.any(~jnp.isfinite(values))) or bool(
+            jnp.any(values[1:] <= values[:-1])
+        ):
+            raise ValueError("Ordinal thresholds must be finite and strictly increasing.")
+        self.thresholds = values
+
+    @property
+    def class_count(self) -> int:
+        return int(self.thresholds.shape[0]) + 1
+
+    def align_observations(
+        self, location: ArrayLike, target: ArrayLike, /
+    ) -> tuple[Array, Array]:
+        location_array = jnp.asarray(location)
+        target_array = jnp.asarray(target)
+        if location_array.ndim >= 1 and int(location_array.shape[-1]) == 1:
+            location_array = location_array[..., 0]
+        if target_array.shape == location_array.shape + (1,):
+            target_array = target_array[..., 0]
+        if target_array.shape != location_array.shape:
+            raise ValueError(
+                "Ordinal prediction and target shapes are incompatible: "
+                f"prediction={location_array.shape}, target={target_array.shape}."
+            )
+        return location_array, target_array
+
+    def class_probabilities(self, location: ArrayLike, /) -> Array:
+        return ordinal_class_probabilities_from_location(location, self.thresholds)
+
+    def cumulative_probabilities(self, location: ArrayLike, /) -> Array:
+        values = jnp.asarray(location, dtype=float)
+        return jax.nn.sigmoid(self.thresholds - values[..., None])
+
+    def exceedance_probabilities(self, location: ArrayLike, /) -> Array:
+        values = jnp.asarray(location, dtype=float)
+        return jax.nn.sigmoid(values[..., None] - self.thresholds)
+
+    def log_prob(
+        self, location: ArrayLike, target: ArrayLike, /, **parameters: Any
+    ) -> Array:
+        if parameters:
+            raise TypeError(
+                "OrdinalCumulativeLinkLikelihood received unknown parameters "
+                f"{tuple(parameters)!r}."
+            )
+        location_array, target_array = self.align_observations(location, target)
+        return ordinal_log_prob_from_location(
+            location_array,
+            target_array,
+            self.thresholds,
+        )
+
+    def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
+        if parameters:
+            raise TypeError(
+                "OrdinalCumulativeLinkLikelihood received unknown parameters "
+                f"{tuple(parameters)!r}."
+            )
+        probabilities = self.class_probabilities(location)
+        return jr.categorical(key, jnp.log(probabilities), axis=-1).astype(jnp.int32)
+
+    def mode_category(self, location: ArrayLike, /) -> Array:
+        return jnp.argmax(self.class_probabilities(location), axis=-1).astype(jnp.int32)
+
+    def median_category(self, location: ArrayLike, /) -> Array:
+        cumulative = self.cumulative_probabilities(location)
+        return jnp.sum(cumulative < 0.5, axis=-1).astype(jnp.int32)
 
 
 class GaussianLikelihood(_AbstractElementwiseLikelihood):
@@ -356,6 +507,8 @@ __all__ = [
     "AbstractLikelihood",
     "CategoricalExponentialFamilyLikelihood",
     "ScalarNaturalExponentialFamilyLikelihood",
+    "IndependentBernoulliLikelihood",
+    "OrdinalCumulativeLinkLikelihood",
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
     "StudentTLikelihood",

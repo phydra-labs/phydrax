@@ -659,6 +659,18 @@ exact prepared mini-batch:
 - `data_valid`
 - `data_status`
 
+Multilabel terms report `data_binary_accuracy`,
+`data_effective_label_weight`, and `data_observed_label_count`; ordinal terms add
+expected rank and rank mean absolute error. Soft targets omit hard accuracy and
+report cross-entropy plus target entropy. Focal terms continue reporting ordinary
+NLL/Brier alongside focal risk.
+
+Dense, trajectory, graph, and operator classification keep case and support
+reductions separate. Statistical means divide by active observation mass; physical
+integrals preserve the geometry/trajectory/query quadrature measure. Overlap terms
+form sufficient statistics over one frozen support before taking a Dice, Jaccard, or
+Tversky ratio. They are never averages of independent pointwise overlap values.
+
 When ragged trajectory data is enforced with
 `phx.enforcement.enforce_ragged_time_series(...)`, the data is part of the ansatz
 rather than a loss term. Train with physics penalties only, and put a

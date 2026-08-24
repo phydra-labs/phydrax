@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -15,7 +15,7 @@ from .._trainable import NonTrainableState
 
 FeatureKind: TypeAlias = Literal["continuous", "ordinal", "categorical", "boolean"]
 TargetKind: TypeAlias = Literal[
-    "continuous", "binary", "multiclass", "multilabel", "count", "ranking"
+    "continuous", "binary", "multiclass", "multilabel", "ordinal", "count", "ranking"
 ]
 
 
@@ -82,7 +82,15 @@ class TargetSchema(StrictModule, NonTrainableState):
         names: Sequence[str] = (),
         class_labels: Sequence[object] = (),
     ):
-        valid = {"continuous", "binary", "multiclass", "multilabel", "count", "ranking"}
+        valid = {
+            "continuous",
+            "binary",
+            "multiclass",
+            "multilabel",
+            "ordinal",
+            "count",
+            "ranking",
+        }
         if kind not in valid:
             raise ValueError(f"Unsupported target kind {kind!r}.")
         names_ = tuple(str(name) for name in names)
@@ -93,6 +101,15 @@ class TargetSchema(StrictModule, NonTrainableState):
             raise ValueError("Binary target schemas require exactly two class labels.")
         if kind == "multiclass" and labels_ and len(labels_) < 2:
             raise ValueError("Multiclass target schemas require at least two labels.")
+        if kind == "multilabel" and not names_:
+            raise ValueError("Multilabel target schemas require named label coordinates.")
+        if kind == "ordinal":
+            if len(labels_) < 3:
+                raise ValueError("Ordinal target schemas require at least three labels.")
+            if not all(isinstance(label, Hashable) for label in labels_) or len(
+                set(labels_)
+            ) != len(labels_):
+                raise ValueError("Ordinal class labels must be hashable and unique.")
         self.kind = kind
         self.names = names_
         self.class_labels = labels_
@@ -100,6 +117,10 @@ class TargetSchema(StrictModule, NonTrainableState):
     @property
     def num_classes(self) -> int:
         return len(self.class_labels)
+
+    @property
+    def num_labels(self) -> int:
+        return len(self.names) if self.kind == "multilabel" else 0
 
 
 __all__ = ["FeatureKind", "FeatureSchema", "TargetKind", "TargetSchema"]

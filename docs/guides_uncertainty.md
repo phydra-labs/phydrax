@@ -871,13 +871,19 @@ term = phx.terms.SupervisedLikelihoodTerm(
 This supports state values, derivatives, fluxes, stresses, integrals, and sensor
 transforms without treating a PDE residual as measurement noise.
 
-`SupervisedClassificationTerm` binds encoded binary labels to Bernoulli log-odds or
-encoded multiclass labels to full categorical logits. Its cross-entropy objective is
-the corresponding negative log likelihood, so it composes directly with physics
-terms without creating a second loss implementation. Classification diagnostics use
-the categorical-specific `class_probabilities(...)` conversion; likelihoods do not
-claim a generic distributional mean, which need not exist for other observation
-families such as Student-t laws with low degrees of freedom.
+`SupervisedClassificationTerm` binds hard binary labels to Bernoulli log-odds,
+multiclass labels to categorical logits, and multilabel vectors to a product of
+independent Bernoulli factors. `SupervisedOrdinalClassificationTerm` uses one scalar
+latent location and fixed ordered thresholds. These are genuine likelihood-backed
+terms and retain raw per-case log probability for posterior construction.
+
+`SupervisedSoftClassificationTerm`, focal objectives, and Dice/Jaccard/Tversky
+overlap objectives are optimization scores, not observation likelihoods; they are
+intentionally rejected by `FixedSupervisedLikelihood`. Classification probability
+conversion remains specific—sigmoid positive probabilities, categorical
+`class_probabilities(...)`, or ordinal class/cumulative/exceedance probabilities.
+Likelihoods do not claim a generic distributional mean, which need not exist for
+other laws such as Student-t distributions with low degrees of freedom.
 
 Report held-out negative log likelihood, CRPS (Gaussian, Student-t, or empirical
 ensemble), energy score for multivariate fields, interval coverage, and interval
@@ -1133,11 +1139,13 @@ posterior = phx.uq.PosteriorProblem(
 `FunctionalSolver.loss()` is a training objective, not a posterior density. Arbitrary
 term scales, statistical `sample_weight` values, changing collocation samples, and
 mean reductions do not define likelihood normalization. For a
-`SupervisedLikelihoodTerm` or `SupervisedClassificationTerm`, call
+`SupervisedLikelihoodTerm`, hard binary/multiclass/multilabel
+`SupervisedClassificationTerm`, or `SupervisedOrdinalClassificationTerm`, call
 `observed_batch()` once and sum its unreduced `log_prob(...)` values inside the
-posterior likelihood. `sample_mask` removes unobserved cases, while optimizer
-weights do not become likelihood powers. Never call random `sample()` from a
-posterior density.
+posterior likelihood. Event masks remove missing multilabel factors and completely
+unobserved rows receive zero effective case mass. `sample_mask` removes whole cases,
+while optimizer weights do not become likelihood powers. Never call random
+`sample()` from a posterior density.
 
 Use `FixedObservationLikelihood`, `FixedResidualLikelihood`, and
 `FixedSupervisedLikelihood` to construct deterministic, sum-reduced normalized

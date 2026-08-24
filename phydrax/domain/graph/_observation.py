@@ -36,6 +36,90 @@ from ._trajectory import (
 
 
 GraphTargetInterpolation = Literal["nearest", "linear"]
+GraphClassificationTargetEncoding = Literal["hard", "soft"]
+
+
+def _classification_array(
+    name: str,
+    value: ArrayLike,
+    encoding: GraphClassificationTargetEncoding,
+    /,
+    *,
+    require_boolean: bool = False,
+) -> Array:
+    if encoding not in ("hard", "soft"):
+        raise ValueError("target_encoding must be 'hard' or 'soft'.")
+    try:
+        arr = jnp.asarray(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise TypeError(f"{name} must contain JSON-compatible numeric values.") from error
+    if jnp.iscomplexobj(arr):
+        raise TypeError(f"{name} must be real.")
+    if require_boolean:
+        if arr.size == 0:
+            return arr.astype(bool)
+        if arr.dtype != jnp.bool_:
+            raise TypeError(f"{name} must contain Boolean values.")
+        return arr
+    if encoding == "hard":
+        if arr.size == 0:
+            return arr
+        if not (
+            jnp.issubdtype(arr.dtype, jnp.integer) or jnp.issubdtype(arr.dtype, jnp.bool_)
+        ):
+            raise TypeError(f"{name} hard values must have integer or Boolean dtype.")
+        return arr
+    return arr.astype(jnp.result_type(arr, 0.0))
+
+
+def _classification_case_arrays(
+    values: ArrayLike | Sequence[ArrayLike],
+    n: int,
+    encoding: GraphClassificationTargetEncoding,
+    /,
+    *,
+    require_boolean: bool = False,
+) -> tuple[Array, ...]:
+    if (
+        isinstance(values, Sequence)
+        and not isinstance(values, (str, bytes))
+        and not hasattr(values, "shape")
+    ):
+        if len(values) != n:
+            raise ValueError(f"Graph classification values must contain {n} case arrays.")
+        cases = tuple(
+            _classification_array(
+                "Graph classification values",
+                value,
+                encoding,
+                require_boolean=require_boolean,
+            )
+            for value in values
+        )
+        if encoding == "hard" and not require_boolean:
+            nonempty = tuple(arr for arr in cases if arr.size != 0)
+            dtype = (
+                jnp.result_type(*(arr.dtype for arr in nonempty))
+                if nonempty
+                else jnp.dtype(jnp.int32)
+            )
+            cases = tuple(arr if arr.size != 0 else arr.astype(dtype) for arr in cases)
+        return cases
+
+    arr = _classification_array(
+        "Graph classification values",
+        values,
+        encoding,
+        require_boolean=require_boolean,
+    )
+    if arr.ndim == 0:
+        raise ValueError("Graph classification values must have a case leading axis.")
+    if int(arr.shape[0]) != n:
+        raise ValueError(
+            "Graph classification values case axis must have length "
+            f"{n}, got {arr.shape[0]}."
+        )
+    return tuple(arr[i] for i in range(n))
 
 
 def _size_for_kind(graph, kind: GraphComponentKind, /) -> int:
@@ -134,6 +218,119 @@ def _validate_graph_trajectory_case_arrays(
             trailing_shape = arr.shape[2:]
         elif arr.shape[2:] != trailing_shape:
             raise ValueError("Graph trajectory target arrays must share trailing shape.")
+        offsets.append(running)
+        lengths.append(expected_length)
+        entity_sizes.append(expected_entities)
+        flattened = arr.reshape((expected_length * expected_entities,) + arr.shape[2:])
+        running += int(flattened.shape[0])
+        parts.append(flattened)
+    return (
+        jnp.concatenate(parts, axis=0),
+        jnp.asarray(offsets, dtype=jnp.int32),
+        jnp.asarray(lengths, dtype=jnp.int32),
+        jnp.asarray(entity_sizes, dtype=jnp.int32),
+    )
+
+
+def _validate_graph_classification_case_arrays(
+    domain: GraphDatasetDomain,
+    values: ArrayLike | Sequence[ArrayLike],
+    kind: GraphComponentKind,
+    encoding: GraphClassificationTargetEncoding,
+    /,
+    *,
+    require_boolean: bool = False,
+) -> tuple[Array, Array]:
+    if kind not in ("nodes", "edges", "globals"):
+        raise ValueError("component_kind must be 'nodes', 'edges', or 'globals'.")
+    cases = _classification_case_arrays(
+        values,
+        domain.size,
+        encoding,
+        require_boolean=require_boolean,
+    )
+    parts: list[Array] = []
+    offsets: list[int] = []
+    running = 0
+    trailing_shape = None
+    for graph, value in zip(domain.graphs, cases, strict=True):
+        expected = _size_for_kind(graph, kind)
+        arr = jnp.asarray(value)
+        if arr.ndim == 0:
+            if expected != 1:
+                raise ValueError(
+                    "Scalar graph classification cases require exactly one entity."
+                )
+            arr = arr.reshape((1,))
+        if int(arr.shape[0]) != expected:
+            raise ValueError(
+                "Graph classification case leading axis must match "
+                f"{kind} count {expected}; got {arr.shape[0]}."
+            )
+        if trailing_shape is None:
+            trailing_shape = arr.shape[1:]
+        elif arr.shape[1:] != trailing_shape:
+            raise ValueError(
+                "Graph classification case arrays must share trailing shape."
+            )
+        offsets.append(running)
+        running += expected
+        parts.append(arr)
+    return jnp.concatenate(parts, axis=0), jnp.asarray(offsets, dtype=jnp.int32)
+
+
+def _validate_graph_trajectory_classification_case_arrays(
+    domain: GraphTrajectoryDatasetDomain,
+    values: ArrayLike | Sequence[ArrayLike],
+    kind: GraphComponentKind,
+    encoding: GraphClassificationTargetEncoding,
+    /,
+    *,
+    require_boolean: bool = False,
+) -> tuple[Array, Array, Array, Array]:
+    if kind not in ("nodes", "edges", "globals"):
+        raise ValueError("component_kind must be 'nodes', 'edges', or 'globals'.")
+    cases = _classification_case_arrays(
+        values,
+        domain.size,
+        encoding,
+        require_boolean=require_boolean,
+    )
+    parts: list[Array] = []
+    offsets: list[int] = []
+    lengths: list[int] = []
+    entity_sizes: list[int] = []
+    running = 0
+    trailing_shape = None
+    for graph, length, value in zip(
+        domain.graphs, domain.lengths.tolist(), cases, strict=True
+    ):
+        expected_entities = _size_for_kind(graph, kind)
+        expected_length = int(length)
+        arr = jnp.asarray(value)
+        if arr.ndim == 1 and expected_entities == 1:
+            arr = arr[:, None]
+        if arr.ndim < 2:
+            raise ValueError(
+                "Graph trajectory classification case arrays must have shape "
+                "(time, entity, ...)."
+            )
+        if int(arr.shape[0]) != expected_length:
+            raise ValueError(
+                "Graph trajectory classification target time axis must match the "
+                f"case length; expected {expected_length}, got {arr.shape[0]}."
+            )
+        if int(arr.shape[1]) != expected_entities:
+            raise ValueError(
+                "Graph trajectory classification target entity axis must match "
+                f"{kind} count {expected_entities}; got {arr.shape[1]}."
+            )
+        if trailing_shape is None:
+            trailing_shape = arr.shape[2:]
+        elif arr.shape[2:] != trailing_shape:
+            raise ValueError(
+                "Graph trajectory classification target arrays must share trailing shape."
+            )
         offsets.append(running)
         lengths.append(expected_length)
         entity_sizes.append(expected_entities)
@@ -392,4 +589,262 @@ def GraphTrajectorySignal(
             interpolation=interpolation_value,
         ),
         metadata={},
+    )
+
+
+class _GraphClassificationTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
+    values: Array
+    offsets: Array
+    kind: GraphComponentKind
+
+    def __init__(self, *, values: Array, offsets: Array, kind: GraphComponentKind):
+        self.values = jax.lax.stop_gradient(jnp.asarray(values))
+        self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
+        self.kind = kind
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+        del args, key, kwargs
+        raise TypeError("GraphClassificationTarget requires GraphBatch evaluation.")
+
+    def __call_batch__(
+        self,
+        batch: Any,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        del key, kwargs
+        if not isinstance(batch, GraphBatch):
+            raise TypeError("GraphClassificationTarget requires GraphBatch evaluation.")
+        if batch.component_kind != self.kind:
+            raise ValueError(
+                "GraphClassificationTarget was built for "
+                f"{self.kind}, got {batch.component_kind}."
+            )
+        dataset_idx = _dataset_indices(batch)
+        local_idx = _local_entity_indices(batch)
+        flat_idx = self.offsets[dataset_idx] + local_idx
+        return _field_from_target(batch, self.values[flat_idx])
+
+
+class _GraphTrajectoryClassificationSignalCallable(
+    StrictModule, BatchEvaluator, NonTrainableState
+):
+    domain: GraphTrajectoryDatasetDomain
+    values: Array
+    offsets: Array
+    lengths: Array
+    entity_sizes: Array
+    kind: GraphComponentKind
+    interpolation: GraphTargetInterpolation
+
+    def __init__(
+        self,
+        *,
+        domain: GraphTrajectoryDatasetDomain,
+        values: Array,
+        offsets: Array,
+        lengths: Array,
+        entity_sizes: Array,
+        kind: GraphComponentKind,
+        interpolation: GraphTargetInterpolation,
+    ):
+        self.domain = domain
+        self.values = jax.lax.stop_gradient(jnp.asarray(values))
+        self.offsets = jnp.asarray(offsets, dtype=jnp.int32)
+        self.lengths = jnp.asarray(lengths, dtype=jnp.int32)
+        self.entity_sizes = jnp.asarray(entity_sizes, dtype=jnp.int32)
+        self.kind = kind
+        self.interpolation = interpolation
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+        del args, key, kwargs
+        raise TypeError(
+            "GraphTrajectoryClassificationSignal requires GraphBatch evaluation."
+        )
+
+    def _flat_index(self, case_idx: Array, time_idx: Array, local_idx: Array, /) -> Array:
+        return self.offsets[case_idx] + time_idx * self.entity_sizes[case_idx] + local_idx
+
+    def __call_batch__(
+        self,
+        batch: Any,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        del key, kwargs
+        if not isinstance(batch, GraphBatch):
+            raise TypeError(
+                "GraphTrajectoryClassificationSignal requires GraphBatch evaluation."
+            )
+        if batch.component_kind != self.kind:
+            raise ValueError(
+                "GraphTrajectoryClassificationSignal was built for "
+                f"{self.kind}, got {batch.component_kind}."
+            )
+        case_idx = _dataset_indices(batch)
+        local_idx = _local_entity_indices(batch)
+        lengths = self.lengths[case_idx]
+
+        if self.interpolation == "nearest":
+            time_field = batch.points.get(GRAPH_TRAJECTORY_TIME_INDEX_KEY)
+            if isinstance(time_field, cx.Field):
+                time_idx = jnp.asarray(time_field.data, dtype=jnp.int32)
+            else:
+                t = jnp.asarray(
+                    _required_field(batch, self.domain.time_label).data,
+                    dtype=float,
+                )
+                time_idx = jnp.rint((t - self.domain.start) / self.domain.dt).astype(
+                    jnp.int32
+                )
+            time_idx = jnp.clip(time_idx, 0, lengths - 1)
+            return _field_from_target(
+                batch,
+                self.values[self._flat_index(case_idx, time_idx, local_idx)],
+            )
+
+        t = jnp.asarray(
+            _required_field(batch, self.domain.time_label).data,
+            dtype=float,
+        )
+        tau = (t - self.domain.start) / self.domain.dt
+        lo = jnp.floor(tau).astype(jnp.int32)
+        lo = jnp.clip(lo, 0, lengths - 1)
+        hi = jnp.clip(lo + 1, 0, lengths - 1)
+        fraction = jnp.clip(tau - lo.astype(float), 0.0, 1.0)
+        stencil = linear_stencil_from_indices(
+            self._flat_index(case_idx, lo, local_idx),
+            self._flat_index(case_idx, hi, local_idx),
+            fraction,
+            source_size=int(self.values.shape[0]),
+        )
+        return _field_from_target(
+            batch,
+            apply_gather_stencil(self.values, stencil).values,
+        )
+
+
+def _graph_classification_target(
+    domain: GraphDatasetDomain,
+    values: ArrayLike | Sequence[ArrayLike],
+    /,
+    *,
+    component_kind: GraphComponentKind,
+    target_encoding: GraphClassificationTargetEncoding,
+    require_boolean: bool,
+) -> DomainFunction:
+    if not isinstance(domain, GraphDatasetDomain):
+        raise TypeError("GraphClassificationTarget requires a GraphDatasetDomain.")
+    values_flat, offsets = _validate_graph_classification_case_arrays(
+        domain,
+        values,
+        component_kind,
+        target_encoding,
+        require_boolean=require_boolean,
+    )
+    return DomainFunction(
+        domain=domain,
+        deps=(domain.label,),
+        func=_GraphClassificationTargetCallable(
+            values=values_flat,
+            offsets=offsets,
+            kind=component_kind,
+        ),
+        metadata={},
+    )
+
+
+def GraphClassificationTarget(
+    domain: GraphDatasetDomain,
+    values: ArrayLike | Sequence[ArrayLike],
+    /,
+    *,
+    component_kind: GraphComponentKind = "nodes",
+    target_encoding: GraphClassificationTargetEncoding = "hard",
+) -> DomainFunction:
+    """Expose dtype-preserving classification targets on graph entities.
+
+    Hard targets retain their integer or Boolean dtype and are gathered directly
+    by graph case and local entity index. Soft targets are explicitly selected
+    with ``target_encoding="soft"`` and converted to an inexact dtype.
+    """
+    return _graph_classification_target(
+        domain,
+        values,
+        component_kind=component_kind,
+        target_encoding=target_encoding,
+        require_boolean=False,
+    )
+
+
+def _graph_trajectory_classification_signal(
+    domain: GraphTrajectoryDatasetDomain,
+    values: ArrayLike | Sequence[ArrayLike],
+    /,
+    *,
+    component_kind: GraphComponentKind,
+    interpolation: GraphTargetInterpolation,
+    target_encoding: GraphClassificationTargetEncoding,
+    require_boolean: bool,
+) -> DomainFunction:
+    if not isinstance(domain, GraphTrajectoryDatasetDomain):
+        raise TypeError(
+            "GraphTrajectoryClassificationSignal requires a GraphTrajectoryDatasetDomain."
+        )
+    if interpolation not in ("nearest", "linear"):
+        raise ValueError("interpolation must be 'nearest' or 'linear'.")
+    if target_encoding == "hard" and interpolation != "nearest":
+        raise ValueError(
+            "Hard graph trajectory classification targets require nearest interpolation."
+        )
+    values_flat, offsets, lengths, entity_sizes = (
+        _validate_graph_trajectory_classification_case_arrays(
+            domain,
+            values,
+            component_kind,
+            target_encoding,
+            require_boolean=require_boolean,
+        )
+    )
+    return DomainFunction(
+        domain=domain,
+        deps=domain.labels,
+        func=_GraphTrajectoryClassificationSignalCallable(
+            domain=domain,
+            values=values_flat,
+            offsets=offsets,
+            lengths=lengths,
+            entity_sizes=entity_sizes,
+            kind=component_kind,
+            interpolation=interpolation,
+        ),
+        metadata={},
+    )
+
+
+def GraphTrajectoryClassificationSignal(
+    domain: GraphTrajectoryDatasetDomain,
+    values: ArrayLike | Sequence[ArrayLike],
+    /,
+    *,
+    component_kind: GraphComponentKind = "nodes",
+    interpolation: GraphTargetInterpolation = "nearest",
+    target_encoding: GraphClassificationTargetEncoding = "hard",
+) -> DomainFunction:
+    """Expose dtype-safe graph-trajectory classification observations.
+
+    Hard labels support nearest observation lookup only. Linear interpolation is
+    available only after explicitly declaring ``target_encoding="soft"``.
+    """
+    return _graph_trajectory_classification_signal(
+        domain,
+        values,
+        component_kind=component_kind,
+        interpolation=interpolation,
+        target_encoding=target_encoding,
+        require_boolean=False,
     )

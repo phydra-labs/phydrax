@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, cast, Literal
@@ -613,11 +614,139 @@ class OperatorBatch(StrictModule):
         return slice_operator_batch(self, index, axis=axis)
 
 
+OperatorClassificationKind = Literal[
+    "binary",
+    "multiclass",
+    "multilabel",
+    "ordinal",
+]
+OperatorClassificationTarget = Literal["hard", "soft"]
+
+
+class OperatorClassificationSpec(StrictModule):
+    """Portable classification semantics for one operator output.
+
+    Class identities are deliberately restricted to ordered, non-empty strings.
+    The specification is therefore JSON-safe and never captures a Python label
+    object or an ML ``TargetSchema`` instance.
+    """
+
+    kind: OperatorClassificationKind
+    classes: tuple[str, ...]
+    target: OperatorClassificationTarget
+    thresholds: tuple[float, ...]
+
+    def __init__(
+        self,
+        kind: OperatorClassificationKind,
+        classes: Sequence[str],
+        /,
+        *,
+        target: OperatorClassificationTarget = "hard",
+        thresholds: Sequence[float] = (),
+    ):
+        if kind not in ("binary", "multiclass", "multilabel", "ordinal"):
+            raise ValueError(
+                "Operator classification kind must be 'binary', 'multiclass', "
+                "'multilabel', or 'ordinal'."
+            )
+        if target not in ("hard", "soft"):
+            raise ValueError("Operator classification target must be 'hard' or 'soft'.")
+        if any(not isinstance(label, str) for label in classes):
+            raise TypeError("Operator classification classes must be strings.")
+        ordered = tuple(classes)
+        if any(not label for label in ordered) or len(set(ordered)) != len(ordered):
+            raise ValueError(
+                "Operator classification classes must be non-empty and unique."
+            )
+        minimum = 3 if kind == "ordinal" else (1 if kind == "multilabel" else 2)
+        exact = 2 if kind == "binary" else None
+        if (exact is not None and len(ordered) != exact) or len(ordered) < minimum:
+            requirement = "exactly two" if exact is not None else f"at least {minimum}"
+            raise ValueError(
+                f"{kind} classification requires {requirement} ordered classes."
+            )
+        if kind == "ordinal" and target == "soft":
+            raise ValueError("Soft ordinal operator targets are not supported.")
+        resolved_thresholds = tuple(float(value) for value in thresholds)
+        if kind == "ordinal":
+            if len(resolved_thresholds) != len(ordered) - 1:
+                raise ValueError(
+                    "Ordinal classification requires one fixed threshold between "
+                    "each adjacent pair of classes."
+                )
+            if any(not math.isfinite(value) for value in resolved_thresholds) or any(
+                right <= left
+                for left, right in zip(
+                    resolved_thresholds,
+                    resolved_thresholds[1:],
+                    strict=False,
+                )
+            ):
+                raise ValueError(
+                    "Ordinal thresholds must be finite and strictly increasing."
+                )
+        elif resolved_thresholds:
+            raise ValueError("Only ordinal classification accepts thresholds.")
+        self.kind = kind
+        self.classes = ordered
+        self.target = target
+        self.thresholds = resolved_thresholds
+
+    @property
+    def class_count(self) -> int:
+        return len(self.classes)
+
+    @property
+    def prediction_channel_shape(self) -> tuple[int, ...]:
+        if self.kind in ("binary", "ordinal"):
+            return ()
+        return (self.class_count,)
+
+    @property
+    def target_channel_shape(self) -> tuple[int, ...]:
+        if self.kind == "multilabel" or (
+            self.kind == "multiclass" and self.target == "soft"
+        ):
+            return (self.class_count,)
+        return ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "classes": list(self.classes),
+            "target": self.target,
+            "thresholds": list(self.thresholds),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+        /,
+    ) -> "OperatorClassificationSpec":
+        expected = {"kind", "classes", "target", "thresholds"}
+        missing = expected - set(value)
+        unknown = set(value) - expected
+        if missing or unknown:
+            raise ValueError(
+                "Operator classification spec must use canonical fields; "
+                f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+            )
+        return cls(
+            value["kind"],
+            value["classes"],
+            target=value["target"],
+            thresholds=value["thresholds"],
+        )
+
+
 class OperatorOutputSpec(StrictModule):
-    """Explicit scalar or channel-last neural-operator output contract."""
+    """Explicit prediction and target contracts for one operator output."""
 
     channels: int | Literal["scalar"]
     component_names: tuple[str, ...]
+    classification: OperatorClassificationSpec | None
 
     def __init__(
         self,
@@ -625,6 +754,7 @@ class OperatorOutputSpec(StrictModule):
         /,
         *,
         component_names: Sequence[str] = (),
+        classification: OperatorClassificationSpec | None = None,
     ):
         if channels == "scalar":
             count = 1
@@ -639,14 +769,44 @@ class OperatorOutputSpec(StrictModule):
             )
         if len(set(names)) != len(names):
             raise ValueError("Operator output component names must be unique.")
+        if classification is not None:
+            if not isinstance(classification, OperatorClassificationSpec):
+                raise TypeError(
+                    "classification must be an OperatorClassificationSpec or None."
+                )
+            expected_channels: int | Literal["scalar"] = (
+                "scalar"
+                if not classification.prediction_channel_shape
+                else classification.prediction_channel_shape[0]
+            )
+            if channels != expected_channels:
+                raise ValueError(
+                    f"{classification.kind} classification requires output channels "
+                    f"{expected_channels!r}; got {channels!r}."
+                )
+            if names:
+                raise ValueError(
+                    "Classification class order belongs to classification.classes, "
+                    "not physical component_names."
+                )
         self.channels = channels
         self.component_names = names
+        self.classification = classification
 
     @property
     def channel_shape(self) -> tuple[int, ...]:
         return () if self.channels == "scalar" else (int(self.channels),)
 
-    def expected_shape(
+    @property
+    def target_channel_shape(self) -> tuple[int, ...]:
+        classification = self.classification
+        return (
+            self.channel_shape
+            if classification is None
+            else classification.target_channel_shape
+        )
+
+    def prediction_shape(
         self,
         batch: OperatorBatch,
         /,
@@ -660,7 +820,31 @@ class OperatorOutputSpec(StrictModule):
         )
         return batch.case_shape + query.sample_shape + self.channel_shape
 
-    def validate(
+    def target_shape(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        query_name: str | None = None,
+    ) -> tuple[int, ...]:
+        query = (
+            batch.require_single_query()
+            if query_name is None
+            else batch.query(query_name)
+        )
+        return batch.case_shape + query.sample_shape + self.target_channel_shape
+
+    def expected_shape(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        query_name: str | None = None,
+    ) -> tuple[int, ...]:
+        """Backward-compatible alias for the prediction shape."""
+        return self.prediction_shape(batch, query_name=query_name)
+
+    def validate_prediction(
         self,
         values: Array,
         batch: OperatorBatch,
@@ -669,12 +853,86 @@ class OperatorOutputSpec(StrictModule):
         query_name: str | None = None,
     ) -> Array:
         array = jnp.asarray(values)
-        expected = self.expected_shape(batch, query_name=query_name)
+        expected = self.prediction_shape(batch, query_name=query_name)
         if tuple(int(size) for size in array.shape) != expected:
             raise ValueError(
-                f"Operator output shape must be {expected}; got {array.shape}."
+                f"Operator prediction shape must be {expected}; got {array.shape}."
             )
+        if self.classification is not None and not jnp.issubdtype(
+            array.dtype, jnp.inexact
+        ):
+            raise TypeError("Operator classification predictions must be inexact logits.")
         return array
+
+    def validate_target(
+        self,
+        values: Array,
+        batch: OperatorBatch,
+        /,
+        *,
+        query_name: str | None = None,
+    ) -> Array:
+        array = jnp.asarray(values)
+        expected = self.target_shape(batch, query_name=query_name)
+        if tuple(int(size) for size in array.shape) != expected:
+            raise ValueError(
+                f"Operator target shape must be {expected}; got {array.shape}."
+            )
+        classification = self.classification
+        if classification is not None:
+            if classification.target == "hard":
+                if not (
+                    jnp.issubdtype(array.dtype, jnp.integer)
+                    or jnp.issubdtype(array.dtype, jnp.bool_)
+                ):
+                    raise TypeError(
+                        "Hard operator classification targets must retain an integer "
+                        "or Boolean dtype."
+                    )
+            elif not jnp.issubdtype(array.dtype, jnp.inexact):
+                raise TypeError("Soft operator classification targets must be inexact.")
+        return array
+
+    def validate(
+        self,
+        values: Array,
+        batch: OperatorBatch,
+        /,
+        *,
+        query_name: str | None = None,
+    ) -> Array:
+        """Backward-compatible prediction validation."""
+        return self.validate_prediction(values, batch, query_name=query_name)
+
+    def to_dict(self) -> dict[str, Any]:
+        value: dict[str, Any] = {
+            "channels": self.channels,
+            "component_names": list(self.component_names),
+        }
+        if self.classification is not None:
+            value["classification"] = self.classification.to_dict()
+        return value
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any], /) -> "OperatorOutputSpec":
+        expected = {"channels", "component_names", "classification"}
+        unknown = set(value) - expected
+        if "channels" not in value or unknown:
+            raise ValueError(
+                "Operator output spec must use canonical fields; "
+                f"missing={[] if 'channels' in value else ['channels']}, "
+                f"unknown={sorted(unknown)}."
+            )
+        classification = value.get("classification")
+        return cls(
+            value["channels"],
+            component_names=value.get("component_names", ()),
+            classification=(
+                None
+                if classification is None
+                else OperatorClassificationSpec.from_dict(classification)
+            ),
+        )
 
 
 class OperatorFieldBatch(StrictModule):
@@ -827,7 +1085,7 @@ class OperatorTargetBatch(StrictModule):
                     f"Target field {name!r} references unknown query "
                     f"{field.query_name!r}."
                 )
-            field.spec.validate(
+            field.spec.validate_target(
                 field.values,
                 batch,
                 query_name=field.query_name,
@@ -947,6 +1205,13 @@ class OperatorPrediction(StrictModule):
                 raise ValueError(
                     f"Operator output field {name!r} must have shape {expected}; "
                     f"got {field.values.shape}."
+                )
+            if field.spec.classification is not None and not jnp.issubdtype(
+                field.values.dtype, jnp.inexact
+            ):
+                raise TypeError(
+                    f"Operator classification output field {name!r} must contain "
+                    "inexact logits."
                 )
         self.fields = field_map
         self.queries = query_map
@@ -1337,6 +1602,9 @@ __all__ = [
     "OperatorAxis",
     "OperatorBasis",
     "OperatorBatch",
+    "OperatorClassificationKind",
+    "OperatorClassificationSpec",
+    "OperatorClassificationTarget",
     "OperatorFieldBatch",
     "OperatorCaseProvenance",
     "OperatorOutputSpec",

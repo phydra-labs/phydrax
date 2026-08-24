@@ -1265,6 +1265,20 @@ sampled graph entities, including explicit node/edge subsets and repeated cases.
     assert jnp.allclose(signal(trajectory_batch).data, jnp.array([1.5, 5.5]))
     ```
 
+### Graph classification
+
+Use `GraphClassificationTarget` and `GraphClassificationTerm` for dtype-preserving
+node, edge, global, or `CochainCells` labels. The term takes `TargetSchema` plus a
+`ClassificationObjective`; hard categorical scoring gathers the selected logit and
+graph integration owns entity masks and mean/integral measure. Hard graph-trajectory
+labels use `GraphTrajectoryClassificationSignal(..., interpolation="nearest")`.
+Linear interpolation is accepted only for explicit soft targets.
+
+Graph classification composes with ordinary graph/cochain residual terms. Apply graph
+physics to a differentiable probability or decoded physical field, not to `argmax`
+labels. A zero graph-classification weight skips integrand evaluation through
+`IntegralFunctional`.
+
 ## Geometry features
 
 Mesh and point-cloud constructors can attach coordinate-aware feature payloads

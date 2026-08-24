@@ -30,7 +30,6 @@ from .._frozendict import frozendict
 from .._interpolation import (
     apply_gather_stencil,
     linear_stencil_from_indices,
-    nearest_stencil_from_indices,
 )
 from .._sampling import design_name
 from .._strict import StrictModule
@@ -71,7 +70,7 @@ class RaggedTimeSeriesBatch(StrictModule):
         times: ArrayLike,
     ):
         self.points = points
-        self.target = jnp.asarray(target, dtype=float)
+        self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
         self.time_indices = jnp.asarray(time_indices, dtype=jnp.int32)
         self.times = jnp.asarray(times, dtype=float)
@@ -100,7 +99,7 @@ def _validate_values(
     values: ArrayLike,
     /,
 ) -> Array:
-    arr = jnp.asarray(values, dtype=float)
+    arr = jnp.asarray(values)
     if arr.ndim < 2:
         raise ValueError(
             "Ragged time-series values must have shape (N, T, ...) with a time axis."
@@ -118,14 +117,7 @@ def _validate_values(
 
 
 def _gather_nearest(values: Array, case_indices: Array, time_indices: Array, /) -> Array:
-    time_count = int(values.shape[1])
-    source = values.reshape((-1,) + values.shape[2:])
-    indices = case_indices * time_count + time_indices
-    stencil = nearest_stencil_from_indices(
-        indices,
-        source_size=int(source.shape[0]),
-    )
-    return apply_gather_stencil(source, stencil).values
+    return values[case_indices, time_indices]
 
 
 def _gather_linear(

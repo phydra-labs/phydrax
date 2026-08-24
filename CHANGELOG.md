@@ -7,6 +7,14 @@
   with encoded target schemas, case masks, positive statistical sample weights,
   posterior-compatible raw log probabilities, classification diagnostics, and a
   gathered categorical hard-label kernel that avoids one-hot target allocation.
+- Expanded classification with posterior-compatible independent multilabel and
+  fixed-threshold ordinal likelihoods; soft-target and focal objectives; explicit
+  target-event masks; differentiable sigmoid/softmax/expectation field transforms;
+  Dice, Jaccard, and Tversky overlap scores; and dense-grid, regular/irregular
+  trajectory, graph-entity, and neural-operator classification. Structured terms
+  retain geometry masks and physical measures, operator schemas use canonical
+  JSON-safe ordered class names, and zero-weight objectives bypass evaluation.
+
 
 - Added regular, first-order conic primal JVP/VJP operators over audited
   `ConicProgram` executions, with cached dense projection-KKT Jacobians,

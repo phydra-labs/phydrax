@@ -146,6 +146,28 @@ class OperatorFieldSpec(StrictModule):
             raise ValueError("Source-only fields cannot define an output specification.")
         if targets and not resolved_query:
             raise ValueError("Target fields require a query_name.")
+        classification = None if output_spec is None else output_spec.classification
+        if classification is not None:
+            if role != "target":
+                raise ValueError(
+                    "Classification fields are target-only until physical label "
+                    "channels are explicitly supported."
+                )
+            if (
+                channels != "scalar"
+                or resolved_representation != "scalar"
+                or names
+                or dimension
+                or scales != (1.0,)
+                or offsets != (0.0,)
+                or cochain is not None
+                or tensor_layout is not None
+            ):
+                raise ValueError(
+                    "Classification fields must have no physical channels: use a "
+                    "dimensionless scalar field with identity affine semantics and "
+                    "no component, cochain, or tensor metadata."
+                )
         self.name = resolved_name
         self.channels = channels
         self.representation = resolved_representation
@@ -173,8 +195,16 @@ class OperatorFieldSpec(StrictModule):
     def is_target(self) -> bool:
         return self.role in ("target", "both")
 
+    @property
+    def is_classification(self) -> bool:
+        return (
+            self.output_spec is not None and self.output_spec.classification is not None
+        )
+
     def nondimensionalize(self, values: Array, /) -> Array:
         array = jnp.asarray(values)
+        if self.is_classification:
+            return array
         scale = jnp.asarray(self.scale, dtype=array.dtype)
         offset = jnp.asarray(self.offset, dtype=array.dtype)
         if self.channels == "scalar":
@@ -188,6 +218,8 @@ class OperatorFieldSpec(StrictModule):
 
     def dimensionalize(self, values: Array, /) -> Array:
         array = jnp.asarray(values)
+        if self.is_classification:
+            return array
         scale = jnp.asarray(self.scale, dtype=array.dtype)
         offset = jnp.asarray(self.offset, dtype=array.dtype)
         if self.channels == "scalar":
@@ -209,14 +241,7 @@ class OperatorFieldSpec(StrictModule):
             "representation": self.representation,
             "source_name": self.source_name,
             "query_name": self.query_name,
-            "output_spec": (
-                None
-                if output_spec is None
-                else {
-                    "channels": output_spec.channels,
-                    "component_names": list(output_spec.component_names),
-                }
-            ),
+            "output_spec": (None if output_spec is None else output_spec.to_dict()),
             "component_names": list(self.component_names),
             "physical_dimension": list(self.physical_dimension),
             "scale": list(self.scale),
@@ -233,12 +258,7 @@ class OperatorFieldSpec(StrictModule):
         """Restore a field specification from its canonical dictionary."""
         output_value = value.get("output_spec")
         output_spec = (
-            None
-            if output_value is None
-            else OperatorOutputSpec(
-                output_value["channels"],
-                component_names=output_value.get("component_names", ()),
-            )
+            None if output_value is None else OperatorOutputSpec.from_dict(output_value)
         )
         return cls(
             str(value["name"]),
