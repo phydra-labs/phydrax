@@ -244,13 +244,21 @@ class OperatorNormalizationPolicy:
         targets: OperatorTargetBatch,
         /,
     ) -> OperatorTargetBatch:
-        missing = tuple(name for name in targets.fields if name not in self.targets)
+        missing = tuple(
+            name
+            for name, field in targets.fields.items()
+            if field.spec.classification is None and name not in self.targets
+        )
         if missing:
             raise KeyError(f"Missing target normalizers for fields {missing}.")
         return OperatorTargetBatch(
             {
                 name: OperatorFieldBatch(
-                    self.targets[name].normalize(field.values),
+                    (
+                        field.values
+                        if field.spec.classification is not None
+                        else self.targets[name].normalize(field.values)
+                    ),
                     query_name=field.query_name,
                     spec=field.spec,
                 )
@@ -265,13 +273,21 @@ class OperatorNormalizationPolicy:
         targets: OperatorTargetBatch,
         /,
     ) -> OperatorTargetBatch:
-        missing = tuple(name for name in targets.fields if name not in self.targets)
+        missing = tuple(
+            name
+            for name, field in targets.fields.items()
+            if field.spec.classification is None and name not in self.targets
+        )
         if missing:
             raise KeyError(f"Missing target normalizers for fields {missing}.")
         return OperatorTargetBatch(
             {
                 name: OperatorFieldBatch(
-                    self.targets[name].denormalize(field.values),
+                    (
+                        field.values
+                        if field.spec.classification is not None
+                        else self.targets[name].denormalize(field.values)
+                    ),
                     query_name=field.query_name,
                     spec=field.spec,
                 )
@@ -286,13 +302,21 @@ class OperatorNormalizationPolicy:
         prediction: OperatorPrediction,
         /,
     ) -> OperatorPrediction:
-        missing = tuple(name for name in prediction.fields if name not in self.targets)
+        missing = tuple(
+            name
+            for name, field in prediction.fields.items()
+            if field.spec.classification is None and name not in self.targets
+        )
         if missing:
             raise KeyError(f"Missing target normalizers for fields {missing}.")
         return OperatorPrediction(
             {
                 name: OperatorFieldBatch(
-                    self.targets[name].normalize(field.values),
+                    (
+                        field.values
+                        if field.spec.classification is not None
+                        else self.targets[name].normalize(field.values)
+                    ),
                     query_name=field.query_name,
                     spec=field.spec,
                 )
@@ -308,13 +332,21 @@ class OperatorNormalizationPolicy:
         prediction: OperatorPrediction,
         /,
     ) -> OperatorPrediction:
-        missing = tuple(name for name in prediction.fields if name not in self.targets)
+        missing = tuple(
+            name
+            for name, field in prediction.fields.items()
+            if field.spec.classification is None and name not in self.targets
+        )
         if missing:
             raise KeyError(f"Missing target normalizers for fields {missing}.")
         return OperatorPrediction(
             {
                 name: OperatorFieldBatch(
-                    self.targets[name].denormalize(field.values),
+                    (
+                        field.values
+                        if field.spec.classification is not None
+                        else self.targets[name].denormalize(field.values)
+                    ),
                     query_name=field.query_name,
                     spec=field.spec,
                 )
@@ -626,6 +658,15 @@ def fit_operator_normalization(
     target_normalizers: dict[str, AffineNormalizer] = {}
     for name in target_names:
         target_batches = tuple(target.field(name) for target in target_tuple)
+        if target_batches[0].spec.classification is not None:
+            if any(
+                field.spec.to_dict() != target_batches[0].spec.to_dict()
+                for field in target_batches[1:]
+            ):
+                raise ValueError(
+                    f"Classification target field {name!r} changed its output spec."
+                )
+            continue
         query_name = target_batches[0].query_name
         if query_name is None:
             raise ValueError(f"Target field {name!r} has no query branch.")

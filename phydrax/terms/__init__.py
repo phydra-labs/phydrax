@@ -16,7 +16,12 @@ from .._term import (
     TermEvaluation,
 )
 from ._bsde import BSDETerm
-from ._classification import SupervisedClassificationTerm
+from ._classification import (
+    SupervisedClassificationTerm,
+    SupervisedFocalClassificationTerm,
+    SupervisedOrdinalClassificationTerm,
+    SupervisedSoftClassificationTerm,
+)
 from ._cochain import cochain_residual_field, CochainResidualTerm
 from ._deep_bsde import (
     deep_bsde_rollout,
@@ -35,6 +40,11 @@ from ._deep_splitting import (
     DeepSplittingRegressionDiagnostics,
     DeepSplittingRegressionTerm,
 )
+from ._dense_classification import (
+    DenseOverlapClassificationTerm,
+    DenseSiteClassificationBatch,
+    DenseSiteClassificationTerm,
+)
 from ._feynman_kac import (
     FeynmanKacRegressionDiagnostics,
     FeynmanKacRegressionTerm,
@@ -51,6 +61,14 @@ from ._flow_matching import (
     FlowMatchingTerm,
     ManifoldFlowMatchingMetric,
     RiemannianFlowMatchingMetric,
+)
+from ._graph_classification import (
+    GraphClassificationReduction,
+    GraphClassificationTarget,
+    GraphClassificationTargetEncoding,
+    GraphClassificationTerm,
+    GraphTrajectoryClassificationSignal,
+    GraphTrajectoryClassificationTerm,
 )
 from ._graph_data import (
     GraphSupervisedTerm,
@@ -102,6 +120,13 @@ from ._score_matching import (
     ScoreSampleProvider,
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
+from ._trajectory_classification import (
+    RaggedTimeSeriesClassificationBatch,
+    RaggedTimeSeriesClassificationTerm,
+    TrajectoryCaseClassificationBatch,
+    TrajectoryCaseClassificationTerm,
+    TrajectoryClassificationMeasure,
+)
 from ._trajectory_data import (
     TrajectoryCaseDataBatch,
     TrajectoryCaseDataTerm,
@@ -147,6 +172,9 @@ __all__ = [
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
     "FlowEndpointProvider",
+    "DenseOverlapClassificationTerm",
+    "DenseSiteClassificationBatch",
+    "DenseSiteClassificationTerm",
     "FlowMatchingBatch",
     "FlowMatchingDiagnostics",
     "FlowMatchingPolicy",
@@ -154,6 +182,12 @@ __all__ = [
     "FlowMatchingTerm",
     "GraphSupervisedTerm",
     "GraphTarget",
+    "GraphClassificationReduction",
+    "GraphClassificationTarget",
+    "GraphClassificationTargetEncoding",
+    "GraphClassificationTerm",
+    "GraphTrajectoryClassificationSignal",
+    "GraphTrajectoryClassificationTerm",
     "GraphTargetInterpolation",
     "GraphTrajectorySignal",
     "GraphTrajectorySupervisedTerm",
@@ -189,8 +223,13 @@ __all__ = [
     "SoftQuantileFunctional",
     "SpatialSinkhornDivergenceTerm",
     "SpatialUnbalancedSinkhornDivergenceTerm",
+    "RaggedTimeSeriesClassificationBatch",
+    "RaggedTimeSeriesClassificationTerm",
     "ScoreSampleProvider",
     "SupervisedClassificationTerm",
+    "SupervisedFocalClassificationTerm",
+    "SupervisedOrdinalClassificationTerm",
+    "SupervisedSoftClassificationTerm",
     "SupervisedDatasetBatch",
     "SupervisedDatasetTerm",
     "SupervisedLikelihoodTerm",
@@ -205,5 +244,8 @@ __all__ = [
     "deep_bsde_shooting_diagnostics",
     "deep_splitting_labels",
     "evaluate",
+    "TrajectoryCaseClassificationBatch",
+    "TrajectoryCaseClassificationTerm",
+    "TrajectoryClassificationMeasure",
     "operator_term_suite",
 ]

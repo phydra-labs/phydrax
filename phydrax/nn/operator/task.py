@@ -549,11 +549,7 @@ class OperatorTask(StrictModule):
                     f"Output field {specification.name!r} is bound to query "
                     f"{output.query_name!r}, expected {specification.query_name!r}."
                 )
-            if (
-                output.spec.channels != specification.output_spec.channels
-                or output.spec.component_names
-                != specification.output_spec.component_names
-            ):
+            if output.spec.to_dict() != specification.output_spec.to_dict():
                 raise ValueError(
                     f"Output field {specification.name!r} has the wrong channel contract."
                 )

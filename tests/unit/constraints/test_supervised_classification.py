@@ -122,7 +122,7 @@ def test_classification_validates_schema_targets_masks_and_output_width():
     sampling = phx.domain.PointSampling(3, design="uniform")
     binary = phx.ml.TargetSchema("binary", class_labels=(0, 1))
 
-    with pytest.raises(ValueError, match="binary and multiclass"):
+    with pytest.raises(ValueError, match="binary, multiclass, and multilabel"):
         phx.terms.SupervisedClassificationTerm(
             "u",
             domain.component(),

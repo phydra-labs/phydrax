@@ -91,6 +91,11 @@ def operator_batch_schema(
                 "query_name": field.query_name,
                 "channels": field.spec.channels,
                 "component_names": list(field.spec.component_names),
+                **(
+                    {}
+                    if field.spec.classification is None
+                    else {"classification": field.spec.classification.to_dict()}
+                ),
             }
             for name, field in target.fields.items()
         }
@@ -161,6 +166,11 @@ def operator_fit_schema(
                 "query_name": field.query_name,
                 "channels": field.spec.channels,
                 "component_names": list(field.spec.component_names),
+                **(
+                    {}
+                    if field.spec.classification is None
+                    else {"classification": field.spec.classification.to_dict()}
+                ),
             }
             for name, field in target.fields.items()
         },

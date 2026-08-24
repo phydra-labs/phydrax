@@ -359,9 +359,7 @@ def operator_dataset_from_cases(
         if any(field.query_name != first_field.query_name for field in fields[1:]):
             raise ValueError(f"Target field {name!r} must use one query branch.")
         if any(
-            field.spec.channels != first_field.spec.channels
-            or field.spec.component_names != first_field.spec.component_names
-            for field in fields[1:]
+            field.spec.to_dict() != first_field.spec.to_dict() for field in fields[1:]
         ):
             raise ValueError(f"Target field {name!r} must use one output contract.")
         sample_shapes = tuple(

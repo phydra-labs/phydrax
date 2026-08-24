@@ -5,6 +5,7 @@ from types import ModuleType
 
 from . import _numerics as _numerics
 from ._batch import MLBatch, WeightPolicy
+from ._classification import ClassificationObjective, ClassificationObjectiveKind
 from ._contracts import (
     AbstractRecipe,
     FitDiagnostics,
@@ -20,6 +21,17 @@ from ._contracts import (
     ML_UNSUPPORTED_GRADIENT,
 )
 from ._fit import fit
+from ._overlap import (
+    dice_score,
+    jaccard_score,
+    overlap_score,
+    OverlapClassReduction,
+    OverlapEmptyPolicy,
+    OverlapKind,
+    OverlapScoreConfig,
+    reduce_overlap_score,
+    tversky_score,
+)
 from ._schema import FeatureKind, FeatureSchema, TargetKind, TargetSchema
 from ._soft_discrete import (
     gumbel_softmax,
@@ -77,6 +89,8 @@ __all__ = [
     "clustering",
     "compose",
     "covariance",
+    "ClassificationObjective",
+    "ClassificationObjectiveKind",
     "decomposition",
     "discriminant",
     "ensemble",
@@ -92,6 +106,15 @@ __all__ = [
     "multiclass",
     "naive_bayes",
     "neighbors",
+    "dice_score",
+    "jaccard_score",
+    "overlap_score",
+    "OverlapClassReduction",
+    "OverlapEmptyPolicy",
+    "OverlapKind",
+    "OverlapScoreConfig",
+    "reduce_overlap_score",
+    "tversky_score",
     "outliers",
     "preprocessing",
     "semi_supervised",
