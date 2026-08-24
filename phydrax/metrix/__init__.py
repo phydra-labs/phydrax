@@ -136,6 +136,11 @@ from ._kahler import (
     validate_kahler_structure,
 )
 from ._kahler_potential import KahlerPotentialGeometry
+from ._legendre_geometry import (
+    LegendreGeometry,
+    LegendreValidationReport,
+    validate_legendre_geometry,
+)
 from ._lie_group import (
     AbstractLieGroup,
     LieGroupStateGeometry,
@@ -348,6 +353,8 @@ __all__ = [
     "HermitianStructure",
     "HermitianValidationReport",
     "HessianGeometry",
+    "LegendreGeometry",
+    "LegendreValidationReport",
     "LeviCivitaConnection",
     "LocalRetraction",
     "LorentzianConvention",
@@ -471,6 +478,7 @@ __all__ = [
     "validate_kahler_structure",
     "validate_local_su_structure",
     "validate_hessian_geometry",
+    "validate_legendre_geometry",
     "validate_immersion",
     "validate_lorentzian_metric",
     "validate_manifold",

@@ -15,6 +15,94 @@ from jaxtyping import Array, PyTree
 from .._strict import StrictModule
 
 
+def _tree_path_string(path: tuple[Any, ...], /) -> str:
+    return jax.tree_util.keystr(path) or "<root>"
+
+
+def _parameter_tree_metadata(
+    parameters: PyTree[Any],
+    /,
+    *,
+    owner: str,
+) -> tuple[
+    tuple[Array, ...],
+    Any,
+    tuple[str, ...],
+    tuple[tuple[int, ...], ...],
+    tuple[str, ...],
+]:
+    path_leaves, tree_definition = jax.tree_util.tree_flatten_with_path(parameters)
+    if not path_leaves:
+        raise ValueError(f"{owner} requires at least one trainable array.")
+    leaves: list[Array] = []
+    paths: list[str] = []
+    shapes: list[tuple[int, ...]] = []
+    dtypes: list[str] = []
+    for path, leaf in path_leaves:
+        path_name = _tree_path_string(path)
+        if not eqx.is_inexact_array(leaf):
+            raise TypeError(
+                f"{owner} requires a filtered trainable PyTree containing only "
+                f"inexact arrays; leaf {path_name} is {type(leaf).__name__}."
+            )
+        array = jnp.asarray(leaf)
+        leaves.append(array)
+        paths.append(path_name)
+        shapes.append(tuple(int(size) for size in array.shape))
+        dtypes.append(str(array.dtype))
+    return (
+        tuple(leaves),
+        tree_definition,
+        tuple(paths),
+        tuple(shapes),
+        tuple(dtypes),
+    )
+
+
+def _parameter_array_leaf_paths(parameters: PyTree[Any], /) -> tuple[str, ...]:
+    return tuple(
+        _tree_path_string(path)
+        for path, leaf in jax.tree_util.tree_flatten_with_path(parameters)[0]
+        if eqx.is_inexact_array(leaf)
+    )
+
+
+def _validated_parameter_leaves(
+    tree: PyTree[Any],
+    /,
+    *,
+    tree_definition: Any,
+    paths: tuple[str, ...],
+    shapes: tuple[tuple[int, ...], ...],
+    dtypes: tuple[str, ...],
+    name: str,
+) -> list[Array]:
+    leaves, actual_tree_definition = jax.tree_util.tree_flatten(tree)
+    if actual_tree_definition != tree_definition:
+        raise ValueError(f"{name} has an incompatible PyTree structure.")
+    validated: list[Array] = []
+    for path, leaf, shape, dtype in zip(
+        paths,
+        leaves,
+        shapes,
+        dtypes,
+        strict=True,
+    ):
+        if not eqx.is_inexact_array(leaf):
+            raise TypeError(f"{name} leaf {path} must be an inexact array.")
+        array = jnp.asarray(leaf)
+        if array.shape != shape:
+            raise ValueError(
+                f"{name} leaf {path} must have shape {shape}, got {array.shape}."
+            )
+        if str(array.dtype) != dtype:
+            raise TypeError(
+                f"{name} leaf {path} must have dtype {dtype}, got {array.dtype}."
+            )
+        validated.append(array)
+    return validated
+
+
 class _PyTreeVectorizer(StrictModule):
     tree_definition: Any = eqx.field(static=True)
     paths: tuple[str, ...] = eqx.field(static=True)

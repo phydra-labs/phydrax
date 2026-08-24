@@ -118,6 +118,8 @@ from ._least_squares_trust import (
     TrustRegionReflective,
 )
 from ._minimize import minimize
+from ._mirror_descent import mirror_descent
+from ._mirror_geometry import ParameterMirrorGeometry
 from ._model_based import BOBYQA, COBYQA, ModelBasedKind
 from ._multistart import (
     multistart_minimize,
@@ -439,6 +441,7 @@ __all__ = [
     "OptimizationTermination",
     "OptimistixMethod",
     "ParameterGeometry",
+    "ParameterMirrorGeometry",
     "QuadraticProgram",
     "ConvexProgramResult",
     "kfac",
@@ -447,6 +450,7 @@ __all__ = [
     "implicit_minimize",
     "least_squares",
     "minimize",
+    "mirror_descent",
     "optimization_status_message",
     "SQP",
     "SimplexIndicator",

@@ -34,6 +34,7 @@ from ..discretization import (
 from ..enforcement import EnforcementProgram
 from ..equations.trefftz import TrialSpaceCertificate
 from ..optim._kfac._config import KFAC
+from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import AbstractRiemannianOptimizer
 from ..terms._randomized_moment import RandomizedMomentPenalty
 from ..terms._randomized_residual import RandomizedResidualTerm
@@ -369,6 +370,7 @@ class FunctionalSolver(StrictModule):
         | optax.GradientTransformationExtraArgs
         | DistributionBasedAlgorithm
         | KFAC
+        | AbstractMirrorOptimizer
         | AbstractRiemannianOptimizer
         | None = None,
         evaluation_parameters: EvaluationParametersFn | None = None,
@@ -393,6 +395,8 @@ class FunctionalSolver(StrictModule):
         - Standard and extra-argument Optax transformations are accepted.
         - `phydrax.optim.kfac(...)` configurations are accepted and receive frozen
           sampled residual terms from this solver.
+        - Phydrax mirror optimizers are accepted and update declared Legendre leaves
+          through direct dual-coordinate translations.
         - Phydrax Riemannian optimizers are accepted and update explicitly selected
           trainable leaves through their declared metrics and retractions.
         - Evosax distribution-based algorithms are accepted.
@@ -401,8 +405,9 @@ class FunctionalSolver(StrictModule):
           `DesignConstraintSystem.search(...)`.
         - `evaluation_parameters`, when provided, maps Optax optimizer state and raw
           training parameters to the parameter view used for diagnostics, model
-          selection, and the returned solver. Riemannian optimizers reject ambient
-          evaluation transforms because they need not preserve manifold membership.
+          selection, and the returned solver. Mirror and Riemannian optimizers reject
+          ambient evaluation transforms because they need not preserve geometric
+          membership.
 
         During training, each term receives the one-based iteration index as the
         JAX scalar keyword `iter_`, enabling scheduled coefficients.
