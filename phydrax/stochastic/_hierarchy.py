@@ -57,6 +57,47 @@ def _fingerprint(parts: Sequence[object], /) -> str:
     return digest.hexdigest()
 
 
+class NoiseCouplingWitness(StrictModule):
+    """Numerical basis/covariance/increment projection evidence for nested noise."""
+
+    basis_map_id: str = eqx.field(static=True)
+    covariance_residual: float = eqx.field(static=True)
+    increment_residual: float = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    passed: bool = eqx.field(static=True)
+    witness_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        basis_map_id: str,
+        /,
+        *,
+        covariance_residual: float,
+        increment_residual: float,
+        tolerance: float,
+    ):
+        identifier = _identifier(basis_map_id, "basis_map_id", required=True)
+        assert identifier is not None
+        covariance = float(covariance_residual)
+        increment = float(increment_residual)
+        threshold = float(tolerance)
+        if (
+            not isfinite(covariance)
+            or covariance < 0.0
+            or not isfinite(increment)
+            or increment < 0.0
+            or not isfinite(threshold)
+            or threshold <= 0.0
+        ):
+            raise ValueError("Noise-coupling residuals/tolerance are invalid.")
+        self.basis_map_id = identifier
+        self.covariance_residual = covariance
+        self.increment_residual = increment
+        self.tolerance = threshold
+        self.passed = max(covariance, increment) <= threshold
+        self.witness_id = _fingerprint((identifier, covariance, increment, threshold))
+
+
 class StochasticLevelSpec(StrictModule):
     """Static identity and compatibility contract for one approximation level."""
 
@@ -76,6 +117,7 @@ class StochasticLevelSpec(StrictModule):
     basis_id: str | None = eqx.field(static=True)
     state_transfer_id: str | None = eqx.field(static=True)
     noise_coupling: NoiseCoupling = eqx.field(static=True)
+    noise_witness: NoiseCouplingWitness | None = eqx.field(static=True)
     fingerprint: str = eqx.field(static=True)
 
     def __init__(
@@ -96,6 +138,7 @@ class StochasticLevelSpec(StrictModule):
         basis_id: str | None = None,
         state_transfer_id: str | None = None,
         noise_coupling: NoiseCoupling = "shared",
+        noise_witness: NoiseCouplingWitness | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         metadata: Mapping[str, str] | None = None,
     ):
@@ -140,6 +183,10 @@ class StochasticLevelSpec(StrictModule):
         )
         basis = _identifier(basis_id, "basis_id", required=False)
         transfer = _identifier(state_transfer_id, "state_transfer_id", required=False)
+        if noise_witness is not None and not isinstance(
+            noise_witness, NoiseCouplingWitness
+        ):
+            raise TypeError("noise_witness must be a NoiseCouplingWitness or None.")
         if discretization_bundle is None:
             records = []
             approximation_key = DiscretizationKey(
@@ -204,6 +251,7 @@ class StochasticLevelSpec(StrictModule):
         self.basis_id = basis
         self.state_transfer_id = transfer
         self.noise_coupling = noise_coupling
+        self.noise_witness = noise_witness
         self.metadata = identities
         self.discretization_bundle = bundle
         self.fingerprint = _fingerprint(
@@ -222,6 +270,7 @@ class StochasticLevelSpec(StrictModule):
                 basis,
                 transfer,
                 noise_coupling,
+                None if noise_witness is None else noise_witness.witness_id,
                 tuple(identities.items()),
                 bundle.bundle_id,
             )
@@ -315,6 +364,10 @@ class StochasticCouplingPlan(StrictModule):
                 if coarse_family is None or coarse_family != fine_family:
                     raise ValueError(
                         "Nested noise levels require one shared metadata noise_family_id."
+                    )
+                if fine.noise_witness is None or not fine.noise_witness.passed:
+                    raise ValueError(
+                        "Nested noise levels require a passing projection witness."
                     )
         self.levels = values
         self.hierarchy_id = identifier

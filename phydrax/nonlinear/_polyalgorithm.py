@@ -15,6 +15,7 @@ from ._newton import (
     NewtonKrylov,
     NewtonTrustRegion,
 )
+from ._precision import NonlinearPrecisionPolicy
 from ._pseudo_transient import PseudoTransient
 from ._quasi_newton import Broyden
 from ._spectral import DFSANE
@@ -85,6 +86,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
 
     methods: tuple[AbstractNonlinearMethod, ...]
     selector_id: str = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -92,6 +94,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
         /,
         *,
         selector_id: str = "root-polyalgorithm",
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         methods_ = tuple(methods)
         if not methods_ or not all(
@@ -103,8 +106,12 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
         identifier = str(selector_id)
         if not identifier:
             raise ValueError("selector_id must be non-empty.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.methods = methods_
         self.selector_id = identifier
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -134,11 +141,13 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
             raise TypeError("problem must be NonlinearSystemProblem.")
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination.")
+        self.precision.validate_tolerance(termination.absolute_residual)
         state = problem.validate_state(initial_state)
         problem_ = problem
         attempts = []
         work_values = []
         diagnostic_values = []
+        precision_children = {}
         used_iterations = 0
         best = None
         best_norm = float("inf")
@@ -185,6 +194,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
                     termination=remaining,
                     args=args,
                     _prepared_start=prepared_start,
+                    precision=self.precision,
                     _return_internal=True,
                 )
                 current_newton_internal = (
@@ -194,7 +204,12 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
             elif isinstance(method, (Broyden, PseudoTransient, DFSANE)):
                 if initial_evaluation is not None:
                     residual_reuses += 1
-                result = method.solve(
+                method_ = eqx.tree_at(
+                    lambda value: value.precision,
+                    method,
+                    self.precision,
+                )
+                result = method_.solve(
                     problem_,
                     state,
                     termination=remaining,
@@ -220,8 +235,13 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
                     output_residual_norm=(result.diagnostics.final_residual_norm),
                     work=work,
                     failure_origin="solve-status",
+                    children=tuple(result.attempts),
                 )
             )
+            if result.precision_evidence is not None:
+                precision_children[f"attempt-{len(attempts) - 1}"] = (
+                    result.precision_evidence
+                )
             work_values.append(work)
             diagnostic_values.append(result.diagnostics)
             used_iterations += int(result.diagnostics.iterations)
@@ -229,12 +249,13 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
             if best is None or norm < best_norm:
                 best = result
                 best_norm = norm
-                state = result.state
-                problem_ = problem_.bind_spaces(state, result.residual)
+                state = self.precision.state(result.state)
+                residual = self.precision.residual(result.residual)
+                problem_ = problem_.bind_spaces(state, residual)
                 initial_evaluation = (
                     problem_,
                     state,
-                    result.residual,
+                    residual,
                     result.auxiliary,
                 )
                 best_newton_internal = current_newton_internal
@@ -282,12 +303,19 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
             method_id=self.method_id,
             derivative_id="attempt-dependent",
             globalization_id="attempt-graph",
+            precision_policy_id=self.precision.policy_id,
             notes=(
                 "methods="
                 + ",".join(attempt.component_id for attempt in attempts)
                 + f";residual-reuses={residual_reuses}"
                 + f";prepared-handoffs={prepared_handoffs}"
             ),
+        )
+        precision_evidence = self.precision.evidence_for(
+            self.precision.state(best.state),
+            self.precision.residual(best.residual),
+            children=precision_children,
+            output_value=best.state,
         )
         return NonlinearResult(
             state=best.state,
@@ -297,6 +325,7 @@ class RootPolyalgorithm(AbstractNonlinearMethod):
             diagnostics=final_diagnostics,
             provenance=provenance,
             transformation_evidence=best.transformation_evidence,
+            precision_evidence=precision_evidence,
             attempts=tuple(attempts),
         )
 
@@ -305,12 +334,22 @@ class FastRoot(AbstractNonlinearMethod):
     """Capability-selected single native root method."""
 
     dense_dimension: int = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
-    def __init__(self, *, dense_dimension: int = 64):
+    def __init__(
+        self,
+        *,
+        dense_dimension: int = 64,
+        precision: NonlinearPrecisionPolicy | None = None,
+    ):
         dimension = int(dense_dimension)
         if dimension < 1:
             raise ValueError("dense_dimension must be positive.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.dense_dimension = dimension
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -345,6 +384,7 @@ class FastRoot(AbstractNonlinearMethod):
             state,
             termination=termination,
             args=args,
+            precision=self.precision,
         )
         provenance = NonlinearProvenance(
             problem_id=result.provenance.problem_id,
@@ -352,6 +392,7 @@ class FastRoot(AbstractNonlinearMethod):
             derivative_id=result.provenance.derivative_id,
             globalization_id=result.provenance.globalization_id,
             linear_plan_id=result.provenance.linear_plan_id,
+            precision_policy_id=self.precision.policy_id,
             notes=f"selected={method.method_id}",
         )
         return NonlinearResult(
@@ -362,6 +403,7 @@ class FastRoot(AbstractNonlinearMethod):
             diagnostics=result.diagnostics,
             provenance=provenance,
             transformation_evidence=result.transformation_evidence,
+            precision_evidence=result.precision_evidence,
             attempts=result.attempts,
         )
 
@@ -371,16 +413,20 @@ class RobustRoot(AbstractNonlinearMethod):
 
     algorithm: RootPolyalgorithm
 
-    def __init__(self):
+    def __init__(self, *, precision: NonlinearPrecisionPolicy | None = None):
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.algorithm = RootPolyalgorithm(
             (
                 NewtonKrylov(),
                 NewtonTrustRegion(),
-                Broyden("good"),
-                PseudoTransient(),
-                DFSANE(),
+                Broyden("good", precision=precision_),
+                PseudoTransient(precision=precision_),
+                DFSANE(precision=precision_),
             ),
             selector_id="robust-root",
+            precision=precision_,
         )
 
     @property

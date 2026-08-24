@@ -20,6 +20,7 @@ from ..linalg import (
     PyTreeSpace,
     solve as solve_linear,
 )
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
     NonlinearCapabilities,
@@ -30,6 +31,12 @@ from ._types import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+
+
+def _coordinate_norm(space, value, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.decision(
+        jnp.linalg.norm(precision.accumulation(space.flatten(value)))
+    )
 
 
 class _HalleyRun(eqx.Module):
@@ -55,6 +62,7 @@ class VectorHalley(AbstractNonlinearMethod):
     linear: LinearSolvePolicy
     maximum_dimension: int = eqx.field(static=True)
     maximum_search_steps: int = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -62,10 +70,14 @@ class VectorHalley(AbstractNonlinearMethod):
         linear: LinearSolvePolicy | None = None,
         maximum_dimension: int = 128,
         maximum_search_steps: int = 16,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         linear_ = LinearSolvePolicy() if linear is None else linear
         if not isinstance(linear_, LinearSolvePolicy):
             raise TypeError("linear must be LinearSolvePolicy or None.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         dimension = int(maximum_dimension)
         steps = int(maximum_search_steps)
         if dimension < 1 or steps < 1:
@@ -73,6 +85,7 @@ class VectorHalley(AbstractNonlinearMethod):
         self.linear = linear_
         self.maximum_dimension = dimension
         self.maximum_search_steps = steps
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -96,6 +109,7 @@ class VectorHalley(AbstractNonlinearMethod):
         termination: NonlinearTermination,
         args: Any = None,
     ) -> NonlinearResult:
+        self.precision.validate_tolerance(termination.absolute_residual)
         state = problem.validate_state(initial_state)
         residual, auxiliary = problem.evaluate(state, args)
         problem_ = problem.bind_spaces(state, residual)
@@ -105,7 +119,8 @@ class VectorHalley(AbstractNonlinearMethod):
             raise ValueError(
                 "VectorHalley requires a square system within maximum_dimension."
             )
-        norm = jnp.linalg.norm(target.flatten(residual))
+        self.precision.validate_trees(state, residual)
+        norm = _coordinate_norm(target, residual, self.precision)
         finite = tree_allfinite(state) & tree_allfinite(residual)
         valid = problem_.valid(state, residual, auxiliary, args)
         run = _HalleyRun(
@@ -153,7 +168,7 @@ class VectorHalley(AbstractNonlinearMethod):
             first = solve_linear(
                 LinearSystem(jacobian),
                 current.residual,
-                policy=self.linear,
+                policy=self.precision.bind_linear(self.linear),
             )
             inverse_residual = first.value
 
@@ -188,7 +203,7 @@ class VectorHalley(AbstractNonlinearMethod):
             second = solve_linear(
                 LinearSystem(modified),
                 jax.tree.map(jnp.negative, current.residual),
-                policy=self.linear,
+                policy=self.precision.bind_linear(self.linear),
             )
             direction = second.value
 
@@ -220,14 +235,21 @@ class VectorHalley(AbstractNonlinearMethod):
 
             def search_body(item):
                 candidate = jax.tree.map(
-                    lambda value, delta: value + item.rate * delta,
+                    lambda value, delta: jnp.asarray(
+                        value + item.rate * delta,
+                        dtype=value.dtype,
+                    ),
                     current.state,
                     direction,
                 )
                 candidate_residual, candidate_auxiliary = problem_.evaluate(
                     candidate, args
                 )
-                candidate_norm = jnp.linalg.norm(target.flatten(candidate_residual))
+                candidate_norm = _coordinate_norm(
+                    target,
+                    candidate_residual,
+                    self.precision,
+                )
                 finite_candidate = tree_allfinite(candidate) & tree_allfinite(
                     candidate_residual
                 )
@@ -265,7 +287,7 @@ class VectorHalley(AbstractNonlinearMethod):
 
             search = jax.lax.while_loop(search_condition, search_body, search)
             step = jax.tree.map(lambda new, old: new - old, search.state, current.state)
-            step_norm = jnp.linalg.norm(source.flatten(step))
+            step_norm = _coordinate_norm(source, step, self.precision)
             converged = search.accepted & (
                 search.norm <= termination.residual_threshold(current.initial_norm)
             )
@@ -275,7 +297,7 @@ class VectorHalley(AbstractNonlinearMethod):
                 & (
                     step_norm
                     <= termination.step_threshold(
-                        jnp.linalg.norm(source.flatten(current.state))
+                        _coordinate_norm(source, current.state, self.precision)
                     )
                 )
             )
@@ -336,8 +358,9 @@ class VectorHalley(AbstractNonlinearMethod):
             accepted_steps=run.accepted_steps,
             rejected_steps=run.rejected_steps,
         )
+        output_state = jax.tree.map(self.precision.output, run.state)
         return NonlinearResult(
-            state=run.state,
+            state=output_state,
             residual=run.residual,
             auxiliary=run.auxiliary,
             status=status,
@@ -347,6 +370,12 @@ class VectorHalley(AbstractNonlinearMethod):
                 method_id=self.method_id,
                 derivative_id="nested-jvp-second-order",
                 globalization_id="residual-decrease",
+                precision_policy_id=self.precision.policy_id,
+            ),
+            precision_evidence=self.precision.evidence_for(
+                run.state,
+                run.residual,
+                output_value=output_state,
             ),
         )
 

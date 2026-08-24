@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -45,7 +46,7 @@ def apply_lpdo_two_site_unitary(
     if gate_.shape != (left.shape[1], right.shape[1], left.shape[1], right.shape[1]):
         raise ValueError("LPDO unitary gate shape is invalid.")
     theta = jnp.tensordot(left, right, axes=(-1, 0))
-    theta = jnp.einsum("abij,likjmr->lakbmr", gate_, theta)
+    theta = oe.contract("abij,likjmr->lakbmr", gate_, theta)
     matrix = theta.reshape(
         (
             left.shape[0] * left.shape[1] * left.shape[2],

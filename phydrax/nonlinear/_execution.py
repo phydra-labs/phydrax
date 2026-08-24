@@ -13,7 +13,8 @@ from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite
-from ._scaling import NonlinearPrecisionPolicy
+from ._newton import NewtonKrylov, NewtonTrustRegion
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
     NonlinearDiagnostics,
@@ -22,10 +23,29 @@ from ._types import (
     NonlinearStatus,
     NonlinearSystemProblem,
     NonlinearTermination,
+    NonlinearTransformationEvidence,
 )
 
 
 NormReduction: TypeAlias = Literal["local-l2", "global-l2"]
+
+
+def _precision_tree_norm(
+    value: PyTree[Any],
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    terms = tuple(
+        jnp.sum(jnp.real(jnp.conj(leaf_) * leaf_))
+        for leaf in jax.tree.leaves(value)
+        if (leaf_ := precision.accumulation(leaf)).size
+    )
+    if not terms:
+        raise ValueError("A nonlinear residual requires at least one non-empty leaf.")
+    squared = terms[0]
+    for term in terms[1:]:
+        squared = squared + term
+    return precision.decision(jnp.sqrt(jnp.maximum(squared, 0.0)))
 
 
 class ShardedNonlinearPolicy(StrictModule):
@@ -106,44 +126,62 @@ class MixedPrecisionRootExecution(StrictModule):
             raise TypeError("problem must be NonlinearSystemProblem.")
         if not isinstance(method, AbstractNonlinearMethod):
             raise TypeError("method must be AbstractNonlinearMethod.")
-        model_initial = self.precision.model(initial_state)
+        if not isinstance(termination, NonlinearTermination):
+            raise TypeError("termination must be NonlinearTermination.")
+        self.precision.validate_tolerance(termination.absolute_residual)
+        model_initial = self.precision.state(initial_state)
 
         def model_residual(state, current_args):
-            residual, auxiliary = problem.evaluate(state, current_args)
-            return self.precision.model(residual), auxiliary
+            residual, auxiliary = problem.residual_function(state, current_args), None
+            if problem.has_aux:
+                residual, auxiliary = residual
+            return self.precision.residual(residual), auxiliary
+
+        def model_validity(state, residual, auxiliary, current_args):
+            assert problem.validity_function is not None
+            return problem.validity_function(
+                state,
+                residual,
+                auxiliary,
+                current_args,
+            )
 
         model_problem = NonlinearSystemProblem(
             model_residual,
             has_aux=True,
+            validity=(None if problem.validity_function is None else model_validity),
             problem_id=f"{problem.problem_id}/mixed-precision",
         )
-        result = method.solve(
-            model_problem,
-            model_initial,
-            termination=termination,
-            args=args,
-        )
+        if isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
+            result = method.solve(
+                model_problem,
+                model_initial,
+                termination=termination,
+                args=args,
+                precision=self.precision,
+            )
+        else:
+            result = method.solve(
+                model_problem,
+                model_initial,
+                termination=termination,
+                args=args,
+            )
+        model_state = self.precision.state(result.state)
+        model_residual_value = self.precision.residual(result.residual)
         physical_state = self.precision.certificate(result.state)
         physical_residual, physical_auxiliary = problem.evaluate(
             physical_state,
             args,
         )
+        physical_residual = self.precision.certificate(physical_residual)
         initial_residual, _ = problem.evaluate(
             self.precision.certificate(initial_state),
             args,
         )
-        physical_norm = jnp.sqrt(
-            sum(
-                jnp.real(jnp.vdot(value, value))
-                for value in jax.tree.leaves(physical_residual)
-            )
-        )
-        initial_norm = jnp.sqrt(
-            sum(
-                jnp.real(jnp.vdot(value, value))
-                for value in jax.tree.leaves(initial_residual)
-            )
-        )
+        initial_residual = self.precision.certificate(initial_residual)
+        physical_norm = _precision_tree_norm(physical_residual, self.precision)
+        initial_norm = _precision_tree_norm(initial_residual, self.precision)
         finite = tree_allfinite(physical_state) & tree_allfinite(physical_residual)
         valid = problem.valid(
             physical_state,
@@ -151,11 +189,8 @@ class MixedPrecisionRootExecution(StrictModule):
             physical_auxiliary,
             args,
         )
-        certified = (
-            finite
-            & valid
-            & (physical_norm <= termination.residual_threshold(initial_norm))
-        )
+        threshold = self.precision.decision(termination.residual_threshold(initial_norm))
+        certified = finite & valid & (physical_norm <= threshold)
         status = jnp.where(
             result.successful & ~certified,
             int(NonlinearStatus.TRANSFORMATION_CERTIFICATION_FAILED),
@@ -164,7 +199,7 @@ class MixedPrecisionRootExecution(StrictModule):
         diagnostics = NonlinearDiagnostics(
             initial_residual_norm=initial_norm,
             final_residual_norm=physical_norm,
-            final_step_norm=result.diagnostics.final_step_norm,
+            final_step_norm=self.precision.decision(result.diagnostics.final_step_norm),
             iterations=result.diagnostics.iterations,
             residual_evaluations=result.diagnostics.residual_evaluations + 2,
             jvp_evaluations=result.diagnostics.jvp_evaluations,
@@ -196,19 +231,38 @@ class MixedPrecisionRootExecution(StrictModule):
             derivative_id=result.provenance.derivative_id,
             globalization_id=result.provenance.globalization_id,
             linear_plan_id=result.provenance.linear_plan_id,
+            precision_policy_id=self.precision.policy_id,
             notes=(
                 f"model={self.precision.model_dtype};"
                 f"direction={self.precision.direction_dtype};"
                 f"certificate={self.precision.certificate_dtype}"
             ),
         )
+        children = (
+            {}
+            if result.precision_evidence is None
+            else {"model-solve": result.precision_evidence}
+        )
+        output_state = jax.tree.map(self.precision.output, physical_state)
+        precision_evidence = self.precision.evidence_for(
+            model_state,
+            model_residual_value,
+            children=children,
+            output_value=output_state,
+        )
         return NonlinearResult(
-            state=physical_state,
+            state=output_state,
             residual=physical_residual,
             auxiliary=physical_auxiliary,
             status=status,
             diagnostics=diagnostics,
             provenance=provenance,
+            transformation_evidence=NonlinearTransformationEvidence(
+                state=model_state,
+                residual=model_residual_value,
+                auxiliary=result.auxiliary,
+            ),
+            precision_evidence=precision_evidence,
             attempts=result.attempts,
         )
 

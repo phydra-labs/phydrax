@@ -9,10 +9,14 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
+from .._temporal_precision import TemporalPrecisionPolicy
 from ..operators.quantum import (
     ApproximationAxis,
     ApproximationQuantity,
@@ -77,6 +81,8 @@ class QuantumJumpProblem(StrictModule):
     hamiltonian: StateVectorOperator
     collapse_operators: tuple[StateVectorOperator, ...]
     initial_state: Array
+    geometry_precision: GeometryPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -86,6 +92,7 @@ class QuantumJumpProblem(StrictModule):
         initial_state: ArrayLike,
         /,
         *,
+        geometry_precision: GeometryPrecisionPolicy | None = None,
         problem_id: str = "quantum-jump",
     ):
         if not isinstance(hamiltonian, StateVectorOperator):
@@ -97,15 +104,25 @@ class QuantumJumpProblem(StrictModule):
             for operator in collapse
         ):
             raise ValueError("Collapse operators must share the Hamiltonian dimension.")
+        geometry_ = (
+            GeometryPrecisionPolicy()
+            if geometry_precision is None
+            else geometry_precision
+        )
+        if not isinstance(geometry_, GeometryPrecisionPolicy):
+            raise TypeError("geometry_precision must be GeometryPrecisionPolicy or None.")
         state = jnp.asarray(initial_state)
+        geometry_.validate_coordinates(state)
         if state.shape != (hamiltonian.dimension,):
             raise ValueError("Initial state dimension does not match the Hamiltonian.")
-        norm = jnp.linalg.norm(state)
+        norm = geometry_.norm(state)
         if not bool(jax.device_get(jnp.isfinite(norm) & (norm > 0.0))):
             raise ValueError("Initial state must have finite nonzero norm.")
         self.hamiltonian = hamiltonian
         self.collapse_operators = collapse
-        self.initial_state = state / norm
+        self.initial_state = jnp.asarray(state / norm, dtype=state.dtype)
+        self.geometry_precision = geometry_
+        self.precision_evidence = geometry_.evidence_for(state)
         self.problem_id = str(problem_id)
 
 
@@ -116,6 +133,9 @@ class QuantumTrajectoryEnsemble(StrictModule):
     times: Array
     approximation: OpenSystemApproximationEvidence
     valid: Array
+    temporal_precision: TemporalPrecisionPolicy
+    geometry_precision: GeometryPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -130,14 +150,35 @@ class QuantumTrajectoryEnsemble(StrictModule):
         problem_id: str,
         maximum_step_size: float = 0.1,
         maximum_statistical_error: float = 0.25,
+        temporal_precision: TemporalPrecisionPolicy,
+        geometry_precision: GeometryPrecisionPolicy,
     ):
-        self.states = jnp.asarray(states)
+        if not isinstance(temporal_precision, TemporalPrecisionPolicy):
+            raise TypeError("temporal_precision must be TemporalPrecisionPolicy.")
+        if not isinstance(geometry_precision, GeometryPrecisionPolicy):
+            raise TypeError("geometry_precision must be GeometryPrecisionPolicy.")
+        states_ = jnp.asarray(states)
+        times_ = jnp.asarray(times)
+        temporal_precision.validate_state(states_[0, 0])
+        geometry_precision.validate_coordinates(states_[0, 0])
+        norm_residual = geometry_precision.decision(
+            jnp.max(jnp.abs(geometry_precision.norm(states_, axis=-1) - 1.0))
+        )
+        self.states = temporal_precision.output(states_)
         self.jump_channels = jnp.asarray(jump_channels, dtype=jnp.int32)
         self.jump_mask = jnp.asarray(jump_mask, dtype=bool)
-        self.times = jnp.asarray(times)
-        norm_residual = jnp.max(jnp.abs(jnp.linalg.norm(self.states, axis=-1) - 1.0))
+        self.times = times_
         self.valid = jnp.all(jnp.isfinite(self.states)) & (norm_residual <= 1e-6)
         statistical_error = 1.0 / jnp.sqrt(float(self.states.shape[0]))
+        self.temporal_precision = temporal_precision
+        self.geometry_precision = geometry_precision
+        self.precision_evidence = temporal_precision.evidence_for(
+            states_[0, 0],
+            times_[0],
+            children={
+                "ensemble-reduction": geometry_precision.evidence_for(states_[0, 0])
+            },
+        )
         self.approximation = OpenSystemApproximationEvidence(
             "quantum-trajectory-ensemble",
             (
@@ -147,7 +188,7 @@ class QuantumTrajectoryEnsemble(StrictModule):
             (
                 ApproximationQuantity(
                     "time-step",
-                    jnp.asarray(step_size),
+                    temporal_precision.decision(jnp.asarray(step_size)),
                     maximum_step_size,
                     units="time",
                     norm_id="absolute",
@@ -155,7 +196,7 @@ class QuantumTrajectoryEnsemble(StrictModule):
                 ),
                 ApproximationQuantity(
                     "monte-carlo-standard-error-scale",
-                    statistical_error,
+                    geometry_precision.decision(statistical_error),
                     maximum_statistical_error,
                     units="dimensionless",
                     norm_id="inverse-sqrt-sample-count",
@@ -164,22 +205,41 @@ class QuantumTrajectoryEnsemble(StrictModule):
                 ),
             ),
             execution_valid=self.valid,
+            precision_evidence=self.precision_evidence,
+            precision_policy_ids=(
+                temporal_precision.policy_id,
+                geometry_precision.policy_id,
+            ),
         )
         self.problem_id = str(problem_id)
 
     def observable(self, operator: StateVectorOperator, /) -> tuple[Array, Array]:
         values = jax.vmap(
-            jax.vmap(lambda state: jnp.real(jnp.vdot(state, operator(state))))
+            jax.vmap(
+                lambda state: jnp.real(
+                    self.geometry_precision.sum(jnp.conj(state) * operator(state))
+                )
+            )
         )(self.states)
-        return jnp.mean(values, axis=0), jnp.std(values, axis=0) / jnp.sqrt(
-            float(values.shape[0])
+        mean = self.geometry_precision.sum(values, axis=0) / values.shape[0]
+        centered = self.geometry_precision.accumulation(values - mean)
+        variance = (
+            self.geometry_precision.sum(
+                jnp.real(jnp.conj(centered) * centered),
+                axis=0,
+            )
+            / values.shape[0]
         )
+        error = self.geometry_precision.decision(jnp.sqrt(variance / values.shape[0]))
+        return self.geometry_precision.decision(mean), error
 
     def empirical_density(self) -> Array:
         final = self.states[:, -1, :]
-        return jnp.mean(
-            jax.vmap(lambda state: state[:, None] * jnp.conj(state[None, :]))(final),
-            axis=0,
+        projectors = jax.vmap(lambda state: state[:, None] * jnp.conj(state[None, :]))(
+            final
+        )
+        return self.geometry_precision.output(
+            self.geometry_precision.sum(projectors, axis=0) / final.shape[0]
         )
 
 
@@ -188,6 +248,8 @@ def _trajectory(
     key: Array,
     step: Array,
     count: int,
+    temporal_precision: TemporalPrecisionPolicy,
+    geometry_precision: GeometryPrecisionPolicy,
 ):
     channel_count = len(problem.collapse_operators)
     decision_address = SampleAddress(
@@ -206,12 +268,20 @@ def _trajectory(
     def advance(state, index):
         decision_key = derive_key(key, decision_address, index)
         channel_key = derive_key(key, channel_address, index)
-        collapsed = jnp.stack(
-            [operator(state) for operator in problem.collapse_operators]
+        collapsed = temporal_precision.stage(
+            jnp.stack([operator(state) for operator in problem.collapse_operators])
         )
-        rates = jnp.real(jnp.einsum("ki,ki->k", jnp.conj(collapsed), collapsed))
-        probabilities = step * rates
-        total = jnp.sum(probabilities)
+        collapsed_ = geometry_precision.accumulation(collapsed)
+        rates = geometry_precision.decision(
+            jnp.real(
+                geometry_precision.sum(
+                    jnp.conj(collapsed_) * collapsed_,
+                    axis=1,
+                )
+            )
+        )
+        probabilities = temporal_precision.decision(step * rates)
+        total = temporal_precision.decision(geometry_precision.sum(probabilities))
         probabilities = eqx.error_if(
             probabilities,
             total > 0.1,
@@ -224,14 +294,27 @@ def _trajectory(
             jnp.log(jnp.maximum(probabilities / safe_total, 1e-30)),
         )
         selected = collapsed[jnp.minimum(channel, max(channel_count - 1, 0))]
-        jump_state = selected / jnp.maximum(jnp.linalg.norm(selected), 1e-30)
-        effective = -1j * problem.hamiltonian(state)
+        jump_state = jnp.asarray(
+            selected / jnp.maximum(geometry_precision.norm(selected), 1e-30),
+            dtype=state.dtype,
+        )
+        effective = temporal_precision.stage(-1j * problem.hamiltonian(state))
         for operator, collapsed_state in zip(
-            problem.collapse_operators, collapsed, strict=True
+            problem.collapse_operators,
+            collapsed,
+            strict=True,
         ):
-            effective = effective - 0.5 * operator.adjoint(collapsed_state)
-        no_jump = state + step * effective
-        no_jump = no_jump / jnp.linalg.norm(no_jump)
+            effective = effective - 0.5 * temporal_precision.stage(
+                operator.adjoint(collapsed_state)
+            )
+        no_jump = jnp.asarray(
+            state + step * temporal_precision.accumulation(effective),
+            dtype=state.dtype,
+        )
+        no_jump = jnp.asarray(
+            no_jump / geometry_precision.norm(no_jump),
+            dtype=state.dtype,
+        )
         next_state = jnp.where(jump, jump_state, no_jump)
         return next_state, (next_state, channel, jump)
 
@@ -248,8 +331,26 @@ def solve_quantum_jump_ensemble(
     step_size: ArrayLike,
     steps: int,
     trajectory_count: int,
+    temporal_precision: TemporalPrecisionPolicy | None = None,
+    geometry_precision: GeometryPrecisionPolicy | None = None,
 ) -> QuantumTrajectoryEnsemble:
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    if not isinstance(problem, QuantumJumpProblem):
+        raise TypeError("problem must be QuantumJumpProblem.")
+    temporal_ = (
+        TemporalPrecisionPolicy() if temporal_precision is None else temporal_precision
+    )
+    geometry_ = (
+        problem.geometry_precision if geometry_precision is None else geometry_precision
+    )
+    if not isinstance(temporal_, TemporalPrecisionPolicy):
+        raise TypeError("temporal_precision must be TemporalPrecisionPolicy or None.")
+    if not isinstance(geometry_, GeometryPrecisionPolicy):
+        raise TypeError("geometry_precision must be GeometryPrecisionPolicy or None.")
+    temporal_.validate_state(problem.initial_state)
+    geometry_.validate_coordinates(problem.initial_state)
+    step = temporal_.coefficient(
+        jnp.asarray(step_size, dtype=problem.initial_state.real.dtype)
+    ).reshape(())
     count = int(steps)
     trajectories = int(trajectory_count)
     if count < 0 or trajectories < 1 or float(step) <= 0.0:
@@ -258,13 +359,20 @@ def solve_quantum_jump_ensemble(
         [operator(problem.initial_state) for operator in problem.collapse_operators]
     )
     initial_rates = jnp.real(
-        jnp.einsum("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
+        oe.contract("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
     )
     if float(step * jnp.sum(initial_rates)) > 0.1:
         raise ValueError("Fixed-step jump probability exceeds the 0.1 validity limit.")
     keys = jax.random.split(key, trajectories)
     states, channels, masks = jax.vmap(
-        lambda local_key: _trajectory(problem, local_key, step, count)
+        lambda local_key: _trajectory(
+            problem,
+            local_key,
+            step,
+            count,
+            temporal_,
+            geometry_,
+        )
     )(keys)
     return QuantumTrajectoryEnsemble(
         states,
@@ -273,6 +381,8 @@ def solve_quantum_jump_ensemble(
         step * jnp.arange(count + 1),
         step_size=step,
         problem_id=problem.problem_id,
+        temporal_precision=temporal_,
+        geometry_precision=geometry_,
     )
 
 

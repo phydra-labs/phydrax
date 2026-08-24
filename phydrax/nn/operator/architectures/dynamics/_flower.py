@@ -141,9 +141,7 @@ class _ChannelLastGroupNorm(StrictModule):
                 )
                 / count
             )
-        normalized = (centered * jax.lax.rsqrt(variance + self.eps)).reshape(
-            array.shape
-        )
+        normalized = (centered * jax.lax.rsqrt(variance + self.eps)).reshape(array.shape)
         affine_shape = (1,) * (array.ndim - 1) + (self.channels,)
         output = normalized * self.scale.reshape(affine_shape)
         output = output + self.bias.reshape(affine_shape)

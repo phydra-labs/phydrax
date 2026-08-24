@@ -10,11 +10,14 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import (
     hermitian_exp,
     hermitian_inverse_sqrt,
     hermitian_sqrt,
+    HermitianPrecisionPolicy,
     HermitianSpectrum,
     HermitianSylvesterOperator,
     TracelessHermitianSpace,
@@ -53,16 +56,29 @@ class FaithfulDensityReport(StrictModule):
     minimum_eigenvalue: Array
     rank: Array
     condition_number: Array
+    precision_evidence: PrecisionEvidenceEnvelope
 
-    def __init__(self, density: ArrayLike, /, *, tolerance: float):
+    def __init__(
+        self,
+        density: ArrayLike,
+        /,
+        *,
+        tolerance: float,
+        precision: HermitianPrecisionPolicy | None = None,
+    ):
         value = jnp.asarray(density)
-        spectrum = HermitianSpectrum(value, tolerance=tolerance)
+        spectrum = HermitianSpectrum(
+            value,
+            tolerance=tolerance,
+            precision=precision,
+        )
         trace_residual = jnp.abs(jnp.trace(value, axis1=-2, axis2=-1) - 1.0)
         self.hermiticity_residual = spectrum.hermiticity_residual
         self.trace_residual = trace_residual
         self.minimum_eigenvalue = spectrum.minimum_eigenvalue
         self.rank = spectrum.numerical_rank
         self.condition_number = spectrum.condition_number
+        self.precision_evidence = spectrum.precision_evidence
         self.valid = (
             spectrum.valid
             & (trace_residual <= tolerance)
@@ -74,13 +90,39 @@ class SLDQuantumFisherGeometry(StrictModule):
     """SLD information metric with ``g_SLD(A,B)=tr(A L_B)``."""
 
     tolerance: float
+    precision: HermitianPrecisionPolicy
+    geometry_precision: GeometryPrecisionPolicy
 
-    def __init__(self, *, tolerance: float = 1e-10):
+    def __init__(
+        self,
+        *,
+        tolerance: float = 1e-10,
+        precision: HermitianPrecisionPolicy | None = None,
+        geometry_precision: GeometryPrecisionPolicy | None = None,
+    ):
+        precision_ = HermitianPrecisionPolicy() if precision is None else precision
+        geometry_ = (
+            GeometryPrecisionPolicy()
+            if geometry_precision is None
+            else geometry_precision
+        )
+        if not isinstance(precision_, HermitianPrecisionPolicy):
+            raise TypeError("precision must be a HermitianPrecisionPolicy or None.")
+        if not isinstance(geometry_, GeometryPrecisionPolicy):
+            raise TypeError(
+                "geometry_precision must be a GeometryPrecisionPolicy or None."
+            )
         self.tolerance = float(tolerance)
+        self.precision = precision_
+        self.geometry_precision = geometry_
 
     def sld(self, density: ArrayLike, tangent: ArrayLike, /) -> Array:
-        operator = HermitianSylvesterOperator(density, tolerance=self.tolerance)
-        result = operator.solve(2.0 * jnp.asarray(tangent))
+        operator = HermitianSylvesterOperator(
+            density,
+            tolerance=self.tolerance,
+            precision=self.precision,
+        )
+        result = operator.solve(2.0 * self.precision.factorization(tangent))
         return result.value
 
     def inner(
@@ -90,7 +132,11 @@ class SLDQuantumFisherGeometry(StrictModule):
         right: ArrayLike,
         /,
     ) -> Array:
-        return jnp.real(jnp.trace(_adjoint(jnp.asarray(left)) @ self.sld(density, right)))
+        value = jnp.trace(
+            _adjoint(self.geometry_precision.accumulation(left))
+            @ self.geometry_precision.accumulation(self.sld(density, right))
+        )
+        return self.geometry_precision.decision(jnp.real(value))
 
     def flat(self, density: ArrayLike, tangent: ArrayLike, /) -> Array:
         return self.sld(density, tangent)
@@ -117,13 +163,35 @@ class BuresDensityManifold(AbstractRiemannianManifold):
     transport_is_parallel: bool = eqx.field(static=True)
     sld_geometry: SLDQuantumFisherGeometry
     tangent_space: TracelessHermitianSpace
+    precision: GeometryPrecisionPolicy
+    hermitian_precision: HermitianPrecisionPolicy
 
-    def __init__(self, dimension: int, /, *, tolerance: float = 1e-9):
+    def __init__(
+        self,
+        dimension: int,
+        /,
+        *,
+        tolerance: float = 1e-9,
+        precision: GeometryPrecisionPolicy | None = None,
+        hermitian_precision: HermitianPrecisionPolicy | None = None,
+    ):
         dimension_ = int(dimension)
         if dimension_ < 2:
             raise ValueError("Density dimension must be at least two.")
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("tolerance must be finite and positive.")
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        hermitian_ = (
+            HermitianPrecisionPolicy()
+            if hermitian_precision is None
+            else hermitian_precision
+        )
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+        if not isinstance(hermitian_, HermitianPrecisionPolicy):
+            raise TypeError(
+                "hermitian_precision must be a HermitianPrecisionPolicy or None."
+            )
         self.dimension = dimension_
         self.tolerance = float(tolerance)
         self.manifold_id = f"manifold:density:bures:{dimension_}"
@@ -132,7 +200,13 @@ class BuresDensityManifold(AbstractRiemannianManifold):
         self.transport_method = "traceless-hermitian-projection"
         self.transport_is_isometric = False
         self.transport_is_parallel = False
-        self.sld_geometry = SLDQuantumFisherGeometry(tolerance=tolerance)
+        self.precision = precision_
+        self.hermitian_precision = hermitian_
+        self.sld_geometry = SLDQuantumFisherGeometry(
+            tolerance=tolerance,
+            precision=hermitian_,
+            geometry_precision=precision_,
+        )
         self.tangent_space = TracelessHermitianSpace(dimension_)
 
     @property
@@ -144,12 +218,16 @@ class BuresDensityManifold(AbstractRiemannianManifold):
 
     def contains(self, point: ArrayLike, /) -> Array:
         return FaithfulDensityReport(
-            self._matrix(point, "density"), tolerance=self.tolerance
+            self._matrix(point, "density"),
+            tolerance=self.tolerance,
+            precision=self.hermitian_precision,
         ).valid
 
     def constraint_residual(self, point: ArrayLike, /) -> Array:
         report = FaithfulDensityReport(
-            self._matrix(point, "density"), tolerance=self.tolerance
+            self._matrix(point, "density"),
+            tolerance=self.tolerance,
+            precision=self.hermitian_precision,
         )
         return jnp.maximum(
             jnp.maximum(report.hermiticity_residual, report.trace_residual),
@@ -182,12 +260,28 @@ class BuresDensityManifold(AbstractRiemannianManifold):
     def retract(self, point: ArrayLike, tangent_step: ArrayLike, /) -> Array:
         rho = self._matrix(point, "density")
         step = self.project_tangent(rho, tangent_step)
-        root = hermitian_sqrt(rho, tolerance=self.tolerance).value
-        inverse_root = hermitian_inverse_sqrt(rho, tolerance=self.tolerance).value
+        root = hermitian_sqrt(
+            rho,
+            tolerance=self.tolerance,
+            precision=self.hermitian_precision,
+        ).value
+        inverse_root = hermitian_inverse_sqrt(
+            rho,
+            tolerance=self.tolerance,
+            precision=self.hermitian_precision,
+        ).value
         local = inverse_root @ step @ inverse_root
-        candidate = root @ hermitian_exp(local).value @ root
+        candidate = (
+            root
+            @ hermitian_exp(
+                local,
+                precision=self.hermitian_precision,
+            ).value
+            @ root
+        )
         candidate = 0.5 * (candidate + _adjoint(candidate))
-        return candidate / jnp.trace(candidate)
+        normalized = candidate / jnp.trace(candidate)
+        return jnp.asarray(normalized, dtype=rho.dtype)
 
     def transport(
         self,

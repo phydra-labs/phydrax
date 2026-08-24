@@ -16,6 +16,13 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import PyTree
 
 from .._tree_math import validate_real_inexact_tree
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve as solve_linear,
+)
 from ._constrained_model import prepare_constrained_model
 from ._iterative import (
     AbstractMinimizationMethod,
@@ -63,11 +70,11 @@ def _certify_minimization(problem, parameters, args, termination, backend_succes
             axis=1,
         )
         if multiplier_matrix.shape[1]:
-            multipliers = jnp.linalg.lstsq(
-                multiplier_matrix,
+            multipliers = solve_linear(
+                LeastSquaresProblem(DenseLinearOperator(multiplier_matrix)),
                 -flat_gradient,
-                rcond=None,
-            )[0]
+                policy=LinearSolvePolicy(DenseSVD()),
+            ).value
             stationarity = flat_gradient + multiplier_matrix @ multipliers
         else:
             stationarity = flat_gradient

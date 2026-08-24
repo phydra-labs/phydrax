@@ -30,6 +30,7 @@ from ._certification import (
     FDConsistencyReport,
 )
 from ._coefficients import StencilCoefficientPlan
+from ._precision import FDExecutionPrecisionPolicy
 from ._request import DerivativeRequest
 from ._stencil import (
     BoundaryStencilSet,
@@ -67,12 +68,17 @@ def prepare_linear_stencil(
     grid: PreparedTensorGrid,
     request: DerivativeRequest,
     /,
+    *,
+    precision: FDExecutionPrecisionPolicy | None = None,
 ) -> BoundaryStencilSet:
     """Prepare a masked variable-width derivative bank between exact entity layouts."""
     if not isinstance(grid, PreparedTensorGrid) or not isinstance(
         request, DerivativeRequest
     ):
         raise TypeError("grid and request must be prepared tensor/derivative values.")
+    precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, FDExecutionPrecisionPolicy):
+        raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
     axis = grid.axis_names.index(request.axis)
     source_layout = grid.layout_at(request.source_location)
     target_layout = grid.layout_at(request.target_location)
@@ -82,8 +88,14 @@ def prepare_linear_stencil(
         if index != axis
     ):
         raise ValueError("Derivative source/target non-differentiated axes must align.")
-    source_coordinates = np.asarray(source_layout.coordinates_by_axis[axis], dtype=float)
-    target_coordinates = np.asarray(target_layout.coordinates_by_axis[axis], dtype=float)
+    source_coordinates = np.asarray(
+        source_layout.coordinates_by_axis[axis],
+        dtype=precision_.certification_dtype,
+    )
+    target_coordinates = np.asarray(
+        target_layout.coordinates_by_axis[axis],
+        dtype=precision_.certification_dtype,
+    )
     source_count = int(source_coordinates.size)
     target_count = int(target_coordinates.size)
     interior_width = _interior_width(request)
@@ -97,7 +109,11 @@ def prepare_linear_stencil(
             f"Derivative stencil capacity {capacity} exceeds source entity count {source_count}."
         )
     indices = np.zeros((target_count, capacity), dtype=np.int32)
-    weights = np.full((target_count, capacity), np.nan, dtype=float)
+    weights = np.full(
+        (target_count, capacity),
+        np.nan,
+        dtype=precision_.coefficient_dtype,
+    )
     valid = np.zeros((target_count, capacity), dtype=bool)
     plans: list[StencilCoefficientPlan] = []
     row_kinds: list[StencilRowKind] = []
@@ -130,6 +146,7 @@ def prepare_linear_stencil(
             0.0,
             request.derivative_order,
             request.accuracy_order,
+            precision=precision_,
         )
     for output_index, evaluation_point in enumerate(target_coordinates):
         if periodic:
@@ -162,6 +179,7 @@ def prepare_linear_stencil(
                 float(evaluation_point),
                 request.derivative_order,
                 request.accuracy_order,
+                precision=precision_,
             )
             anchor = int(
                 np.clip(
@@ -211,6 +229,7 @@ class PreparedStencilOperator(AbstractLinearOperator):
     consistency_report: FDConsistencyReport
     adjoint_report: FDAdjointReport
     conservation_report: FDConservationReport
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
@@ -218,6 +237,8 @@ class PreparedStencilOperator(AbstractLinearOperator):
         source: DiscreteFieldSpace,
         target: DiscreteFieldSpace,
         /,
+        *,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         if not isinstance(stencil_set, BoundaryStencilSet):
             raise TypeError("stencil_set must be a BoundaryStencilSet.")
@@ -225,6 +246,9 @@ class PreparedStencilOperator(AbstractLinearOperator):
             target, DiscreteFieldSpace
         ):
             raise TypeError("source and target must be DiscreteFieldSpace values.")
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         if not isinstance(source.vector_space, ArraySpace) or not isinstance(
             target.vector_space, ArraySpace
         ):
@@ -261,18 +285,37 @@ class PreparedStencilOperator(AbstractLinearOperator):
                 "stencil": stencil_set.stencil.stencil_id,
                 "source": source.field_space_id,
                 "target": target.field_space_id,
+                "precision": precision_.policy_id,
             }
         )
         self.stencil_set = stencil_set
         self.axis = axis
         self.indices = stencil_set.stencil.indices
-        self.weights = stencil_set.stencil.weights
+        self.weights = stencil_set.stencil.weights.astype(
+            jnp.dtype(precision_.coefficient_dtype)
+        )
         self.valid = stencil_set.stencil.valid
-        self.consistency_report = certify_stencil_consistency(stencil_set)
-        self.adjoint_report = certify_operator_adjoint(self)
+        self.precision = precision_
+        certification_tolerance = float(
+            max(
+                1e-10,
+                1024.0 * np.finfo(precision_.certification_dtype).eps,
+            )
+        )
+        self.consistency_report = certify_stencil_consistency(
+            stencil_set,
+            tolerance=max(1e-9, certification_tolerance),
+        )
+        self.adjoint_report = certify_operator_adjoint(
+            self,
+            tolerance=certification_tolerance,
+            certification_dtype=precision_.certification_dtype,
+        )
         self.conservation_report = certify_operator_conservation(
             self,
             periodic=stencil_set.kind == "periodic",
+            tolerance=certification_tolerance,
+            certification_dtype=precision_.certification_dtype,
         )
 
     def mv(self, vector: ArrayLike, /) -> Array:
@@ -288,8 +331,12 @@ class PreparedStencilOperator(AbstractLinearOperator):
         )
         safe_weights = jnp.where(self.valid, self.weights, 0.0)
         weight_shape = safe_weights.shape + (1,) * (gathered.ndim - 2)
-        result = jnp.sum(safe_weights.reshape(weight_shape) * safe_gathered, axis=1)
-        result = jnp.moveaxis(result, 0, self.axis)
+        accumulation_dtype = jnp.dtype(self.precision.accumulation_dtype)
+        products = safe_weights.reshape(weight_shape).astype(
+            accumulation_dtype
+        ) * safe_gathered.astype(accumulation_dtype)
+        result = jnp.sum(products, axis=1, dtype=accumulation_dtype)
+        result = jnp.moveaxis(result, 0, self.axis).astype(self.target.dtype)
         return self.target.validate(result)
 
     def transpose_mv(self, vector: ArrayLike, /) -> Array:
@@ -298,20 +345,24 @@ class PreparedStencilOperator(AbstractLinearOperator):
         safe_indices = jnp.where(self.valid, self.indices, 0)
         mask_shape = self.valid.shape + (1,) * (moved.ndim - 1)
         safe_weights = jnp.where(self.valid, self.weights, 0.0)
-        contributions = safe_weights.reshape(mask_shape) * moved[:, None, ...]
+        accumulation_dtype = jnp.dtype(self.precision.accumulation_dtype)
+        contributions = safe_weights.reshape(mask_shape).astype(
+            accumulation_dtype
+        ) * moved[:, None, ...].astype(accumulation_dtype)
         contributions = jnp.where(
             self.valid.reshape(mask_shape),
             contributions,
-            jnp.zeros((), dtype=contributions.dtype),
+            jnp.zeros((), dtype=accumulation_dtype),
         )
         source_axis = self.source.shape[self.axis]
         output_shape = (source_axis,) + moved.shape[1:]
         output = (
-            jnp.zeros(output_shape, dtype=contributions.dtype)
+            jnp.zeros(output_shape, dtype=accumulation_dtype)
             .at[safe_indices]
             .add(contributions)
         )
-        return self.source.validate(jnp.moveaxis(output, 0, self.axis))
+        output = jnp.moveaxis(output, 0, self.axis).astype(self.source.dtype)
+        return self.source.validate(output)
 
     def adjoint_mv(self, vector: ArrayLike, /) -> Array:
         value = self.target.validate(jnp.asarray(vector))

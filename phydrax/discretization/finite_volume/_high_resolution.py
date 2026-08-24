@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -307,13 +308,13 @@ class CharacteristicReconstructionPlan(StrictModule):
             value,
             (3, 2, 1, 0, -1),
         )
-        left_characteristic = jnp.einsum("nij,nsj->nsi", left_matrix, left_windows)
-        right_characteristic = jnp.einsum("nij,nsj->nsi", left_matrix, right_windows)
+        left_characteristic = oe.contract("nij,nsj->nsi", left_matrix, left_windows)
+        right_characteristic = oe.contract("nij,nsj->nsi", left_matrix, right_windows)
         left_reconstructed = self.reconstruction._left(left_characteristic)
         right_reconstructed = self.reconstruction._left(right_characteristic)
         return (
-            jnp.einsum("nij,nj->ni", right_matrix, left_reconstructed),
-            jnp.einsum("nij,nj->ni", right_matrix, right_reconstructed),
+            oe.contract("nij,nj->ni", right_matrix, left_reconstructed),
+            oe.contract("nij,nj->ni", right_matrix, right_reconstructed),
             wave_speeds,
         )
 
@@ -390,8 +391,8 @@ class NonuniformWENOReconstructionPlan(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         windows = values[indices]
-        candidates = jnp.einsum("nkj,nkj...->nk...", coefficients, windows)
-        smoothness = jnp.einsum(
+        candidates = oe.contract("nkj,nkj...->nk...", coefficients, windows)
+        smoothness = oe.contract(
             "nkij,nki...,nkj...->nk...",
             smoothness_matrices,
             windows,

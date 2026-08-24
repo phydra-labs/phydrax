@@ -16,9 +16,15 @@ from phydrax.conditions import AbstractMomentCondition
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
-from ..integration import IntegrationRealization, PerStepIntegration, reduce
+from ..integration import (
+    IntegrationPrecisionPolicy,
+    IntegrationRealization,
+    PerStepIntegration,
+    reduce,
+)
 from ..integration._api import _requires_random_key
 from ..integration._execution import resolve_integration
 from ._integrated import checked_estimate_field, validate_condition_source
@@ -60,6 +66,7 @@ class RandomizedMomentDiagnostics(StrictModule):
     negative: Array
     finite: Array
     integration_diagnostics: tuple[Any, ...]
+    precision_evidence: PrecisionEvidenceEnvelope
     num_realizations: int = eqx.field(static=True)
     loss_mode: RandomizedResidualLossMode = eqx.field(static=True)
 
@@ -78,6 +85,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
     weight: Array
     num_realizations: int = eqx.field(static=True)
     loss_mode: RandomizedResidualLossMode = eqx.field(static=True)
+    precision: IntegrationPrecisionPolicy
     label: str | None = eqx.field(static=True)
 
     def __init__(
@@ -90,6 +98,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         loss_mode: RandomizedResidualLossMode = "u_statistic",
         scale: ArrayLike = 1.0,
         label: str | None = None,
+        precision: IntegrationPrecisionPolicy | None = None,
     ):
         if not isinstance(condition, AbstractMomentCondition):
             raise TypeError(
@@ -115,6 +124,9 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             raise ValueError("Term scale must be a scalar.")
         if not bool(jnp.isfinite(coefficient)) or float(coefficient) < 0.0:
             raise ValueError("Term scale must be finite and nonnegative.")
+        precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, IntegrationPrecisionPolicy):
+            raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
         self.condition = condition
         self.source = source
         self.fields = condition.fields
@@ -122,6 +134,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         self.weight = self.scale
         self.num_realizations = count
         self.loss_mode = loss_mode
+        self.precision = precision_
         self.label = condition.label if label is None else str(label)
 
     def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> RandomizedMomentBatch:
@@ -148,7 +161,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         /,
         *,
         runtime_kwargs: Mapping[str, Any],
-    ) -> tuple[Array, Any]:
+    ) -> tuple[Array, Any, PrecisionEvidenceEnvelope | None]:
         estimate = reduce(integrand, realization, **runtime_kwargs)
         field = checked_estimate_field(estimate)
         named_dims = tuple(dim for dim in field.dims if dim is not None)
@@ -164,7 +177,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
                 f"Moment target shape {target.shape} cannot broadcast to "
                 f"integrated shape {integrated.shape}."
             )
-        return integrated - target, estimate.diagnostics
+        return integrated - target, estimate.diagnostics, estimate.precision_evidence
 
     def _evaluate(
         self,
@@ -174,7 +187,12 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         *,
         iter_: int | Array | None,
         kwargs: Mapping[str, Any],
-    ) -> tuple[Array, Array | None, tuple[Any, ...]]:
+    ) -> tuple[
+        Array,
+        Array | None,
+        tuple[Any, ...],
+        tuple[PrecisionEvidenceEnvelope | None, ...],
+    ]:
         if not isinstance(batch, RandomizedMomentBatch):
             raise TypeError("batch must be a RandomizedMomentBatch.")
         runtime_kwargs = dict(kwargs)
@@ -189,10 +207,13 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             )
             for realization in batch.left
         )
-        left = jnp.stack(tuple(value for value, _ in left_results), axis=0)
-        diagnostics = tuple(item for _, item in left_results)
+        left = self.precision.accumulation(
+            jnp.stack(tuple(value for value, _, _ in left_results), axis=0)
+        )
+        diagnostics = tuple(item for _, item, _ in left_results)
+        evidences = tuple(evidence for _, _, evidence in left_results)
         if batch.right is None:
-            return left, None, diagnostics
+            return left, None, diagnostics, evidences
         right_results = tuple(
             self._mismatch(
                 integrand,
@@ -201,8 +222,16 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             )
             for realization in batch.right
         )
-        right = jnp.stack(tuple(value for value, _ in right_results), axis=0)
-        return left, right, diagnostics + tuple(item for _, item in right_results)
+        right = self.precision.accumulation(
+            jnp.stack(tuple(value for value, _, _ in right_results), axis=0)
+        )
+        right_evidence = tuple(evidence for _, _, evidence in right_results)
+        return (
+            left,
+            right,
+            diagnostics + tuple(item for _, item, _ in right_results),
+            evidences + right_evidence,
+        )
 
     def loss(
         self,
@@ -215,7 +244,7 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         **kwargs: Any,
     ) -> Array:
         materialized = self.sample(key=key) if batch is None else batch
-        left, right, _ = self._evaluate(
+        left, right, _, _ = self._evaluate(
             functions,
             materialized,
             iter_=iter_,
@@ -226,8 +255,11 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
             tuple(int(size) for size in left.shape[1:]),
             self.loss_mode,
             right=right,
+            precision=self.precision,
         )
-        return self.scale * jnp.asarray(value, dtype=float).reshape(())
+        return self.precision.decision(
+            self.precision.decision(self.scale) * value
+        ).reshape(())
 
     def diagnostics(
         self,
@@ -240,41 +272,71 @@ class RandomizedMomentPenalty(AbstractSamplingTerm):
         **kwargs: Any,
     ) -> RandomizedMomentDiagnostics:
         materialized = self.sample(key=key) if batch is None else batch
-        left, right, integration_diagnostics = self._evaluate(
+        left, right, integration_diagnostics, integration_evidence = self._evaluate(
             functions,
             materialized,
             iter_=iter_,
             kwargs=kwargs,
         )
         event_shape = tuple(int(size) for size in left.shape[1:])
-        objective = self.scale * randomized_squared_mean(
+        objective = self.precision.decision(self.scale) * randomized_squared_mean(
             left,
             event_shape,
             self.loss_mode,
             right=right,
+            precision=self.precision,
         )
-        mean = jnp.mean(left, axis=0)
-        centered = left - mean
-        variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(
-            self.num_realizations - 1
+        mean = jnp.mean(self.precision.accumulation(left), axis=0)
+        centered = self.precision.accumulation(left - mean)
+        variance = jnp.sum(
+            self.precision.accumulation(jnp.abs(centered) ** 2),
+            axis=0,
+        ) / float(self.num_realizations - 1)
+        standard_error = jnp.sqrt(
+            self.precision.accumulation(variance / float(self.num_realizations))
         )
-        standard_error = jnp.sqrt(variance / float(self.num_realizations))
-        plug_in_norm = jnp.sqrt(event_inner(mean, event_shape))
-        mean_standard_error = jnp.sqrt(event_inner(standard_error, event_shape))
+        plug_in_norm = self.precision.decision(
+            jnp.sqrt(
+                event_inner(
+                    mean,
+                    event_shape,
+                    precision=self.precision,
+                )
+            )
+        )
+        mean_standard_error = self.precision.decision(
+            jnp.sqrt(
+                event_inner(
+                    standard_error,
+                    event_shape,
+                    precision=self.precision,
+                )
+            )
+        )
         finite = (
             jnp.isfinite(objective)
             & jnp.isfinite(plug_in_norm)
             & jnp.isfinite(mean_standard_error)
         )
+        children = {
+            f"integration-{index}": evidence
+            for index, evidence in enumerate(integration_evidence)
+            if evidence is not None
+        }
+        precision_evidence = self.precision.evidence_for(
+            left,
+            children=children,
+        )
         return RandomizedMomentDiagnostics(
-            objective=jnp.asarray(objective, dtype=float).reshape(()),
-            plug_in_moment_norm=jnp.asarray(plug_in_norm, dtype=float).reshape(()),
-            mean_standard_error=jnp.asarray(mean_standard_error, dtype=float).reshape(()),
+            objective=self.precision.decision(objective).reshape(()),
+            plug_in_moment_norm=plug_in_norm.reshape(()),
+            mean_standard_error=mean_standard_error.reshape(()),
             negative=objective < 0.0,
             finite=finite,
             integration_diagnostics=integration_diagnostics,
             num_realizations=self.num_realizations,
             loss_mode=self.loss_mode,
+            precision_evidence=precision_evidence,
         )
 
 

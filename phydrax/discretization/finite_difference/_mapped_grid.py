@@ -11,6 +11,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -276,9 +278,7 @@ def evaluate_mapped_metrics(
     sbp_order: SBPInteriorOrder = 4,
 ) -> tuple[Array, Array, Array, Array]:
     """Pure differentiable mapped coordinates, deformation, cofactor, and Jacobian."""
-    if not isinstance(reference_grid, PreparedTensorGrid) or not callable(
-        coordinate_map
-    ):
+    if not isinstance(reference_grid, PreparedTensorGrid) or not callable(coordinate_map):
         raise TypeError("Mapped metric evaluation requires a grid and coordinate map.")
     dimension = len(reference_grid.shape)
     physical = jax.vmap(coordinate_map)(reference_grid.points)
@@ -337,9 +337,14 @@ class PreparedMappedTensorGrid(StrictModule, NonTrainableState):
         )
         deformation, cofactor = _discrete_cofactor(physical, derivatives)
         jacobian = jnp.sum(deformation * cofactor, axis=(-2, -1)) / float(dimension)
+        invalid_jacobian = jnp.any(~jnp.isfinite(jacobian)) | jnp.any(jacobian <= 0.0)
+        if not isinstance(invalid_jacobian, jax_core.Tracer) and bool(invalid_jacobian):
+            raise eqx.EquinoxRuntimeError(
+                "Mapped tensor Jacobian must be finite and positive."
+            )
         jacobian = eqx.error_if(
             jacobian,
-            jnp.any(~jnp.isfinite(jacobian)) | jnp.any(jacobian <= 0.0),
+            invalid_jacobian,
             "Mapped tensor Jacobian must be finite and positive.",
         )
         inverse = jnp.swapaxes(cofactor, -1, -2) / jacobian[..., None, None]
@@ -438,7 +443,7 @@ class PreparedMappedTensorGrid(StrictModule, NonTrainableState):
             axis=-1,
         )
         return (
-            jnp.einsum(
+            oe.contract(
                 "...ij,...j->...i",
                 self.cofactor,
                 reference_gradient,
@@ -451,7 +456,7 @@ class PreparedMappedTensorGrid(StrictModule, NonTrainableState):
         dimension = len(self.shape)
         if value.shape != self.shape + (dimension,):
             raise ValueError("Mapped vector must have one trailing physical component.")
-        contravariant_flux = jnp.einsum("...ij,...i->...j", self.cofactor, value)
+        contravariant_flux = oe.contract("...ij,...i->...j", self.cofactor, value)
         result = jnp.zeros(self.shape, dtype=value.dtype)
         for axis, derivative in enumerate(self.derivatives):
             result = result + derivative.operator.mv(contravariant_flux[..., axis])
@@ -558,7 +563,7 @@ class MappedDiffusionOperator(AbstractLinearOperator):
     def mv(self, vector: ArrayLike, /) -> Array:
         value = self.source.validate(jnp.asarray(vector))
         gradient = self.mapped_grid.gradient(value)
-        flux = jnp.einsum("...ij,...j->...i", self.coefficient, gradient)
+        flux = oe.contract("...ij,...j->...i", self.coefficient, gradient)
         return self.mapped_grid.divergence(flux)
 
     def transpose_mv(self, vector: ArrayLike, /) -> Array:

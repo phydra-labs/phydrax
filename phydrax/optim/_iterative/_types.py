@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from ..._bounds import _static_bound_metadata, Bounds
+from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._tree_math import (  # noqa: F401
     tree_add_scaled as _tree_add_scaled,
@@ -533,6 +534,7 @@ class OptimizationProvenance(StrictModule):
     matrix_free: bool = eqx.field(static=True)
     implicit_differentiation: bool = eqx.field(static=True)
     notes: str = eqx.field(static=True)
+    precision_policy_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -545,6 +547,7 @@ class OptimizationProvenance(StrictModule):
         matrix_free: bool,
         implicit_differentiation: bool = False,
         notes: str = "",
+        precision_policy_id: str | None = None,
     ):
         values = tuple(
             str(value) for value in (problem_id, method, backend, globalization)
@@ -555,6 +558,9 @@ class OptimizationProvenance(StrictModule):
         self.backend_method = str(backend_method)
         self.matrix_free = bool(matrix_free)
         self.implicit_differentiation = bool(implicit_differentiation)
+        self.precision_policy_id = (
+            None if precision_policy_id is None else str(precision_policy_id)
+        )
         self.notes = str(notes)
 
 
@@ -586,6 +592,7 @@ class OptimizationCertificate(StrictModule):
     evaluation_work: Array
     kind: OptimizationCertificateKind = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -602,7 +609,15 @@ class OptimizationCertificate(StrictModule):
         certified: Any,
         evaluation_work: Any = 0,
         certificate_id: str,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         identifier = str(certificate_id)
         if not identifier:
             raise ValueError("certificate_id must be non-empty.")
@@ -617,6 +632,7 @@ class OptimizationCertificate(StrictModule):
         self.regular = jnp.asarray(regular, dtype=jnp.bool_)
         self.certified = jnp.asarray(certified, dtype=jnp.bool_)
         self.evaluation_work = jnp.asarray(evaluation_work, dtype=jnp.int32)
+        self.precision_evidence = precision_evidence
         self.certificate_id = identifier
 
 
@@ -667,6 +683,8 @@ class ConstrainedOptimalityCertificate(StrictModule):
     equality_sources: tuple[str, ...] = eqx.field(static=True)
     inequality_sources: tuple[str, ...] = eqx.field(static=True)
 
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
+
     def __init__(
         self,
         *,
@@ -680,7 +698,15 @@ class ConstrainedOptimalityCertificate(StrictModule):
         complementarity: Any,
         equality_sources: tuple[str, ...] = (),
         inequality_sources: tuple[str, ...] = (),
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         equality = jnp.asarray(equality_multipliers)
         inequality = jnp.asarray(inequality_multipliers)
         slacks_ = jnp.asarray(slacks)
@@ -712,6 +738,7 @@ class ConstrainedOptimalityCertificate(StrictModule):
         self.complementarity = jnp.asarray(complementarity)
         self.equality_sources = equality_sources_
         self.inequality_sources = inequality_sources_
+        self.precision_evidence = precision_evidence
 
 
 class MinimizationResult(StrictModule):
@@ -727,6 +754,7 @@ class MinimizationResult(StrictModule):
     optimality_certificate: OptimizationCertificate | None
     status_evidence: OptimizationStatusEvidence | None
     method_evidence: Any
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -742,6 +770,7 @@ class MinimizationResult(StrictModule):
         optimality_certificate: OptimizationCertificate | None = None,
         status_evidence: OptimizationStatusEvidence | None = None,
         method_evidence: Any = None,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
@@ -766,6 +795,13 @@ class MinimizationResult(StrictModule):
             OptimizationStatusEvidence,
         ):
             raise TypeError("status_evidence must be OptimizationStatusEvidence or None.")
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         self.parameters = parameters
         self.objective = jnp.asarray(objective)
         self.auxiliary = auxiliary
@@ -776,6 +812,7 @@ class MinimizationResult(StrictModule):
         self.optimality_certificate = optimality_certificate
         self.status_evidence = status_evidence
         self.method_evidence = method_evidence
+        self.precision_evidence = precision_evidence
 
     @property
     def successful(self) -> Array:
@@ -795,6 +832,7 @@ class LeastSquaresResult(StrictModule):
     optimality_certificate: OptimizationCertificate | None
     status_evidence: OptimizationStatusEvidence | None
     method_evidence: Any
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -810,6 +848,7 @@ class LeastSquaresResult(StrictModule):
         optimality_certificate: OptimizationCertificate | None = None,
         status_evidence: OptimizationStatusEvidence | None = None,
         method_evidence: Any = None,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
         if not isinstance(diagnostics, OptimizationDiagnostics):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
@@ -827,6 +866,13 @@ class LeastSquaresResult(StrictModule):
             OptimizationStatusEvidence,
         ):
             raise TypeError("status_evidence must be OptimizationStatusEvidence or None.")
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         self.parameters = parameters
         self.residual = residual
         self.objective = jnp.asarray(objective)
@@ -837,6 +883,7 @@ class LeastSquaresResult(StrictModule):
         self.optimality_certificate = optimality_certificate
         self.status_evidence = status_evidence
         self.method_evidence = method_evidence
+        self.precision_evidence = precision_evidence
 
     @property
     def successful(self) -> Array:

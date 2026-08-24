@@ -62,7 +62,9 @@ class ConstantTransport(AbstractTransportClosure):
             or viscosity < 0.0
             or conductivity < 0.0
         ):
-            raise ValueError("Constant transport coefficients must be finite and non-negative.")
+            raise ValueError(
+                "Constant transport coefficients must be finite and non-negative."
+            )
         self.dynamic_viscosity = viscosity
         self.bulk_viscosity = bulk
         self.thermal_conductivity = conductivity
@@ -88,9 +90,7 @@ class ConstantTransport(AbstractTransportClosure):
         return TransportProperties(
             dynamic_viscosity=jnp.full(shape, self.dynamic_viscosity, dtype=dtype),
             bulk_viscosity=jnp.full(shape, self.bulk_viscosity, dtype=dtype),
-            thermal_conductivity=jnp.full(
-                shape, self.thermal_conductivity, dtype=dtype
-            ),
+            thermal_conductivity=jnp.full(shape, self.thermal_conductivity, dtype=dtype),
         )
 
 
@@ -171,7 +171,7 @@ class SutherlandTransport(AbstractTransportClosure):
         ratio = safe / self.reference_temperature
         viscosity = (
             self.reference_viscosity
-            * ratio ** 1.5
+            * ratio**1.5
             * (self.reference_temperature + self.sutherland_temperature)
             / (safe + self.sutherland_temperature)
         )

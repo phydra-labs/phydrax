@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._sampling import derive_key, SampleAddress
@@ -165,7 +166,7 @@ def solve_event_driven_quantum_jump(
             collapsed = jnp.stack(
                 [operator(normalized) for operator in problem.collapse_operators]
             )
-            rates = jnp.real(jnp.einsum("ki,ki->k", jnp.conj(collapsed), collapsed))
+            rates = jnp.real(oe.contract("ki,ki->k", jnp.conj(collapsed), collapsed))
             probabilities = rates / jnp.sum(rates)
             local_key = derive_key(key, channel_address, event_count)
             channel = jax.random.categorical(

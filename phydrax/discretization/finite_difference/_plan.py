@@ -31,6 +31,7 @@ from ._boundary import (
     HaloPlan,
 )
 from ._operators import prepare_linear_stencil, PreparedStencilOperator
+from ._precision import FDExecutionPrecisionPolicy
 from ._request import DerivativeRequest
 from ._stencil import BoundaryStencilSet, StencilFootprint
 
@@ -62,6 +63,7 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
     requests: tuple[DerivativeRequest, ...]
     key: DiscretizationKey
     capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -72,6 +74,7 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
         *,
         field_name: str = "state",
         key: DiscretizationKey | None = None,
+        precision: FDExecutionPrecisionPolicy | None = None,
         plan_id: str | None = None,
     ):
         if not isinstance(grid, PreparedTensorGrid):
@@ -98,6 +101,9 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
         )
         if not isinstance(key_, DiscretizationKey):
             raise TypeError("key must be a DiscretizationKey.")
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         capabilities = (
             DiscretizationCapability.STRONG_DERIVATIVE,
             DiscretizationCapability.MATRIX_FREE,
@@ -111,6 +117,7 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
                     "field": field,
                     "requests": [request.request_id for request in requests_],
                     "key": key_.key_id,
+                    "precision": precision_.policy_id,
                 }
             )
             if plan_id is None
@@ -123,6 +130,7 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
         self.requests = requests_
         self.key = key_
         self.capabilities = capabilities
+        self.precision = precision_
         self.plan_id = identifier
 
     def prepare(
@@ -156,6 +164,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
     prepared_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
     preparation: PreparationReport
+    precision: FDExecutionPrecisionPolicy
 
     def __init__(
         self,
@@ -177,17 +186,24 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
                 if location.location_id == plan.grid.centered_location.location_id
                 else f"{plan.field_name}@{location.location_id[:12]}",
                 location=location,
+                dtype=jnp.dtype(plan.precision.field_dtype),
             )
             for location in locations
         }
         stencils = tuple(
-            prepare_linear_stencil(plan.grid, request) for request in plan.requests
+            prepare_linear_stencil(
+                plan.grid,
+                request,
+                precision=plan.precision,
+            )
+            for request in plan.requests
         )
         operators = tuple(
             PreparedStencilOperator(
                 stencil,
                 space_by_location[stencil.stencil.source_location.location_id],
                 space_by_location[stencil.stencil.target_location.location_id],
+                precision=plan.precision,
             )
             for stencil in stencils
         )
@@ -249,6 +265,7 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
                 "plan": plan.plan_id,
                 "stencils": [stencil.stencil.stencil_id for stencil in stencils],
                 "numeric_version": version,
+                "precision": plan.precision.policy_id,
             }
         )
         self.grid = plan.grid
@@ -266,7 +283,20 @@ class PreparedFiniteDifferenceDiscretization(AbstractStrongFormDiscretization):
         self.plan_id = plan.plan_id
         self.prepared_id = prepared_id
         self.numeric_version = version
+        self.precision = plan.precision
         self.preparation = preparation
+
+    @property
+    def precision_evidence(self):
+        return self.precision.evidence()
+
+    @property
+    def precision_evidence_id(self) -> str:
+        return self.precision_evidence.evidence_id
+
+    @property
+    def resource_evidence_id(self) -> str:
+        return self.precision.resource_assumptions.assumptions_id
 
     @property
     def state_shape(self) -> tuple[int, ...]:
@@ -509,6 +539,7 @@ def periodic_finite_difference(
     /,
     *,
     accuracy_order: int = 2,
+    precision: FDExecutionPrecisionPolicy | None = None,
 ) -> PreparedFiniteDifferenceDiscretization:
     """Prepare first/second derivatives on every periodic tensor axis."""
     if not isinstance(grid, PreparedTensorGrid) or not all(
@@ -540,6 +571,7 @@ def periodic_finite_difference(
     return FiniteDifferencePlan(
         grid,
         requests,
+        precision=precision,
         field_name="periodic_fd_state",
     ).prepare()
 

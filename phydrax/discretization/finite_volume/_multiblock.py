@@ -36,7 +36,9 @@ def _repeat_to_shape(values: Array, target: tuple[int, ...], /) -> Array:
         return output
     if len(output.shape[:-1]) != len(target):
         raise ValueError("Multiblock traces must have matching rank.")
-    for axis, (source, destination) in enumerate(zip(output.shape[:-1], target, strict=True)):
+    for axis, (source, destination) in enumerate(
+        zip(output.shape[:-1], target, strict=True)
+    ):
         if destination % source:
             raise ValueError("Nested interface ratios must be integral.")
         output = jnp.repeat(output, destination // source, axis=axis)
@@ -105,7 +107,9 @@ class ConservativeMultiblockInterfacePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Multiblock FV axis or side is invalid.")
         if left_side != "upper" or right_side != "lower":
-            raise ValueError("Initial multiblock FV orientation requires upper-to-lower sides.")
+            raise ValueError(
+                "Initial multiblock FV orientation requires upper-to-lower sides."
+            )
         if left.component_names != right.component_names:
             raise ValueError("Multiblock FV component layouts must match.")
         if not isinstance(orientation, InterfaceOrientation):
@@ -116,9 +120,14 @@ class ConservativeMultiblockInterfacePlan(StrictModule, NonTrainableState):
             raise TypeError("interface_solver must be a numerical flux plan.")
         left_shape = _tangential_shape(left.cell_shape, left_axis_)
         right_shape = _tangential_shape(right.cell_shape, right_axis_)
-        oriented_right_shape = tuple(right_shape[index] for index in orientation.permutation)
+        oriented_right_shape = tuple(
+            right_shape[index] for index in orientation.permutation
+        )
         for left_count, right_count in zip(left_shape, oriented_right_shape, strict=True):
-            if max(left_count, right_count) != 2 * min(left_count, right_count) and left_count != right_count:
+            if (
+                max(left_count, right_count) != 2 * min(left_count, right_count)
+                and left_count != right_count
+            ):
                 raise ValueError("Multiblock FV interfaces must conform or nest 2:1.")
         self.left = left
         self.right = right
@@ -171,8 +180,12 @@ class ConservativeMultiblockInterfacePlan(StrictModule, NonTrainableState):
         )
         left_mortar = _repeat_to_shape(left_trace, mortar_shape)
         right_mortar = _repeat_to_shape(right_trace, mortar_shape)
-        left_measure_mortar = _repeat_to_shape(left_measure[..., None], mortar_shape)[..., 0]
-        right_measure_mortar = _repeat_to_shape(right_measure[..., None], mortar_shape)[..., 0]
+        left_measure_mortar = _repeat_to_shape(left_measure[..., None], mortar_shape)[
+            ..., 0
+        ]
+        right_measure_mortar = _repeat_to_shape(right_measure[..., None], mortar_shape)[
+            ..., 0
+        ]
         mortar_measure = jnp.minimum(left_measure_mortar, right_measure_mortar)
         result = self.interface_solver.face_flux(
             system, left_mortar, right_mortar, self.left_axis, args

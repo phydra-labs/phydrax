@@ -2368,6 +2368,22 @@ mask-preserving collation, persisted training-only normalization, exact
 model/optimizer/RNG checkpoints, explicit parameter/compute/reduction dtypes,
 scheduled autoregressive rollouts, and prefetching sharded loaders.
 
+`OperatorDTypePolicy` makes placement executable. Trainable parameters remain in
+`parameter_dtype`; each forward pass builds a transient `compute_dtype` view;
+losses, metrics, and gradient accumulation use `reduction_dtype`. Coordinate,
+quadrature, mask, and topology arrays are never quantized as model values.
+`matmul_precision` is scoped with JAX around model execution. FNO spectral
+convolutions promote float16/bfloat16 values to float32 FFTs (and float64 values
+to float64 FFTs), then cast the inverse transform back to compute dtype.
+
+Float16 training requires an explicit `OperatorLossScalePolicy`. A nonfinite
+microstep discards the complete accumulation window and backs off one replicated
+scale; only a finite optimizer candidate commits parameters and optimizer state.
+The scale, growth counter, and nonfinite count are checkpointed for bitwise
+resume. Artifact format 4 and training-checkpoint format 3 persist the dtype
+policy and resolved real/complex precision evidence and reject older or
+inconsistent manifests.
+
 `OperatorEpochPlan` is the operator-facing view of PhydraX's shared finite-index
 data-plane engine. It maps each logical position directly to one case index with
 a versioned, stateless permutation, never allocates a dataset-sized shuffle
@@ -2498,7 +2514,15 @@ that choice is recorded in the plan fingerprint guarding prepared inputs.
 
 ---
 
-::: phydrax.nn.operator.training.OperatorMixedPrecisionPolicy
+::: phydrax.nn.operator.training.OperatorDTypePolicy
+
+---
+
+::: phydrax.nn.operator.training.OperatorPrecisionEvidence
+
+---
+
+::: phydrax.nn.operator.training.OperatorLossScalePolicy
 
 ---
 

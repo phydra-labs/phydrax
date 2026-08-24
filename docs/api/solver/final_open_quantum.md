@@ -31,25 +31,35 @@ and converted into Kraus operators only after CP/TP certification.
 
 ## HEOM
 
-Capacity-checked scaled topology, BDF1–5 implicit solves, tier-block
-preconditioning evidence, and independent bath/depth continuation are exposed
-separately.
+Fixed-step BDF1–5 and adaptive matrix-free BDF1 are separate APIs. Adaptive
+HEOM uses a full-step/two-half-step error estimator, accepted/rejected step
+history, bounded attempts, and an actual tier-diagonal right preconditioner.
+Bath/depth continuation remains an independent approximation axis.
 
 ::: phydrax.solver.solve_heom_bdf
 
+::: phydrax.solver.solve_heom_adaptive_bdf
+
 ::: phydrax.solver.solve_heom_continuation_grid
 
-## Causal processes
+## Causal processes and direct memory
 
 Sequential system-memory channels are the physical process representation.
-Tomography reports support and identifiability; memory compression is accepted
-only when the compressed process remains CPTP.
+Tomography uses a tangent-space quotient rank and canonical selected-map
+fingerprints. Memory refit requires disjoint held-out interventions, nonzero
+pre-fit error, and measured improvement. Direct-memory evolution is promoted
+only after operator-basis map reconstruction and Choi CP/TP certification.
 
-## Artifacts
+## Qualification artifacts
 
-::: phydrax.solver.write_open_system_artifact
+Campaign artifact creation, verification, and graduation live under
+`tools.open_system_campaigns`, not the solver API. The tooling writes one
+complete unverified record, verifies precision linkage and exact independent
+reproduction, and only then passes a verified campaign into graduation.
 
-::: phydrax.solver.read_open_system_artifact
+```text
+python -m tools.open_system_campaign_matrix --output-directory <directory>
+```
 
 ## Permanent claim boundaries
 

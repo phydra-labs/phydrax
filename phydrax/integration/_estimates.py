@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._numerics import WeightedMomentsDiagnostics
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ._status import IntegrationStatus
 
@@ -165,6 +166,7 @@ class IntegrationEstimate(StrictModule):
     error_estimate: Array | None
     diagnostics: Any
     provenance: IntegrationProvenance
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     error_kind: str | None = eqx.field(static=True)
 
     def __init__(
@@ -178,6 +180,7 @@ class IntegrationEstimate(StrictModule):
         error_kind: str | None,
         diagnostics: Any,
         provenance: IntegrationProvenance,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
     ):
         self.value = value
         self.status = jnp.asarray(status, dtype=jnp.int32)
@@ -186,6 +189,7 @@ class IntegrationEstimate(StrictModule):
         self.error_kind = error_kind
         self.diagnostics = diagnostics
         self.provenance = provenance
+        self.precision_evidence = precision_evidence
 
     @property
     def successful(self) -> Array:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
 from ._core import (
@@ -39,6 +40,22 @@ class AbstractPreparedDiscretization(StrictModule, NonTrainableState):
     prepared_id: AbstractAttribute[str]
     numeric_version: AbstractAttribute[str]
     preparation: AbstractAttribute[PreparationReport]
+
+    @property
+    def precision_evidence(self) -> PrecisionEvidenceEnvelope | None:
+        """Observed execution precision, when the method provides it."""
+        return None
+
+    @property
+    def precision_evidence_id(self) -> str | None:
+        """Identity of observed execution precision, when the method provides it."""
+        evidence = self.precision_evidence
+        return None if evidence is None else evidence.evidence_id
+
+    @property
+    def resource_evidence_id(self) -> str | None:
+        """Identity of resource assumptions or measurements, when available."""
+        return None
 
 
 def validate_prepared_metadata(

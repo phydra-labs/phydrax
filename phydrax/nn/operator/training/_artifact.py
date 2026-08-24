@@ -28,14 +28,17 @@ from ..capabilities import OperatorTrainingEvidence
 from ..data import OperatorBatch
 from ..protocols import OperatorModel
 from ..task import OperatorTask
-from ._dtype import OperatorDTypePolicy
+from ._dtype import (
+    OperatorDTypePolicy,
+    OperatorPrecisionEvidence,
+)
 from ._normalization import OperatorNormalizationPolicy
 from ._physics import OperatorOutputPipeline
 from ._trained_operator import TrainedOperator
 
 
 _OPERATOR_ARTIFACT_FORMAT = "phydrax-operator-artifact"
-_OPERATOR_ARTIFACT_VERSION = 3
+_OPERATOR_ARTIFACT_VERSION = 4
 
 
 def _sha256(path: Path, /) -> str:
@@ -75,7 +78,8 @@ class OperatorArtifactManifest:
     execution_model_factory_id: str
     execution_model_recipe: Mapping[str, Any] | None
     normalization: Mapping[str, Any] | None
-    dtype_policy: Mapping[str, str]
+    dtype_policy: Mapping[str, str | None]
+    precision_evidence: Mapping[str, str | None]
     training_evidence: Mapping[str, str]
     provenance: Mapping[str, Any]
     calibration: Mapping[str, Any]
@@ -106,6 +110,7 @@ class OperatorArtifactManifest:
             "execution_model_recipe",
             "normalization",
             "dtype_policy",
+            "precision_evidence",
             "training_evidence",
             "provenance",
             "calibration",
@@ -157,6 +162,7 @@ class OperatorArtifactManifest:
             execution_model_recipe=value["execution_model_recipe"],
             normalization=value["normalization"],
             dtype_policy=value["dtype_policy"],
+            precision_evidence=value["precision_evidence"],
             execution_model_architecture_id=architecture_id,
             training_evidence=value["training_evidence"],
             provenance=value["provenance"],
@@ -265,8 +271,7 @@ def save_operator_artifact(
     artifact_id = (
         trained.artifact_id
         or hashlib.sha256(
-            f"{trained.task_fingerprint}:{trained.contract_fingerprint}:"
-            f"{model_checksum}".encode("utf-8")
+            f"{trained.execution_plan.fingerprint}:{model_checksum}".encode("utf-8")
         ).hexdigest()
     )
     evidence = trained.training_evidence
@@ -293,6 +298,7 @@ def save_operator_artifact(
             None if trained.normalization is None else trained.normalization.to_dict()
         ),
         dtype_policy=trained.dtype_policy.to_dict(),
+        precision_evidence=trained.precision_evidence.to_dict(),
         training_evidence={
             "regime": evidence.regime,
             "checkpoint_id": evidence.checkpoint_id,
@@ -407,6 +413,10 @@ def load_trained_operator(
         checkpoint_id=manifest.training_evidence.get("checkpoint_id", ""),
         corpus_id=manifest.training_evidence.get("corpus_id", ""),
     )
+    dtype_policy = OperatorDTypePolicy.from_dict(dict(manifest.dtype_policy))
+    precision_evidence = OperatorPrecisionEvidence.from_dict(manifest.precision_evidence)
+    if dtype_policy.precision_evidence != precision_evidence:
+        raise ValueError("Operator artifact precision evidence disagrees with policy.")
     trained = TrainedOperator(
         execution_model,
         task,
@@ -415,13 +425,15 @@ def load_trained_operator(
         fixed_query_fingerprints=manifest.fixed_query_fingerprints,
         output_pipeline=output_pipeline,
         normalization=normalization,
-        dtype_policy=OperatorDTypePolicy.from_dict(dict(manifest.dtype_policy)),
+        dtype_policy=dtype_policy,
         artifact_id=manifest.artifact_id,
         provenance=dict(manifest.provenance),
         calibration=dict(manifest.calibration),
     )
     if trained.contract_fingerprint != manifest.contract_fingerprint:
         raise ValueError("Operator artifact instance-contract fingerprint mismatch.")
+    if trained.precision_evidence != precision_evidence:
+        raise ValueError("Operator artifact effective precision mismatch.")
     return trained
 
 

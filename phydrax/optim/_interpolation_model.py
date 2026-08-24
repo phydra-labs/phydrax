@@ -11,7 +11,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    prepare as prepare_linear,
+    solve as solve_linear,
+    solve_many as solve_linear_many,
+)
 
 
 def quadratic_basis(step: Any, /) -> Array:
@@ -42,18 +53,23 @@ class QuadraticResidualModel(StrictModule):
     residual_dimension: int = eqx.field(static=True)
     interpolation_rank: Array
     parameter_dimension: int = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    linear_plan_id: str = eqx.field(static=True)
 
     def residual(self, parameters: Any, /) -> Array:
         coordinates = jnp.asarray(parameters)
         scaled = (coordinates - self.center) / self.radius
-        return self.coefficients @ quadratic_basis(scaled)
+        return self.precision.residual(self.coefficients @ quadratic_basis(scaled))
 
     def jacobian(self, parameters: Any, /) -> Array:
         return jax.jacfwd(self.residual)(jnp.asarray(parameters))
 
     def objective(self, parameters: Any, /) -> Array:
-        residual = self.residual(parameters)
-        return 0.5 * jnp.real(jnp.vdot(residual, residual))
+        residual = self.precision.accumulation(self.residual(parameters))
+        return self.precision.decision(
+            0.5 * jnp.real(jnp.sum(jnp.conj(residual) * residual))
+        )
 
 
 class QuadraticScalarModel(StrictModule):
@@ -64,11 +80,16 @@ class QuadraticScalarModel(StrictModule):
     radius: Array
     condition_estimate: Array
     parameter_dimension: int = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
+    linear_plan_id: str = eqx.field(static=True)
 
     def value(self, parameters: Any, /) -> Array:
         coordinates = jnp.asarray(parameters)
         scaled = (coordinates - self.center) / self.radius
-        return jnp.real(jnp.vdot(self.coefficients, quadratic_basis(scaled)))
+        coefficients = self.precision.accumulation(self.coefficients)
+        basis = self.precision.accumulation(quadratic_basis(scaled))
+        return self.precision.decision(jnp.real(jnp.sum(jnp.conj(coefficients) * basis)))
 
     def gradient(self, parameters: Any, /) -> Array:
         return jax.grad(self.value)(jnp.asarray(parameters))
@@ -113,28 +134,65 @@ class InterpolationSet(StrictModule):
         self.evaluations = jnp.asarray(evaluations, dtype=jnp.int32)
 
 
+def _fit_design(
+    design: Array,
+    values: Array,
+    regularization: float,
+    precision: NonlinearPrecisionPolicy,
+    linear: LinearSolvePolicy | None,
+    /,
+):
+    linear_ = (
+        LinearSolvePolicy(DenseSVD(damping=regularization**0.5))
+        if linear is None
+        else linear
+    )
+    if not isinstance(linear_, LinearSolvePolicy):
+        raise TypeError("linear must be LinearSolvePolicy or None.")
+    design_ = precision.accumulation(design)
+    values_ = precision.accumulation(values)
+    prepared = prepare_linear(
+        LeastSquaresProblem(DenseLinearOperator(design_)),
+        precision.bind_linear(linear_),
+    )
+    return (
+        solve_linear_many(prepared, values_)
+        if values_.ndim == 2
+        else solve_linear(prepared, values_)
+    )
+
+
 def fit_quadratic_residual_model(
     interpolation: InterpolationSet,
     /,
     *,
     regularization: float = 1e-12,
+    linear: LinearSolvePolicy | None = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> QuadraticResidualModel:
     if not isinstance(interpolation, InterpolationSet):
         raise TypeError("interpolation must be InterpolationSet.")
-    scaled = (interpolation.points - interpolation.center[None, :]) / interpolation.radius
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    points = precision_.state(interpolation.points)
+    residuals = precision_.residual(interpolation.residuals)
+    precision_.validate_trees(points, residuals)
+    scaled = (points - interpolation.center[None, :]) / interpolation.radius
     design = jax.vmap(quadratic_basis)(scaled)
     regularization_ = float(regularization)
-    gram = jnp.conj(design.T) @ design + regularization_ * jnp.eye(
-        design.shape[1], dtype=design.dtype
+    if regularization_ < 0.0 or not jnp.isfinite(regularization_):
+        raise ValueError("regularization must be finite and non-negative.")
+    result = _fit_design(
+        design,
+        residuals,
+        regularization_,
+        precision_,
+        linear,
     )
-    right = jnp.conj(design.T) @ interpolation.residuals
-    coefficients = jnp.linalg.solve(gram, right).T
-    singular_values = jnp.linalg.svd(design, compute_uv=False)
-    condition = singular_values[0] / jnp.maximum(
-        singular_values[-1],
-        1e-30,
-    )
-    rank = jnp.linalg.matrix_rank(design)
+    coefficients = precision_.direction(result.value.T)
+    condition = precision_.decision(jnp.max(result.diagnostics.condition_estimate))
+    rank = jnp.min(result.diagnostics.rank)
     return QuadraticResidualModel(
         coefficients=coefficients,
         center=interpolation.center,
@@ -143,6 +201,13 @@ def fit_quadratic_residual_model(
         interpolation_rank=rank,
         residual_dimension=interpolation.residuals.shape[1],
         parameter_dimension=interpolation.points.shape[1],
+        precision=precision_,
+        precision_evidence=precision_.evidence_for(
+            points,
+            residuals,
+            output_value=coefficients,
+        ),
+        linear_plan_id=result.provenance.plan_id,
     )
 
 
@@ -154,6 +219,8 @@ def fit_quadratic_scalar_model(
     /,
     *,
     regularization: float = 1e-12,
+    linear: LinearSolvePolicy | None = None,
+    precision: NonlinearPrecisionPolicy | None = None,
 ) -> QuadraticScalarModel:
     points_ = jnp.asarray(points)
     values_ = jnp.asarray(values)
@@ -161,48 +228,56 @@ def fit_quadratic_scalar_model(
     radius_ = jnp.asarray(radius)
     if points_.ndim != 2 or values_.shape != (points_.shape[0],):
         raise ValueError("Scalar interpolation shapes are incompatible.")
+    precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, NonlinearPrecisionPolicy):
+        raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
+    points_ = precision_.state(points_)
+    values_ = precision_.residual(values_)
+    precision_.validate_trees(points_, values_)
     scaled = (points_ - center_[None, :]) / radius_
     design = jax.vmap(quadratic_basis)(scaled)
     if design.shape[0] < design.shape[1]:
-        linear_design = design[:, : 1 + points_.shape[1]]
-        linear_coefficients = jnp.linalg.lstsq(
-            linear_design,
+        fitted_design = design[:, : 1 + points_.shape[1]]
+        result = _fit_design(
+            fitted_design,
             values_,
-            rcond=None,
-        )[0]
+            regularization,
+            precision_,
+            linear,
+        )
+        fitted = precision_.direction(result.value)
         coefficients = jnp.concatenate(
             [
-                linear_coefficients,
+                fitted,
                 jnp.zeros(
-                    (design.shape[1] - linear_coefficients.size,),
-                    dtype=linear_coefficients.dtype,
+                    (design.shape[1] - fitted.size,),
+                    dtype=fitted.dtype,
                 ),
             ]
         )
-        singular_values = jnp.linalg.svd(
-            linear_design,
-            compute_uv=False,
-        )
     else:
-        gram = jnp.conj(design.T) @ design + regularization * jnp.eye(
-            design.shape[1],
-            dtype=design.dtype,
+        result = _fit_design(
+            design,
+            values_,
+            regularization,
+            precision_,
+            linear,
         )
-        coefficients = jnp.linalg.solve(
-            gram,
-            jnp.conj(design.T) @ values_,
-        )
-        singular_values = jnp.linalg.svd(design, compute_uv=False)
-    condition = singular_values[0] / jnp.maximum(
-        singular_values[-1],
-        1e-30,
-    )
+        coefficients = precision_.direction(result.value)
+    condition = precision_.decision(jnp.max(result.diagnostics.condition_estimate))
     return QuadraticScalarModel(
-        coefficients,
-        center_,
-        radius_,
-        condition,
+        coefficients=coefficients,
+        center=center_,
+        radius=radius_,
+        condition_estimate=condition,
         parameter_dimension=points_.shape[1],
+        precision=precision_,
+        precision_evidence=precision_.evidence_for(
+            points_,
+            values_,
+            output_value=coefficients,
+        ),
+        linear_plan_id=result.provenance.plan_id,
     )
 
 

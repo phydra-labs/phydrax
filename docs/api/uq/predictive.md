@@ -1,5 +1,15 @@
 # Predictive results
 
+`PredictivePrecisionPolicy` separates retained sample storage from moment and
+quantile arithmetic. `PredictiveField` casts only sample values; named dimensions,
+validity masks, and uncertainty-source semantics remain unchanged. Means,
+variances, standard deviations, observation-variance reductions, and quantiles
+execute in summary precision and the field retains resolved precision evidence.
+
+::: phydrax.uq.PredictivePrecisionPolicy
+
+---
+
 ::: phydrax.uq.SampleAxis
     options:
         members:

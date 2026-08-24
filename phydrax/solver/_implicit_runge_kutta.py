@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jax import lax
 from jaxtyping import Array, ArrayLike
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import TimeGrid
@@ -32,6 +33,7 @@ from ._temporal_method import (
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
+from ._temporal_precision import TemporalPrecisionPolicy
 
 
 _DEFAULT_ARGS = object()
@@ -136,15 +138,21 @@ class _IRKArguments(StrictModule):
 class _IRKResidual(eqx.Module):
     problem: DifferentialProblem
     method: GaussLegendreIRK
+    precision: TemporalPrecisionPolicy
 
     def __call__(self, stage_rates: Array, arguments: _IRKArguments, /) -> Array:
         tableau = jnp.asarray(self.method.tableau, dtype=stage_rates.real.dtype)
         nodes = jnp.asarray(self.method.nodes, dtype=arguments.time.dtype)
-        stage_states = arguments.state + arguments.step_size * jnp.tensordot(
-            tableau, stage_rates, axes=1
-        )
+        accumulated_state = self.precision.accumulation(arguments.state)
+        accumulated_rates = self.precision.accumulation(stage_rates)
+        accumulated_tableau = self.precision.accumulation(tableau)
+        stage_states = (
+            accumulated_state
+            + self.precision.accumulation(arguments.step_size)
+            * jnp.tensordot(accumulated_tableau, accumulated_rates, axes=1)
+        ).astype(arguments.state.dtype)
         return jax.vmap(
-            lambda node, state, rate: (
+            lambda node, state, rate: self.precision.residual(
                 rate
                 - jnp.asarray(
                     self.problem.drift(
@@ -164,6 +172,7 @@ class GaussLegendreInterpolation(eqx.Module):
     states: Array
     stage_rates: Array
     coefficients: Array
+    precision: TemporalPrecisionPolicy
 
     @eqx.filter_jit
     def evaluate(self, query_times: ArrayLike, /, *, left: bool = True) -> Array:
@@ -197,7 +206,7 @@ class GaussLegendreInterpolation(eqx.Module):
             self.states[indices]
             + widths.reshape(widths.shape + (1,) * (self.states.ndim - 1)) * updates
         )
-        return values.reshape(query.shape + self.states.shape[1:])
+        return self.precision.output(values.reshape(query.shape + self.states.shape[1:]))
 
 
 def solve_implicit_runge_kutta(
@@ -210,6 +219,7 @@ def solve_implicit_runge_kutta(
     termination: NonlinearTermination | None = None,
     args: Any = _DEFAULT_ARGS,
     dense: bool = False,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> DifferentialSolution:
     """Integrate one deterministic ODE by fixed-grid Gauss collocation."""
     if not isinstance(problem, DifferentialProblem) or problem.stochastic:
@@ -242,17 +252,21 @@ def solve_implicit_runge_kutta(
         raise TypeError("termination must be NonlinearTermination or None.")
     if not isinstance(dense, bool):
         raise TypeError("dense must be a bool.")
+    precision_ = TemporalPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, TemporalPrecisionPolicy):
+        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+    precision_.validate_implicit_state(problem.initial_state)
     runtime_args = problem.args if args is _DEFAULT_ARGS else args
     stage_shape = (selected.stages,) + problem.initial_state.shape
     space = ArraySpace(stage_shape, dtype=problem.initial_state.dtype)
-    residual = _IRKResidual(problem, selected)
+    residual = _IRKResidual(problem, selected, precision_)
     stage_problem = NonlinearSystemProblem(
         residual,
         state_space=space,
         residual_space=space,
         problem_id=f"{problem.problem_id}:gauss-stage-root",
     )
-    initial_rate = jnp.asarray(
+    initial_rate = precision_.residual(
         problem.drift(times[0], problem.initial_state, runtime_args)
     )
     initial_guess = jnp.broadcast_to(initial_rate, stage_shape)
@@ -262,12 +276,19 @@ def solve_implicit_runge_kutta(
         problem.initial_state,
         runtime_args,
     )
+    nonlinear_precision = NonlinearPrecisionPolicy(
+        state_dtype=problem.initial_state.dtype,
+        residual_dtype=problem.initial_state.dtype,
+        accumulation_dtype=precision_.accumulation_dtype,
+        decision_dtype=precision_.decision_dtype,
+    )
     prepared = prepare_nonlinear(
         stage_problem,
         initial_guess,
         method=root_method,
         termination=root_termination,
         args=first_arguments,
+        precision=nonlinear_precision,
     )
     weights = jnp.asarray(selected.weights, dtype=problem.initial_state.real.dtype)
 
@@ -285,7 +306,14 @@ def solve_implicit_runge_kutta(
             )
             result = implicit_root_result(refreshed)
             stages = jnp.asarray(result.state)
-            next_state = state + step_size * jnp.tensordot(weights, stages, axes=1)
+            accumulated = precision_.accumulation(state) + precision_.accumulation(
+                step_size
+            ) * jnp.tensordot(
+                precision_.accumulation(weights),
+                precision_.accumulation(stages),
+                axes=1,
+            )
+            next_state = accumulated.astype(state.dtype)
             finite = jnp.all(jnp.isfinite(stages)) & jnp.all(jnp.isfinite(next_state))
             valid = (result.status == int(NonlinearStatus.SUCCESS)) & finite
             return next_state, stages, valid, result.diagnostics.iterations
@@ -317,6 +345,7 @@ def solve_implicit_runge_kutta(
             states,
             stage_rates,
             jnp.asarray(selected.dense_coefficients, dtype=states.real.dtype),
+            precision_,
         )
         if dense
         else None
@@ -326,7 +355,14 @@ def solve_implicit_runge_kutta(
         equation_form="explicit-ode",
         backend_id="backend:phydrax:gauss-irk",
         configuration_id=configuration_id(
-            (selected, root_method, root_termination, time_grid.time_id, dense),
+            (
+                selected,
+                root_method,
+                root_termination,
+                precision_.policy_id,
+                time_grid.time_id,
+                dense,
+            ),
             prefix="temporal-configuration",
         ),
         controller_id=f"controller:fixed-grid:{time_grid.time_id}",
@@ -335,10 +371,12 @@ def solve_implicit_runge_kutta(
         adaptive=False,
         dense=dense,
         maximum_steps=time_grid.num_steps,
+        precision_evidence=precision_.evidence_for(problem.initial_state, times),
     )
+    output_states = jax.vmap(precision_.output)(states)
     return DifferentialSolution(
         times=times,
-        states=states,
+        states=output_states,
         valid=valid,
         interpolation=interpolation,
         backend_result=jnp.where(successful, 0, 1),

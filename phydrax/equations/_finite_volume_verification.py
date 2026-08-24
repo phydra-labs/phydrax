@@ -100,7 +100,10 @@ def finite_volume_error_norms(
     numerical_ = jnp.asarray(numerical)
     exact_ = jnp.asarray(exact)
     volumes = jnp.asarray(cell_volumes)
-    if numerical_.shape != exact_.shape or numerical_.shape[: volumes.ndim] != volumes.shape:
+    if (
+        numerical_.shape != exact_.shape
+        or numerical_.shape[: volumes.ndim] != volumes.shape
+    ):
         raise ValueError("Verification values and cell volumes must align.")
     error = jnp.abs(numerical_ - exact_)
     weights = volumes / jnp.sum(volumes)
@@ -169,9 +172,7 @@ def periodic_advection_verification_case(
 
     def exact(points: Array, time: Array, args: Any) -> Array:
         del args
-        return jnp.sin(
-            2.0 * jnp.pi * (points[..., :1] - speed_ * time)
-        )
+        return jnp.sin(2.0 * jnp.pi * (points[..., :1] - speed_ * time))
 
     return FiniteVolumeVerificationCase(
         "periodic-advection",
@@ -217,14 +218,10 @@ def euler_riemann_verification_case(
     def initial(points: Array, time: Array, args: Any) -> Array:
         del time, args
         coordinate = points[..., 0]
-        primitive = jnp.where(
-            (coordinate < 0.5)[..., None], left, right
-        )
+        primitive = jnp.where((coordinate < 0.5)[..., None], left, right)
         return system.primitive_to_conserved(primitive)
 
-    return FiniteVolumeVerificationCase(
-        str(name), system, initial, float(final_time)
-    )
+    return FiniteVolumeVerificationCase(str(name), system, initial, float(final_time))
 
 
 def lax_verification_case() -> FiniteVolumeVerificationCase:
@@ -266,9 +263,7 @@ def woodward_colella_verification_case() -> FiniteVolumeVerificationCase:
         )
         return system.primitive_to_conserved(primitive)
 
-    return FiniteVolumeVerificationCase(
-        "woodward-colella", system, initial, 0.038
-    )
+    return FiniteVolumeVerificationCase("woodward-colella", system, initial, 0.038)
 
 
 def couette_velocity_profile(

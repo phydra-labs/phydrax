@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, validate_inexact_tree
 from ..linalg import AbstractVectorSpace, PyTreeSpace
@@ -450,6 +451,7 @@ class NonlinearProvenance(StrictModule):
     derivative_id: str = eqx.field(static=True)
     globalization_id: str = eqx.field(static=True)
     linear_plan_id: str = eqx.field(static=True)
+    precision_policy_id: str | None = eqx.field(static=True)
     notes: str = eqx.field(static=True)
 
     def __init__(
@@ -460,6 +462,7 @@ class NonlinearProvenance(StrictModule):
         derivative_id: str,
         globalization_id: str,
         linear_plan_id: str = "",
+        precision_policy_id: str | None = None,
         notes: str = "",
     ):
         identifiers = tuple(
@@ -475,6 +478,9 @@ class NonlinearProvenance(StrictModule):
             self.globalization_id,
         ) = identifiers
         self.linear_plan_id = str(linear_plan_id)
+        self.precision_policy_id = (
+            None if precision_policy_id is None else str(precision_policy_id)
+        )
         self.notes = str(notes)
 
 
@@ -509,6 +515,7 @@ class NonlinearResult(StrictModule):
     diagnostics: NonlinearDiagnostics
     provenance: NonlinearProvenance
     transformation_evidence: NonlinearTransformationEvidence | None
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     attempts: tuple[Any, ...]
 
     def __init__(
@@ -521,6 +528,7 @@ class NonlinearResult(StrictModule):
         diagnostics: NonlinearDiagnostics,
         provenance: NonlinearProvenance,
         transformation_evidence: NonlinearTransformationEvidence | None = None,
+        precision_evidence: PrecisionEvidenceEnvelope | None = None,
         attempts: tuple[Any, ...] = (),
     ):
         if not isinstance(diagnostics, NonlinearDiagnostics):
@@ -533,6 +541,13 @@ class NonlinearResult(StrictModule):
             raise TypeError(
                 "transformation_evidence must be NonlinearTransformationEvidence or None."
             )
+        if precision_evidence is not None and not isinstance(
+            precision_evidence,
+            PrecisionEvidenceEnvelope,
+        ):
+            raise TypeError(
+                "precision_evidence must be PrecisionEvidenceEnvelope or None."
+            )
         self.state = state
         self.residual = residual
         self.auxiliary = auxiliary
@@ -540,6 +555,7 @@ class NonlinearResult(StrictModule):
         self.diagnostics = diagnostics
         self.provenance = provenance
         self.transformation_evidence = transformation_evidence
+        self.precision_evidence = precision_evidence
         self.attempts = tuple(attempts)
 
     @property

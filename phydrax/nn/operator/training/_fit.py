@@ -51,8 +51,9 @@ from ._checkpoint import (
     save_operator_training_checkpoint,
 )
 from ._dataset import OperatorDataset
-from ._dtype import OperatorDTypePolicy
+from ._dtype import OperatorDTypePolicy, OperatorPrecisionEvidence
 from ._execution import (
+    _operator_prediction,
     executionize_prediction,
     nondimensionalize_batch,
     nondimensionalize_targets,
@@ -60,6 +61,11 @@ from ._execution import (
 )
 from ._fingerprint import operator_fit_schema
 from ._loader import OperatorBatchLoader, OperatorTrainingBatch
+from ._loss_scale import (
+    OperatorLossScalePolicy,
+    OperatorLossScaleState,
+    tree_all_finite,
+)
 from ._losses import (
     AbstractOperatorLossTerm,
     OperatorLossContext,
@@ -102,33 +108,6 @@ class OperatorValidationPolicy:
 
 
 @dataclass(frozen=True)
-class OperatorMixedPrecisionPolicy:
-    """Dynamic loss-scaling policy for low-precision operator optimization."""
-
-    initial_scale: float = 32768.0
-    dynamic: bool = True
-    growth_interval: int = 2000
-    growth_factor: float = 2.0
-    backoff_factor: float = 0.5
-    minimum_scale: float = 1.0
-    maximum_scale: float = 16777216.0
-
-    def __post_init__(self):
-        if self.initial_scale <= 0.0 or not jnp.isfinite(self.initial_scale):
-            raise ValueError("initial_scale must be finite and positive.")
-        if int(self.growth_interval) <= 0:
-            raise ValueError("growth_interval must be positive.")
-        if self.growth_factor <= 1.0:
-            raise ValueError("growth_factor must exceed one.")
-        if not 0.0 < self.backoff_factor < 1.0:
-            raise ValueError("backoff_factor must lie strictly between zero and one.")
-        if self.minimum_scale <= 0.0 or self.maximum_scale < self.minimum_scale:
-            raise ValueError("Loss-scale bounds are invalid.")
-        if not self.minimum_scale <= self.initial_scale <= self.maximum_scale:
-            raise ValueError("initial_scale must lie within the configured bounds.")
-
-
-@dataclass(frozen=True)
 class OperatorFitHistory:
     """Immutable learning curves and validation records from one fit run."""
 
@@ -160,6 +139,8 @@ class OperatorFitResult:
     history: OperatorFitHistory
     normalization: OperatorNormalizationPolicy | None
     dtype_policy: OperatorDTypePolicy
+    precision_evidence: OperatorPrecisionEvidence
+    loss_scale_state: OperatorLossScaleState | None
     progress: TrainingProgress
     resumed_from_step: int
     training_seconds: float
@@ -363,12 +344,28 @@ def _tree_scale(tree: Any, scale: Any, /) -> Any:
     return jax.tree_util.tree_map(lambda value: value * scale, tree)
 
 
-def _tree_all_finite(tree: Any, /) -> bool:
-    leaves = jax.tree_util.tree_leaves(tree)
-    if not leaves:
-        return True
-    finite = jnp.stack(tuple(jnp.all(jnp.isfinite(leaf)) for leaf in leaves))
-    return bool(jax.device_get(jnp.all(finite)))
+def _validate_training_precision(
+    dtype_policy: OperatorDTypePolicy,
+    loss_scale_policy: OperatorLossScalePolicy | None,
+    /,
+) -> None:
+    if dtype_policy.parameter_dtype not in ("float32", "float64"):
+        raise ValueError(
+            "Operator fitting requires float32 or float64 persistent parameters."
+        )
+    if dtype_policy.compute_dtype in ("float16", "bfloat16") and (
+        dtype_policy.reduction_dtype not in ("float32", "float64")
+    ):
+        raise ValueError(
+            "Low-precision operator compute requires float32 or float64 reductions."
+        )
+    if dtype_policy.compute_dtype == "float16":
+        if loss_scale_policy is None:
+            raise ValueError(
+                "float16 operator compute requires an explicit loss_scale_policy."
+            )
+    elif loss_scale_policy is not None:
+        raise ValueError("Loss scaling is supported only for float16 operator compute.")
 
 
 def _has_trainable_arrays(parameters: Any, /) -> bool:
@@ -414,7 +411,7 @@ def fit_operator(
     normalize_coordinates: bool = False,
     normalization_weighting: Literal["uniform", "quadrature"] = "uniform",
     dtype_policy: OperatorDTypePolicy | None = None,
-    mixed_precision: OperatorMixedPrecisionPolicy | None = None,
+    loss_scale_policy: OperatorLossScalePolicy | None = None,
     validation_policy: OperatorValidationPolicy | None = None,
     sharding_policy: OperatorShardingPolicy | None = None,
     jit: bool = True,
@@ -555,6 +552,12 @@ def fit_operator(
     resolved_dtype = OperatorDTypePolicy() if dtype_policy is None else dtype_policy
     if not isinstance(resolved_dtype, OperatorDTypePolicy):
         raise TypeError("dtype_policy must be an OperatorDTypePolicy.")
+    if loss_scale_policy is not None and not isinstance(
+        loss_scale_policy,
+        OperatorLossScalePolicy,
+    ):
+        raise TypeError("loss_scale_policy must be an OperatorLossScalePolicy.")
+    _validate_training_precision(resolved_dtype, loss_scale_policy)
     model = resolved_dtype.cast_model(model)
     if sharding_policy is not None:
         model = replicate_operator_model(model, sharding_policy)
@@ -681,7 +684,12 @@ def fit_operator(
         key,
     ):
         if output_pipeline is None:
-            raw_prediction = evaluated_model.predict_prevalidated(batch, key=key)
+            raw_prediction = _operator_prediction(
+                evaluated_model,
+                batch,
+                key,
+                resolved_dtype,
+            )
             if task is None:
                 return raw_prediction, raw_prediction
             physical_prediction = physicalize_prediction(
@@ -694,7 +702,12 @@ def fit_operator(
             return raw_prediction, physical_prediction
         assert task is not None
         model_key, pipeline_key = split_eval_key(key, 2)
-        raw_prediction = evaluated_model.predict_prevalidated(batch, key=model_key)
+        raw_prediction = _operator_prediction(
+            evaluated_model,
+            batch,
+            model_key,
+            resolved_dtype,
+        )
         physical_prediction = physicalize_prediction(
             raw_prediction,
             physical_batch,
@@ -737,8 +750,12 @@ def fit_operator(
     accumulated_cases = 0.0
     accumulated_microsteps = 0
     accumulated_metrics = [0.0] * len(metric_names)
-    loss_scale = 1.0 if mixed_precision is None else float(mixed_precision.initial_scale)
-    finite_updates = 0
+    reduction_dtype = jnp.dtype(resolved_dtype.reduction_dtype)
+    loss_scale_state = (
+        OperatorLossScaleState(jnp.asarray(1.0, dtype=reduction_dtype))
+        if loss_scale_policy is None
+        else loss_scale_policy.initial_state(reduction_dtype)
+    )
 
     def loss_components(
         current_model,
@@ -751,7 +768,8 @@ def fit_operator(
         *,
         training: bool,
     ):
-        evaluated_model = current_model if training else inference_mode(current_model)
+        storage_model = current_model if training else inference_mode(current_model)
+        evaluated_model = resolved_dtype.compute_model(storage_model)
         execution_prediction, physical_prediction = predict_for_loss(
             evaluated_model,
             batch,
@@ -807,7 +825,7 @@ def fit_operator(
         physical_targets,
         key,
         step,
-        scale,
+        loss_scale_state_,
     ):
         def objective(candidate):
             current_model = combine_trainable(candidate, fixed)
@@ -821,13 +839,26 @@ def fit_operator(
                 step,
                 training=True,
             )
-            return total * scale, (total, components)
+            scaled = (
+                total
+                if loss_scale_policy is None
+                else loss_scale_policy.scale_loss(total, loss_scale_state_)
+            )
+            return scaled, (total, components)
 
         (_, (total, components)), gradient = eqx.filter_value_and_grad(
             objective,
             has_aux=True,
         )(current_parameters)
-        return total, components, _tree_scale(gradient, 1.0 / scale)
+        if loss_scale_policy is not None:
+            gradient = loss_scale_policy.unscale_gradients(
+                gradient,
+                loss_scale_state_,
+            )
+        finite = tree_all_finite((gradient, total, components))
+        if sharding_policy is not None:
+            finite = eqx.filter_shard(finite, sharding_policy.replicated)
+        return total, components, gradient, finite
 
     def update_fn(current_parameters, current_state, gradient):
         updates, next_state = optimizer.update(
@@ -835,7 +866,11 @@ def fit_operator(
             current_state,
             current_parameters,
         )
-        return eqx.apply_updates(current_parameters, updates), next_state
+        next_parameters = eqx.apply_updates(current_parameters, updates)
+        finite = tree_all_finite((next_parameters, next_state))
+        if sharding_policy is not None:
+            finite = eqx.filter_shard(finite, sharding_policy.replicated)
+        return next_parameters, next_state, finite
 
     run_gradient_fn = eqx.filter_jit(gradient_fn) if jit else gradient_fn
     run_update_fn = eqx.filter_jit(update_fn) if jit else update_fn
@@ -950,7 +985,9 @@ def fit_operator(
         ),
         "fixed_query_fingerprints": fixed_query_fingerprints,
         "dtype_policy": resolved_dtype.to_dict(),
-        "mixed_precision": (None if mixed_precision is None else asdict(mixed_precision)),
+        "loss_scale_policy": (
+            None if loss_scale_policy is None else asdict(loss_scale_policy)
+        ),
         "output_pipeline": (
             None if output_pipeline is None else output_pipeline.fingerprint
         ),
@@ -994,8 +1031,7 @@ def fit_operator(
             gradient_accumulator,
             jnp.asarray(accumulated_cases),
             jnp.asarray(accumulated_microsteps, dtype=jnp.int32),
-            jnp.asarray(loss_scale),
-            jnp.asarray(finite_updates, dtype=jnp.int32),
+            loss_scale_state,
         )
         restored = load_operator_training_checkpoint(
             checkpoint,
@@ -1011,13 +1047,10 @@ def fit_operator(
             gradient_accumulator,
             accumulated_cases_array,
             accumulated_microsteps_array,
-            loss_scale_array,
-            finite_updates_array,
+            loss_scale_state,
         ) = restored.optimizer_state
         accumulated_cases = float(jax.device_get(accumulated_cases_array))
         accumulated_microsteps = int(jax.device_get(accumulated_microsteps_array))
-        loss_scale = float(jax.device_get(loss_scale_array))
-        finite_updates = int(jax.device_get(finite_updates_array))
         metadata = restored.metadata
         progress = TrainingProgress(**metadata["progress"])
         if progress.update_step != restored.step:
@@ -1086,8 +1119,7 @@ def fit_operator(
                 gradient_accumulator,
                 jnp.asarray(accumulated_cases),
                 jnp.asarray(accumulated_microsteps, dtype=jnp.int32),
-                jnp.asarray(loss_scale),
-                jnp.asarray(finite_updates, dtype=jnp.int32),
+                loss_scale_state,
             ),
             step=control.progress.update_step,
             key=master_key,
@@ -1190,7 +1222,7 @@ def fit_operator(
                     if control.stop_requested or signal_guard.stop_requested:
                         break
                     key = control.key_for(control.progress.microstep, site=0)
-                    total, components, gradient = run_gradient_fn(
+                    total, components, gradient, finite_array = run_gradient_fn(
                         parameters,
                         training_batch.batch,
                         training_batch.targets,
@@ -1206,13 +1238,11 @@ def fit_operator(
                         ),
                         key,
                         jnp.asarray(control.progress.update_step + 1, dtype=float),
-                        jnp.asarray(loss_scale),
+                        loss_scale_state,
                     )
                     count = _case_count(training_batch.batch)
                     values = (total,) + components
-                    finite = _tree_all_finite(gradient) and all(
-                        bool(jax.device_get(jnp.isfinite(value))) for value in values
-                    )
+                    finite = bool(jax.device_get(finite_array))
                     control.progress = replace(
                         control.progress,
                         microstep=control.progress.microstep + 1,
@@ -1223,16 +1253,24 @@ def fit_operator(
                         accumulated_cases = 0.0
                         accumulated_microsteps = 0
                         accumulated_metrics = [0.0] * len(metric_names)
-                        finite_updates = 0
-                        if mixed_precision is None or not mixed_precision.dynamic:
+                        if loss_scale_policy is None or not loss_scale_policy.dynamic:
                             raise FloatingPointError(
                                 "Non-finite operator loss or gradient encountered."
                             )
-                        loss_scale = max(
-                            mixed_precision.minimum_scale,
-                            loss_scale * mixed_precision.backoff_factor,
+                        loss_scale_state = loss_scale_policy.on_nonfinite_microstep(
+                            loss_scale_state
                         )
-                        control.emit("nonfinite", metrics={"loss_scale": loss_scale})
+                        control.emit(
+                            "nonfinite",
+                            metrics={
+                                "loss_scale": float(
+                                    jax.device_get(loss_scale_state.scale)
+                                ),
+                                "nonfinite_microsteps": int(
+                                    jax.device_get(loss_scale_state.nonfinite_microsteps)
+                                ),
+                            },
+                        )
                         continue
                     gradient_accumulator = _tree_add_scaled(
                         gradient_accumulator,
@@ -1254,11 +1292,22 @@ def fit_operator(
                         gradient_accumulator,
                         1.0 / accumulated_cases,
                     )
-                    parameters, optimizer_state = run_update_fn(
+                    (
+                        candidate_parameters,
+                        candidate_optimizer_state,
+                        candidate_finite_array,
+                    ) = run_update_fn(
                         parameters,
                         optimizer_state,
                         averaged_gradient,
                     )
+                    if not bool(jax.device_get(candidate_finite_array)):
+                        raise FloatingPointError(
+                            "Operator optimizer produced non-finite state from "
+                            "finite gradients."
+                        )
+                    parameters = candidate_parameters
+                    optimizer_state = candidate_optimizer_state
                     model = combine_trainable(parameters, fixed)
                     update_step = control.progress.update_step + 1
                     control.complete_update(update_step)
@@ -1276,15 +1325,9 @@ def fit_operator(
                     accumulated_cases = 0.0
                     accumulated_microsteps = 0
                     accumulated_metrics = [0.0] * len(metric_names)
-                    finite_updates += 1
-                    if (
-                        mixed_precision is not None
-                        and mixed_precision.dynamic
-                        and finite_updates % int(mixed_precision.growth_interval) == 0
-                    ):
-                        loss_scale = min(
-                            mixed_precision.maximum_scale,
-                            loss_scale * mixed_precision.growth_factor,
+                    if loss_scale_policy is not None:
+                        loss_scale_state = loss_scale_policy.on_finite_update(
+                            loss_scale_state
                         )
                     control.emit("batch_end", metrics=metrics)
                     if (
@@ -1293,7 +1336,11 @@ def fit_operator(
                     ):
                         for name, value in metrics.items():
                             tensorboard.scalar(f"train/{name}", value, update_step)
-                        tensorboard.scalar("train/loss_scale", loss_scale, update_step)
+                        tensorboard.scalar(
+                            "train/loss_scale",
+                            float(jax.device_get(loss_scale_state.scale)),
+                            update_step,
+                        )
                     if (
                         raw_validation_loader is not None
                         and validation_config is not None
@@ -1416,6 +1463,8 @@ def fit_operator(
         history=history,
         normalization=resolved_normalization,
         dtype_policy=resolved_dtype,
+        precision_evidence=resolved_dtype.precision_evidence,
+        loss_scale_state=(None if loss_scale_policy is None else loss_scale_state),
         progress=control.progress,
         resumed_from_step=resumed_from_step,
         training_seconds=training_seconds,
@@ -1428,7 +1477,6 @@ def fit_operator(
 __all__ = [
     "OperatorFitHistory",
     "OperatorFitResult",
-    "OperatorMixedPrecisionPolicy",
     "OperatorValidationPolicy",
     "fit_operator",
 ]

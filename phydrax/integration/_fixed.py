@@ -21,6 +21,7 @@ from ._estimates import (
     IntegrationProvenance,
 )
 from ._lowering import _component_base_mass, component_factor_fields, sum_over
+from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
 
@@ -156,12 +157,14 @@ def _component_moments(
     log_density: Any | None,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    precision: IntegrationPrecisionPolicy,
 ) -> tuple[cx.Field, cx.Field, cx.Field, Array]:
     points = batch.points
     function = _as_domain_function(integrand, component)
     values = function(points, key=key, **kwargs)
     if not isinstance(values, cx.Field):
         raise TypeError("An integration DomainFunction must evaluate to coordax.Field.")
+    values = cx.Field(precision.evaluation(values.data), dims=values.dims)
     finite_inputs = jnp.all(jnp.isfinite(jnp.asarray(values.data)))
     base_weight = _component_weight(
         component,
@@ -175,16 +178,34 @@ def _component_moments(
         log_values = log_density_function(points, key=key, **kwargs)
         if not isinstance(log_values, cx.Field):
             raise TypeError("log_density must evaluate to coordax.Field.")
-        density_values = jnp.exp(jnp.asarray(log_values.data))
+        log_data = precision.evaluation(log_values.data)
+        density_values = jnp.exp(log_data)
         finite_inputs = finite_inputs & jnp.all(jnp.isfinite(density_values))
         weight = weight * cx.Field(density_values, dims=log_values.dims)
+    weight = cx.Field(precision.accumulation(weight.data), dims=weight.dims)
+    base_weight = cx.Field(
+        precision.accumulation(base_weight.data),
+        dims=base_weight.dims,
+    )
     numerator = weight * values
     denominator = weight
     base_denominator = base_weight
     for axis in batch.axes:
-        numerator = sum_over(numerator, axis)
-        denominator = sum_over(denominator, axis)
-        base_denominator = sum_over(base_denominator, axis)
+        numerator = sum_over(
+            numerator,
+            axis,
+            accumulation_dtype=precision.accumulation_dtype,
+        )
+        denominator = sum_over(
+            denominator,
+            axis,
+            accumulation_dtype=precision.accumulation_dtype,
+        )
+        base_denominator = sum_over(
+            base_denominator,
+            axis,
+            accumulation_dtype=precision.accumulation_dtype,
+        )
     return numerator, denominator, base_denominator, finite_inputs
 
 
@@ -277,9 +298,13 @@ def integrate_fixed_component(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Reduce a component target over a typed fixed or sampled batch."""
     callback_kwargs = {} if kwargs is None else kwargs
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     if isinstance(target.component, ComponentSum):
         if not isinstance(batch, tuple) or len(batch) != len(target.component.terms):
             raise ValueError(
@@ -300,6 +325,7 @@ def integrate_fixed_component(
                 log_density=None,
                 key=term_key,
                 kwargs=callback_kwargs,
+                precision=precision_,
             )
             numerators.append(numerator)
             denominators.append(denominator)
@@ -328,6 +354,7 @@ def integrate_fixed_component(
         log_density=None,
         key=key,
         kwargs=callback_kwargs,
+        precision=precision_,
     )
     return _finish_fixed(
         numerator,
@@ -349,11 +376,15 @@ def integrate_fixed_density(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Reduce a deterministic density target relative to a component measure."""
     if not isinstance(target.base, ComponentTarget):
         raise TypeError("Fixed density integration requires a ComponentTarget base.")
     callback_kwargs = {} if kwargs is None else kwargs
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     if isinstance(target.base.component, ComponentSum):
         if not isinstance(batch, tuple) or len(batch) != len(target.base.component.terms):
             raise ValueError(
@@ -377,6 +408,7 @@ def integrate_fixed_density(
                     log_density=target.log_density,
                     key=term_key,
                     kwargs=callback_kwargs,
+                    precision=precision_,
                 )
             )
             numerators.append(numerator)
@@ -418,6 +450,7 @@ def integrate_fixed_density(
         log_density=target.log_density,
         key=key,
         kwargs=callback_kwargs,
+        precision=precision_,
     )
     base_normalization_mass = None
     if target.base.normalized and not target.normalized:

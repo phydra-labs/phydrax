@@ -61,6 +61,7 @@ from ._multilevel import (
     advance_multilevel,
     finalize_multilevel,
     initialize_multilevel,
+    MLMCErrorLedger,
     MultilevelDiagnostics,
     MultilevelEstimatorState,
     MultilevelRealization,
@@ -93,6 +94,7 @@ from ._plans import (
     StratifiedDesign,
     StratifiedMonteCarloPlan,
 )
+from ._precision import IntegrationPrecisionPolicy
 from ._product import ProductIntegrationRealization
 from ._riemannian import (
     MetricMeasureNormalization,
@@ -217,6 +219,7 @@ __all__ = [
     "IntegrationBatch",
     "IntegrationEstimate",
     "IntegrationPlan",
+    "IntegrationPrecisionPolicy",
     "MeasureCalibrationDiagnostics",
     "MeasureCompressionDiagnostics",
     "MeasureTransformationRecord",
@@ -239,6 +242,7 @@ __all__ = [
     "ReferenceQuadrilateralRule",
     "MonteCarloDiagnostics",
     "MonteCarloPlan",
+    "MLMCErrorLedger",
     "MultilevelDiagnostics",
     "MultilevelEstimatorState",
     "MultilevelMonteCarloPlan",

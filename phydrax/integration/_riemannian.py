@@ -9,6 +9,7 @@ from typing import Any
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..metrix import (
     Immersion,
@@ -16,6 +17,7 @@ from ..metrix import (
     RiemannianMetric,
     WeightedRiemannianMeasure,
 )
+from ._precision import IntegrationPrecisionPolicy
 from ._rules import ReferenceRule
 from ._targets import MappedTarget
 
@@ -38,6 +40,7 @@ class MetricMeasureNormalization(StrictModule):
     valid: Array
     minimum_log_density: Array
     maximum_log_density: Array
+    precision_evidence: PrecisionEvidenceEnvelope
     sample_count: int
 
     def __init__(
@@ -49,12 +52,16 @@ class MetricMeasureNormalization(StrictModule):
         minimum_log_density: ArrayLike,
         maximum_log_density: ArrayLike,
         sample_count: int,
+        precision_evidence: PrecisionEvidenceEnvelope,
     ):
         self.mass = jnp.asarray(mass)
         self.log_mass = jnp.asarray(log_mass)
         self.valid = jnp.asarray(valid, dtype=bool)
         self.minimum_log_density = jnp.asarray(minimum_log_density)
         self.maximum_log_density = jnp.asarray(maximum_log_density)
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        self.precision_evidence = precision_evidence
         self.sample_count = int(sample_count)
 
 
@@ -86,21 +93,30 @@ def normalize_metric_measure(
     coordinates: ArrayLike,
     base_weights: ArrayLike,
     /,
+    *,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> MetricMeasureNormalization:
     """Evaluate finite positive mass under caller-supplied base quadrature weights."""
     if not isinstance(measure, WeightedRiemannianMeasure):
         raise TypeError("measure must be a WeightedRiemannianMeasure.")
-    points = jnp.asarray(coordinates)
-    weights = jnp.asarray(base_weights, dtype=points.real.dtype)
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
+    points = precision_.evaluation(coordinates)
+    weights = precision_.accumulation(base_weights)
     if points.ndim != 2 or points.shape[-1] != measure.chart.dimension:
         raise ValueError("coordinates must have shape (samples, chart_dimension).")
     if weights.shape != (points.shape[0],):
         raise ValueError("base_weights must match the coordinate sample axis.")
-    log_density = measure.log_coordinate_density(points)
-    maximum = jnp.max(log_density)
-    scaled = jnp.sum(weights * jnp.exp(log_density - maximum))
-    log_mass = maximum + jnp.log(scaled)
-    mass = jnp.exp(log_mass)
+    log_density = precision_.evaluation(measure.log_coordinate_density(points))
+    maximum = precision_.decision(jnp.max(log_density))
+    scaled = jnp.sum(
+        precision_.accumulation(
+            weights * jnp.exp(precision_.accumulation(log_density - maximum))
+        )
+    )
+    log_mass = precision_.decision(maximum + jnp.log(scaled))
+    mass = precision_.output(jnp.exp(log_mass))
     valid = (
         jnp.all(jnp.isfinite(points))
         & jnp.all(jnp.isfinite(weights) & (weights >= 0.0))
@@ -115,6 +131,7 @@ def normalize_metric_measure(
         minimum_log_density=jnp.min(log_density),
         maximum_log_density=maximum,
         sample_count=points.shape[0],
+        precision_evidence=precision_.evidence_for(log_density),
     )
 
 

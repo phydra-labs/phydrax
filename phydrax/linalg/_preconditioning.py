@@ -45,9 +45,16 @@ from ._preconditioners import (
     BlockDiagonalPreconditioner,
     DiagonalPreconditioner,
     LocalBlockPreconditioner,
+    PrecisionCastPreconditioner,
 )
 from ._properties import LinearCapabilityError
-from ._spaces import _coordinate_dtype, _has_diagonal_pairing
+from ._spaces import (
+    _coordinate_dtype,
+    _has_diagonal_pairing,
+    ArraySpace,
+    DiagonalPairing,
+    EuclideanPairing,
+)
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._structured_operators import LocalBlockDiagonalLinearOperator
 
@@ -776,6 +783,7 @@ class PreconditionerPlan(StrictModule):
     cost: PreconditionerCostEstimate
     setup_operator_id: str | None = eqx.field(static=True)
     component_id: str = eqx.field(static=True)
+    compute_dtype: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -786,6 +794,7 @@ class PreconditionerPlan(StrictModule):
         *,
         side: Literal["left", "right"],
         materialization: MaterializationPolicy | None = None,
+        compute_dtype: str | None = None,
     ):
         if not isinstance(policy, PreconditioningPolicy):
             raise TypeError("policy must be a PreconditioningPolicy.")
@@ -798,6 +807,7 @@ class PreconditionerPlan(StrictModule):
         )
         if not isinstance(materialization_, MaterializationPolicy):
             raise TypeError("materialization must be a MaterializationPolicy or None.")
+        compute_dtype_ = None if compute_dtype is None else jnp.dtype(compute_dtype).name
         properties = policy.properties_for(system_operator)
         setup = (
             system_operator
@@ -817,6 +827,25 @@ class PreconditionerPlan(StrictModule):
         if not cost.accepted:
             raise ValueError(
                 f"Preconditioner {cost.component} is infeasible: {cost.reason}."
+            )
+        if compute_dtype_ is not None:
+            low_itemsize = jnp.dtype(compute_dtype_).itemsize
+            high_itemsize = _coordinate_dtype(system_operator.source).itemsize
+            dimension = system_operator.source.size
+            cost = PreconditionerCostEstimate(
+                component=cost.component,
+                storage_bytes=dimension * low_itemsize,
+                preparation_workspace_bytes=(
+                    cost.preparation_workspace_bytes + dimension * low_itemsize
+                ),
+                apply_workspace_bytes_per_rhs=dimension
+                * (high_itemsize + 2 * low_itemsize),
+                setup_matvec_count=cost.setup_matvec_count,
+                accepted=cost.accepted,
+                reason=(
+                    f"{cost.reason}; stored/applied in {compute_dtype_} with "
+                    "explicit coordinate casts"
+                ),
             )
         if policy.preconditioner is not None:
             setup_operator_id = None
@@ -838,6 +867,7 @@ class PreconditionerPlan(StrictModule):
             "side": side,
             "refresh": policy.refresh_policy,
             "properties": _preconditioner_properties_payload(properties),
+            "compute_dtype": compute_dtype_,
             "cost": {
                 "storage_bytes": cost.storage_bytes,
                 "preparation_workspace_bytes": cost.preparation_workspace_bytes,
@@ -852,6 +882,7 @@ class PreconditionerPlan(StrictModule):
         self.space_id = system_operator.source.space_id
         self.setup_operator_id = setup_operator_id
         self.component_id = component_id
+        self.compute_dtype = compute_dtype_
         self.plan_id = canonical_fingerprint(payload)
 
 
@@ -923,6 +954,55 @@ class PreparedPreconditioner(StrictModule):
         self.refresh_kind = refresh_kind
 
 
+def _precision_cast_action(
+    action: AbstractPreconditioner,
+    plan: PreconditionerPlan,
+    /,
+) -> AbstractPreconditioner:
+    if plan.compute_dtype is None:
+        return action
+    if isinstance(action, PrecisionCastPreconditioner):
+        if action.compute_dtype != plan.compute_dtype:
+            raise LinearCapabilityError(
+                "Prepared preconditioner precision does not match its plan."
+            )
+        return action
+    if not isinstance(action, DiagonalPreconditioner):
+        raise LinearCapabilityError(
+            "Lower-precision preconditioning currently requires Jacobi diagonal state."
+        )
+    if not isinstance(action.space, ArraySpace):
+        raise LinearCapabilityError(
+            "Lower-precision Jacobi requires one ArraySpace coordinate layout."
+        )
+    compute_dtype = jnp.dtype(plan.compute_dtype)
+    pairing = action.space.pairing
+    if isinstance(pairing, DiagonalPairing):
+        low_pairing = DiagonalPairing(pairing.weights.astype(compute_dtype))
+    elif isinstance(pairing, EuclideanPairing):
+        low_pairing = EuclideanPairing()
+    else:
+        raise LinearCapabilityError(
+            "Lower-precision Jacobi requires Euclidean or diagonal pairing."
+        )
+    low_space = ArraySpace(
+        action.space.shape,
+        dtype=compute_dtype,
+        pairing=low_pairing,
+    )
+    diagonal = jnp.reciprocal(action.inverse_diagonal).astype(compute_dtype)
+    lowered = DiagonalPreconditioner(
+        diagonal,
+        space=low_space,
+        positive_definite=action.properties.certifies("positive_definite"),
+    )
+    return PrecisionCastPreconditioner(
+        lowered,
+        action.space,
+        compute_dtype,
+    )
+
+
 def prepare_preconditioner(
     plan: PreconditionerPlan | None,
     system_operator: AbstractLinearOperator,
@@ -965,8 +1045,13 @@ def prepare_preconditioner(
             built_version = previous.built_numeric_version
             refresh_kind = "reused"
         elif policy.refresh_policy == "numeric":
+            previous_action = (
+                previous.action.inner
+                if isinstance(previous.action, PrecisionCastPreconditioner)
+                else previous.action
+            )
             action = policy.builder.refresh(
-                previous.action,
+                previous_action,
                 setup,
                 materialization=materialization,
             )
@@ -976,6 +1061,7 @@ def prepare_preconditioner(
             action = policy.builder.prepare(setup, materialization=materialization)
             built_version = numeric_version
             refresh_kind = "rebuilt"
+    action = _precision_cast_action(action, plan)
     return PreparedPreconditioner(
         action,
         setup,

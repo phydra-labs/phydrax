@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ._quadratic import _max_abs, _min_value, QuadraticProgram
@@ -44,15 +45,15 @@ def audit_primal_recession_ray(
     """Audit a primal recession direction proving dual infeasibility."""
 
     ray, _ = _normalize_vector(jnp.asarray(candidate, dtype=problem.linear.dtype))
-    quadratic_residual = _max_abs(jnp.einsum("...ij,...j->...i", problem.quadratic, ray))
+    quadratic_residual = _max_abs(oe.contract("...ij,...j->...i", problem.quadratic, ray))
     equality_residual = _max_abs(
-        jnp.einsum(
+        oe.contract(
             "...ij,...j->...i",
             problem.equality_matrix[..., : problem.num_user_equalities, :],
             ray,
         )
     )
-    inequality_direction = jnp.einsum(
+    inequality_direction = oe.contract(
         "...ij,...j->...i",
         problem.inequality_matrix[..., : problem.num_user_inequalities, :],
         ray,
@@ -120,12 +121,12 @@ def audit_dual_infeasibility_ray(
     lower = lower / scale[..., None]
     upper = upper / scale[..., None]
     stationarity = (
-        jnp.einsum(
+        oe.contract(
             "...ji,...j->...i",
             problem.equality_matrix[..., : problem.num_user_equalities, :],
             equality,
         )
-        + jnp.einsum(
+        + oe.contract(
             "...ji,...j->...i",
             problem.inequality_matrix[..., : problem.num_user_inequalities, :],
             inequality,

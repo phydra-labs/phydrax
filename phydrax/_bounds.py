@@ -7,10 +7,10 @@ from __future__ import annotations
 from math import isfinite
 from typing import Any
 
-import numpy as np
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, PyTree
 
 from ._strict import StrictModule

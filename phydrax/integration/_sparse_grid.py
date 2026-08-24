@@ -44,6 +44,7 @@ from ._estimates import (
 from ._fixed import integrate_fixed_component, integrate_fixed_density
 from ._lowering import _component_base_mass
 from ._plans import SparseGridPlan
+from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
 
@@ -304,36 +305,62 @@ def integrate_sparse_grid(
     *,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Reduce a Smolyak batch and report its deterministic level difference."""
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     if isinstance(target, DensityTarget):
         current = integrate_fixed_density(
-            integrand, target, realization.batch, key=key, kwargs=kwargs
+            integrand,
+            target,
+            realization.batch,
+            key=key,
+            kwargs=kwargs,
+            precision=precision_,
         )
         previous = (
             None
             if realization.previous is None
             else integrate_fixed_density(
-                integrand, target, realization.previous, key=key, kwargs=kwargs
+                integrand,
+                target,
+                realization.previous,
+                key=key,
+                kwargs=kwargs,
+                precision=precision_,
             )
         )
     else:
         current = integrate_fixed_component(
-            integrand, target, realization.batch, key=key, kwargs=kwargs
+            integrand,
+            target,
+            realization.batch,
+            key=key,
+            kwargs=kwargs,
+            precision=precision_,
         )
         previous = (
             None
             if realization.previous is None
             else integrate_fixed_component(
-                integrand, target, realization.previous, key=key, kwargs=kwargs
+                integrand,
+                target,
+                realization.previous,
+                key=key,
+                kwargs=kwargs,
+                precision=precision_,
             )
         )
     if previous is None:
         level_difference = None
         error = None
     else:
-        level_difference = current.value.data - previous.value.data
-        error = jnp.max(jnp.abs(level_difference))
+        level_difference = precision_.accumulation(
+            current.value.data - previous.value.data
+        )
+        error = precision_.decision(jnp.max(jnp.abs(level_difference)))
     num_evaluations = current.num_evaluations + (
         0 if previous is None else previous.num_evaluations
     )

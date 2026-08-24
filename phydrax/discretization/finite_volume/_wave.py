@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
@@ -39,7 +40,10 @@ class WaveDecomposition(StrictModule):
         speeds_ = jnp.asarray(speeds)
         left_ = jnp.asarray(left_fluctuation)
         right_ = jnp.asarray(right_fluctuation)
-        if waves_.shape[:-2] != speeds_.shape[:-1] or waves_.shape[-1] != speeds_.shape[-1]:
+        if (
+            waves_.shape[:-2] != speeds_.shape[:-1]
+            or waves_.shape[-1] != speeds_.shape[-1]
+        ):
             raise ValueError("Wave families and speeds must align.")
         if left_.shape != waves_.shape[:-1] or right_.shape != left_.shape:
             raise ValueError("Wave fluctuations must match the state batch shape.")
@@ -106,7 +110,7 @@ class RoeWavePropagationPlan(AbstractWavePropagationPlan):
         left_matrix, right_matrix, speeds = system.eigensystem(
             left, right, int(axis), args
         )
-        amplitudes = jnp.einsum("...ij,...j->...i", left_matrix, right - left)
+        amplitudes = oe.contract("...ij,...j->...i", left_matrix, right - left)
         waves = right_matrix * amplitudes[..., None, :]
         negative = jnp.minimum(speeds, 0.0)
         positive = jnp.maximum(speeds, 0.0)
@@ -133,9 +137,7 @@ class FWaveShallowWaterPlan(AbstractWavePropagationPlan):
         self.conservative = True
         self.fwave = True
         self.differentiability = "almost_everywhere"
-        self.wave_plan_id = canonical_fingerprint(
-            {"kind": "shallow-water-fwave"}
-        )
+        self.wave_plan_id = canonical_fingerprint({"kind": "shallow-water-fwave"})
 
     def decompose(
         self,
@@ -160,25 +162,22 @@ class FWaveShallowWaterPlan(AbstractWavePropagationPlan):
         velocity_right = right[..., 1] / depth_right
         root_left = jnp.sqrt(depth_left)
         root_right = jnp.sqrt(depth_right)
-        velocity = (
-            root_left * velocity_left + root_right * velocity_right
-        ) / (root_left + root_right)
+        velocity = (root_left * velocity_left + root_right * velocity_right) / (
+            root_left + root_right
+        )
         sound = jnp.sqrt(0.5 * system.gravity * (depth_left + depth_right))
         speeds = jnp.stack((velocity - sound, velocity + sound), axis=-1)
         flux_jump = system.physical_flux(right, 0) - system.physical_flux(left, 0)
         bathymetry_jump = jnp.asarray(auxiliary_right) - jnp.asarray(auxiliary_left)
         adjusted = flux_jump.at[..., 1].add(
-            0.5
-            * system.gravity
-            * (depth_left + depth_right)
-            * bathymetry_jump
+            0.5 * system.gravity * (depth_left + depth_right) * bathymetry_jump
         )
-        first_amplitude = (
-            (velocity + sound) * adjusted[..., 0] - adjusted[..., 1]
-        ) / (2.0 * sound)
-        second_amplitude = (
-            adjusted[..., 1] - (velocity - sound) * adjusted[..., 0]
-        ) / (2.0 * sound)
+        first_amplitude = ((velocity + sound) * adjusted[..., 0] - adjusted[..., 1]) / (
+            2.0 * sound
+        )
+        second_amplitude = (adjusted[..., 1] - (velocity - sound) * adjusted[..., 0]) / (
+            2.0 * sound
+        )
         first = first_amplitude[..., None] * jnp.stack(
             (jnp.ones_like(velocity), velocity - sound), axis=-1
         )
@@ -267,7 +266,7 @@ class TransverseWaveSolverPlan(StrictModule, NonTrainableState):
         left_matrix, right_matrix, speeds = system.eigensystem(
             left, right, int(transverse_axis), args
         )
-        amplitudes = jnp.einsum("...ij,...j->...i", left_matrix, fluctuation)
+        amplitudes = oe.contract("...ij,...j->...i", left_matrix, fluctuation)
         waves = right_matrix * amplitudes[..., None, :]
         negative = jnp.sum(jnp.minimum(speeds, 0.0)[..., None, :] * waves, axis=-1)
         positive = jnp.sum(jnp.maximum(speeds, 0.0)[..., None, :] * waves, axis=-1)

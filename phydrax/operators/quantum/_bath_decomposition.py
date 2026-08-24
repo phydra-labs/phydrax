@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+from jaxtyping import Array
 
 from ._pseudomode import BathCorrelationExpansion
 
@@ -123,8 +124,131 @@ def drude_lorentz_pade_from_poles(
     )
 
 
+def _pade_bose_poles_residues(order: int, /) -> tuple[Array, Array]:
+    count = int(order)
+    alpha = jnp.diag(
+        jnp.asarray(
+            [
+                1.0 / jnp.sqrt((2 * index + 5) * (2 * index + 3))
+                for index in range(2 * count - 1)
+            ]
+        ),
+        k=1,
+    )
+    alpha = alpha + alpha.T
+    epsilon = -2.0 / jnp.linalg.eigvalsh(alpha)[:count]
+    if count == 1:
+        chi = jnp.zeros((0,), dtype=epsilon.dtype)
+    else:
+        alpha_prime = jnp.diag(
+            jnp.asarray(
+                [
+                    1.0 / jnp.sqrt((2 * index + 7) * (2 * index + 5))
+                    for index in range(2 * count - 2)
+                ]
+            ),
+            k=1,
+        )
+        alpha_prime = alpha_prime + alpha_prime.T
+        chi = -2.0 / jnp.linalg.eigvalsh(alpha_prime)[: count - 1]
+    prefactor = 0.5 * count * (2 * (count + 1) + 1)
+    residues = []
+    for index in range(count):
+        numerator = prefactor
+        for value in chi:
+            numerator = numerator * (value**2 - epsilon[index] ** 2)
+        denominator = 1.0
+        for other in range(count):
+            denominator = denominator * (
+                epsilon[other] ** 2
+                - epsilon[index] ** 2
+                + (1.0 if index == other else 0.0)
+            )
+        residues.append(numerator / denominator)
+    return epsilon, jnp.asarray(residues)
+
+
+def drude_lorentz_pade(
+    reorganization_energy: float,
+    cutoff_frequency: float,
+    temperature: float,
+    order: int,
+    /,
+    *,
+    reference_grid_size: int = 256,
+) -> BathCorrelationExpansion:
+    """Analytic Padé spectrum decomposition in units with hbar = k_B = 1."""
+    energy = float(reorganization_energy)
+    cutoff = float(cutoff_frequency)
+    thermal = float(temperature)
+    count = int(order)
+    grid_size = int(reference_grid_size)
+    if (
+        energy < 0.0
+        or cutoff <= 0.0
+        or thermal <= 0.0
+        or count < 1
+        or grid_size < 2
+    ):
+        raise ValueError("Drude–Lorentz Padé parameters are invalid.")
+    epsilon, kappa = _pade_bose_poles_residues(count)
+    frequencies = epsilon * thermal
+    if jnp.any(
+        jnp.abs(frequencies**2 - cutoff**2)
+        <= 1e-12 * jnp.maximum(1.0, cutoff**2)
+    ):
+        raise ValueError("A Padé pole collides with the Drude cutoff frequency.")
+    coefficients = [
+        energy
+        * cutoff
+        * (1.0 / jnp.tan(cutoff / (2.0 * thermal)) - 1j)
+    ]
+    coefficients.extend(
+        [
+            (
+                4.0
+                * energy
+                * cutoff
+                * thermal
+                * kappa[index]
+                * frequencies[index]
+                / (frequencies[index] ** 2 - cutoff**2)
+            )
+            + 0.0j
+            for index in range(count)
+        ]
+    )
+    exponents = jnp.concatenate(
+        (jnp.asarray([cutoff + 0.0j]), frequencies.astype(complex))
+    )
+    provisional = BathCorrelationExpansion(
+        jnp.asarray(coefficients),
+        exponents,
+        expansion_id=f"drude-pade:{count}",
+    )
+    reference = drude_lorentz_matsubara(
+        energy,
+        cutoff,
+        thermal,
+        max(256, 16 * count),
+    )
+    times = jnp.linspace(
+        1e-6 / max(cutoff, thermal),
+        10.0 / max(cutoff, 1e-12),
+        grid_size,
+    )
+    residual = provisional.residual_against(reference, times)
+    return BathCorrelationExpansion(
+        provisional.coefficients,
+        provisional.exponents,
+        expansion_id=provisional.expansion_id,
+        fit_residual=residual,
+    )
+
+
 __all__ = [
     "drude_lorentz_matsubara",
+    "drude_lorentz_pade",
     "drude_lorentz_pade_from_poles",
     "fit_bath_exponentials",
     "underdamped_brownian_two_pole",

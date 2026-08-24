@@ -42,6 +42,7 @@ from ._estimates import (
 )
 from ._lowering import component_factor_fields, sum_over
 from ._plans import AdaptiveQuadraturePlan
+from ._precision import IntegrationPrecisionPolicy
 from ._rules import (
     ClenshawCurtisRule,
     GaussKronrodRule,
@@ -137,6 +138,7 @@ class DomainAdaptiveIntegrand(StrictModule):
     variable: str = eqx.field(static=True)
     axis: str = eqx.field(static=True)
     geometry_variable: bool = eqx.field(static=True)
+    precision: IntegrationPrecisionPolicy
 
     def field(self, coordinate: Array, /) -> cx.Field:
         coordinate_ = jnp.asarray(coordinate, dtype=float)
@@ -155,20 +157,42 @@ class DomainAdaptiveIntegrand(StrictModule):
         values = self.integrand(points, key=self.key, **self.kwargs)
         if not isinstance(values, cx.Field):
             raise TypeError("Adaptive integrands must evaluate to coordax.Field.")
+        values = cx.Field(
+            self.precision.evaluation(values.data),
+            dims=values.dims,
+        )
         mask, modifier = component_factor_fields(
             self.component,
             points,
             key=self.key,
             kwargs=dict(self.kwargs.items()),
         )
-        result = values * mask * modifier
+        weight = cx.Field(
+            self.precision.accumulation((mask * modifier).data),
+            dims=(mask * modifier).dims,
+        )
+        result = cx.Field(
+            self.precision.accumulation((values * weight).data),
+            dims=(values * weight).dims,
+        )
         if self.log_density is not None:
             log_values = self.log_density(points, key=self.key, **self.kwargs)
-            result = result * cx.Field(
-                jnp.exp(jnp.asarray(log_values.data)), dims=log_values.dims
+            density = cx.Field(
+                self.precision.accumulation(
+                    jnp.exp(self.precision.evaluation(log_values.data))
+                ),
+                dims=log_values.dims,
+            )
+            result = cx.Field(
+                self.precision.accumulation((result * density).data),
+                dims=(result * density).dims,
             )
         if self.axis in result.named_dims:
-            result = sum_over(result, self.axis)
+            result = sum_over(
+                result,
+                self.axis,
+                accumulation_dtype=self.precision.accumulation_dtype,
+            )
         return result
 
     def __call__(self, coordinate: Array, /) -> Array:
@@ -211,20 +235,23 @@ def _meets_plan_tolerance(
     value: Array,
     error: Array,
     plan: AdaptiveQuadraturePlan,
+    precision: IntegrationPrecisionPolicy,
     /,
 ) -> Array:
-    real_dtype = jnp.real(jnp.asarray(value)).dtype
+    magnitude = precision.decision(_error_norm(value))
+    error_ = precision.decision(error)
+    real_dtype = magnitude.dtype
     absolute = (
         jnp.sqrt(jnp.finfo(real_dtype).eps)
         if plan.absolute_tolerance is None
-        else jnp.asarray(plan.absolute_tolerance, dtype=float)
+        else jnp.asarray(plan.absolute_tolerance, dtype=real_dtype)
     )
     relative = (
         jnp.sqrt(jnp.finfo(real_dtype).eps)
         if plan.relative_tolerance is None
-        else jnp.asarray(plan.relative_tolerance, dtype=float)
+        else jnp.asarray(plan.relative_tolerance, dtype=real_dtype)
     )
-    return error <= absolute + relative * _error_norm(value)
+    return error_ <= absolute + relative * magnitude
 
 
 def _run_adaptive_raw(
@@ -237,6 +264,7 @@ def _run_adaptive_raw(
     log_density: Any | None,
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
     variable_, factor, structure, fixed = _resolve_interval(component, variable)
     axis = structure.axis_for(variable_)
@@ -257,8 +285,11 @@ def _run_adaptive_raw(
         variable=variable_,
         axis=axis,
         geometry_variable=isinstance(factor, Interval1d),
+        precision=precision,
     )
-    endpoints = jnp.asarray((factor.start, *plan.breakpoints, factor.end), dtype=float)
+    endpoints = precision.accumulation(
+        jnp.asarray((factor.start, *plan.breakpoints, factor.end))
+    )
     initial_count = len(plan.breakpoints) + 1
     prototype = callback.field(0.5 * (endpoints[0] + endpoints[-1]))
     output_shape = prototype.data.shape
@@ -286,7 +317,7 @@ def _run_adaptive_raw(
                 "Adaptive quadrature failed to meet its numerical contract.",
             )
         value = cx.Field(value_data, dims=output_dims)
-        error = jnp.asarray(jnp.inf)
+        error = precision.decision(jnp.asarray(jnp.inf))
         diagnostics = AdaptiveQuadratureDiagnostics(
             status=status,
             num_evaluations=jnp.asarray(1, dtype=jnp.int32),
@@ -309,20 +340,36 @@ def _run_adaptive_raw(
     def evaluate_interval(lower: Array, upper: Array) -> tuple[Array, Array, Array]:
         half = 0.5 * (upper - lower)
         center = 0.5 * (upper + lower)
-        high_points = center + half * high.nodes
-        high_values = jax.vmap(callback)(high_points)
-        high_estimate = half * jnp.tensordot(high.weights, high_values, axes=(0, 0))
+        high_nodes = precision.accumulation(high.nodes)
+        high_weights = precision.accumulation(high.weights)
+        high_points = center + half * high_nodes
+        high_values = precision.accumulation(jax.vmap(callback)(high_points))
+        high_estimate = precision.accumulation(
+            half * jnp.tensordot(high_weights, high_values, axes=(0, 0))
+        )
         if high.embedded_weights is not None:
-            low_estimate = half * jnp.tensordot(
-                high.embedded_weights, high_values, axes=(0, 0)
+            low_estimate = precision.accumulation(
+                half
+                * jnp.tensordot(
+                    precision.accumulation(high.embedded_weights),
+                    high_values,
+                    axes=(0, 0),
+                )
             )
         else:
             if low is None:
                 raise RuntimeError("Nested adaptive rule is missing its low rule.")
-            low_points = center + half * low.nodes
-            low_values = jax.vmap(callback)(low_points)
-            low_estimate = half * jnp.tensordot(low.weights, low_values, axes=(0, 0))
-        error = _error_norm(high_estimate - low_estimate)
+            low_points = center + half * precision.accumulation(low.nodes)
+            low_values = precision.accumulation(jax.vmap(callback)(low_points))
+            low_estimate = precision.accumulation(
+                half
+                * jnp.tensordot(
+                    precision.accumulation(low.weights),
+                    low_values,
+                    axes=(0, 0),
+                )
+            )
+        error = precision.decision(_error_norm(high_estimate - low_estimate))
         finite = jnp.all(jnp.isfinite(high_values)) & jnp.all(jnp.isfinite(high_estimate))
         return high_estimate, error, finite
 
@@ -345,24 +392,18 @@ def _run_adaptive_raw(
         .at[:initial_count]
         .set(initial_estimates)
     )
-    errors = jnp.zeros((capacity,), dtype=float).at[:initial_count].set(initial_errors)
+    errors = (
+        jnp.zeros((capacity,), dtype=initial_errors.dtype)
+        .at[:initial_count]
+        .set(initial_errors)
+    )
     active = jnp.arange(capacity) < initial_count
-    global_estimate = jnp.sum(initial_estimates, axis=0)
-    global_error = jnp.sum(initial_errors)
+    global_estimate = precision.accumulation(jnp.sum(initial_estimates, axis=0))
+    global_error = precision.decision(jnp.sum(initial_errors))
     evaluation_count = jnp.asarray(initial_count * local_cost + 1, dtype=jnp.int32)
-    absolute = (
-        jnp.sqrt(jnp.finfo(initial_estimates.dtype).eps)
-        if plan.absolute_tolerance is None
-        else jnp.asarray(plan.absolute_tolerance, dtype=float)
-    )
-    relative = (
-        jnp.sqrt(jnp.finfo(initial_estimates.dtype).eps)
-        if plan.relative_tolerance is None
-        else jnp.asarray(plan.relative_tolerance, dtype=float)
-    )
 
     def converged(estimate: Array, error: Array) -> Array:
-        return error <= absolute + relative * _error_norm(estimate)
+        return _meets_plan_tolerance(estimate, error, plan, precision)
 
     bounds_valid = jnp.all(jnp.diff(endpoints) > 0.0)
     finite_valid = jnp.all(initial_finite)
@@ -465,13 +506,13 @@ def _run_adaptive_raw(
                     midpoint, upper
                 )
                 finite = left_finite & right_finite
-                new_total = (
+                new_total = precision.accumulation(
                     total_value
                     - estimate_values[selected]
                     + left_estimate
                     + right_estimate
                 )
-                new_error = (
+                new_error = precision.decision(
                     total_error_value - error_values[selected] + left_error + right_error
                 )
                 lower_values = lower_values.at[selected].set(lower)
@@ -582,8 +623,9 @@ def _combine_ratio(
     /,
     *,
     plan: AdaptiveQuadraturePlan,
+    precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
-    denominator_data = jnp.asarray(denominator.value.data)
+    denominator_data = precision.accumulation(denominator.value.data)
     valid = jnp.all(jnp.isfinite(denominator_data)) & jnp.all(denominator_data != 0)
     status = jnp.maximum(numerator.status, denominator.status)
     status = jnp.where(
@@ -591,19 +633,24 @@ def _combine_ratio(
         status,
         int(IntegrationStatus.INVALID_NORMALIZATION_MASS),
     )
-    value_data = numerator.value.data / denominator_data
+    value_data = precision.accumulation(
+        precision.accumulation(numerator.value.data) / denominator_data
+    )
     value = cx.Field(value_data, dims=numerator.value.dims)
     if numerator.error_estimate is None or denominator.error_estimate is None:
         raise RuntimeError("Adaptive ratio terms require embedded-rule errors.")
-    relative_numerator = numerator.error_estimate / jnp.maximum(
-        jnp.abs(numerator.value.data), jnp.finfo(float).tiny
+    tiny = jnp.finfo(jnp.real(value_data).dtype).tiny
+    relative_numerator = precision.decision(
+        numerator.error_estimate
+        / jnp.maximum(jnp.abs(precision.accumulation(numerator.value.data)), tiny)
     )
-    relative_denominator = denominator.error_estimate / jnp.maximum(
-        jnp.abs(denominator_data), jnp.finfo(float).tiny
+    relative_denominator = precision.decision(
+        denominator.error_estimate / jnp.maximum(jnp.abs(denominator_data), tiny)
     )
-    error = jnp.abs(value_data) * (relative_numerator + relative_denominator)
-    error = _error_norm(error)
-    ratio_converged = _meets_plan_tolerance(value_data, error, plan)
+    error = precision.decision(
+        _error_norm(jnp.abs(value_data) * (relative_numerator + relative_denominator))
+    )
+    ratio_converged = _meets_plan_tolerance(value_data, error, plan, precision)
     status = jnp.where(
         (status == int(IntegrationStatus.CONVERGED)) & (~ratio_converged),
         int(IntegrationStatus.REFINEMENT_STAGNATION),
@@ -645,9 +692,13 @@ def integrate_adaptive(
     variable: str | None = None,
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
+    precision: IntegrationPrecisionPolicy | None = None,
 ) -> IntegrationEstimate:
     """Execute native adaptive interval integration for component/density targets."""
     callback_kwargs = {} if kwargs is None else kwargs
+    precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+    if not isinstance(precision_, IntegrationPrecisionPolicy):
+        raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     if isinstance(target, DensityTarget):
         if not isinstance(target.base, ComponentTarget):
             raise TypeError("Adaptive density integration requires a component base.")
@@ -671,6 +722,7 @@ def integrate_adaptive(
                 log_density=log_density,
                 key=term_key,
                 kwargs=callback_kwargs,
+                precision=precision_,
             )
             for component, term_key in zip(
                 component_target.component.terms, keys, strict=True
@@ -685,11 +737,19 @@ def integrate_adaptive(
         for estimate in estimates[1:]:
             if estimate.error_estimate is None:
                 raise RuntimeError("Adaptive union terms require embedded-rule errors.")
-            value = value + estimate.value
-            error = error + estimate.error_estimate
+            value = cx.Field(
+                precision_.accumulation((value + estimate.value).data),
+                dims=value.dims,
+            )
+            error = precision_.decision(error + estimate.error_estimate)
             status = jnp.maximum(status, estimate.status)
             evaluations = evaluations + estimate.num_evaluations
-        combined_converged = _meets_plan_tolerance(value.data, error, plan)
+        combined_converged = _meets_plan_tolerance(
+            jnp.asarray(value.data),
+            error,
+            plan,
+            precision_,
+        )
         status = jnp.where(
             (status == int(IntegrationStatus.CONVERGED)) & (~combined_converged),
             int(IntegrationStatus.REFINEMENT_STAGNATION),
@@ -739,8 +799,14 @@ def integrate_adaptive(
             variable=variable,
             key=key,
             kwargs=callback_kwargs,
+            precision=precision_,
         )
-        return _combine_ratio(raw, denominator, plan=plan)
+        return _combine_ratio(
+            raw,
+            denominator,
+            plan=plan,
+            precision=precision_,
+        )
     numerator = _run_adaptive_raw(
         integrand,
         component_target.component,
@@ -749,6 +815,7 @@ def integrate_adaptive(
         log_density=log_density,
         key=key,
         kwargs=callback_kwargs,
+        precision=precision_,
     )
     if not normalized and not normalize_base:
         return numerator
@@ -760,8 +827,14 @@ def integrate_adaptive(
         log_density=log_density if normalized else None,
         key=key,
         kwargs=callback_kwargs,
+        precision=precision_,
     )
-    return _combine_ratio(numerator, denominator, plan=plan)
+    return _combine_ratio(
+        numerator,
+        denominator,
+        plan=plan,
+        precision=precision_,
+    )
 
 
 __all__ = ["DomainAdaptiveIntegrand", "integrate_adaptive"]

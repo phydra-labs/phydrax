@@ -125,6 +125,24 @@ transforms, so all terms observe the same enforced field mapping.
 `partition_functions()` exposes the trainable/non-trainable state split used by
 `solve(...)`, and `save_onnx("u", ...)` exports one ansatz field.
 
+## Experimental contraction precision
+
+`solve(..., precision=FunctionalPrecisionPolicy(...))` scopes JAX matrix
+contraction precision around every prepared objective evaluation, including
+training loss, term diagnostics, data metrics, and final objective settling.
+This experiment is deliberately restricted to standard Optax transformations;
+line-search ExtraArgs transforms, native iterative/least-squares methods, KFAC,
+Riemannian methods, and Evosax are rejected rather than receiving a partial
+policy. Trainable inexact leaves must share one dtype.
+
+The returned solver retains the policy and a content-addressed precision
+evidence envelope. Its functional discretization records include that evidence
+identity, and later `loss(...)` calls reuse the scoped contraction policy.
+
+::: phydrax.solver.FunctionalPrecisionPolicy
+
+---
+
 ::: phydrax.solver.FunctionalSolver
     options:
         members:

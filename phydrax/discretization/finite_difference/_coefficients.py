@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._precision import FDExecutionPrecisionPolicy
 
 
 def fornberg_weights(
@@ -88,9 +89,15 @@ class StencilCoefficientPlan(StrictModule, NonTrainableState):
         weights: ArrayLike | None = None,
         residual_tolerance: float = 1e-9,
         plan_id: str | None = None,
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
-        coordinates = np.asarray(nodes, dtype=float).reshape((-1,))
-        point = float(evaluation_point)
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
+        certification_dtype = np.dtype(precision_.certification_dtype)
+        coefficient_dtype = np.dtype(precision_.coefficient_dtype)
+        coordinates = np.asarray(nodes, dtype=certification_dtype).reshape((-1,))
+        point = certification_dtype.type(evaluation_point)
         derivative = int(derivative_order)
         accuracy = int(accuracy_order)
         if derivative <= 0 or accuracy <= 0:
@@ -100,7 +107,7 @@ class StencilCoefficientPlan(StrictModule, NonTrainableState):
         resolved_weights = (
             fornberg_weights(coordinates, point, derivative)
             if weights is None
-            else np.asarray(weights, dtype=float).reshape((-1,))
+            else np.asarray(weights, dtype=certification_dtype).reshape((-1,))
         )
         if resolved_weights.shape != coordinates.shape or np.any(
             ~np.isfinite(resolved_weights)
@@ -111,10 +118,18 @@ class StencilCoefficientPlan(StrictModule, NonTrainableState):
         maximum_degree = max(coordinates.size - 1, required_degree)
         residuals = np.asarray(
             [
-                np.sum(resolved_weights * offsets**degree)
-                - (float(factorial(derivative)) if degree == derivative else 0.0)
+                np.sum(
+                    resolved_weights * offsets**degree,
+                    dtype=certification_dtype,
+                )
+                - (
+                    certification_dtype.type(factorial(derivative))
+                    if degree == derivative
+                    else certification_dtype.type(0.0)
+                )
                 for degree in range(maximum_degree + 1)
-            ]
+            ],
+            dtype=certification_dtype,
         )
         tolerance = float(residual_tolerance)
         if not np.isfinite(tolerance) or tolerance <= 0.0:
@@ -133,6 +148,8 @@ class StencilCoefficientPlan(StrictModule, NonTrainableState):
                     "derivative_order": derivative,
                     "accuracy_order": accuracy,
                     "weights": array_tree_fingerprint(resolved_weights),
+                    "coefficient_dtype": precision_.coefficient_dtype,
+                    "certification_dtype": precision_.certification_dtype,
                 }
             )
             if plan_id is None
@@ -141,10 +158,10 @@ class StencilCoefficientPlan(StrictModule, NonTrainableState):
         if not identifier:
             raise ValueError("plan_id must be non-empty.")
         self.nodes = jnp.asarray(coordinates)
-        self.evaluation_point = point
+        self.evaluation_point = float(point)
         self.derivative_order = derivative
         self.accuracy_order = accuracy
-        self.weights = jnp.asarray(resolved_weights)
+        self.weights = jnp.asarray(resolved_weights, dtype=coefficient_dtype)
         self.moment_residuals = jnp.asarray(residuals)
         self.condition_estimate = condition
         self.plan_id = identifier

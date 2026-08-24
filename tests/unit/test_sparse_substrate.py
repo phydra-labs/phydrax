@@ -4,6 +4,7 @@
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 
 import phydrax as phx
 from phydrax.linalg import ArraySpace, DiagonalPairing
@@ -56,8 +57,8 @@ def test_shared_pattern_batched_sparse_map_matches_dense_actions_and_storage():
     assert dense.shape == (2, 2, 3)
     assert storage.batch_shape == (2,)
     assert storage.values.shape[0] == 2
-    assert jnp.allclose(forward, jnp.einsum("bij,bj->bi", dense, source))
-    assert jnp.allclose(transpose, jnp.einsum("bji,bj->bi", dense, target))
+    assert jnp.allclose(forward, oe.contract("bij,bj->bi", dense, source))
+    assert jnp.allclose(transpose, oe.contract("bji,bj->bi", dense, target))
     assert jnp.allclose(adjoint, transpose)
 
 

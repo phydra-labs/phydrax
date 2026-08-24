@@ -7,9 +7,13 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
+from ..linalg import HermitianPrecisionPolicy
 from ..metrix import BuresDensityManifold, FaithfulDensityReport
 from ..uq import (
     QuantumPOVM,
@@ -23,6 +27,8 @@ class QuantumTomographyProblem(StrictModule):
     data: QuantumTomographyData
     initial_density: Array
     manifold: BuresDensityManifold
+    precision: GeometryPrecisionPolicy
+    hermitian_precision: HermitianPrecisionPolicy
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -33,13 +39,36 @@ class QuantumTomographyProblem(StrictModule):
         /,
         *,
         problem_id: str = "quantum-tomography",
+        precision: GeometryPrecisionPolicy | None = None,
+        hermitian_precision: HermitianPrecisionPolicy | None = None,
     ):
         if not isinstance(povm, QuantumPOVM) or not isinstance(
             data, QuantumTomographyData
         ):
             raise TypeError("povm and data must use quantum tomography contracts.")
-        manifold = BuresDensityManifold(povm.dimension)
+        precision_ = povm.precision if precision is None else precision
+        hermitian_ = (
+            povm.hermitian_precision
+            if hermitian_precision is None
+            else hermitian_precision
+        )
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+        if not isinstance(hermitian_, HermitianPrecisionPolicy):
+            raise TypeError(
+                "hermitian_precision must be a HermitianPrecisionPolicy or None."
+            )
+        if precision_.policy_id != povm.precision.policy_id:
+            raise ValueError("Tomography problem precision must match the POVM.")
+        if hermitian_.policy_id != povm.hermitian_precision.policy_id:
+            raise ValueError("Tomography Hermitian precision must match the POVM.")
+        manifold = BuresDensityManifold(
+            povm.dimension,
+            precision=precision_,
+            hermitian_precision=hermitian_,
+        )
         density = jnp.asarray(initial_density)
+        precision_.validate_coordinates(density)
         if not bool(jax.device_get(manifold.contains(density))):
             raise ValueError("initial_density must be faithful and trace one.")
         if data.counts.shape != (povm.outcome_count,):
@@ -48,6 +77,8 @@ class QuantumTomographyProblem(StrictModule):
         self.data = data
         self.initial_density = density
         self.manifold = manifold
+        self.precision = precision_
+        self.hermitian_precision = hermitian_
         self.problem_id = str(problem_id)
 
 
@@ -83,6 +114,8 @@ class QuantumTomographyResult(StrictModule):
     identifiable_rank: Array
     valid: Array
     converged: Array
+    precision_evidence: PrecisionEvidenceEnvelope
+    hermitian_precision_evidence: PrecisionEvidenceEnvelope
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -97,6 +130,8 @@ class QuantumTomographyResult(StrictModule):
         *,
         converged: ArrayLike,
         problem_id: str,
+        precision_evidence: PrecisionEvidenceEnvelope,
+        hermitian_precision_evidence: PrecisionEvidenceEnvelope,
     ):
         self.density = jnp.asarray(density)
         self.log_likelihood_history = jnp.asarray(log_likelihood_history)
@@ -110,6 +145,14 @@ class QuantumTomographyResult(StrictModule):
             & jnp.all(self.minimum_eigenvalue_history > 0.0)
         )
         self.converged = jnp.asarray(converged, dtype=bool)
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        if not isinstance(hermitian_precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError(
+                "hermitian_precision_evidence must be PrecisionEvidenceEnvelope."
+            )
+        self.precision_evidence = precision_evidence
+        self.hermitian_precision_evidence = hermitian_precision_evidence
         self.problem_id = str(problem_id)
 
 
@@ -119,6 +162,10 @@ class QuantumTomographyArtifact(StrictModule):
     data_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     schema_version: int = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope
+    hermitian_precision_evidence: PrecisionEvidenceEnvelope
+    precision_policy_id: str = eqx.field(static=True)
+    hermitian_precision_policy_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -128,21 +175,33 @@ class QuantumTomographyArtifact(StrictModule):
         povm_id: str,
         data_id: str,
         problem_id: str,
-        schema_version: int = 1,
+        precision_evidence: PrecisionEvidenceEnvelope,
+        hermitian_precision_evidence: PrecisionEvidenceEnvelope,
+        precision_policy_id: str,
+        hermitian_precision_policy_id: str,
+        schema_version: int = 2,
     ):
         self.density = jnp.asarray(density)
         self.povm_id = str(povm_id)
         self.data_id = str(data_id)
         self.problem_id = str(problem_id)
         self.schema_version = int(schema_version)
+        self.precision_evidence = precision_evidence
+        self.hermitian_precision_evidence = hermitian_precision_evidence
+        self.precision_policy_id = str(precision_policy_id)
+        self.hermitian_precision_policy_id = str(hermitian_precision_policy_id)
 
 
 def _negative_log_likelihood_cotangent(
     problem: QuantumTomographyProblem, density: Array, /
 ) -> Array:
-    probabilities = problem.povm.probabilities(density)
+    probabilities = problem.precision.accumulation(problem.povm.probabilities(density))
     safe = jnp.maximum(probabilities, jnp.finfo(probabilities.dtype).tiny)
-    return -jnp.einsum("k,kij->ij", problem.data.counts / safe, problem.povm.effects)
+    return -oe.contract(
+        "k,kij->ij",
+        problem.precision.accumulation(problem.data.counts / safe),
+        problem.precision.accumulation(problem.povm.effects),
+    )
 
 
 def solve_quantum_tomography(
@@ -154,13 +213,16 @@ def solve_quantum_tomography(
     if not isinstance(problem, QuantumTomographyProblem):
         raise TypeError("problem must be a QuantumTomographyProblem.")
     policy_ = QuantumTomographyPolicy() if policy is None else policy
-    density = problem.initial_density
+    density = problem.precision.output(problem.initial_density)
     likelihoods = []
     eigenvalues = []
     accepted = []
     converged = False
     previous = tomography_log_likelihood(
-        problem.povm, problem.data, density
+        problem.povm,
+        problem.data,
+        density,
+        precision=problem.precision,
     ).log_likelihood
     for _ in range(policy_.iterations):
         cotangent = _negative_log_likelihood_cotangent(problem, density)
@@ -172,7 +234,10 @@ def solve_quantum_tomography(
         for _ in range(policy_.maximum_backtracks + 1):
             candidate = problem.manifold.retract(density, step * direction)
             candidate_result = tomography_log_likelihood(
-                problem.povm, problem.data, candidate
+                problem.povm,
+                problem.data,
+                candidate,
+                precision=problem.precision,
             )
             if bool(
                 jax.device_get(
@@ -188,18 +253,31 @@ def solve_quantum_tomography(
         if did_accept:
             density = candidate
         likelihoods.append(candidate_likelihood if did_accept else previous)
-        report = FaithfulDensityReport(density, tolerance=problem.manifold.tolerance)
+        report = FaithfulDensityReport(
+            density,
+            tolerance=problem.manifold.tolerance,
+            precision=problem.hermitian_precision,
+        )
         eigenvalues.append(report.minimum_eigenvalue)
         accepted.append(did_accept)
-        improvement = candidate_likelihood - previous if did_accept else 0.0
+        improvement = (
+            problem.precision.decision(candidate_likelihood - previous)
+            if did_accept
+            else problem.precision.decision(0.0)
+        )
         previous = candidate_likelihood if did_accept else previous
-        if bool(jax.device_get(jnp.abs(improvement) <= policy_.likelihood_tolerance)):
+        if bool(
+            jax.device_get(
+                jnp.abs(improvement)
+                <= problem.precision.decision(policy_.likelihood_tolerance)
+            )
+        ):
             converged = True
             break
     from ..metrix import density_fidelity
 
     return QuantumTomographyResult(
-        density,
+        problem.precision.output(density),
         jnp.stack(likelihoods) if likelihoods else jnp.zeros((0,)),
         jnp.stack(eigenvalues) if eigenvalues else jnp.zeros((0,)),
         jnp.asarray(accepted),
@@ -207,6 +285,10 @@ def solve_quantum_tomography(
         problem.povm.identifiability_rank(),
         converged=converged,
         problem_id=problem.problem_id,
+        precision_evidence=problem.precision.evidence_for(problem.initial_density),
+        hermitian_precision_evidence=problem.hermitian_precision.evidence_for(
+            problem.initial_density
+        ),
     )
 
 
@@ -220,6 +302,11 @@ def freeze_quantum_tomography(
         povm_id=problem.povm.povm_id,
         data_id=problem.data.data_id,
         problem_id=problem.problem_id,
+        precision_evidence=result.precision_evidence,
+        hermitian_precision_evidence=result.hermitian_precision_evidence,
+        precision_policy_id=problem.precision.policy_id,
+        hermitian_precision_policy_id=problem.hermitian_precision.policy_id,
+        schema_version=2,
     )
 
 

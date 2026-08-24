@@ -157,9 +157,7 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         )
         local = tuple(
             size // split
-            for size, split in zip(
-                plan.global_shape, plan.split_factors, strict=True
-            )
+            for size, split in zip(plan.global_shape, plan.split_factors, strict=True)
         )
         report_id = canonical_fingerprint(
             {
@@ -213,12 +211,9 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         upper = jnp.take(state, jnp.arange(width), axis=axis_)
         return jnp.concatenate((lower, state, upper), axis=axis_)
 
-    def materialize_periodic_halos(
-        self, state: Array, /
-    ) -> tuple[Array, ...]:
+    def materialize_periodic_halos(self, state: Array, /) -> tuple[Array, ...]:
         return tuple(
-            self.periodic_halo(state, axis)
-            for axis in range(len(self.plan.global_shape))
+            self.periodic_halo(state, axis) for axis in range(len(self.plan.global_shape))
         )
 
     def compile_residual(
@@ -231,9 +226,7 @@ class PreparedFiniteVolumeDecomposition(StrictModule, NonTrainableState):
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("dynamics must be PreparedFiniteVolumeDynamics.")
         if dynamics.discretization.cell_shape != self.plan.global_shape:
-            raise ValueError(
-                "Distributed FV dynamics and decomposition shapes differ."
-            )
+            raise ValueError("Distributed FV dynamics and decomposition shapes differ.")
         return jax.jit(
             lambda value: dynamics(jnp.asarray(time), value, args),
             in_shardings=self.cell_sharding,

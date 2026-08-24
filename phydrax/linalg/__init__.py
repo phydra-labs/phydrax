@@ -69,6 +69,7 @@ from ._factorizations import (
     PreparedFactorization,
     refresh_factorization,
 )
+from ._hermitian_precision import HermitianPrecisionPolicy
 from ._hermitian_spectral import (
     hermitian_exp,
     hermitian_inverse_sqrt,
@@ -484,6 +485,7 @@ from .krylov import (
 __all__ = [
     "HermitianFunctionResult",
     "HermitianSpectrum",
+    "HermitianPrecisionPolicy",
     "HermitianSylvesterOperator",
     "SylvesterSolveResult",
     "TracelessHermitianSpace",

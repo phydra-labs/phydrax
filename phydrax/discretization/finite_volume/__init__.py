@@ -89,6 +89,7 @@ from ._positivity import (
     FluxPositivityPlan,
     PositivityBlendResult,
 )
+from ._precision import FiniteVolumePrecisionPolicy, PrecisionDType
 from ._reconstruction import (
     AbstractFaceReconstructionPlan,
     AbstractSlopeLimiter,
@@ -131,6 +132,8 @@ __all__ = [
     "ConservativeBoundaryCondition",
     "ConservativeBoundaryKind",
     "ConservativeDiffusionPlan",
+    "FiniteVolumePrecisionPolicy",
+    "PrecisionDType",
     "ViscousFluxPlan",
     "ViscousStabilityReport",
     "FaceCoefficientPlan",

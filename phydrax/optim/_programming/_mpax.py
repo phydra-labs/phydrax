@@ -9,6 +9,7 @@ from dataclasses import replace
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ...backends import (
@@ -149,7 +150,7 @@ def _expanded_duals_and_slacks(
     inequality_dual = provider_dual[
         ..., problem.num_equalities : problem.num_equalities + problem.num_inequalities
     ]
-    slack = problem.inequality_rhs - jnp.einsum(
+    slack = problem.inequality_rhs - oe.contract(
         "...ij,...j->...i",
         problem.inequality_matrix,
         primal,

@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- Added native-precision open-system campaign records, integrity-checked
+  artifacts, semantic-variate replay evidence, fail-closed promotion policies,
+  frozen campaign-matrix tooling, and cross-campaign graduation with permanent
+  unsupported-claim provenance.
+
+- Replaced Boolean archive qualification with exact campaign
+  deserialization and reproduction, added derived physicality/capacity gates,
+  adaptive preconditioned HEOM, eventful multi-event MPS jumps, analytic Padé
+  residues, direct-memory Choi certification, active-memory refit, and separate
+  neural projection-audit semantics.
+  Campaign orchestration and graduation now live under developer tooling rather
+  than the public solver API.
+
+- Added connected VMC neural trajectory execution, seeded disjoint process
+  tomography designs, count-aware held-out refit evidence, and pre-fit/post-fit
+  recovery gates for sequential-process and causal-memory campaigns.
+
 - Added fail-closed open-system evidence with quantified approximation
   thresholds, exact pseudomode initial states, process initial-state
   physicality, semantic trajectory keys, fixed-step probability guards,
@@ -51,6 +68,13 @@
   bosonic Fock spaces, pseudomode/reaction-coordinate embeddings, HEOM,
   memory-kernel and TCL evolution, tensor-network states and truncation
   evidence, and process-tensor MPO contracts.
+- Unified nonlinear and optimization model/direction/certificate precision,
+  routed dense root, interpolation, Schur, KKT, and sensitivity systems through
+  `phydrax.linalg`, and retained nested execution evidence. Added temporal,
+  integration, geometry, and Hermitian precision to Gaussian, trajectory, HEOM,
+  memory-kernel, Fock, and process-tensor paths, plus an explicit
+  `TensorNetworkPrecisionPolicy` for storage, contraction, factorization,
+  accumulation, certification, and output roles.
 
 - Added projective-line Calabi–Yau campaign preparation, residue and induced
   hypersurface geometry, positivity-globalized Kähler-potential solving,
@@ -110,6 +134,30 @@
   Wiener controls; weighted-measure result interoperability; explicit resource,
   moment, rank, positivity, and terminal-status diagnostics; and a compiled
   accuracy/performance benchmark harness.
+- Cross-domain executable precision contracts with strict content-addressed
+  request, resolution, nested evidence, and resource-assumption records.
+  Finite differences separate coefficient, field, accumulation, certification,
+  communication, checkpoint, AMR, distributed-halo, multigrid, and adjoint
+  placement. Structured finite volume separates state, reconstruction, flux,
+  conservative reduction/decision, output, and checkpoint precision across
+  dynamics, SSPRK runtime, AMR, rollouts, HDF5, and restart. Integration
+  separates evaluation, accumulation, decision, and output precision across
+  fixed, mapped, adaptive, stochastic, product, weighted, MLMC, atlas,
+  Riemannian, and projective execution. Neural operators retain master
+  parameters, transient compute views, scoped matmul/FFT precision, dynamic
+  loss-scale state, and persisted effective evidence. Spatial noise, SPDE
+  composition, predictive summaries, bootstrap particles, native
+  GMRES/FGMRES basis storage, Jacobi preconditioning, nonlinear Newton and
+  globalization decisions, native/SSP temporal integration, flow-matching and
+  manifold reductions, Hermitian spectra/Sylvester solves, quantum tomography,
+  Calabi--Yau campaigns, randomized estimator objectives, and experimental
+  standard-Optax `FunctionalSolver` contractions expose matching policies and
+  evidence. Information geometry composes geometry precision with the linear
+  runtime instead of raw dense solves. Precision-sensitive persistence formats
+  reject incompatible contracts and retain effective evidence. The precision
+  benchmark reports accuracy, storage, runtime, and evidence across FD, finite
+  volume, integration, linear, nonlinear, temporal, geometry, Hermitian,
+  operator, and UQ domains.
 - `phydrax.discretization`: canonical entity/topology/support, finite-measure,
   DOF/field-space, plan/preparation, transfer, bundle, hierarchy, temporal, tensor,
   spectral, metric-cochain, conforming P1 finite-element, and conservative

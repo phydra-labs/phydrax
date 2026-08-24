@@ -15,8 +15,10 @@ from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import DomainFunction
 
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..integration import IntegrationPrecisionPolicy
 from ..operators.differential._dimension_estimators import DimensionOperatorSamples
 from ..operators.differential._stochastic_estimators import StochasticOperatorSamples
 from ._randomized_quadratic import event_inner as _event_inner, randomized_squared_mean
@@ -160,6 +162,7 @@ class RandomizedResidualDiagnostics(StrictModule):
     valid_fraction: Array
     negative: Array
     finite: Array
+    precision_evidence: PrecisionEvidenceEnvelope
     num_realizations: int = eqx.field(static=True)
     loss_mode: RandomizedResidualLossMode = eqx.field(static=True)
 
@@ -206,6 +209,7 @@ def _per_sample_loss(
     /,
     *,
     right: RandomizedResidualSamples | None,
+    precision: IntegrationPrecisionPolicy,
 ) -> Array:
     right_values = None
     if mode == "independent_product":
@@ -223,6 +227,7 @@ def _per_sample_loss(
         left.event_shape,
         mode,
         right=right_values,
+        precision=precision,
     )
 
 
@@ -231,15 +236,23 @@ def _reduce(
     mask: Array,
     weights: Array,
     /,
+    precision: IntegrationPrecisionPolicy,
 ) -> Array:
-    effective = jnp.where(mask, weights, 0.0)
+    effective = precision.accumulation(jnp.where(mask, weights, 0.0))
     mass = jnp.sum(effective)
     mass = eqx.error_if(
         mass,
         ~(jnp.isfinite(mass) & (mass > 0.0)),
         "Randomized residual batch has zero valid sample mass.",
     )
-    return jnp.sum(jnp.where(mask, effective * values, 0.0)) / mass
+    return precision.decision(
+        jnp.sum(
+            precision.accumulation(
+                jnp.where(mask, effective * precision.accumulation(values), 0.0)
+            )
+        )
+        / mass
+    )
 
 
 class RandomizedResidualTerm(AbstractSamplingTerm):
@@ -249,6 +262,7 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
     fixed_collocation: Any
     batch_sampler: BatchSampler | None
     scalar_weight: Array
+    precision: IntegrationPrecisionPolicy
     loss_mode: RandomizedResidualLossMode = eqx.field(static=True)
     sampling_mode: RandomizedResidualSamplingMode = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
@@ -263,6 +277,7 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
         sampling_mode: RandomizedResidualSamplingMode = "resample",
         scalar_weight: ArrayLike = 1.0,
         label: str | None = None,
+        precision: IntegrationPrecisionPolicy | None = None,
     ):
         if not callable(residual_evaluator):
             raise TypeError("residual_evaluator must be callable.")
@@ -285,12 +300,16 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
         weight = jnp.asarray(scalar_weight, dtype=float).reshape(())
         if bool(~jnp.isfinite(weight)) or float(weight) < 0.0:
             raise ValueError("scalar_weight must be finite and nonnegative.")
+        precision_ = IntegrationPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, IntegrationPrecisionPolicy):
+            raise TypeError("precision must be an IntegrationPrecisionPolicy or None.")
         self.residual_evaluator = residual_evaluator
         self.fixed_collocation = fixed
         self.batch_sampler = sampler
         self.scalar_weight = weight
         self.loss_mode = loss_mode
         self.sampling_mode = sampling_mode
+        self.precision = precision_
         self.label = label
 
     def sample(self, *, key: Key[Array, ""] = jr.key(0)) -> RandomizedResidualBatch:
@@ -361,8 +380,18 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
         del iter_, kwargs
         materialized = self.sample(key=key) if batch is None else batch
         left, right = self._evaluate(functions, materialized)
-        values = _per_sample_loss(left, self.loss_mode, right=right)
-        return self.scalar_weight * _reduce(values, left.mask, left.weights)
+        values = _per_sample_loss(
+            left,
+            self.loss_mode,
+            right=right,
+            precision=self.precision,
+        )
+        return self.precision.decision(self.scalar_weight) * _reduce(
+            values,
+            left.mask,
+            left.weights,
+            self.precision,
+        )
 
     def diagnostics(
         self,
@@ -374,33 +403,52 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
     ) -> RandomizedResidualDiagnostics:
         materialized = self.sample(key=key) if batch is None else batch
         left, right = self._evaluate(functions, materialized)
-        objective = self.scalar_weight * _reduce(
-            _per_sample_loss(left, self.loss_mode, right=right),
+        objective = self.precision.decision(self.scalar_weight) * _reduce(
+            _per_sample_loss(
+                left,
+                self.loss_mode,
+                right=right,
+                precision=self.precision,
+            ),
             left.mask,
             left.weights,
+            self.precision,
         )
-        plug_in = jnp.sqrt(
-            _reduce(
-                _event_inner(left.mean, left.event_shape),
-                left.mask,
-                left.weights,
+        plug_in = self.precision.decision(
+            jnp.sqrt(
+                _reduce(
+                    _event_inner(
+                        left.mean,
+                        left.event_shape,
+                        precision=self.precision,
+                    ),
+                    left.mask,
+                    left.weights,
+                    self.precision,
+                )
             )
         )
         standard_error = _reduce(
-            _event_inner(left.standard_error, left.event_shape),
+            _event_inner(
+                left.standard_error,
+                left.event_shape,
+                precision=self.precision,
+            ),
             left.mask,
             left.weights,
+            self.precision,
         )
         finite = jnp.isfinite(objective) & jnp.isfinite(plug_in)
         return RandomizedResidualDiagnostics(
             objective=objective,
             plug_in_residual_norm=plug_in,
             mean_probe_standard_error=jnp.sqrt(standard_error),
-            valid_fraction=jnp.mean(left.mask),
+            valid_fraction=self.precision.decision(jnp.mean(left.mask)),
             negative=objective < 0.0,
             finite=finite,
             num_realizations=left.num_realizations,
             loss_mode=self.loss_mode,
+            precision_evidence=self.precision.evidence_for(left.values),
         )
 
 

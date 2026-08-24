@@ -11,6 +11,16 @@ hyperboloid, Fisher–Rao simplex, affine-invariant SPD, complex-projective,
 unitary, special-unitary, and affine-invariant HPD geometry. Logarithms remain
 local at cut loci and matrix logarithm branch boundaries.
 
+::: phydrax.metrix.GeometryPrecisionPolicy
+
+`GeometryPrecisionPolicy` separates stored coordinates, local geometric compute,
+reductions, certification decisions, and returned values. Flow-matching event
+metrics, segmented cochain metrics, fixed RK4 coordinate geodesics, Fréchet
+statistics, metric validation, and exponential-family information geometry accept
+this policy. Reductions cast operands before summation; casting a completed
+low-precision scalar is never reported as widened accumulation. Result-bearing
+services retain effective precision evidence.
+
 ## Coordinate metric integration
 
 ::: phydrax.metrix.MetricGeodesicResult

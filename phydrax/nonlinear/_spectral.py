@@ -14,6 +14,7 @@ from jaxtyping import Array, PyTree
 
 from .._tree_math import tree_allfinite
 from ..linalg import PyTreeSpace
+from ._precision import NonlinearPrecisionPolicy
 from ._types import (
     AbstractNonlinearMethod,
     NonlinearCapabilities,
@@ -24,6 +25,21 @@ from ._types import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
+
+
+def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Array:
+    return precision.decision(jnp.linalg.norm(precision.accumulation(value)))
+
+
+def _coordinate_inner(
+    left: Array,
+    right: Array,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    left_ = precision.accumulation(left)
+    right_ = precision.accumulation(right)
+    return precision.decision(jnp.real(jnp.sum(jnp.conj(left_) * right_)))
 
 
 class _SpectralSearch(eqx.Module):
@@ -67,6 +83,7 @@ class DFSANE(AbstractNonlinearMethod):
     contraction: float = eqx.field(static=True)
     sufficient_decrease: float = eqx.field(static=True)
     maximum_search_steps: int = eqx.field(static=True)
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -77,6 +94,7 @@ class DFSANE(AbstractNonlinearMethod):
         contraction: float = 0.5,
         sufficient_decrease: float = 1e-4,
         maximum_search_steps: int = 24,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         history_ = int(history)
         search_steps = int(maximum_search_steps)
@@ -95,6 +113,9 @@ class DFSANE(AbstractNonlinearMethod):
             raise ValueError("DF-SANE controls must be finite and positive.")
         if not values[0] < values[1] or not values[2] < 1.0 or not values[3] < 1.0:
             raise ValueError("DF-SANE spectral and line-search controls are invalid.")
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.history = history_
         (
             self.minimum_spectral,
@@ -103,6 +124,7 @@ class DFSANE(AbstractNonlinearMethod):
             self.sufficient_decrease,
         ) = values
         self.maximum_search_steps = search_steps
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -127,6 +149,7 @@ class DFSANE(AbstractNonlinearMethod):
         args: Any = None,
         _initial_evaluation=None,
     ) -> NonlinearResult:
+        self.precision.validate_tolerance(termination.absolute_residual)
         if _initial_evaluation is None:
             state_tree = problem.validate_state(initial_state)
             residual_tree, auxiliary = problem.evaluate(state_tree, args)
@@ -143,11 +166,12 @@ class DFSANE(AbstractNonlinearMethod):
             raise ValueError("DF-SANE requires square state/residual coordinates.")
         state = source.flatten(state_tree)
         residual = target.flatten(residual_tree)
-        norm = jnp.linalg.norm(residual)
+        self.precision.validate_trees(state_tree, residual_tree)
+        norm = _coordinate_norm(residual, self.precision)
         finite = tree_allfinite(state_tree) & tree_allfinite(residual_tree)
         valid = problem_.valid(state_tree, residual_tree, auxiliary, args)
         converged = finite & valid & (norm <= termination.residual_threshold(norm))
-        merit = 0.5 * norm * norm
+        merit = self.precision.decision(0.5 * norm * norm)
         run = _SpectralRun(
             state=state,
             residual=residual,
@@ -191,13 +215,13 @@ class DFSANE(AbstractNonlinearMethod):
             )
 
         def body(current):
-            direction = -current.sigma * current.residual
+            direction = self.precision.direction(-current.sigma * current.residual)
             reference = jnp.max(current.merit_history)
             search = _SpectralSearch(
                 state=current.state,
                 residual=current.residual,
                 norm=current.norm,
-                rate=jnp.asarray(1.0, dtype=current.norm.dtype),
+                rate=self.precision.decision(1.0),
                 evaluations=jnp.asarray(0, dtype=jnp.int32),
                 accepted=jnp.asarray(False),
                 finite_seen=jnp.asarray(False),
@@ -220,13 +244,19 @@ class DFSANE(AbstractNonlinearMethod):
                 )
 
             def search_body(item):
-                candidate_coordinates = current.state + item.rate * direction
+                candidate_coordinates = jnp.asarray(
+                    current.state + item.rate * direction,
+                    dtype=current.state.dtype,
+                )
                 candidate = source.unflatten(candidate_coordinates)
                 candidate_residual_tree, candidate_auxiliary = problem_.evaluate(
                     candidate, args
                 )
                 candidate_residual = target.flatten(candidate_residual_tree)
-                candidate_norm = jnp.linalg.norm(candidate_residual)
+                candidate_norm = _coordinate_norm(
+                    candidate_residual,
+                    self.precision,
+                )
                 candidate_finite = jnp.all(jnp.isfinite(candidate_coordinates)) & jnp.all(
                     jnp.isfinite(candidate_residual)
                 )
@@ -262,8 +292,8 @@ class DFSANE(AbstractNonlinearMethod):
             search = jax.lax.while_loop(search_condition, search_body, search)
             step = search.state - current.state
             residual_delta = search.residual - current.residual
-            denominator = jnp.real(jnp.vdot(step, residual_delta))
-            spectral = jnp.real(jnp.vdot(step, step)) / jnp.where(
+            denominator = _coordinate_inner(step, residual_delta, self.precision)
+            spectral = _coordinate_inner(step, step, self.precision) / jnp.where(
                 jnp.abs(denominator) < 1e-30, 1.0, denominator
             )
             spectral_usable = search.accepted & jnp.isfinite(spectral) & (spectral > 0.0)
@@ -293,13 +323,15 @@ class DFSANE(AbstractNonlinearMethod):
             converged = search.accepted & (
                 search.norm <= termination.residual_threshold(current.initial_norm)
             )
-            step_norm = jnp.linalg.norm(step)
+            step_norm = _coordinate_norm(step, self.precision)
             stagnated = (
                 search.accepted
                 & ~converged
                 & (
                     step_norm
-                    <= termination.step_threshold(jnp.linalg.norm(current.state))
+                    <= termination.step_threshold(
+                        _coordinate_norm(current.state, self.precision)
+                    )
                 )
             )
             next_evaluations = current.evaluations + search.evaluations
@@ -361,7 +393,10 @@ class DFSANE(AbstractNonlinearMethod):
         final_residual, final_auxiliary = problem_.evaluate(final_state, args)
         diagnostics = NonlinearDiagnostics(
             initial_residual_norm=run.initial_norm,
-            final_residual_norm=jnp.linalg.norm(target.flatten(final_residual)),
+            final_residual_norm=_coordinate_norm(
+                target.flatten(final_residual),
+                self.precision,
+            ),
             final_step_norm=run.step_norm,
             iterations=run.iteration,
             residual_evaluations=run.evaluations + 1,
@@ -371,8 +406,9 @@ class DFSANE(AbstractNonlinearMethod):
             nonfinite_trials=run.nonfinite,
             acceleration_restarts=run.restarts,
         )
+        output_state = jax.tree.map(self.precision.output, final_state)
         return NonlinearResult(
-            state=final_state,
+            state=output_state,
             residual=final_residual,
             auxiliary=final_auxiliary,
             status=status,
@@ -382,6 +418,12 @@ class DFSANE(AbstractNonlinearMethod):
                 method_id=self.method_id,
                 derivative_id="none",
                 globalization_id="nonmonotone-spectral-residual",
+                precision_policy_id=self.precision.policy_id,
+            ),
+            precision_evidence=self.precision.evidence_for(
+                final_state,
+                final_residual,
+                output_value=output_state,
             ),
         )
 

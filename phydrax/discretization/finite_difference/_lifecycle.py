@@ -22,10 +22,11 @@ from ..._array_archive import (
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._precision import FDExecutionPrecisionPolicy
 
 
 _FD_CHECKPOINT_FORMAT = "phydrax-fd-checkpoint"
-_FD_CHECKPOINT_VERSION = 1
+_FD_CHECKPOINT_VERSION = 2
 
 
 class FDCheckpointPlan(StrictModule, NonTrainableState):
@@ -36,7 +37,8 @@ class FDCheckpointPlan(StrictModule, NonTrainableState):
     amr_trace_id: str | None = eqx.field(static=True)
     partition_id: str | None = eqx.field(static=True)
     integrator_id: str = eqx.field(static=True)
-    numeric_policy: str = eqx.field(static=True)
+    precision_contract_id: str = eqx.field(static=True)
+    precision: FDExecutionPrecisionPolicy
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -48,11 +50,13 @@ class FDCheckpointPlan(StrictModule, NonTrainableState):
         boundary_program_id: str | None = None,
         amr_trace_id: str | None = None,
         partition_id: str | None = None,
-        numeric_policy: str = "float64",
+        precision: FDExecutionPrecisionPolicy | None = None,
     ):
         discretizations = tuple(str(value) for value in discretization_ids)
         integrator = str(integrator_id)
-        numeric = str(numeric_policy)
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
         optional = tuple(
             None if value is None else str(value)
             for value in (boundary_program_id, amr_trace_id, partition_id)
@@ -61,7 +65,7 @@ class FDCheckpointPlan(StrictModule, NonTrainableState):
             not discretizations
             or any(not value for value in discretizations)
             or not integrator
-            or not numeric
+            or not precision_.policy_id
             or any(value == "" for value in optional)
         ):
             raise ValueError("FD checkpoint identities must be non-empty when supplied.")
@@ -70,7 +74,8 @@ class FDCheckpointPlan(StrictModule, NonTrainableState):
         self.amr_trace_id = optional[1]
         self.partition_id = optional[2]
         self.integrator_id = integrator
-        self.numeric_policy = numeric
+        self.precision_contract_id = precision_.policy_id
+        self.precision = precision_
         self.plan_id = canonical_fingerprint(self.manifest_identity())
 
     def manifest_identity(self, /) -> dict[str, Any]:
@@ -80,7 +85,7 @@ class FDCheckpointPlan(StrictModule, NonTrainableState):
             "amr_trace_id": self.amr_trace_id,
             "partition_id": self.partition_id,
             "integrator_id": self.integrator_id,
-            "numeric_policy": self.numeric_policy,
+            "precision_contract_id": self.precision_contract_id,
         }
 
 
@@ -157,6 +162,24 @@ def write_fd_checkpoint(
         raise ValueError(
             "FD checkpoint array names must be portable and fields non-empty."
         )
+    expected_field_dtype = jnp.dtype(plan.precision.field_dtype)
+    for name, value in field_values.items():
+        array = jnp.asarray(value)
+        if array.dtype != expected_field_dtype:
+            raise TypeError(
+                f"FD checkpoint field {name!r} has dtype {array.dtype}; "
+                f"expected {expected_field_dtype}."
+            )
+    for name, value in auxiliary_values.items():
+        array = jnp.asarray(value)
+        if (
+            jnp.issubdtype(array.dtype, jnp.inexact)
+            and array.dtype != expected_field_dtype
+        ):
+            raise TypeError(
+                f"FD checkpoint auxiliary {name!r} has dtype {array.dtype}; "
+                f"expected {expected_field_dtype} for inexact state."
+            )
     arrays = {f"field/{name}": value for name, value in field_values.items()}
     arrays.update(
         {f"auxiliary/{name}": value for name, value in auxiliary_values.items()}

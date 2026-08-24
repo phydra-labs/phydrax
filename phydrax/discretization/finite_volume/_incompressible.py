@@ -102,11 +102,15 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
         divergence = jnp.zeros(self.discretization.cell_shape)
         for axis, component in enumerate(values):
             integrated = component * self.discretization.face_measures[axis]
-            divergence = divergence + _difference(
-                integrated,
-                axis,
-                self.discretization.grid.structured_axes[axis].periodic,
-            ) / self.discretization.cell_volumes
+            divergence = (
+                divergence
+                + _difference(
+                    integrated,
+                    axis,
+                    self.discretization.grid.structured_axes[axis].periodic,
+                )
+                / self.discretization.cell_volumes
+            )
         return divergence
 
     def gradient(self, pressure: ArrayLike, /) -> FaceVelocity:
@@ -129,9 +133,9 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
                 if moved.shape[0] == 1:
                     gradient = jnp.zeros((2,) + moved.shape[1:], dtype=moved.dtype)
                 else:
-                    interior = (moved[1:] - moved[:-1]) / (centers[1:] - centers[:-1]).reshape(
-                        (-1,) + (1,) * (moved.ndim - 1)
-                    )
+                    interior = (moved[1:] - moved[:-1]) / (
+                        centers[1:] - centers[:-1]
+                    ).reshape((-1,) + (1,) * (moved.ndim - 1))
                     gradient = jnp.concatenate(
                         (jnp.zeros_like(moved[:1]), interior, jnp.zeros_like(moved[:1])),
                         axis=0,

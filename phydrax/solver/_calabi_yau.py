@@ -11,6 +11,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..geometry.complex import (
     HypersurfaceKahlerEvaluation,
@@ -27,6 +29,7 @@ class CalabiYauMetricProblem(StrictModule):
     weights: Array
     normalization: Array
     positivity_floor: float
+    precision: GeometryPrecisionPolicy
 
     def __init__(
         self,
@@ -38,6 +41,7 @@ class CalabiYauMetricProblem(StrictModule):
         weights: ArrayLike | None = None,
         normalization: ArrayLike = 0.0,
         positivity_floor: float = 1e-7,
+        precision: GeometryPrecisionPolicy | None = None,
     ):
         if not isinstance(hypersurface, ProjectiveHypersurface):
             raise TypeError("hypersurface must be a ProjectiveHypersurface.")
@@ -46,18 +50,22 @@ class CalabiYauMetricProblem(StrictModule):
         if not callable(potential_model):
             raise TypeError("potential_model must be callable.")
         count = samples.homogeneous_points.shape[0]
-        weights_ = (
-            jnp.ones((count,)) / float(count) if weights is None else jnp.asarray(weights)
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+        weights_ = precision_.accumulation(
+            jnp.ones((count,)) / float(count) if weights is None else weights
         )
         if weights_.shape != (count,):
             raise ValueError("weights must match the sample axis.")
-        weights_ = weights_ / jnp.sum(weights_)
+        weights_ = precision_.accumulation(weights_ / jnp.sum(weights_))
         self.hypersurface = hypersurface
         self.samples = samples
         self.potential_model = potential_model
         self.weights = weights_
-        self.normalization = jnp.asarray(normalization).reshape(())
+        self.normalization = precision_.compute(normalization).reshape(())
         self.positivity_floor = float(positivity_floor)
+        self.precision = precision_
 
 
 class CalabiYauSolvePolicy(StrictModule):
@@ -98,6 +106,8 @@ class CalabiYauMetricResult(StrictModule):
     converged: Array
     iteration_count: int
     hypersurface_id: str
+    precision_evidence: PrecisionEvidenceEnvelope
+    precision: GeometryPrecisionPolicy
 
     def __init__(
         self,
@@ -111,6 +121,8 @@ class CalabiYauMetricResult(StrictModule):
         *,
         converged: ArrayLike,
         hypersurface_id: str,
+        precision_evidence: PrecisionEvidenceEnvelope,
+        precision: GeometryPrecisionPolicy,
     ):
         self.potential_model = potential_model
         self.normalization = jnp.asarray(normalization)
@@ -126,6 +138,12 @@ class CalabiYauMetricResult(StrictModule):
         self.converged = jnp.asarray(converged, dtype=bool)
         self.iteration_count = int(self.objective_history.shape[0])
         self.hypersurface_id = str(hypersurface_id)
+        if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
+            raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
+        self.precision_evidence = precision_evidence
+        if not isinstance(precision, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy.")
+        self.precision = precision
 
     def evaluate(
         self,
@@ -150,6 +168,7 @@ def _objective(
     normalization: Array,
     positivity_floor: float,
     potential_model: Any,
+    precision: GeometryPrecisionPolicy,
 ):
     geometry = HypersurfaceKahlerGeometry(
         hypersurface,
@@ -171,14 +190,15 @@ def _objective(
         margins.append(evaluation.positivity_margin)
         potentials.append(evaluation.potential)
         valid.append(evaluation.valid)
-    residual = jnp.stack(residuals)
-    margin = jnp.stack(margins)
-    potential = jnp.stack(potentials)
+    residual = precision.compute(jnp.stack(residuals))
+    margin = precision.decision(jnp.stack(margins))
+    potential = precision.compute(jnp.stack(potentials))
     validity = jnp.stack(valid)
-    mean_potential = jnp.sum(weights * potential)
-    equation = jnp.sum(weights * residual**2)
+    accumulated_weights = precision.accumulation(weights)
+    mean_potential = jnp.sum(accumulated_weights * precision.accumulation(potential))
+    equation = jnp.sum(accumulated_weights * precision.accumulation(residual**2))
     gauge = mean_potential**2
-    objective = equation + gauge
+    objective = precision.decision(equation + gauge)
     return objective, (jnp.sqrt(equation), jnp.min(margin), jnp.all(validity))
 
 
@@ -208,16 +228,24 @@ def solve_calabi_yau_metric(
             problem.normalization,
             problem.positivity_floor,
             candidate,
+            problem.precision,
         )
 
     value_and_grad = eqx.filter_value_and_grad(objective, has_aux=True)
     for _ in range(policy_.iterations):
         (value, auxiliary), gradient = value_and_grad(model)
         residual, margin, validity = auxiliary
-        gradient_norm = jnp.sqrt(
-            sum(
-                jnp.real(jnp.vdot(leaf, leaf))
-                for leaf in jax.tree.leaves(eqx.filter(gradient, eqx.is_array))
+        gradient_norm = problem.precision.decision(
+            jnp.sqrt(
+                sum(
+                    jnp.real(
+                        jnp.vdot(
+                            problem.precision.accumulation(leaf),
+                            problem.precision.accumulation(leaf),
+                        )
+                    )
+                    for leaf in jax.tree.leaves(eqx.filter(gradient, eqx.is_array))
+                )
             )
         )
         step = policy_.learning_rate
@@ -237,9 +265,15 @@ def solve_calabi_yau_metric(
             candidate_value, candidate_auxiliary = objective(candidate)
             if bool(
                 jax.device_get(
-                    (candidate_value <= value)
+                    (
+                        problem.precision.decision(candidate_value)
+                        <= problem.precision.decision(value)
+                    )
                     & candidate_auxiliary[2]
-                    & (candidate_auxiliary[1] > problem.positivity_floor)
+                    & (
+                        candidate_auxiliary[1]
+                        > problem.precision.decision(problem.positivity_floor)
+                    )
                 )
             ):
                 did_accept = True
@@ -253,18 +287,26 @@ def solve_calabi_yau_metric(
         residuals.append(residual)
         margins.append(margin)
         accepted.append(did_accept)
-        if bool(jax.device_get(gradient_norm <= policy_.gradient_tolerance)):
+        if bool(
+            jax.device_get(
+                gradient_norm <= problem.precision.decision(policy_.gradient_tolerance)
+            )
+        ):
             converged = True
             break
     return CalabiYauMetricResult(
         model,
         problem.normalization,
-        jnp.stack(objectives) if objectives else jnp.zeros((0,)),
-        jnp.stack(residuals) if residuals else jnp.zeros((0,)),
-        jnp.stack(margins) if margins else jnp.zeros((0,)),
+        problem.precision.output(
+            jnp.stack(objectives) if objectives else jnp.zeros((0,))
+        ),
+        problem.precision.output(jnp.stack(residuals) if residuals else jnp.zeros((0,))),
+        problem.precision.output(jnp.stack(margins) if margins else jnp.zeros((0,))),
         jnp.asarray(accepted),
         converged=converged,
         hypersurface_id=problem.hypersurface.hypersurface_id,
+        precision_evidence=problem.precision.evidence_for(problem.weights),
+        precision=problem.precision,
     )
 
 

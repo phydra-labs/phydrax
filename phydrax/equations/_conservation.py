@@ -26,6 +26,7 @@ from ..discretization.finite_volume import (
     FiniteVolumeBoundarySet,
     FiniteVolumeDiscretization,
     FiniteVolumeMethodPlan,
+    FiniteVolumePrecisionPolicy,
     FWaveShallowWaterPlan,
     HLLCFluxPlan,
     MappedFiniteVolumeDiscretization,
@@ -143,6 +144,8 @@ class CompiledConservationProblem(StrictModule):
                     type(discretization).__name__,
                     discretization.prepared_id,
                     numeric_version=discretization.numeric_version,
+                    precision_evidence_id=discretization.precision_evidence_id,
+                    resource_evidence_id=discretization.resource_evidence_id,
                 ),
                 DiscretizationRecord(
                     form_key,
@@ -201,9 +204,7 @@ def _validate_method(
         solver, (EntropyConservativeEulerFluxPlan, EntropyStableEulerFluxPlan)
     ) and not isinstance(system, euler_systems):
         raise ValueError("Euler entropy fluxes require an Euler-compatible system.")
-    if method.positivity is not None and not isinstance(
-        system, AbstractAdmissibleSystem
-    ):
+    if method.positivity is not None and not isinstance(system, AbstractAdmissibleSystem):
         raise ValueError("Positivity limiting requires an admissible system.")
     if method.entropy_diagnostics and not isinstance(system, AbstractEntropySystem):
         raise ValueError("Entropy diagnostics require an entropy system.")
@@ -212,7 +213,9 @@ def _validate_method(
     ):
         raise ValueError("Shallow-water f-wave flux requires ShallowWaterSystem.")
     if isinstance(solver, AbstractWavePropagationPlan) and method.positivity is not None:
-        raise ValueError("Wave-propagation positivity limiting is not yet a face-state policy.")
+        raise ValueError(
+            "Wave-propagation positivity limiting is not yet a face-state policy."
+        )
     if not isinstance(solver, (AbstractNumericalFluxPlan, AbstractWavePropagationPlan)):
         raise TypeError("Finite-volume method has an invalid interface solver.")
     if method.positivity is not None and not isinstance(
@@ -229,6 +232,7 @@ def compile_conservation_problem(
     *,
     capacity=None,
     bathymetry=None,
+    precision: FiniteVolumePrecisionPolicy | None = None,
 ) -> CompiledConservationProblem:
     """Lower one conservation system onto prepared structured finite volumes."""
     if not isinstance(problem, ConservationProblemIR):
@@ -248,6 +252,7 @@ def compile_conservation_problem(
         problem.boundaries,
         capacity=capacity,
         bathymetry=bathymetry,
+        precision=precision,
         source=problem.source,
     )
     return CompiledConservationProblem(problem, discretization, method, dynamics)

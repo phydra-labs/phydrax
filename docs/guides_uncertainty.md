@@ -26,6 +26,11 @@ or merges unidentified axes. The source is a provenance statement, not an estima
 a Diffrax path ensemble supplies `process` draws but does not estimate `numerical`
 error automatically.
 
+`PredictivePrecisionPolicy` can retain large sample ensembles in float32 while
+performing moments and quantiles in float64. The cast applies only to sample
+values; named axes, masks, and uncertainty-source labels remain structural.
+Resolved storage/summary precision is retained on the predictive result.
+
 ```python
 import coordax as cx
 import jax.numpy as jnp
@@ -105,6 +110,12 @@ and randomized Nyström. Both routes expose their method, rank, tolerance,
 residual estimate, convergence flag, and seed/sketch provenance through
 `noise.approximation`; check that record before treating a truncation as
 numerically adequate.
+
+`SpatialNoisePrecisionPolicy` independently places covariance construction,
+retained basis storage, runtime diffusion, and certification. All basis
+factories consume it. `SemidiscreteSPDE.precision_evidence` nests the available
+spatial-discretization and noise-basis evidence rather than reducing the coupled
+problem to one nominal dtype.
 
 The path axis alone says nothing about numerical uncertainty. To quantify
 spatial truncation, time stepping, or solver error, run an explicit discretization

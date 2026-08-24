@@ -265,12 +265,14 @@ def prepare_jacobian(
         )
 
     if policy.mode == "sparse":
+        assert policy.sparse_plan is not None
         sparse = prepare_sparse_linearization(policy.sparse_plan, state, args)
         if not source.compatible(sparse.operator.source):
-            raise ValueError("Sparse Jacobian source must match the nonlinear state space.")
-        if (
-            problem.residual_space is not None
-            and not problem.residual_space.compatible(sparse.operator.target)
+            raise ValueError(
+                "Sparse Jacobian source must match the nonlinear state space."
+            )
+        if problem.residual_space is not None and not problem.residual_space.compatible(
+            sparse.operator.target
         ):
             raise ValueError(
                 "Sparse Jacobian target must match the nonlinear residual space."
@@ -296,6 +298,7 @@ def prepare_jacobian(
     )
     residual = target.validate(residual)
     if policy.mode == "explicit":
+        assert policy.operator_function is not None
         operator = policy.operator_function(state, args)
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError(

@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import (
     ArraySpace,
@@ -41,6 +43,8 @@ class InformationMetricOperator(StrictModule):
     space: ArraySpace
     damping: Array
     metric_id: str
+    precision: GeometryPrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope
 
     def __init__(
         self,
@@ -50,18 +54,27 @@ class InformationMetricOperator(StrictModule):
         *,
         damping: ArrayLike = 0.0,
         metric_id: str,
+        precision: GeometryPrecisionPolicy | None = None,
     ):
         if not callable(action):
             raise TypeError("action must be callable.")
-        point = jnp.asarray(coordinates)
-        damping_ = jnp.asarray(damping, dtype=point.real.dtype)
+        original = jnp.asarray(coordinates)
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+        precision_.validate_coordinates(original)
+        point = precision_.compute(original)
+        damping_ = precision_.compute(damping)
         if damping_.shape != ():
             raise ValueError("damping must be scalar.")
         identifier = str(metric_id)
         if not identifier:
             raise ValueError("metric_id must be non-empty.")
         space = ArraySpace(point.shape, dtype=point.dtype, space_id=f"{identifier}:space")
-        damped = _DampedInformationAction(action, damping_)
+        damped = _DampedInformationAction(
+            lambda vector: precision_.compute(action(precision_.compute(vector))),
+            damping_,
+        )
         self.operator = FunctionLinearOperator(
             damped,
             source=space,
@@ -71,6 +84,8 @@ class InformationMetricOperator(StrictModule):
         )
         self.space = space
         self.damping = damping_
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence_for(original)
         self.metric_id = identifier
 
     @property
@@ -78,7 +93,7 @@ class InformationMetricOperator(StrictModule):
         return self.space.shape
 
     def mv(self, vector: ArrayLike, /) -> Array:
-        return self.operator.mv(jnp.asarray(vector))
+        return self.operator.mv(self.precision.compute(vector))
 
     def solve(
         self,
@@ -94,9 +109,11 @@ class InformationMetricOperator(StrictModule):
         )
         return solve(
             problem,
-            jnp.asarray(cotangent),
+            self.precision.compute(cotangent),
             policy=policy,
-            initial_guess=None if initial_guess is None else jnp.asarray(initial_guess),
+            initial_guess=(
+                None if initial_guess is None else self.precision.compute(initial_guess)
+            ),
         )
 
     def materialize(self, /, *, maximum_size: int = 256) -> Array:
@@ -118,26 +135,34 @@ def pulled_back_information_operator(
     *,
     damping: ArrayLike = 0.0,
     metric_id: str = "pullback-information",
+    precision: GeometryPrecisionPolicy | None = None,
 ) -> InformationMetricOperator:
     """Return ``J^T G J`` without materializing ``J`` or ``G``."""
     if not callable(parameter_map):
         raise TypeError("parameter_map must be callable.")
-    parameters_ = jnp.asarray(parameters)
-    target = jnp.asarray(parameter_map(parameters_))
+    parameters_original = jnp.asarray(parameters)
+    precision_ = target_metric.precision if precision is None else precision
+    if not isinstance(precision_, GeometryPrecisionPolicy):
+        raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+    parameters_ = precision_.compute(parameters_original)
+    target = precision_.compute(parameter_map(parameters_))
     if target.shape != target_metric.shape:
         raise ValueError("parameter_map output must match target metric coordinates.")
     _, linearized = jax.linearize(parameter_map, parameters_)
 
     def action(vector: Array) -> Array:
-        target_vector = linearized(vector)
+        target_vector = precision_.compute(linearized(precision_.compute(vector)))
         target_action = target_metric.mv(target_vector)
-        return jax.linear_transpose(linearized, parameters_)(target_action)[0]
+        return precision_.compute(
+            jax.linear_transpose(linearized, parameters_)(target_action)[0]
+        )
 
     return InformationMetricOperator(
         action,
         parameters_,
         damping=damping,
         metric_id=metric_id,
+        precision=precision_,
     )
 
 

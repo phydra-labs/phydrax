@@ -8,6 +8,11 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from tools.open_system_campaigns import (
+    gaussian_campaign,
+    read_open_system_artifact,
+    write_open_system_artifact,
+)
 
 
 def test_approximation_evidence_requires_quantified_axes():
@@ -50,13 +55,13 @@ def test_promotion_policy_is_fail_closed_for_unknown_physicality():
     policy = phx.operators.quantum.OpenSystemPromotionPolicy(
         ("cutoff",),
         ("error",),
-        require_physicality=True,
+        ("trace",),
         policy_id="fail-closed",
     )
     decision = phx.operators.quantum.evaluate_open_system_promotion(
         policy,
         approximation,
-        phx.operators.quantum.OpenSystemPhysicalityEvidence(status="unknown"),
+        phx.operators.quantum.OpenSystemPhysicalityEvidence(),
         execution_success=True,
         capacity_exhausted=False,
         archive_verified=True,
@@ -130,29 +135,27 @@ def test_gaussian_hbar_and_generator_conventions():
 
 def test_open_system_artifact_roundtrip_and_identity(tmp_path):
     path = tmp_path / "artifact.zip"
-    phx.solver.write_open_system_artifact(
+    record = gaussian_campaign()
+    write_open_system_artifact(
         path,
-        campaign_id="campaign",
-        representation_id="representation",
-        problem_id="problem",
-        plan_id="plan",
-        precision="float64",
+        record,
+        problem_id=record.campaign_id,
+        plan_id="artifact-test-plan",
         backend="cpu",
-        status="success",
-        thresholds={"error": 0.1},
-        approximation_axes={"cutoff": 4},
-        semantic_rng_schema={"seed": 1},
-        arrays={"state": jnp.asarray([1.0, 2.0])},
+        runner_id="artifact-test-runner",
+        code_fingerprint="artifact-test-code",
     )
-    manifest, arrays = phx.solver.read_open_system_artifact(
+    stored, manifest = read_open_system_artifact(
         path,
-        expected_campaign_id="campaign",
-        expected_representation_id="representation",
+        expected_campaign_id=record.campaign_id,
+        expected_representation_id=record.representation_id,
     )
-    assert manifest["status"] == "success"
-    assert jnp.allclose(arrays["state"], jnp.asarray([1.0, 2.0]))
+    assert manifest["record"]["campaign_id"] == record.campaign_id
+    assert stored.artifact_names == record.artifact_names
     with pytest.raises(ValueError):
-        phx.solver.read_open_system_artifact(path, expected_campaign_id="wrong")
+        read_open_system_artifact(
+            path, expected_campaign_id="wrong"
+        )
 
 
 def test_generic_quantum_jump_adapter():
@@ -220,22 +223,14 @@ def test_heom_bdf_grid_and_process_identifiability():
     assert bool(grid.valid)
 
 
-def test_sampled_neural_rate_evidence_blocks_uncertain_steps():
-    problem = phx.solver.SampledNeuralTrajectoryProblem(
-        jnp.asarray([0.2]),
-        lambda parameters, vector: vector,
-        lambda parameters: -parameters,
-        lambda parameters: (
-            jnp.asarray([1.0]),
-            jnp.asarray([1.0]),
-            jnp.asarray(2.0),
-        ),
-        lambda channel, parameters: (parameters, jnp.asarray(0.0)),
+def test_neural_rate_evidence_blocks_uncertain_rates():
+    evidence = phx.solver.NeuralRateEvidence(
+        jnp.asarray([1.0]),
+        jnp.asarray([1.0]),
+        jnp.asarray([2.0]),
+        relative_error_tolerance=0.1,
     )
-    result = phx.solver.solve_sampled_neural_trajectory(
-        problem, step_size=0.1, steps=2, rate_relative_error_tolerance=0.1
-    )
-    assert not bool(result.valid)
+    assert not bool(evidence.valid)
 
 
 def test_complex_stiefel_and_sequential_process_tomography():
@@ -265,7 +260,9 @@ def test_complex_stiefel_and_sequential_process_tomography():
         phx.solver.StinespringTomographyProblem(model, (experiment,)),
         iterations=1,
     )
-    assert bool(result.valid)
+    assert bool(result.execution_valid)
+    assert not bool(result.valid)
+    assert bool(result.underidentified)
     source = phx.tensor_network.causal_process_from_lindblad(
         jnp.zeros((2, 2), dtype=complex),
         jnp.zeros((1, 2, 2), dtype=complex),

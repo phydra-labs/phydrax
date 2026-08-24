@@ -15,6 +15,7 @@ import numpy as np
 
 from .._training import EvaluationParametersFn
 from ._functional_objective import _FunctionalObjective
+from ._functional_precision import FunctionalPrecisionPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,7 @@ class FunctionalSolveConfig:
     tensorboard_flush_every: int = 10
     profile_adaptive: bool = False
     train_term_sample_size: int | None = None
+    precision: FunctionalPrecisionPolicy | None = None
 
     def __post_init__(self):
         iterations = int(self.num_iter)
@@ -45,6 +47,10 @@ class FunctionalSolveConfig:
             raise ValueError("log_every must be >= 0.")
         if flush_every <= 0:
             raise ValueError("tensorboard_flush_every must be positive.")
+        if self.precision is not None and not isinstance(
+            self.precision, FunctionalPrecisionPolicy
+        ):
+            raise TypeError("precision must be a FunctionalPrecisionPolicy or None.")
         object.__setattr__(self, "num_iter", iterations)
         object.__setattr__(self, "log_every", log_every)
         object.__setattr__(self, "tensorboard_flush_every", flush_every)

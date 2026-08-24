@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._finite_volume_runtime import (
@@ -22,9 +23,7 @@ from ._finite_volume_runtime import (
 )
 
 
-FiniteVolumeRetentionPolicy: TypeAlias = Literal[
-    "final", "checkpoints", "trajectory"
-]
+FiniteVolumeRetentionPolicy: TypeAlias = Literal["final", "checkpoints", "trajectory"]
 FiniteVolumeRematerializationPolicy: TypeAlias = Literal["none", "step"]
 RolloutLoss = Callable[[FiniteVolumeRuntimeState, Any], Array]
 
@@ -35,6 +34,7 @@ class FiniteVolumeRolloutResult(StrictModule):
     retained_times: Array
     accepted: Array
     statuses: Array
+    precision_evidence: PrecisionEvidenceEnvelope
 
 
 class FiniteVolumeGradientReport(StrictModule):
@@ -109,11 +109,7 @@ class FiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
             )
             return next_state, output
 
-        step_function = (
-            jax.checkpoint(step)
-            if self.rematerialization == "step"
-            else step
-        )
+        step_function = jax.checkpoint(step) if self.rematerialization == "step" else step
         final, outputs = jax.lax.scan(
             step_function,
             initial_state,
@@ -122,20 +118,25 @@ class FiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
         )
         states, times, accepted, statuses = outputs
         if self.retention == "trajectory":
-            retained_states = states
-            retained_times = times
+            retained_states = self.runtime.precision.output(states)
+            retained_times = self.runtime.precision.decision(times)
         elif self.retention == "checkpoints":
-            retained_states = states[self.checkpoint_stride - 1 :: self.checkpoint_stride]
-            retained_times = times[self.checkpoint_stride - 1 :: self.checkpoint_stride]
+            retained_states = self.runtime.precision.checkpoint(
+                states[self.checkpoint_stride - 1 :: self.checkpoint_stride]
+            )
+            retained_times = self.runtime.precision.decision(
+                times[self.checkpoint_stride - 1 :: self.checkpoint_stride]
+            )
         else:
-            retained_states = states[-1:]
-            retained_times = times[-1:]
+            retained_states = self.runtime.precision.output(states[-1:])
+            retained_times = self.runtime.precision.decision(times[-1:])
         return FiniteVolumeRolloutResult(
             final_state=final,
             retained_states=retained_states,
             retained_times=retained_times,
             accepted=accepted,
             statuses=statuses,
+            precision_evidence=self.runtime.precision.evidence(),
         )
 
     def gradient_report(
@@ -184,11 +185,17 @@ class FiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
             - objective(initial_state.conservative_state - epsilon_ * direction)
         ) / (2.0 * epsilon_)
         return FiniteVolumeGradientReport(
-            directional_derivative=directional,
-            reverse_directional_derivative=reverse,
-            finite_difference_derivative=finite_difference,
-            jvp_vjp_residual=jnp.abs(directional - reverse),
-            finite_difference_residual=jnp.abs(directional - finite_difference),
+            directional_derivative=self.runtime.precision.decision(directional),
+            reverse_directional_derivative=self.runtime.precision.decision(reverse),
+            finite_difference_derivative=self.runtime.precision.decision(
+                finite_difference
+            ),
+            jvp_vjp_residual=self.runtime.precision.decision(
+                jnp.abs(directional - reverse)
+            ),
+            finite_difference_residual=self.runtime.precision.decision(
+                jnp.abs(directional - finite_difference)
+            ),
         )
 
 

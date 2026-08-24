@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -58,9 +59,9 @@ def quantum_geometric_tensor(
     if state.ndim != 1 or not jnp.issubdtype(state.dtype, jnp.complexfloating):
         raise TypeError("state_function must return one complex state vector.")
     jacobian = jax.jacfwd(state_function)(point)
-    overlap = jnp.einsum("s,si->i", jnp.conj(state), jacobian)
+    overlap = oe.contract("s,si->i", jnp.conj(state), jacobian)
     horizontal = jacobian - state[:, None] * overlap[None, :]
-    tensor = jnp.einsum("si,sj->ij", jnp.conj(horizontal), horizontal)
+    tensor = oe.contract("si,sj->ij", jnp.conj(horizontal), horizontal)
     connection = -jnp.imag(overlap)
     normalization = jnp.abs(jnp.vdot(state, state) - 1.0)
     return QuantumGeometricTensorResult(

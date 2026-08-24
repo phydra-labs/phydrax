@@ -5,10 +5,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import equinox as eqx
-import jax
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
@@ -18,65 +16,7 @@ from .._tensor_support import PreparedTensorGrid
 from ..amr import BlockLevelPlan
 from ._execution import PreparedStencilExecutionOperator
 from ._operators import PreparedStencilOperator
-
-
-class FDPrecisionPolicy(StrictModule, NonTrainableState):
-    """Explicit coefficient, compute, reduction, and checkpoint dtypes."""
-
-    coefficient_dtype: str = eqx.field(static=True)
-    compute_dtype: str = eqx.field(static=True)
-    reduction_dtype: str = eqx.field(static=True)
-    checkpoint_dtype: str = eqx.field(static=True)
-    policy_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        coefficient_dtype: Any = np.float64,
-        compute_dtype: Any = np.float64,
-        reduction_dtype: Any = np.float64,
-        checkpoint_dtype: Any | None = None,
-    ):
-        coefficient = _canonical_dtype(coefficient_dtype)
-        compute = _canonical_dtype(compute_dtype)
-        reduction = _canonical_dtype(reduction_dtype)
-        checkpoint = (
-            compute if checkpoint_dtype is None else _canonical_dtype(checkpoint_dtype)
-        )
-        if any(
-            not np.issubdtype(value, np.inexact)
-            for value in (coefficient, compute, reduction, checkpoint)
-        ):
-            raise TypeError("FD precision dtypes must be real or complex inexact types.")
-        if reduction.itemsize < compute.itemsize:
-            raise ValueError(
-                "FD reduction precision cannot be narrower than compute precision."
-            )
-        self.coefficient_dtype = coefficient.str
-        self.compute_dtype = compute.str
-        self.reduction_dtype = reduction.str
-        self.checkpoint_dtype = checkpoint.str
-        self.policy_id = canonical_fingerprint(
-            {
-                "kind": "fd-precision-policy",
-                "coefficient": coefficient.str,
-                "compute": compute.str,
-                "reduction": reduction.str,
-                "checkpoint": checkpoint.str,
-            }
-        )
-
-    @property
-    def compute_itemsize(self) -> int:
-        return np.dtype(self.compute_dtype).itemsize
-
-    @property
-    def checkpoint_itemsize(self) -> int:
-        return np.dtype(self.checkpoint_dtype).itemsize
-
-
-def _canonical_dtype(value: Any, /) -> np.dtype:
-    return np.dtype(jax.dtypes.canonicalize_dtype(np.dtype(value)))
+from ._precision import FDExecutionPrecisionPolicy
 
 
 class FDResourceEstimate(StrictModule, NonTrainableState):
@@ -90,6 +30,8 @@ class FDResourceEstimate(StrictModule, NonTrainableState):
     memory_budget_bytes: int | None = eqx.field(static=True)
     fits_budget: bool = eqx.field(static=True)
     estimate_id: str = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
+    precision_resource_assumptions_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -102,6 +44,8 @@ class FDResourceEstimate(StrictModule, NonTrainableState):
         checkpoint_bytes: int,
         memory_budget_bytes: int | None,
         plan_id: str,
+        precision_policy_id: str,
+        precision_resource_assumptions_id: str,
     ):
         values = tuple(
             int(value)
@@ -129,6 +73,8 @@ class FDResourceEstimate(StrictModule, NonTrainableState):
         self.total_bytes = total
         self.memory_budget_bytes = budget
         self.fits_budget = budget is None or total <= budget
+        self.precision_policy_id = str(precision_policy_id)
+        self.precision_resource_assumptions_id = str(precision_resource_assumptions_id)
         self.estimate_id = canonical_fingerprint(
             {
                 "kind": "fd-resource-estimate",
@@ -136,6 +82,10 @@ class FDResourceEstimate(StrictModule, NonTrainableState):
                 "components": list(values),
                 "total": total,
                 "budget": budget,
+                "precision_policy": self.precision_policy_id,
+                "precision_resource_assumptions": (
+                    self.precision_resource_assumptions_id
+                ),
             }
         )
 
@@ -150,7 +100,7 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
     amr_levels: tuple[BlockLevelPlan, ...]
     temporary_fields: int = eqx.field(static=True)
     checkpoint_copies: int = eqx.field(static=True)
-    precision: FDPrecisionPolicy
+    precision: FDExecutionPrecisionPolicy
     memory_budget_bytes: int | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -167,7 +117,7 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
         amr_levels: Sequence[BlockLevelPlan] = (),
         temporary_fields: int = 2,
         checkpoint_copies: int = 1,
-        precision: FDPrecisionPolicy | None = None,
+        precision: FDExecutionPrecisionPolicy | None = None,
         memory_budget_bytes: int | None = None,
     ):
         if not isinstance(grid, PreparedTensorGrid):
@@ -182,7 +132,19 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
         )
         operators_ = tuple(operators)
         levels = tuple(amr_levels)
-        precision_ = FDPrecisionPolicy() if precision is None else precision
+        precision_ = FDExecutionPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, FDExecutionPrecisionPolicy):
+            raise TypeError("precision must be an FDExecutionPrecisionPolicy.")
+        for operator in operators_:
+            operator_precision = (
+                operator.reference_operator.precision
+                if isinstance(operator, PreparedStencilExecutionOperator)
+                else operator.precision
+            )
+            if operator_precision.policy_id != precision_.policy_id:
+                raise ValueError(
+                    "FD preflight operators must share one precision policy."
+                )
         if (
             fields <= 0
             or temporaries < 0
@@ -226,8 +188,10 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
         )
 
     def estimate(self, /) -> FDResourceEstimate:
-        itemsize = self.precision.compute_itemsize
+        assumptions = self.precision.resource_assumptions
+        itemsize = assumptions.itemsize("storage")
         state_bytes = self.grid.size * self.field_count * itemsize
+        checkpoint_itemsize = assumptions.itemsize("checkpoint")
         halo_shape = tuple(
             size + lower + upper
             for size, (lower, upper) in zip(
@@ -259,13 +223,13 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
         checkpoint_bytes = (
             self.grid.size
             * self.field_count
-            * self.precision.checkpoint_itemsize
+            * checkpoint_itemsize
             * self.checkpoint_copies
             + sum(
                 level.maximum_blocks
                 * int(np.prod(level.block_shape))
                 * self.field_count
-                * self.precision.checkpoint_itemsize
+                * checkpoint_itemsize
                 * self.checkpoint_copies
                 for level in self.amr_levels
             )
@@ -278,6 +242,8 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
             amr_bytes=amr_bytes,
             checkpoint_bytes=checkpoint_bytes,
             memory_budget_bytes=self.memory_budget_bytes,
+            precision_policy_id=self.precision.policy_id,
+            precision_resource_assumptions_id=assumptions.assumptions_id,
             plan_id=self.plan_id,
         )
         if not estimate.fits_budget:
@@ -290,6 +256,5 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
 
 __all__ = [
     "FDExecutionPreflightPlan",
-    "FDPrecisionPolicy",
     "FDResourceEstimate",
 ]

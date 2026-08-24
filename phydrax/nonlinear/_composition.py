@@ -14,6 +14,14 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._tree_math import tree_allfinite
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve as solve_linear,
+)
+from ._precision import NonlinearPrecisionPolicy
 from ._updates import (
     AbstractNonlinearUpdate,
     apply_prepared_nonlinear_update,
@@ -36,9 +44,13 @@ NonlinearCompositionKind: TypeAlias = Literal[
 ]
 
 
-def _space_norm(space, value, /) -> Array:
-    squared = jnp.real(space.inner(value, value))
-    return jnp.sqrt(jnp.maximum(squared, 0.0))
+def _space_norm(
+    space,
+    value,
+    precision: NonlinearPrecisionPolicy,
+    /,
+) -> Array:
+    return precision.norm(space, value)
 
 
 def _component_control(
@@ -70,6 +82,8 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
     regularization: float = eqx.field(static=True)
     safeguard_factor: float = eqx.field(static=True)
     update_name: str = eqx.field(static=True)
+    linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -80,6 +94,8 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         weights: tuple[float, ...] | None = None,
         regularization: float = 1e-10,
         safeguard_factor: float = 1.0,
+        linear: LinearSolvePolicy | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         updates_ = tuple(updates)
         if not updates_ or not all(
@@ -105,6 +121,12 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             raise ValueError("regularization must be finite and non-negative.")
         if not isfinite(safeguard_) or safeguard_ < 1.0:
             raise ValueError("safeguard_factor must be finite and at least one.")
+        linear_ = LinearSolvePolicy(DenseSVD()) if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         identifier = canonical_fingerprint(
             {
                 "kind": "nonlinear-composition",
@@ -121,6 +143,8 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         self.regularization = regularization_
         self.safeguard_factor = safeguard_
         self.update_name = f"composite-{kind}/{identifier}"
+        self.linear = linear_
+        self.precision = precision_
 
     @property
     def update_id(self) -> str:
@@ -318,7 +342,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             [
                 jnp.stack(
                     [
-                        jnp.real(residual_space.inner(left, right))
+                        jnp.real(self.precision.inner(residual_space, left, right))
                         for right in residual_differences
                     ]
                 )
@@ -331,16 +355,27 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         )
         right = -jnp.stack(
             [
-                jnp.real(residual_space.inner(delta, base_residual))
+                jnp.real(
+                    self.precision.inner(
+                        residual_space,
+                        delta,
+                        base_residual,
+                    )
+                )
                 for delta in residual_differences
             ]
         )
-        coefficients = jnp.linalg.solve(gram, right)
+        coefficients = solve_linear(
+            LeastSquaresProblem(DenseLinearOperator(gram)),
+            right,
+            policy=self.precision.bind_linear(self.linear),
+        ).value
         accelerated = state
         for coefficient, component in zip(coefficients, components, strict=True):
             accelerated = jax.tree.map(
-                lambda value, proposed, base, scale=coefficient: (
-                    value + scale * (proposed - base)
+                lambda value, proposed, base, scale=coefficient: jnp.asarray(
+                    value + scale * (proposed - base),
+                    dtype=value.dtype,
                 ),
                 accelerated,
                 component.state,
@@ -350,9 +385,20 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             accelerated,
             args,
         )
-        accelerated_norm = _space_norm(residual_space, accelerated_residual)
+        accelerated_norm = _space_norm(
+            residual_space,
+            accelerated_residual,
+            self.precision,
+        )
         child_norms = jnp.stack(
-            [_space_norm(residual_space, component.residual) for component in components]
+            [
+                _space_norm(
+                    residual_space,
+                    component.residual,
+                    self.precision,
+                )
+                for component in components
+            ]
         )
         best_index = jnp.argmin(child_norms)
         best_state = components[0].state
@@ -369,7 +415,11 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         all_applied = jnp.asarray(True)
         for component in components:
             all_applied = all_applied & component.applied
-        base_norm = _space_norm(residual_space, base_residual)
+        base_norm = _space_norm(
+            residual_space,
+            base_residual,
+            self.precision,
+        )
         finite = (
             tree_allfinite(accelerated)
             & tree_allfinite(accelerated_residual)
@@ -410,8 +460,17 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         initial_residual, _ = problem.evaluate(initial_state, args)
         candidate = prepared.plan.state_space.validate(candidate)
         residual, auxiliary = problem.evaluate(candidate, args)
-        initial_norm = _space_norm(prepared.plan.residual_space, initial_residual)
-        final_norm = _space_norm(prepared.plan.residual_space, residual)
+        self.precision.validate_trees(initial_state, initial_residual)
+        initial_norm = _space_norm(
+            prepared.plan.residual_space,
+            initial_residual,
+            self.precision,
+        )
+        final_norm = _space_norm(
+            prepared.plan.residual_space,
+            residual,
+            self.precision,
+        )
         finite = tree_allfinite(candidate) & tree_allfinite(residual)
         valid = problem.valid(candidate, residual, auxiliary, args)
         children_applied = jnp.asarray(True)
@@ -441,7 +500,11 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         diagnostics = NonlinearUpdateDiagnostics(
             initial_residual_norm=initial_norm,
             final_residual_norm=final_norm,
-            step_norm=_space_norm(prepared.plan.state_space, step),
+            step_norm=_space_norm(
+                prepared.plan.state_space,
+                step,
+                self.precision,
+            ),
             work=component_work + wrapper_work,
             accepted_steps=_sum_component_field(components, "accepted_steps")
             + (status == int(NonlinearUpdateStatus.APPLIED)).astype(jnp.int32),
@@ -462,7 +525,9 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
                 problem_id=problem.problem_id,
                 update_id=self.update_id,
                 plan_id=prepared.plan.plan_id,
-                notes=f"composition={self.kind}",
+                notes=(
+                    f"composition={self.kind};precision-policy={self.precision.policy_id}"
+                ),
             ),
             components=components,
         )

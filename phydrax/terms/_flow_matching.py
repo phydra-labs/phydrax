@@ -25,6 +25,7 @@ from .._flow_matching_metric import (
     RiemannianFlowMatchingMetric,
 )
 from .._frozendict import frozendict
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..transport.continuous._coupling import EndpointCouplingSample
@@ -196,6 +197,7 @@ class FlowMatchingDiagnostics(StrictModule):
     coupling_id: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
     metric_id: str = eqx.field(static=True)
+    precision_evidence: PrecisionEvidenceEnvelope
 
     @property
     def passed(self) -> bool:
@@ -405,15 +407,27 @@ class FlowMatchingTerm(AbstractSamplingTerm):
                 "velocity field must preserve the complete interpolant event shape."
             )
         predicted = jnp.where(expanded_valid, predicted, jnp.zeros_like(predicted))
+        precision = self.metric.precision
         loss = jax.vmap(self.metric)(safe_state, predicted, safe_target)
-        residual_squared = jnp.abs(predicted - safe_target) ** 2
-        predicted_squared = jnp.abs(predicted) ** 2
-        target_squared = jnp.abs(safe_target) ** 2
+        residual_squared = (
+            jnp.abs(
+                precision.accumulation(
+                    precision.compute(predicted) - precision.compute(safe_target)
+                )
+            )
+            ** 2
+        )
+        predicted_squared = (
+            jnp.abs(precision.accumulation(precision.compute(predicted))) ** 2
+        )
+        target_squared = (
+            jnp.abs(precision.accumulation(precision.compute(safe_target))) ** 2
+        )
         if event_axes:
-            residual_squared = jnp.sum(residual_squared, axis=event_axes)
-            predicted_squared = jnp.sum(predicted_squared, axis=event_axes)
-            target_squared = jnp.sum(target_squared, axis=event_axes)
-        weights = normalized_log_weights(batch.log_weights, valid)
+            residual_squared = precision.sum(residual_squared, axis=event_axes)
+            predicted_squared = precision.sum(predicted_squared, axis=event_axes)
+            target_squared = precision.sum(target_squared, axis=event_axes)
+        weights = precision.accumulation(normalized_log_weights(batch.log_weights, valid))
         return _FlowMatchingNodeEvaluation(
             loss=loss,
             squared_component_error=residual_squared / float(max(prod(state_shape), 1)),
@@ -437,7 +451,11 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         del iter_, kwargs
         materialized = self.sample(key=key) if batch is None else batch
         evaluation = self._evaluate_nodes(functions, materialized)
-        return self.scalar_weight * jnp.sum(evaluation.weights * evaluation.loss)
+        precision = self.metric.precision
+        return precision.decision(
+            precision.decision(self.scalar_weight)
+            * precision.sum(evaluation.weights * precision.accumulation(evaluation.loss))
+        )
 
     def diagnostics(
         self,
@@ -449,13 +467,31 @@ class FlowMatchingTerm(AbstractSamplingTerm):
     ) -> FlowMatchingDiagnostics:
         materialized = self.sample(key=key) if batch is None else batch
         evaluation = self._evaluate_nodes(functions, materialized)
-        objective = self.scalar_weight * jnp.sum(evaluation.weights * evaluation.loss)
-        rms = jnp.sqrt(jnp.sum(evaluation.weights * evaluation.squared_component_error))
-        predicted_norm = jnp.sqrt(jnp.sum(evaluation.weights * evaluation.predicted_norm))
-        target_norm = jnp.sqrt(jnp.sum(evaluation.weights * evaluation.target_norm))
-        minimum_time = jnp.min(jnp.where(evaluation.valid, evaluation.time, jnp.inf))
-        maximum_time = jnp.max(jnp.where(evaluation.valid, evaluation.time, -jnp.inf))
-        mean_time = jnp.sum(evaluation.weights * evaluation.time)
+        precision = self.metric.precision
+        objective = precision.decision(
+            precision.decision(self.scalar_weight)
+            * precision.sum(evaluation.weights * precision.accumulation(evaluation.loss))
+        )
+        rms = precision.decision(
+            jnp.sqrt(
+                precision.sum(evaluation.weights * evaluation.squared_component_error)
+            )
+        )
+        predicted_norm = precision.decision(
+            jnp.sqrt(precision.sum(evaluation.weights * evaluation.predicted_norm))
+        )
+        target_norm = precision.decision(
+            jnp.sqrt(precision.sum(evaluation.weights * evaluation.target_norm))
+        )
+        minimum_time = precision.decision(
+            jnp.min(jnp.where(evaluation.valid, evaluation.time, jnp.inf))
+        )
+        maximum_time = precision.decision(
+            jnp.max(jnp.where(evaluation.valid, evaluation.time, -jnp.inf))
+        )
+        mean_time = precision.decision(
+            precision.sum(evaluation.weights * evaluation.time)
+        )
         finite = (
             jnp.isfinite(objective)
             & jnp.isfinite(rms)
@@ -469,8 +505,10 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             root_mean_squared_component_error=rms,
             mean_predicted_velocity_norm=predicted_norm,
             mean_target_velocity_norm=target_norm,
-            valid_fraction=jnp.mean(evaluation.valid),
-            effective_sample_size=effective_sample_size(evaluation.weights),
+            valid_fraction=precision.decision(jnp.mean(evaluation.valid)),
+            effective_sample_size=precision.decision(
+                effective_sample_size(evaluation.weights)
+            ),
             minimum_sampled_time=minimum_time,
             maximum_sampled_time=maximum_time,
             mean_sampled_time=mean_time,
@@ -481,6 +519,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             coupling_id=materialized.coupling_id,
             policy_id=materialized.policy_id,
             metric_id=self.metric.metric_id,
+            precision_evidence=precision.evidence_for(materialized.state),
         )
 
 

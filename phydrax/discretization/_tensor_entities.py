@@ -90,9 +90,7 @@ class StructuredAxis(StrictModule, NonTrainableState):
                     "Interval-primary axis measures must be positive and span bounds."
                 )
             edge_coordinates = bounds[0] + np.concatenate(([0.0], np.cumsum(widths)))
-            expected_centers = 0.5 * (
-                edge_coordinates[:-1] + edge_coordinates[1:]
-            )
+            expected_centers = 0.5 * (edge_coordinates[:-1] + edge_coordinates[1:])
             if not np.allclose(centers, expected_centers, rtol=1e-10, atol=1e-12):
                 raise ValueError(
                     "Interval-primary axis nodes must be cell centers for their measures."

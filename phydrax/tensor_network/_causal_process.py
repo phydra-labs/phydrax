@@ -179,8 +179,11 @@ class CausalProcessTensor(StrictModule):
             if (
                 instrument.dimension != system
                 or not 0 <= outcome < instrument.kraus.shape[0]
+                or not bool(instrument.outcome_active[outcome])
             ):
-                raise ValueError("Instrument outcome is incompatible with the process.")
+                raise ValueError(
+                    "Instrument outcome is incompatible or inactive for the process."
+                )
             updated = jnp.zeros_like(state)
             for index in range(instrument.kraus.shape[1]):
                 local = jnp.kron(instrument.kraus[outcome, index], memory_identity)

@@ -101,7 +101,8 @@ from ._plan import (
     periodic_finite_difference,
     PreparedFiniteDifferenceDiscretization,
 )
-from ._preflight import FDExecutionPreflightPlan, FDPrecisionPolicy, FDResourceEstimate
+from ._precision import FDExecutionPrecisionPolicy
+from ._preflight import FDExecutionPreflightPlan, FDResourceEstimate
 from ._program import (
     FDPipelineReport,
     PreparedStencilProgram,
@@ -197,7 +198,7 @@ __all__ = [
     "FDEvidenceKind",
     "FDStabilityReport",
     "FDExecutionPreflightPlan",
-    "FDPrecisionPolicy",
+    "FDExecutionPrecisionPolicy",
     "FDResourceEstimate",
     "FiniteDifferencePlan",
     "GridRegion",

@@ -28,6 +28,15 @@ Krylov solve, so the last admissible solve cannot overrun the outer contract.
 without rebuilding the prepared linear plan. `JacobianRefreshPolicy` independently
 selects every-step, periodic, stagnation, or globalization-rejection refresh.
 
+`NonlinearPrecisionPolicy` separates stored state and residual dtypes from
+accumulation, convergence-decision, and returned-output dtypes. Newton line-search
+merits, trust-region geometry, residual norms, and final certification use the
+resolved accumulation and decision precisions without promoting the iterated state.
+Widened inner products support Euclidean or diagonal `ArraySpace` pairings and
+Euclidean `PyTreeSpace` pairings; unsupported custom pairings fail before execution.
+Prepared solves retain the policy identity across refresh, and every
+`NonlinearResult` records both that identity and effective precision evidence.
+
 !!! example
     ```python
     import jax.numpy as jnp
@@ -247,10 +256,13 @@ no residual or local-solver work.
 ## Scaling, precision, batching, and sharding
 
 `NonlinearScalingPolicy` prepares positive state and residual scaling while
-retaining physical-unit certification. `NonlinearPrecisionPolicy` separates
-model, direction, linear, and certificate precision;
-`MixedPrecisionRootExecution` always re-evaluates the original problem in
-certificate precision.
+retaining physical-unit certification. The canonical `NonlinearPrecisionPolicy`
+controls state, residual/model, direction, accumulation, decision/certificate,
+linear-solve, and output roles. Its embedded `MixedPrecisionPolicy` is composed
+into native linear plans rather than bypassing `phydrax.linalg`.
+`MixedPrecisionRootExecution` iterates in model precision, re-evaluates the original
+problem in certificate precision, and retains the model solve as nested precision
+and transformation evidence.
 
 `SmallRootKernel` is a fixed-work, masked, batched dense-Newton kernel for small
 array systems. Completed batch members stop updating independently.
@@ -266,6 +278,12 @@ direct-loss-minimization semantics. `root_solution_jvp` and
 `root_solution_second_jvp` applies the second-order implicit-function formula
 without constructing a third-order tensor. Singular, ill-conditioned, and
 nonfinite derivative systems return explicit `SensitivityEvidence`.
+
+Implicit sensitivity systems, constrained solution maps, scalar roots, batched
+small roots, quasi-Newton methods, spectral residual methods, pseudo-transient
+continuation, higher-order roots, and root portfolios use the same policy.
+Sensitivity evidence retains the executed linear plan ID and the primal precision
+envelope; portfolio envelopes retain every attempted child solve.
 
 ## Implicit root differentiation
 
@@ -338,6 +356,10 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 ---
 
 ::: phydrax.nonlinear.NonlinearTermination
+
+---
+
+::: phydrax.nonlinear.NonlinearPrecisionPolicy
 
 ---
 

@@ -13,6 +13,14 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from .._nonlinear_precision import NonlinearPrecisionPolicy
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve as solve_linear,
+)
 from ._iterative._base import AbstractLeastSquaresMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
@@ -89,6 +97,8 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
     absolute_step: float = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
     max_dense_dimension: int = eqx.field(static=True)
+    linear: LinearSolvePolicy
+    precision: NonlinearPrecisionPolicy
 
     def __init__(
         self,
@@ -98,6 +108,8 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
         absolute_step: float = 1e-7,
         regularization: float = 1e-8,
         max_dense_dimension: int = 512,
+        linear: LinearSolvePolicy | None = None,
+        precision: NonlinearPrecisionPolicy | None = None,
     ):
         search = ArmijoLineSearch() if line_search is None else line_search
         values = tuple(
@@ -116,9 +128,17 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             )
         if dimension < 1:
             raise ValueError("max_dense_dimension must be positive.")
+        linear_ = LinearSolvePolicy(DenseLU()) if linear is None else linear
+        precision_ = NonlinearPrecisionPolicy() if precision is None else precision
+        if not isinstance(linear_, LinearSolvePolicy):
+            raise TypeError("linear must be LinearSolvePolicy or None.")
+        if not isinstance(precision_, NonlinearPrecisionPolicy):
+            raise TypeError("precision must be NonlinearPrecisionPolicy or None.")
         self.line_search = search
         self.relative_step, self.absolute_step, self.regularization = values
         self.max_dense_dimension = dimension
+        self.linear = linear_
+        self.precision = precision_
 
     @property
     def method_id(self) -> str:
@@ -146,7 +166,7 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
                 f"max_dense_dimension={self.max_dense_dimension}."
             )
         return _central_difference_model(
-            residual_function,
+            lambda value: self.precision.residual(residual_function(value)),
             parameters,
             relative_step=self.relative_step,
             absolute_step=self.absolute_step,
@@ -290,12 +310,21 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
 
             def gauss_newton(_):
                 flat_residual, _ = ravel_pytree(model.residual)
-                normal = model.jacobian.T @ model.jacobian
+                jacobian = self.precision.accumulation(model.jacobian)
+                normal = jnp.conj(jacobian.T) @ jacobian
                 normal = normal + self.regularization * jnp.eye(
                     flat_parameters.size, dtype=normal.dtype
                 )
-                flat_gradient, _ = ravel_pytree(model.gradient)
-                proposed_flat = jnp.linalg.solve(normal, -flat_gradient)
+                flat_gradient = self.precision.accumulation(
+                    ravel_pytree(model.gradient)[0]
+                )
+                proposed_flat = self.precision.direction(
+                    solve_linear(
+                        LinearSystem(DenseLinearOperator(normal)),
+                        -flat_gradient,
+                        policy=self.precision.bind_linear(self.linear),
+                    ).value
+                )
                 proposed = unravel(proposed_flat)
                 proposed_directional = _tree_inner(model.gradient, proposed)
                 usable = (
@@ -442,8 +471,11 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             )
         if not isinstance(termination, OptimizationTermination):
             raise TypeError("termination must be an OptimizationTermination.")
-        parameters = _validate_real_inexact_tree(
-            initial_parameters, name="initial_parameters"
+        parameters = self.precision.state(
+            _validate_real_inexact_tree(
+                initial_parameters,
+                name="initial_parameters",
+            )
         )
 
         def residual_function(candidate):
@@ -509,10 +541,11 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
             accepted_step_size=metrics.accepted_step_size,
             direction_fallbacks=state.direction_fallbacks,
         )
+        output_parameters = jax.tree.map(self.precision.output, parameters)
         return LeastSquaresResult(
-            parameters,
+            output_parameters,
             final_model.residual,
-            final_model.objective,
+            self.precision.output(final_model.objective),
             auxiliary,
             status,
             diagnostics,
@@ -523,10 +556,16 @@ class FiniteDifferenceGaussNewton(AbstractLeastSquaresMethod):
                 globalization=self.globalization_id,
                 matrix_free=False,
                 implicit_differentiation=False,
+                precision_policy_id=self.precision.policy_id,
                 notes=(
                     "Jacobian columns use central residual differences; no residual "
                     "JVP, VJP, or reverse-mode derivative is evaluated."
                 ),
+            ),
+            precision_evidence=self.precision.evidence_for(
+                parameters,
+                final_model.residual,
+                output_value=output_parameters,
             ),
         )
 

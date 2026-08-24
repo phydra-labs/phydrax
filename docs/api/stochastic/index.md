@@ -96,7 +96,9 @@ and observable identities. `StochasticCouplingPlan` validates parent links, owns
 generic `DiscretizationHierarchy`, and prevents nominally adjacent levels with
 incompatible contracts from being coupled accidentally. `NoiseCoupling` records the
 shared realization and coarse/fine transformation rather than treating equal PRNG
-keys as evidence of common randomness.
+keys as evidence of common randomness. Nested noise additionally requires explicit
+coarse/fine basis IDs, one noise-family ID, and a passing `NoiseCouplingWitness`
+whose covariance and increment projection residuals satisfy its tolerance.
 
 These contracts are consumed by `solve_coupled_hierarchy` and multilevel integration.
 Coarse and fine outputs retain pair IDs, validity, per-level cost, and coupling
@@ -107,6 +109,10 @@ provenance; a failed member is never silently replaced by an independent draw.
 ---
 
 ::: phydrax.stochastic.StochasticCouplingPlan
+
+---
+
+::: phydrax.stochastic.NoiseCouplingWitness
 
 
 ## Path events and changes of measure

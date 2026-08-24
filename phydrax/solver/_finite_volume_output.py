@@ -12,9 +12,13 @@ import equinox as eqx
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization.finite_volume import FiniteVolumeDiscretization
+from ..discretization.finite_volume import (
+    FiniteVolumeDiscretization,
+    FiniteVolumePrecisionPolicy,
+)
 from ._finite_volume_runtime import FiniteVolumeRuntimeState
 
 
@@ -33,6 +37,8 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
     xdmf_path: str = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
     component_names: tuple[str, ...] = eqx.field(static=True)
+    precision: FiniteVolumePrecisionPolicy
+    precision_evidence: PrecisionEvidenceEnvelope
     output_id: str = eqx.field(static=True)
 
     def __init__(
@@ -40,11 +46,22 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         path: str | Path,
         discretization: FiniteVolumeDiscretization,
         /,
+        *,
+        precision: FiniteVolumePrecisionPolicy | None = None,
     ):
         if not isinstance(discretization, FiniteVolumeDiscretization):
             raise TypeError(
                 "XDMF output currently requires Cartesian finite-volume geometry."
             )
+        precision_ = (
+            FiniteVolumePrecisionPolicy(
+                np.asarray(discretization.cell_volumes).dtype.name
+            )
+            if precision is None
+            else precision
+        )
+        if not isinstance(precision_, FiniteVolumePrecisionPolicy):
+            raise TypeError("precision must be a FiniteVolumePrecisionPolicy.")
         target = Path(path)
         hdf5_path = target if target.suffix == ".h5" else target.with_suffix(".h5")
         xdmf_path = hdf5_path.with_suffix(".xdmf")
@@ -52,12 +69,16 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         self.xdmf_path = str(xdmf_path)
         self.discretization_id = discretization.prepared_id
         self.component_names = discretization.component_names
+        self.precision = precision_
+        self.precision_evidence = precision_.evidence()
         self.output_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-output",
                 "hdf5": str(hdf5_path),
                 "discretization": discretization.prepared_id,
                 "components": list(discretization.component_names),
+                "precision": precision_.policy_id,
+                "precision_evidence": self.precision_evidence.evidence_id,
             }
         )
 
@@ -68,8 +89,10 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         target = Path(self.hdf5_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(target, "w") as handle:
-            handle.attrs["schema_version"] = 1
+            handle.attrs["schema_version"] = 2
             handle.attrs["discretization_id"] = self.discretization_id
+            handle.attrs["precision_policy_id"] = self.precision.policy_id
+            handle.attrs["precision_evidence_id"] = self.precision_evidence.evidence_id
             handle.attrs["component_names"] = np.asarray(
                 self.component_names, dtype=h5py.string_dtype()
             )
@@ -95,6 +118,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             raise ValueError("Output discretization identity changed.")
         if not isinstance(runtime_state, FiniteVolumeRuntimeState):
             raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
+        self.precision.validate_state(runtime_state.conservative_state)
         h5py = _h5py()
         target = Path(self.hdf5_path)
         if not target.exists():
@@ -108,7 +132,10 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             group.attrs["status"] = int(runtime_state.last_status)
             group.create_dataset(
                 "conservative_state",
-                data=np.asarray(runtime_state.conservative_state),
+                data=np.asarray(
+                    runtime_state.conservative_state,
+                    dtype=self.precision.numpy_dtype("output"),
+                ),
                 compression="gzip",
                 shuffle=True,
             )
@@ -125,15 +152,21 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                 (name, float(group.attrs["time"]))
                 for name, group in handle["steps"].items()
             )
+            coordinate_precision = {
+                name: int(dataset.dtype.itemsize)
+                for name, dataset in handle["coordinates"].items()
+            }
+            state_precision = (
+                int(handle["steps"][records[0][0]]["conservative_state"].dtype.itemsize)
+                if records
+                else int(self.precision.numpy_dtype("output").itemsize)
+            )
         vertex_counts = [
-            axis.point_coordinates.size
-            for axis in discretization.grid.structured_axes
+            axis.point_coordinates.size for axis in discretization.grid.structured_axes
         ]
         while len(vertex_counts) < 3:
             vertex_counts.append(1)
-        topology_dimensions = " ".join(
-            str(int(value)) for value in vertex_counts[::-1]
-        )
+        topology_dimensions = " ".join(str(int(value)) for value in vertex_counts[::-1])
         axis_names = list(discretization.grid.axis_names)
         while len(axis_names) < 3:
             axis_names.append(f"inactive_{len(axis_names)}")
@@ -141,14 +174,12 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         for index, axis_name in enumerate(axis_names[:3]):
             if index < len(discretization.cell_shape):
                 size = int(
-                    discretization.grid.structured_axes[
-                        index
-                    ].point_coordinates.size
+                    discretization.grid.structured_axes[index].point_coordinates.size
                 )
                 geometry_items.append(
                     f'<DataItem Dimensions="{size}" NumberType="Float" '
-                    f'Precision="8" Format="HDF">{hdf5_path.name}:'
-                    f'/coordinates/{axis_name}</DataItem>'
+                    f'Precision="{coordinate_precision[axis_name]}" Format="HDF">'
+                    f"{hdf5_path.name}:/coordinates/{axis_name}</DataItem>"
                 )
             else:
                 geometry_items.append(
@@ -164,9 +195,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         )
         grids = []
         for name, time in records:
-            state_path = (
-                f"{hdf5_path.name}:/steps/{name}/conservative_state"
-            )
+            state_path = f"{hdf5_path.name}:/steps/{name}/conservative_state"
             grids.append(
                 f'''      <Grid Name="step-{name}" GridType="Uniform">
         <Time Value="{time:.17g}"/>
@@ -178,7 +207,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         </Geometry>
         <Attribute Name="conservative_state" AttributeType="Vector" Center="Cell">
           <DataItem Dimensions="{state_dimensions}" NumberType="Float"
-                    Precision="8" Format="HDF">{state_path}</DataItem>
+                    Precision="{state_precision}" Format="HDF">{state_path}</DataItem>
         </Attribute>
       </Grid>'''
             )
@@ -186,13 +215,13 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             (
                 '<?xml version="1.0" ?>',
                 '<Xdmf Version="3.0">',
-                '  <Domain>',
+                "  <Domain>",
                 '    <Grid Name="finite-volume" GridType="Collection" CollectionType="Temporal">',
                 *grids,
-                '    </Grid>',
-                '  </Domain>',
-                '</Xdmf>',
-                '',
+                "    </Grid>",
+                "  </Domain>",
+                "</Xdmf>",
+                "",
             )
         )
         Path(self.xdmf_path).write_text(payload)

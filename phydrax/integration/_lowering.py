@@ -33,16 +33,19 @@ from phydrax.domain import (
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._precision import complex_precision_dtype, real_precision_dtype_name
 from ..geometry import BoundaryAtlasProvider, CubatureAtlasProvider
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan
 from ._rules import (
     ClenshawCurtisRule,
     CubatureRule,
+    CubatureRuleData,
     GaussHermiteRule,
     GaussianCubatureRule,
     interval_rule_data,
     IntervalRule,
+    OrthogonalRuleData,
     probability_rule_data,
     ProbabilityRule,
     TanhSinhRule,
@@ -60,11 +63,26 @@ def first_field_leaf(tree: PyTree[Any], /) -> cx.Field:
     raise ValueError("Expected at least one coordax.Field leaf.")
 
 
-def sum_over(field: cx.Field, axis: str, /) -> cx.Field:
+def sum_over(
+    field: cx.Field,
+    axis: str,
+    /,
+    *,
+    accumulation_dtype: Any | None = None,
+) -> cx.Field:
     if axis not in field.named_dims:
         raise ValueError(f"Cannot reduce missing axis {axis!r} from dims={field.dims!r}.")
     position = field.dims.index(axis)
-    values = jnp.sum(jnp.asarray(field.data), axis=position)
+    data = jnp.asarray(field.data)
+    if accumulation_dtype is not None and jnp.issubdtype(data.dtype, jnp.inexact):
+        real_dtype = real_precision_dtype_name(accumulation_dtype)
+        target_dtype = (
+            complex_precision_dtype(real_dtype)
+            if jnp.issubdtype(data.dtype, jnp.complexfloating)
+            else real_dtype
+        )
+        data = data.astype(target_dtype)
+    values = jnp.sum(data, axis=position)
     return cx.Field(values, dims=field.dims[:position] + field.dims[position + 1 :])
 
 
@@ -353,10 +371,13 @@ class IntegrationAxisSpec(AbstractAxisSpec):
 
 
 def _fixed_rule_node_count(rule: IntervalRule | ProbabilityRule, /) -> int:
-    if isinstance(rule, GaussHermiteRule):
-        return int(probability_rule_data(rule).nodes.shape[0])
     if isinstance(rule, GaussianCubatureRule):
         return rule.num_points
+    if isinstance(rule, GaussHermiteRule):
+        data = probability_rule_data(rule)
+        if not isinstance(data, OrthogonalRuleData):
+            raise RuntimeError("GaussHermiteRule resolved non-orthogonal rule data.")
+        return int(data.nodes.shape[0])
     return int(interval_rule_data(rule).nodes.shape[0])
 
 
@@ -371,6 +392,10 @@ def _scalar_interior_rule_data(
             raise TypeError(f"{owner} requires a standard-normal probability factor.")
         data = probability_rule_data(rule)
         if isinstance(rule, GaussianCubatureRule):
+            if not isinstance(data, CubatureRuleData):
+                raise RuntimeError(
+                    "GaussianCubatureRule resolved non-cubature rule data."
+                )
             if rule.dimension != 1:
                 raise ValueError(
                     "Direct scalar probability integration requires a "
@@ -378,6 +403,8 @@ def _scalar_interior_rule_data(
                 )
             nodes = data.points[:, 0]
         else:
+            if not isinstance(data, OrthogonalRuleData):
+                raise RuntimeError("GaussHermiteRule resolved non-orthogonal rule data.")
             nodes = data.nodes
         if (
             not factor.supports_reference_transform
@@ -638,7 +665,7 @@ def _materialize_boundary_atlas(
 
 
 def _cubature_factor_data(
-    factor: AbstractGeometry,
+    factor: Any,
     selector: Any,
     rule: CubatureRule,
     /,

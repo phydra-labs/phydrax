@@ -34,6 +34,7 @@ from ._temporal_method import (
     TemporalMethodCapabilities,
     TemporalSolveEvidence,
 )
+from ._temporal_precision import TemporalPrecisionPolicy
 
 
 class _StochasticProblemContract(Protocol):
@@ -60,12 +61,14 @@ class _VectorizedDenseInterpolation(eqx.Module):
     """Dense Diffrax interpolation over shared arbitrarily shaped query times."""
 
     interpolation: dfx.DenseInterpolation
+    precision: TemporalPrecisionPolicy
     sample_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
         self,
         interpolation: dfx.DenseInterpolation,
         sample_shape: tuple[int, ...],
+        precision: TemporalPrecisionPolicy,
         /,
     ):
         samples = tuple(int(size) for size in sample_shape)
@@ -81,6 +84,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
             interpolation,
             is_leaf=eqx.is_array,
         )
+        self.precision = precision
         self.sample_shape = samples
 
     @eqx.filter_jit
@@ -121,7 +125,9 @@ class _VectorizedDenseInterpolation(eqx.Module):
                 lambda time: interpolation.evaluate(time, left=left)
             )(flat_times)
         )(self.interpolation)
-        return values.reshape(self.sample_shape + query.shape + values.shape[2:])
+        return self.precision.output(
+            values.reshape(self.sample_shape + query.shape + values.shape[2:])
+        )
 
 
 def _levy_area(kind: str, /) -> type:
@@ -357,6 +363,30 @@ def _method_capabilities(solver: Any, /) -> TemporalMethodCapabilities:
     return diffrax_method_capabilities(solver)
 
 
+def _solver_precision(
+    solver: Any,
+    requested: TemporalPrecisionPolicy | None,
+    /,
+) -> TemporalPrecisionPolicy:
+    embedded = (
+        solver.precision
+        if isinstance(solver, (SSPRK33, SSPRK54))
+        else TemporalPrecisionPolicy()
+    )
+    if requested is None:
+        return embedded
+    if not isinstance(requested, TemporalPrecisionPolicy):
+        raise TypeError("precision must be a TemporalPrecisionPolicy or None.")
+    if (
+        isinstance(solver, (SSPRK33, SSPRK54))
+        and requested.policy_id != embedded.policy_id
+    ):
+        raise ValueError(
+            "Explicit Diffrax precision must match the precision embedded in SSPRK."
+        )
+    return requested
+
+
 def _equation_form(problem: DifferentialProblem | SplitDifferentialProblem, /) -> str:
     if isinstance(problem, SplitDifferentialProblem):
         return "additive-ode"
@@ -484,6 +514,7 @@ def _solve_evidence(
     controller: Any,
     adjoint: Any,
     event: Any | None,
+    precision: TemporalPrecisionPolicy,
     /,
     *,
     rtol: float,
@@ -514,6 +545,7 @@ def _solve_evidence(
                 None if dt0 is None else repr(dt0),
                 bool(dense),
                 max_steps,
+                precision.policy_id,
             ),
             prefix="temporal-configuration",
         )
@@ -529,6 +561,10 @@ def _solve_evidence(
         adaptive=isinstance(controller, dfx.AbstractAdaptiveStepSizeController),
         dense=dense,
         maximum_steps=max_steps,
+        precision_evidence=precision.evidence_for(
+            problem.initial_state,
+            problem.t0,
+        ),
     )
 
 
@@ -540,6 +576,7 @@ def _native_solution(
     path_key: Array | None,
     path_sign: Array | None,
     solver: Any,
+    precision: TemporalPrecisionPolicy,
     stepsize_controller: Any,
     adjoint: Any,
     dt0: ArrayLike | None,
@@ -600,6 +637,15 @@ def _native_solution(
         resolved_dt0 = dt0
         lowered = lower_deterministic_problem(problem)
         terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs))
+    time_dtype = jnp.asarray(problem.initial_state).real.dtype
+    start = precision.coefficient(jnp.asarray(start, dtype=time_dtype))
+    end = precision.coefficient(jnp.asarray(end, dtype=time_dtype))
+    save_times = precision.coefficient(jnp.asarray(save_times, dtype=time_dtype))
+    resolved_dt0 = (
+        None
+        if resolved_dt0 is None
+        else precision.coefficient(jnp.asarray(resolved_dt0, dtype=time_dtype))
+    )
     return dfx.diffeqsolve(
         terms,
         solver,
@@ -625,11 +671,16 @@ def _valid_values(times: Array, states: Array, /, *, sample_ndim: int) -> Array:
     return jnp.isfinite(times) & finite_states
 
 
-def _dense_interpolation(native: Any, sample_shape: tuple[int, ...], /) -> Any:
+def _dense_interpolation(
+    native: Any,
+    sample_shape: tuple[int, ...],
+    precision: TemporalPrecisionPolicy,
+    /,
+) -> Any:
     interpolation = native.interpolation
     if interpolation is None:
         raise RuntimeError("Diffrax did not return the requested dense interpolation.")
-    return _VectorizedDenseInterpolation(interpolation, sample_shape)
+    return _VectorizedDenseInterpolation(interpolation, sample_shape, precision)
 
 
 def _reshape_native_sample_shape(native: Any, sample_shape: tuple[int, ...], /) -> Any:
@@ -665,6 +716,7 @@ def solve_diffrax(
     max_steps: int | None = 4096,
     throw: bool = False,
     solver_configuration_id: str | None = None,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> DifferentialSolution:
     """Solve one explicit, additive-split, or stochastic differential problem."""
     if not isinstance(problem, (DifferentialProblem, SplitDifferentialProblem)):
@@ -688,6 +740,11 @@ def solve_diffrax(
 
     times = validate_save_times(problem.t0, problem.t1, save_times)
     selected_solver = _resolved_solver(problem, solver)
+    precision = _solver_precision(selected_solver, precision)
+    precision.validate_diffrax_state(
+        problem.initial_state,
+        internal_precision=isinstance(selected_solver, (SSPRK33, SSPRK54)),
+    )
     _validated_state_geometry_solver(problem, selected_solver)
     if isinstance(selected_solver, AbstractGeometricSolver) and dt0 is None:
         raise ValueError("Geometric solvers require an explicit fixed dt0.")
@@ -709,6 +766,7 @@ def solve_diffrax(
         controller,
         selected_adjoint,
         event,
+        precision,
         rtol=rtol,
         atol=atol,
         dt0=dt0,
@@ -723,6 +781,7 @@ def solve_diffrax(
         path_key=None if realization is None else realization.path_keys,
         path_sign=None if realization is None else realization.path_signs,
         solver=selected_solver,
+        precision=precision,
         stepsize_controller=controller,
         adjoint=selected_adjoint,
         dt0=dt0,
@@ -732,13 +791,13 @@ def solve_diffrax(
         throw=throw,
     )
     native_times = jnp.asarray(native.ts)
-    native_states = jnp.asarray(native.ys)
+    native_states = precision.output(native.ys)
     solver_id, resolved_method = _solver_provenance(selected_solver)
     return DifferentialSolution(
         times=native_times,
         states=native_states,
         valid=_valid_values(native_times, native_states, sample_ndim=0),
-        interpolation=_dense_interpolation(native, ()) if dense else None,
+        interpolation=_dense_interpolation(native, (), precision) if dense else None,
         backend_result=native.result,
         stats=native.stats,
         event_mask=native.event_mask,
@@ -774,6 +833,7 @@ def solve_diffrax_ensemble(
     dense: bool = False,
     throw: bool = False,
     solver_configuration_id: str | None = None,
+    precision: TemporalPrecisionPolicy | None = None,
 ) -> DifferentialSolution:
     """Solve the coupled SDE batch encoded by one Wiener realization."""
     if not isinstance(problem, DifferentialProblem):
@@ -790,6 +850,11 @@ def solve_diffrax_ensemble(
         raise TypeError("dense must be a bool.")
     times = validate_save_times(problem.t0, problem.t1, save_times)
     selected_solver = _resolved_solver(problem, solver)
+    precision = _solver_precision(selected_solver, precision)
+    precision.validate_diffrax_state(
+        problem.initial_state,
+        internal_precision=isinstance(selected_solver, (SSPRK33, SSPRK54)),
+    )
     _validated_state_geometry_solver(problem, selected_solver)
     _validated_stochastic_solver(problem, selected_solver, realization)
     _validated_method_form(problem, selected_solver)
@@ -808,6 +873,7 @@ def solve_diffrax_ensemble(
         controller,
         selected_adjoint,
         event,
+        precision,
         rtol=rtol,
         atol=atol,
         dt0=dt0,
@@ -828,6 +894,7 @@ def solve_diffrax_ensemble(
             path_key=key,
             path_sign=sign,
             solver=selected_solver,
+            precision=precision,
             stepsize_controller=controller,
             adjoint=selected_adjoint,
             dt0=dt0,
@@ -842,7 +909,7 @@ def solve_diffrax_ensemble(
         realization.sample_shape,
     )
     native_times = jnp.asarray(native.ts)
-    native_states = jnp.asarray(native.ys)
+    native_states = precision.output(native.ys)
     solver_id, resolved_method = _solver_provenance(selected_solver)
     return DifferentialSolution(
         times=native_times,
@@ -854,7 +921,9 @@ def solve_diffrax_ensemble(
         ),
         sample_shape=realization.sample_shape,
         interpolation=(
-            _dense_interpolation(native, realization.sample_shape) if dense else None
+            _dense_interpolation(native, realization.sample_shape, precision)
+            if dense
+            else None
         ),
         backend_result=native.result,
         stats=native.stats,

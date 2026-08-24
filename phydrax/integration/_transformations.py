@@ -32,7 +32,9 @@ class MeasureTransformationRecord(StrictModule):
         source = str(source_provenance)
         target = str(target_provenance)
         if not kind_ or not source or not target:
-            raise ValueError("Transformation identities and provenance must be non-empty.")
+            raise ValueError(
+                "Transformation identities and provenance must be non-empty."
+            )
         self.kind = kind_
         self.diagnostics = diagnostics
         self.source_provenance = source
@@ -53,8 +55,7 @@ class TransformedIntegrationDiagnostics(StrictModule):
     ):
         transformations_ = tuple(transformations)
         if any(
-            not isinstance(item, MeasureTransformationRecord)
-            for item in transformations_
+            not isinstance(item, MeasureTransformationRecord) for item in transformations_
         ):
             raise TypeError(
                 "transformations must contain MeasureTransformationRecord values."

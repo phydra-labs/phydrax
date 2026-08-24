@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -65,10 +66,10 @@ def test_euler_roe_eigensystem_roundtrips_state_jump_in_two_dimensions():
     right = system.primitive_to_conserved(jnp.asarray([[0.8, -0.1, 0.2, 0.7]]))
     left_matrix, right_matrix, eigenvalues = system.eigensystem(left, right, 0)
     jump = right - left
-    recovered = jnp.einsum(
+    recovered = oe.contract(
         "...ij,...j->...i",
         right_matrix,
-        jnp.einsum("...ij,...j->...i", left_matrix, jump),
+        oe.contract("...ij,...j->...i", left_matrix, jump),
     )
 
     np.testing.assert_allclose(recovered, jump, rtol=2e-11, atol=2e-11)

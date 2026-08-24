@@ -238,7 +238,13 @@ class SpectralConvND(StrictModule):
 
         spatial_axes = tuple(range(values.ndim - ndim - 1, values.ndim - 1))
         spatial_shape = tuple(int(values.shape[axis]) for axis in spatial_axes)
-        transformed = jnp.fft.rfftn(values, axes=spatial_axes, norm="ortho")
+        source_dtype = values.dtype
+        fft_dtype = jnp.float64 if source_dtype == jnp.float64 else jnp.float32
+        transformed = jnp.fft.rfftn(
+            values.astype(fft_dtype),
+            axes=spatial_axes,
+            norm="ortho",
+        )
         output_ft = jnp.zeros(
             (*transformed.shape[:-1], self.out_channels), dtype=transformed.dtype
         )
@@ -268,12 +274,13 @@ class SpectralConvND(StrictModule):
             )
             output_ft = output_ft.at[(..., *spatial_slices, slice(None))].set(result)
 
-        return jnp.fft.irfftn(
+        output = jnp.fft.irfftn(
             output_ft,
             s=spatial_shape,
             axes=spatial_axes,
             norm="ortho",
         )
+        return output.astype(source_dtype)
 
 
 def spectral_resample(

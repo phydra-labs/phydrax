@@ -42,12 +42,10 @@ class AbstractThermodynamicMaterial(StrictModule, NonTrainableState):
     @abc.abstractmethod
     def specific_enthalpy(self, density: Array, pressure: Array, /) -> Array:
         raise NotImplementedError
-    @abc.abstractmethod
-    def specific_heat_cp(
-        self, density: Array, pressure: Array, /
-    ) -> Array:
-        raise NotImplementedError
 
+    @abc.abstractmethod
+    def specific_heat_cp(self, density: Array, pressure: Array, /) -> Array:
+        raise NotImplementedError
 
     @abc.abstractmethod
     def admissible(self, density: Array, pressure: Array, /) -> Array:
@@ -81,7 +79,9 @@ class IdealGasMaterial(AbstractThermodynamicMaterial):
             or density_floor_ <= 0.0
             or pressure_floor_ <= 0.0
         ):
-            raise ValueError("Ideal-gas parameters and floors must be finite and positive.")
+            raise ValueError(
+                "Ideal-gas parameters and floors must be finite and positive."
+            )
         self.gamma = gamma_
         self.gas_constant = gas_constant_
         self.density_floor = density_floor_
@@ -110,9 +110,8 @@ class IdealGasMaterial(AbstractThermodynamicMaterial):
 
     def specific_enthalpy(self, density: Array, pressure: Array, /) -> Array:
         return self.gamma * pressure / ((self.gamma - 1.0) * density)
-    def specific_heat_cp(
-        self, density: Array, pressure: Array, /
-    ) -> Array:
+
+    def specific_heat_cp(self, density: Array, pressure: Array, /) -> Array:
         del pressure
         return jnp.full_like(
             density,
@@ -120,10 +119,7 @@ class IdealGasMaterial(AbstractThermodynamicMaterial):
         )
 
     def admissible(self, density: Array, pressure: Array, /) -> Array:
-        return (density >= self.density_floor) & (
-            pressure >= self.pressure_floor
-        )
-
+        return (density >= self.density_floor) & (pressure >= self.pressure_floor)
 
 
 class StiffenedGasMaterial(AbstractThermodynamicMaterial):
@@ -189,9 +185,9 @@ class StiffenedGasMaterial(AbstractThermodynamicMaterial):
         ) - self.gamma * self.pressure_offset
 
     def specific_internal_energy(self, density: Array, pressure: Array, /) -> Array:
-        return self.reference_energy + (
-            pressure + self.gamma * self.pressure_offset
-        ) / ((self.gamma - 1.0) * density)
+        return self.reference_energy + (pressure + self.gamma * self.pressure_offset) / (
+            (self.gamma - 1.0) * density
+        )
 
     def temperature(self, density: Array, pressure: Array, /) -> Array:
         return (
@@ -203,19 +199,13 @@ class StiffenedGasMaterial(AbstractThermodynamicMaterial):
 
     def specific_enthalpy(self, density: Array, pressure: Array, /) -> Array:
         return self.specific_internal_energy(density, pressure) + pressure / density
-    def specific_heat_cp(
-        self, density: Array, pressure: Array, /
-    ) -> Array:
-        del pressure
-        return jnp.full_like(
-            density, self.gamma * self.heat_capacity
-        )
 
+    def specific_heat_cp(self, density: Array, pressure: Array, /) -> Array:
+        del pressure
+        return jnp.full_like(density, self.gamma * self.heat_capacity)
 
     def admissible(self, density: Array, pressure: Array, /) -> Array:
-        return (density >= self.density_floor) & (
-            pressure + self.pressure_offset > 0.0
-        )
+        return (density >= self.density_floor) & (pressure + self.pressure_offset > 0.0)
 
 
 __all__ = [

@@ -13,7 +13,7 @@ la = phx.linalg
 
 
 pytestmark = pytest.mark.skipif(
-    not jax.config.x64_enabled,
+    not bool(jax.config.read("jax_enable_x64")),
     reason="Mixed float64/float32 certification requires JAX x64.",
 )
 
@@ -57,6 +57,7 @@ def test_dense_mixed_precision_refinement_improves_certified_solution():
 
     requested = refined.provenance.requested_precision
     effective = refined.provenance.effective_precision
+    assert effective is not None
     assert requested is refined_policy.precision
     assert requested.factorization_dtype == "float32"
     assert effective.operator_dtype == "float64"
@@ -66,6 +67,7 @@ def test_dense_mixed_precision_refinement_improves_certified_solution():
     assert effective.krylov_dtype is None
     assert effective.preconditioner_dtype is None
     assert effective.maximum_refinement_steps == 3
+    assert effective.condition_limit is not None
     assert effective.condition_limit <= 0.1 / jnp.finfo(jnp.float32).eps
 
     selected = la.plan(problem, refined_policy).candidates[-1]
@@ -83,17 +85,9 @@ def test_mixed_precision_rejects_unsafe_condition_before_factorization():
         la.prepare(problem, _mixed_policy())
 
 
-def test_mixed_precision_rejects_unsupported_provider_and_factor_dtype():
+def test_mixed_precision_rejects_unsupported_factor_and_accumulation_dtypes():
     matrix = jnp.asarray([[2.0, 0.25], [0.5, 1.5]], dtype=jnp.float64)
     problem = la.LinearSystem(la.DenseLinearOperator(matrix))
-    iterative = la.LinearSolvePolicy(
-        la.GMRES(),
-        precision=la.MixedPrecisionPolicy(
-            operator_dtype=jnp.float64,
-            krylov_dtype=jnp.float32,
-            residual_dtype=jnp.float64,
-        ),
-    )
     unsupported_factor = la.LinearSolvePolicy(
         la.DenseLU(),
         precision=la.MixedPrecisionPolicy(
@@ -112,8 +106,6 @@ def test_mixed_precision_rejects_unsupported_provider_and_factor_dtype():
         ),
     )
 
-    with pytest.raises(ValueError, match="MixedPrecisionPolicy is capability-rejected"):
-        la.plan(problem, iterative)
     with pytest.raises(ValueError, match="jax-dense LU does not support"):
         la.plan(problem, unsupported_factor)
     with pytest.raises(ValueError, match="accumulation_dtype"):

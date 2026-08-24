@@ -236,12 +236,8 @@ class MultiblockSATCoupling(StrictModule, NonTrainableState):
             right_on_left = self.interpolation.mortar_to_left(right_mortar)
             left_on_right = self.interpolation.mortar_to_right(left_mortar)
             if self.flux == "central":
-                left_residual = 0.5 * self.speed * (
-                    left_trace - right_on_left
-                )
-                right_residual = 0.5 * self.speed * (
-                    left_on_right - right_trace
-                )
+                left_residual = 0.5 * self.speed * (left_trace - right_on_left)
+                right_residual = 0.5 * self.speed * (left_on_right - right_trace)
             elif self.speed > 0.0:
                 left_residual = jnp.zeros_like(left_trace)
                 right_residual = self.speed * (left_on_right - right_trace)
