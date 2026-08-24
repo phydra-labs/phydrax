@@ -217,6 +217,7 @@ class ConvexProgramProvenance(StrictModule):
     backend_version: str = eqx.field(static=True)
     convexity_evidence: str = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
+    numeric_binding_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -230,6 +231,7 @@ class ConvexProgramProvenance(StrictModule):
         backend_version: str,
         convexity_evidence: str,
         regularization: float,
+        numeric_binding_id: str = "unbound",
     ):
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
@@ -244,6 +246,7 @@ class ConvexProgramProvenance(StrictModule):
                 backend,
                 backend_version,
                 convexity_evidence,
+                numeric_binding_id,
             )
         )
         if any(not value for value in strings):
@@ -261,6 +264,7 @@ class ConvexProgramProvenance(StrictModule):
             self.backend,
             self.backend_version,
             self.convexity_evidence,
+            self.numeric_binding_id,
         ) = strings
         self.regularization = float(regularization)
 

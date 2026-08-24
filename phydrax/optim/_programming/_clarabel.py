@@ -22,7 +22,7 @@ from ._cones import (
     ZeroCone,
 )
 from ._policy import ClarabelInteriorPoint, ConvexSolvePolicy
-from ._problem import ConicProgram
+from ._problem import _conic_bound_indices, ConicProgram
 from ._quadratic import _max_abs, ConvexProgramResult
 from ._types import (
     ConvexProgramCertificate,
@@ -86,21 +86,6 @@ def _clarabel_cones(prepared, cone: AbstractConvexCone, /):
     return tuple(mapped), tuple(transforms), tuple(slices)
 
 
-def _bound_structure(program: ConicProgram, /):
-    lower = np.asarray(program.lower_bounds).reshape((-1, program.num_variables))
-    upper = np.asarray(program.upper_bounds).reshape((-1, program.num_variables))
-    lower_finite = np.isfinite(lower)
-    upper_finite = np.isfinite(upper)
-    fixed = lower_finite & upper_finite & (lower == upper)
-    roles = np.stack((lower_finite, upper_finite, fixed), axis=-1)
-    if not np.all(roles == roles[:1]):
-        raise ValueError("Clarabel requires shared bound roles across a program batch.")
-    fixed_indices = np.flatnonzero(fixed[0])
-    lower_indices = np.flatnonzero(lower_finite[0] & ~fixed[0])
-    upper_indices = np.flatnonzero(upper_finite[0] & ~fixed[0])
-    return fixed_indices, lower_indices, upper_indices
-
-
 def _provider_plan(policy: ConvexSolvePolicy, /) -> ClarabelPlan:
     method = policy.method
     if not isinstance(method, ClarabelInteriorPoint):
@@ -123,7 +108,9 @@ def _prepare_structure(
 ) -> _PreparedClarabelProgram:
     prepared = prepare_clarabel(_provider_plan(policy))
     cones, transforms, slices = _clarabel_cones(prepared, program.cone)
-    fixed, lower, upper = _bound_structure(program)
+    fixed, lower, upper = _conic_bound_indices(
+        program.bounds, program.batch_shape, program.num_variables
+    )
     module = prepared.module
     cones = cones + (
         (() if fixed.size == 0 else (module.ZeroConeT(int(fixed.size)),))

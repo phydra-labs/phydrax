@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Sequence
 from math import sqrt
-from typing import Any, Sequence
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -42,6 +43,11 @@ class AbstractConvexCone(StrictModule):
 
     @abc.abstractmethod
     def interior_margin(self, value: Any, /) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def dual_projection_smoothness_margin(self, value: Any, /) -> Array:
+        """Distance to the nearest nonsmooth stratum of the dual projection."""
         raise NotImplementedError
 
     def residual(self, value: Any, /) -> Array:
@@ -84,6 +90,10 @@ class ZeroCone(AbstractConvexCone):
         array = self._validate(value)
         return -jnp.linalg.norm(array, axis=-1)
 
+    def dual_projection_smoothness_margin(self, value: Any, /) -> Array:
+        array = self._validate(value)
+        return jnp.full(array.shape[:-1], jnp.inf, dtype=array.dtype)
+
 
 class NonnegativeCone(AbstractConvexCone):
     """Elementwise nonnegative orthant."""
@@ -108,6 +118,12 @@ class NonnegativeCone(AbstractConvexCone):
         if self.dimension == 0:
             return jnp.full(array.shape[:-1], jnp.inf, dtype=array.dtype)
         return jnp.min(array, axis=-1)
+
+    def dual_projection_smoothness_margin(self, value: Any, /) -> Array:
+        array = self._validate(value)
+        if self.dimension == 0:
+            return jnp.full(array.shape[:-1], jnp.inf, dtype=array.dtype)
+        return jnp.min(jnp.abs(array), axis=-1)
 
 
 class SecondOrderCone(AbstractConvexCone):
@@ -141,6 +157,12 @@ class SecondOrderCone(AbstractConvexCone):
     def interior_margin(self, value: Any, /) -> Array:
         array = self._validate(value)
         return array[..., 0] - jnp.linalg.norm(array[..., 1:], axis=-1)
+
+    def dual_projection_smoothness_margin(self, value: Any, /) -> Array:
+        array = self._validate(value)
+        scalar = array[..., 0]
+        norm = jnp.linalg.norm(array[..., 1:], axis=-1)
+        return jnp.minimum(jnp.abs(norm - scalar), jnp.abs(norm + scalar))
 
 
 class RotatedSecondOrderCone(AbstractConvexCone):
@@ -192,6 +214,10 @@ class RotatedSecondOrderCone(AbstractConvexCone):
     def interior_margin(self, value: Any, /) -> Array:
         array = self._validate(value)
         return self._soc.interior_margin(self._to_soc(array))
+
+    def dual_projection_smoothness_margin(self, value: Any, /) -> Array:
+        array = self._validate(value)
+        return self._soc.dual_projection_smoothness_margin(self._to_soc(array))
 
 
 class ProductCone(AbstractConvexCone):
@@ -247,6 +273,16 @@ class ProductCone(AbstractConvexCone):
             return jnp.full(array.shape[:-1], jnp.inf, dtype=array.dtype)
         margins = tuple(
             cone.interior_margin(block)
+            for cone, block in zip(self.cones, self.split(array), strict=True)
+        )
+        return jnp.min(jnp.stack(margins, axis=-1), axis=-1)
+
+    def dual_projection_smoothness_margin(self, value: Any, /) -> Array:
+        array = self._validate(value)
+        if not self.cones:
+            return jnp.full(array.shape[:-1], jnp.inf, dtype=array.dtype)
+        margins = tuple(
+            cone.dual_projection_smoothness_margin(block)
             for cone, block in zip(self.cones, self.split(array), strict=True)
         )
         return jnp.min(jnp.stack(margins, axis=-1), axis=-1)

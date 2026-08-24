@@ -1123,12 +1123,14 @@ Repeated programs use:
 5. `solve_convex_program`.
 
 Refresh preserves dimensions, bound roles, constraint topology, dtype, batch shape,
-method, and problem identity. It changes only numeric coefficients and increments
-`numeric_version`.
+method, and problem identity. It changes only numeric coefficients, increments
+`numeric_version`, and creates a new runtime-unique `numeric_binding_id`.
 
-The returned provenance records the public program's `problem_id` and `structure_id`,
-the exact policy fingerprint, and the prepared numeric version. Lowering an LP to a
-dense QP or conic provider representation does not leak that internal identity.
+The returned execution and provenance record the public program's `problem_id` and
+`structure_id`, exact policy fingerprint, prepared numeric version, and numeric binding
+identity. The binding identity distinguishes independently prepared programs that have
+the same structure, policy, and version. Lowering an LP to a dense QP or conic provider
+representation does not leak that internal identity.
 
 `ConvexWarmStart` stores primal, equality-dual, inequality-dual, slack, and bound-dual
 arrays for one exact `structure_id`. The native dense method requires strictly positive
@@ -1245,8 +1247,8 @@ bounds. The public cone product supports:
 - `ProductCone`.
 
 Every cone exposes primal/dual projection, membership residual, interior margin,
-and complementarity. Cone topology is static across program batches and numeric
-refreshes.
+dual-projection smoothness margin, and complementarity. Cone topology is static across
+program batches and numeric refreshes.
 
 Clarabel 0.11.1 is an optional explicit host backend selected with
 `ConvexSolvePolicy(ClarabelInteriorPoint())`. Rotated cones are mapped through one
@@ -1255,7 +1257,90 @@ independent Phydrax audit. Native variable bounds are represented separately in 
 public result. Clarabel is not a JIT or differentiation boundary and is never selected
 automatically.
 
+### Regular conic primal sensitivity
+
+`prepare_conic_sensitivity` binds one `PreparedConvexProgram` to the exact
+`ConvexProgramExecution` produced from its current `numeric_version`. It rejects stale
+or structurally different executions before forming derivatives. The prepared object
+contains only JAX numerical state and static cone topology; the Clarabel provider does
+not enter the derivative kernel.
+
+The derivative is defined by the direct projection-KKT residual. With
+`s = b - Ax` and dual variable `y`, conic complementarity is equivalent to
+`y = project_dual(y - s)`. Phydrax therefore differentiates
+
+`H(x, y) = (P_effective x + q + Aᵀy, y - project_dual(y + Ax - b))`,
+
+where `P_effective = P + λI` includes the solve policy's explicit regularization.
+One solve with `D H` computes a JVP; one adjoint solve with `(D H)ᵀ` computes a VJP.
+No homogeneous scale variable or solver iteration is differentiated.
+
+`ConicProgramData` is the fixed-topology numerical data space. It contains tangents or
+cotangents for `P`, `q`, `A`, `b`, lower bounds, and upper bounds. Cone identity and
+block topology remain static. `conic_primal_jvp` maps one `ConicProgramData` tangent
+to a primal tangent. `conic_primal_vjp` maps a primal cotangent back to
+`ConicProgramData`.
+
+The ordinary derivative is available only when:
+
+- the audited forward result is optimal and finite;
+- the projection point is separated from every cone projection kink;
+- the projection-KKT Jacobian is numerically full rank;
+- the selected linear or adjoint solve converges with finite condition evidence.
+
+Weak complementarity, an SOC apex or transition surface, nonunique primal-dual roots,
+infeasibility, and failed linear solves return `regular=False` and NaN sensitivity
+values in status mode. Error-mode linear policies raise instead. Phydrax does not
+silently return a selected generalized derivative.
+
+Native bounds are lowered into fixed, finite-lower, and finite-upper cone rows. A fixed
+bound has one valid tangent, so JVP inputs require equal lower and upper perturbations.
+The VJP splits its cotangent equally between the two public bound arrays. Infinite
+bounds accept only zero tangents and receive zero cotangents.
+
+The derivative solve currently requires undamped `DenseSVD`, so full-rank and condition
+evidence are available before any derivative is accepted. Tikhonov damping would change
+the derivative equation and is rejected; regularize the executed convex program through
+`ConvexSolvePolicy.regularization` instead. Existing materialization and resource
+budgets bound this dense path. Matrix-free sensitivity is deferred until its regularity
+contract can certify more than convergence and a small residual.
+
+Preparation and Clarabel execution remain host operations. Once prepared,
+`conic_primal_jvp` and `conic_primal_vjp` are JIT-compatible JAX kernels, but this does
+not make the forward Clarabel solve device-resident. The API provides first-order
+mathematical solution sensitivity only; higher-order differentiation is unsupported.
+
+```python
+import equinox
+import phydrax
+
+prepared = phydrax.optim.prepare_convex_program(problem, policy)
+execution = phydrax.optim.solve_convex_program(prepared)
+sensitivity = phydrax.optim.prepare_conic_sensitivity(prepared, execution)
+
+tangent = phydrax.optim.ConicProgramData.zeros_like(problem)
+tangent = equinox.tree_at(
+    lambda data: data.constraint_rhs,
+    tangent,
+    rhs_direction,
+)
+forward = phydrax.optim.conic_primal_jvp(sensitivity, tangent)
+reverse = phydrax.optim.conic_primal_vjp(sensitivity, primal_cotangent)
+```
+
 ::: phydrax.optim.ConicProgram
+
+---
+
+::: phydrax.optim.ConicProgramData
+
+---
+
+::: phydrax.optim.PreparedConicSensitivity
+
+---
+
+::: phydrax.optim.ConicSensitivityResult
 
 ---
 
@@ -1284,6 +1369,18 @@ automatically.
 ---
 
 ::: phydrax.optim.solve_conic_program
+
+---
+
+::: phydrax.optim.prepare_conic_sensitivity
+
+---
+
+::: phydrax.optim.conic_primal_jvp
+
+---
+
+::: phydrax.optim.conic_primal_vjp
 
 
 ## Bounded global search: differential evolution

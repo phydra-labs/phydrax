@@ -76,6 +76,30 @@ def _static_bound_values(
     return arrays[0], arrays[1]
 
 
+def _conic_bound_indices(
+    bounds: Bounds,
+    batch_shape: tuple[int, ...],
+    variables: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    lower, upper = _static_bound_values(bounds, batch_shape, variables)
+    lower = lower.reshape((-1, variables))
+    upper = upper.reshape((-1, variables))
+    lower_finite = np.isfinite(lower)
+    upper_finite = np.isfinite(upper)
+    fixed = lower_finite & upper_finite & (lower == upper)
+    roles = np.stack((lower_finite, upper_finite, fixed), axis=-1)
+    if not np.all(roles == roles[:1]):
+        raise ValueError(
+            "ConicProgram bounds require a shared finite/fixed role pattern across a batch."
+        )
+    return (
+        np.flatnonzero(fixed[0]),
+        np.flatnonzero(lower_finite[0] & ~fixed[0]),
+        np.flatnonzero(upper_finite[0] & ~fixed[0]),
+    )
+
+
 class ConicProgram(StrictModule):
     """Quadratic-conic program ``min 1/2 xᵀPx + qᵀx`` with ``Ax+s=b, s in K``."""
 
@@ -166,6 +190,9 @@ class ConicProgram(StrictModule):
         lower, upper = bounds_.materialize(linear_)
         lower = jnp.asarray(lower, dtype=dtype)
         upper = jnp.asarray(upper, dtype=dtype)
+        fixed_indices, lower_indices, upper_indices = _conic_bound_indices(
+            bounds_, batch, variables
+        )
         identifier = str(problem_id)
         evidence = str(convexity_evidence)
         if not identifier or not evidence:
@@ -191,10 +218,11 @@ class ConicProgram(StrictModule):
                 "variables": variables,
                 "constraints": constraints,
                 "quadratic": quadratic_ is not None,
-                "bound_roles": [
-                    np.isfinite(value).astype(np.int8).reshape(-1).tolist()
-                    for value in _static_bound_values(bounds_, batch, variables)
-                ],
+                "bound_roles": {
+                    "fixed": fixed_indices.tolist(),
+                    "lower": lower_indices.tolist(),
+                    "upper": upper_indices.tolist(),
+                },
                 "cone": cone.cone_id,
                 "dtype": str(dtype),
             }

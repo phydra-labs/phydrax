@@ -86,6 +86,27 @@ def test_clarabel_prepared_refresh_reuses_provider_structure():
     assert execution.result.provenance.numeric_version == 1
 
 
+def test_fixed_bound_roles_participate_in_conic_structure_identity():
+    def problem(lower, upper):
+        return phx.optim.ConicProgram(
+            jnp.ones((1, 1)),
+            jnp.zeros(1),
+            jnp.empty((0, 1)),
+            jnp.empty((0,)),
+            phx.optim.ProductCone(()),
+            bounds=phx.optim.Bounds(lower, upper),
+            problem_id="bound-role-identity",
+        )
+
+    fixed = problem(1.0, 1.0)
+    interval = problem(0.0, 2.0)
+    assert fixed.structure_id != interval.structure_id
+
+    prepared = phx.optim.prepare_convex_program(fixed, _policy())
+    with pytest.raises(ValueError, match="structure"):
+        phx.optim.refresh_convex_program(prepared, interval)
+
+
 def test_clarabel_maps_rotated_cone_and_native_bounds():
     problem = phx.optim.ConicProgram(
         jnp.eye(1),

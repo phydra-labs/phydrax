@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added regular, first-order conic primal JVP/VJP operators over audited
+  `ConicProgram` executions. The projection-KKT derivative supports existing
+  zero, nonnegative, second-order, rotated second-order, and product cones,
+  preserves native-bound cotangents, reports projection/linear regularity
+  evidence, and rejects stale executions and nonsmooth or singular roots.
+  Fixed versus interval bounds now participate in conic structure identity.
+
 - Added native-precision open-system campaign records, integrity-checked
   artifacts, semantic-variate replay evidence, fail-closed promotion policies,
   frozen campaign-matrix tooling, and cross-campaign graduation with permanent
