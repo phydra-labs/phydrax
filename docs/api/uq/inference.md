@@ -515,10 +515,20 @@ is required. The finite guarantee does not extend to positions outside the catal
 `map_candidate_search`, excluding the live `PosteriorProblem` and search object while
 retaining method, layout, signature, and count provenance.
 
-`search_map` remains the bounded stochastic differential-evolution initializer in
-unconstrained posterior-position coordinates. It preserves the population and exact
-accounting, but never interprets that population as posterior samples. Local
-stationarity remains a separate `find_map` phase.
+`search_map` provides two bounded initializers in unconstrained posterior-position
+coordinates. `DifferentialEvolutionSearch` preserves final-population and generation
+evidence. `GaussianProcessMAPSearch` performs sequential expected improvement and
+preserves every evaluated position, raw negative log density, validity flag, proposal
+kind, and running best value. Neither archive is a posterior sample, convergence
+certificate, or stationarity claim. Local stationarity remains a separate `find_map`
+phase.
+
+The GP surrogate is fitted after standardizing observed negative log densities.
+`GaussianProcessLikelihoodState.noise_scale` remains in raw negative-log-density
+units and is divided by the active objective scale before covariance construction.
+`jitter` acts directly in standardized covariance units. Search positions are modeled
+in an affine unit box; physical parameter reconstruction still follows the
+`ParameterSpace` bijectors.
 
 ::: phydrax.uq.search_map_candidates
 
@@ -534,6 +544,14 @@ stationarity remains a separate `find_map` phase.
 ---
 
 ::: phydrax.uq.MAPSearchResult
+
+::: phydrax.uq.GaussianProcessMAPSearch
+
+---
+
+::: phydrax.uq.GaussianProcessMAPSearchResult
+
+---
 
 ---
 

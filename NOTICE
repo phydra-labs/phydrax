@@ -135,3 +135,10 @@ The cubature-rule design study considered sigma-py/quadpy. Phydrax does not
 include or depend on quadpy source or proprietary runtime data; its implementation
 uses the original quadrature publications and the permissively licensed sources
 identified above.
+
+The bounded MAP-initialization design study considered Hyperoptax at commit
+9e2950203048112bbb59aa0582b2d214cc0c16db, licensed under the Apache License,
+Version 2.0. Phydrax implements a narrower sequential expected-improvement method
+independently against its own kernel, Gaussian-process, posterior, search-evidence,
+and state-space contracts. No Hyperoptax source code is copied or redistributed,
+and randomized Kriging Believer is not implemented.

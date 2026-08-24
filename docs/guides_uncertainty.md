@@ -1244,6 +1244,47 @@ Non-finite candidates are counted and excluded from selection. The population is
 optimizer state shaped by selection; it is not a posterior sample. Population
 dispersion convergence is not stationarity evidence or proof of a global optimum.
 
+For expensive, smooth, low-dimensional posterior objectives, use the sequential GP
+initializer instead of spending complete differential-evolution populations:
+
+```python
+surrogate = phx.uq.GaussianProcessLikelihoodState(
+    kernel=phx.kernels.Matern52Kernel(length_scale=0.25),
+    noise_scale=0.0,
+    jitter=1e-8,
+)
+search = phx.uq.GaussianProcessMAPSearch(
+    32,
+    surrogate=surrogate,
+    initial_evaluations=8,
+    candidate_count=512,
+)
+global_mode = phx.uq.search_map(
+    posterior,
+    search,
+    key=jr.key(11),
+    position_bounds=(
+        {"source": -6.0},
+        {"source": 6.0},
+    ),
+)
+```
+
+The surrogate operates on affine unit-box coordinates and standardizes finite
+negative-log-density observations before fitting. `noise_scale` is declared in raw
+negative-log-density units and is divided by the active objective scale;
+`jitter` is already in standardized covariance units. Non-finite evaluations remain
+in the archive, are excluded from the GP, and still suppress duplicate proposals.
+If fewer than two finite evaluations exist or the surrogate becomes non-finite, the
+initializer records a deterministic space-filling fallback.
+
+`GaussianProcessMAPSearchResult` retains every evaluated position, raw objective,
+validity flag, proposal kind, running best value, fallback count, surrogate-failure
+count, bounds, root key, design identity, and exact evaluation count. It reports
+budget exhaustion rather than convergence. The implementation is sequential and
+exact-GP based, with cubic observation-count cost; it does not support parallel
+fantasies, categorical variables, constraints, or automatic kernel fitting.
+
 ### Local MAP refinement
 
 `find_map` compiles the complete JAX-native strong-Wolfe L-BFGS transition and
