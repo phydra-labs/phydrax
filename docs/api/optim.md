@@ -1244,18 +1244,62 @@ bounds. The public cone product supports:
 - `NonnegativeCone`;
 - `SecondOrderCone`;
 - `RotatedSecondOrderCone`;
+- `PositiveSemidefiniteCone`;
+- `ExponentialCone`;
+- `PowerCone`;
 - `ProductCone`.
 
 Every cone exposes primal/dual projection, membership residual, interior margin,
 dual-projection smoothness margin, and complementarity. Cone topology is static across
 program batches and numeric refreshes.
 
+`PositiveSemidefiniteCone(matrix_size)` uses Clarabel's Frobenius-isometric `svec`
+coordinates: the upper triangle is stacked by column, diagonal entries are unchanged,
+and off-diagonal entries are multiplied by `sqrt(2)`. For a three-by-three matrix the
+order is `(00, 01, 11, 02, 12, 22)`. `pack` rejects materially nonsymmetric real
+matrices; `unpack` reconstructs the symmetric matrix. Projection clips matrix
+eigenvalues at zero and uses a stable spectral Fréchet rule. Repeated nonzero
+eigenvalues are regular; any zero eigenvalue makes the ordinary projection derivative
+unavailable.
+
+`ExponentialCone()` has canonical coordinates `(x, y, z)` and the closed primal region
+`y > 0, y exp(x/y) <= z`, together with the face `y = 0, x <= 0, z >= 0`.
+`PowerCone(exponent)` has coordinates `(x, y, z)`, static
+`0 < exponent < 1`, and constraint
+`x^exponent y^(1-exponent) >= abs(z)` with nonnegative `x` and `y`.
+Both asymmetric cones derive dual projection from Moreau decomposition,
+`project_dual(v) = v + project(-v)`.
+EXP membership and boundary products are evaluated in log form,
+`log(y) + x/y`, before reconstructing a representable product. This preserves valid
+float64 points with tiny positive `y` and ratios beyond the direct `exp` overflow
+threshold; unrepresentable products remain explicit infinity/failure rather than a
+clipped finite value.
+For float32 POW projection, primal/polar classification is evaluated in original
+coordinates at float64 working precision. General inputs are promoted before
+normalization, so normalization preserves every representable float32 coordinate; the
+scalar root and KKT derivative are then formed in normalized float64 coordinates and
+cast back to float32. The normalized scalar and cone-boundary residual is bounded by
+`512 * eps`. Qualification compares against a 100-digit reference over exponents
+`0.01` through `0.99`, positive scales `1e-30` through `1e30`, and mixed-magnitude
+coordinates spanning `1e-30` through `1e30`, with relative projection, scaled
+feasibility, and JVP error bounded by `5e-5`. This is a bounded numerical contract, not
+a uniform high-accuracy claim at every exponent/input combination.
+
+The EXP and POW projectors use JAX-native, fixed-topology safeguarded
+Newton-bisection roots. An accepted root must retain a sign bracket and satisfy
+scale-aware residual and bracket-width evidence. Failed roots return nonfinite
+projections, causing membership audits and conic sensitivities to fail closed. Their
+custom JVPs differentiate the locally regular projection KKT system rather than the
+finite root iteration schedule. Axis, face, spectral-zero, and region-transition points
+have zero smoothness margin and are not ordinary differentiability claims.
+
 Clarabel 0.11.1 is an optional explicit host backend selected with
-`ConvexSolvePolicy(ClarabelInteriorPoint())`. Rotated cones are mapped through one
-documented isometry to Clarabel's SOC representation and mapped back before the
-independent Phydrax audit. Native variable bounds are represented separately in the
-public result. Clarabel is not a JIT or differentiation boundary and is never selected
-automatically.
+`ConvexSolvePolicy(ClarabelInteriorPoint())`. PSD, EXP, and POW blocks map directly to
+the provider's native coordinates; rotated cones alone use a documented SOC isometry.
+Native variable bounds are represented separately in the public result. Clarabel is
+not a JIT or differentiation boundary and is never selected automatically. Its public
+Phydrax program surface is dense even though the adapter passes assembled CSC matrices
+to the host provider.
 
 ### Regular conic primal sensitivity
 
@@ -1288,10 +1332,11 @@ The ordinary derivative is available only when:
 - the projection-KKT Jacobian is numerically full rank;
 - the selected linear or adjoint solve converges with finite condition evidence.
 
-Weak complementarity, an SOC apex or transition surface, nonunique primal-dual roots,
-infeasibility, and failed linear solves return `regular=False` and NaN sensitivity
-values in status mode. Error-mode linear policies raise instead. Phydrax does not
-silently return a selected generalized derivative.
+Weak complementarity, an SOC apex or transition surface, a zero PSD eigenvalue, an
+EXP/POW axis or projection-region transition, nonunique primal-dual roots,
+infeasibility, and failed projection or linear solves return `regular=False` and NaN
+sensitivity values in status mode. Error-mode linear policies raise instead. Phydrax
+does not silently return a selected generalized derivative.
 
 Native bounds are lowered into fixed, finite-lower, and finite-upper cone rows. A fixed
 bound has one valid tangent, so JVP inputs require equal lower and upper perturbations.
@@ -1357,6 +1402,18 @@ reverse = phydrax.optim.conic_primal_vjp(sensitivity, primal_cotangent)
 ---
 
 ::: phydrax.optim.RotatedSecondOrderCone
+
+---
+
+::: phydrax.optim.PositiveSemidefiniteCone
+
+---
+
+::: phydrax.optim.ExponentialCone
+
+---
+
+::: phydrax.optim.PowerCone
 
 ---
 

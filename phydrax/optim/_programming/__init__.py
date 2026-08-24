@@ -20,6 +20,7 @@ from ._conic_sensitivity import (
     prepare_conic_sensitivity,
     PreparedConicSensitivity,
 )
+from ._exponential_cone import ExponentialCone
 from ._lifecycle import (
     bind_convex_numeric,
     CanonicalProgram,
@@ -49,7 +50,9 @@ from ._policy import (
     MPAXraPDHG,
     QPaxInteriorPoint,
 )
+from ._power_cone import PowerCone
 from ._problem import ConicProgram, LinearProgram
+from ._psd_cone import PositiveSemidefiniteCone
 from ._quadratic import (
     ConvexProgramResult,
     QuadraticProgram,
@@ -86,8 +89,11 @@ __all__ = [
     "ConvexTermination",
     "ConvexWarmStart",
     "DensePrimalDualQP",
+    "ExponentialCone",
     "LinearProgram",
     "NonnegativeCone",
+    "PositiveSemidefiniteCone",
+    "PowerCone",
     "PreparedConvexProgram",
     "PreparedConicSensitivity",
     "ProductCone",

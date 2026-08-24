@@ -21,8 +21,11 @@ from ._cones import (
     SecondOrderCone,
     ZeroCone,
 )
+from ._exponential_cone import ExponentialCone
 from ._policy import ClarabelInteriorPoint, ConvexSolvePolicy
+from ._power_cone import PowerCone
 from ._problem import _conic_bound_indices, ConicProgram
+from ._psd_cone import PositiveSemidefiniteCone
 from ._quadratic import _max_abs, ConvexProgramResult
 from ._types import (
     ConvexProgramCertificate,
@@ -81,6 +84,15 @@ def _clarabel_cones(prepared, cone: AbstractConvexCone, /):
         elif isinstance(block, RotatedSecondOrderCone):
             mapped.append(module.SecondOrderConeT(dimension))
             transforms.append(_rotated_transform(dimension))
+        elif isinstance(block, PositiveSemidefiniteCone):
+            mapped.append(module.PSDTriangleConeT(block.matrix_size))
+            transforms.append(None)
+        elif isinstance(block, ExponentialCone):
+            mapped.append(module.ExponentialConeT())
+            transforms.append(None)
+        elif isinstance(block, PowerCone):
+            mapped.append(module.PowerConeT(block.exponent))
+            transforms.append(None)
         else:
             raise TypeError(f"Clarabel does not support cone {type(block).__name__!r}.")
     return tuple(mapped), tuple(transforms), tuple(slices)

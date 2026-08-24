@@ -471,3 +471,104 @@ def test_damped_derivative_svd_is_rejected():
             ),
             linear=damped,
         )
+
+
+def test_advanced_cone_projection_qcps_match_native_regular_jvps():
+    psd = phx.optim.PositiveSemidefiniteCone(2)
+    cases = (
+        (
+            psd,
+            psd.pack(jnp.asarray([[1.0, 2.0], [2.0, -1.0]])),
+            psd.pack(jnp.asarray([[0.2, -0.1], [-0.1, 0.3]])),
+        ),
+        (
+            phx.optim.ExponentialCone(),
+            jnp.asarray([1.0, 2.0, 3.0]),
+            jnp.asarray([0.2, -0.1, 0.3]),
+        ),
+        (
+            phx.optim.PowerCone(0.4),
+            jnp.asarray([-1.0, 2.0, 1.0]),
+            jnp.asarray([0.2, -0.1, 0.3]),
+        ),
+    )
+    cotangent = jnp.asarray([0.7, -0.4, 0.2])
+    for index, (cone, value, direction) in enumerate(cases):
+        problem = phx.optim.ConicProgram(
+            jnp.eye(cone.dimension),
+            -value,
+            -jnp.eye(cone.dimension),
+            jnp.zeros(cone.dimension),
+            cone,
+            problem_id=f"advanced-cone-sensitivity-{index}",
+        )
+        primal = cone.project(value)
+        _, _, sensitivity = _prepare(
+            problem,
+            solution=(
+                primal,
+                primal,
+                primal - value,
+                jnp.zeros(cone.dimension),
+                jnp.zeros(cone.dimension),
+            ),
+        )
+        tangent = _tangent(problem, linear=-direction)
+
+        derivative = phx.optim.conic_primal_jvp(sensitivity, tangent)
+        expected = jax.jvp(cone.project, (value,), (direction,))[1]
+        np.testing.assert_allclose(
+            derivative.value,
+            expected,
+            atol=5e-6,
+            rtol=5e-6,
+        )
+        assert derivative.regular
+        adjoint = phx.optim.conic_primal_vjp(
+            sensitivity,
+            cotangent[: cone.dimension],
+        )
+        np.testing.assert_allclose(
+            jnp.vdot(cotangent[: cone.dimension], derivative.value),
+            _data_pairing(adjoint.value, tangent),
+            atol=5e-6,
+            rtol=5e-6,
+        )
+
+
+def test_advanced_cone_projection_boundaries_are_nonregular():
+    psd = phx.optim.PositiveSemidefiniteCone(2)
+    cases = (
+        (psd, psd.pack(jnp.diag(jnp.asarray([1.0, 0.0])))),
+        (phx.optim.ExponentialCone(), jnp.zeros(3)),
+        (phx.optim.PowerCone(0.4), jnp.zeros(3)),
+    )
+    for index, (cone, value) in enumerate(cases):
+        problem = phx.optim.ConicProgram(
+            jnp.eye(cone.dimension),
+            -value,
+            -jnp.eye(cone.dimension),
+            jnp.zeros(cone.dimension),
+            cone,
+            problem_id=f"advanced-cone-boundary-{index}",
+        )
+        primal = cone.project(value)
+        _, _, sensitivity = _prepare(
+            problem,
+            solution=(
+                primal,
+                primal,
+                primal - value,
+                jnp.zeros(cone.dimension),
+                jnp.zeros(cone.dimension),
+            ),
+            regularity_tolerance=1e-7,
+        )
+        derivative = phx.optim.conic_primal_jvp(
+            sensitivity,
+            _tangent(problem, linear=jnp.ones(cone.dimension)),
+        )
+
+        assert not derivative.projection_regular
+        assert not derivative.regular
+        assert jnp.all(jnp.isnan(derivative.value))

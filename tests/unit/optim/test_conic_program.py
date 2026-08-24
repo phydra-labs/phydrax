@@ -41,6 +41,37 @@ def test_clarabel_solves_active_second_order_cone_program():
     assert result.provenance.backend == "clarabel"
 
 
+def test_clarabel_projects_advanced_cones_in_native_coordinates():
+    psd = phx.optim.PositiveSemidefiniteCone(2)
+    cases = (
+        (psd, psd.pack(jnp.asarray([[1.0, 2.0], [2.0, -1.0]])), 1e-7),
+        (phx.optim.ExponentialCone(), jnp.asarray([1.0, 2.0, 3.0]), 2e-6),
+        (phx.optim.PowerCone(0.4), jnp.asarray([-1.0, 2.0, 1.0]), 2e-5),
+    )
+    for index, (cone, value, tolerance) in enumerate(cases):
+        problem = phx.optim.ConicProgram(
+            jnp.eye(cone.dimension),
+            -value,
+            -jnp.eye(cone.dimension),
+            jnp.zeros(cone.dimension),
+            cone,
+            problem_id=f"advanced-cone-projection-{index}",
+        )
+        result = phx.optim.solve_conic_program(problem, policy=_policy())
+        expected = cone.project(value)
+
+        assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
+        np.testing.assert_allclose(
+            result.primal, expected, atol=tolerance, rtol=tolerance
+        )
+        np.testing.assert_allclose(
+            result.cone_slack, expected, atol=tolerance, rtol=tolerance
+        )
+        assert cone.contains(result.cone_slack, tolerance=tolerance)
+        assert cone.contains_dual(result.cone_dual, tolerance=tolerance)
+        assert result.kkt_residual_norm < 5e-7
+
+
 def test_clarabel_preserves_qp_user_constraint_axes():
     problem = phx.optim.QuadraticProgram(
         jnp.eye(2),

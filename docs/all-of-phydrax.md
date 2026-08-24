@@ -333,12 +333,14 @@ Coefficient search is bounded initialization, not a globally optimal solver.
 Dense algorithms enforce dimension guards; no failed solve is hidden by a
 fallback, projection, covariance repair, or undeclared regularization.
 
-Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC product-cone programs live
-in `phydrax.optim`. Native bounds remain separate from user constraint axes; typed
-methods, reusable plan/prepare/bind/refresh lifecycles, strict warm starts,
-independent KKT/ray audits, status, and provenance share one contract. Native dense,
-QPax 0.1.4, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods remain explicit
-choices with no automatic fallback or universal differentiability claim.
+Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC/PSD/exponential/power
+product-cone programs live in `phydrax.optim`. PSD uses scaled upper-column symmetric
+coordinates; EXP and POW use safeguarded JAX-native projectors and Moreau duals. Native
+bounds remain separate from user constraint axes; typed methods, reusable
+plan/prepare/bind/refresh lifecycles, strict warm starts, independent KKT/ray audits,
+status, provenance, and regular projection-KKT sensitivities share one contract. Native
+dense, QPax 0.1.4, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods remain
+explicit choices with no automatic fallback or universal differentiability claim.
 
 General nonlinear optimization lives in `phydrax.optim`. Scalar, block-residual,
 proximal-composite, constrained, state/design, stochastic, manifold, and factor
