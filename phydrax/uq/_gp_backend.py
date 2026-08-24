@@ -82,6 +82,25 @@ def exact_gp_conditioner_from_covariances(
     return projection, covariance, jnp.maximum(jnp.diag(covariance), 0.0)
 
 
+def exact_gp_predict_diagonal_from_covariances(
+    cholesky: ArrayLike,
+    cross_covariance: ArrayLike,
+    prior_diagonal: ArrayLike,
+    residual: ArrayLike,
+    /,
+) -> tuple[Array, Array]:
+    """Predict a residual mean and latent variance without a dense query covariance."""
+    factor = jnp.asarray(cholesky)
+    cross = jnp.asarray(cross_covariance)
+    diagonal = jnp.asarray(prior_diagonal)
+    value = jnp.asarray(residual)
+    alpha = jsp.linalg.cho_solve((factor, True), value)
+    mean = cross @ alpha
+    projection = jsp.linalg.cho_solve((factor, True), cross.T).T
+    variance = diagonal - jnp.sum(cross * projection, axis=1)
+    return mean, jnp.maximum(variance, 0.0)
+
+
 def fitc_factors(
     observation_points: ArrayLike,
     inducing_points: ArrayLike,
@@ -307,6 +326,7 @@ __all__ = [
     "exact_gp_conditioner",
     "exact_gp_conditioner_from_covariances",
     "exact_gp_log_probability",
+    "exact_gp_predict_diagonal_from_covariances",
     "fitc_factors",
     "fitc_factors_from_covariances",
     "low_rank_gp_conditioner",

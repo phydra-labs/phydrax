@@ -23,7 +23,13 @@ from ._kalman import KalmanExecutionMethod
 from ._laplace import fit_laplace, LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
 from ._map import find_map, MAPResult
-from ._map_search import MAPSearchResult, PositionBounds, search_map
+from ._map_gp_search import GaussianProcessMAPSearch
+from ._map_search import (
+    GaussianProcessMAPSearchResult,
+    MAPSearchResult,
+    PositionBounds,
+    search_map,
+)
 from ._particle import ParticleFilterResult
 from ._posterior import ParameterSpace, PosteriorProblem
 from ._posterior_terms import AbstractPosteriorTerm
@@ -504,7 +510,7 @@ class StateSpaceMAPWorkflowResult(StrictModule):
     """Existing global/local MAP records plus diagnostics at the selected mode."""
 
     likelihood: MultiExperimentStateSpaceLikelihoodResult
-    global_search: MAPSearchResult | None
+    global_search: MAPSearchResult | GaussianProcessMAPSearchResult | None
     local_map: MAPResult | None
     workflow: Literal["global", "local", "global-local"] = eqx.field(static=True)
 
@@ -626,7 +632,7 @@ class StateSpaceEstimation(StrictModule):
 
     def global_map(
         self,
-        search: DifferentialEvolutionSearch,
+        search: DifferentialEvolutionSearch | GaussianProcessMAPSearch,
         /,
         *,
         key: Key[Array, ""],
@@ -640,6 +646,8 @@ class StateSpaceEstimation(StrictModule):
             position_bounds=position_bounds,
             initial_position=initial_position,
         )
+        if not global_result.valid:
+            raise RuntimeError("Global MAP search produced no finite candidate.")
         return StateSpaceMAPWorkflowResult(
             likelihood=self.evaluate_likelihood(global_result.parameters),
             global_search=global_result,
@@ -649,7 +657,7 @@ class StateSpaceEstimation(StrictModule):
 
     def global_then_local_map(
         self,
-        search: DifferentialEvolutionSearch,
+        search: DifferentialEvolutionSearch | GaussianProcessMAPSearch,
         /,
         *,
         key: Key[Array, ""],
@@ -670,6 +678,8 @@ class StateSpaceEstimation(StrictModule):
             position_bounds=position_bounds,
             initial_position=initial_position,
         )
+        if not global_result.valid:
+            raise RuntimeError("Global MAP search produced no finite candidate.")
         local = find_map(
             self.posterior,
             global_result.position,
@@ -692,6 +702,7 @@ class StateSpaceEstimation(StrictModule):
         source_map: StateSpaceMAPWorkflowResult
         | MAPResult
         | MAPSearchResult
+        | GaussianProcessMAPSearchResult
         | None = None,
         /,
         *,
@@ -711,18 +722,29 @@ class StateSpaceEstimation(StrictModule):
             position = self.posterior.initial_position
             workflow_map = None
         elif isinstance(source_map, StateSpaceMAPWorkflowResult):
+            if (
+                source_map.local_map is None
+                and source_map.global_search is not None
+                and not source_map.global_search.valid
+            ):
+                raise RuntimeError("MAP workflow has no finite global candidate.")
             position = source_map.position
             workflow_map = source_map
         elif isinstance(source_map, MAPResult):
             position = source_map.position
             workflow_map = None
-        elif isinstance(source_map, MAPSearchResult):
+        elif isinstance(
+            source_map,
+            (MAPSearchResult, GaussianProcessMAPSearchResult),
+        ):
+            if not source_map.valid:
+                raise RuntimeError("Global MAP search produced no finite candidate.")
             position = source_map.position
             workflow_map = None
         else:
             raise TypeError(
                 "source_map must be a state-space workflow, MAPResult, "
-                "MAPSearchResult, or None."
+                "MAPSearchResult, GaussianProcessMAPSearchResult, or None."
             )
         self._require_transform_safe_likelihoods("laplace")
         approximation = fit_laplace(
