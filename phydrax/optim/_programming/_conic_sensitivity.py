@@ -17,11 +17,10 @@ from jaxtyping import Array, ArrayLike, PyTree
 from ..._strict import StrictModule
 from ...linalg import (
     adjoint,
-    ArraySpace,
+    DenseLinearOperator,
     DenseSVD,
     DifferentiationPolicy,
     FailurePolicy,
-    FunctionLinearOperator,
     LeastSquaresProblem,
     LinearSolveDiagnostics,
     LinearSolvePolicy,
@@ -88,6 +87,7 @@ class PreparedConicSensitivity(StrictModule):
     constraint_matrix: Array
     constraint_rhs: Array
     state: Array
+    state_jacobian: Array
     cone: AbstractConvexCone
     forward_valid: Array
     projection_margin: Array
@@ -206,46 +206,6 @@ def _kkt_residual(
     return jnp.concatenate((stationarity, complementarity))
 
 
-def _state_operator(
-    quadratic: Array,
-    linear: Array,
-    matrix: Array,
-    rhs: Array,
-    state: Array,
-    cone: AbstractConvexCone,
-    num_variables: int,
-    /,
-) -> FunctionLinearOperator:
-    space = ArraySpace(state.shape, dtype=state.dtype)
-
-    def residual(candidate):
-        return _kkt_residual(
-            candidate,
-            quadratic,
-            linear,
-            matrix,
-            rhs,
-            cone,
-            num_variables,
-        )
-
-    def action(direction):
-        return jax.jvp(residual, (state,), (direction,))[1]
-
-    def transpose_action(cotangent):
-        _, pullback = jax.vjp(residual, state)
-        return pullback(cotangent)[0]
-
-    return FunctionLinearOperator(
-        action,
-        source=space,
-        target=space,
-        transpose_action=transpose_action,
-        operator_id="conic-projection-kkt-jacobian",
-        closure_convert=False,
-    )
-
-
 def _data_residual(
     quadratic: Array,
     linear: Array,
@@ -273,6 +233,7 @@ def _jvp_case(
     matrix: Array,
     rhs: Array,
     state: Array,
+    state_jacobian: Array,
     tangent_quadratic: Array,
     tangent_linear: Array,
     tangent_matrix: Array,
@@ -282,15 +243,7 @@ def _jvp_case(
     num_variables: int,
     linear_policy: LinearSolvePolicy,
 ):
-    operator = _state_operator(
-        quadratic,
-        linear,
-        matrix,
-        rhs,
-        state,
-        cone,
-        num_variables,
-    )
+    operator = DenseLinearOperator(state_jacobian)
     _, data_action = jax.jvp(
         lambda p, q, a, b: _data_residual(
             p,
@@ -317,21 +270,14 @@ def _vjp_case(
     matrix: Array,
     rhs: Array,
     state: Array,
+    state_jacobian: Array,
     cotangent: Array,
     *,
     cone: AbstractConvexCone,
     num_variables: int,
     linear_policy: LinearSolvePolicy,
 ):
-    operator = _state_operator(
-        quadratic,
-        linear,
-        matrix,
-        rhs,
-        state,
-        cone,
-        num_variables,
-    )
+    operator = DenseLinearOperator(state_jacobian)
     state_cotangent = jnp.concatenate(
         (cotangent, jnp.zeros(state.shape[0] - num_variables, dtype=state.dtype))
     )
@@ -641,6 +587,19 @@ def prepare_conic_sensitivity(
             variables,
         )
     )(quadratic, linear_values, matrix, rhs, state)
+    state_jacobian = jax.vmap(
+        lambda p, q, a, b, u: jax.jacfwd(
+            lambda candidate: _kkt_residual(
+                candidate,
+                p,
+                q,
+                a,
+                b,
+                cone,
+                variables,
+            )
+        )(u)
+    )(quadratic, linear_values, matrix, rhs, state)
     root_residual_norm = _max_abs(residual)
     data_scale = jnp.maximum(
         1.0,
@@ -686,6 +645,7 @@ def prepare_conic_sensitivity(
         matrix,
         rhs,
         state,
+        state_jacobian,
         cone,
         forward_valid,
         projection_margin,
@@ -726,12 +686,13 @@ def conic_primal_jvp(
         tangent,
     )
     solve_cases = eqx.filter_vmap(
-        lambda p, q, a, b, u, dp, dq, da, db: _jvp_case(
+        lambda p, q, a, b, u, j, dp, dq, da, db: _jvp_case(
             p,
             q,
             a,
             b,
             u,
+            j,
             dp,
             dq,
             da,
@@ -747,6 +708,7 @@ def conic_primal_jvp(
         prepared.constraint_matrix,
         prepared.constraint_rhs,
         prepared.state,
+        prepared.state_jacobian,
         tangent_quadratic,
         tangent_linear,
         tangent_matrix,
@@ -804,12 +766,13 @@ def conic_primal_vjp(
         "Conic primal cotangent must be finite.",
     ).reshape((prepared.num_cases, prepared.num_variables))
     solve_cases = eqx.filter_vmap(
-        lambda p, q, a, b, u, dx: _vjp_case(
+        lambda p, q, a, b, u, j, dx: _vjp_case(
             p,
             q,
             a,
             b,
             u,
+            j,
             dx,
             cone=prepared.cone,
             num_variables=prepared.num_variables,
@@ -822,6 +785,7 @@ def conic_primal_vjp(
         prepared.constraint_matrix,
         prepared.constraint_rhs,
         prepared.state,
+        prepared.state_jacobian,
         cotangent_,
     )
     regular = _result_regularity(prepared, linear_result)

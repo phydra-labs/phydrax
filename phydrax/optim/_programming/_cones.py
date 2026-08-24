@@ -17,6 +17,13 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 
 
+def _scaled_norm(value: Array, /) -> Array:
+    scale = jnp.max(jnp.abs(value), axis=-1, initial=0.0)
+    safe_scale = jnp.where(jnp.isfinite(scale) & (scale > 0.0), scale, 1.0)
+    residual = scale * jnp.linalg.norm(value / safe_scale[..., None], axis=-1)
+    return jnp.where(jnp.isinf(scale), jnp.inf, residual)
+
+
 class AbstractConvexCone(StrictModule):
     """Closed convex cone over one trailing canonical-coordinate axis."""
 
@@ -52,11 +59,11 @@ class AbstractConvexCone(StrictModule):
 
     def residual(self, value: Any, /) -> Array:
         array = self._validate(value)
-        return jnp.linalg.norm(array - self.project(array), axis=-1)
+        return _scaled_norm(array - self.project(array))
 
     def dual_residual(self, value: Any, /) -> Array:
         array = self._validate(value)
-        return jnp.linalg.norm(array - self.project_dual(array), axis=-1)
+        return _scaled_norm(array - self.project_dual(array))
 
     def contains(self, value: Any, /, *, tolerance: float = 0.0) -> Array:
         return self.residual(value) <= float(tolerance)

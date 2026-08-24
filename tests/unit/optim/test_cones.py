@@ -17,6 +17,9 @@ import phydrax as phx
         phx.optim.NonnegativeCone(3),
         phx.optim.SecondOrderCone(3),
         phx.optim.RotatedSecondOrderCone(4),
+        phx.optim.PositiveSemidefiniteCone(2),
+        phx.optim.ExponentialCone(),
+        phx.optim.PowerCone(0.4),
     ],
 )
 def test_cone_projection_is_idempotent_batched_and_jittable(cone):
@@ -30,16 +33,27 @@ def test_cone_projection_is_idempotent_batched_and_jittable(cone):
     assert jnp.all(cone.contains(projected, tolerance=1e-7))
 
 
+def test_cone_residuals_preserve_nonfinite_norm_semantics():
+    cone = phx.optim.ZeroCone(1)
+    values = jnp.asarray([[jnp.inf], [-jnp.inf], [jnp.nan]])
+    residuals = jax.jit(cone.residual)(values)
+
+    assert jnp.all(jnp.isinf(residuals[:2]))
+    assert jnp.isnan(residuals[2])
+
+
 def test_self_dual_cones_satisfy_moreau_decomposition():
     cones = (
         phx.optim.NonnegativeCone(3),
         phx.optim.SecondOrderCone(3),
         phx.optim.RotatedSecondOrderCone(4),
+        phx.optim.PositiveSemidefiniteCone(2),
     )
     values = (
         jnp.asarray([-2.0, 1.0, 3.0]),
         jnp.asarray([-0.5, 2.0, -1.0]),
         jnp.asarray([-1.0, 2.0, 3.0, -4.0]),
+        jnp.asarray([1.0, jnp.sqrt(2.0), -1.0]),
     )
     for cone, value in zip(cones, values, strict=True):
         np.testing.assert_allclose(

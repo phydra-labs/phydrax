@@ -304,7 +304,7 @@ class ClarabelInteriorPoint(AbstractConvexProgramMethod):
             quadratic_program=True,
             conic_program=True,
             dense=True,
-            sparse=True,
+            sparse=False,
             matrix_free=False,
             warm_start=False,
             prepared_refresh=True,
