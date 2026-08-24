@@ -35,6 +35,32 @@ def _point_batch(domain, points):
     )
 
 
+def test_panelization_rejects_same_named_geometrically_distinct_support():
+    source_geometry = phx.geometry.Circle(
+        (0.0, 0.0),
+        1.0,
+        feature_id="shared-layer-support",
+    ).compile()
+    different_geometry = phx.geometry.Circle(
+        (0.25, -0.1),
+        1.2,
+        feature_id="shared-layer-support",
+    ).compile()
+    phx.operators.BoundaryPanelization2D(
+        source_geometry.boundary_atlas,
+        panels_per_chart=2,
+        quadrature_order=2,
+        geometry=source_geometry,
+    )
+    with pytest.raises(ValueError, match="same support"):
+        phx.operators.BoundaryPanelization2D(
+            source_geometry.boundary_atlas,
+            panels_per_chart=2,
+            quadrature_order=2,
+            geometry=different_geometry,
+        )
+
+
 def test_panelization_measure_and_reports_separate_pde_from_accuracy():
     panelization = _circle_panelization()
     assert jnp.allclose(panelization.boundary_measure, 2.0 * jnp.pi, atol=2e-11)

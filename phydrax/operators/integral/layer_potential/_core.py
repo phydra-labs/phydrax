@@ -75,15 +75,27 @@ class AbstractLayerKernel(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
+def _type_identity(value: object, /) -> str:
+    value_type = type(value)
+    return f"{value_type.__module__}.{value_type.__qualname__}"
+
+
 def _boundary_support_id(atlas: BoundaryAtlas, /) -> str:
     return canonical_fingerprint(
         {
-            "kind": "boundary-singular-support-v1",
+            "kind": "boundary-singular-support-v2",
             "source_id": atlas.source_id,
-            "entity_ids": array_tree_fingerprint(atlas.source_entity_ids),
-            "orientation": array_tree_fingerprint(atlas.orientation),
-            "mapping": repr(atlas.mapping),
-            "trim_domains": repr(atlas.trim_domains),
+            "atlas_type": _type_identity(atlas),
+            "mapping_type": _type_identity(atlas.mapping),
+            "trim_types": [
+                None if trim is None else _type_identity(trim)
+                for trim in atlas.trim_domains
+            ],
+            "atlas_arrays": array_tree_fingerprint(atlas),
+            "mapping_arrays": array_tree_fingerprint(atlas.mapping),
+            "trim_arrays": array_tree_fingerprint(atlas.trim_domains),
+            "mapping_structure": repr(atlas.mapping),
+            "trim_structure": repr(atlas.trim_domains),
         }
     )
 
@@ -120,17 +132,19 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
         panels = int(panels_per_chart)
         order = int(quadrature_order)
         if panels <= 0 or order < 2:
-            raise ValueError("Panel count must be positive and quadrature order at least two.")
+            raise ValueError(
+                "Panel count must be positive and quadrature order at least two."
+            )
         if geometry is not None:
             if not isinstance(geometry, CompiledGeometry):
                 raise TypeError("Panelization geometry must be a CompiledGeometry.")
             if not geometry.has_capability(GeometryCapability.BOUNDARY_ATLAS):
-                raise TypeError(
-                    "Panelization geometry must provide a boundary atlas."
-                )
+                raise TypeError("Panelization geometry must provide a boundary atlas.")
             if geometry.ambient_dimension != 2:
                 raise ValueError("Panelization geometry must be two-dimensional.")
-            if _boundary_support_id(geometry.boundary_atlas) != _boundary_support_id(atlas):
+            if _boundary_support_id(geometry.boundary_atlas) != _boundary_support_id(
+                atlas
+            ):
                 raise ValueError(
                     "Panelization geometry and boundary atlas must describe "
                     "the same support."
@@ -238,7 +252,10 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
             GeometryCapability.REGION_QUERY,
             GeometryCapability.SIGNED_DISTANCE,
         )
-        if any(not geometry.has_capability(capability) for capability in required_capabilities):
+        if any(
+            not geometry.has_capability(capability)
+            for capability in required_capabilities
+        ):
             raise TypeError(
                 "Target admissibility requires certified region and signed-distance queries."
             )
@@ -259,14 +276,10 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
         signed_distance = jnp.asarray(geometry.signed_distance(values))
         inside = jnp.asarray(geometry.contains(values), dtype=bool)
         scale = jnp.maximum(jnp.max(jnp.abs(values)), 1.0)
-        classification_tolerance = (
-            64.0 * jnp.finfo(values.dtype).eps * scale
-        )
+        classification_tolerance = 64.0 * jnp.finfo(values.dtype).eps * scale
         on_boundary = jnp.abs(signed_distance) <= classification_tolerance
         if target_side == "interior":
-            side_matches = jnp.all(
-                inside & (signed_distance < -classification_tolerance)
-            )
+            side_matches = jnp.all(inside & (signed_distance < -classification_tolerance))
         elif target_side == "exterior":
             side_matches = jnp.all(
                 (~inside) & (signed_distance > classification_tolerance)
@@ -294,15 +307,14 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
                 "target_fingerprint": self.target_fingerprint,
                 "target_side": target_side,
                 "accuracy_clearance": clearance,
-                "boundary_classification_tolerance": float(
-                    classification_tolerance
-                ),
+                "boundary_classification_tolerance": float(classification_tolerance),
             }
         )
 
 
 class BoundaryLayerApproximationReport(StrictModule, NonTrainableState):
     """Quadrature and density approximation evidence, separate from PDE exactness."""
+
     panelization_id: str = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
     density_space: str = eqx.field(static=True)
