@@ -38,6 +38,27 @@ def test_adaptive_triangle_polynomial_converges_on_initial_partition():
     )
 
 
+def test_adaptive_callable_triangles_reuse_partition_and_diagnostics():
+    triangles = jnp.asarray(
+        [[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]],
+    )
+    plan = phx.integration.AdaptiveTrianglePlan(
+        max_cells=16,
+        collect_partition=True,
+    )
+    estimate = phx.integration.adaptive_triangle_callable(
+        lambda points: points[:, 0] ** 2 + points[:, 1],
+        triangles,
+        plan,
+    )
+
+    assert estimate.successful
+    assert estimate.value == pytest.approx(0.25, rel=2e-13)
+    assert estimate.error_kind == "paired-reference-rule"
+    assert estimate.provenance.target == "callable"
+    assert estimate.diagnostics.partition is not None
+
+
 def test_adaptive_triangle_reports_cell_exhaustion_without_throwing():
     domain, boundary = _problem()
     function = domain.Function("x")(lambda x: jnp.exp(8.0 * x[0]))

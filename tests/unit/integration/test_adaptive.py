@@ -36,6 +36,26 @@ def test_adaptive_rules_share_one_plan_and_estimate_contract(rule):
     assert estimate.diagnostics.partition is not None
 
 
+def test_adaptive_callable_interval_reuses_plan_and_diagnostics():
+    plan = phx.integration.AdaptiveQuadraturePlan(
+        absolute_tolerance=1e-10,
+        relative_tolerance=1e-10,
+        max_intervals=16,
+        collect_partition=True,
+    )
+    estimate = phx.integration.adaptive_interval_callable(
+        lambda points: points**4 - 2.0 * points + 1.0,
+        jnp.asarray((-1.0, 2.0)),
+        plan,
+    )
+
+    assert estimate.successful
+    assert jnp.allclose(estimate.value, 6.6, atol=1e-10)
+    assert estimate.error_kind == "embedded-rule"
+    assert estimate.provenance.target == "callable"
+    assert estimate.diagnostics.partition is not None
+
+
 def test_adaptive_breakpoints_cover_each_initial_subinterval():
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     function = domain.Function("x")(lambda x: jnp.abs(x - 0.3))

@@ -33,16 +33,15 @@ Its `TrialSpaceCertificate` remains algebraic and has validity region
 `off-singular-support`. The certificate contains no numerical clearance threshold.
 
 ```python
-potential = phx.operators.LaplaceLayerPotential2D(
-    panelization,
-    kind="double",
-    density=density,
-)
-values, target_report = potential.evaluate_with_report(
+evaluation = phx.operators.evaluate_layer_potential(
+    potential,
     targets,
+    phx.operators.LayerEvaluationPlan2D(accuracy_clearance=0.05),
     target_side="interior",
-    accuracy_clearance=0.05,
 )
+values = evaluation.values
+target_report = evaluation.target_report
+evaluation_report = evaluation.evaluation_report
 ```
 
 `LayerPotentialTargetReport` checks the complete continuous boundary through the
@@ -69,8 +68,11 @@ constructing any differential residual. Boundary targets and mismatched reports 
 rejected. `evaluation_accuracy_supported` remains a separate audit result and does not
 alter PDE membership.
 
-`BoundaryLayerApproximationReport` records panelization, quadrature, density space, and
-trace policy independently.
+`LayerDiscretizationReport` records panelization, quadrature, density space, and
+trace policy independently. `LayerEvaluationReport` records the explicit evaluator,
+target binding, finite status, and evaluator-specific error evidence. The direct B0
+evaluator deliberately reports `unestimated-direct`; it does not claim close-target
+accuracy merely because the target-clearance policy passes.
 
 ## Interior Dirichlet solve
 
@@ -87,7 +89,7 @@ result = phx.solver.solve_interior_laplace_dirichlet_2d(
 assert bool(result.valid)
 ```
 
-The result retains linear-solve diagnostics and separate boundary-layer approximation
+The result retains linear-solve diagnostics and separate layer discretization
 evidence. The returned off-surface potential carries the algebraic Laplace certificate.
 
 ## Sign convention
@@ -101,21 +103,61 @@ Other references may use opposite signs or interchange interior/exterior `+` and
 labels. Phydrax uses semantic side names and regression-tests this convention on the
 unit circle.
 
+## Adaptive near and self evaluation
+
+`LayerEvaluationPlan2D("adaptive", ...)` classifies target-to-panel regimes and
+uses the shared `AdaptiveQuadraturePlan` engine for every panel. The global report
+aggregates all panel errors and refuses accuracy support unless the accumulated
+bound satisfies the requested tolerance. A boundary source-node single layer uses
+logarithmic product regularization; its status and error remain in the evaluator report.
+
+## Corners and grading
+
+`BoundaryCornerTopology2D` declares chart endpoints and opening angles.
+`BoundaryPanelPartition2D` supports uniform, Kress, and dyadic endpoint grading.
+The partition is content-addressed and is stored by `BoundaryPanelization2D`; geometry
+derivatives may vary while the discrete topology remains fixed.
+
+## Helmholtz combined fields
+
+`HelmholtzLayerKernel2D` uses the outgoing Hankel fundamental solution. Exterior
+Dirichlet solves use the Brakhage--Werner field
+`D - i eta S`. The solver requires an explicit `AdaptiveQuadraturePlan` for logarithmic
+self-block product integration and returns a `BoundaryOperatorAssemblyReport`; failed
+corrected blocks cannot enter the CFIE matrix.
+
+## Local QBX expansions
+
+`LayerEvaluationPlan2D("qbx", qbx_order=..., qbx_radius_factor=...)` evaluates the
+analytic finite layer field from target-associated local Taylor expansions. Truncation
+error is reported separately. Boundary targets are evaluated by averaging the two
+one-sided local expansions; PDE membership remains off-support only.
+
+## Three-dimensional surfaces
+
+`SurfacePanelization3D` lowers triangular boundary charts through a reference-triangle
+rule. `LaplaceLayerPotential3D` and `evaluate_laplace_layer_3d` require compiled,
+continuous geometry evidence and reject unresolved or on-surface direct targets.
+
+## Near/far backend contract
+
+`AbstractLayerAccelerationBackend` separates backend execution from layer
+representation. `DirectNearFarBackend2D` is the exact corrected decomposition used as
+the reference backend; it reports near/far work counts and direct parity. An external
+FMM backend must satisfy the same contract and must add its approximation error rather
+than replacing singular or near-panel corrections.
+
 ## Current support boundary
 
-- curves in two dimensions;
-- scalar Laplace kernel;
-- fixed Gauss–Legendre panelization;
-- smooth off-surface evaluation;
-- local-diagonal Nyström principal-value trace;
-- dense interior Dirichlet solve.
+- 2D Laplace direct, adaptive near/self, corner grading, and local QBX;
+- 2D outgoing Helmholtz kernels and explicit Brakhage--Werner CFIE assembly;
+- direct 3D Laplace triangular surface panels;
+- explicit near/far direct backend accounting.
 
-Not yet claimed:
+Still separate:
 
-- Kress logarithmic product integration;
-- corner-graded meshes;
-- close-evaluation error estimates or QBX;
-- three-dimensional singular quadrature;
-- Helmholtz combined fields;
-- FMM acceleration;
+- RCIP corner preconditioning;
+- 3D singular self quadrature and 3D QBX;
+- Burton--Miller, transmission, and Maxwell systems;
+- external FMM integration and global QBX/FMM coupling;
 - topology-changing geometry derivatives.

@@ -29,6 +29,27 @@ See [Integrals and measures](../guides_integrals.md) for target semantics,
 normalization, method selection, uncertainty contracts, external weighted
 measures, and composed space/time/stochastic reductions.
 
+## Callable adaptive engines
+
+Specialized evaluators can reuse the bounded adaptive integration substrate without
+constructing a domain component. `adaptive_interval_callable` accepts a batched
+callable over interval coordinates, while `adaptive_triangle_callable` accepts a
+batched callable over physical triangle points. Both consume the existing adaptive
+plans and `IntegrationPrecisionPolicy`, and return the shared
+`IntegrationEstimate` with partition, status, error-kind, evaluation-count, and
+provenance diagnostics.
+
+Layer evaluators should keep panel classification and singularity corrections in
+their own orchestration layer, then wrap these estimates into layer-specific
+approximation reports. They must not create parallel fixed-capacity refinement or
+error-status implementations.
+
+::: phydrax.integration.adaptive_interval_callable
+
+---
+
+::: phydrax.integration.adaptive_triangle_callable
+
 ## Workflow
 
 ::: phydrax.integration.integrate

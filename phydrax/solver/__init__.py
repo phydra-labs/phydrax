@@ -314,6 +314,10 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._helmholtz import (
+    ExteriorHelmholtzDirichletResult2D,
+    solve_exterior_helmholtz_dirichlet_2d,
+)
 from ._heom import (
     drude_lorentz_qubit_heom,
     HEOMHierarchy,
@@ -1084,6 +1088,8 @@ __all__ = [
     "LinearTrialSpaceResult",
     "solve_linear_trial_space",
     "solve_interior_laplace_dirichlet_2d",
+    "ExteriorHelmholtzDirichletResult2D",
+    "solve_exterior_helmholtz_dirichlet_2d",
     "solve_variational_tdvp",
     "TDVPMode",
     "VariationalTDVPPolicy",

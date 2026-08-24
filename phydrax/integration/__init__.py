@@ -4,6 +4,7 @@
 
 """Measure-aware deterministic, adaptive, and stochastic integration."""
 
+from ._adaptive_callable import adaptive_interval_callable, adaptive_triangle_callable
 from ._api import from_samples, integrate, IntegrationRealization, materialize, reduce
 from ._atlas import (
     AtlasIntegrationResult,
@@ -173,12 +174,14 @@ __all__ = [
     "AtlasPatchQuadrature",
     "integrate_atlas_scalar",
     "AdaptivePartition",
+    "adaptive_interval_callable",
     "AdaptiveIntegration",
     "AdaptiveQuadratureDiagnostics",
     "AdaptiveQuadraturePlan",
     "AdaptiveTriangleDiagnostics",
     "AdaptiveTrianglePartition",
     "AdaptiveTrianglePlan",
+    "adaptive_triangle_callable",
     "AdaptiveMultilevelSplittingPlan",
     "AdaptiveMultilevelSplittingResult",
     "adaptive_multilevel_splitting",

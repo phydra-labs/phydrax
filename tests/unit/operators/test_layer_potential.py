@@ -77,11 +77,17 @@ def test_panelization_measure_and_reports_separate_pde_from_accuracy():
     assert certificate.singular_support_id == panelization.source_support_id
     assert "minimum_declared_clearance" not in vars(certificate)
 
-    interior_values, interior_report = potential.evaluate_with_report(
+    evaluation = phx.operators.evaluate_layer_potential(
+        potential,
         jnp.asarray([[0.0, 0.0], [0.2, -0.1]]),
+        phx.operators.LayerEvaluationPlan2D(accuracy_clearance=0.1),
         target_side="interior",
-        accuracy_clearance=0.1,
     )
+    interior_values = evaluation.values
+    interior_report = evaluation.target_report
+    assert bool(evaluation.valid)
+    assert evaluation.evaluation_report.error_kind == "unestimated-direct"
+    assert not bool(evaluation.evaluation_report.accuracy_supported)
     assert bool(interior_report.pde_membership_valid)
     assert bool(interior_report.accuracy_supported)
     assert jnp.allclose(interior_values, -1.0, atol=2e-10)
@@ -184,9 +190,9 @@ def test_panelization_measure_and_reports_separate_pde_from_accuracy():
             bare_panelization,
             target_side="interior",
         )
-    approximation = potential.approximation_report()
-    assert approximation.approximation_id
-    assert approximation.panelization_id == panelization.panelization_id
+    discretization = potential.discretization_report()
+    assert discretization.discretization_id
+    assert discretization.panelization_id == panelization.panelization_id
 
 
 def test_finite_layer_sum_is_harmonic_independently_of_quadrature_accuracy():
@@ -226,11 +232,14 @@ def test_interior_circle_dirichlet_double_layer_recovers_constant_solution():
             [-0.4, 0.3],
         ]
     )
-    values, report = result.potential.evaluate_with_report(
+    evaluation = phx.operators.evaluate_layer_potential(
+        result.potential,
         targets,
+        phx.operators.LayerEvaluationPlan2D(accuracy_clearance=0.1),
         target_side="interior",
-        accuracy_clearance=0.1,
     )
+    values = evaluation.values
+    report = evaluation.target_report
     assert bool(report.pde_membership_valid)
     assert bool(report.accuracy_supported)
     assert jnp.allclose(values, 1.0, atol=3e-3, rtol=3e-3)

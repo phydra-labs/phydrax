@@ -8,7 +8,6 @@ from typing import Any
 
 import coordax as cx
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
@@ -31,9 +30,12 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..geometry import CubatureAtlasProvider
+from ._adaptive_callable import (
+    _error_norm,
+    adaptive_triangle_callable,
+)
 from ._estimates import (
     AdaptiveTriangleDiagnostics,
-    AdaptiveTrianglePartition,
     IntegrationEstimate,
     IntegrationProvenance,
 )
@@ -100,6 +102,9 @@ class _TriangleIntegrand(StrictModule):
                 dims=(result * density).dims,
             )
         return result
+
+    def __call__(self, coordinates: Array, /) -> Array:
+        return jnp.asarray(self.field(coordinates).data)
 
 
 def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunction:
@@ -188,25 +193,6 @@ def _resolve_triangles(
     return label, axis, structure, fixed, triangles
 
 
-def _triangle_children(vertices: Array, /) -> Array:
-    first, second, third = vertices
-    first_second = 0.5 * (first + second)
-    second_third = 0.5 * (second + third)
-    third_first = 0.5 * (third + first)
-    return jnp.stack(
-        (
-            jnp.stack((first, first_second, third_first)),
-            jnp.stack((first_second, second, second_third)),
-            jnp.stack((third_first, second_third, third)),
-            jnp.stack((first_second, second_third, third_first)),
-        )
-    )
-
-
-def _error_norm(value: Array, /) -> Array:
-    return jnp.max(jnp.abs(jnp.asarray(value)))
-
-
 def _run_triangle_raw(
     integrand: Any,
     component: DomainComponent,
@@ -219,10 +205,6 @@ def _run_triangle_raw(
     precision: IntegrationPrecisionPolicy,
 ) -> IntegrationEstimate:
     label, axis, structure, fixed, initial_triangles = _resolve_triangles(component)
-    initial_triangles = precision.accumulation(initial_triangles)
-    initial_count = int(initial_triangles.shape[0])
-    if initial_count > plan.max_cells:
-        raise ValueError("max_cells cannot hold every initial triangle chart.")
     function = _as_domain_function(integrand, component)
     density_function = (
         None if log_density is None else _as_domain_function(log_density, component)
@@ -239,326 +221,29 @@ def _run_triangle_raw(
         axis=axis,
         precision=precision,
     )
-    low_data = plan.low_rule.materialize()
-    high_data = plan.high_rule.materialize()
-    ambient_dimension = int(initial_triangles.shape[-1])
-    if ambient_dimension not in (2, 3):
-        raise ValueError("Adaptive triangles require ambient dimension two or three.")
-
-    def physical_jacobian(vertices: Array) -> Array:
-        first = vertices[1] - vertices[0]
-        second = vertices[2] - vertices[0]
-        if ambient_dimension == 2:
-            return jnp.abs(jnp.linalg.det(jnp.stack((first, second), axis=-1)))
-        return jnp.linalg.norm(jnp.cross(first, second))
-
-    def evaluate_field(vertices: Array, rule_data) -> cx.Field:
-        origin = vertices[0]
-        first = vertices[1] - origin
-        second = vertices[2] - origin
-        reference = precision.accumulation(rule_data.points)
-        physical = origin + reference[:, :1] * first + reference[:, 1:2] * second
-        values = callback.field(physical)
-        weights = cx.Field(
-            precision.accumulation(
-                physical_jacobian(vertices) * precision.accumulation(rule_data.weights)
-            ),
-            dims=(axis,),
-        )
-        weighted = values * weights
-        return sum_over(
-            weighted,
-            axis,
-            accumulation_dtype=precision.accumulation_dtype,
-        )
-
-    initial_cost = initial_count * (
-        int(low_data.weights.shape[0]) + int(high_data.weights.shape[0])
+    prototype = callback.field(jnp.mean(initial_triangles[0], axis=0, keepdims=True))
+    reduced = sum_over(
+        prototype,
+        axis,
+        accumulation_dtype=precision.accumulation_dtype,
     )
-    if plan.max_evaluations is not None and plan.max_evaluations < initial_cost:
-        centroid = jnp.mean(initial_triangles[0], axis=0, keepdims=True)
-        prototype = callback.field(centroid) * cx.Field(
-            precision.accumulation(jnp.ones((1,))),
-            dims=(axis,),
-        )
-        reduced = sum_over(
-            prototype,
-            axis,
-            accumulation_dtype=precision.accumulation_dtype,
-        )
-        value_data = jnp.zeros_like(jnp.asarray(reduced.data))
-        status = jnp.asarray(
-            int(IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED), dtype=jnp.int32
-        )
-        if plan.throw:
-            value_data = eqx.error_if(
-                value_data,
-                True,
-                "Adaptive triangle quadrature exceeded its initial evaluation budget.",
-            )
-        diagnostics = AdaptiveTriangleDiagnostics(
-            status=status,
-            num_evaluations=jnp.asarray(1, dtype=jnp.int32),
-            estimated_error=precision.decision(jnp.asarray(jnp.inf)),
-            partition=None,
-            low_rule=plan.low_rule.rule_id,
-            high_rule=plan.high_rule.rule_id,
-        )
-        return IntegrationEstimate(
-            cx.Field(value_data, dims=reduced.dims),
-            status=status,
-            num_evaluations=1,
-            error_estimate=precision.decision(jnp.asarray(jnp.inf)),
-            error_kind="paired-reference-rule",
-            diagnostics=diagnostics,
-            provenance=IntegrationProvenance(
-                "adaptive-triangle", "component", plan.high_rule.rule_id
-            ),
-        )
-
-    first_high = evaluate_field(initial_triangles[0], high_data)
-    if initial_count == 1:
-        high_estimates = jnp.asarray(first_high.data)[None, ...]
-    else:
-        remaining_high = jax.vmap(
-            lambda vertices: jnp.asarray(evaluate_field(vertices, high_data).data)
-        )(initial_triangles[1:])
-        high_estimates = jnp.concatenate(
-            (jnp.asarray(first_high.data)[None, ...], remaining_high), axis=0
-        )
-    low_estimates = jax.vmap(
-        lambda vertices: jnp.asarray(evaluate_field(vertices, low_data).data)
-    )(initial_triangles)
-    initial_errors = precision.decision(
-        jax.vmap(_error_norm)(high_estimates - low_estimates)
-    )
-    finite = (
-        jnp.all(jnp.isfinite(high_estimates))
-        & jnp.all(jnp.isfinite(low_estimates))
-        & jnp.all(jnp.isfinite(initial_errors))
-    )
-    capacity = plan.max_cells
-    output_shape = high_estimates.shape[1:]
-    vertices = (
-        jnp.zeros((capacity, 3, ambient_dimension), dtype=initial_triangles.dtype)
-        .at[:initial_count]
-        .set(initial_triangles)
-    )
-    estimates = (
-        jnp.zeros((capacity,) + output_shape, dtype=high_estimates.dtype)
-        .at[:initial_count]
-        .set(high_estimates)
-    )
-    errors = (
-        jnp.zeros((capacity,), dtype=initial_errors.dtype)
-        .at[:initial_count]
-        .set(initial_errors)
-    )
-    active = jnp.arange(capacity) < initial_count
-    total = precision.accumulation(jnp.sum(high_estimates, axis=0))
-    total_error = precision.decision(jnp.sum(initial_errors))
-    decision_dtype = total_error.dtype
-    absolute = (
-        jnp.sqrt(jnp.finfo(decision_dtype).eps)
-        if plan.absolute_tolerance is None
-        else jnp.asarray(plan.absolute_tolerance, dtype=decision_dtype)
-    )
-    relative = (
-        jnp.sqrt(jnp.finfo(decision_dtype).eps)
-        if plan.relative_tolerance is None
-        else jnp.asarray(plan.relative_tolerance, dtype=decision_dtype)
-    )
-
-    def converged(value: Array, error: Array) -> Array:
-        magnitude = precision.decision(_error_norm(value))
-        return precision.decision(error) <= absolute + relative * magnitude
-
-    done = (~finite) | converged(total, total_error)
-    status = jnp.where(
-        finite,
-        int(IntegrationStatus.CONVERGED),
-        int(IntegrationStatus.NONFINITE_INTEGRAND),
-    ).astype(jnp.int32)
-    state = (
-        vertices,
-        estimates,
-        errors,
-        active,
-        jnp.asarray(initial_count, dtype=jnp.int32),
-        total,
-        total_error,
-        jnp.asarray(initial_cost, dtype=jnp.int32),
-        status,
-        done,
-    )
-    child_cost = 4 * (int(low_data.weights.shape[0]) + int(high_data.weights.shape[0]))
-    maximum_evaluations = (
-        2**31 - 1 if plan.max_evaluations is None else plan.max_evaluations
-    )
-    iterations = max(0, (capacity - initial_count) // 3)
-
-    def iteration(carry, _):
-        (
-            vertices_,
-            estimates_,
-            errors_,
-            active_,
-            count_,
-            total_,
-            total_error_,
-            evaluations_,
-            status_,
-            finished_,
-        ) = carry
-
-        def advance(current):
-            (
-                vertices__,
-                estimates__,
-                errors__,
-                active__,
-                count__,
-                total__,
-                total_error__,
-                evaluations__,
-                status__,
-                finished__,
-            ) = current
-            budget_ok = evaluations__ + child_cost <= maximum_evaluations
-
-            def budget_failure(values):
-                values = list(values)
-                values[-2] = jnp.asarray(
-                    int(IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED),
-                    dtype=jnp.int32,
-                )
-                values[-1] = jnp.asarray(True)
-                return tuple(values)
-
-            def refine(values):
-                (
-                    vertices___,
-                    estimates___,
-                    errors___,
-                    active___,
-                    count___,
-                    total___,
-                    total_error___,
-                    evaluations___,
-                    status___,
-                    finished___,
-                ) = values
-                selected = jnp.argmax(jnp.where(active___, errors___, -jnp.inf))
-                children = _triangle_children(vertices___[selected])
-                child_high = jax.vmap(
-                    lambda child: jnp.asarray(evaluate_field(child, high_data).data)
-                )(children)
-                child_low = jax.vmap(
-                    lambda child: jnp.asarray(evaluate_field(child, low_data).data)
-                )(children)
-                child_errors = precision.decision(
-                    jax.vmap(_error_norm)(child_high - child_low)
-                )
-                finite_children = (
-                    jnp.all(jnp.isfinite(child_high))
-                    & jnp.all(jnp.isfinite(child_low))
-                    & jnp.all(jnp.isfinite(child_errors))
-                )
-                append = count___ + jnp.arange(3, dtype=jnp.int32)
-                next_vertices = vertices___.at[selected].set(children[0])
-                next_vertices = next_vertices.at[append].set(children[1:])
-                next_estimates = estimates___.at[selected].set(child_high[0])
-                next_estimates = next_estimates.at[append].set(child_high[1:])
-                next_errors = errors___.at[selected].set(child_errors[0])
-                next_errors = next_errors.at[append].set(child_errors[1:])
-                next_active = active___.at[append].set(True)
-                next_total = precision.accumulation(
-                    total___ - estimates___[selected] + jnp.sum(child_high, axis=0)
-                )
-                next_total_error = precision.decision(
-                    total_error___ - errors___[selected] + jnp.sum(child_errors)
-                )
-                next_count = count___ + 3
-                next_evaluations = evaluations___ + child_cost
-                next_converged = converged(next_total, next_total_error)
-                next_done = (~finite_children) | next_converged
-                next_status = jnp.where(
-                    finite_children,
-                    int(IntegrationStatus.CONVERGED),
-                    int(IntegrationStatus.NONFINITE_INTEGRAND),
-                ).astype(jnp.int32)
-                return (
-                    next_vertices,
-                    next_estimates,
-                    next_errors,
-                    next_active,
-                    next_count,
-                    next_total,
-                    next_total_error,
-                    next_evaluations,
-                    next_status,
-                    next_done,
-                )
-
-            return jax.lax.cond(budget_ok, refine, budget_failure, current)
-
-        next_carry = jax.lax.cond(finished_, lambda value: value, advance, carry)
-        return next_carry, None
-
-    state, _ = jax.lax.scan(iteration, state, xs=None, length=iterations)
-    (
-        vertices,
-        estimates,
-        errors,
-        active,
-        count,
-        total,
-        total_error,
-        evaluations,
-        status,
-        done,
-    ) = state
-    status = jnp.where(
-        done,
-        status,
-        int(IntegrationStatus.MAXIMUM_CELLS_REACHED),
-    ).astype(jnp.int32)
-    value_data = total
-    if plan.throw:
-        value_data = eqx.error_if(
-            value_data,
-            status != int(IntegrationStatus.CONVERGED),
-            "Adaptive triangle quadrature failed to meet its numerical contract.",
-        )
-    partition = (
-        AdaptiveTrianglePartition(
-            count=count,
-            vertices=vertices,
-            integral_estimates=estimates,
-            estimated_errors=errors,
-            active=active,
-        )
-        if plan.collect_partition
-        else None
-    )
-    diagnostics = AdaptiveTriangleDiagnostics(
-        status=status,
-        num_evaluations=evaluations,
-        estimated_error=total_error,
-        partition=partition,
-        low_rule=plan.low_rule.rule_id,
-        high_rule=plan.high_rule.rule_id,
+    raw = adaptive_triangle_callable(
+        callback,
+        initial_triangles,
+        plan,
+        precision=precision,
     )
     return IntegrationEstimate(
-        cx.Field(value_data, dims=first_high.dims),
-        status=status,
-        num_evaluations=evaluations,
-        error_estimate=total_error,
-        error_kind="paired-reference-rule",
-        diagnostics=diagnostics,
+        cx.Field(raw.value, dims=reduced.dims),
+        status=raw.status,
+        num_evaluations=raw.num_evaluations,
+        error_estimate=raw.error_estimate,
+        error_kind=raw.error_kind,
+        diagnostics=raw.diagnostics,
         provenance=IntegrationProvenance(
             "adaptive-triangle", "component", plan.high_rule.rule_id
         ),
+        precision_evidence=raw.precision_evidence,
     )
 
 

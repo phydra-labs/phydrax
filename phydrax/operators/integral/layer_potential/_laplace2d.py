@@ -21,10 +21,9 @@ from ....equations.trefftz._core import (
 )
 from ._core import (
     AbstractLayerKernel,
-    BoundaryLayerApproximationReport,
     BoundaryPanelization2D,
     KernelActionSide,
-    LayerPotentialTargetReport,
+    LayerDiscretizationReport,
 )
 
 
@@ -91,7 +90,8 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: Literal["scalar"] = eqx.field(static=True)
     _certificate: TrialSpaceCertificate
-    _approximation: BoundaryLayerApproximationReport
+    _discretization: LayerDiscretizationReport
+    representation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -127,6 +127,7 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
         self.kind = kind
         self.in_size = 2
         self.out_size = "scalar"
+        self.representation_id = representation_id
         self._certificate = TrialSpaceCertificate(
             equation_family="laplace",
             ambient_dimension=2,
@@ -144,7 +145,7 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
             validity_region="off-singular-support",
             singular_support_id=panelization.source_support_id,
         )
-        self._approximation = BoundaryLayerApproximationReport(
+        self._discretization = LayerDiscretizationReport(
             panelization=panelization,
             kernel_id=kernel.kernel_id,
             density_space="quadrature-node-values",
@@ -191,29 +192,15 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
             self.density,
         )
 
-    def evaluate_with_report(
-        self,
-        targets: ArrayLike,
-        /,
-        *,
-        target_side: Literal["interior", "exterior"],
-        accuracy_clearance: float = 0.0,
-    ) -> tuple[Array, LayerPotentialTargetReport]:
+    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
         values = jnp.asarray(targets, dtype=float)
-        single = values.ndim == 1
-        if single:
-            values = values[None, :]
-        report = LayerPotentialTargetReport(
-            values,
-            self.panelization,
-            target_side=target_side,
-            accuracy_clearance=accuracy_clearance,
-        )
-        output = jax.vmap(self)(values)
-        return (output[0] if single else output), report
+        if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
+            raise ValueError("Direct layer targets must have shape (target_count, 2).")
+        return jax.vmap(self)(values)
 
-    def approximation_report(self) -> BoundaryLayerApproximationReport:
-        return self._approximation
+    def discretization_report(self) -> LayerDiscretizationReport:
+        return self._discretization
+
 
     def model_metadata(self) -> Mapping[str, Any]:
         return {TRIAL_SPACE_CERTIFICATE_KEY: self._certificate}
