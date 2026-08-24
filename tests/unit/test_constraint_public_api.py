@@ -74,6 +74,7 @@ PUBLIC_TERM_API = {
     "SoftQuantileFunctional",
     "SpatialSinkhornDivergenceTerm",
     "SpatialUnbalancedSinkhornDivergenceTerm",
+    "SupervisedClassificationTerm",
     "SupervisedDatasetBatch",
     "SupervisedDatasetTerm",
     "SupervisedLikelihoodTerm",

@@ -138,6 +138,7 @@ def test_fixed_supervised_likelihood_preserves_operator_and_ignores_training_wei
         sampling=phx.domain.PointSampling(3, design="uniform"),
         observation_operator=lambda function: 2.0 * function,
         weight=1000.0,
+        sample_weight=jnp.arange(1.0, 7.0),
         reduction="mean",
         label="flux_sensors",
     )
@@ -152,6 +153,39 @@ def test_fixed_supervised_likelihood_preserves_operator_and_ignores_training_wei
     assert observed.shape == (6,)
     assert jnp.allclose(observed, expected)
     assert jnp.allclose(term.log_prob(jnp.asarray(2.0)), expected.sum())
+
+
+def test_fixed_supervised_likelihood_accepts_classification_sibling():
+    logits = jnp.asarray([[2.0, -1.0, 0.2], [-0.5, 1.4, 0.1], [0.0, -0.3, 1.7]])
+    targets = jnp.asarray([0, 1, 2], dtype=jnp.int32)
+    domain = phx.domain.DatasetDomain(logits)
+
+    @domain.Function("data")
+    def field(row):
+        return row
+
+    supervised = phx.terms.SupervisedClassificationTerm(
+        "phase",
+        domain.component(),
+        targets,
+        phx.ml.TargetSchema(
+            "multiclass",
+            class_labels=("solid", "liquid", "gas"),
+        ),
+        sampling=phx.domain.PointSampling(3, design="uniform"),
+        weight=50.0,
+        sample_weight=jnp.asarray([3.0, 2.0, 1.0]),
+        label="phase_sensors",
+    )
+    term = phx.uq.FixedSupervisedLikelihood(
+        supervised,
+        lambda _: {"phase": field},
+    )
+    expected = jax.nn.log_softmax(logits, axis=-1)[jnp.arange(targets.size), targets]
+
+    assert term.label == "phase_sensors"
+    assert jnp.allclose(term.per_case_log_prob(None), expected)
+    assert jnp.allclose(term.log_prob(None), jnp.sum(expected))
 
 
 def test_composite_terms_construct_problem_without_hidden_reweighting():

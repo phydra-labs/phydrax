@@ -8,6 +8,7 @@ from abc import abstractmethod
 from typing import Any, Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
@@ -157,20 +158,29 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
             )
         return location_array, target_array
 
-    def _natural(self, location: ArrayLike, /):
+    def _full_logits(self, location: ArrayLike, /) -> Array:
         values = jnp.asarray(location)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("Categorical predictions must be real-valued.")
+        if values.ndim == 0 or int(values.shape[-1]) != self.prediction_dimension:
+            raise ValueError(
+                "Categorical predictions must end in coordinate dimension "
+                f"{self.prediction_dimension}; got {values.shape}."
+            )
         values = values.astype(jnp.result_type(values, 0.0))
         if self.prediction_coordinates == "natural":
-            if values.ndim == 0 or int(values.shape[-1]) != (
-                self.family.signature.dimension
-            ):
-                raise ValueError(
-                    "Categorical natural predictions have an incompatible shape."
-                )
-            return self.family.natural(values)
-        return self.family.natural_from_logits(values)
+            return jnp.concatenate(
+                (values, jnp.zeros_like(values[..., :1])),
+                axis=-1,
+            )
+        return values
+
+    def _natural(self, location: ArrayLike, /):
+        return self.family.natural_from_logits(self._full_logits(location))
+
+    def class_probabilities(self, location: ArrayLike, /) -> Array:
+        """Return conventional probabilities on the complete category simplex."""
+        return jax.nn.softmax(self._full_logits(location), axis=-1)
 
     def log_prob(
         self, location: ArrayLike, target: ArrayLike, /, **parameters: Any
@@ -181,7 +191,10 @@ class CategoricalExponentialFamilyLikelihood(AbstractLikelihood):
                 f"{tuple(parameters)!r}."
             )
         aligned_location, aligned_target = self.align_observations(location, target)
-        return self.family.log_prob(self._natural(aligned_location), aligned_target)
+        return self.family.log_prob_from_logits(
+            self._full_logits(aligned_location),
+            aligned_target,
+        )
 
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:

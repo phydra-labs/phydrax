@@ -58,6 +58,48 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
         values = values.astype(jnp.result_type(values, 0.0))
         return self.natural(values[..., :-1] - values[..., -1, None])
 
+    def log_prob_from_logits(
+        self,
+        logits: ArrayLike,
+        target: ArrayLike,
+        /,
+    ) -> Array:
+        """Return hard-label log probabilities without materializing one-hot targets."""
+        values = jnp.asarray(logits)
+        if jnp.issubdtype(values.dtype, jnp.complexfloating):
+            raise TypeError("Categorical logits must be real-valued.")
+        if values.ndim == 0 or int(values.shape[-1]) != self.num_categories:
+            raise ValueError(
+                "Categorical full logits must end in num_categories="
+                f"{self.num_categories}; got {values.shape}."
+            )
+        values = values.astype(jnp.result_type(values, 0.0))
+
+        raw_target = jnp.asarray(target)
+        if jnp.issubdtype(raw_target.dtype, jnp.complexfloating):
+            raise TypeError("Categorical observations must be real-valued labels.")
+        if raw_target.shape != values.shape[:-1]:
+            raise ValueError(
+                "Categorical targets must match the logits batch shape; "
+                f"got logits={values.shape} and target={raw_target.shape}."
+            )
+        observation = raw_target.astype(jnp.result_type(raw_target, 0.0))
+        target_valid = (
+            jnp.isfinite(observation)
+            & (observation >= 0.0)
+            & (observation < self.num_categories)
+            & (observation == jnp.floor(observation))
+        )
+        logits_valid = jnp.all(jnp.isfinite(values), axis=-1)
+        valid = logits_valid & target_valid
+        safe_target = jnp.where(target_valid, observation, 0.0).astype(jnp.int32)
+        safe_logits = jnp.where(logits_valid[..., None], values, 0.0)
+        selected = jnp.take_along_axis(safe_logits, safe_target[..., None], axis=-1)[
+            ..., 0
+        ]
+        result = selected - jax.nn.logsumexp(safe_logits, axis=-1)
+        return jnp.where(valid, result, -jnp.inf)
+
     def probabilities_from_natural(self, natural: NaturalCoordinates, /) -> Array:
         """Return conventional full category probabilities."""
         domain = self.natural_domain(natural)

@@ -74,6 +74,27 @@ def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
     )
 
 
+def _make_classification_solver(seed: int = 0) -> FunctionalSolver:
+    rows = jnp.asarray([[-1.0], [-0.4], [0.6], [1.2]])
+    domain = DatasetDomain(rows)
+    model = MLP(
+        in_size=1,
+        out_size="scalar",
+        hidden_sizes=(),
+        key=jr.key(seed),
+    )
+    logits = domain.Model("data")(model)
+    classification = phx.terms.SupervisedClassificationTerm(
+        "logits",
+        domain.component(),
+        jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
+        phx.ml.TargetSchema("binary", class_labels=("negative", "positive")),
+        sampling=PointSampling(4, design="uniform"),
+        label="binary_data",
+    )
+    return FunctionalSolver(functions={"logits": logits}, terms=[classification])
+
+
 def _make_dataset_solver_with_two_train_terms(seed: int = 0) -> FunctionalSolver:
     rows = jnp.linspace(0.0, 1.0, 8).reshape((-1, 1))
     domain = DatasetDomain(rows)
@@ -164,6 +185,27 @@ def test_solve_text_log_includes_observation_data_metrics(tmp_path):
     assert "data_accuracy=" in text
     assert "data_relative_l2_error=" in text
     assert "data_rmse=" in text
+
+
+def test_solve_text_log_includes_classification_data_metrics(tmp_path):
+    solver = _make_classification_solver()
+    log_path = tmp_path / "classification.log"
+
+    solver.solve(
+        num_iter=1,
+        optim=optax.adam(1e-2),
+        seed=0,
+        log_every=1,
+        log_path=log_path,
+    )
+
+    text = log_path.read_text(encoding="utf-8")
+    assert "data_negative_log_likelihood=" in text
+    assert "data_accuracy=" in text
+    assert "data_brier_score=" in text
+    assert "data_effective_weight=" in text
+    assert "data_valid=" in text
+    assert "data_status=" in text
 
 
 def test_solve_text_log_includes_evaluation_terms(tmp_path):

@@ -103,13 +103,26 @@ def reduce_supervised_loss(
     /,
     *,
     reduction: str,
+    sample_weight: ArrayLike | None = None,
 ) -> Array:
-    """Reduce per-sample supervised losses with a common mean/sum policy."""
+    """Reduce per-sample supervised losses with a common weighted policy."""
     per_sample_arr = jnp.asarray(per_sample, dtype=float)
+    if sample_weight is None:
+        weighted = per_sample_arr
+        mass = jnp.asarray(per_sample_arr.size, dtype=per_sample_arr.dtype)
+    else:
+        weights = jnp.asarray(sample_weight, dtype=float)
+        if weights.shape != per_sample_arr.shape:
+            raise ValueError(
+                "sample_weight must match the per-sample loss shape; "
+                f"got weights={weights.shape} and losses={per_sample_arr.shape}."
+            )
+        weighted = weights * per_sample_arr
+        mass = jnp.sum(weights)
     if reduction == "mean":
-        reduced = jnp.mean(per_sample_arr)
+        reduced = jnp.sum(weighted) / mass
     elif reduction == "sum":
-        reduced = jnp.sum(per_sample_arr)
+        reduced = jnp.sum(weighted)
     else:
         raise ValueError("reduction must be either 'mean' or 'sum'.")
     return jnp.asarray(reduced, dtype=float).reshape(())
@@ -123,7 +136,7 @@ def validate_supervised_targets(
     name: str,
 ) -> Array:
     """Validate a target array with a leading empirical-case axis."""
-    arr = jnp.asarray(values, dtype=float)
+    arr = jnp.asarray(values)
     if arr.ndim == 0:
         raise ValueError(f"{name} values must have shape (N, ...).")
     if int(arr.shape[0]) != int(leading_size):
@@ -154,6 +167,66 @@ def validate_case_indices(
     if bool(jnp.any(idx < 0)) or bool(jnp.any(idx >= int(size))):
         raise ValueError(f"{name} must be within [0, {int(size)}).")
     return idx
+
+
+def validate_case_mask(
+    mask: ArrayLike | None,
+    /,
+    *,
+    size: int,
+    name: str = "sample_mask",
+) -> Array | None:
+    """Validate an optional Boolean mask over empirical cases."""
+    if mask is None:
+        return None
+    result = jnp.asarray(mask)
+    if result.dtype != jnp.bool_:
+        raise TypeError(f"{name} must be Boolean.")
+    if result.shape != (int(size),):
+        raise ValueError(f"{name} must have shape ({int(size)},), got {result.shape}.")
+    return result
+
+
+def configured_case_indices(
+    indices: ArrayLike | None,
+    mask: ArrayLike | None,
+    /,
+    *,
+    size: int,
+    indices_name: str = "indices",
+    mask_name: str = "sample_mask",
+) -> Array | None:
+    """Return the ordered non-empty intersection of an index subset and mask."""
+    selected = validate_case_indices(indices, size=size, name=indices_name)
+    valid = validate_case_mask(mask, size=size, name=mask_name)
+    if valid is None:
+        return selected
+    candidates = jnp.arange(int(size), dtype=jnp.int32) if selected is None else selected
+    configured = candidates[valid[candidates]]
+    if int(configured.shape[0]) == 0:
+        raise ValueError("The configured empirical case population must be non-empty.")
+    return configured
+
+
+def validate_case_weights(
+    weights: ArrayLike | None,
+    /,
+    *,
+    size: int,
+    indices: Array | None,
+    name: str = "sample_weight",
+) -> Array | None:
+    """Validate positive statistical weights on configured empirical cases."""
+    if weights is None:
+        return None
+    result = jnp.asarray(weights, dtype=float)
+    if result.shape != (int(size),):
+        raise ValueError(f"{name} must have shape ({int(size)},), got {result.shape}.")
+    configured = jnp.arange(int(size), dtype=jnp.int32) if indices is None else indices
+    active = result[configured]
+    if bool(jnp.any(~jnp.isfinite(active))) or bool(jnp.any(active <= 0.0)):
+        raise ValueError(f"{name} must be finite and strictly positive.")
+    return result
 
 
 def sample_case_indices(

@@ -849,9 +849,10 @@ JSON and Parquet artifacts under
 
 ## Observation likelihoods and proper scores
 
-Native likelihoods include fixed-scale Gaussian, heteroscedastic Gaussian, and
-Student-t observations. `SupervisedLikelihoodTerm` aligns targets through a
-`DatasetDomain` and can score a transformed physical observable:
+Native likelihoods include Bernoulli and categorical observations, fixed-scale and
+heteroscedastic Gaussian observations, and Student-t observations.
+`SupervisedLikelihoodTerm` aligns targets through a `DatasetDomain` and can score a
+transformed physical observable:
 
 ```python
 dataset = phx.domain.DatasetDomain(jnp.linspace(0.0, 1.0, 64)[:, None])
@@ -869,6 +870,14 @@ term = phx.terms.SupervisedLikelihoodTerm(
 
 This supports state values, derivatives, fluxes, stresses, integrals, and sensor
 transforms without treating a PDE residual as measurement noise.
+
+`SupervisedClassificationTerm` binds encoded binary labels to Bernoulli log-odds or
+encoded multiclass labels to full categorical logits. Its cross-entropy objective is
+the corresponding negative log likelihood, so it composes directly with physics
+terms without creating a second loss implementation. Classification diagnostics use
+the categorical-specific `class_probabilities(...)` conversion; likelihoods do not
+claim a generic distributional mean, which need not exist for other observation
+families such as Student-t laws with low degrees of freedom.
 
 Report held-out negative log likelihood, CRPS (Gaussian, Student-t, or empirical
 ensemble), energy score for multivariate fields, interval coverage, and interval
@@ -1122,10 +1131,13 @@ posterior = phx.uq.PosteriorProblem(
 ```
 
 `FunctionalSolver.loss()` is a training objective, not a posterior density. Arbitrary
-term scales, changing collocation samples, and mean reductions do not define
-likelihood normalization. For a `SupervisedLikelihoodTerm`, call
+term scales, statistical `sample_weight` values, changing collocation samples, and
+mean reductions do not define likelihood normalization. For a
+`SupervisedLikelihoodTerm` or `SupervisedClassificationTerm`, call
 `observed_batch()` once and sum its unreduced `log_prob(...)` values inside the
-posterior likelihood. Never call random `sample()` from a posterior density.
+posterior likelihood. `sample_mask` removes unobserved cases, while optimizer
+weights do not become likelihood powers. Never call random `sample()` from a
+posterior density.
 
 Use `FixedObservationLikelihood`, `FixedResidualLikelihood`, and
 `FixedSupervisedLikelihood` to construct deterministic, sum-reduced normalized
