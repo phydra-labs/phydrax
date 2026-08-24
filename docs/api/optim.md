@@ -103,6 +103,121 @@ result contracts are Phydrax-owned.
 
 ::: phydrax.optim.FiniteExhaustiveSearch
 
+## Mirror descent
+
+`ParameterMirrorGeometry` binds selected real PyTree leaves to explicit
+`LegendreGeometry` instances. Unselected leaves use the Euclidean quadratic potential
+and ordinary additive gradient descent. The binding records the complete tree
+definition, every leaf shape, and every dtype; it never infers a mirror map from a
+positive initial value.
+
+For a selected potential `Φ` and coordinate gradient `g`, `mirror_descent` applies
+
+`x⁺ = (∇Φ)⁻¹(∇Φ(x) - αg/w)`,
+
+where `w > 0` is the optional static geometry weight. This is a direct dual-coordinate
+translation. It does not calculate `∇²Φ`, solve a natural-gradient system, or project
+an invalid result back into the domain.
+
+!!! example
+    ```python
+    import phydrax as phx
+
+
+    def train_mirror(solver, negative_entropy_geometry):
+        parameters = solver.trainable_functions()
+        paths = phx.optim.ParameterMirrorGeometry.array_leaf_paths(parameters)
+        positive_path = next(path for path in paths if "positive" in path)
+
+        geometry = phx.optim.ParameterMirrorGeometry.from_leaf_paths(
+            parameters,
+            {positive_path: negative_entropy_geometry},
+        )
+        optimizer = phx.optim.mirror_descent(
+            geometry,
+            learning_rate=1e-2,
+        )
+        return solver.solve(
+            num_iter=1_000,
+            optim=optimizer,
+            keep_best=False,
+        )
+    ```
+
+See [Hessian and Legendre information geometry](metrix/information_geometry.md) for a
+complete negative-entropy construction. Its update is multiplicative:
+
+`x⁺ = x · exp(-αg/w)`.
+
+### Binding and product semantics
+
+A selected leaf must:
+
+- use real floating-point coordinates;
+- end in the Legendre chart dimension;
+- lie strictly inside the declared primal support at construction.
+
+Leading axes are independent copies of the same potential. A potential may couple the
+coordinates within one final-axis point, but it does not couple different leading
+factors or different PyTree leaves. Split a genuinely coupled parameterization into one
+explicit leaf and declare one geometry for that complete coordinate vector.
+
+Scaling a leaf geometry by `w` scales both its potential and reported step divergence:
+
+`D_{wΦ}(x⁺ ∥ x) = w DΦ(x⁺ ∥ x)`.
+
+The corresponding dual displacement is `-αg/w`. Weights must be finite and strictly
+positive.
+
+### Failure and diagnostics
+
+The initial fixed-step implementation accepts a positive scalar learning rate or a
+callable schedule receiving the zero-based JAX step. A scheduled rate may be zero but
+must remain finite and nonnegative. Momentum, clipping, adaptive moments, and
+backtracking are deliberately absent: each requires a separate dual-coordinate
+contract rather than ambient Optax composition.
+
+If a translated dual point or its inverse leaves its declared support, execution fails.
+There is no clipping, normalization, jitter, or hidden step reduction.
+`evaluation_parameters` is rejected because an ambient transform need not preserve
+Legendre support.
+
+Console, TensorBoard, and returned diagnostics use the `optimizer/mirror/` namespace:
+
+- coordinate-gradient norm;
+- applied dual-displacement norm;
+- Bregman step divergence;
+- support residual;
+- selected Legendre-leaf count.
+
+The two norms are coordinate diagnostics, not invariant natural-gradient norms.
+
+### Relation to simplex optimization
+
+`ProbabilitySimplexManifold` plus `riemannian_sgd` already performs exact
+negative-entropy mirror descent on the open normalized simplex. Its Fisher sharp map
+and multiplicative retraction simplify to
+
+`p⁺ = normalize(p · exp(-αg))`.
+
+Use that existing manifold path for normalized probabilities. Use `SimplexIndicator`
+when boundary solutions with exact zeros are required. Do not represent the affine
+mass constraint as an unconstrained full-dimensional `LegendreGeometry`.
+
+::: phydrax.optim.ParameterMirrorGeometry
+    options:
+        members:
+            - from_leaf_paths
+            - array_leaf_paths
+            - validate
+            - contains
+            - constraint_residuals
+            - maximum_constraint_residual
+
+---
+
+::: phydrax.optim.mirror_descent
+
 ## Riemannian optimization
 
 `ParameterGeometry` binds complete trainable PyTree leaves to explicit

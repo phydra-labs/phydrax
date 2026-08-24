@@ -224,6 +224,18 @@ transpose pullback. Optional regularization adds exactly the declared parameter-
 `regularization * v`. Both results retain operator, method, approximation, validity,
 and status provenance.
 
+`ExponentialFamilyInformationGeometry` adds exact Fisher matrices/actions, natural
+gradient solves, and exponential- and mixture-affine interpolation. Its ordered KL
+divergence has the dual Bregman identities
+
+`KL(left ∥ right) = D_A(η_right ∥ η_left) = D_A*(μ_left ∥ μ_right)`.
+
+The natural-coordinate endpoints reverse. Passing `(η_left, η_right)` directly to a
+log-normalizer Bregman function computes `KL(right ∥ left)`, not
+`KL(left ∥ right)`. The typed family API remains authoritative because
+`natural_from_mean(...)` retains boundary, exterior, nonfinite, and nonconvergence
+statuses that a raw chart inverse cannot represent.
+
 ## Domains and statuses
 
 Natural and mean domains are different. `natural_domain(...)` classifies whether a
@@ -372,6 +384,10 @@ mean, or nonfinite input.
 ---
 
 ::: phydrax.uq.exponential_family_parameter_fisher_action
+
+---
+
+::: phydrax.uq.ExponentialFamilyInformationGeometry
 
 ## Status codes
 

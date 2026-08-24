@@ -14,10 +14,11 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._strict import StrictModule
 from ...metrix import AbstractRiemannianManifold
-
-
-def _path_string(path: tuple[Any, ...], /) -> str:
-    return jax.tree_util.keystr(path) or "<root>"
+from .._pytree import (
+    _parameter_array_leaf_paths,
+    _parameter_tree_metadata,
+    _validated_parameter_leaves,
+)
 
 
 def _real_tree_inner(left: Array, right: Array, /) -> Array:
@@ -55,24 +56,13 @@ class ParameterGeometry(StrictModule):
         if weights is not None and not isinstance(weights, Mapping):
             raise TypeError("ParameterGeometry weights must be a path mapping.")
 
-        path_leaves, tree_definition = jax.tree_util.tree_flatten_with_path(parameters)
-        if not path_leaves:
-            raise ValueError("ParameterGeometry requires at least one trainable array.")
-
-        paths: list[str] = []
-        shapes: list[tuple[int, ...]] = []
-        dtypes: list[str] = []
-        for path, leaf in path_leaves:
-            path_name = _path_string(path)
-            if not eqx.is_inexact_array(leaf):
-                raise TypeError(
-                    "ParameterGeometry requires a filtered trainable PyTree containing "
-                    f"only inexact arrays; leaf {path_name} is {type(leaf).__name__}."
-                )
-            array = jnp.asarray(leaf)
-            paths.append(path_name)
-            shapes.append(tuple(int(size) for size in array.shape))
-            dtypes.append(str(array.dtype))
+        (
+            leaves,
+            tree_definition,
+            paths,
+            shapes,
+            dtypes,
+        ) = _parameter_tree_metadata(parameters, owner="ParameterGeometry")
 
         available = set(paths)
         requested = set(manifolds)
@@ -94,7 +84,7 @@ class ParameterGeometry(StrictModule):
         selected_indices: list[int] = []
         leaf_weights: list[float] = []
         for index, (path_name, leaf, shape) in enumerate(
-            zip(paths, (leaf for _, leaf in path_leaves), shapes, strict=True)
+            zip(paths, leaves, shapes, strict=True)
         ):
             manifold = manifolds[path_name] if path_name in manifolds else None
             if manifold is None:
@@ -176,11 +166,7 @@ class ParameterGeometry(StrictModule):
     @staticmethod
     def array_leaf_paths(parameters: PyTree[Any], /) -> tuple[str, ...]:
         """Return deterministic paths for all inexact-array leaves."""
-        return tuple(
-            _path_string(path)
-            for path, leaf in jax.tree_util.tree_flatten_with_path(parameters)[0]
-            if eqx.is_inexact_array(leaf)
-        )
+        return _parameter_array_leaf_paths(parameters)
 
     @property
     def num_manifold_leaves(self) -> int:
@@ -193,30 +179,14 @@ class ParameterGeometry(StrictModule):
         )
 
     def _validated_leaves(self, tree: PyTree[Any], name: str, /) -> list[Array]:
-        leaves, tree_definition = jax.tree_util.tree_flatten(tree)
-        if tree_definition != self.tree_definition:
-            raise ValueError(f"{name} has an incompatible PyTree structure.")
-        validated: list[Array] = []
-        for path, leaf, shape, dtype in zip(
-            self.paths,
-            leaves,
-            self.shapes,
-            self.dtypes,
-            strict=True,
-        ):
-            if not eqx.is_inexact_array(leaf):
-                raise TypeError(f"{name} leaf {path} must be an inexact array.")
-            array = jnp.asarray(leaf)
-            if array.shape != shape:
-                raise ValueError(
-                    f"{name} leaf {path} must have shape {shape}, got {array.shape}."
-                )
-            if str(array.dtype) != dtype:
-                raise TypeError(
-                    f"{name} leaf {path} must have dtype {dtype}, got {array.dtype}."
-                )
-            validated.append(array)
-        return validated
+        return _validated_parameter_leaves(
+            tree,
+            tree_definition=self.tree_definition,
+            paths=self.paths,
+            shapes=self.shapes,
+            dtypes=self.dtypes,
+            name=name,
+        )
 
     def validate(self, parameters: PyTree[Any], /) -> None:
         """Validate the bound structure, shapes, and dtypes."""

@@ -17,6 +17,7 @@ from ..optim._iterative import (
     AbstractScalarIterativeMethod,
 )
 from ..optim._kfac._config import KFAC
+from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import AbstractRiemannianOptimizer
 from ._functional_evosax import _solve_evosax_distribution
 from ._functional_gradient import solve_gradient
@@ -135,9 +136,9 @@ def _resolve_backend(
 ) -> _FunctionalBackend:
     if isinstance(optimizer, str):
         raise TypeError(
-            "optim must be an optimizer object (e.g. phydrax.optim.riemannian_sgd(...), "
-            "optax.adam(...), optax.lbfgs(...), or an evosax distribution-based "
-            "algorithm instance), not a string."
+            "optim must be an optimizer object (e.g. phydrax.optim.mirror_descent(...), "
+            "phydrax.optim.riemannian_sgd(...), optax.adam(...), optax.lbfgs(...), "
+            "or an evosax distribution-based algorithm instance), not a string."
         )
     if isinstance(optimizer, PopulationBasedAlgorithm):
         if evaluation_parameters is not None:
@@ -165,15 +166,16 @@ def _resolve_backend(
             AbstractLeastSquaresMethod,
             AbstractScalarIterativeMethod,
             AbstractRiemannianOptimizer,
+            AbstractMirrorOptimizer,
             optax.GradientTransformationExtraArgs,
             optax.GradientTransformation,
         ),
     ):
         return _GradientBackend(optimizer)
     raise TypeError(
-        "optim must be a Phydrax iterative or Riemannian optimizer, an Optax "
-        "transformation, a KFAC configuration, or an Evosax distribution-based "
-        "algorithm instance."
+        "optim must be a Phydrax iterative, mirror, or Riemannian optimizer, an "
+        "Optax transformation, a KFAC configuration, or an Evosax "
+        "distribution-based algorithm instance."
     )
 
 
