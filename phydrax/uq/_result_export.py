@@ -38,7 +38,7 @@ from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
 from ._map import MAPResult
 from ._map_candidate_search import MAPCandidateSearchResult
-from ._map_search import MAPSearchResult
+from ._map_search import GaussianProcessMAPSearchResult, MAPSearchResult
 from ._mcmc import MCMCResult
 from ._particle import (
     ParticleBackwardSimulationResult,
@@ -1251,6 +1251,74 @@ def _adapt_result(result, arrays, fields, trees):
             "search": {"batch_size": result.search.batch_size},
         }
         return "map_candidate_search", metadata, ("problem", "search")
+
+    if isinstance(result, GaussianProcessMAPSearchResult):
+        _put_tree(trees, arrays, "position", result.position)
+        _put_tree(trees, arrays, "parameters", result.parameters)
+        _put_tree(
+            trees,
+            arrays,
+            "evaluated_positions",
+            result.evaluated_positions,
+        )
+        _put_tree(trees, arrays, "lower_bounds", result.lower_bounds)
+        _put_tree(trees, arrays, "upper_bounds", result.upper_bounds)
+        _put_tree(
+            trees,
+            arrays,
+            "search_kernel",
+            result.search.surrogate.kernel,
+        )
+        for name in (
+            "objective",
+            "log_density",
+            "raw_objectives",
+            "valid_evaluations",
+            "proposal_kinds",
+            "best_objective_history",
+            "best_history_valid",
+        ):
+            _put_field(fields, arrays, name, getattr(result, name))
+        _put_field(
+            fields,
+            arrays,
+            "search_noise_scale",
+            result.search.surrogate.noise_scale,
+        )
+        _put_field(
+            fields,
+            arrays,
+            "search_jitter",
+            result.search.surrogate.jitter,
+        )
+        metadata = {
+            "valid": result.valid,
+            "termination_reason": result.termination_reason,
+            "objective_evaluations": result.objective_evaluations,
+            "invalid_evaluations": result.invalid_evaluations,
+            "fallback_count": result.fallback_count,
+            "surrogate_failure_count": result.surrogate_failure_count,
+            "design_signature": result.design_signature,
+            "method_id": result.method_id,
+            "proposal_seconds": result.proposal_seconds,
+            "objective_seconds": result.objective_seconds,
+            "search": {
+                "max_evaluations": result.search.max_evaluations,
+                "initial_evaluations": result.search.initial_evaluations,
+                "candidate_count": result.search.candidate_count,
+                "improvement_margin": result.search.improvement_margin,
+                "minimum_separation": result.search.minimum_separation,
+                "kernel": type(result.search.surrogate.kernel).__name__,
+                "noise_scale_units": "raw_negative_log_density",
+                "noise_standardization": "noise_scale / objective_scale",
+                "jitter_units": "standardized_covariance",
+            },
+        }
+        return (
+            "gaussian_process_map_search",
+            metadata,
+            ("problem", "search", "key"),
+        )
 
     if isinstance(result, MAPSearchResult):
         _put_tree(trees, arrays, "position", result.position)

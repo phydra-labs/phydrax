@@ -31,6 +31,11 @@
   dual translations. Added fixed-step mirror descent over mixed trainable
   PyTrees, including FunctionalSolver diagnostics and documented
   exponential-family KL and simplex exponentiated-gradient identities.
+- Added a sequential Gaussian-process MAP initializer for expensive bounded posterior
+  objectives. The UQ-owned search normalizes unconstrained positions, treats surrogate
+  noise in raw negative-log-density units, records complete evaluated-point and
+  fallback evidence, composes with state-space global/local MAP and Laplace workflows,
+  and preserves the existing differential-evolution result contract.
 
 - Added regular, first-order conic primal JVP/VJP operators over audited
   `ConicProgram` executions, with cached dense projection-KKT Jacobians,

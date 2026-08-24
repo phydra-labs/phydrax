@@ -25,6 +25,7 @@ from .._sampling import (
     resolve_design,
 )
 from .._strict import StrictModule
+from ._bounded_search import _BoundedVectorDomain
 
 
 SearchStrategy = Literal["best1bin", "rand1bin"]
@@ -300,44 +301,6 @@ def _run_differential_evolution(
     )
 
 
-def _validated_search_vectors(
-    initial_vector: ArrayLike,
-    lower_bounds: ArrayLike,
-    upper_bounds: ArrayLike,
-    /,
-) -> tuple[Array, Array, Array]:
-    initial_np = np.asarray(initial_vector)
-    lower_np = np.asarray(lower_bounds)
-    upper_np = np.asarray(upper_bounds)
-    if initial_np.ndim != 1:
-        raise ValueError("initial_vector must be one-dimensional.")
-    if initial_np.size == 0:
-        raise ValueError("Differential evolution requires at least one dimension.")
-    if lower_np.shape != initial_np.shape or upper_np.shape != initial_np.shape:
-        raise ValueError(
-            "initial_vector, lower_bounds, and upper_bounds must have identical shapes."
-        )
-    dtype = np.result_type(initial_np.dtype, lower_np.dtype, upper_np.dtype)
-    if not np.issubdtype(dtype, np.floating):
-        raise TypeError("Differential-evolution vectors and bounds must be real-valued.")
-    initial_np = initial_np.astype(dtype, copy=False)
-    lower_np = lower_np.astype(dtype, copy=False)
-    upper_np = upper_np.astype(dtype, copy=False)
-    if not np.all(np.isfinite(initial_np)):
-        raise ValueError("initial_vector must be finite.")
-    if not np.all(np.isfinite(lower_np)) or not np.all(np.isfinite(upper_np)):
-        raise ValueError("Differential-evolution bounds must be finite.")
-    if np.any(lower_np >= upper_np):
-        raise ValueError("Every lower bound must be smaller than its upper bound.")
-    if np.any((initial_np < lower_np) | (initial_np > upper_np)):
-        raise ValueError("initial_vector lies outside the search bounds.")
-    return (
-        jnp.asarray(initial_np),
-        jnp.asarray(lower_np),
-        jnp.asarray(upper_np),
-    )
-
-
 def _bounded_differential_evolution(
     objective: Callable[[Array], Array],
     initial_vector: ArrayLike,
@@ -352,13 +315,12 @@ def _bounded_differential_evolution(
         raise TypeError("objective must be callable.")
     if not isinstance(search, DifferentialEvolutionSearch):
         raise TypeError("search must be a DifferentialEvolutionSearch.")
-    initial, lower, upper = _validated_search_vectors(
-        initial_vector,
-        lower_bounds,
-        upper_bounds,
-    )
-    dimension = int(initial.shape[0])
-    initial_unit = (initial - lower) / (upper - lower)
+    domain = _BoundedVectorDomain(initial_vector, lower_bounds, upper_bounds)
+    initial = domain.initial
+    lower = domain.lower
+    upper = domain.upper
+    dimension = domain.dimension
+    initial_unit = domain.to_unit(initial)
     design_key = jr.fold_in(key, 0)
     evolution_key = jr.fold_in(key, 1)
     population = jnp.asarray(
@@ -405,8 +367,8 @@ def _bounded_differential_evolution(
         absolute_tolerance=search.absolute_tolerance,
     )
     generations_ = int(generations)
-    population_vectors = lower + unit_population * (upper - lower)
-    best_vector = lower + best_unit * (upper - lower)
+    population_vectors = domain.from_unit(unit_population)
+    best_vector = domain.from_unit(best_unit)
     finite_population = bool(jnp.any(jnp.isfinite(population_objectives)))
     converged_ = bool(converged)
     if not finite_population:

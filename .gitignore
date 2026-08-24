@@ -30,6 +30,7 @@ _gitignore/
 benchmarks/*
 !benchmarks/dae_benchmark_artifact.json
 !benchmarks/integral_physics.json
+!benchmarks/map_gp_search.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/
