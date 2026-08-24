@@ -16,6 +16,12 @@
   JSON-safe ordered class names, and zero-weight objectives bypass evaluation.
 
 
+- Added domain-aware Legendre geometry with explicit primal/dual supports,
+  conjugate and Fenchel--Young operations, representative validation, and direct
+  dual translations. Added fixed-step mirror descent over mixed trainable
+  PyTrees, including FunctionalSolver diagnostics and documented
+  exponential-family KL and simplex exponentiated-gradient identities.
+
 - Added regular, first-order conic primal JVP/VJP operators over audited
   `ConicProgram` executions, with cached dense projection-KKT Jacobians,
   native-bound cotangents, projection/linear regularity evidence, and exact

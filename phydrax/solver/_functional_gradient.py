@@ -36,6 +36,7 @@ from ..optim._iterative import (
     OptimizationTermination,
 )
 from ..optim._least_squares import LeastSquaresState
+from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import (
     AbstractRiemannianLineSearchOptimizer,
     AbstractRiemannianOptimizer,
@@ -78,6 +79,7 @@ def solve_gradient(
     optim: AbstractCompositeLeastSquaresMethod
     | AbstractLeastSquaresMethod
     | AbstractScalarIterativeMethod
+    | AbstractMirrorOptimizer
     | AbstractRiemannianOptimizer
     | optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
@@ -101,7 +103,7 @@ def solve_gradient(
 
     if isinstance(optim, str):
         raise TypeError(
-            "optim must be a Phydrax Riemannian optimizer or an Optax "
+            "optim must be a Phydrax mirror or Riemannian optimizer, or an Optax "
             "transformation, not a string."
         )
 
@@ -111,6 +113,7 @@ def solve_gradient(
     _opt_iterative: AbstractScalarIterativeMethod | None = None
     _opt_least_squares: AbstractLeastSquaresMethod | None = None
 
+    _opt_mirror: AbstractMirrorOptimizer | None = None
     _opt_riemannian: AbstractRiemannianOptimizer | None = None
     if isinstance(optim, AbstractCompositeLeastSquaresMethod):
         _opt_composite = optim
@@ -118,6 +121,13 @@ def solve_gradient(
         _opt_least_squares = optim
     elif isinstance(optim, AbstractScalarIterativeMethod):
         _opt_iterative = optim
+    elif isinstance(optim, AbstractMirrorOptimizer):
+        if evaluation_parameters is not None:
+            raise ValueError(
+                "evaluation_parameters is unsupported for mirror optimizers because "
+                "an ambient transform need not preserve Legendre support."
+            )
+        _opt_mirror = optim
     elif isinstance(optim, AbstractRiemannianOptimizer):
         if evaluation_parameters is not None:
             raise ValueError(
@@ -131,8 +141,8 @@ def solve_gradient(
         _opt_standard = optim
     else:
         raise TypeError(
-            "optim must be a Phydrax least-squares, iterative, or Riemannian "
-            "optimizer, or an Optax transformation."
+            "optim must be a Phydrax least-squares, iterative, mirror, or "
+            "Riemannian optimizer, or an Optax transformation."
         )
     if precision is not None and not isinstance(precision, FunctionalPrecisionPolicy):
         raise TypeError("precision must be a FunctionalPrecisionPolicy or None.")
@@ -143,6 +153,8 @@ def solve_gradient(
         if _opt_least_squares is not None
         else _opt_iterative.method_id
         if _opt_iterative is not None
+        else _opt_mirror.optimizer_id
+        if _opt_mirror is not None
         else _opt_riemannian.optimizer_id
         if _opt_riemannian is not None
         else "optax"
@@ -249,6 +261,7 @@ def solve_gradient(
         is_iterative = _opt_iterative is not None
         iterative_termination = OptimizationTermination(maximum_steps=int(num_iter))
         is_linesearch = _opt_linesearch is not None
+        is_mirror = _opt_mirror is not None
         is_riemannian = _opt_riemannian is not None
         is_riemannian_linesearch = isinstance(
             _opt_riemannian, AbstractRiemannianLineSearchOptimizer
@@ -366,6 +379,20 @@ def solve_gradient(
                 )
                 return params_, opt_state, loss_val, terms
 
+            if is_mirror:
+                (loss_val, terms), grads = loss_fn(
+                    params_,
+                    non_trainable_,
+                    prepared_,
+                )
+                assert _opt_mirror is not None
+                params_, opt_state = _opt_mirror.update(
+                    grads,
+                    opt_state,
+                    params_,
+                )
+                return params_, opt_state, loss_val, terms
+
             if is_riemannian:
                 (loss_val, terms), grads = loss_fn(
                     params_,
@@ -475,6 +502,8 @@ def solve_gradient(
             if is_least_squares
             else _opt_iterative
             if is_iterative
+            else _opt_mirror
+            if is_mirror
             else _opt_riemannian
             if is_riemannian
             else (_opt_linesearch if is_linesearch else _opt_standard)
@@ -628,6 +657,15 @@ def solve_gradient(
                     break
                 console_step = log_every_ > 0 and (step % log_every_ == 0)
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+                mirror_step_metrics = None
+                mirror_constraint_residual = None
+                if _opt_mirror is not None and (console_step or tensorboard_step):
+                    mirror_step_metrics = _opt_mirror.step_metrics(opt_state)
+                    mirror_constraint_residual = (
+                        _opt_mirror.parameter_geometry.maximum_constraint_residual(
+                            current_evaluation_params
+                        )
+                    )
                 riemannian_step_metrics = None
                 riemannian_constraint_residual = None
                 if _opt_riemannian is not None and (console_step or tensorboard_step):
@@ -708,6 +746,21 @@ def solve_gradient(
                             f"{int(iterative_step_metrics.accepted)}"
                             " status="
                             f"{int(iterative_step_metrics.status)}"
+                        )
+                    if mirror_step_metrics is not None:
+                        if mirror_constraint_residual is None:
+                            raise RuntimeError(
+                                "Mirror diagnostics require a constraint residual."
+                            )
+                        optimizer_suffix = (
+                            " coordinate_grad="
+                            f"{float(mirror_step_metrics.coordinate_gradient_norm):.6e}"
+                            " dual_step="
+                            f"{float(mirror_step_metrics.dual_displacement_norm):.6e}"
+                            " bregman_step="
+                            f"{float(mirror_step_metrics.bregman_step):.6e}"
+                            " constraint="
+                            f"{float(mirror_constraint_residual):.6e}"
                         )
                     if riemannian_step_metrics is not None:
                         if riemannian_constraint_residual is None:
@@ -874,6 +927,32 @@ def solve_gradient(
                             iterative_step_metrics.status,
                             step,
                         )
+                    if mirror_step_metrics is not None:
+                        tb_writer.scalar(
+                            "optimizer/mirror/learning_rate",
+                            mirror_step_metrics.learning_rate,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/mirror/coordinate_gradient_norm",
+                            mirror_step_metrics.coordinate_gradient_norm,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/mirror/dual_displacement_norm",
+                            mirror_step_metrics.dual_displacement_norm,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/mirror/bregman_step",
+                            mirror_step_metrics.bregman_step,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/mirror/constraint_residual_max",
+                            mirror_constraint_residual,
+                            step,
+                        )
                     if riemannian_step_metrics is not None:
                         tb_writer.scalar(
                             "optimizer/riemannian/learning_rate",
@@ -992,6 +1071,31 @@ def solve_gradient(
             if keep_best
             else current_evaluation_params
         )
+        mirror_diagnostics: dict[str, Any] = {}
+        if _opt_mirror is not None:
+            mirror_geometry = _opt_mirror.parameter_geometry
+            if not bool(mirror_geometry.contains(chosen)):
+                raise ValueError(
+                    "Returned parameters are outside their declared "
+                    "ParameterMirrorGeometry."
+                )
+            mirror_metrics = _opt_mirror.step_metrics(opt_state)
+            mirror_diagnostics = {
+                "optimizer/mirror/num_legendre_leaves": jnp.asarray(
+                    mirror_geometry.num_legendre_leaves
+                ),
+                "optimizer/mirror/learning_rate": mirror_metrics.learning_rate,
+                "optimizer/mirror/coordinate_gradient_norm": (
+                    mirror_metrics.coordinate_gradient_norm
+                ),
+                "optimizer/mirror/dual_displacement_norm": (
+                    mirror_metrics.dual_displacement_norm
+                ),
+                "optimizer/mirror/bregman_step": mirror_metrics.bregman_step,
+                "optimizer/mirror/constraint_residual_max": (
+                    mirror_geometry.maximum_constraint_residual(chosen)
+                ),
+            }
         riemannian_diagnostics: dict[str, Any] = {}
         if _opt_riemannian is not None:
             geometry = _opt_riemannian.parameter_geometry
@@ -1176,6 +1280,7 @@ def solve_gradient(
                 ),
             }
             | riemannian_diagnostics
+            | mirror_diagnostics
             | iterative_diagnostics
         )
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)

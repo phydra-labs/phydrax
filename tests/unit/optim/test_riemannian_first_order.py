@@ -42,6 +42,37 @@ def test_riemannian_sgd_reduces_exactly_to_optax_sgd_in_euclidean_space():
     assert jnp.allclose(state.metrics.tangent_step_norm, 0.2 * jnp.sqrt(0.625))
 
 
+def test_simplex_riemannian_sgd_is_exact_entropy_mirror_descent():
+    probability = jnp.asarray([0.2, 0.3, 0.5])
+    gradient = jnp.asarray([1.2, -0.4, 0.7])
+    learning_rate = 0.15
+    parameters = {"point": probability}
+    geometry = _single_leaf_geometry(
+        parameters,
+        phx.metrix.ProbabilitySimplexManifold(3),
+    )
+    optimizer = phx.optim.riemannian_sgd(
+        geometry,
+        learning_rate=learning_rate,
+    )
+    state = optimizer.init(parameters)
+    actual, _ = optimizer.update(
+        {"point": gradient},
+        state,
+        parameters,
+    )
+    shifted, _ = optimizer.update(
+        {"point": gradient + 5.0},
+        state,
+        parameters,
+    )
+    logits = jnp.log(probability) - learning_rate * gradient
+    expected = jax.nn.softmax(logits)
+
+    assert jnp.allclose(actual["point"], expected)
+    assert jnp.allclose(shifted["point"], expected)
+
+
 def test_riemannian_sgd_mixed_update_and_global_clipping():
     parameters = {
         "offset": jnp.array(1.0),

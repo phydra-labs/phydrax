@@ -4,6 +4,10 @@
 manifold contract. It distinguishes exact exponential, logarithm, and squared
 geodesic distance from a generic retraction.
 
+Ordered endpoint divergences and dual-affine translations are separate from exact
+Riemannian endpoint operations. See
+[Hessian and Legendre information geometry](information_geometry.md).
+
 ::: phydrax.metrix.AbstractGeodesicManifold
 
 Exact endpoint operations are supplied for Euclidean, sphere, Poincaré-ball,

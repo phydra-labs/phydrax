@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
 from ._chart import CoordinateChart
 from ._information_operator import InformationMetricOperator
@@ -77,16 +78,23 @@ class HessianGeometry(StrictModule):
         /,
         *,
         damping: ArrayLike = 0.0,
+        precision: GeometryPrecisionPolicy | None = None,
     ) -> InformationMetricOperator:
-        point = jnp.asarray(coordinates)
-        if point.shape != (self.chart.dimension,):
+        original = jnp.asarray(coordinates)
+        if original.shape != (self.chart.dimension,):
             raise ValueError("Information operator requires one unbatched chart point.")
+        precision_ = GeometryPrecisionPolicy() if precision is None else precision
+        if not isinstance(precision_, GeometryPrecisionPolicy):
+            raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
+        precision_.validate_coordinates(original)
+        point = precision_.compute(original)
         _, action = jax.linearize(jax.grad(self._potential_point), point)
         return InformationMetricOperator(
             action,
-            point,
+            original,
             damping=damping,
             metric_id=f"hessian-information:{self.chart.name}",
+            precision=precision_,
         )
 
     def bregman_divergence(
