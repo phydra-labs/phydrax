@@ -194,7 +194,7 @@ class Domain(StrictModule):
         binding: "ModelBinding | None" = None,
     ):
         """Bind a model with an explicit domain input contract."""
-        from .._model import ModelBinding, ModelEvaluator
+        from .._model import ModelBinding, ModelEvaluator, ModelMetadataProvider
         from ._function import DomainFunction
         from ._model_function import ConcatenatedModelEvaluator
 
@@ -224,6 +224,14 @@ class Domain(StrictModule):
                     )
                 resolved_binding = binding
 
+            metadata: Mapping[str, Any] = {}
+            if isinstance(model, ModelMetadataProvider):
+                metadata = model.model_metadata()
+                if not isinstance(metadata, Mapping):
+                    raise TypeError("Model metadata providers must return a mapping.")
+                if any(not isinstance(name, str) or not name for name in metadata):
+                    raise ValueError("Model metadata keys must be nonempty strings.")
+
             return DomainFunction(
                 domain=self,
                 deps=deps_,
@@ -233,6 +241,7 @@ class Domain(StrictModule):
                     deps=tuple(deps_),
                     binding=resolved_binding,
                 ),
+                metadata=metadata,
             )
 
         return decorator

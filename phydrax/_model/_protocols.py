@@ -5,9 +5,13 @@
 from __future__ import annotations
 
 import abc
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Protocol, runtime_checkable
 
 from ._binding import ModelBinding
+
+
+MODEL_CONSTRUCTION_CERTIFICATE_KEYS = frozenset({"trial_space_certificate"})
 
 
 class ModelEvaluator(abc.ABC):
@@ -17,6 +21,14 @@ class ModelEvaluator(abc.ABC):
     def input_binding(self) -> ModelBinding:
         """Return the model's input packing and batch execution contract."""
         raise NotImplementedError
+
+@runtime_checkable
+class ModelMetadataProvider(Protocol):
+    """Model supplying immutable semantic metadata to a bound domain function."""
+
+    def model_metadata(self) -> Mapping[str, Any]:
+        """Return metadata attached by ``Domain.Model``."""
+        ...
 
 
 class AxisModelEvaluator(abc.ABC):
@@ -62,6 +74,8 @@ class StructuredDerivativeProvider(abc.ABC):
 
 __all__ = [
     "AxisModelEvaluator",
+    "MODEL_CONSTRUCTION_CERTIFICATE_KEYS",
     "ModelEvaluator",
+    "ModelMetadataProvider",
     "StructuredDerivativeProvider",
 ]

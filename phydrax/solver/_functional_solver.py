@@ -20,6 +20,7 @@ from phydrax.domain import DomainFunction
 from .._doc import DOC_KEY0
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
+from .._model import MODEL_CONSTRUCTION_CERTIFICATE_KEYS
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm, AbstractScalarTerm
@@ -31,6 +32,7 @@ from ..discretization import (
     DiscretizationRole,
 )
 from ..enforcement import EnforcementProgram
+from ..equations.trefftz import TrialSpaceCertificate
 from ..optim._kfac._config import KFAC
 from ..optim._riemannian import AbstractRiemannianOptimizer
 from ..terms._randomized_moment import RandomizedMomentPenalty
@@ -61,24 +63,43 @@ def _functional_discretization_bundle(
     trial_records = []
     trial_key_ids = []
     for name, function in functions.items():
+        certificate_values = tuple(
+            function.metadata[name]
+            for name in MODEL_CONSTRUCTION_CERTIFICATE_KEYS
+            if name in function.metadata
+        )
+        if len(certificate_values) > 1:
+            raise ValueError("Trial function carries multiple construction certificates.")
+        certificate = certificate_values[0] if certificate_values else None
+        if certificate is not None and not isinstance(certificate, TrialSpaceCertificate):
+            raise TypeError("Trial-space certificate metadata has an invalid value.")
         key = DiscretizationKey(
             f"trial:{name}",
             DiscretizationRole.AUXILIARY,
             domain_labels=function.deps,
         )
+        trial_payload = {
+            "kind": "functional-trial",
+            "name": name,
+            "dependencies": list(function.deps),
+            "domain": repr(function.domain),
+            "function": repr(function.func),
+        }
+        artifact_kind = "parametric-domain-function"
+        if certificate is not None:
+            artifact_kind = "exact-pde-trial-space"
+            trial_payload["trial_space"] = {
+                "certificate_id": certificate.certificate_id,
+                "equation_family": certificate.equation_family,
+                "ambient_dimension": certificate.ambient_dimension,
+                "basis_id": certificate.basis_id,
+                "rank": certificate.rank,
+            }
         trial_records.append(
             DiscretizationRecord(
                 key,
-                "parametric-domain-function",
-                canonical_fingerprint(
-                    {
-                        "kind": "functional-trial",
-                        "name": name,
-                        "dependencies": list(function.deps),
-                        "domain": repr(function.domain),
-                        "function": repr(function.func),
-                    }
-                ),
+                artifact_kind,
+                canonical_fingerprint(trial_payload),
             )
         )
         trial_key_ids.append(key.key_id)

@@ -45,6 +45,10 @@ term evaluation.
 """
 
 from ._bdf_method import BDFMethod
+from ._boundary_integral import (
+    InteriorLaplaceDirichletResult,
+    solve_interior_laplace_dirichlet_2d,
+)
 from ._calabi_yau import (
     CalabiYauMetricProblem,
     CalabiYauMetricResult,
@@ -380,6 +384,7 @@ from ._lindblad import (
     LindbladSolution,
     solve_lindblad,
 )
+from ._linear_trial_space import LinearTrialSpaceResult, solve_linear_trial_space
 from ._markov_cubature import (
     MarkovCubatureDiagnostics,
     MarkovCubatureMethod,
@@ -1075,6 +1080,10 @@ __all__ = [
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
     "FunctionalSolver",
+    "InteriorLaplaceDirichletResult",
+    "LinearTrialSpaceResult",
+    "solve_linear_trial_space",
+    "solve_interior_laplace_dirichlet_2d",
     "solve_variational_tdvp",
     "TDVPMode",
     "VariationalTDVPPolicy",

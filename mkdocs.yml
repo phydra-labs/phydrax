@@ -93,6 +93,7 @@ nav:
     - Cookbook:
         - Overview: "cookbook/index.md"
         - Poisson (field learning): "cookbook/poisson.md"
+        - Exact nD Trefftz fields: "cookbook/trefftz_nd.md"
         - Heat equation (space–time): "cookbook/heat.md"
         - Integral and nonlocal physics: "cookbook/integral_physics.md"
         - Stochastic dynamics (PINNs and SPDEs): "cookbook/stochastic_dynamics.md"
@@ -123,6 +124,9 @@ nav:
         - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
         - Solver substrates: "guides_solver_substrates.md"
         - Differential operators: "guides_differential.md"
+        - Exact PDE trial spaces: "guides_exact_trial_spaces.md"
+        - Holomorphic potential fields: "guides_holomorphic_potentials.md"
+        - Boundary layer potentials: "guides_boundary_layer_potentials.md"
         - Integrals and measures: "guides_integrals.md"
         - Special functions and named integrals: "guides_special_functions.md"
         - Euclidean path integrals and Feynman–Kac: "guides_path_integrals.md"
@@ -137,6 +141,9 @@ nav:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
+        - Equation representations:
+            - Exact PDE trial spaces: "api/equations/trefftz.md"
+            - Holomorphic potential fields: "api/equations/holomorphic.md"
         - Linear algebra runtime: "api/linalg.md"
         - External solver backends: "api/backends.md"
         - Sparse derivatives: "api/sparse_derivatives.md"
@@ -227,6 +234,7 @@ nav:
             - Differential: "api/operators/differential.md"
             - Graph: "api/operators/graph.md"
             - Integral: "api/operators/integral.md"
+            - Boundary layer potentials: "api/operators/layer_potential.md"
             - Interpolation: "api/operators/interpolation.md"
             - Path integrals: "api/operators/path_integral.md"
             - Functional: "api/operators/functional.md"

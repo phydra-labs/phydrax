@@ -15,6 +15,21 @@
   power cones with JAX-native primal/dual projections and direct Clarabel
   mappings. Fixed versus interval bounds now participate in conic structure
   identity.
+- Added certified finite Trefftz trial spaces for nD harmonic,
+  polyharmonic-Almansi, and homogeneous Helmholtz fields, with deterministic
+  exact-rational harmonic bases, resource preflight, sampled PDE audits,
+  enforcement safety, provenance, and direct fixed-boundary least-squares
+  fitting.
+
+- Added real-parameter complex affine layers, polynomial and exponential
+  holomorphic potentials, certified 2D harmonic, biharmonic, and plane-elastic
+  representations, plus prepared 2D Laplace single/double boundary layers and
+  an interior Dirichlet boundary-integral solve. Holomorphic coverage and parameter
+  linearity propagate into physical certificates, distinguishing linear finite
+  subspaces from nonlinear finite parametric families. Layer fields retain algebraic
+  PDE exactness off singular support; continuous-boundary target admissibility is
+  validated before residual audits, while target-clearance and panel/trace/BC
+  approximation evidence remain separate.
 
 - Added native-precision open-system campaign records, integrity-checked
   artifacts, semantic-variate replay evidence, fail-closed promotion policies,

@@ -12,6 +12,7 @@ from ._causal_recurrent import (
     CausalRecurrentResult,
     run_causal_recurrent,
 )
+from ._complex_linear import ComplexLinear
 from ._dropout import Dropout, inference_mode
 from ._fourier_embeddings import (
     ExplicitFourierFeatureEmbeddings,
@@ -90,6 +91,7 @@ __all__ = [
     "GRUCell",
     "sample_fourier_grid",
     "Dropout",
+    "ComplexLinear",
     "Linear",
     "LinearRecurrentUnit",
     "MultiheadWarp",

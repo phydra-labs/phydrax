@@ -21,7 +21,9 @@ from ._objectives import (
 )
 from ._protocols import (
     AxisModelEvaluator,
+    MODEL_CONSTRUCTION_CERTIFICATE_KEYS,
     ModelEvaluator,
+    ModelMetadataProvider,
     StructuredDerivativeProvider,
 )
 from ._structure import (
@@ -48,8 +50,10 @@ __all__ = [
     "FrozenModel",
     "KFACLayoutProvider",
     "ModelBatchMode",
+    "MODEL_CONSTRUCTION_CERTIFICATE_KEYS",
     "ModelBinding",
     "ModelEvaluator",
+    "ModelMetadataProvider",
     "ModelObjectiveProvider",
     "model_objective_labels",
     "model_from_structure_recipe",
