@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from typing import Any, TypeAlias
+from uuid import uuid4
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -178,6 +179,7 @@ class PreparedConvexProgram(StrictModule):
     template: ConvexProgramTemplate
     state: Any
     numeric_version: Array
+    numeric_binding_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -187,6 +189,7 @@ class PreparedConvexProgram(StrictModule):
         /,
         *,
         numeric_version: Any = 0,
+        numeric_binding_id: str | None = None,
     ):
         if not isinstance(program, (LinearProgram, QuadraticProgram, ConicProgram)):
             raise TypeError("program must be a canonical convex program.")
@@ -197,6 +200,9 @@ class PreparedConvexProgram(StrictModule):
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
             raise ValueError("numeric_version must be scalar.")
+        binding = uuid4().hex if numeric_binding_id is None else str(numeric_binding_id)
+        if not binding:
+            raise ValueError("numeric_binding_id must be non-empty.")
         self.program = program
         self.template = template
         self.state = state
@@ -205,6 +211,7 @@ class PreparedConvexProgram(StrictModule):
             version < 0,
             "numeric_version must be non-negative.",
         )
+        self.numeric_binding_id = binding
 
     @property
     def plan(self) -> ConvexProgramPlan:
@@ -217,6 +224,7 @@ class ConvexProgramExecution(StrictModule):
     result: ConvexProgramResult
     numeric_version: Array
     plan_id: str = eqx.field(static=True)
+    numeric_binding_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -225,15 +233,24 @@ class ConvexProgramExecution(StrictModule):
         *,
         numeric_version: Any,
         plan_id: str,
+        numeric_binding_id: str,
     ):
         if not isinstance(result, ConvexProgramResult):
             raise TypeError("result must be a ConvexProgramResult.")
         identifier = str(plan_id)
         if not identifier:
             raise ValueError("plan_id must be non-empty.")
+        binding = str(numeric_binding_id)
+        if not binding:
+            raise ValueError("numeric_binding_id must be non-empty.")
+        if result.provenance.numeric_binding_id != binding:
+            raise ValueError(
+                "Execution result provenance does not match its numeric binding."
+            )
         self.result = result
         self.numeric_version = jnp.asarray(numeric_version, dtype=jnp.int32)
         self.plan_id = identifier
+        self.numeric_binding_id = binding
 
 
 def plan_convex_program(
@@ -505,6 +522,7 @@ def solve_prepared_convex_program(
         backend_version=backend_provenance.backend_version,
         convexity_evidence=backend_provenance.convexity_evidence,
         regularization=policy.regularization,
+        numeric_binding_id=prepared.numeric_binding_id,
     )
     result = eqx.tree_at(
         lambda candidate: candidate.provenance,
@@ -515,6 +533,7 @@ def solve_prepared_convex_program(
         result,
         numeric_version=prepared.numeric_version,
         plan_id=prepared.plan.plan_id,
+        numeric_binding_id=prepared.numeric_binding_id,
     )
 
 
