@@ -9,6 +9,7 @@ from math import sqrt
 
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 import scipy.sparse as sp
 
 from ...backends import ClarabelPlan, prepare_clarabel, PreparedClarabel
@@ -277,11 +278,11 @@ def _audit_result(
         if program.quadratic is None
         else program.quadratic
     )
-    objective = 0.5 * jnp.einsum(
+    objective = 0.5 * oe.contract(
         "...i,...ij,...j->...", primal, quadratic, primal
     ) + jnp.sum(program.linear * primal, axis=-1)
     primal_residual = (
-        jnp.einsum("...ij,...j->...i", program.constraint_matrix, primal)
+        oe.contract("...ij,...j->...i", program.constraint_matrix, primal)
         + slack
         - program.constraint_rhs
     )
@@ -290,9 +291,9 @@ def _audit_result(
     cone_violation = slack - cone_projection
     dual_violation = dual - dual_projection
     stationarity = (
-        jnp.einsum("...ij,...j->...i", quadratic, primal)
+        oe.contract("...ij,...j->...i", quadratic, primal)
         + program.linear
-        + jnp.einsum("...ji,...j->...i", program.constraint_matrix, dual)
+        + oe.contract("...ji,...j->...i", program.constraint_matrix, dual)
         - lower_dual
         + upper_dual
     )
@@ -358,8 +359,8 @@ def _audit_result(
 
     primal_ray_scale = jnp.maximum(1.0, _max_abs(primal))
     primal_ray = primal / primal_ray_scale[..., None]
-    quadratic_ray = _max_abs(jnp.einsum("...ij,...j->...i", quadratic, primal_ray))
-    recession_slack = -jnp.einsum(
+    quadratic_ray = _max_abs(oe.contract("...ij,...j->...i", quadratic, primal_ray))
+    recession_slack = -oe.contract(
         "...ij,...j->...i", program.constraint_matrix, primal_ray
     )
     primal_ray_residual = jnp.maximum(
@@ -389,7 +390,7 @@ def _audit_result(
     lower_ray = lower_dual / dual_ray_scale[..., None]
     upper_ray = upper_dual / dual_ray_scale[..., None]
     dual_ray_stationarity = (
-        jnp.einsum("...ji,...j->...i", program.constraint_matrix, dual_ray)
+        oe.contract("...ji,...j->...i", program.constraint_matrix, dual_ray)
         - lower_ray
         + upper_ray
     )

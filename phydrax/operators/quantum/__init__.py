@@ -20,6 +20,7 @@ from ._amplitude import (
 )
 from ._bath_decomposition import (
     drude_lorentz_matsubara,
+    drude_lorentz_pade,
     drude_lorentz_pade_from_poles,
     fit_bath_exponentials,
     underdamped_brownian_two_pole,
@@ -160,6 +161,7 @@ __all__ = [
     "QuantumObservablePlan",
     "ReactionCoordinateMapping",
     "jaynes_cummings_hamiltonian",
+    "drude_lorentz_pade",
     "kerr_hamiltonian",
     "lorentzian_pseudomode",
     "DynamicalMapSeriesPhysicality",

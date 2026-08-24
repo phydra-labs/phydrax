@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -453,9 +454,9 @@ def test_information_chain_is_jittable_and_coherent_samples_recover_lag_moments(
     draws = phx.uq.sample_gaussian_markov(jr.key(912), recovered, sample_shape=(20_000,))
     empirical_mean = jnp.mean(draws, axis=0)
     centered = draws - empirical_mean
-    empirical_covariance = jnp.einsum("sni,snj->nij", centered, centered) / draws.shape[0]
+    empirical_covariance = oe.contract("sni,snj->nij", centered, centered) / draws.shape[0]
     empirical_cross = (
-        jnp.einsum("sni,snj->nij", centered[:, :-1], centered[:, 1:]) / draws.shape[0]
+        oe.contract("sni,snj->nij", centered[:, :-1], centered[:, 1:]) / draws.shape[0]
     )
     assert jnp.allclose(empirical_mean, recovered.means, rtol=0.0, atol=2.5e-2)
     assert jnp.allclose(

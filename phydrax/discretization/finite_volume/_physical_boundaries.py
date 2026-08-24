@@ -9,6 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -312,10 +313,10 @@ class CharacteristicInflowBoundary(AbstractFiniteVolumeBoundary):
         left_matrix, right_matrix, speeds = system.eigensystem(
             interior, target, axis, args
         )
-        amplitudes = jnp.einsum("...ij,...j->...i", left_matrix, target - interior)
+        amplitudes = oe.contract("...ij,...j->...i", left_matrix, target - interior)
         outward_sign = jnp.sign(outward_normal[..., axis])
         incoming = speeds * outward_sign[..., None] < 0.0
-        correction = jnp.einsum(
+        correction = oe.contract(
             "...ij,...j->...i",
             right_matrix,
             jnp.where(incoming, amplitudes, 0.0),
@@ -362,10 +363,10 @@ class CharacteristicOutflowBoundary(AbstractFiniteVolumeBoundary):
         left_matrix, right_matrix, speeds = system.eigensystem(
             interior, target, axis, args
         )
-        amplitudes = jnp.einsum("...ij,...j->...i", left_matrix, target - interior)
+        amplitudes = oe.contract("...ij,...j->...i", left_matrix, target - interior)
         outward_sign = jnp.sign(outward_normal[..., axis])
         incoming = speeds * outward_sign[..., None] < 0.0
-        correction = jnp.einsum(
+        correction = oe.contract(
             "...ij,...j->...i",
             right_matrix,
             jnp.where(incoming, amplitudes, 0.0),

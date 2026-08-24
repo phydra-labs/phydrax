@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 
@@ -23,7 +24,7 @@ def apply_unitary_to_state(unitary: ArrayLike, state: ArrayLike, /) -> Array:
     vector = jnp.asarray(state)
     if vector.shape[-1:] != (matrix.shape[-1],):
         raise ValueError("State trailing dimension must match the unitary dimension.")
-    return jnp.einsum("...ij,...j->...i", matrix, vector)
+    return oe.contract("...ij,...j->...i", matrix, vector)
 
 
 def conjugate_density(unitary: ArrayLike, density: ArrayLike, /) -> Array:

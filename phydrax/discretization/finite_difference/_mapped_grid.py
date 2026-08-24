@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
@@ -442,7 +443,7 @@ class PreparedMappedTensorGrid(StrictModule, NonTrainableState):
             axis=-1,
         )
         return (
-            jnp.einsum(
+            oe.contract(
                 "...ij,...j->...i",
                 self.cofactor,
                 reference_gradient,
@@ -455,7 +456,7 @@ class PreparedMappedTensorGrid(StrictModule, NonTrainableState):
         dimension = len(self.shape)
         if value.shape != self.shape + (dimension,):
             raise ValueError("Mapped vector must have one trailing physical component.")
-        contravariant_flux = jnp.einsum("...ij,...i->...j", self.cofactor, value)
+        contravariant_flux = oe.contract("...ij,...i->...j", self.cofactor, value)
         result = jnp.zeros(self.shape, dtype=value.dtype)
         for axis, derivative in enumerate(self.derivatives):
             result = result + derivative.operator.mv(contravariant_flux[..., axis])
@@ -562,7 +563,7 @@ class MappedDiffusionOperator(AbstractLinearOperator):
     def mv(self, vector: ArrayLike, /) -> Array:
         value = self.source.validate(jnp.asarray(vector))
         gradient = self.mapped_grid.gradient(value)
-        flux = jnp.einsum("...ij,...j->...i", self.coefficient, gradient)
+        flux = oe.contract("...ij,...j->...i", self.coefficient, gradient)
         return self.mapped_grid.divergence(flux)
 
     def transpose_mv(self, vector: ArrayLike, /) -> Array:

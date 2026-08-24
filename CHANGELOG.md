@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- Added native-precision open-system campaign records, integrity-checked
+  artifacts, semantic-variate replay evidence, fail-closed promotion policies,
+  frozen campaign-matrix tooling, and cross-campaign graduation with permanent
+  unsupported-claim provenance.
+
+- Replaced Boolean archive qualification with exact campaign
+  deserialization and reproduction, added derived physicality/capacity gates,
+  adaptive preconditioned HEOM, eventful multi-event MPS jumps, analytic Padé
+  residues, direct-memory Choi certification, active-memory refit, and separate
+  neural projection-audit semantics.
+  Campaign orchestration and graduation now live under developer tooling rather
+  than the public solver API.
+
+- Added connected VMC neural trajectory execution, seeded disjoint process
+  tomography designs, count-aware held-out refit evidence, and pre-fit/post-fit
+  recovery gates for sequential-process and causal-memory campaigns.
+
 - Added fail-closed open-system evidence with quantified approximation
   thresholds, exact pseudomode initial states, process initial-state
   physicality, semantic trajectory keys, fixed-step probability guards,

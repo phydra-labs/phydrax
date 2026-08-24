@@ -16,6 +16,7 @@ from ._causal_process import CausalProcessTensor, CombLegSpec
 
 class ProcessGaugeReport(StrictModule):
     isometry_residuals: Array
+    coordinate_count: Array
     physical_parameter_count: Array
     gauge_dimension: Array
     valid: Array
@@ -23,15 +24,24 @@ class ProcessGaugeReport(StrictModule):
     def __init__(
         self,
         isometry_residuals: ArrayLike,
+        coordinate_count: ArrayLike,
         physical_parameter_count: ArrayLike,
         gauge_dimension: ArrayLike,
         /,
     ):
         self.isometry_residuals = jnp.asarray(isometry_residuals)
+        self.coordinate_count = jnp.asarray(coordinate_count)
         self.physical_parameter_count = jnp.asarray(physical_parameter_count)
         self.gauge_dimension = jnp.asarray(gauge_dimension)
-        self.valid = jnp.all(jnp.isfinite(self.isometry_residuals)) & jnp.all(
-            self.isometry_residuals <= 1e-8
+        self.valid = (
+            jnp.all(jnp.isfinite(self.isometry_residuals))
+            & jnp.all(self.isometry_residuals <= 1e-8)
+            & (self.coordinate_count > 0)
+            & (self.physical_parameter_count > 0)
+            & (
+                self.coordinate_count
+                == self.physical_parameter_count + self.gauge_dimension
+            )
         )
 
 
@@ -97,12 +107,27 @@ class SequentialStinespringProcess(StrictModule):
                 for value in self.isometries
             ]
         )
-        coordinate_count = sum(2 * value.size for value in self.isometries)
-        constraint_count = self.spec.slot_count * composite**2
-        gauge_dimension = max(0, self.spec.slot_count - 1) * self.spec.memory_dimension**2
+        coordinate_count = 2 * self.initial_factor.size + sum(
+            2 * value.size for value in self.isometries
+        )
+        density_parameters = composite**2 - 1
+        channel_parameters = sum(
+            2 * composite**2 * environment
+            - composite**2
+            - environment**2
+            for environment in self.environment_dimensions
+        )
+        temporal_memory_gauge = (self.spec.slot_count + 1) * max(
+            0, self.spec.memory_dimension**2 - 1
+        )
+        physical_parameter_count = (
+            density_parameters + channel_parameters - temporal_memory_gauge
+        )
+        gauge_dimension = coordinate_count - physical_parameter_count
         return ProcessGaugeReport(
             residuals,
-            coordinate_count - constraint_count - gauge_dimension,
+            coordinate_count,
+            physical_parameter_count,
             gauge_dimension,
         )
 

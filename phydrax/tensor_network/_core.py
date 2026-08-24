@@ -56,6 +56,17 @@ class MatrixProductState(StrictModule):
             state = jnp.tensordot(state, tensor, axes=(-1, 0))
         return state[..., 0].reshape(-1)
 
+    def to_dense(self, /, *, maximum_elements: int = 1_000_000) -> Array:
+        count = 1
+        for dimension in self.physical_dimensions:
+            count *= dimension
+        if int(maximum_elements) <= 0 or count > int(maximum_elements):
+            raise ValueError(
+                f"Dense MPS materialization requires {count} elements; "
+                f"capacity is {int(maximum_elements)}."
+            )
+        return self.precision.output(self._contract())
+
     def inner(self, other: MatrixProductState, /) -> Array:
         from ._environments import mps_inner
 

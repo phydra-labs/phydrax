@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array
 
 from .._strict import StrictModule
@@ -214,7 +215,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
             (sample_count,) + effective_transitions.shape,
         )
         first_values = (
-            jnp.einsum(
+            oe.contract(
                 "nctij,ncj->ncti",
                 effective_transitions[:, :, :1],
                 initial_states,
@@ -273,7 +274,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
             axis=-1,
         )
         means = (
-            jnp.einsum(
+            oe.contract(
                 "ctij,nctj->ncti",
                 transitions,
                 flat_path[:, :, :-1],
@@ -325,7 +326,7 @@ class GaussianMarkovVariationalFamily(AbstractVariationalFamily):
             axis=-1,
         )
         means = (
-            jnp.einsum(
+            oe.contract(
                 "ctij,nctj->ncti",
                 transitions,
                 flat_path[:, :, :-1],

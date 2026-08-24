@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -36,9 +37,9 @@ def validate_process_comb_causality(
     norm = jnp.vdot(trace_vector, trace_vector)
     residuals = []
     for tensor in process.tensors:
-        reduced = jnp.einsum("o,loir->lir", trace_vector, tensor)
-        bond_transfer = jnp.einsum("lir,i->lr", reduced, trace_vector) / norm
-        expected = jnp.einsum("lr,i->lir", bond_transfer, trace_vector)
+        reduced = oe.contract("o,loir->lir", trace_vector, tensor)
+        bond_transfer = oe.contract("lir,i->lr", reduced, trace_vector) / norm
+        expected = oe.contract("lr,i->lir", bond_transfer, trace_vector)
         residuals.append(jnp.max(jnp.abs(reduced - expected)))
     return ProcessCombCausalityReport(jnp.stack(residuals), tolerance=tolerance)
 

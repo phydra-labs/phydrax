@@ -8,6 +8,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -272,8 +273,8 @@ class ProcessTensorMPO(StrictModule):
         for tensor, intervention in zip(self.tensors, operations, strict=True):
             tensor_ = self.precision.contraction(tensor)
             superoperator = self.precision.contraction(intervention.superoperator)
-            state = jnp.einsum("li,loir->ro", state, tensor_)
-            state = jnp.einsum("oi,ri->ro", superoperator, state)
+            state = oe.contract("li,loir->ro", state, tensor_)
+            state = oe.contract("oi,ri->ro", superoperator, state)
             density = self.precision.sum(state, axis=0).reshape(
                 (self.dimension, self.dimension)
             )

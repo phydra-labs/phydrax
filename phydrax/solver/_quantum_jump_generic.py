@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..stochastic import JumpProcess, PoissonClockRealization
@@ -40,7 +41,7 @@ def quantum_jump_differential_problem(
         collapsed = jnp.stack(
             [operator(quantum_state) for operator in problem.collapse_operators]
         )
-        return jnp.real(jnp.einsum("ki,ki->k", jnp.conj(collapsed), collapsed))
+        return jnp.real(oe.contract("ki,ki->k", jnp.conj(collapsed), collapsed))
 
     def drift(time, state, args):
         del time, args

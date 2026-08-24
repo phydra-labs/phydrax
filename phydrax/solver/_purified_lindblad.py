@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -95,7 +96,7 @@ def apply_local_kraus_channel(
     tensor = state.tensors[channel.site]
     if tensor.shape[1] != channel.kraus.shape[-1]:
         raise ValueError("Kraus and physical dimensions differ.")
-    transformed = jnp.einsum("aoi,likr->loakr", channel.kraus, tensor)
+    transformed = oe.contract("aoi,likr->loakr", channel.kraus, tensor)
     transformed = transformed.reshape(
         (tensor.shape[0], tensor.shape[1], -1, tensor.shape[-1])
     )

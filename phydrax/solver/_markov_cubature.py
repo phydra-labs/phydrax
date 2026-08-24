@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
@@ -353,7 +354,7 @@ def solve_markov_cubature(
             lambda state, enabled: evaluate_parent(time, state, enabled)
         )(current, active)
         state_width = jnp.asarray(width, dtype=current.dtype)
-        noise = jnp.einsum("rsd,pd->rps", diffusion, controls)
+        noise = oe.contract("rsd,pd->rps", diffusion, controls)
         return (
             current[:, None, :]
             + state_width * drift[:, None, :]

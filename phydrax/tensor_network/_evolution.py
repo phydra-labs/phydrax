@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._precision import PrecisionEvidenceEnvelope
@@ -64,7 +65,7 @@ def apply_two_site_gate(
     if gate_.shape != (d_left, d_right, d_left, d_right):
         raise ValueError("Gate shape must be (out_left,out_right,in_left,in_right).")
     theta = jnp.tensordot(left, right, axes=(-1, 0))
-    theta = jnp.einsum("abij,lijr->labr", gate_, theta)
+    theta = oe.contract("abij,lijr->labr", gate_, theta)
     matrix = precision.factorization(
         theta.reshape((left.shape[0] * d_left, d_right * right.shape[-1]))
     )

@@ -285,7 +285,6 @@ class OpenSystemHistorySolution(StrictModule):
             trace_residual=jnp.max(trace_residuals),
             hermiticity_residual=jnp.max(hermiticity_residuals),
             positivity_margin=jnp.min(minimum_eigenvalues),
-            status="unknown",
             precision_evidence=precision_evidence,
         )
         self.valid = execution_valid & pointwise_density_valid
@@ -405,8 +404,8 @@ def solve_memory_kernel(
         jnp.asarray(step_size, dtype=problem.initial_density.real.dtype)
     ).reshape(())
     count = int(steps)
-    if count < 0 or float(step) <= 0.0:
-        raise ValueError("steps and step_size must be positive.")
+    if count <= 0 or float(step) <= 0.0 or not bool(jnp.isfinite(step)):
+        raise ValueError("steps and step_size must be finite and positive.")
     states = [problem.initial_density]
     for current in range(count):
         time = step * current
@@ -509,6 +508,82 @@ def solve_time_local_open_system(
     )
 
 
+class MemoryKernelMapCertification(StrictModule):
+    superoperators: Array
+    choi_matrices: Array
+    cp_margins: Array
+    trace_preservation_residuals: Array
+    valid: Array
+
+    def __init__(
+        self,
+        superoperators: ArrayLike,
+        certifications: tuple[DynamicalMapPhysicality, ...],
+        /,
+    ):
+        self.superoperators = jnp.asarray(superoperators)
+        self.choi_matrices = jnp.stack(
+            [value.choi_matrix for value in certifications]
+        )
+        self.cp_margins = jnp.stack(
+            [value.cp_margin for value in certifications]
+        )
+        self.trace_preservation_residuals = jnp.stack(
+            [value.trace_preservation_residual for value in certifications]
+        )
+        self.valid = (
+            jnp.all(jnp.isfinite(self.superoperators))
+            & jnp.all(jnp.stack([value.valid for value in certifications]))
+        )
+
+
+def certify_memory_kernel_map(
+    problem: MemoryKernelMasterEquation,
+    /,
+    *,
+    step_size: ArrayLike,
+    steps: int,
+) -> MemoryKernelMapCertification:
+    """Reconstruct and certify the discrete dynamical map on matrix units."""
+    dimension = problem.kernel.dimension
+    columns = []
+    for row in range(dimension):
+        for column in range(dimension):
+            basis = (
+                jnp.zeros(
+                    (dimension, dimension),
+                    dtype=problem.initial_density.dtype,
+                )
+                .at[row, column]
+                .set(1.0)
+            )
+            basis_problem = MemoryKernelMasterEquation(
+                problem.local_generator,
+                problem.kernel,
+                basis,
+                geometry_precision=problem.geometry_precision,
+                hermitian_precision=problem.hermitian_precision,
+                problem_id=f"{problem.problem_id}:basis-{row}-{column}",
+            )
+            solution = solve_memory_kernel(
+                basis_problem,
+                step_size=step_size,
+                steps=steps,
+            )
+            columns.append(solution.states.reshape((int(steps) + 1, -1)))
+    superoperators = jnp.stack(columns, axis=-1)
+    certifications = tuple(
+        DynamicalMapPhysicality(
+            superoperator,
+            dimension,
+            geometry_precision=problem.geometry_precision,
+            hermitian_precision=problem.hermitian_precision,
+        )
+        for superoperator in superoperators
+    )
+    return MemoryKernelMapCertification(superoperators, certifications)
+
+
 def exponential_memory_qubit_problem(
     strength: float,
     decay: float,
@@ -539,10 +614,12 @@ def exponential_memory_qubit_problem(
 
 __all__ = [
     "DynamicalMapPhysicality",
+    "MemoryKernelMapCertification",
     "MemoryKernelMasterEquation",
     "OpenSystemHistorySolution",
     "QuantumMemoryKernel",
     "TimeLocalOpenSystemProblem",
+    "certify_memory_kernel_map",
     "exponential_memory_qubit_problem",
     "solve_memory_kernel",
     "solve_time_local_open_system",

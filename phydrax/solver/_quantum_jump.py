@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._geometry_precision import GeometryPrecisionPolicy
@@ -358,7 +359,7 @@ def solve_quantum_jump_ensemble(
         [operator(problem.initial_state) for operator in problem.collapse_operators]
     )
     initial_rates = jnp.real(
-        jnp.einsum("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
+        oe.contract("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
     )
     if float(step * jnp.sum(initial_rates)) > 0.1:
         raise ValueError("Fixed-step jump probability exceeds the 0.1 validity limit.")

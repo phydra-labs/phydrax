@@ -10,6 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
@@ -305,8 +306,8 @@ class RoeFluxPlan(AbstractNumericalFluxPlan):
             absolute,
         )
         jump = right_ - left_
-        characteristic = jnp.einsum("...ij,...j->...i", left_matrix, jump)
-        dissipation = jnp.einsum("...ij,...j->...i", right_matrix, fixed * characteristic)
+        characteristic = oe.contract("...ij,...j->...i", left_matrix, jump)
+        dissipation = oe.contract("...ij,...j->...i", right_matrix, fixed * characteristic)
         flux = 0.5 * (
             system.physical_flux(left_, int(axis), args)
             + system.physical_flux(right_, int(axis), args)

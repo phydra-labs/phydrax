@@ -8,6 +8,7 @@ from typing import Any, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._bounds import Bounds
@@ -385,9 +386,9 @@ def _restore_linear_constraint_fields(
     inequality_dual = result.cone_dual[..., equalities : equalities + inequalities]
     inequality_slack = result.cone_slack[..., equalities : equalities + inequalities]
     equality_residual = (
-        jnp.einsum("...ij,...j->...i", equality_matrix, result.primal) - equality_rhs
+        oe.contract("...ij,...j->...i", equality_matrix, result.primal) - equality_rhs
     )
-    inequality_action = jnp.einsum(
+    inequality_action = oe.contract(
         "...ij,...j->...i",
         inequality_matrix,
         result.primal,

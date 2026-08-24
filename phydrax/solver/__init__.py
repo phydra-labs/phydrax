@@ -319,11 +319,14 @@ from ._heom import (
     thermal_drude_lorentz_qubit_heom,
 )
 from ._heom_implicit import (
+    HEOMAdaptiveBDFEvidence,
+    HEOMAdaptiveBDFResult,
     HEOMBDFEvidence,
     HEOMBDFResult,
     HEOMImplicitEvidence,
     HEOMImplicitResult,
     HEOMTierBlockPreconditioner,
+    solve_heom_adaptive_bdf,
     solve_heom_backward_euler,
     solve_heom_bdf,
 )
@@ -398,8 +401,10 @@ from ._memory import (
     VolterraVectorField,
 )
 from ._memory_kernel import (
+    certify_memory_kernel_map,
     DynamicalMapPhysicality,
     exponential_memory_qubit_problem,
+    MemoryKernelMapCertification,
     MemoryKernelMasterEquation,
     OpenSystemHistorySolution,
     QuantumMemoryKernel,
@@ -435,21 +440,19 @@ from ._neural_quantum_jump import (
     solve_neural_no_jump_tdvp,
 )
 from ._neural_sampled_trajectory import (
+    audit_connected_vmc_jump_projection,
+    ConnectedVMCJumpProjectionAudit,
+    ConnectedVMCNeuralTrajectoryPolicy,
+    ConnectedVMCNeuralTrajectoryProblem,
+    ConnectedVMCNeuralTrajectoryResult,
     NeuralRateEvidence,
-    SampledNeuralTrajectoryProblem,
-    SampledNeuralTrajectoryResult,
-    solve_sampled_neural_trajectory,
+    solve_connected_vmc_neural_trajectory,
 )
 from ._nonmarkov_campaign import (
     lorentzian_qubit_comparison,
     NonMarkovianComparisonResult,
     spin_boson_dephasing_comparison,
     SpinBosonComparisonResult,
-)
-from ._open_system_artifact import (
-    OPEN_SYSTEM_ARTIFACT_SCHEMA,
-    read_open_system_artifact,
-    write_open_system_artifact,
 )
 from ._particles import (
     InteractingParticleProblem,
@@ -476,7 +479,9 @@ from ._process_tomography import (
     CausalProcessTomographyProblem,
     CausalProcessTomographyResult,
     fit_causal_process_initial_state,
+    informationally_complete_process_experiments,
     ProcessTomographyExperiment,
+    tomography_designs_disjoint,
 )
 from ._pseudomode import (
     jaynes_cummings_pseudomode_problem,
@@ -610,7 +615,9 @@ from ._stencil_evolution import (
     StaggeredAcousticState,
 )
 from ._stinespring_tomography import (
+    fit_causal_process_memory,
     fit_stinespring_process,
+    ProcessMemoryRefitResult,
     StinespringTomographyProblem,
     StinespringTomographyResult,
 )
@@ -1093,6 +1100,8 @@ __all__ = [
     "train_neural_cde",
     "CausalProcessTomographyProblem",
     "CausalProcessTomographyResult",
+    "HEOMAdaptiveBDFEvidence",
+    "HEOMAdaptiveBDFResult",
     "HEOMImplicitEvidence",
     "HEOMImplicitResult",
     "LPDOBondEvidence",
@@ -1110,7 +1119,10 @@ __all__ = [
     "apply_lpdo_two_site_unitary",
     "boundary_driven_xxz_problem",
     "fit_causal_process_initial_state",
+    "informationally_complete_process_experiments",
+    "tomography_designs_disjoint",
     "open_kitaev_chain",
+    "solve_heom_adaptive_bdf",
     "solve_heom_backward_euler",
     "solve_neural_no_jump_tdvp",
     "solve_purified_strang",
@@ -1119,23 +1131,27 @@ __all__ = [
     "HEOMBDFResult",
     "HEOMGridContinuationResult",
     "HEOMTierBlockPreconditioner",
+    "ConnectedVMCJumpProjectionAudit",
+    "ConnectedVMCNeuralTrajectoryPolicy",
+    "ConnectedVMCNeuralTrajectoryProblem",
+    "ConnectedVMCNeuralTrajectoryResult",
     "NeuralRateEvidence",
-    "OPEN_SYSTEM_ARTIFACT_SCHEMA",
+    "audit_connected_vmc_jump_projection",
     "PurifiedStationarityDiagnostic",
-    "SampledNeuralTrajectoryProblem",
-    "SampledNeuralTrajectoryResult",
     "XXZQualificationResult",
     "diagnose_purified_stationarity",
     "local_kraus_channel_from_lindblad",
     "prepare_scaled_heom_topology",
     "qualify_boundary_driven_xxz",
     "quantum_jump_differential_problem",
-    "read_open_system_artifact",
+    "certify_memory_kernel_map",
+    "MemoryKernelMapCertification",
     "solve_heom_bdf",
     "solve_heom_continuation_grid",
     "solve_quantum_jump_generic",
-    "solve_sampled_neural_trajectory",
-    "write_open_system_artifact",
+    "solve_connected_vmc_neural_trajectory",
+    "fit_causal_process_memory",
+    "ProcessMemoryRefitResult",
     "StinespringTomographyProblem",
     "StinespringTomographyResult",
     "fit_stinespring_process",

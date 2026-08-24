@@ -6,6 +6,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -43,7 +44,7 @@ class _PolynomialBasis(AbstractArrayModel):
     def __call__(self, coordinate, /, *, key=None):
         del key
         powers = jnp.asarray(coordinate[0]) ** jnp.arange(self.coefficients.shape[-1])
-        return jnp.einsum("crp,p->cr", self.coefficients, powers).reshape(-1)
+        return oe.contract("crp,p->cr", self.coefficients, powers).reshape(-1)
 
 
 class _PolynomialOutput(AbstractArrayModel):
