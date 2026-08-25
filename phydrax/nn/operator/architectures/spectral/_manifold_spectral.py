@@ -139,9 +139,9 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
         key: Key[Array, ""] = DOC_KEY0,
     ):
         if not isinstance(source_plan, SpectralDecomposition):
-            raise TypeError("source_plan must be a SpectralDiscretization.")
+            raise TypeError("source_plan must be a SpectralDecomposition.")
         if target_plan is not None and not isinstance(target_plan, SpectralDecomposition):
-            raise TypeError("target_plan must be a SpectralDiscretization.")
+            raise TypeError("target_plan must be a SpectralDecomposition.")
         self.source_plan = source_plan
         self.target_plan = source_plan if target_plan is None else target_plan
         if source_plan.num_modes != self.target_plan.num_modes:

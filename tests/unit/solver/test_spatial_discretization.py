@@ -33,9 +33,9 @@ def test_fourier_sine_and_cosine_laplacians_respect_boundary_semantics():
     fourier_axis = phx.discretization.FourierAxisSpec(16).materialize(0.0, 1.0)
     sine_axis = phx.discretization.SineAxisSpec(15).materialize(0.0, 1.0)
     cosine_axis = phx.discretization.CosineAxisSpec(16).materialize(0.0, 1.0)
-    fourier = phx.discretization.SeparableSpectralDiscretization((fourier_axis,))
-    sine = phx.discretization.SeparableSpectralDiscretization((sine_axis,))
-    cosine = phx.discretization.SeparableSpectralDiscretization((cosine_axis,))
+    fourier = phx.discretization.TensorSpectralDiscretization.from_axes((fourier_axis,))
+    sine = phx.discretization.TensorSpectralDiscretization.from_axes((sine_axis,))
+    cosine = phx.discretization.TensorSpectralDiscretization.from_axes((cosine_axis,))
     fourier_state = jnp.sin(4.0 * jnp.pi * fourier_axis.nodes)
     sine_state = jnp.sin(jnp.pi * sine_axis.nodes)
     cosine_state = jnp.cos(jnp.pi * cosine_axis.nodes)
@@ -63,7 +63,9 @@ def test_fourier_sine_and_cosine_laplacians_respect_boundary_semantics():
 def test_tensor_grid_laplacian_preserves_channels_and_compiles():
     x_axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     y_axis = phx.discretization.FourierAxisSpec(10).materialize(0.0, 1.0)
-    discretization = phx.discretization.SeparableSpectralDiscretization((x_axis, y_axis))
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
+        (x_axis, y_axis)
+    )
     x = x_axis.nodes[:, None]
     y = y_axis.nodes[None, :]
     scalar = jnp.sin(2.0 * jnp.pi * x) + 0.5 * jnp.cos(4.0 * jnp.pi * y)
@@ -84,7 +86,9 @@ def test_tensor_grid_laplacian_preserves_channels_and_compiles():
 def test_tensor_eigenpairs_use_exact_separable_modes_and_stable_ordering():
     x_axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
     y_axis = phx.discretization.CosineAxisSpec(33).materialize(0.0, 1.0)
-    discretization = phx.discretization.SeparableSpectralDiscretization((x_axis, y_axis))
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
+        (x_axis, y_axis)
+    )
 
     eigenvalues, modes = discretization.eigenpairs(rank=8)
     flattened = modes.reshape((discretization.num_points, 8))
@@ -108,7 +112,7 @@ def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank():
     axes = tuple(
         phx.discretization.FourierAxisSpec(64).materialize(0.0, 1.0) for _ in range(2)
     )
-    discretization = phx.discretization.SeparableSpectralDiscretization(axes)
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes(axes)
 
     eigenvalues, modes = discretization.eigenpairs(rank=6)
 
@@ -117,7 +121,7 @@ def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank():
     assert modes.shape == (64, 64, 6)
 
     long_axis = phx.discretization.FourierAxisSpec(10_000).materialize(0.0, 1.0)
-    long_grid = phx.discretization.SeparableSpectralDiscretization((long_axis,))
+    long_grid = phx.discretization.TensorSpectralDiscretization.from_axes((long_axis,))
     long_eigenvalues, long_modes = long_grid.eigenpairs(rank=4)
     assert long_eigenvalues.shape == (4,)
     assert long_modes.shape == (10_000, 4)
@@ -151,7 +155,7 @@ def test_existing_spectral_plan_is_reused_without_a_second_basis_convention():
         jnp.ones((3,)),
         decomposition_id="unit-plan",
     )
-    discretization = phx.discretization.SpectralDiscretization(plan)
+    discretization = phx.discretization.EigenbasisDiscretization(plan)
     state = jnp.asarray([1.0, 2.0, 3.0])
 
     assert discretization.plan is plan
@@ -176,11 +180,11 @@ def test_spatial_discretization_rejects_unsupported_grids_and_state_shapes():
         periodic=False,
     ).materialize(0.0, 1.0)
     with pytest.raises(ValueError, match="require FiniteDifferencePlan"):
-        phx.discretization.SeparableSpectralDiscretization((nonperiodic_uniform,))
+        phx.discretization.TensorSpectralDiscretization.from_axes((nonperiodic_uniform,))
 
     axis = phx.discretization.FourierAxisSpec(6).materialize(0.0, 1.0)
-    discretization = phx.discretization.SeparableSpectralDiscretization((axis,))
-    with pytest.raises(ValueError, match="begin with tensor-grid shape"):
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
+    with pytest.raises(ValueError, match="Physical values must begin with shape"):
         discretization.laplacian(jnp.ones((5,)))
     with pytest.raises(ValueError, match="rank must lie"):
         discretization.eigenpairs(rank=7)

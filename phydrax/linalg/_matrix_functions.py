@@ -35,6 +35,7 @@ MatrixFunctionKind: TypeAlias = Literal[
     "exp",
     "phi1",
     "phi2",
+    "phi3",
     "sin",
     "cos",
     "log",
@@ -372,6 +373,8 @@ def _zero_scale_action(
         return coordinates
     if kind == "phi2":
         return jnp.asarray(0.5, dtype=coordinates.dtype) * coordinates
+    if kind == "phi3":
+        return jnp.asarray(1.0 / 6.0, dtype=coordinates.dtype) * coordinates
     if kind == "sin" or kind == "sqrt":
         return jnp.zeros_like(coordinates)
     if kind == "resolvent":
@@ -419,6 +422,7 @@ def matrix_function_action(
         "exp",
         "phi1",
         "phi2",
+        "phi3",
         "sin",
         "cos",
         "log",
@@ -711,6 +715,39 @@ def matrix_phi1_action(
     return matrix_function_action(operator, vector, scale, kind="phi1", **kwargs)
 
 
+def matrix_phi2_action(
+    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+) -> MatrixFunctionResult:
+    return matrix_function_action(operator, vector, scale, kind="phi2", **kwargs)
+
+
+def matrix_phi3_action(
+    operator, vector, scale: ArrayLike = 1.0, /, **kwargs
+) -> MatrixFunctionResult:
+    return matrix_function_action(operator, vector, scale, kind="phi3", **kwargs)
+
+
+def _phi_function_value(value: Array, order: int, /) -> Array:
+    """Evaluate first through third scalar phi functions with stable zero limits."""
+    order_ = int(order)
+    if order_ not in (1, 2, 3):
+        raise ValueError("Phi-function order must be one, two, or three.")
+    threshold = jnp.sqrt(jnp.finfo(value.real.dtype).eps)
+    safe = jnp.where(jnp.abs(value) > threshold, value, 1)
+    if order_ == 1:
+        series = 1 + value / 2 + value**2 / 6 + value**3 / 24 + value**4 / 120
+        quotient = jnp.expm1(value) / safe
+    elif order_ == 2:
+        series = 0.5 + value / 6 + value**2 / 24 + value**3 / 120 + value**4 / 720
+        quotient = (jnp.expm1(value) - value) / safe**2
+    else:
+        series = (
+            1.0 / 6.0 + value / 24 + value**2 / 120 + value**3 / 720 + value**4 / 5040
+        )
+        quotient = (jnp.expm1(value) - value - 0.5 * value**2) / safe**3
+    return jnp.where(jnp.abs(value) > threshold, quotient, series)
+
+
 def _scalar_function(
     value: Array,
     kind: MatrixFunctionKind,
@@ -741,18 +778,12 @@ def _scalar_function(
         shift_ = jnp.asarray(shift)
         dtype = jnp.result_type(value.dtype, shift_.dtype)
         return 1.0 / (shift_.astype(dtype) - value.astype(dtype))
-    threshold = jnp.sqrt(jnp.finfo(value.real.dtype).eps)
-    safe = jnp.where(jnp.abs(value) > threshold, value, 1)
     if kind == "phi1":
-        series = 1 + value / 2 + value**2 / 6 + value**3 / 24
-        return jnp.where(jnp.abs(value) > threshold, jnp.expm1(value) / safe, series)
+        return _phi_function_value(value, 1)
     if kind == "phi2":
-        series = 0.5 + value / 6 + value**2 / 24 + value**3 / 120
-        return jnp.where(
-            jnp.abs(value) > threshold,
-            (jnp.expm1(value) - value) / safe**2,
-            series,
-        )
+        return _phi_function_value(value, 2)
+    if kind == "phi3":
+        return _phi_function_value(value, 3)
     raise ValueError("Unknown matrix-function kind.")
 
 
@@ -775,9 +806,9 @@ def _small_matrix_function(
         scaled = scaled + jnp.diag((~active).astype(scaled.dtype))
     if kind == "exp":
         return jsp.linalg.expm(scaled)
-    if kind in ("phi1", "phi2"):
+    if kind in ("phi1", "phi2", "phi3"):
         size = matrix.shape[0]
-        blocks = 2 if kind == "phi1" else 3
+        blocks = {"phi1": 2, "phi2": 3, "phi3": 4}[kind]
         augmented = jnp.zeros((blocks * size, blocks * size), dtype=scaled.dtype)
         augmented = augmented.at[:size, :size].set(scaled)
         identity = jnp.eye(size, dtype=scaled.dtype)
@@ -929,4 +960,6 @@ __all__ = [
     "matrix_exponential_action",
     "matrix_function_action",
     "matrix_phi1_action",
+    "matrix_phi2_action",
+    "matrix_phi3_action",
 ]

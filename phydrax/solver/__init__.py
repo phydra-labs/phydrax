@@ -221,6 +221,7 @@ from ._driving_path import (
     PiecewiseLinearDrivingPath,
 )
 from ._dynamics_evolution import DiffraxEvolution
+from ._etdrk import ETDRKMethod, solve_etdrk
 from ._fbsde import (
     CoupledFBSDEProblem,
     CoupledFBSDEResult,
@@ -1010,10 +1011,12 @@ __all__ = [
     "PartitionedDifferentialProblem",
     "RosenbrockAdaptivePolicy",
     "RosenbrockWMethod",
+    "ETDRKMethod",
     "SemidiscreteSPDE",
     "SemilinearDrift",
     "SemilinearFallback",
     "SemilinearSPDEScheme",
+    "solve_etdrk",
     "SPDEConvergenceLevel",
     "PreparedSplitFieldPML",
     "PreparedStaggeredAcoustics",

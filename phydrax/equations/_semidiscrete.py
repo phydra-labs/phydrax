@@ -116,6 +116,8 @@ class DiscreteStateLayout(StrictModule):
         discretization: AbstractStrongFormDiscretization,
         /,
     ):
+        from ..discretization.spectral import TensorSpectralDiscretization
+
         field_values = tuple(fields)
         if not field_values or any(
             not isinstance(field, PDEField) for field in field_values
@@ -130,10 +132,14 @@ class DiscreteStateLayout(StrictModule):
         scalar_fields = tuple(
             field.representation in ("scalar", "pseudoscalar") for field in field_values
         )
-        shape = tuple(int(size) for size in discretization.state_shape)
+        if isinstance(discretization, TensorSpectralDiscretization):
+            shape = discretization.physical_shape
+            base_space = discretization.physical_space
+        else:
+            shape = tuple(int(size) for size in discretization.state_shape)
+            base_space = discretization.field_spaces[0]
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("Prepared spatial shape must contain positive dimensions.")
-        base_space = discretization.field_spaces[0]
         if not isinstance(base_space.layout, TensorDofLayout):
             raise TypeError(
                 "Strong-form state layouts currently require tensor DOF coordinates."
@@ -607,29 +613,21 @@ class _SemidiscreteEvaluator(StrictModule):
         axis: int,
         order: int,
     ) -> Array:
-        from ..discretization._tensor import SeparableSpectralDiscretization
+        from ..discretization.spectral import TensorSpectralDiscretization
         from ..operators.differential._array_ops import _fd_nth_derivative
 
-        if not isinstance(self.discretization, SeparableSpectralDiscretization):
+        if not isinstance(
+            self.discretization, TensorSpectralDiscretization
+        ) or self.discretization.axes[axis].family not in ("sine", "cosine"):
             return self.discretization.partial_derivative(
                 value,
                 axis=axis,
                 order=order,
             )
-        basis = self.discretization.basis[axis]
-        if basis in ("uniform", "fourier"):
-            return self.discretization.partial_derivative(
-                value,
-                axis=axis,
-                order=order,
-            )
-        spacing = (
-            self.discretization.axes[axis].nodes[1]
-            - self.discretization.axes[axis].nodes[0]
-        )
+        nodes = self.discretization.axes[axis].nodes
         return _fd_nth_derivative(
             value,
-            dx=spacing,
+            dx=nodes[1] - nodes[0],
             axis=axis,
             order=order,
             periodic=False,
@@ -673,22 +671,17 @@ class _SemidiscreteEvaluator(StrictModule):
         axis: int,
         /,
         *,
-        gradient: bool,
         order: int = 1,
     ) -> tuple[int, ...]:
-        from ..discretization._tensor import SeparableSpectralDiscretization
+        from ..discretization.spectral import TensorSpectralDiscretization
 
-        if not isinstance(self.discretization, SeparableSpectralDiscretization):
+        if not isinstance(
+            self.discretization, TensorSpectralDiscretization
+        ) or self.discretization.axes[axis].family not in ("sine", "cosine"):
             return parity
-        basis = self.discretization.basis[axis]
         output = list(parity)
-        if basis in ("sine", "cosine"):
-            if output[axis] in (0, 1) and order % 2:
-                output[axis] = 1 - output[axis]
-        elif basis == "uniform" and gradient:
-            output[axis] = 1
-        elif basis == "uniform" and order % 2:
-            output[axis] = 2
+        if output[axis] in (0, 1) and order % 2:
+            output[axis] = 1 - output[axis]
         return tuple(output)
 
     def _parities(
@@ -700,11 +693,7 @@ class _SemidiscreteEvaluator(StrictModule):
         components = self._components(expression)
         if expression.op == "field":
             return tuple((0,) * rank for _ in range(components))
-        if expression.op == "coordinate":
-            return None
-        if expression.op == "constant":
-            return None
-        if expression.op == "parameter":
+        if expression.op in ("coordinate", "constant", "parameter"):
             return None
         argument_parities = tuple(
             self._parities(argument) for argument in expression.args
@@ -721,12 +710,7 @@ class _SemidiscreteEvaluator(StrictModule):
             axes = self._axes(expression.coordinate)
             axis = axes[0] if expression.axis is None else axes[expression.axis]
             return tuple(
-                self._toggle_parity(
-                    parity,
-                    axis,
-                    gradient=False,
-                    order=expression.order,
-                )
+                self._toggle_parity(parity, axis, order=expression.order)
                 for parity in source
             )
         if expression.op == "gradient":
@@ -735,11 +719,7 @@ class _SemidiscreteEvaluator(StrictModule):
                 return None
             assert expression.coordinate is not None
             return tuple(
-                self._toggle_parity(
-                    source[0],
-                    axis,
-                    gradient=True,
-                )
+                self._toggle_parity(source[0], axis)
                 for axis in self._axes(expression.coordinate)
             )
         if expression.op == "laplacian":
@@ -750,7 +730,7 @@ class _SemidiscreteEvaluator(StrictModule):
                 return None
             assert expression.coordinate is not None
             differentiated = tuple(
-                self._toggle_parity(parity, axis, gradient=False)
+                self._toggle_parity(parity, axis)
                 for parity, axis in zip(
                     source,
                     self._axes(expression.coordinate),
@@ -812,42 +792,28 @@ class _SemidiscreteEvaluator(StrictModule):
         order: int,
         parity: int,
     ) -> Array:
-        from ..discretization._tensor import (
-            _dual_basis_first_derivative,
-            SeparableSpectralDiscretization,
-        )
+        from ..discretization._tensor import _dual_basis_first_derivative
+        from ..discretization.spectral import TensorSpectralDiscretization
 
-        if (
-            isinstance(self.discretization, SeparableSpectralDiscretization)
-            and self.discretization.basis[axis] == "uniform"
-            and parity == 1
-        ):
-            spacing = (
-                self.discretization.axes[axis].nodes[1]
-                - self.discretization.axes[axis].nodes[0]
+        if not isinstance(self.discretization, TensorSpectralDiscretization):
+            return self.discretization.partial_derivative(
+                value,
+                axis=axis,
+                order=order,
             )
-            result = (value - jnp.roll(value, 1, axis=axis)) / spacing
-            if order > 1:
-                result = self.discretization.partial_derivative(
-                    result,
-                    axis=axis,
-                    order=order - 1,
-                )
-            return result
-        if (
-            isinstance(self.discretization, SeparableSpectralDiscretization)
-            and self.discretization.basis[axis] in ("sine", "cosine")
-            and parity == 2
-        ):
+        family = self.discretization.axes[axis].family
+        if family not in ("sine", "cosine"):
+            return self.discretization.partial_derivative(
+                value,
+                axis=axis,
+                order=order,
+            )
+        if parity == 2:
             raise ValueError(
                 "Cannot infer sine/cosine extension parity for this differentiated "
                 "composite expression; rewrite it into boundary-compatible terms."
             )
-        if (
-            not isinstance(self.discretization, SeparableSpectralDiscretization)
-            or self.discretization.basis[axis] not in ("sine", "cosine")
-            or parity != 1
-        ):
+        if parity != 1:
             return self.discretization.partial_derivative(
                 value,
                 axis=axis,
@@ -861,12 +827,13 @@ class _SemidiscreteEvaluator(StrictModule):
                     result,
                     self.discretization.axes[axis].nodes,
                     axis=axis,
-                    basis=self.discretization.basis[axis],
+                    basis=family,
                 )
             else:
                 result = self.discretization.partial_derivative(
                     result,
                     axis=axis,
+                    order=1,
                 )
             current = 1 - current
         return result
@@ -1116,30 +1083,18 @@ class _SemidiscreteEvaluator(StrictModule):
                     )
                 return result
             if node.op == "gradient":
-                from ..discretization._tensor import SeparableSpectralDiscretization
-
-                source_parities = self._parities(node.args[0])
-                components = []
-                for axis in axes:
-                    parity = 2 if source_parities is None else source_parities[0][axis]
-                    if (
-                        isinstance(self.discretization, SeparableSpectralDiscretization)
-                        and self.discretization.basis[axis] == "uniform"
-                        and parity != 1
-                    ):
-                        component = self.discretization.gradient(
-                            operand,
-                            axes=(axis,),
-                        )[..., 0]
-                    else:
-                        component = self._differentiate_components(
+                result = jnp.stack(
+                    tuple(
+                        self._differentiate_components(
                             operand,
                             node.args[0],
                             axis=axis,
                             order=1,
                         )
-                    components.append(component)
-                result = jnp.stack(tuple(components), axis=-1)
+                        for axis in axes
+                    ),
+                    axis=-1,
+                )
                 if lift is not None:
                     result = result + jnp.stack(
                         tuple(
@@ -1155,20 +1110,12 @@ class _SemidiscreteEvaluator(StrictModule):
                     parity = (
                         2 if source_parities is None else source_parities[component][axis]
                     )
-                    if parity == 1:
-                        derivative = self.discretization.divergence(
-                            operand[..., component, None],
-                            axes=(axis,),
-                            dual=True,
-                        )
-                    else:
-                        derivative = self._partial_with_parity(
-                            operand[..., component],
-                            axis=axis,
-                            order=1,
-                            parity=parity,
-                        )
-                    result = result + derivative
+                    result = result + self._partial_with_parity(
+                        operand[..., component],
+                        axis=axis,
+                        order=1,
+                        parity=parity,
+                    )
                 if lift is not None:
                     correction = jnp.zeros_like(lift[..., 0])
                     for component, axis in enumerate(axes):
@@ -1894,7 +1841,7 @@ def _coordinate_axis_map(
     discretization: Any,
     /,
 ) -> tuple[tuple[str, tuple[int, ...]], ...]:
-    from ..discretization._tensor import SeparableSpectralDiscretization
+    from ..discretization.spectral import TensorSpectralDiscretization
 
     spatial = tuple(
         coordinate for coordinate in problem.coordinates if coordinate.kind == "space"
@@ -1902,7 +1849,7 @@ def _coordinate_axis_map(
     if not spatial:
         raise ValueError("Semidiscrete PDE compilation requires spatial coordinates.")
     rank = sum(coordinate.size for coordinate in spatial)
-    if isinstance(discretization, SeparableSpectralDiscretization):
+    if isinstance(discretization, TensorSpectralDiscretization):
         if rank != len(discretization.state_shape):
             raise ValueError(
                 "PDE spatial coordinate size must match the tensor-grid rank; "
@@ -1917,24 +1864,13 @@ def _coordinate_axis_map(
                 if coordinate.periodic != periodic:
                     raise ValueError(
                         f"PDE coordinate {coordinate.name!r} periodic={coordinate.periodic} "
-                        f"is incompatible with basis {discretization.basis[axis]!r}."
+                        f"is incompatible with basis {discretization.axes[axis].family!r}."
                     )
                 if coordinate.bounds is not None:
-                    nodes = np.asarray(discretization.axes[axis].nodes)
-                    spacing = float(nodes[1] - nodes[0])
-                    basis = discretization.basis[axis]
-                    if basis == "sine":
-                        actual_bounds = (
-                            float(nodes[0] - 0.5 * spacing),
-                            float(nodes[-1] + 0.5 * spacing),
-                        )
-                    elif basis in ("fourier", "uniform"):
-                        actual_bounds = (
-                            float(nodes[0]),
-                            float(nodes[-1] + spacing),
-                        )
-                    else:
-                        actual_bounds = (float(nodes[0]), float(nodes[-1]))
+                    actual_bounds = tuple(
+                        float(value)
+                        for value in np.asarray(discretization.axes[axis].bounds)
+                    )
                     if not np.allclose(
                         actual_bounds,
                         coordinate.bounds,
@@ -2025,14 +1961,14 @@ def _validate_boundary_conditions(
     boundary_lifts: Sequence[BoundaryLift],
     /,
 ) -> None:
-    from ..discretization._tensor import SeparableSpectralDiscretization
+    from ..discretization.spectral import TensorSpectralDiscretization
 
     lifts = {lift.field_name: lift for lift in boundary_lifts}
     if any(condition.kind == "interface" for condition in problem.conditions):
         raise ValueError(
             "Semidiscrete single-grid compilation does not support interface conditions."
         )
-    if not isinstance(discretization, SeparableSpectralDiscretization):
+    if not isinstance(discretization, TensorSpectralDiscretization):
         if any(condition.kind == "boundary" for condition in problem.conditions):
             raise ValueError(
                 "Manifold spectral discretizations do not expose a boundary basis contract."
@@ -2073,11 +2009,16 @@ def _validate_boundary_conditions(
             )
         kind, field_name, derivative_coordinate, derivative_axis, order = form
         for axis in axes_by_coordinate[condition.coordinate]:
-            basis = discretization.basis[axis]
-            if basis in ("uniform", "fourier"):
+            basis = discretization.axes[axis].family
+            if basis == "fourier":
                 raise ValueError(
                     f"Boundary condition {condition.name!r} is incompatible with "
                     f"periodic basis {basis!r}."
+                )
+            if basis not in ("sine", "cosine"):
+                raise ValueError(
+                    "Polynomial boundary equations require a constrained-basis or "
+                    "generalized tau formulation."
                 )
             expected = "dirichlet" if basis == "sine" else "neumann"
             if kind != expected:
@@ -2261,11 +2202,11 @@ def _spectral_representation(
     coefficients: tuple[float, ...] | None,
     /,
 ) -> Any | None:
-    from ..discretization._tensor import SpectralDiscretization
+    from ..discretization._tensor import EigenbasisDiscretization
     from ..linalg import TransformDiagonalRepresentation
 
     if (
-        not isinstance(discretization, SpectralDiscretization)
+        not isinstance(discretization, EigenbasisDiscretization)
         or discretization.plan.num_modes != discretization.plan.num_points
         or coefficients is None
         or not layout.squeezed
@@ -2430,10 +2371,8 @@ def _validate_semidiscrete_expressions(
     *,
     allow_temporal_derivatives: bool,
 ) -> None:
-    from ..discretization._tensor import (
-        SeparableSpectralDiscretization,
-        SpectralDiscretization,
-    )
+    from ..discretization._tensor import EigenbasisDiscretization
+    from ..discretization.spectral import TensorSpectralDiscretization
 
     expression_values = tuple(expressions)
     regions_by_name = {region.name: region for region in problem.regions}
@@ -2457,10 +2396,10 @@ def _validate_semidiscrete_expressions(
             "Semidiscrete volume quadrature only supports unpartitioned interior "
             f"spatial regions with unique coordinates; got {unsupported_integrals}."
         )
-    if isinstance(discretization, SpectralDiscretization):
+    if isinstance(discretization, EigenbasisDiscretization):
         if lifts:
             raise ValueError(
-                "SpectralDiscretization cannot apply coordinate-space "
+                "EigenbasisDiscretization cannot apply coordinate-space "
                 "BoundaryLift objects without a coordinate frame."
             )
         framed_expressions = expression_values + tuple(
@@ -2473,8 +2412,8 @@ def _validate_semidiscrete_expressions(
             for expression in framed_expressions
         ):
             raise ValueError(
-                "SpectralDiscretization has no coordinate frame for "
-                "coordinate, derivative, gradient, divergence, or curl nodes."
+                "EigenbasisDiscretization has no coordinate frame for coordinate, "
+                "derivative, gradient, divergence, or curl nodes."
             )
     for expression in expression_values:
         for node in _expression_nodes(expression):
@@ -2513,8 +2452,8 @@ def _validate_semidiscrete_expressions(
                 raise ValueError(
                     "Derivatives of grouped coordinates require an explicit axis."
                 )
-            if not isinstance(discretization, SeparableSpectralDiscretization) or not any(
-                discretization.basis[axis] in ("sine", "cosine") for axis in axes
+            if not isinstance(discretization, TensorSpectralDiscretization) or not any(
+                discretization.axes[axis].family in ("sine", "cosine") for axis in axes
             ):
                 continue
             if node.args[0].op == "coordinate":
@@ -2538,6 +2477,7 @@ def _validate_semidiscrete_expressions(
 def compile_semidiscrete_pde(
     problem: PDEProblemIR,
     discretization: Any,
+    spatial_method: Any | None = None,
     /,
     *,
     parameter_values: Mapping[str, Any] | None = None,
@@ -2545,11 +2485,39 @@ def compile_semidiscrete_pde(
     method: SemidiscreteCompilationMethod = "auto",
 ) -> Any:
     """Compile validated PDE IR into state-shaped method-of-lines dynamics."""
+    from ..discretization import (
+        PreparedTensorGrid,
+        PseudospectralMethodPlan,
+        TensorSpectralDiscretization,
+    )
     from ..solver._semilinear_drift import SemilinearDrift
 
     if method not in ("auto", "direct", "semilinear"):
         raise ValueError("method must be 'auto', 'direct', or 'semilinear'.")
-    from ..discretization import PreparedTensorGrid
+    if (
+        isinstance(discretization, TensorSpectralDiscretization)
+        and spatial_method is not None
+    ):
+        if not isinstance(spatial_method, PseudospectralMethodPlan):
+            raise TypeError(
+                "Tensor spectral compilation requires a PseudospectralMethodPlan "
+                "as its third positional argument."
+            )
+        from ._spectral_compile import compile_spectral_pde
+
+        return compile_spectral_pde(
+            problem,
+            discretization,
+            spatial_method,
+            parameter_values=parameter_values,
+            boundary_lifts=boundary_lifts,
+            splitting=method,
+        )
+    if spatial_method is not None:
+        raise ValueError(
+            "A spatial_method may only be supplied for a discretization that "
+            "declares one."
+        )
 
     if isinstance(discretization, PreparedTensorGrid):
         if boundary_lifts:

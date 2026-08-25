@@ -7,7 +7,7 @@ import phydrax as phx
 
 def _periodic_basis(size, mode_names):
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
-    spatial = phx.discretization.SeparableSpectralDiscretization((axis,))
+    spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     available = {
         "constant": jnp.ones((size,)),
         "cosine": jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * axis.nodes),
@@ -19,10 +19,23 @@ def _periodic_basis(size, mode_names):
         modes,
         eigenvalues,
         quadrature_weights=spatial.quadrature_weights,
-        state_shape=spatial.state_shape,
+        state_shape=spatial.physical_shape,
         mode_ids=mode_names,
-        field_space_id=spatial.field_spaces[0].field_space_id,
+        field_space_id=spatial.physical_space.field_space_id,
     )
+
+
+def test_modal_spectral_noise_requires_point_value_random_field_basis():
+    axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
+    spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
+    modal_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
+        spatial,
+        0.1,
+        rank=3,
+    )
+
+    with pytest.raises(ValueError, match="real point-value basis"):
+        phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(modal_basis)
 
 
 def test_gaussian_field_replays_and_matches_declared_weighted_covariance():

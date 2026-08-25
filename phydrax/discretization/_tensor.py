@@ -12,7 +12,6 @@ from math import prod
 from typing import Any, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -20,7 +19,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from ..linalg import ArraySpace, DiagonalPairing
-from ._axis import AxisDiscretization, TensorGridPlan
+from ._axis import AxisDiscretization
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -35,11 +34,10 @@ from ._measure import DiscreteMeasure
 from ._spaces import DiscreteFieldSpace, TensorDofLayout
 from ._spectral import SpectralDecomposition
 from ._support import DiscreteSupport
-from ._tensor_support import PreparedTensorGrid
 from ._topology import EntitySet, PointTopology
 
 
-_TensorBasis = Literal["uniform", "fourier", "sine", "cosine"]
+_TensorBasis = Literal["fourier", "sine", "cosine"]
 
 
 def _hash_parts(*parts: Any) -> str:
@@ -76,7 +74,7 @@ def _axis_data(
     if not np.allclose(spacing, spacing[0], rtol=1e-10, atol=1e-12):
         raise ValueError("Exact tensor eigensystems require uniformly spaced axes.")
 
-    if basis in ("uniform", "fourier", "sine"):
+    if basis in ("fourier", "sine"):
         expected = np.full_like(weights, weights[0])
     else:
         pattern = np.ones_like(weights)
@@ -98,12 +96,10 @@ def _axis_eigenvalues(
     """Return one exact axis spectrum in deterministic real-mode order."""
     nodes, _, spacing = _axis_data(axis, basis)
     count = int(nodes.size)
-    if basis in ("uniform", "fourier"):
+    if basis == "fourier":
         mode_indices = np.arange(count, dtype=int)
         frequencies = ((mode_indices + 1) // 2).astype(float)
         frequencies[0] = 0.0
-        if basis == "uniform":
-            return 4.0 * np.sin(np.pi * frequencies / float(count)) ** 2 / spacing**2
         return (2.0 * np.pi * frequencies / (float(count) * spacing)) ** 2
     if basis == "sine":
         frequencies = np.arange(1, count + 1, dtype=float)
@@ -128,7 +124,7 @@ def _axis_modes(
     node_indices = np.arange(count, dtype=float)
     modes = np.empty((count, unique.size), dtype=float)
     for column, mode_index in enumerate(unique):
-        if basis in ("uniform", "fourier"):
+        if basis == "fourier":
             if mode_index == 0:
                 modes[:, column] = 1.0
                 continue
@@ -366,474 +362,7 @@ class AbstractStrongFormDiscretization(AbstractPreparedDiscretization):
         raise NotImplementedError
 
 
-class SeparableSpectralDiscretization(AbstractStrongFormDiscretization):
-    """Explicit per-axis Fourier/sine/cosine spectral calculus.
-
-    Uniform finite differences use ``FiniteDifferencePlan``; polynomial axes use
-    ``ChebyshevCollocation`` or another collocation method.
-    """
-
-    axes: tuple[AxisDiscretization, ...]
-    grid: PreparedTensorGrid
-    key: DiscretizationKey
-    support: DiscreteSupport
-    field_spaces: tuple[DiscreteFieldSpace, ...]
-    measures: tuple[DiscreteMeasure, ...]
-    capabilities: tuple[DiscretizationCapability, ...] = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-    prepared_id: str = eqx.field(static=True)
-    numeric_version: str = eqx.field(static=True)
-    preparation: PreparationReport
-    _state_shape: tuple[int, ...] = eqx.field(static=True)
-    _quadrature_weights: Array
-    _points: Array
-    basis: tuple[_TensorBasis, ...] = eqx.field(static=True)
-    boundary_conditions: tuple[str, ...] = eqx.field(static=True)
-    _discretization_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        axes: Sequence[AxisDiscretization],
-        /,
-        *,
-        axis_names: Sequence[str] | None = None,
-        field_names: Sequence[str] = ("state",),
-        key: DiscretizationKey | None = None,
-        plan_id: str | None = None,
-        numeric_version: str = "0",
-        dtype: Any = float,
-    ):
-        axes_value = tuple(axes)
-        if not axes_value:
-            raise ValueError(
-                "SeparableSpectralDiscretization requires at least one axis."
-            )
-        basis: list[_TensorBasis] = []
-        boundary: list[str] = []
-        for index, axis in enumerate(axes_value):
-            if not isinstance(axis, AxisDiscretization):
-                raise TypeError("axes must contain AxisDiscretization objects.")
-            nodes = np.asarray(axis.nodes, dtype=float)
-            if nodes.size < 2 or np.any(~np.isfinite(nodes)):
-                raise ValueError(f"Axis {index} requires at least two finite nodes.")
-            if np.any(np.diff(nodes) <= 0.0):
-                raise ValueError(f"Axis {index} nodes must be strictly increasing.")
-            weights = axis.quad_weights
-            if weights is None:
-                raise ValueError(f"Axis {index} requires quadrature weights.")
-            weights_host = np.asarray(weights, dtype=float)
-            if np.any(~np.isfinite(weights_host)) or np.any(weights_host <= 0.0):
-                raise ValueError("Axis quadrature weights must be finite and positive.")
-            if axis.basis == "uniform":
-                raise ValueError(
-                    "Uniform axes require FiniteDifferencePlan, not "
-                    "SeparableSpectralDiscretization."
-                )
-            elif axis.basis == "fourier":
-                if not axis.periodic:
-                    raise ValueError("Fourier axes must be periodic.")
-                basis.append("fourier")
-                boundary.append("periodic")
-            elif axis.basis == "sine":
-                if axis.periodic:
-                    raise ValueError("Sine axes must be non-periodic.")
-                basis.append("sine")
-                boundary.append("homogeneous_dirichlet")
-            elif axis.basis == "cosine":
-                if axis.periodic:
-                    raise ValueError("Cosine axes must be non-periodic.")
-                basis.append("cosine")
-                boundary.append("homogeneous_neumann")
-            else:
-                raise ValueError(
-                    "SeparableSpectralDiscretization supports fourier, sine, "
-                    "and cosine axis calculi."
-                )
-        shape = tuple(int(axis.nodes.size) for axis in axes_value)
-        tensor_weights = jnp.asarray(1.0, dtype=float)
-        for index, axis in enumerate(axes_value):
-            reshape = [1] * len(axes_value)
-            reshape[index] = shape[index]
-            assert axis.quad_weights is not None
-            tensor_weights = tensor_weights * jnp.asarray(axis.quad_weights).reshape(
-                tuple(reshape)
-            )
-        identifier_parts: list[Any] = ["tensor-grid-v2"]
-        for axis in axes_value:
-            identifier_parts.extend(
-                (
-                    axis.basis,
-                    str(bool(axis.periodic)),
-                    axis.nodes,
-                    axis.quad_weights,
-                )
-            )
-        names = (
-            tuple(f"axis{index}" for index in range(len(axes_value)))
-            if axis_names is None
-            else tuple(str(name) for name in axis_names)
-        )
-        if (
-            len(names) != len(axes_value)
-            or any(not name for name in names)
-            or len(set(names)) != len(names)
-        ):
-            raise ValueError(
-                "axis_names must contain one unique non-empty name per axis."
-            )
-        fields = tuple(str(name) for name in field_names)
-        if (
-            not fields
-            or any(not name for name in fields)
-            or len(set(fields)) != len(fields)
-        ):
-            raise ValueError("field_names must contain unique non-empty names.")
-        key_ = (
-            DiscretizationKey(
-                "tensor_grid",
-                DiscretizationRole.PHYSICAL,
-                domain_labels=names,
-            )
-            if key is None
-            else key
-        )
-        if not isinstance(key_, DiscretizationKey):
-            raise TypeError("key must be a DiscretizationKey.")
-        prepared_identifier = _hash_parts(*identifier_parts)
-        grid = PreparedTensorGrid(axes_value, axis_names=names)
-        support = grid.support
-        measure = grid.measure
-        quadrature = grid.quadrature_weights
-        spaces = tuple(
-            grid.field_space(
-                field_name,
-                dtype=dtype,
-                representation="point_value",
-                conformity="unrestricted",
-            )
-            for field_name in fields
-        )
-        capabilities = (
-            DiscretizationCapability.STRONG_DERIVATIVE,
-            DiscretizationCapability.RECONSTRUCTION,
-            DiscretizationCapability.MATRIX_FREE,
-        )
-        preparation = PreparationReport(
-            capabilities=capabilities,
-            resource_counts={
-                "axes": len(shape),
-                "points": int(prod(shape)),
-                "fields": len(spaces),
-            },
-        )
-        spaces, measures, capabilities = validate_prepared_metadata(
-            key=key_,
-            support=support,
-            field_spaces=spaces,
-            measures=(measure,),
-            capabilities=capabilities,
-            preparation=preparation,
-        )
-        plan_identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "tensor-grid-direct-plan",
-                    "axis_names": list(names),
-                    "shape": list(shape),
-                    "basis": list(basis),
-                    "boundary": list(boundary),
-                    "key": key_.key_id,
-                }
-            )
-            if plan_id is None
-            else str(plan_id)
-        )
-        version = str(numeric_version)
-        if not plan_identifier or not version:
-            raise ValueError("plan_id and numeric_version must be non-empty.")
-        self.axes = axes_value
-        self.grid = grid
-        self.key = key_
-        self.support = support
-        self.field_spaces = spaces
-        self.measures = measures
-        self.capabilities = capabilities
-        self.plan_id = plan_identifier
-        self.prepared_id = prepared_identifier
-        self.numeric_version = version
-        self.preparation = preparation
-        self._state_shape = shape
-        self._quadrature_weights = quadrature
-        self._points = grid.points
-        self.basis = tuple(basis)
-        self.boundary_conditions = tuple(boundary)
-        self._discretization_id = prepared_identifier
-
-    @classmethod
-    def from_plan(
-        cls,
-        plan: TensorGridPlan,
-        bounds: ArrayLike,
-        /,
-        *,
-        field_names: Sequence[str] = ("state",),
-        numeric_version: str = "0",
-        dtype: Any = float,
-    ) -> "SeparableSpectralDiscretization":
-        """Materialize a tensor-grid plan over bounds shaped ``(2, num_axes)``."""
-        if not isinstance(plan, TensorGridPlan):
-            raise TypeError("plan must be a TensorGridPlan.")
-        limits = jnp.asarray(bounds, dtype=float)
-        if limits.shape != (2, len(plan.axes)):
-            raise ValueError(
-                f"bounds must have shape {(2, len(plan.axes))}; got {limits.shape}."
-            )
-        return cls(
-            tuple(
-                axis_spec.materialize(limits[0, index], limits[1, index])
-                for index, axis_spec in enumerate(plan.axes)
-            ),
-            axis_names=plan.axis_names,
-            field_names=field_names,
-            key=plan.key,
-            plan_id=plan.plan_id,
-            numeric_version=numeric_version,
-            dtype=dtype,
-        )
-
-    @property
-    def state_shape(self) -> tuple[int, ...]:
-        return self._state_shape
-
-    @property
-    def quadrature_weights(self) -> Array:
-        return self._quadrature_weights
-
-    @property
-    def discretization_id(self) -> str:
-        return self._discretization_id
-
-    @property
-    def points(self) -> Array:
-        return self._points
-
-    def _validate_state(self, state: ArrayLike, /) -> Array:
-        array = jnp.asarray(state)
-        spatial_rank = len(self.state_shape)
-        if (
-            array.ndim < spatial_rank
-            or tuple(array.shape[:spatial_rank]) != self.state_shape
-        ):
-            raise ValueError(
-                "State must begin with tensor-grid shape "
-                f"{self.state_shape}; got {array.shape}."
-            )
-        return array
-
-    def partial_derivative(
-        self,
-        state: ArrayLike,
-        /,
-        *,
-        axis: int,
-        order: int = 1,
-    ) -> Array:
-        from ..operators.differential._array_ops import (
-            _basis_nth_derivative,
-            _fd_nth_derivative,
-        )
-
-        array = self._validate_state(state)
-        axis_index = int(axis)
-        derivative_order = int(order)
-        if axis_index < 0 or axis_index >= len(self.state_shape):
-            raise ValueError(
-                f"axis must lie in [0, {len(self.state_shape)}); got {axis_index}."
-            )
-        if derivative_order <= 0:
-            raise ValueError("order must be positive.")
-        axis_data = self.axes[axis_index]
-        basis = self.basis[axis_index]
-        if basis == "uniform":
-            spacing = axis_data.nodes[1] - axis_data.nodes[0]
-            if derivative_order == 2:
-                return (
-                    jnp.roll(array, -1, axis=axis_index)
-                    - 2.0 * array
-                    + jnp.roll(array, 1, axis=axis_index)
-                ) / spacing**2
-            return _fd_nth_derivative(
-                array,
-                dx=spacing,
-                axis=axis_index,
-                order=derivative_order,
-                periodic=True,
-            )
-        return _basis_nth_derivative(
-            array,
-            axis_data.nodes,
-            axis=axis_index,
-            order=derivative_order,
-            basis=basis,
-        )
-
-    def gradient(
-        self,
-        state: ArrayLike,
-        /,
-        *,
-        axes: int | Sequence[int] | None = None,
-    ) -> Array:
-        array = self._validate_state(state)
-        selected = _normalize_spatial_axes(axes, len(self.state_shape))
-        components = []
-        for axis_index in selected:
-            if self.basis[axis_index] == "uniform":
-                spacing = self.axes[axis_index].nodes[1] - self.axes[axis_index].nodes[0]
-                component = (jnp.roll(array, -1, axis=axis_index) - array) / spacing
-            else:
-                component = self.partial_derivative(array, axis=axis_index)
-            components.append(component)
-        return jnp.stack(tuple(components), axis=-1)
-
-    def divergence(
-        self,
-        state: ArrayLike,
-        /,
-        *,
-        axes: int | Sequence[int] | None = None,
-        dual: bool = False,
-    ) -> Array:
-        array = self._validate_state(state)
-        selected = _normalize_spatial_axes(axes, len(self.state_shape))
-        if array.ndim <= len(self.state_shape) or int(array.shape[-1]) != len(selected):
-            raise ValueError(
-                "Divergence requires a trailing component axis matching the "
-                f"{len(selected)} selected spatial axes; got {array.shape}."
-            )
-        out = jnp.zeros_like(array[..., 0])
-        for component_index, axis_index in enumerate(selected):
-            component = array[..., component_index]
-            basis = self.basis[axis_index]
-            if dual and basis == "uniform":
-                spacing = self.axes[axis_index].nodes[1] - self.axes[axis_index].nodes[0]
-                derivative = (
-                    component - jnp.roll(component, 1, axis=axis_index)
-                ) / spacing
-            elif dual and basis in ("sine", "cosine"):
-                derivative = _dual_basis_first_derivative(
-                    component,
-                    self.axes[axis_index].nodes,
-                    axis=axis_index,
-                    basis=basis,
-                )
-            else:
-                derivative = self.partial_derivative(component, axis=axis_index)
-            out = out + derivative
-        return out
-
-    def laplacian(
-        self,
-        state: ArrayLike,
-        /,
-        *,
-        axes: int | Sequence[int] | None = None,
-    ) -> Array:
-        array = self._validate_state(state)
-        selected = _normalize_spatial_axes(axes, len(self.state_shape))
-        out = jnp.zeros_like(array)
-        for axis_index in selected:
-            axis = self.axes[axis_index]
-            basis = self.basis[axis_index]
-            if basis == "uniform":
-                spacing = axis.nodes[1] - axis.nodes[0]
-                second = (
-                    jnp.roll(array, -1, axis=axis_index)
-                    - 2.0 * array
-                    + jnp.roll(array, 1, axis=axis_index)
-                ) / spacing**2
-            else:
-                second = self.partial_derivative(array, axis=axis_index, order=2)
-            out = out + second
-        return out
-
-    def integral(
-        self,
-        state: ArrayLike,
-        /,
-        *,
-        axes: int | Sequence[int] | None = None,
-    ) -> Array:
-        out = self._validate_state(state)
-        selected = _normalize_spatial_axes(axes, len(self.state_shape))
-        for axis_index in sorted(selected, reverse=True):
-            weights = self.axes[axis_index].quad_weights
-            assert weights is not None
-            out = jnp.tensordot(weights, out, axes=((0,), (axis_index,)))
-        return out
-
-    def flatten(self, state: ArrayLike, /) -> Array:
-        array = self._validate_state(state)
-        return array.reshape((self.num_points,) + array.shape[len(self.state_shape) :])
-
-    def unflatten(self, state: ArrayLike, /) -> Array:
-        array = jnp.asarray(state)
-        if array.ndim < 1 or int(array.shape[0]) != self.num_points:
-            raise ValueError(
-                f"Flattened state must begin with ({self.num_points},); got {array.shape}."
-            )
-        return array.reshape(self.state_shape + array.shape[1:])
-
-    def laplacian_matrix(self) -> Array:
-        identity = jnp.eye(self.num_points, dtype=float)
-        columns = jax.vmap(
-            lambda vector: self.flatten(self.laplacian(self.unflatten(vector)))
-        )(identity)
-        return columns.T
-
-    def eigenpairs(self, *, rank: int | None = None) -> tuple[Array, Array]:
-        """Return the smallest separable tensor modes without a dense Laplacian."""
-        count = self.num_points
-        retained = count if rank is None else int(rank)
-        if retained <= 0 or retained > count:
-            raise ValueError(f"rank must lie in [1, {count}].")
-
-        axis_eigenvalues = tuple(
-            _axis_eigenvalues(axis, basis)
-            for axis, basis in zip(self.axes, self.basis, strict=True)
-        )
-        selected = _smallest_tensor_indices(axis_eigenvalues, retained)
-        selected_array = np.asarray(selected, dtype=int)
-        eigenvalues = np.asarray(
-            [
-                sum(
-                    float(axis_eigenvalues[axis_index][mode_index])
-                    for axis_index, mode_index in enumerate(indices)
-                )
-                for indices in selected
-            ],
-            dtype=float,
-        )
-
-        modes = np.ones(self.state_shape + (retained,), dtype=float)
-        for axis_index, (axis, basis) in enumerate(
-            zip(self.axes, self.basis, strict=True)
-        ):
-            selected_modes = _axis_modes(
-                axis,
-                basis,
-                selected_array[:, axis_index],
-            )
-            reshape = [1] * len(self.state_shape) + [retained]
-            reshape[axis_index] = self.state_shape[axis_index]
-            modes *= selected_modes.reshape(tuple(reshape))
-        modes = _canonicalize_mode_signs(modes.reshape((count, retained))).reshape(
-            self.state_shape + (retained,)
-        )
-        return jnp.asarray(eigenvalues), jnp.asarray(modes)
-
-
-class SpectralDiscretization(AbstractStrongFormDiscretization):
+class EigenbasisDiscretization(AbstractStrongFormDiscretization):
     """Method-of-lines wrapper around an existing manifold spectral plan."""
 
     plan: SpectralDecomposition
@@ -987,7 +516,7 @@ class SpectralDiscretization(AbstractStrongFormDiscretization):
         order: int = 1,
     ) -> Array:
         raise NotImplementedError(
-            "SpectralDiscretization has no coordinate derivative frame."
+            "EigenbasisDiscretization has no coordinate derivative frame."
         )
 
     def gradient(
@@ -998,7 +527,7 @@ class SpectralDiscretization(AbstractStrongFormDiscretization):
         axes: int | Sequence[int] | None = None,
     ) -> Array:
         raise NotImplementedError(
-            "SpectralDiscretization has no coordinate gradient frame."
+            "EigenbasisDiscretization has no coordinate gradient frame."
         )
 
     def divergence(
@@ -1010,7 +539,7 @@ class SpectralDiscretization(AbstractStrongFormDiscretization):
         dual: bool = False,
     ) -> Array:
         raise NotImplementedError(
-            "SpectralDiscretization has no coordinate divergence frame."
+            "EigenbasisDiscretization has no coordinate divergence frame."
         )
 
     def integral(
@@ -1071,6 +600,5 @@ class SpectralDiscretization(AbstractStrongFormDiscretization):
 
 __all__ = [
     "AbstractStrongFormDiscretization",
-    "SpectralDiscretization",
-    "SeparableSpectralDiscretization",
+    "EigenbasisDiscretization",
 ]

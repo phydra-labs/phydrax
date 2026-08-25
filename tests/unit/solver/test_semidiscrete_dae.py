@@ -7,7 +7,7 @@ import phydrax as phx
 
 def _spatial(points=8):
     axis = phx.discretization.FourierAxisSpec(points).materialize(0.0, 1.0)
-    return axis, phx.discretization.SeparableSpectralDiscretization((axis,))
+    return axis, phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 
 
 def _mixed_problem():
