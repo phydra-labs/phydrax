@@ -18,6 +18,35 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
+_NORMAL_ALE_CONTRACT = "physical-normal-flux-minus-grid-transport-relative-waves-v1"
+
+
+def _normal_ale_inputs(
+    left: Array,
+    right: Array,
+    normal: Array,
+    grid_normal_velocity: Array,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    left_ = jnp.asarray(left)
+    right_ = jnp.asarray(right)
+    normal_ = jnp.asarray(normal)
+    grid_velocity = jnp.asarray(grid_normal_velocity)
+    if grid_velocity.shape != left_.shape[:-1]:
+        raise ValueError(
+            "grid_normal_velocity must exactly match the face batch shape; "
+            "scalar broadcasting is not permitted."
+        )
+    if not jnp.issubdtype(grid_velocity.dtype, jnp.floating):
+        raise TypeError("grid_normal_velocity must have a real floating dtype.")
+    grid_velocity = eqx.error_if(
+        grid_velocity,
+        jnp.any(~jnp.isfinite(grid_velocity)),
+        "grid_normal_velocity must be finite.",
+    )
+    return left_, right_, normal_, grid_velocity
+
+
 class NumericalFluxResult(StrictModule):
     """One canonical normal flux density and its signal-speed bound."""
 
@@ -66,7 +95,11 @@ class RusanovFluxPlan(AbstractNumericalFluxPlan):
             "almost_everywhere" if epsilon == 0.0 else "smooth_surrogate"
         )
         self.flux_id = canonical_fingerprint(
-            {"kind": "rusanov-flux", "smooth_epsilon": epsilon}
+            {
+                "kind": "rusanov-flux",
+                "smooth_epsilon": epsilon,
+                "normal_ale_contract": _NORMAL_ALE_CONTRACT,
+            }
         )
 
     def face_flux(
@@ -110,13 +143,46 @@ class RusanovFluxPlan(AbstractNumericalFluxPlan):
         ) - 0.5 * speed[..., None] * (right_ - left_)
         return NumericalFluxResult(flux, speed)
 
+    def normal_ale_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        grid_normal_velocity: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        left_, right_, normal_, grid_velocity = _normal_ale_inputs(
+            left, right, normal, grid_normal_velocity
+        )
+        lower, upper = system.normal_signal_bounds(left_, right_, normal_, args)
+        relative_lower = jnp.asarray(lower) - grid_velocity
+        relative_upper = jnp.asarray(upper) - grid_velocity
+        speed = jnp.maximum(jnp.abs(relative_lower), jnp.abs(relative_upper))
+        if self.smooth_epsilon > 0.0:
+            speed = jnp.sqrt(speed**2 + self.smooth_epsilon**2)
+        transport_state = 0.5 * (left_ + right_)
+        flux = (
+            0.5
+            * (
+                system.physical_normal_flux(left_, normal_, args)
+                + system.physical_normal_flux(right_, normal_, args)
+            )
+            - grid_velocity[..., None] * transport_state
+            - 0.5 * speed[..., None] * (right_ - left_)
+        )
+        return NumericalFluxResult(flux, speed)
+
 
 class HLLFluxPlan(AbstractNumericalFluxPlan):
     """Two-wave Harten–Lax–van Leer numerical flux."""
 
     def __init__(self):
         self.differentiability = "almost_everywhere"
-        self.flux_id = canonical_fingerprint({"kind": "hll-flux"})
+        self.flux_id = canonical_fingerprint(
+            {"kind": "hll-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
+        )
 
     def face_flux(
         self,
@@ -178,13 +244,52 @@ class HLLFluxPlan(AbstractNumericalFluxPlan):
         )
         return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
 
+    def normal_ale_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        grid_normal_velocity: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        left_, right_, normal_, grid_velocity = _normal_ale_inputs(
+            left, right, normal, grid_normal_velocity
+        )
+        lower, upper = system.normal_signal_bounds(left_, right_, normal_, args)
+        lower = jnp.minimum(jnp.asarray(lower) - grid_velocity, 0.0)
+        upper = jnp.maximum(jnp.asarray(upper) - grid_velocity, 0.0)
+        left_flux = (
+            system.physical_normal_flux(left_, normal_, args)
+            - grid_velocity[..., None] * left_
+        )
+        right_flux = (
+            system.physical_normal_flux(right_, normal_, args)
+            - grid_velocity[..., None] * right_
+        )
+        denominator = upper - lower
+        middle = (
+            upper[..., None] * left_flux
+            - lower[..., None] * right_flux
+            + (lower * upper)[..., None] * (right_ - left_)
+        ) / jnp.where(denominator == 0.0, 1.0, denominator)[..., None]
+        flux = jnp.where(
+            (lower >= 0.0)[..., None],
+            left_flux,
+            jnp.where((upper <= 0.0)[..., None], right_flux, middle),
+        )
+        return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
+
 
 class HLLCFluxPlan(AbstractNumericalFluxPlan):
     """Contact-resolving HLLC flux for Euler-compatible state layouts."""
 
     def __init__(self):
         self.differentiability = "almost_everywhere"
-        self.flux_id = canonical_fingerprint({"kind": "hllc-euler-flux"})
+        self.flux_id = canonical_fingerprint(
+            {"kind": "hllc-euler-flux", "normal_ale_contract": _NORMAL_ALE_CONTRACT}
+        )
 
     def face_flux(
         self,
@@ -268,6 +373,207 @@ class HLLCFluxPlan(AbstractNumericalFluxPlan):
         speed = jnp.maximum(jnp.abs(lower), jnp.abs(upper))
         return NumericalFluxResult(flux, speed)
 
+    def normal_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        if system.component_count != system.dimension + 2:
+            raise TypeError("HLLC requires an Euler-compatible state layout.")
+        left_ = jnp.asarray(left)
+        right_ = jnp.asarray(right)
+        normal_ = jnp.asarray(normal)
+        primitive_left = system.conserved_to_primitive(left_)
+        primitive_right = system.conserved_to_primitive(right_)
+        density_left = primitive_left[..., 0]
+        density_right = primitive_right[..., 0]
+        velocity_left = primitive_left[..., 1:-1]
+        velocity_right = primitive_right[..., 1:-1]
+        pressure_left = primitive_left[..., -1]
+        pressure_right = primitive_right[..., -1]
+        normal_left = jnp.sum(velocity_left * normal_, axis=-1)
+        normal_right = jnp.sum(velocity_right * normal_, axis=-1)
+        lower, upper = system.normal_signal_bounds(left_, right_, normal_, args)
+        denominator = density_left * (lower - normal_left) - density_right * (
+            upper - normal_right
+        )
+        contact = (
+            pressure_right
+            - pressure_left
+            + density_left * normal_left * (lower - normal_left)
+            - density_right * normal_right * (upper - normal_right)
+        ) / jnp.where(denominator == 0.0, 1.0, denominator)
+
+        def star_state(
+            state: Array,
+            density: Array,
+            velocity: Array,
+            pressure: Array,
+            signal: Array,
+            normal_velocity: Array,
+        ) -> Array:
+            star_density = density * (signal - normal_velocity) / (signal - contact)
+            star_velocity = velocity + (contact - normal_velocity)[..., None] * normal_
+            specific_energy = state[..., -1] / density
+            star_energy = star_density * (
+                specific_energy
+                + (contact - normal_velocity)
+                * (contact + pressure / (density * (signal - normal_velocity)))
+            )
+            return jnp.concatenate(
+                (
+                    star_density[..., None],
+                    star_density[..., None] * star_velocity,
+                    star_energy[..., None],
+                ),
+                axis=-1,
+            )
+
+        left_star = star_state(
+            left_,
+            density_left,
+            velocity_left,
+            pressure_left,
+            lower,
+            normal_left,
+        )
+        right_star = star_state(
+            right_,
+            density_right,
+            velocity_right,
+            pressure_right,
+            upper,
+            normal_right,
+        )
+        left_flux = system.physical_normal_flux(left_, normal_, args)
+        right_flux = system.physical_normal_flux(right_, normal_, args)
+        left_star_flux = left_flux + lower[..., None] * (left_star - left_)
+        right_star_flux = right_flux + upper[..., None] * (right_star - right_)
+        flux = jnp.where(
+            (lower >= 0.0)[..., None],
+            left_flux,
+            jnp.where(
+                (contact >= 0.0)[..., None],
+                left_star_flux,
+                jnp.where(
+                    (upper > 0.0)[..., None],
+                    right_star_flux,
+                    right_flux,
+                ),
+            ),
+        )
+        return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
+
+    def normal_ale_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        grid_normal_velocity: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        if system.component_count != system.dimension + 2:
+            raise TypeError("HLLC requires an Euler-compatible state layout.")
+        left_, right_, normal_, grid_velocity = _normal_ale_inputs(
+            left, right, normal, grid_normal_velocity
+        )
+        primitive_left = system.conserved_to_primitive(left_)
+        primitive_right = system.conserved_to_primitive(right_)
+        density_left = primitive_left[..., 0]
+        density_right = primitive_right[..., 0]
+        velocity_left = primitive_left[..., 1:-1]
+        velocity_right = primitive_right[..., 1:-1]
+        pressure_left = primitive_left[..., -1]
+        pressure_right = primitive_right[..., -1]
+        normal_left = jnp.sum(velocity_left * normal_, axis=-1)
+        normal_right = jnp.sum(velocity_right * normal_, axis=-1)
+        lower, upper = system.normal_signal_bounds(left_, right_, normal_, args)
+        denominator = density_left * (lower - normal_left) - density_right * (
+            upper - normal_right
+        )
+        contact = (
+            pressure_right
+            - pressure_left
+            + density_left * normal_left * (lower - normal_left)
+            - density_right * normal_right * (upper - normal_right)
+        ) / jnp.where(denominator == 0.0, 1.0, denominator)
+
+        def star_state(
+            state: Array,
+            density: Array,
+            velocity: Array,
+            pressure: Array,
+            signal: Array,
+            normal_velocity: Array,
+        ) -> Array:
+            star_density = density * (signal - normal_velocity) / (signal - contact)
+            star_velocity = velocity + (contact - normal_velocity)[..., None] * normal_
+            specific_energy = state[..., -1] / density
+            star_energy = star_density * (
+                specific_energy
+                + (contact - normal_velocity)
+                * (contact + pressure / (density * (signal - normal_velocity)))
+            )
+            return jnp.concatenate(
+                (
+                    star_density[..., None],
+                    star_density[..., None] * star_velocity,
+                    star_energy[..., None],
+                ),
+                axis=-1,
+            )
+
+        left_star = star_state(
+            left_,
+            density_left,
+            velocity_left,
+            pressure_left,
+            lower,
+            normal_left,
+        )
+        right_star = star_state(
+            right_,
+            density_right,
+            velocity_right,
+            pressure_right,
+            upper,
+            normal_right,
+        )
+        relative_lower = lower - grid_velocity
+        relative_upper = upper - grid_velocity
+        relative_contact = contact - grid_velocity
+        left_flux = (
+            system.physical_normal_flux(left_, normal_, args)
+            - grid_velocity[..., None] * left_
+        )
+        right_flux = (
+            system.physical_normal_flux(right_, normal_, args)
+            - grid_velocity[..., None] * right_
+        )
+        left_star_flux = left_flux + relative_lower[..., None] * (left_star - left_)
+        right_star_flux = right_flux + relative_upper[..., None] * (right_star - right_)
+        flux = jnp.where(
+            (relative_lower >= 0.0)[..., None],
+            left_flux,
+            jnp.where(
+                (relative_contact >= 0.0)[..., None],
+                left_star_flux,
+                jnp.where(
+                    (relative_upper > 0.0)[..., None],
+                    right_star_flux,
+                    right_flux,
+                ),
+            ),
+        )
+        speed = jnp.maximum(jnp.abs(relative_lower), jnp.abs(relative_upper))
+        return NumericalFluxResult(flux, speed)
+
 
 class RoeFluxPlan(AbstractNumericalFluxPlan):
     """Roe characteristic flux with a quadratic entropy fix."""
@@ -307,7 +613,9 @@ class RoeFluxPlan(AbstractNumericalFluxPlan):
         )
         jump = right_ - left_
         characteristic = oe.contract("...ij,...j->...i", left_matrix, jump)
-        dissipation = oe.contract("...ij,...j->...i", right_matrix, fixed * characteristic)
+        dissipation = oe.contract(
+            "...ij,...j->...i", right_matrix, fixed * characteristic
+        )
         flux = 0.5 * (
             system.physical_flux(left_, int(axis), args)
             + system.physical_flux(right_, int(axis), args)

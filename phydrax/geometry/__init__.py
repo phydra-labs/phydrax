@@ -6,6 +6,16 @@
 
 from . import analytic, brep, complex, design, reconstruction, simplicial
 from ._atlas import BoundaryAtlas, BoundaryFrame, BoundaryMap, TrimDomain
+from ._bvh_overlap import (
+    AabbOverlapCandidate,
+    AabbOverlapQueryResult,
+    build_host_aabb_overlap_bvh,
+    HostAabbOverlapBvh,
+    OverlapSearchLimits,
+    OverlapSearchStatus,
+    OverlapTolerance,
+    query_host_aabb_overlaps,
+)
 from ._capabilities import (
     BoundaryAtlasProvider,
     GeometryCapability,
@@ -25,6 +35,12 @@ from ._contracts import (
     GeometrySource,
     GeometryTolerance,
 )
+from ._convex_intersections import (
+    intersect_convex_polygons,
+    IntersectionResult,
+    IntersectionStatus,
+    PredicateEvidence,
+)
 from ._cubature import (
     AbstractCubatureMap,
     CubatureAtlas,
@@ -39,6 +55,15 @@ from ._sampling import (
     sample_boundary_atlas,
     SamplingReport,
     SamplingResult,
+)
+from ._tetra_intersections import (
+    intersect_tetrahedra,
+    stable_tetra_pair_id,
+    TetraIntersectionEvidence,
+    TetraIntersectionLimits,
+    TetraIntersectionResult,
+    TetraIntersectionStatus,
+    TetraIntersectionTolerance,
 )
 from .analytic import (
     BlendCSG,
@@ -172,6 +197,25 @@ __all__ = [
     "reconstruction",
     "simplicial",
     "AbstractSurfacePatch",
+    "AabbOverlapCandidate",
+    "AabbOverlapQueryResult",
+    "HostAabbOverlapBvh",
+    "OverlapSearchLimits",
+    "OverlapSearchStatus",
+    "OverlapTolerance",
+    "build_host_aabb_overlap_bvh",
+    "query_host_aabb_overlaps",
+    "IntersectionResult",
+    "IntersectionStatus",
+    "PredicateEvidence",
+    "intersect_convex_polygons",
+    "TetraIntersectionEvidence",
+    "TetraIntersectionLimits",
+    "TetraIntersectionResult",
+    "TetraIntersectionStatus",
+    "TetraIntersectionTolerance",
+    "intersect_tetrahedra",
+    "stable_tetra_pair_id",
     "AbstractCubatureMap",
     "BoundaryAtlas",
     "BoundaryAtlasPartition",

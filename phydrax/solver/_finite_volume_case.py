@@ -7,7 +7,9 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpy as np
+from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -16,6 +18,7 @@ from ..discretization._fv_precision import (
     FiniteVolumePrecisionPolicy,
     PrecisionDType,
 )
+from ..discretization.finite_volume import UnstructuredFiniteVolumeDiscretization
 from ._finite_volume_runtime import (
     FiniteVolumeStepPolicy,
     PreparedFiniteVolumeRuntime,
@@ -66,6 +69,13 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
     discretization_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     boundary_id: str = eqx.field(static=True)
+    mesh_kind: str = eqx.field(static=True)
+    mesh_topology_id: str = eqx.field(static=True)
+    mesh_geometry_id: str = eqx.field(static=True)
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    mesh_vertices: Array
+    vertex_global_ids: Array
+    cell_global_ids: Array
     precision: FiniteVolumePrecisionPolicy
     execution: FiniteVolumeExecutionSpec
     case_id: str = eqx.field(static=True)
@@ -78,13 +88,13 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
         /,
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
-        schema_version: int = 1,
+        schema_version: int = 2,
     ):
         name_ = str(name)
         version = int(schema_version)
-        if not name_ or version != 1:
+        if not name_ or version != 2:
             raise ValueError(
-                "Finite-volume case name must be non-empty and schema version 1."
+                "Finite-volume case name must be non-empty and schema version 2."
             )
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
@@ -98,13 +108,35 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
                 "Finite-volume case precision must match the prepared runtime."
             )
         dynamics = runtime.dynamics
+        discretization = dynamics.discretization
+        if isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
+            mesh_kind = "unstructured"
+            topology_id = discretization.topology_id
+            geometry_id = discretization.geometry_id
+            vertices = discretization.vertices
+            vertex_ids = discretization.vertex_global_ids
+            cell_ids = discretization.cell_global_ids
+        else:
+            mesh_kind = "structured"
+            topology_id = discretization.prepared_id
+            geometry_id = discretization.prepared_id
+            vertices = jnp.empty((0, 0))
+            vertex_ids = jnp.empty((0,), dtype=jnp.int64)
+            cell_ids = jnp.empty((0,), dtype=jnp.int64)
         self.schema_version = version
         self.name = name_
         self.runtime_id = runtime.runtime_id
         self.system_id = dynamics.system.system_id
-        self.discretization_id = dynamics.discretization.prepared_id
+        self.discretization_id = discretization.prepared_id
         self.method_id = dynamics.method.method_id
         self.boundary_id = dynamics.boundaries.boundary_set_id
+        self.mesh_kind = mesh_kind
+        self.mesh_topology_id = topology_id
+        self.mesh_geometry_id = geometry_id
+        self.state_shape = discretization.state_shape
+        self.mesh_vertices = jnp.asarray(vertices)
+        self.vertex_global_ids = jnp.asarray(vertex_ids)
+        self.cell_global_ids = jnp.asarray(cell_ids)
         self.precision = precision_
         self.execution = execution
         self.case_id = canonical_fingerprint(self.to_dict(include_case_id=False))
@@ -118,6 +150,14 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
             "discretization_id": self.discretization_id,
             "method_id": self.method_id,
             "boundary_id": self.boundary_id,
+            "mesh": {
+                "kind": self.mesh_kind,
+                "topology_id": self.mesh_topology_id,
+                "geometry_id": self.mesh_geometry_id,
+                "vertex_count": int(self.mesh_vertices.shape[0]),
+                "cell_count": int(self.state_shape[0]),
+            },
+            "state_shape": list(self.state_shape),
             "precision": {
                 "storage_dtype": self.precision.storage_dtype,
                 "reconstruction_dtype": self.precision.reconstruction_dtype,
@@ -146,6 +186,8 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
             "discretization_id",
             "method_id",
             "boundary_id",
+            "mesh",
+            "state_shape",
             "precision",
             "execution",
             "case_id",
@@ -157,8 +199,25 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
                 f"Finite-volume case schema has unknown={sorted(unknown)!r}, "
                 f"missing={sorted(missing)!r}."
             )
-        if payload["schema_version"] != 1:
+        if payload["schema_version"] != 2:
             raise ValueError("Unsupported finite-volume case schema version.")
+        mesh_keys = {
+            "kind",
+            "topology_id",
+            "geometry_id",
+            "vertex_count",
+            "cell_count",
+        }
+        if not isinstance(payload["mesh"], dict) or set(payload["mesh"]) != mesh_keys:
+            raise ValueError("Finite-volume mesh identity schema fields changed.")
+        if payload["mesh"]["kind"] not in ("structured", "unstructured"):
+            raise ValueError("Finite-volume mesh identity kind is invalid.")
+        if (
+            not isinstance(payload["state_shape"], list)
+            or not payload["state_shape"]
+            or any(int(value) <= 0 for value in payload["state_shape"])
+        ):
+            raise ValueError("Finite-volume state_shape is invalid.")
 
     @classmethod
     def from_dict(

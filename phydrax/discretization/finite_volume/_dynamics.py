@@ -28,6 +28,7 @@ from ._high_resolution import (
     NonuniformWENOReconstructionPlan,
 )
 from ._mapped import MappedFiniteVolumeDiscretization
+from ._positivity import EinfeldtHLLFluxPlan
 from ._precision import FiniteVolumePrecisionPolicy
 from ._reconstruction import (
     AbstractFaceReconstructionPlan,
@@ -456,9 +457,12 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             left, right = self._reconstruct(time, value, axis, args)
             if isinstance(self.discretization, MappedFiniteVolumeDiscretization):
                 solver = self.method.interface_solver
-                if not isinstance(solver, (RusanovFluxPlan, HLLFluxPlan)):
+                if not isinstance(
+                    solver, (RusanovFluxPlan, HLLFluxPlan, EinfeldtHLLFluxPlan)
+                ):
                     raise ValueError(
-                        "Mapped finite volumes currently require Rusanov or HLL flux."
+                        "Mapped finite volumes currently require Rusanov, HLL, "
+                        "or Einfeldt HLL flux."
                     )
                 normal = (
                     self.discretization.face_area_vectors[axis]

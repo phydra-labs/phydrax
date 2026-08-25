@@ -102,7 +102,7 @@ class FiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
             result = self.runtime.advance(runtime_state, args)
             next_state = result.runtime_state
             output = (
-                next_state.conservative_state,
+                next_state.content_state.conservative_content,
                 next_state.time,
                 result.accepted,
                 next_state.last_status,
@@ -151,17 +151,19 @@ class FiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
     ) -> FiniteVolumeGradientReport:
         if not callable(loss):
             raise TypeError("loss must be callable.")
-        direction = jnp.asarray(tangent)
-        if direction.shape != initial_state.conservative_state.shape:
-            raise ValueError("Rollout tangent must match the conservative state.")
+        direction = self.runtime.precision.storage(tangent)
+        initial_content = initial_state.content_state.conservative_content
+        if direction.shape != initial_content.shape:
+            raise ValueError("Rollout tangent must match the conservative content.")
         epsilon_ = float(epsilon)
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
 
-        def objective(state):
+        def objective(content):
+            content_state = initial_state.content_state.with_content(content)
             runtime = FiniteVolumeRuntimeState(
-                state,
-                initial_state.time,
+                content_state,
+                initial_state.topology_journal,
                 initial_state.step_size,
                 accepted_step=initial_state.accepted_step,
                 last_status=initial_state.last_status,
@@ -175,14 +177,14 @@ class FiniteVolumeRolloutPlan(StrictModule, NonTrainableState):
 
         _, directional = jax.jvp(
             objective,
-            (initial_state.conservative_state,),
+            (initial_content,),
             (direction,),
         )
-        gradient = jax.grad(objective)(initial_state.conservative_state)
+        gradient = jax.grad(objective)(initial_content)
         reverse = jnp.vdot(gradient, direction)
         finite_difference = (
-            objective(initial_state.conservative_state + epsilon_ * direction)
-            - objective(initial_state.conservative_state - epsilon_ * direction)
+            objective(initial_content + epsilon_ * direction)
+            - objective(initial_content - epsilon_ * direction)
         ) / (2.0 * epsilon_)
         return FiniteVolumeGradientReport(
             directional_derivative=self.runtime.precision.decision(directional),
