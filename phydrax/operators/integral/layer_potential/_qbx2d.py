@@ -139,15 +139,29 @@ def _integrate_center_coefficients(
     order: int,
     plan: AdaptiveQuadraturePlan,
     /,
+    *,
+    selected_panels: tuple[int, ...] | None = None,
 ) -> tuple[Array, Array, Array, Array]:
     panelization = potential.panelization
-    panel_plan = _panel_plan(plan, panelization.panel_count)
+    panel_ids = (
+        tuple(range(panelization.panel_count))
+        if selected_panels is None
+        else tuple(selected_panels)
+    )
+    if not panel_ids:
+        return (
+            jnp.zeros((2 ** (order + 1) - 1,), dtype=potential.density.dtype),
+            jnp.asarray(0.0),
+            jnp.asarray(int(IntegrationStatus.CONVERGED), dtype=jnp.int32),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+    panel_plan = _panel_plan(plan, len(panel_ids))
     coefficients = None
     error = jnp.asarray(0.0)
     status = jnp.asarray(int(IntegrationStatus.CONVERGED), dtype=jnp.int32)
     evaluations = jnp.asarray(0, dtype=jnp.int32)
     quadrature_order = panelization.quadrature_order
-    for panel_id in range(panelization.panel_count):
+    for panel_id in panel_ids:
         start = panel_id * quadrature_order
         stop = start + quadrature_order
         chart = panelization.panel_chart_indices[panel_id]
@@ -170,12 +184,14 @@ def _integrate_center_coefficients(
                 )
             )(reference)
             density = density_basis @ node_density
+
             def one(source, normal, jacobian, weight):
                 return (
                     _derivative_flat(potential, center, source, normal, order)
                     * jacobian
                     * weight
                 )
+
             return jax.vmap(one)(
                 frame.origin,
                 frame.normal,
@@ -188,7 +204,11 @@ def _integrate_center_coefficients(
             bounds,
             panel_plan,
         )
-        coefficients = estimate.value if coefficients is None else coefficients + estimate.value
+        coefficients = (
+            estimate.value
+            if coefficients is None
+            else coefficients + estimate.value
+        )
         if estimate.error_estimate is not None:
             error = error + estimate.error_estimate
         status = jnp.maximum(status, estimate.status)
