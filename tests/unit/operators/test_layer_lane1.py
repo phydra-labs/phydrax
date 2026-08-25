@@ -203,6 +203,59 @@ def test_direct_near_far_backend_matches_direct_representation():
     )
 
 
+def test_double_layer_diagonal_limit_is_analytic_and_orientation_aware():
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    uniform = _circle_panelization(panels=4, order=4)
+    topology = phx.operators.BoundaryCornerTopology2D(
+        geometry.boundary_atlas.num_charts,
+        ((0, "start"), (0, "end")),
+    )
+    graded_partition = phx.operators.BoundaryPanelPartition2D(
+        geometry.boundary_atlas,
+        4,
+        grading="kress",
+        corner_topology=topology,
+    )
+    graded = phx.operators.BoundaryPanelization2D(
+        geometry.boundary_atlas,
+        quadrature_order=4,
+        geometry=geometry,
+        partition=graded_partition,
+    )
+    expected = -1.0 / (4.0 * jnp.pi)
+    for panelization in (uniform, graded):
+        matrix = phx.operators.double_layer_principal_value_matrix(panelization)
+        assert jnp.allclose(
+            jnp.diag(matrix) / panelization.weights,
+            expected,
+            atol=1e-10,
+        )
+
+    atlas = geometry.boundary_atlas
+    reversed_atlas = phx.geometry.BoundaryAtlas(
+        atlas.mapping,
+        source_entity_ids=atlas.source_entity_ids,
+        source_id="reversed-circle-diagonal-test",
+        physical_tags=atlas.physical_tags,
+        orientation=-atlas.orientation,
+        seam_owner=atlas.seam_owner,
+        trim_domains=atlas.trim_domains,
+    )
+    reversed_panelization = phx.operators.BoundaryPanelization2D(
+        reversed_atlas,
+        panels_per_chart=4,
+        quadrature_order=4,
+    )
+    reversed_matrix = phx.operators.double_layer_principal_value_matrix(
+        reversed_panelization
+    )
+    assert jnp.allclose(
+        jnp.diag(reversed_matrix) / reversed_panelization.weights,
+        -expected,
+        atol=1e-10,
+    )
+
+
 def test_rcip_uses_nonzero_nested_corner_hierarchy():
     coarse = jnp.asarray(((2.0, 0.2), (0.1, 1.5)))
     fine = (
@@ -287,14 +340,13 @@ def test_fmm_mixed_excluded_leaf_is_kept_in_near_correction():
         jnp.asarray([[2.8, 0.0], [3.2, 0.0]]),
         excluded_source_indices=(0,),
     )
-    near_indices = tuple(
-        int(index)
+    near_blocks = tuple(
+        tuple(int(index) for index in source_block)
         for target_sources in near_sources
         for source_block in target_sources
-        for index in source_block
     )
 
-    assert 0 in near_indices
+    assert any(0 in block and any(index != 0 for index in block) for block in near_blocks)
 
 
 def test_global_qbx_fmm_reports_independent_error_channels():
@@ -324,6 +376,23 @@ def test_global_qbx_fmm_reports_independent_error_channels():
         ),
     )
 
+    direct = phx.operators.evaluate_layer_potential(
+        potential,
+        panelization.points[0][None, :],
+        phx.operators.LayerEvaluationPlan2D(
+            "qbx",
+            qbx_order=2,
+            qbx_radius_factor=0.05,
+            adaptive_plan=phx.integration.AdaptiveQuadraturePlan(
+                absolute_tolerance=1e-2,
+                relative_tolerance=1e-2,
+                max_intervals=12,
+                throw=False,
+            ),
+        ),
+        target_side="boundary",
+    )
+    assert jnp.allclose(evaluation.values, direct.values, atol=2e-2)
     assert evaluation.m2l_translations > 0
     assert evaluation.l2l_translations > 0
     assert evaluation.near_panel_count > 0

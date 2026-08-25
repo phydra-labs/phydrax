@@ -21,6 +21,7 @@ from ....integration import (
     AdaptiveQuadraturePlan,
     IntegrationStatus,
 )
+from ....operators.differential._jet import jet_terms
 
 
 class QBXEvaluation2D(StrictModule):
@@ -54,36 +55,34 @@ def _kernel_value(potential, target: Array, source: Array, normal: Array) -> Arr
     return potential.kernel.source_normal_derivative(target, source, normal)
 
 
-def _derivative_flat(
+def _directional_terms(
     potential,
     center: Array,
     source: Array,
     normal: Array,
+    direction: Array,
     order: int,
 ) -> Array:
-    def function(target: Array) -> Array:
+    def function(distance: Array) -> Array:
+        target = center + distance * direction
         return _kernel_value(potential, target, source, normal)
-    derivative = function
-    chunks = [jnp.asarray(function(center)).reshape((-1,))]
-    for degree in range(1, order + 1):
-        derivative = jax.jacfwd(derivative)
-        chunks.append(jnp.asarray(derivative(center)).reshape((-1,)))
-    return jnp.concatenate(chunks)
+
+    primal, terms = jet_terms(
+        function,
+        jnp.asarray(0.0, dtype=center.dtype),
+        jnp.asarray(1.0, dtype=center.dtype),
+        order=order,
+    )
+    return jnp.stack((primal, *terms))
 
 
 def _expand_coefficients(coefficients: Array, displacement: Array, order: int) -> Array:
+    distance = jnp.linalg.norm(displacement)
     value = coefficients[0]
-    offset = 1
     factorial = 1.0
     for degree in range(1, order + 1):
-        width = 2**degree
-        tensor = coefficients[offset : offset + width].reshape((2,) * degree)
-        contraction = tensor
-        for _ in range(degree):
-            contraction = jnp.tensordot(contraction, displacement, axes=(0, 0))
         factorial *= degree
-        value = value + contraction / factorial
-        offset += width
+        value = value + coefficients[degree] * distance**degree / factorial
     return value
 
 
@@ -136,6 +135,7 @@ def _center_clearance(
 def _integrate_center_coefficients(
     potential,
     center: Array,
+    direction: Array,
     order: int,
     plan: AdaptiveQuadraturePlan,
     /,
@@ -150,7 +150,7 @@ def _integrate_center_coefficients(
     )
     if not panel_ids:
         return (
-            jnp.zeros((2 ** (order + 1) - 1,), dtype=potential.density.dtype),
+            jnp.zeros((order + 1,), dtype=potential.density.dtype),
             jnp.asarray(0.0),
             jnp.asarray(int(IntegrationStatus.CONVERGED), dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
@@ -187,7 +187,14 @@ def _integrate_center_coefficients(
 
             def one(source, normal, jacobian, weight):
                 return (
-                    _derivative_flat(potential, center, source, normal, order)
+                    _directional_terms(
+                        potential,
+                        center,
+                        source,
+                        normal,
+                        direction,
+                        order,
+                    )
                     * jacobian
                     * weight
                 )
@@ -289,10 +296,13 @@ def evaluate_qbx_2d(
                 )
                 center_evaluations.append(jnp.asarray(0, dtype=jnp.int32))
                 continue
+            displacement = target - center
+            direction = displacement / jnp.linalg.norm(displacement)
             coefficients, coefficient_error, status, evaluation_count = (
                 _integrate_center_coefficients(
                     potential,
                     center,
+                    direction,
                     expansion_order,
                     adaptive_plan,
                 )

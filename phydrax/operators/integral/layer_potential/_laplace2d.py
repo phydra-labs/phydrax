@@ -206,6 +206,42 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
         return {TRIAL_SPACE_CERTIFICATE_KEY: self._certificate}
 
 
+def _analytic_double_layer_diagonal_limit(
+    panelization: BoundaryPanelization2D,
+    node_index: int,
+    /,
+) -> Array:
+    chart = panelization.chart_indices[node_index]
+    reference = panelization.references[node_index, 0]
+    chart_index = jnp.asarray([chart], dtype=jnp.int32)
+
+    def origin(value: Array) -> Array:
+        return panelization.atlas.frame(
+            chart_index,
+            value.reshape((1, 1)),
+        ).origin[0]
+
+    def normal(value: Array) -> Array:
+        return panelization.atlas.frame(
+            chart_index,
+            value.reshape((1, 1)),
+        ).normal[0]
+
+    frame = panelization.atlas.frame(
+        chart_index,
+        reference.reshape((1, 1)),
+    )
+    first = jax.jacfwd(origin)(reference)
+    second = jax.jacfwd(jax.jacfwd(origin))(reference)
+    normal_derivative = jax.jacfwd(normal)(reference)
+    speed_squared = jnp.dot(first, first)
+    coefficient = (
+        -jnp.dot(first, normal_derivative)
+        - 0.5 * jnp.dot(second, frame.normal[0])
+    ) / (2.0 * jnp.pi * speed_squared)
+    return coefficient
+
+
 def double_layer_principal_value_matrix(
     panelization: BoundaryPanelization2D,
     /,
@@ -225,20 +261,11 @@ def double_layer_principal_value_matrix(
         2.0 * jnp.pi * safe_squared
     )
 
-    step = 1.0 / (
-        panelization.panels_per_chart * panelization.quadrature_order * 1_000_000.0
-    )
-    reference = panelization.references[:, 0]
-    direction = jnp.where(reference + step < 1.0, 1.0, -1.0)
-    shifted_reference = (reference + direction * step)[:, None]
-    shifted = panelization.atlas.frame(
-        panelization.chart_indices,
-        shifted_reference,
-    )
-    diagonal = jax.vmap(kernel.source_normal_derivative)(
-        targets,
-        shifted.origin,
-        shifted.normal,
+    diagonal = jnp.stack(
+        tuple(
+            _analytic_double_layer_diagonal_limit(panelization, index)
+            for index in range(panelization.node_count)
+        )
     )
     indices = jnp.arange(panelization.node_count)
     values = values.at[indices, indices].set(diagonal)

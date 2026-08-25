@@ -44,23 +44,24 @@ class GlobalQBXFMMEvaluation2D(StrictModule, NonTrainableState):
     near_panel_count: int = eqx.field(static=True)
 
 
-def _complex_power_to_cartesian(
+def _complex_power_to_directional(
     coefficients: Array,
+    direction: Array,
     order: int,
     /,
 ) -> Array:
-    """Convert analytic complex powers to flattened Cartesian derivative tensors."""
-    chunks = [jnp.asarray(jnp.real(coefficients[0])).reshape((-1,))]
+    """Convert analytic complex powers to directional derivative terms."""
+    direction_complex = direction[0] + 1j * direction[1]
+    values = [jnp.real(coefficients[0])]
     for degree in range(1, order + 1):
-        values = []
-        factorial = math.factorial(degree)
-        for flat_index in range(2**degree):
-            y_count = flat_index.bit_count()
-            values.append(
-                jnp.real(coefficients[degree] * factorial * (1j**y_count))
+        values.append(
+            jnp.real(
+                coefficients[degree]
+                * math.factorial(degree)
+                * direction_complex**degree
             )
-        chunks.append(jnp.stack(values))
-    return jnp.concatenate(chunks)
+        )
+    return jnp.stack(values)
 
 
 def evaluate_global_qbx_fmm_2d(
@@ -140,24 +141,45 @@ def evaluate_global_qbx_fmm_2d(
         centers_,
         near_ratio=ratio,
     )
-    near_panels = tuple(
+    near_panels = {
         int(panel_id)
         for panel_id in range(panelization.panel_count)
         if bool(jnp.any(interactions.near_mask[:, panel_id]))
-    )
-    excluded_indices = tuple(
-        index
-        for panel_id in near_panels
-        for index in range(
-            panel_id * panelization.quadrature_order,
-            (panel_id + 1) * panelization.quadrature_order,
+    }
+    center_data = None
+    leaf_map = None
+    local = None
+    translations = None
+    for _ in range(panelization.panel_count + 1):
+        excluded_indices = tuple(
+            index
+            for panel_id in sorted(near_panels)
+            for index in range(
+                panel_id * panelization.quadrature_order,
+                (panel_id + 1) * panelization.quadrature_order,
+            )
         )
-    )
-    center_data, leaf_map, local, _, translations = backend.local_expansions(
-        potential,
-        centers_,
-        excluded_source_indices=excluded_indices,
-    )
+        center_data, leaf_map, local, near_sources, translations = (
+            backend.local_expansions(
+                potential,
+                centers_,
+                excluded_source_indices=excluded_indices,
+            )
+        )
+        observed_panels = set(near_panels)
+        for source_blocks in near_sources:
+            for source_block in source_blocks:
+                observed_panels.update(
+                    int(index) // panelization.quadrature_order
+                    for index in source_block
+                )
+        if observed_panels == near_panels:
+            break
+        near_panels = observed_panels
+    else:
+        raise ValueError("FMM near-correction closure did not stabilize.")
+    if center_data is None or leaf_map is None or local is None or translations is None:
+        raise RuntimeError("FMM local expansion preparation produced no state.")
     outputs = [[] for _ in range(values.shape[0])]
     coefficient_errors = []
     fmm_errors = []
@@ -166,19 +188,28 @@ def evaluate_global_qbx_fmm_2d(
     evaluations = []
     for center_index, center in enumerate(centers_):
         leaf = leaf_map[center_index]
-        near_coefficients, coefficient_error, status, evaluation_count = (
-            _integrate_center_coefficients(
-                potential,
-                center,
-                order,
-                adaptive_plan,
-                selected_panels=near_panels,
-            )
-        )
-        fmm_coefficients = _complex_power_to_cartesian(local[leaf], order)
-        coefficients = fmm_coefficients + near_coefficients
         target_index = target_indices[center_index]
         displacement = values[target_index] - center
+        direction = displacement / jnp.linalg.norm(displacement)
+        (
+            near_coefficients,
+            coefficient_error,
+            status,
+            evaluation_count,
+        ) = _integrate_center_coefficients(
+            potential,
+            center,
+            direction,
+            order,
+            adaptive_plan,
+            selected_panels=tuple(sorted(near_panels)),
+        )
+        fmm_coefficients = _complex_power_to_directional(
+            local[leaf],
+            direction,
+            order,
+        )
+        coefficients = fmm_coefficients + near_coefficients
         high = _expand_coefficients(coefficients, displacement, order)
         low = _expand_coefficients(coefficients, displacement, max(order - 1, 0))
         far_high = _expand_coefficients(fmm_coefficients, displacement, order)
