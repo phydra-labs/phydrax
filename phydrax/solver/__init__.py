@@ -255,6 +255,16 @@ from ._finite_volume_checkpoint import (
     read_finite_volume_checkpoint,
     write_finite_volume_checkpoint,
 )
+from ._finite_volume_content import (
+    apply_stage_rate_euler_update,
+    FiniteVolumeConservativeContentState,
+)
+from ._finite_volume_implicit import (
+    FiniteVolumeBackwardEulerPlan,
+    FiniteVolumeImplicitStage,
+    FiniteVolumeImplicitStepResult,
+    PreparedFiniteVolumeBackwardEulerStep,
+)
 from ._finite_volume_output import FiniteVolumeOutputPlan
 from ._finite_volume_rollout import (
     FiniteVolumeGradientReport,
@@ -265,10 +275,25 @@ from ._finite_volume_rollout import (
 )
 from ._finite_volume_runtime import (
     FiniteVolumeAdvanceResult,
+    FiniteVolumeALEAdvanceEvidence,
+    FiniteVolumeEmbeddedAdvanceEvidence,
     FiniteVolumeRunStatus,
     FiniteVolumeRuntimeState,
     FiniteVolumeStepPolicy,
     PreparedFiniteVolumeRuntime,
+)
+from ._finite_volume_topology_events import (
+    FiniteVolumeTopologyArtifactEvidence,
+    FiniteVolumeTopologyEpoch,
+    FiniteVolumeTopologyEvent,
+    FiniteVolumeTopologyEventJournal,
+    FiniteVolumeTopologyEventRequest,
+    FiniteVolumeTopologyEventScheduler,
+    FiniteVolumeTopologyEventTransaction,
+    FiniteVolumeTopologyEventTransactionResult,
+    TopologyEventKind,
+    TopologyEventState,
+    TopologyEventStatus,
 )
 from ._fock_continuation import (
     FockContinuationPolicy,
@@ -648,6 +673,18 @@ from ._temporal_method import (
 )
 from ._temporal_precision import TemporalPrecisionPolicy
 from ._theta import ThetaMethod
+from ._unstructured_amr_runtime import (
+    PreparedUnstructuredAMRRuntime,
+    UnstructuredAMRAdvanceResult,
+    UnstructuredAMRRefluxReport,
+    UnstructuredAMRRuntimeState,
+)
+from ._unstructured_incompressible import (
+    UnstructuredPressureCorrectionPlan,
+    UnstructuredPressureCorrectionResult,
+    UnstructuredPressureProjectionPlan,
+    UnstructuredPressureProjectionResult,
+)
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -1042,11 +1079,36 @@ __all__ = [
     "FiniteVolumeStepResult",
     "SplittingKind",
     "UnsplitFiniteVolumeSSPRK3Plan",
+    "FiniteVolumeBackwardEulerPlan",
+    "FiniteVolumeImplicitStage",
+    "FiniteVolumeImplicitStepResult",
+    "PreparedFiniteVolumeBackwardEulerStep",
+    "UnstructuredPressureCorrectionPlan",
+    "UnstructuredPressureCorrectionResult",
+    "UnstructuredPressureProjectionPlan",
+    "UnstructuredPressureProjectionResult",
+    "FiniteVolumeALEAdvanceEvidence",
+    "FiniteVolumeEmbeddedAdvanceEvidence",
     "FiniteVolumeAdvanceResult",
     "FiniteVolumeRunStatus",
+    "FiniteVolumeTopologyArtifactEvidence",
+    "FiniteVolumeTopologyEventTransaction",
+    "FiniteVolumeTopologyEventTransactionResult",
+    "FiniteVolumeTopologyEventScheduler",
+    "PreparedUnstructuredAMRRuntime",
+    "UnstructuredAMRAdvanceResult",
+    "UnstructuredAMRRefluxReport",
+    "UnstructuredAMRRuntimeState",
     "FiniteVolumeRuntimeState",
     "FiniteVolumeStepPolicy",
     "PreparedFiniteVolumeRuntime",
+    "FiniteVolumeTopologyEpoch",
+    "FiniteVolumeTopologyEvent",
+    "FiniteVolumeTopologyEventJournal",
+    "FiniteVolumeTopologyEventRequest",
+    "TopologyEventKind",
+    "TopologyEventState",
+    "TopologyEventStatus",
     "FiniteVolumeCaseSpec",
     "FiniteVolumeExecutionSpec",
     "FiniteVolumePrecisionPolicy",
@@ -1057,6 +1119,8 @@ __all__ = [
     "FiniteVolumeCheckpointPlan",
     "read_finite_volume_checkpoint",
     "write_finite_volume_checkpoint",
+    "FiniteVolumeConservativeContentState",
+    "apply_stage_rate_euler_update",
     "FiniteVolumeOutputPlan",
     "FiniteVolumeGradientReport",
     "FiniteVolumeRematerializationPolicy",

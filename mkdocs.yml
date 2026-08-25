@@ -122,6 +122,7 @@ nav:
         - Discretization: "guides_discretization.md"
         - Structured finite volume: "guides_finite_volume.md"
         - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
+        - Unstructured finite volume: "guides_unstructured_finite_volume.md"
         - Solver substrates: "guides_solver_substrates.md"
         - Differential operators: "guides_differential.md"
         - Exact PDE trial spaces: "guides_exact_trial_spaces.md"
@@ -183,6 +184,7 @@ nav:
             - Temporal and stochastic composition: "api/discretization/stochastic.md"
             - Finite differences: "api/discretization/finite_difference.md"
             - Structured finite volume: "api/discretization/finite_volume.md"
+            - Unstructured finite volume: "api/discretization/unstructured_finite_volume.md"
             - Modal and constrained solvers: "api/discretization/modal_solvers.md"
             - Fixed-capacity AMR: "api/discretization/amr.md"
         - Domains:

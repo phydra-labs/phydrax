@@ -71,6 +71,23 @@
   PDE exactness off singular support; continuous-boundary target admissibility is
   validated before residual audits, while target-clearance and panel/trace/BC
   approximation evidence remain separate.
+- Added a single-device unstructured finite-volume stack over canonical cell complexes:
+  triangle, quadrilateral, mixed polygonal, and affine tetrahedral geometry; stable
+  topology/geometry/global identities; normal Rusanov-HLL-HLLC fluxes; general
+  cell-polynomial and CWENO/WENO-Z reconstruction; explicit viscous triangle closure;
+  shared SSPRK positivity/retry; matrix-free backward Euler; momentum-weighted
+  Rhie--Chow pressure correction; schema-versioned mesh, case, checkpoint, HDF5/XDMF,
+  and VTK persistence; fixed-connectivity GCL diagnostics and conservative remap;
+  polygonal embedded-boundary clipping and PLIC/VOF transport; fixed-capacity two-level
+  AMR; conservative overset interpolation; and accepted-step periodic sliding overlap.
+  Tetrahedral reconstruction/dynamics qualification is degree-one affine only; degree-two
+  k-exact and WENO qualification remains limited to the tested 2-D geometries.
+
+- Added explicit stage flux-rate and accepted content-integral ledgers, conservative
+  content state, epoch/event transactions, automatic certified AABB/polygon/tetra
+  remap artifacts, embedded small-cell stabilization, two-material EOS/system
+  foundations, capillarity/contact-angle evidence, and fail-closed rejection of
+  unintegrated two-material PLIC runtime coupling.
 
 - Added native-precision open-system campaign records, integrity-checked
   artifacts, semantic-variate replay evidence, fail-closed promotion policies,

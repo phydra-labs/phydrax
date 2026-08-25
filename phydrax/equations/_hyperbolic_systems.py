@@ -65,6 +65,11 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
         /,
     ) -> Array:
         normal_ = jnp.asarray(normal)
+        if normal_.ndim == 0 or normal_.shape[-1] != self.dimension:
+            raise ValueError(
+                "Normal vectors must have a trailing dimension matching "
+                f"system dimension {self.dimension}."
+            )
         flux = jnp.zeros_like(state)
         for axis in range(self.dimension):
             flux = flux + normal_[..., axis, None] * self.physical_flux(state, axis, args)
@@ -78,14 +83,10 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> Array:
-        normal_ = jnp.asarray(normal)
-        speed = jnp.zeros(left.shape[:-1], dtype=left.dtype)
-        for axis in range(self.dimension):
-            speed = speed + jnp.abs(normal_[..., axis]) * self.max_wave_speed(
-                left, right, axis, args
-            )
-        return speed
+        lower, upper = self.normal_signal_bounds(left, right, normal, args)
+        return jnp.maximum(jnp.abs(lower), jnp.abs(upper))
 
+    @abc.abstractmethod
     def normal_signal_bounds(
         self,
         left: Array,
@@ -94,8 +95,7 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
         args: Any = None,
         /,
     ) -> tuple[Array, Array]:
-        speed = self.max_normal_wave_speed(left, right, normal, args)
-        return -speed, speed
+        raise NotImplementedError
 
     @abc.abstractmethod
     def conserved_to_primitive(self, state: Array, /) -> Array:
@@ -112,6 +112,11 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
     @property
     def component_count(self) -> int:
         return len(self.component_names)
+
+    @abc.abstractmethod
+    def admissible(self, state: Array, /) -> Array:
+        """Unconstrained systems admit every finite state by default."""
+        return jnp.all(jnp.isfinite(state), axis=-1)
 
 
 class AbstractCharacteristicSystem(AbstractConservationSystem):
@@ -176,6 +181,9 @@ class ScalarConservationSystem(AbstractConservationSystem):
         self.flux = flux
         self.wave_speed = wave_speed
 
+    def admissible(self, state: Array, /) -> Array:
+        return jnp.all(jnp.isfinite(jnp.asarray(state)), axis=-1)
+
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         return jnp.asarray(self.flux(jnp.asarray(state), int(axis), args))
 
@@ -198,6 +206,22 @@ class ScalarConservationSystem(AbstractConservationSystem):
         /,
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
+        return -speed, speed
+
+    def normal_signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        normal_ = jnp.asarray(normal)
+        speed = jnp.zeros(left.shape[:-1], dtype=left.dtype)
+        for axis in range(self.dimension):
+            speed = speed + jnp.abs(normal_[..., axis]) * self.max_wave_speed(
+                left, right, axis, args
+            )
         return -speed, speed
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
@@ -362,6 +386,31 @@ class EulerSystem(
             right_primitive[..., 1 + axis_] + right_sound,
         )
         return lower, upper
+
+    def normal_signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        del args
+        normal_ = jnp.asarray(normal)
+        left_primitive = self.conserved_to_primitive(left)
+        right_primitive = self.conserved_to_primitive(right)
+        left_sound = self.material.sound_speed(
+            left_primitive[..., 0], left_primitive[..., -1]
+        )
+        right_sound = self.material.sound_speed(
+            right_primitive[..., 0], right_primitive[..., -1]
+        )
+        left_velocity = jnp.sum(left_primitive[..., 1:-1] * normal_, axis=-1)
+        right_velocity = jnp.sum(right_primitive[..., 1:-1] * normal_, axis=-1)
+        return (
+            jnp.minimum(left_velocity - left_sound, right_velocity - right_sound),
+            jnp.maximum(left_velocity + left_sound, right_velocity + right_sound),
+        )
 
     def admissible(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
@@ -561,6 +610,16 @@ class CompressibleNavierStokesSystem(
     ) -> tuple[Array, Array]:
         return self.inviscid.signal_bounds(left, right, axis, args)
 
+    def normal_signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        return self.inviscid.normal_signal_bounds(left, right, normal, args)
+
     def admissible(self, state: Array, /) -> Array:
         return self.inviscid.admissible(state)
 
@@ -720,6 +779,22 @@ class MultispeciesEulerSystem(AbstractAdmissibleSystem):
         /,
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
+        return -speed, speed
+
+    def normal_signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        normal_ = jnp.asarray(normal)
+        speed = jnp.zeros(left.shape[:-1], dtype=left.dtype)
+        for axis in range(self.dimension):
+            speed = speed + jnp.abs(normal_[..., axis]) * self.max_wave_speed(
+                left, right, axis, args
+            )
         return -speed, speed
 
     def admissible(self, state: Array, /) -> Array:
@@ -897,6 +972,22 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
         speed = self.max_wave_speed(left, right, axis, args)
         return -speed, speed
 
+    def normal_signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        normal_ = jnp.asarray(normal)
+        speed = jnp.zeros(left.shape[:-1], dtype=left.dtype)
+        for axis in range(self.dimension):
+            speed = speed + jnp.abs(normal_[..., axis]) * self.max_wave_speed(
+                left, right, axis, args
+            )
+        return -speed, speed
+
     def admissible(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
         return (value[..., 0] >= self.density_floor) & (
@@ -994,6 +1085,22 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
         /,
     ) -> tuple[Array, Array]:
         speed = self.max_wave_speed(left, right, axis, args)
+        return -speed, speed
+
+    def normal_signal_bounds(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[Array, Array]:
+        normal_ = jnp.asarray(normal)
+        speed = jnp.zeros(left.shape[:-1], dtype=left.dtype)
+        for axis in range(self.dimension):
+            speed = speed + jnp.abs(normal_[..., axis]) * self.max_wave_speed(
+                left, right, axis, args
+            )
         return -speed, speed
 
     def admissible(self, state: Array, /) -> Array:

@@ -95,6 +95,14 @@ from ._materials import (
     AbstractThermodynamicMaterial,
     IdealGasMaterial,
     StiffenedGasMaterial,
+    TwoMaterialEOSClosure,
+    TwoMaterialEOSReport,
+    TwoMaterialPrimitiveState,
+)
+from ._multiphase import (
+    TwoMaterialVOFDiagnostics,
+    TwoMaterialVOFStateLayout,
+    TwoMaterialVOFSystem,
 )
 from ._randomized_compile import (
     analyze_randomized_compilation,
@@ -230,6 +238,12 @@ __all__ = [
     "ShallowWaterSystem",
     "PrandtlTransport",
     "StiffenedGasMaterial",
+    "TwoMaterialEOSClosure",
+    "TwoMaterialEOSReport",
+    "TwoMaterialPrimitiveState",
+    "TwoMaterialVOFDiagnostics",
+    "TwoMaterialVOFStateLayout",
+    "TwoMaterialVOFSystem",
     "SutherlandTransport",
     "TransportProperties",
     "couette_velocity_profile",

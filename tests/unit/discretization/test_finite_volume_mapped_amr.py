@@ -26,9 +26,7 @@ def _scalar_system(dimension):
     return phx.equations.ScalarConservationSystem(
         dimension,
         lambda state, axis, args: velocity[axis] * state,
-        lambda left, right, axis, args: jnp.full(
-            left.shape[:-1], abs(velocity[axis])
-        ),
+        lambda left, right, axis, args: jnp.full(left.shape[:-1], abs(velocity[axis])),
         system_id=f"mapped-transport-{dimension}",
     )
 
@@ -56,7 +54,7 @@ def test_mapped_identity_preserves_cartesian_measures_and_constant_free_stream()
     compiled = phx.equations.compile_conservation_problem(problem, mapped, method)
 
     np.testing.assert_allclose(mapped.cell_volumes, reference.cell_volumes, rtol=1e-12)
-    residual = compiled(0.0, jnp.ones(mapped.state_shape))
+    residual = compiled(jnp.asarray(0.0), jnp.ones(mapped.state_shape))
     np.testing.assert_allclose(residual, 0.0, atol=2e-12)
 
 
@@ -88,7 +86,7 @@ def test_warped_mapped_geometry_preserves_constant_flux_divergence():
         ),
     )
 
-    residual = compiled(0.0, jnp.ones(mapped.state_shape))
+    residual = compiled(jnp.asarray(0.0), jnp.ones(mapped.state_shape))
     np.testing.assert_allclose(residual, 0.0, atol=2e-11)
     assert jnp.all(mapped.cell_volumes > 0.0)
 
@@ -177,19 +175,66 @@ def test_amr_synchronization_refluxes_then_restricts_covered_cells():
     np.testing.assert_allclose(result.conservation_defect, [0.0])
 
 
-def test_amr_register_consumes_only_accepted_time_averaged_fluxes():
+def test_amr_register_consumes_accepted_flux_integrals_once():
+    def accepted_ledger(
+        flux_integral, owner_cells, cell_count, level, start_time, end_time, step
+    ):
+        block = phx.discretization.FiniteVolumeAcceptedFluxIntegralBlock(
+            jnp.asarray(flux_integral),
+            jnp.asarray(owner_cells, dtype=jnp.int32),
+            jnp.full((len(owner_cells),), -1, dtype=jnp.int32),
+            jnp.ones((len(owner_cells),), dtype=bool),
+            "mapped-amr:x-interface",
+            "mapped-amr-interface",
+        )
+        versions = (jnp.asarray(0),) * 3
+        return phx.discretization.FiniteVolumeAcceptedFluxIntegralLedger(
+            (block,),
+            jnp.zeros((cell_count, 1)),
+            jnp.ones((cell_count,), dtype=bool),
+            geometry_family_id=f"mapped-amr:{level}:geometry-family",
+            geometry_layout_id=f"mapped-amr:{level}",
+            stage_geometry_versions=versions,
+            start_geometry_version=jnp.asarray(0),
+            end_geometry_version=jnp.asarray(0),
+            evidence_policy_id="mapped-amr:accepted-integrals",
+            stage_evidence_versions=versions,
+            start_evidence_version=jnp.asarray(0),
+            end_evidence_version=jnp.asarray(0),
+            start_topology_epoch_id=f"mapped-amr:{level}:topology",
+            end_topology_epoch_id=f"mapped-amr:{level}:topology",
+            start_time=jnp.asarray(start_time),
+            end_time=jnp.asarray(end_time),
+            accepted_step=jnp.asarray(step, dtype=jnp.int32),
+        )
+
+    coarse_ledger = accepted_ledger([[0.4], [0.8]], (0, 1), 2, "coarse", 0.0, 0.2, 1)
+    fine_ledgers = (
+        accepted_ledger([[0.05], [0.2]], (0, 2), 4, "fine", 0.0, 0.1, 1),
+        accepted_ledger([[0.15], [0.4]], (0, 2), 4, "fine", 0.1, 0.2, 2),
+    )
+    assert coarse_ledger.units == fine_ledgers[0].units == "content"
+    assert coarse_ledger.blocks[0].units == fine_ledgers[0].blocks[0].units == "content"
+    assert coarse_ledger.blocks[0].route_id != fine_ledgers[0].blocks[0].route_id
+    assert coarse_ledger.ledger_id != fine_ledgers[0].ledger_id
+    assert fine_ledgers[0].ledger_id == fine_ledgers[1].ledger_id
 
     coarse = SimpleNamespace(
+        accepted=True,
         accepted_step_size=jnp.asarray(0.2),
-        accepted_integrated_fluxes=(jnp.asarray([[2.0], [4.0]]),),
+        accepted_flux_integrals=coarse_ledger,
     )
-    fine = SimpleNamespace(
-        accepted_step_size=jnp.asarray(0.1),
-        accepted_integrated_fluxes=(jnp.asarray([[1.0], [3.0]]),),
+    fine = tuple(
+        SimpleNamespace(
+            accepted=True,
+            accepted_step_size=jnp.asarray(0.1),
+            accepted_flux_integrals=ledger,
+        )
+        for ledger in fine_ledgers
     )
     register = phx.discretization.flux_register_from_accepted_steps(
         coarse,
-        (fine, fine),
+        fine,
         0,
         lambda value: value,
         jnp.asarray([True, True]),

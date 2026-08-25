@@ -34,10 +34,33 @@ def _rollout_runtime(cells=12):
         dynamics, phx.discretization.FluxPositivityPlan()
     )
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.15, 1.0]), (cells, 3))
-    initial = phx.solver.FiniteVolumeRuntimeState(
-        system.primitive_to_conserved(primitive), 0.0, 0.001
+    initial = runtime.initialize_state(
+        system.primitive_to_conserved(primitive),
+        0.0,
+        0.001,
     )
     return runtime, initial
+
+
+def test_direct_ssprk_wrapper_matches_uncoupled_structured_runtime():
+    runtime, initial = _rollout_runtime()
+
+    direct = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(runtime.dynamics).advance(
+        initial.content_state.time,
+        initial.cell_average(),
+        initial.step_size,
+    )
+    prepared = runtime.advance(initial)
+
+    assert bool(prepared.accepted)
+    np.testing.assert_allclose(
+        direct.state,
+        prepared.runtime_state.cell_average(),
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(direct.time, prepared.runtime_state.content_state.time)
+    np.testing.assert_allclose(direct.step_size, initial.step_size)
 
 
 def test_rollout_retention_policies_preserve_constant_state():
@@ -48,16 +71,41 @@ def test_rollout_retention_policies_preserve_constant_state():
     checkpoints = phx.solver.FiniteVolumeRolloutPlan(
         runtime, 6, retention="checkpoints", checkpoint_stride=2
     ).rollout(initial)
-    final = phx.solver.FiniteVolumeRolloutPlan(
-        runtime, 6, retention="final"
-    ).rollout(initial)
+    final = phx.solver.FiniteVolumeRolloutPlan(runtime, 6, retention="final").rollout(
+        initial
+    )
 
     assert trajectory.retained_states.shape[0] == 6
     assert checkpoints.retained_states.shape[0] == 3
     assert final.retained_states.shape[0] == 1
+    assert trajectory.retained_states.shape[1:] == (
+        initial.content_state.conservative_content.shape
+    )
     np.testing.assert_allclose(
-        trajectory.final_state.conservative_state,
-        initial.conservative_state,
+        trajectory.retained_states,
+        jnp.broadcast_to(
+            initial.content_state.conservative_content,
+            trajectory.retained_states.shape,
+        ),
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        trajectory.final_state.content_state.conservative_content,
+        initial.content_state.conservative_content,
+        atol=2e-12,
+    )
+    np.testing.assert_allclose(
+        trajectory.final_state.cell_average(),
+        initial.cell_average(),
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    initial_integral = initial.content_state.volume_integral()
+    np.testing.assert_allclose(
+        jnp.sum(trajectory.retained_states, axis=1),
+        jnp.broadcast_to(initial_integral, (6, initial_integral.size)),
+        rtol=2e-12,
         atol=2e-12,
     )
     assert jnp.all(trajectory.accepted)
@@ -73,23 +121,20 @@ def test_step_rematerialization_matches_uncheckpointed_rollout():
     ).rollout(initial)
 
     np.testing.assert_allclose(
-        rematerialized.final_state.conservative_state,
-        direct.final_state.conservative_state,
+        rematerialized.final_state.content_state.conservative_content,
+        direct.final_state.content_state.conservative_content,
         rtol=1e-12,
         atol=1e-12,
     )
 
 
-def test_rollout_gradient_report_matches_forward_reverse_and_finite_difference():
+def test_rollout_gradient_report_matches_content_coordinate_jvp_and_vjp():
     runtime, initial = _rollout_runtime(8)
-    plan = phx.solver.FiniteVolumeRolloutPlan(
-        runtime, 3, rematerialization="step"
-    )
-    tangent = jnp.linspace(-0.2, 0.2, initial.conservative_state.size).reshape(
-        initial.conservative_state.shape
-    )
+    plan = phx.solver.FiniteVolumeRolloutPlan(runtime, 3, rematerialization="step")
+    initial_content = initial.content_state.conservative_content
+    tangent = jnp.linspace(-0.2, 0.2, initial_content.size).reshape(initial_content.shape)
     report = plan.gradient_report(
-        lambda final, args: jnp.sum(final.conservative_state[..., -1]),
+        lambda final, args: jnp.sum(final.content_state.conservative_content[..., -1]),
         initial,
         tangent,
         epsilon=1e-5,
