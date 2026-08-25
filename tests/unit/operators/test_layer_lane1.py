@@ -240,8 +240,9 @@ def test_3d_qbx_directional_expansion_covers_real_and_complex_layers():
         triangle_plan=triangle_plan,
     )
 
-    assert jnp.allclose(single.values, 0.5, atol=1e-2)
-    assert jnp.allclose(double.values, -0.5, atol=1e-2)
+    assert jnp.allclose(panelization.boundary_measure, 4.0 * jnp.pi)
+    assert jnp.allclose(single.values, 1.0, atol=1e-2)
+    assert jnp.allclose(double.values, -1.0, atol=1e-2)
     for result in (single, double, helmholtz):
         assert result.values.shape == (1,)
         assert jnp.all(jnp.isfinite(result.values))
