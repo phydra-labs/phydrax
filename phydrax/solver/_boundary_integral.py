@@ -17,20 +17,20 @@ from ..linalg import (
     solve as solve_linear,
 )
 from ..operators.integral.layer_potential import (
-    BoundaryLayerApproximationReport,
     BoundaryPanelization2D,
     double_layer_principal_value_matrix,
     LaplaceLayerPotential2D,
+    LayerDiscretizationReport,
 )
 
 
 class InteriorLaplaceDirichletResult(StrictModule):
-    """Solved double-layer density and independently certified interior potential."""
+    """Solved double-layer density and independently certified potential."""
 
     density: Array
     potential: LaplaceLayerPotential2D
     linear_result: LinearSolveResult
-    approximation: BoundaryLayerApproximationReport
+    discretization: LayerDiscretizationReport
     boundary_residual_norm: Array
     valid: Array
 
@@ -40,20 +40,20 @@ class InteriorLaplaceDirichletResult(StrictModule):
         density: Array,
         potential: LaplaceLayerPotential2D,
         linear_result: LinearSolveResult,
-        approximation: BoundaryLayerApproximationReport,
+        discretization: LayerDiscretizationReport,
         boundary_residual_norm: Array,
     ):
         if not isinstance(potential, LaplaceLayerPotential2D):
             raise TypeError("potential must be LaplaceLayerPotential2D.")
         if not isinstance(linear_result, LinearSolveResult):
             raise TypeError("linear_result must be LinearSolveResult.")
-        if not isinstance(approximation, BoundaryLayerApproximationReport):
-            raise TypeError("approximation must be BoundaryLayerApproximationReport.")
+        if not isinstance(discretization, LayerDiscretizationReport):
+            raise TypeError("discretization must be LayerDiscretizationReport.")
         residual = jnp.asarray(boundary_residual_norm)
         self.density = jnp.asarray(density)
         self.potential = potential
         self.linear_result = linear_result
-        self.approximation = approximation
+        self.discretization = discretization
         self.boundary_residual_norm = residual
         self.valid = (
             linear_result.successful
@@ -98,17 +98,12 @@ def solve_interior_laplace_dirichlet_2d(
         kind="double",
         density=density,
     )
-    approximation = BoundaryLayerApproximationReport(
-        panelization=panelization,
-        kernel_id=potential.kernel.kernel_id,
-        density_space="quadrature-node-values",
-        trace_policy="interior-minus-half-jump-local-diagonal",
-    )
+    discretization = potential.discretization_report()
     return InteriorLaplaceDirichletResult(
         density=density,
         potential=potential,
         linear_result=linear_result,
-        approximation=approximation,
+        discretization=discretization,
         boundary_residual_norm=residual,
     )
 

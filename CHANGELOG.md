@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Added
+- Added public callable adaptive interval and triangle engines that reuse
+  `AdaptiveQuadraturePlan`, `AdaptiveTrianglePlan`, `IntegrationPrecisionPolicy`,
+  `IntegrationEstimate`, bounded partitions, statuses, and error-kind diagnostics.
+  Specialized evaluators can now keep singularity classification and correction
+  orchestration separate without duplicating the adaptive refinement subsystem.
+- Expanded boundary layers with an explicit representation/discretization/evaluator
+  split, global-error-aware adaptive near/self panel evaluation, declared corner
+  topology and Kress/dyadic partitions, outgoing 2D Helmholtz kernels and explicit
+  Brakhage--Werner CFIE assembly reports, target-associated 2D local expansions,
+  triangular 3D surface panels, and a corrected near/far direct backend contract.
+- Added target-centered Duffy self integration for 3D surface layers, coefficient-
+  quadrature 3D QBX with continuous signed-distance clearance, outgoing 3D
+  Helmholtz fields, and explicit Duffy-based 3D CFIE assembly reports. The
+  reference near/far backend remains explicitly direct; no FMM claim is attached.
+- Split the analytic sphere boundary atlas into two trimmed reference triangles,
+  preserving full-sphere measure under triangular 3D panel quadrature and sampling.
+- Added a fixed-topology Laplace multipole treecode reference with truncation
+  estimates and direct/multipole work accounting; the production FMM path and
+  global QBX coupling are recorded separately below.
+- Added genuine 2D Laplace M2M/M2L/L2L translations and global QBX/FMM coupling
+  with prepared target associations, continuous expansion clearance, separate FMM
+  truncation, coefficient-quadrature, and local expansion error evidence.
 - Added likelihood-backed binary and multiclass empirical classification terms
   with encoded target schemas, case masks, positive statistical sample weights,
   posterior-compatible raw log probabilities, classification diagnostics, and a

@@ -415,7 +415,7 @@ class _SphereBoundaryMap(AbstractBoundaryMap):
 
     @property
     def num_charts(self) -> int:
-        return 1
+        return 2
 
     @property
     def reference_dimension(self) -> int:
@@ -426,9 +426,13 @@ class _SphereBoundaryMap(AbstractBoundaryMap):
         return 3
 
     def map(self, chart_indices: Array, reference: Array, /) -> Array:
-        del chart_indices
-        azimuth = 2.0 * jnp.pi * reference[..., 0]
-        vertical = 1.0 - 2.0 * reference[..., 1]
+        chart = chart_indices.astype(reference.dtype)
+        first = reference[..., 0]
+        second = reference[..., 1]
+        square_first = jnp.where(chart == 0.0, first, 1.0 - second)
+        square_second = jnp.where(chart == 0.0, second, first + second)
+        azimuth = 2.0 * jnp.pi * square_first
+        vertical = 1.0 - 2.0 * square_second
         radial = jnp.sqrt(jnp.maximum(1.0 - vertical * vertical, 0.0))
         direction = jnp.stack(
             (
@@ -540,11 +544,13 @@ def sphere_boundary_atlas(
     *,
     source_id: str,
 ) -> BoundaryAtlas:
+    triangle = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
     return BoundaryAtlas(
         _SphereBoundaryMap(center, radius),
-        source_entity_ids=jnp.asarray([0], dtype=jnp.int32),
-        orientation=-jnp.ones((1,), dtype=float),
+        source_entity_ids=jnp.asarray([0, 0], dtype=jnp.int32),
+        orientation=-jnp.ones((2,), dtype=float),
         source_id=source_id,
+        trim_domains=(TrimDomain(triangle), TrimDomain(triangle)),
     )
 
 

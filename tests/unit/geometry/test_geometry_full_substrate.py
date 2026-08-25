@@ -100,6 +100,28 @@ def test_boundary_atlas_frames_selection_and_sampling_metadata():
     assert np.allclose(np.asarray(samples.points[:, 0]), -1.0)
 
 
+def test_sphere_boundary_atlas_uses_trimmed_triangular_charts():
+    atlas = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile().boundary_atlas
+    charts = jnp.asarray([0, 0, 1, 1], dtype=jnp.int32)
+    references = jnp.asarray(
+        [[0.25, 0.25], [0.75, 0.75], [0.25, 0.25], [0.75, 0.75]]
+    )
+    mask = atlas.reference_mask(charts, references)
+
+    assert atlas.num_charts == 2
+    assert np.array_equal(np.asarray(mask), [True, False, True, False])
+    samples = phx.geometry.sample_boundary_atlas(
+        atlas,
+        32,
+        key=jax.random.key(17),
+    )
+    assert bool(samples.report.complete)
+    assert np.allclose(
+        np.asarray(jnp.linalg.norm(samples.points, axis=1)),
+        1.0,
+    )
+
+
 def test_matrix_free_ddg_linear_precision():
     mesh = phx.geometry.TriangleMesh(
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],

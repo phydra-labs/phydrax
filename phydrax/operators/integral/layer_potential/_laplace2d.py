@@ -19,12 +19,12 @@ from ....equations.trefftz._core import (
     TRIAL_SPACE_CERTIFICATE_KEY,
     TrialSpaceCertificate,
 )
+from ....operators.differential._jet import jet_terms
 from ._core import (
     AbstractLayerKernel,
-    BoundaryLayerApproximationReport,
     BoundaryPanelization2D,
     KernelActionSide,
-    LayerPotentialTargetReport,
+    LayerDiscretizationReport,
 )
 
 
@@ -91,7 +91,8 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: Literal["scalar"] = eqx.field(static=True)
     _certificate: TrialSpaceCertificate
-    _approximation: BoundaryLayerApproximationReport
+    _discretization: LayerDiscretizationReport
+    representation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -127,6 +128,7 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
         self.kind = kind
         self.in_size = 2
         self.out_size = "scalar"
+        self.representation_id = representation_id
         self._certificate = TrialSpaceCertificate(
             equation_family="laplace",
             ambient_dimension=2,
@@ -144,7 +146,7 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
             validity_region="off-singular-support",
             singular_support_id=panelization.source_support_id,
         )
-        self._approximation = BoundaryLayerApproximationReport(
+        self._discretization = LayerDiscretizationReport(
             panelization=panelization,
             kernel_id=kernel.kernel_id,
             density_space="quadrature-node-values",
@@ -191,32 +193,59 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
             self.density,
         )
 
-    def evaluate_with_report(
-        self,
-        targets: ArrayLike,
-        /,
-        *,
-        target_side: Literal["interior", "exterior"],
-        accuracy_clearance: float = 0.0,
-    ) -> tuple[Array, LayerPotentialTargetReport]:
+    def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
         values = jnp.asarray(targets, dtype=float)
-        single = values.ndim == 1
-        if single:
-            values = values[None, :]
-        report = LayerPotentialTargetReport(
-            values,
-            self.panelization,
-            target_side=target_side,
-            accuracy_clearance=accuracy_clearance,
-        )
-        output = jax.vmap(self)(values)
-        return (output[0] if single else output), report
+        if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
+            raise ValueError("Direct layer targets must have shape (target_count, 2).")
+        return jax.vmap(self)(values)
 
-    def approximation_report(self) -> BoundaryLayerApproximationReport:
-        return self._approximation
+    def discretization_report(self) -> LayerDiscretizationReport:
+        return self._discretization
+
 
     def model_metadata(self) -> Mapping[str, Any]:
         return {TRIAL_SPACE_CERTIFICATE_KEY: self._certificate}
+
+
+def _analytic_double_layer_diagonal_limit(
+    panelization: BoundaryPanelization2D,
+    node_index: int,
+    /,
+) -> Array:
+    chart = panelization.chart_indices[node_index]
+    reference = panelization.references[node_index, 0]
+    chart_index = jnp.asarray([chart], dtype=jnp.int32)
+
+    def origin(value: Array) -> Array:
+        return panelization.atlas.frame(
+            chart_index,
+            value.reshape((1, 1)),
+        ).origin[0]
+
+    def normal(value: Array) -> Array:
+        return panelization.atlas.frame(
+            chart_index,
+            value.reshape((1, 1)),
+        ).normal[0]
+
+    frame = panelization.atlas.frame(
+        chart_index,
+        reference.reshape((1, 1)),
+    )
+    direction = jnp.ones_like(reference)
+    _, (first, second) = jet_terms(origin, reference, direction, order=2)
+    _, (normal_derivative,) = jet_terms(
+        normal,
+        reference,
+        direction,
+        order=1,
+    )
+    speed_squared = jnp.dot(first, first)
+    coefficient = (
+        -jnp.dot(first, normal_derivative)
+        - 0.5 * jnp.dot(second, frame.normal[0])
+    ) / (2.0 * jnp.pi * speed_squared)
+    return coefficient
 
 
 def double_layer_principal_value_matrix(
@@ -238,20 +267,11 @@ def double_layer_principal_value_matrix(
         2.0 * jnp.pi * safe_squared
     )
 
-    step = 1.0 / (
-        panelization.panels_per_chart * panelization.quadrature_order * 1_000_000.0
-    )
-    reference = panelization.references[:, 0]
-    direction = jnp.where(reference + step < 1.0, 1.0, -1.0)
-    shifted_reference = (reference + direction * step)[:, None]
-    shifted = panelization.atlas.frame(
-        panelization.chart_indices,
-        shifted_reference,
-    )
-    diagonal = jax.vmap(kernel.source_normal_derivative)(
-        targets,
-        shifted.origin,
-        shifted.normal,
+    diagonal = jnp.stack(
+        tuple(
+            _analytic_double_layer_diagonal_limit(panelization, index)
+            for index in range(panelization.node_count)
+        )
     )
     indices = jnp.arange(panelization.node_count)
     values = values.at[indices, indices].set(diagonal)

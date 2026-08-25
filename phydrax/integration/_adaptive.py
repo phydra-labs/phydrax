@@ -32,10 +32,13 @@ from phydrax.domain import (
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._numerics import clenshaw_curtis_data, tanh_sinh_data
 from .._strict import StrictModule
+from ._adaptive_callable import (
+    _error_norm,
+    _meets_plan_tolerance,
+    adaptive_interval_callable,
+)
 from ._estimates import (
-    AdaptivePartition,
     AdaptiveQuadratureDiagnostics,
     IntegrationEstimate,
     IntegrationProvenance,
@@ -43,12 +46,6 @@ from ._estimates import (
 from ._lowering import component_factor_fields, sum_over
 from ._plans import AdaptiveQuadraturePlan
 from ._precision import IntegrationPrecisionPolicy
-from ._rules import (
-    ClenshawCurtisRule,
-    GaussKronrodRule,
-    interval_rule_data,
-    TanhSinhRule,
-)
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
 
@@ -205,55 +202,6 @@ def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunc
     return DomainFunction(domain=component.domain, deps=(), func=value)
 
 
-def _local_rule(plan: AdaptiveQuadraturePlan, /):
-    high = interval_rule_data(plan.rule)
-    if isinstance(plan.rule, GaussKronrodRule):
-        if high.embedded_weights is None:
-            raise RuntimeError("Gauss--Kronrod rule is missing embedded weights.")
-        return high, None, int(high.nodes.shape[0])
-    if isinstance(plan.rule, ClenshawCurtisRule):
-        low_order = 2 if plan.rule.level == 1 else 2 ** (plan.rule.level - 1) + 1
-        low = clenshaw_curtis_data(low_order)
-        return high, low, int(high.nodes.shape[0] + low.nodes.shape[0])
-    if isinstance(plan.rule, TanhSinhRule):
-        low_order = max(3, plan.rule.order - 20)
-        if low_order % 2 == 0:
-            low_order -= 1
-        low = tanh_sinh_data(low_order)
-        return high, low, int(high.nodes.shape[0] + low.nodes.shape[0])
-    raise TypeError(
-        "AdaptiveQuadraturePlan requires GaussKronrodRule, "
-        "ClenshawCurtisRule, or TanhSinhRule."
-    )
-
-
-def _error_norm(value: Array, /) -> Array:
-    return jnp.max(jnp.abs(jnp.asarray(value)))
-
-
-def _meets_plan_tolerance(
-    value: Array,
-    error: Array,
-    plan: AdaptiveQuadraturePlan,
-    precision: IntegrationPrecisionPolicy,
-    /,
-) -> Array:
-    magnitude = precision.decision(_error_norm(value))
-    error_ = precision.decision(error)
-    real_dtype = magnitude.dtype
-    absolute = (
-        jnp.sqrt(jnp.finfo(real_dtype).eps)
-        if plan.absolute_tolerance is None
-        else jnp.asarray(plan.absolute_tolerance, dtype=real_dtype)
-    )
-    relative = (
-        jnp.sqrt(jnp.finfo(real_dtype).eps)
-        if plan.relative_tolerance is None
-        else jnp.asarray(plan.relative_tolerance, dtype=real_dtype)
-    )
-    return error_ <= absolute + relative * magnitude
-
-
 def _run_adaptive_raw(
     integrand: Any,
     component: DomainComponent,
@@ -287,333 +235,25 @@ def _run_adaptive_raw(
         geometry_variable=isinstance(factor, Interval1d),
         precision=precision,
     )
-    endpoints = precision.accumulation(
-        jnp.asarray((factor.start, *plan.breakpoints, factor.end))
-    )
-    initial_count = len(plan.breakpoints) + 1
+    endpoints = precision.accumulation(jnp.asarray((factor.start, factor.end)))
     prototype = callback.field(0.5 * (endpoints[0] + endpoints[-1]))
-    output_shape = prototype.data.shape
-    output_dims = prototype.dims
-    high, low, local_cost = _local_rule(plan)
-    initial_cost = initial_count * local_cost + 1
-    if plan.max_evaluations is not None and plan.max_evaluations < initial_cost:
-        bounds_valid = jnp.all(jnp.diff(endpoints) > 0.0)
-        finite = jnp.all(jnp.isfinite(jnp.asarray(prototype.data)))
-        status = jnp.where(
-            bounds_valid,
-            int(IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED),
-            int(IntegrationStatus.INVALID_BOUNDS),
-        )
-        status = jnp.where(
-            finite,
-            status,
-            int(IntegrationStatus.NONFINITE_INTEGRAND),
-        )
-        value_data = jnp.zeros_like(jnp.asarray(prototype.data))
-        if plan.throw:
-            value_data = eqx.error_if(
-                value_data,
-                status != int(IntegrationStatus.CONVERGED),
-                "Adaptive quadrature failed to meet its numerical contract.",
-            )
-        value = cx.Field(value_data, dims=output_dims)
-        error = precision.decision(jnp.asarray(jnp.inf))
-        diagnostics = AdaptiveQuadratureDiagnostics(
-            status=status,
-            num_evaluations=jnp.asarray(1, dtype=jnp.int32),
-            estimated_error=error,
-            partition=None,
-            rule=type(plan.rule).__name__,
-        )
-        return IntegrationEstimate(
-            value,
-            status=status,
-            num_evaluations=1,
-            error_estimate=error,
-            error_kind="embedded-rule",
-            diagnostics=diagnostics,
-            provenance=IntegrationProvenance(
-                "adaptive", "component", type(plan.rule).__name__
-            ),
-        )
-
-    def evaluate_interval(lower: Array, upper: Array) -> tuple[Array, Array, Array]:
-        half = 0.5 * (upper - lower)
-        center = 0.5 * (upper + lower)
-        high_nodes = precision.accumulation(high.nodes)
-        high_weights = precision.accumulation(high.weights)
-        high_points = center + half * high_nodes
-        high_values = precision.accumulation(jax.vmap(callback)(high_points))
-        high_estimate = precision.accumulation(
-            half * jnp.tensordot(high_weights, high_values, axes=(0, 0))
-        )
-        if high.embedded_weights is not None:
-            low_estimate = precision.accumulation(
-                half
-                * jnp.tensordot(
-                    precision.accumulation(high.embedded_weights),
-                    high_values,
-                    axes=(0, 0),
-                )
-            )
-        else:
-            if low is None:
-                raise RuntimeError("Nested adaptive rule is missing its low rule.")
-            low_points = center + half * precision.accumulation(low.nodes)
-            low_values = precision.accumulation(jax.vmap(callback)(low_points))
-            low_estimate = precision.accumulation(
-                half
-                * jnp.tensordot(
-                    precision.accumulation(low.weights),
-                    low_values,
-                    axes=(0, 0),
-                )
-            )
-        error = precision.decision(_error_norm(high_estimate - low_estimate))
-        finite = jnp.all(jnp.isfinite(high_values)) & jnp.all(jnp.isfinite(high_estimate))
-        return high_estimate, error, finite
-
-    initial_estimates, initial_errors, initial_finite = jax.vmap(evaluate_interval)(
-        endpoints[:-1], endpoints[1:]
-    )
-    capacity = plan.max_intervals
-    lower_bounds = (
-        jnp.zeros((capacity,), dtype=endpoints.dtype)
-        .at[:initial_count]
-        .set(endpoints[:-1])
-    )
-    upper_bounds = (
-        jnp.zeros((capacity,), dtype=endpoints.dtype)
-        .at[:initial_count]
-        .set(endpoints[1:])
-    )
-    estimates = (
-        jnp.zeros((capacity,) + output_shape, dtype=initial_estimates.dtype)
-        .at[:initial_count]
-        .set(initial_estimates)
-    )
-    errors = (
-        jnp.zeros((capacity,), dtype=initial_errors.dtype)
-        .at[:initial_count]
-        .set(initial_errors)
-    )
-    active = jnp.arange(capacity) < initial_count
-    global_estimate = precision.accumulation(jnp.sum(initial_estimates, axis=0))
-    global_error = precision.decision(jnp.sum(initial_errors))
-    evaluation_count = jnp.asarray(initial_count * local_cost + 1, dtype=jnp.int32)
-
-    def converged(estimate: Array, error: Array) -> Array:
-        return _meets_plan_tolerance(estimate, error, plan, precision)
-
-    bounds_valid = jnp.all(jnp.diff(endpoints) > 0.0)
-    finite_valid = jnp.all(initial_finite)
-    initial_status = jnp.where(
-        bounds_valid,
-        int(IntegrationStatus.CONVERGED),
-        int(IntegrationStatus.INVALID_BOUNDS),
-    )
-    initial_status = jnp.where(
-        finite_valid,
-        initial_status,
-        int(IntegrationStatus.NONFINITE_INTEGRAND),
-    )
-    done = (~bounds_valid) | (~finite_valid) | converged(global_estimate, global_error)
-    max_evaluations = (
-        capacity * 2 * local_cost + initial_count * local_cost + 1
-        if plan.max_evaluations is None
-        else plan.max_evaluations
-    )
-    state = (
-        lower_bounds,
-        upper_bounds,
-        estimates,
-        errors,
-        active,
-        jnp.asarray(initial_count, dtype=jnp.int32),
-        global_estimate,
-        global_error,
-        evaluation_count,
-        jnp.asarray(initial_status, dtype=jnp.int32),
-        done,
-    )
-
-    def iteration(carry, _):
-        (
-            lowers,
-            uppers,
-            interval_estimates,
-            interval_errors,
-            active_mask,
-            count,
-            total_estimate,
-            total_error,
-            evaluations,
-            status,
-            finished,
-        ) = carry
-
-        def refine(current):
-            (
-                lowers_,
-                uppers_,
-                estimates_,
-                errors_,
-                active_,
-                count_,
-                total_,
-                error_,
-                evaluations_,
-                status_,
-                _finished,
-            ) = current
-            capacity_exhausted = count_ >= capacity
-            evaluation_exhausted = evaluations_ + 2 * local_cost > max_evaluations
-
-            def fail_capacity(values):
-                status_value = jnp.where(
-                    capacity_exhausted,
-                    int(IntegrationStatus.MAXIMUM_INTERVALS_REACHED),
-                    int(IntegrationStatus.MAXIMUM_EVALUATIONS_REACHED),
-                )
-                return values[:-2] + (
-                    jnp.asarray(status_value, dtype=jnp.int32),
-                    jnp.asarray(True),
-                )
-
-            def split(values):
-                (
-                    lower_values,
-                    upper_values,
-                    estimate_values,
-                    error_values,
-                    active_values,
-                    count_value,
-                    total_value,
-                    total_error_value,
-                    evaluation_value,
-                    status_value,
-                    _done_value,
-                ) = values
-                selected = jnp.argmax(jnp.where(active_values, error_values, -jnp.inf))
-                lower = lower_values[selected]
-                upper = upper_values[selected]
-                midpoint = 0.5 * (lower + upper)
-                stagnated = (midpoint == lower) | (midpoint == upper)
-                left_estimate, left_error, left_finite = evaluate_interval(
-                    lower, midpoint
-                )
-                right_estimate, right_error, right_finite = evaluate_interval(
-                    midpoint, upper
-                )
-                finite = left_finite & right_finite
-                new_total = precision.accumulation(
-                    total_value
-                    - estimate_values[selected]
-                    + left_estimate
-                    + right_estimate
-                )
-                new_error = precision.decision(
-                    total_error_value - error_values[selected] + left_error + right_error
-                )
-                lower_values = lower_values.at[selected].set(lower)
-                upper_values = upper_values.at[selected].set(midpoint)
-                estimate_values = estimate_values.at[selected].set(left_estimate)
-                error_values = error_values.at[selected].set(left_error)
-                lower_values = lower_values.at[count_value].set(midpoint)
-                upper_values = upper_values.at[count_value].set(upper)
-                estimate_values = estimate_values.at[count_value].set(right_estimate)
-                error_values = error_values.at[count_value].set(right_error)
-                active_values = active_values.at[count_value].set(True)
-                count_value = count_value + 1
-                evaluation_value = evaluation_value + 2 * local_cost
-                status_value = jnp.where(
-                    finite,
-                    status_value,
-                    int(IntegrationStatus.NONFINITE_INTEGRAND),
-                )
-                status_value = jnp.where(
-                    stagnated,
-                    int(IntegrationStatus.REFINEMENT_STAGNATION),
-                    status_value,
-                )
-                done_value = (~finite) | stagnated | converged(new_total, new_error)
-                return (
-                    lower_values,
-                    upper_values,
-                    estimate_values,
-                    error_values,
-                    active_values,
-                    count_value,
-                    new_total,
-                    new_error,
-                    evaluation_value,
-                    jnp.asarray(status_value, dtype=jnp.int32),
-                    done_value,
-                )
-
-            return jax.lax.cond(
-                capacity_exhausted | evaluation_exhausted,
-                fail_capacity,
-                split,
-                current,
-            )
-
-        next_carry = jax.lax.cond(finished, lambda value: value, refine, carry)
-        return next_carry, None
-
-    state, _ = jax.lax.scan(iteration, state, xs=None, length=capacity)
-    (
-        lower_bounds,
-        upper_bounds,
-        estimates,
-        errors,
-        active,
-        count,
-        global_estimate,
-        global_error,
-        evaluation_count,
-        status,
-        done,
-    ) = state
-    status = jnp.where(
-        done,
-        status,
-        int(IntegrationStatus.MAXIMUM_INTERVALS_REACHED),
-    )
-    value_data = global_estimate
-    if plan.throw:
-        value_data = eqx.error_if(
-            value_data,
-            status != int(IntegrationStatus.CONVERGED),
-            "Adaptive quadrature failed to meet its numerical contract.",
-        )
-    value = cx.Field(value_data, dims=output_dims)
-    partition = None
-    if plan.collect_partition:
-        partition = AdaptivePartition(
-            count=count,
-            lower_bounds=lower_bounds,
-            upper_bounds=upper_bounds,
-            integral_estimates=estimates,
-            estimated_errors=errors,
-            active=active,
-        )
-    rule_name = type(plan.rule).__name__
-    diagnostics = AdaptiveQuadratureDiagnostics(
-        status=status,
-        num_evaluations=evaluation_count,
-        estimated_error=global_error,
-        partition=partition,
-        rule=rule_name,
+    raw = adaptive_interval_callable(
+        jax.vmap(callback),
+        endpoints,
+        plan,
+        precision=precision,
     )
     return IntegrationEstimate(
-        value,
-        status=status,
-        num_evaluations=evaluation_count,
-        error_estimate=global_error,
-        error_kind="embedded-rule",
-        diagnostics=diagnostics,
-        provenance=IntegrationProvenance("adaptive", "component", rule_name),
+        cx.Field(raw.value, dims=prototype.dims),
+        status=raw.status,
+        num_evaluations=raw.num_evaluations,
+        error_estimate=raw.error_estimate,
+        error_kind=raw.error_kind,
+        diagnostics=raw.diagnostics,
+        provenance=IntegrationProvenance(
+            "adaptive", "component", type(plan.rule).__name__
+        ),
+        precision_evidence=raw.precision_evidence,
     )
 
 
