@@ -19,6 +19,7 @@ from ....equations.trefftz._core import (
     TRIAL_SPACE_CERTIFICATE_KEY,
     TrialSpaceCertificate,
 )
+from ....operators.differential._jet import jet_terms
 from ._core import (
     AbstractLayerKernel,
     BoundaryPanelization2D,
@@ -231,9 +232,14 @@ def _analytic_double_layer_diagonal_limit(
         chart_index,
         reference.reshape((1, 1)),
     )
-    first = jax.jacfwd(origin)(reference)
-    second = jax.jacfwd(jax.jacfwd(origin))(reference)
-    normal_derivative = jax.jacfwd(normal)(reference)
+    direction = jnp.ones_like(reference)
+    _, (first, second) = jet_terms(origin, reference, direction, order=2)
+    _, (normal_derivative,) = jet_terms(
+        normal,
+        reference,
+        direction,
+        order=1,
+    )
     speed_squared = jnp.dot(first, first)
     coefficient = (
         -jnp.dot(first, normal_derivative)

@@ -24,6 +24,7 @@ from ....integration import (
     reference_rule_data,
     ReferenceTriangleRule,
 )
+from ....operators.differential._jet import jet_terms
 
 
 class QBXEvaluation3D(StrictModule):
@@ -41,39 +42,36 @@ class QBXEvaluation3D(StrictModule):
     expansion_order: int = eqx.field(static=True)
 
 
-def _derivative_flat(
+def _directional_terms(
     potential,
     center: Array,
     source: Array,
     normal: Array,
+    direction: Array,
     order: int,
 ) -> Array:
-    def function(target: Array) -> Array:
+    def function(distance: Array) -> Array:
+        target = center + distance * direction
         if potential.kind == "single":
             return potential.kernel.value(target, source)
         return potential.kernel.source_normal_derivative(target, source, normal)
 
-    derivative = function
-    chunks = [jnp.asarray(function(center)).reshape((-1,))]
-    for degree in range(1, order + 1):
-        derivative = jax.jacfwd(derivative)
-        chunks.append(jnp.asarray(derivative(center)).reshape((-1,)))
-    return jnp.concatenate(chunks)
+    primal, terms = jet_terms(
+        function,
+        jnp.asarray(0.0, dtype=center.dtype),
+        jnp.asarray(1.0, dtype=center.dtype),
+        order=order,
+    )
+    return jnp.stack((primal, *terms))
 
 
 def _expand(coefficients: Array, displacement: Array, order: int) -> Array:
+    distance = jnp.linalg.norm(displacement)
     value = coefficients[0]
-    offset = 1
     factorial = 1.0
     for degree in range(1, order + 1):
-        width = 3**degree
-        tensor = coefficients[offset : offset + width].reshape((3,) * degree)
-        contraction = tensor
-        for _ in range(degree):
-            contraction = jnp.tensordot(contraction, displacement, axes=(0, 0))
         factorial *= degree
-        value = value + contraction / factorial
-        offset += width
+        value = value + coefficients[degree] * distance**degree / factorial
     return value
 
 
@@ -182,6 +180,8 @@ def evaluate_qbx_3d(
             coefficient_error = jnp.asarray(0.0)
             status = jnp.asarray(int(IntegrationStatus.CONVERGED), dtype=jnp.int32)
             evaluation_count = jnp.asarray(0, dtype=jnp.int32)
+            displacement = target - center
+            direction = displacement / jnp.linalg.norm(displacement)
             for source_panel in range(panelization.panel_count):
                 start = source_panel * panelization.nodes_per_panel
                 stop = start + panelization.nodes_per_panel
@@ -226,11 +226,12 @@ def evaluate_qbx_3d(
 
                     def one(source, source_normal, jacobian, density):
                         return (
-                            _derivative_flat(
+                            _directional_terms(
                                 potential,
                                 center,
                                 source,
                                 source_normal,
+                                direction,
                                 expansion_order,
                             )
                             * jacobian
