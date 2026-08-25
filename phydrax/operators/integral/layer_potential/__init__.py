@@ -55,6 +55,7 @@ from ._quadrature3d import (
     evaluate_single_layer_self_triangle_3d,
 )
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
+from ._treecode2d import LaplaceTreecodeBackend2D, LaplaceTreecodeEvaluation2D
 
 
 __all__ = [
@@ -98,4 +99,6 @@ __all__ = [
     "HelmholtzLayerPotential3D",
     "AbstractLayerBackend",
     "LayerBackendEvaluation2D",
+    "LaplaceTreecodeBackend2D",
+    "LaplaceTreecodeEvaluation2D",
 ]

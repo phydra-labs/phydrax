@@ -13,6 +13,13 @@
   topology and Kress/dyadic partitions, outgoing 2D Helmholtz kernels and explicit
   Brakhage--Werner CFIE assembly reports, target-associated 2D local expansions,
   triangular 3D surface panels, and a corrected near/far direct backend contract.
+- Added target-centered Duffy self integration for 3D surface layers, coefficient-
+  quadrature 3D QBX with continuous signed-distance clearance, outgoing 3D
+  Helmholtz fields, and explicit Duffy-based 3D CFIE assembly reports. The
+  reference near/far backend remains explicitly direct; no FMM claim is attached.
+- Added a fixed-topology Laplace multipole treecode with truncation estimates and
+  direct/multipole work accounting. It is explicitly not presented as a full FMM;
+  fine-grid RCIP compression and FMM M2M/M2L/L2L coupling remain separate.
 - Added likelihood-backed binary and multiclass empirical classification terms
   with encoded target schemas, case masks, positive statistical sample weights,
   posterior-compatible raw log probabilities, classification diagnostics, and a

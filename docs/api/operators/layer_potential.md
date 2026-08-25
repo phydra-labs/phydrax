@@ -116,3 +116,39 @@ PDE-certificate and operator-approximation guarantee split.
 ---
 
 ::: phydrax.operators.DirectNearFarReferenceBackend2D
+
+::: phydrax.operators.QBXEvaluation3D
+
+---
+
+::: phydrax.operators.evaluate_qbx_3d
+
+---
+
+::: phydrax.operators.HelmholtzLayerKernel3D
+
+---
+
+::: phydrax.operators.HelmholtzLayerPotential3D
+
+---
+
+::: phydrax.operators.HelmholtzCombinedField3D
+
+---
+
+::: phydrax.solver.ExteriorHelmholtzDirichletResult3D
+
+---
+
+::: phydrax.solver.solve_exterior_helmholtz_dirichlet_3d
+
+---
+
+::: phydrax.operators.CornerBlockInversePreconditioner2D
+
+::: phydrax.operators.LaplaceTreecodeBackend2D
+
+---
+
+::: phydrax.operators.LaplaceTreecodeEvaluation2D
