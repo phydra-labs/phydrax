@@ -145,7 +145,7 @@ PDE-certificate and operator-approximation guarantee split.
 
 ---
 
-::: phydrax.operators.CornerBlockInversePreconditioner2D
+::: phydrax.operators.RCIPPreconditioner2D
 
 ::: phydrax.operators.LaplaceTreecodeBackend2D
 

@@ -15,7 +15,6 @@ from ._core import (
     LayerDiscretizationReport,
     LayerPotentialTargetReport,
 )
-from ._corner_block import CornerBlockInversePreconditioner2D
 from ._evaluation import (
     evaluate_layer_potential,
     LayerEvaluationPlan2D,
@@ -54,6 +53,7 @@ from ._quadrature3d import (
     evaluate_double_layer_self_triangle_3d,
     evaluate_single_layer_self_triangle_3d,
 )
+from ._rcip import RCIPPreconditioner2D
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 from ._treecode2d import LaplaceTreecodeBackend2D, LaplaceTreecodeEvaluation2D
 
@@ -92,7 +92,7 @@ __all__ = [
     "evaluate_single_layer_self_triangle_3d",
     "QBXEvaluation3D",
     "evaluate_qbx_3d",
-    "CornerBlockInversePreconditioner2D",
+    "RCIPPreconditioner2D",
     "DirectNearFarReferenceBackend2D",
     "HelmholtzCombinedField3D",
     "HelmholtzLayerKernel3D",
