@@ -81,7 +81,7 @@ def run_advanced_potential_benchmarks(
             "wall_ms": boundary_ms,
             "pde_exactness": layer_certificate.exactness,
             "validity_region": layer_certificate.validity_region,
-            "approximation_id": result.approximation.approximation_id,
+            "discretization_id": result.discretization.discretization_id,
         },
     }
 

@@ -128,7 +128,7 @@ def test_barycentric_self_weights_are_partition_unity_and_nodal_delta():
     panelization = _circle_panelization(panels=1, order=5)
     from phydrax._interpolation import barycentric_basis
 
-    nodes = panelization.references[:, 0]
+    nodes = panelization.references[: panelization.quadrature_order, 0]
     differences = nodes[:, None] - nodes[None, :]
     weights = jnp.reciprocal(jnp.prod(differences + jnp.eye(nodes.size), axis=1))
     basis = jnp.stack([barycentric_basis(node, nodes, weights) for node in nodes])
