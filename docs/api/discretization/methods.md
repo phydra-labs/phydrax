@@ -2,7 +2,7 @@
 
 ## Strong tensor and spectral methods
 
-::: phydrax.discretization.SeparableSpectralDiscretization
+::: phydrax.discretization.TensorSpectralDiscretization
 
 ---
 
@@ -18,9 +18,17 @@
 ---
 
 
-::: phydrax.discretization.SpectralDiscretization
+::: phydrax.discretization.EigenbasisDiscretization
 
 ---
+::: phydrax.discretization.PseudospectralMethodPlan
+
+---
+
+::: phydrax.equations.CompiledSpectralDynamics
+
+---
+
 
 ::: phydrax.equations.DiscreteStateLayout
 

@@ -986,7 +986,7 @@ must share an aligned `ModalTransform` and compatible operator groups. A target 
 cross-discretization, not arbitrary query coordinates or independently remeshed
 manifolds with unresolved eigenbasis alignment.
 
-`SpectralDiscretization.from_stiffness(K, M, ...)` uses the finite-element
+`SpectralDecomposition.from_stiffness(K, M, ...)` uses the finite-element
 convention \(K\succeq0\), \(M\succ0\) and solves \(K v=\lambda M v\).
 `phx.graph.spectral_discretization_from_triangle_mesh(mesh, ...)` assembles
 cotangent stiffness and lumped mass directly from a `TriangleMesh`; no provider

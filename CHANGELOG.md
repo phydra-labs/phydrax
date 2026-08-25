@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added coefficient-resident global Fourier, sine, cosine, Chebyshev, Legendre,
+  constrained, and mixed tensor spectral spaces; explicit padding/filter dealiasing;
+  modal PDE and periodic conservation lowering; entropy diagnostics;
+  conjugacy-preserving modal spatial noise; internal-linalg Galerkin, boundary-lift,
+  and generalized tau formulations; and diagonal ETDRK2/4 integration with shared
+  stable phi-three matrix actions.
 - Added public callable adaptive interval and triangle engines that reuse
   `AdaptiveQuadraturePlan`, `AdaptiveTrianglePlan`, `IntegrationPrecisionPolicy`,
   `IntegrationEstimate`, bounded partitions, statuses, and error-kind diagnostics.

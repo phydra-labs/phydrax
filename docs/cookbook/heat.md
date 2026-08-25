@@ -203,7 +203,7 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
     )
 
     axis = phx.discretization.SineAxisSpec(64).materialize(0.0, 1.0)
-    space = phx.discretization.SeparableSpectralDiscretization((axis,))
+    space = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     dynamics = phx.equations.compile_semidiscrete_pde(problem, space)
 
     initial = jnp.sin(jnp.pi * axis.nodes)
@@ -217,9 +217,10 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
     ```
 
 `dynamics` has the solver-compatible signature `(time, state, args) -> state`.
-Scalar single-field problems retain the spatial state shape; multiple or vector
-fields use a static trailing-component packing described by
-`dynamics.layout`. Runtime parameter mappings remain differentiable.
+Without a spectral method argument, this bounded linear example selects the
+point-value strong-form path, so scalar single-field problems retain the physical
+spatial shape. Multiple or vector fields use a static trailing-component packing
+described by `dynamics.layout`. Runtime parameter mappings remain differentiable.
 
 Nonhomogeneous Dirichlet or Neumann data require an explicit
 `phx.equations.BoundaryLift`. The evolved state is then the homogeneous residual
@@ -227,21 +228,22 @@ and `dynamics.physical_state(time, state, args)` reconstructs the physical
 field. This explicit split prevents a nonperiodic boundary from being silently
 treated as periodic.
 
-`SeparableSpectralDiscretization` also exposes `partial_derivative`, `gradient`,
-`divergence`, `curl`, and `integral` while preserving trailing field/component axes.
-Sine/cosine nested calculus tracks primal and parity-dual representations, so
-`divergence(gradient, dual=True)` gives the corresponding spectral Laplacian.
+`TensorSpectralDiscretization` exposes physical `partial_derivative`, `gradient`,
+`divergence`, `curl`, and `integral` conveniences while its primary scientific state
+space is modal. Pass an explicit `PseudospectralMethodPlan` to
+`compile_semidiscrete_pde` for coefficient-resident compilation, then use
+`project_state` and `reconstruct_state` at representation boundaries. Nonlinear
+coefficient-resident compilation requires an explicit dealiasing policy.
+
 Uniform finite-difference grids use the separate native FD compiler and explicit
-stencil composition.
-Functional parameters accept either component constants or arrays aligned with
-the full spatial shape. Compilation IDs and semilinear operator IDs include
-resolved parameter values and boundary-lift IDs, so cached artifacts cannot be
-reused across different bound dynamics.
+stencil composition. Functional parameters accept either component constants or
+arrays aligned with the full spatial shape. Compilation IDs and semilinear operator
+IDs include resolved parameter values and boundary-lift IDs, so cached artifacts
+cannot be reused across different bound dynamics.
 
 Bounded PDE coordinates must match the materialized tensor-grid interval.
-Semidiscrete volume integrals accept interior spatial regions; boundary,
-interface, and component-specific boundary semantics are rejected rather than
-being approximated as whole-domain operations. On sine/cosine grids, nested
-calculus tracks primal and dual extension parity. Rewrite a differentiated
-nonlinear or boundary-incompatible composite into terms with explicit,
-compatible parity.
+Semidiscrete volume integrals accept interior spatial regions; boundary, interface,
+and component-specific boundary semantics are rejected rather than being approximated
+as whole-domain operations. Sine and cosine derivative evaluators track primal and
+dual extension parity through compatible expression trees. Ambiguous differentiated
+composites are rejected instead of being assigned a silent boundary extension.

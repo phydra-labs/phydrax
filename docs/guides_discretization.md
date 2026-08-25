@@ -63,9 +63,9 @@ coefficients. Derivatives may map between different entity shapes, such as cells
 normal faces, and expose rectangular transpose and pairing-adjoint actions.
 
 `compile_semidiscrete_pde(problem, support)` lowers supported PDE expressions directly
-to native finite-difference operators. No spectral axis composer is inserted.
-`SeparableSpectralDiscretization` is reserved for Fourier, sine, and cosine axes;
-polynomial axes use an explicit collocation method.
+to native finite-difference operators. A global spectral method instead starts from
+`TensorSpectralPlan` basis factors and supplies an explicit
+`PseudospectralMethodPlan`; numerical axis specifications remain sampling objects.
 
 For uniform periodic grids, `periodic_finite_difference(support)` prepares the common
 first/second-derivative calculus. Uniform bounded FD2 Laplacians can instead be
@@ -115,10 +115,16 @@ a state-space declaration.
 
 ## Spectral bases
 
-`ModalTransform` is the canonical weighted analysis/synthesis contract. It carries
-physical/modal spaces, stable mode IDs, measure, normalization, and transform
-identity. `OperatorSpectrum` separately binds one operator's modal values,
-nullspace, degeneracy groups, and approximation provenance. A
+`TensorSpectralPlan` prepares global Fourier, sine, cosine, Chebyshev, Legendre,
+constrained, and mixed tensor spaces. Its primary state is a
+`modal_coefficient` field space; the physical point-value space, quadrature, projection,
+and reconstruction retain independent identities. Nonlinear PDE lowering requires an
+explicit padding, filtering, or no-dealiasing policy. See
+[Global spectral methods](guides_spectral_methods.md).
+
+`ModalTransform` remains the canonical weighted dense analysis/synthesis contract for
+small or irregular bases. `OperatorSpectrum` separately binds one operator's modal
+values, nullspace, degeneracy groups, and approximation provenance. A
 `SpectralDecomposition` is their convenience pairing:
 
 ```python
@@ -128,13 +134,12 @@ decomposition = phx.discretization.SpectralDecomposition.from_eigenpairs(
     measure,
     decomposition_id="surface-laplacian",
 )
-space = phx.discretization.SpectralDiscretization(decomposition)
+space = phx.discretization.EigenbasisDiscretization(decomposition)
 ```
 
-One transform may support multiple operator spectra, including distinct
-finite-difference and pseudospectral Laplacian symbols.
-The same decomposition feeds graph/manifold kernels, method-of-lines simulation,
-and stochastic noise construction.
+Fast `AbstractLinearTransform` implementations and weighted `ModalTransform` objects
+have distinct execution and scientific roles. The same eigenbasis decomposition feeds
+graph/manifold kernels, method-of-lines simulation, and stochastic noise construction.
 
 ## Cell complexes and cochains
 
@@ -257,6 +262,10 @@ noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     precision=noise_precision,
 )
 ```
+
+For `TensorSpectralDiscretization`, `from_spectrum` binds the modal primary field
+space. Kernel and covariance-operator factories construct point-value bases and bind
+`physical_space`; the distinct IDs prevent accidental representation mixing.
 
 `StochasticCouplingPlan` retains solver/observable coupling semantics and owns a
 generic `DiscretizationHierarchy` whose levels contain complete bundles. Stochastic

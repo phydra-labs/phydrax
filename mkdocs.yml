@@ -120,6 +120,7 @@ nav:
     - Guides:
         - Domains and sampling: "guides_domain.md"
         - Discretization: "guides_discretization.md"
+        - Global spectral methods: "guides_spectral_methods.md"
         - Structured finite volume: "guides_finite_volume.md"
         - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
         - Unstructured finite volume: "guides_unstructured_finite_volume.md"
@@ -182,6 +183,7 @@ nav:
             - Topology and support: "api/discretization/topology.md"
             - Field spaces and axes: "api/discretization/spaces.md"
             - Prepared methods: "api/discretization/methods.md"
+            - Global spectral methods: "api/discretization/spectral.md"
             - Temporal and stochastic composition: "api/discretization/stochastic.md"
             - Finite differences: "api/discretization/finite_difference.md"
             - Structured finite volume: "api/discretization/finite_volume.md"
@@ -283,6 +285,7 @@ nav:
         - Solver:
             - Overview: "api/solver/index.md"
             - Time integrators: "api/solver/time_integrators.md"
+            - Exponential Runge--Kutta: "api/solver/etdrk.md"
             - Differential equations: "api/solver/differential.md"
             - Non-Markovian and many-body quantum systems: "api/solver/nonmarkov_manybody.md"
             - Production open quantum systems: "api/solver/production_open_quantum.md"
