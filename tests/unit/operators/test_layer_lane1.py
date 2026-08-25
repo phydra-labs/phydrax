@@ -201,3 +201,142 @@ def test_direct_near_far_backend_matches_direct_representation():
     assert reference.near_panel_count + reference.far_panel_count == (
         targets.shape[0] * panelization.panel_count
     )
+
+
+def test_rcip_uses_nonzero_nested_corner_hierarchy():
+    coarse = jnp.asarray(((2.0, 0.2), (0.1, 1.5)))
+    fine = (
+        jnp.asarray(
+            (
+                (2.0, 0.1, 0.0, 0.0),
+                (0.0, 1.8, 0.1, 0.0),
+                (0.0, 0.0, 2.2, 0.2),
+                (0.0, 0.0, 0.1, 1.7),
+            )
+        ),
+        jnp.eye(8) * 2.0,
+    )
+    restriction_0 = jnp.asarray(
+        ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0))
+    )
+    restriction_1 = jnp.concatenate(
+        (jnp.eye(4), jnp.zeros((4, 4))),
+        axis=1,
+    )
+    preconditioner = phx.operators.RCIPPreconditioner2D(
+        coarse,
+        fine,
+        (restriction_0, restriction_1),
+        (restriction_0.T, restriction_1.T),
+        topology_id="corner-hierarchy",
+    )
+    applied = preconditioner.apply(jnp.asarray((1.0, -0.5)))
+
+    assert preconditioner.levels == 2
+    assert len(preconditioner.compressed_inverses) == 3
+    assert jnp.all(jnp.isfinite(applied))
+    assert preconditioner.preconditioner_id
+
+
+def test_laplace_fmm_order_sweep_matches_direct_far_field():
+    panelization = _circle_panelization(panels=8, order=4)
+    potential = phx.operators.LaplaceLayerPotential2D(
+        panelization,
+        kind="single",
+        density=jnp.linspace(0.5, 1.5, panelization.node_count),
+    )
+    targets = jnp.stack(
+        (jnp.linspace(2.8, 3.2, 32), jnp.zeros((32,))),
+        axis=-1,
+    )
+    direct = potential._evaluate_direct(targets)
+    errors = []
+    for expansion_order in (2, 4, 8):
+        backend = phx.operators.LaplaceFMMBackend2D(
+            potential,
+            expansion_order=expansion_order,
+            leaf_size=8,
+            opening_angle=0.5,
+        )
+        evaluation = backend.evaluate(
+            potential,
+            targets,
+            absolute_tolerance=1e-5,
+        )
+        errors.append(float(jnp.max(jnp.abs(evaluation.values - direct))))
+        assert evaluation.m2m_translations > 0
+        assert evaluation.m2l_translations > 0
+        assert evaluation.l2l_translations > 0
+    assert errors[-1] <= errors[0]
+
+
+def test_fmm_mixed_excluded_leaf_is_kept_in_near_correction():
+    panelization = _circle_panelization(panels=8, order=4)
+    potential = phx.operators.LaplaceLayerPotential2D(
+        panelization,
+        kind="single",
+        density=jnp.ones((panelization.node_count,)),
+    )
+    backend = phx.operators.LaplaceFMMBackend2D(
+        potential,
+        expansion_order=6,
+        leaf_size=4,
+    )
+    _, _, _, near_sources, _ = backend.local_expansions(
+        potential,
+        jnp.asarray([[2.8, 0.0], [3.2, 0.0]]),
+        excluded_source_indices=(0,),
+    )
+    near_indices = tuple(
+        int(index)
+        for target_sources in near_sources
+        for source_block in target_sources
+        for index in source_block
+    )
+
+    assert 0 in near_indices
+
+
+def test_global_qbx_fmm_reports_independent_error_channels():
+    panelization = _circle_panelization(panels=4, order=4)
+    potential = phx.operators.LaplaceLayerPotential2D(
+        panelization,
+        kind="single",
+        density=jnp.ones((panelization.node_count,)),
+    )
+    backend = phx.operators.LaplaceFMMBackend2D(
+        potential,
+        expansion_order=4,
+        leaf_size=4,
+    )
+    evaluation = phx.operators.evaluate_global_qbx_fmm_2d(
+        potential,
+        backend,
+        panelization.points[0][None, :],
+        target_side="boundary",
+        expansion_order=2,
+        radius_factor=0.05,
+        adaptive_plan=phx.integration.AdaptiveQuadraturePlan(
+            absolute_tolerance=1e-2,
+            relative_tolerance=1e-2,
+            max_intervals=12,
+            throw=False,
+        ),
+    )
+
+    assert evaluation.m2l_translations > 0
+    assert evaluation.l2l_translations > 0
+    assert evaluation.near_panel_count > 0
+    assert jnp.all(
+        jnp.isfinite(
+            jnp.asarray(
+                (
+                    evaluation.coefficient_quadrature_error,
+                    evaluation.fmm_truncation_error,
+                    evaluation.expansion_truncation_error,
+                    evaluation.error_estimate,
+                )
+            )
+        )
+    )
+    assert evaluation.error_estimate >= evaluation.fmm_truncation_error
