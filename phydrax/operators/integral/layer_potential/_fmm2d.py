@@ -224,6 +224,93 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         visit(self.source_root)
         return tuple(value for value in moments if value is not None)
 
+    def local_expansions(
+        self,
+        potential: LaplaceLayerPotential2D,
+        centers: ArrayLike,
+        /,
+    ) -> tuple[Array, tuple[int, ...], tuple[Array, ...], tuple[tuple[Array, ...], ...]]:
+        """Return far-field local coefficients with M2M/M2L/L2L evidence."""
+        values = jnp.asarray(centers, dtype=float)
+        if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
+            raise ValueError("FMM centers must have shape (center_count, 2).")
+        moments = self._source_moments(potential.density)
+        target_centers, target_radii, target_children, target_indices, target_root = _build_tree(
+            np.asarray(values),
+            1,
+        )
+        target_centers_jax = jnp.asarray(target_centers)
+        target_radii_jax = jnp.asarray(target_radii)
+        local = [
+            jnp.zeros((self.expansion_order + 1,), dtype=complex)
+            for _ in range(len(target_indices))
+        ]
+        near_sources: list[list[Array]] = [[] for _ in target_indices]
+        m2l_count = [0]
+        l2l_count = [0]
+
+        def pair(source_node: int, target_node: int) -> None:
+            source_center = self.source_centers[source_node, 0] + 1j * self.source_centers[source_node, 1]
+            target_center = target_centers_jax[target_node, 0] + 1j * target_centers_jax[target_node, 1]
+            distance = max(float(jnp.abs(target_center - source_center)), 1e-15)
+            separated = (
+                float(self.source_radii[source_node] + target_radii_jax[target_node])
+                <= self.opening_angle * distance
+            )
+            source_children = np.asarray(self.source_children[source_node])
+            target_children_local = np.asarray(target_children_global[target_node])
+            if separated:
+                local[target_node] = local[target_node] + _m2l(
+                    moments[source_node], source_center, target_center
+                )
+                m2l_count[0] += 1
+                return
+            source_leaf = bool(np.all(source_children < 0))
+            target_leaf = bool(np.all(target_children_local < 0))
+            if source_leaf and target_leaf:
+                near_sources[target_node].append(self.source_indices[source_node])
+                return
+            if target_leaf:
+                for child in source_children:
+                    if child >= 0:
+                        pair(int(child), target_node)
+                return
+            for child in target_children_local:
+                if child >= 0:
+                    pair(source_node, int(child))
+
+        target_children_global = target_children
+        pair(self.source_root, target_root)
+
+        def propagate(parent: int) -> None:
+            parent_center = target_centers_jax[parent, 0] + 1j * target_centers_jax[parent, 1]
+            for child in np.asarray(target_children_global[parent]):
+                if child >= 0:
+                    child_center = target_centers_jax[int(child), 0] + 1j * target_centers_jax[int(child), 1]
+                    local[int(child)] = local[int(child)] + _l2l(
+                        local[parent], parent_center, child_center
+                    )
+                    l2l_count[0] += 1
+                    propagate(int(child))
+
+        propagate(target_root)
+        leaf_map = tuple(
+            next(
+                node
+                for node, indices in enumerate(target_indices)
+                if int(index) in set(np.asarray(indices).tolist())
+                and np.all(target_children[node] < 0)
+            )
+            for index in range(values.shape[0])
+        )
+        return (
+            target_centers_jax,
+            leaf_map,
+            tuple(local),
+            tuple(tuple(indices) for indices in near_sources),
+            (m2l_count[0], l2l_count[0]),
+        )
+
     def evaluate(
         self,
         potential: LaplaceLayerPotential2D,
