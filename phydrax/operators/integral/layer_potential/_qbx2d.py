@@ -22,6 +22,7 @@ from ....integration import (
     IntegrationStatus,
 )
 from ....operators.differential._jet import jet_terms
+from ....special import hankel1
 
 
 class QBXEvaluation2D(StrictModule):
@@ -55,6 +56,160 @@ def _kernel_value(potential, target: Array, source: Array, normal: Array) -> Arr
     return potential.kernel.source_normal_derivative(target, source, normal)
 
 
+def _series_multiply(left: Array, right: Array, order: int) -> Array:
+    dtype = jnp.result_type(left, right)
+    values = []
+    for degree in range(order + 1):
+        value = jnp.asarray(0.0, dtype=dtype)
+        for index in range(degree + 1):
+            value = value + left[index] * right[degree - index]
+        values.append(value)
+    return jnp.stack(values)
+
+
+def _series_reciprocal(values: Array, order: int) -> Array:
+    reciprocal = jnp.zeros((order + 1,), dtype=values.dtype)
+    reciprocal = reciprocal.at[0].set(1.0 / values[0])
+    for degree in range(1, order + 1):
+        value = jnp.asarray(0.0, dtype=values.dtype)
+        for index in range(1, degree + 1):
+            value = value + values[index] * reciprocal[degree - index]
+        reciprocal = reciprocal.at[degree].set(-value / values[0])
+    return reciprocal
+
+
+def _radial_series(
+    center: Array,
+    source: Array,
+    direction: Array,
+    order: int,
+) -> Array:
+    offset = center - source
+    squared = jnp.zeros((order + 1,), dtype=center.dtype)
+    squared = squared.at[0].set(jnp.dot(offset, offset))
+    if order >= 1:
+        squared = squared.at[1].set(2.0 * jnp.dot(offset, direction))
+    if order >= 2:
+        squared = squared.at[2].set(1.0)
+    radius = jnp.zeros((order + 1,), dtype=center.dtype)
+    radius = radius.at[0].set(jnp.sqrt(squared[0]))
+    for degree in range(1, order + 1):
+        convolution = jnp.asarray(0.0, dtype=center.dtype)
+        for index in range(1, degree):
+            convolution = convolution + radius[index] * radius[degree - index]
+        radius = radius.at[degree].set(
+            (squared[degree] - convolution) / (2.0 * radius[0])
+        )
+    return radius
+
+def _bessel_derivatives(
+    bessel_order: int,
+    argument: Array,
+    order: int,
+) -> Array:
+    """Differentiate integer-order Hankel functions by their ODE recurrence."""
+    value_zero = hankel1(float(bessel_order), argument)
+    derivatives = jnp.zeros((order + 1,), dtype=value_zero.dtype)
+    derivatives = derivatives.at[0].set(value_zero)
+    if order >= 1:
+        first = (
+            -hankel1(1.0, argument)
+            if bessel_order == 0
+            else hankel1(float(bessel_order - 1), argument)
+            - value_zero / argument
+        )
+        derivatives = derivatives.at[1].set(first)
+    for degree in range(order - 1):
+        lower_one = (
+            derivatives[degree - 1] if degree >= 1 else jnp.asarray(0.0 + 0.0j)
+        )
+        lower_two = (
+            derivatives[degree - 2] if degree >= 2 else jnp.asarray(0.0 + 0.0j)
+        )
+        next_value = (
+            (2.0 * degree + 1.0) * argument * derivatives[degree + 1]
+            + (degree * degree + argument * argument - bessel_order**2)
+            * derivatives[degree]
+            + 2.0 * degree * argument * lower_one
+            + degree * (degree - 1.0) * lower_two
+        )
+        derivatives = derivatives.at[degree + 2].set(
+            -next_value / argument**2
+        )
+    return derivatives
+
+
+def _compose_series(
+    derivatives: Array,
+    argument: Array,
+    order: int,
+) -> Array:
+    delta = argument.at[0].set(0.0)
+    power = jnp.zeros((order + 1,), dtype=argument.dtype)
+    power = power.at[0].set(1.0)
+    result = jnp.zeros((order + 1,), dtype=derivatives.dtype)
+    for degree in range(order + 1):
+        result = result + derivatives[degree] * power / math.factorial(degree)
+        if degree < order:
+            power = _series_multiply(power, delta, order)
+    return result
+
+
+def _raw_derivatives(normalized: Array, order: int) -> Array:
+    return jnp.stack(
+        [
+            normalized[degree] * math.factorial(degree)
+            for degree in range(order + 1)
+        ]
+    )
+
+
+@eqx.filter_jit
+def _helmholtz_directional_components(
+    potential,
+    center: Array,
+    source: Array,
+    normal: Array,
+    direction: Array,
+    order: int,
+    include_double: bool,
+) -> tuple[Array, Array]:
+    """Evaluate directional terms without tracing custom Hankel JVPs."""
+    wavenumber = jnp.asarray(potential.kernel.wavenumber, dtype=center.dtype)
+    radius = _radial_series(center, source, direction, order)
+    argument = wavenumber * radius
+    single_series = _compose_series(
+        _bessel_derivatives(0, argument[0], order),
+        argument,
+        order,
+    )
+    single = 0.25j * _raw_derivatives(single_series, order)
+    if not include_double:
+        return single, jnp.zeros_like(single)
+
+    normal_projection = jnp.zeros((order + 1,), dtype=center.dtype)
+    offset = center - source
+    normal_projection = normal_projection.at[0].set(jnp.dot(offset, normal))
+    if order >= 1:
+        normal_projection = normal_projection.at[1].set(jnp.dot(direction, normal))
+    geometric_factor = _series_multiply(
+        normal_projection,
+        _series_reciprocal(radius, order),
+        order,
+    )
+    double_series = _series_multiply(
+        _compose_series(
+            _bessel_derivatives(1, argument[0], order),
+            argument,
+            order,
+        ),
+        geometric_factor,
+        order,
+    )
+    double = 0.25j * wavenumber * _raw_derivatives(double_series, order)
+    return single, double
+
+
 def _directional_terms(
     potential,
     center: Array,
@@ -63,6 +218,31 @@ def _directional_terms(
     direction: Array,
     order: int,
 ) -> Array:
+    from ._helmholtz2d import HelmholtzCombinedField2D, HelmholtzLayerPotential2D
+
+    if isinstance(potential, HelmholtzCombinedField2D):
+        single, double = _helmholtz_directional_components(
+            potential,
+            center,
+            source,
+            normal,
+            direction,
+            order,
+            True,
+        )
+        return double - 1j * potential.eta * single
+    if isinstance(potential, HelmholtzLayerPotential2D):
+        single, double = _helmholtz_directional_components(
+            potential,
+            center,
+            source,
+            normal,
+            direction,
+            order,
+            potential.kind == "double",
+        )
+        return double if potential.kind == "double" else single
+
     def function(distance: Array) -> Array:
         target = center + distance * direction
         return _kernel_value(potential, target, source, normal)
