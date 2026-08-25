@@ -38,7 +38,13 @@ _ALE_SOLVER_TYPES = (
 )
 
 
-def _compile_two_dimensional_system(geometry_kind, system, interface_solver):
+def _compile_two_dimensional_system(
+    geometry_kind,
+    system,
+    interface_solver,
+    *,
+    entropy_pair=None,
+):
     vertices = np.asarray(
         (
             (0.0, 0.0),
@@ -117,7 +123,42 @@ def _compile_two_dimensional_system(geometry_kind, system, interface_solver):
         problem,
         discretization,
         method,
+        entropy_pair=entropy_pair,
     )
+
+
+@pytest.mark.parametrize("geometry_kind", ("structured", "mapped"))
+def test_entropy_pair_compiles_for_structured_geometry(geometry_kind):
+    system = phx.equations.EulerSystem(2)
+    pair = phx.equations.ideal_gas_euler_entropy_pair(system)
+    without_pair = _compile_two_dimensional_system(
+        geometry_kind,
+        system,
+        phx.discretization.RusanovFluxPlan(),
+    )
+    with_pair = _compile_two_dimensional_system(
+        geometry_kind,
+        system,
+        phx.discretization.RusanovFluxPlan(),
+        entropy_pair=pair,
+    )
+
+    assert with_pair.dynamics.entropy_pair is pair
+    assert with_pair.dynamics.dynamics_id != without_pair.dynamics.dynamics_id
+    assert with_pair.compilation_id != without_pair.compilation_id
+
+
+@pytest.mark.parametrize("geometry_kind", ("triangle", "unstructured"))
+def test_entropy_pair_rejects_unsupported_finite_volume_geometry(geometry_kind):
+    system = phx.equations.EulerSystem(2)
+    pair = phx.equations.ideal_gas_euler_entropy_pair(system)
+    with pytest.raises(ValueError, match="structured and mapped"):
+        _compile_two_dimensional_system(
+            geometry_kind,
+            system,
+            phx.discretization.RusanovFluxPlan(),
+            entropy_pair=pair,
+        )
 
 
 def _two_dimensional_euler_faces():
@@ -633,12 +674,34 @@ def test_entropy_flux_is_consistent_and_dissipative_variant_has_nonpositive_pair
     right = system.primitive_to_conserved(jnp.asarray([[0.9, 0.1, 0.9], [1.1, 0.3, 1.2]]))
     central = phx.discretization.EntropyConservativeEulerFluxPlan()
     stable = phx.discretization.EntropyStableEulerFluxPlan()
+    entropy_pair = phx.equations.ideal_gas_euler_entropy_pair(system)
 
     equal = central.face_flux(system, left, left, 0)
     np.testing.assert_allclose(
         equal.normal_flux, system.physical_flux(left, 0), rtol=1e-12
     )
     assert jnp.all(stable.entropy_dissipation(system, left, right) <= 2e-13)
+    central_flux = central.face_flux(system, left, right, 0).normal_flux
+    stable_flux = stable.face_flux(system, left, right, 0).normal_flux
+    np.testing.assert_allclose(
+        entropy_pair.interface_entropy_residual(
+            left,
+            right,
+            central_flux,
+            0,
+        ),
+        0.0,
+        atol=1e-10,
+    )
+    assert jnp.all(
+        entropy_pair.interface_entropy_residual(
+            left,
+            right,
+            stable_flux,
+            0,
+        )
+        <= 2e-13
+    )
 
 
 def test_characteristic_weno_euler_step_preserves_positive_sod_state_and_mass():

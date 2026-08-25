@@ -93,6 +93,23 @@ Statuses are bounded and machine-readable:
 
 Accepted states are never repaired through post-hoc density or pressure clipping.
 
+## Convex entropy diagnostics
+
+Bind an explicit `ConvexEntropyPair` through
+`compile_conservation_problem(..., entropy_pair=pair)`. Runtime residual diagnostics
+then expose volume-weighted total entropy, semidiscrete entropy rate, source entropy
+rate, convective entropy rate, admissibility, and precision evidence.
+
+This compiler-attached path currently covers structured and mapped structured finite
+volumes. Triangle and modern unstructured geometry reject an attached pair rather than
+silently applying stationary cell-volume formulas to normal-face or ALE content rates.
+
+Entropy-pair diagnostics are rejected with a `ViscousFluxPlan` until viscous entropy
+production is represented separately. The current convective rate therefore never
+mislabels a viscous contribution. Bounded-domain rates include boundary transport;
+periodic, source-free entropy-stable cases are the appropriate sign-check surface.
+
+
 ## Runtime state and case identity
 
 `FiniteVolumeRuntimeState` contains evolving continuation values:

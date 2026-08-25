@@ -128,8 +128,9 @@ speed:
 - `EntropyStableEulerFluxPlan`.
 
 Preparation rejects incompatible combinations. HLLC requires Euler state layout, Roe
-requires a characteristic system, positivity limiting requires an admissibility
-predicate, and entropy diagnostics require entropy variables.
+requires a characteristic system, and positivity limiting requires an admissibility
+predicate. Entropy-conservative/stable interface residuals use an explicit
+`ConvexEntropyPair`; the pair must target the same conservation system.
 
 Wave propagation is a separate interface family, not an optional extension of a flux
 result:
@@ -173,9 +174,10 @@ Dirichlet ghost formula is not silently reused as an advective inflow state.
 - `IdealMHDSystem` with three-vector momentum and magnetic field;
 - `ShallowWaterSystem` in one or two dimensions.
 
-System capabilities are explicit abstract contracts for characteristics, admissibility,
-and entropy variables. Unsupported dimensions or numerical combinations fail during
-construction or compilation.
+System capabilities are explicit abstract contracts for characteristics and
+admissibility. Entropy variables, entropy fluxes, and relative entropy are supplied by
+an explicit `ConvexEntropyPair`. Unsupported dimensions or numerical combinations fail
+during construction or compilation.
 
 ## Positivity and entropy
 
@@ -184,9 +186,27 @@ averages using fixed-count bisection. It does not claim that an arbitrary time s
 positive; the time integrator must also respect the method CFL and any source
 restriction.
 
-`residual_with_diagnostics()` returns signal speeds, boundary balance, source integral,
-conservation defect, maximum local rate, and optional entropy production. Diagnostics
-reuse the exact execution fluxes.
+Attach a pair through the standard compiler:
+
+```python
+compiled = phx.equations.compile_conservation_problem(
+    problem,
+    discretization,
+    method,
+    entropy_pair=phx.equations.ideal_gas_euler_entropy_pair(problem.system),
+)
+```
+
+Compiler-attached entropy diagnostics currently support structured and mapped
+structured finite volumes. Triangle and modern unstructured compilation reject a
+supplied pair until normal-face and ALE/content-rate entropy accounting are explicit.
+
+`residual_with_diagnostics()` then returns volume-weighted total entropy, semidiscrete
+entropy rate, source entropy rate, convective entropy rate, admissibility, and
+precision evidence under `diagnostics.entropy`. The pair is rejected alongside a
+viscous flux plan because viscous entropy production is not yet represented separately.
+For bounded domains, the convective rate includes boundary transport; it is not a
+closed entropy-production certificate.
 
 ## Time execution
 

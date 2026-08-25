@@ -57,6 +57,7 @@ dependencies = [
     "trimesh[easy]>=4.11.1",
     "optimistix>=0.1.0",
     "qpax>=0.1.4",
+    "h5py>=3.16.0",
 ]
 
 [project.optional-dependencies]

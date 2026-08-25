@@ -82,6 +82,10 @@ from ._embedded_dynamics import (
     lower_embedded_stage_metrics,
     UnstructuredEmbeddedBoundarySet,
 )
+from ._entropy import (
+    FiniteVolumeEntropyDiagnostics,
+    integrated_finite_volume_relative_entropy,
+)
 from ._flux_ledger import (
     FiniteVolumeAcceptedFluxIntegralBlock,
     FiniteVolumeAcceptedFluxIntegralLedger,
@@ -441,7 +445,9 @@ __all__ = [
     "MACPressureProjectionPlan",
     "PressureCorrectionResult",
     "PressureProjectionResult",
+    "FiniteVolumeEntropyDiagnostics",
     "FiniteVolumeResidualDiagnostics",
+    "integrated_finite_volume_relative_entropy",
     "HLLCFluxPlan",
     "HLLFluxPlan",
     "EinfeldtHLLFluxPlan",
