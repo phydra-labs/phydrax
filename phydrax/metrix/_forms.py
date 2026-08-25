@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from itertools import combinations
 from math import comb
 
 import jax
@@ -14,18 +13,10 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ._chart import CoordinateChart
+from ._exterior_basis import exterior_indices, wedge_sign
 from ._map import DifferentiableMap
 from ._metric import AbstractSemiRiemannianMetric
 from ._utils import _pointwise_array
-
-
-def _multi_indices(dimension: int, degree: int, /) -> tuple[tuple[int, ...], ...]:
-    return tuple(combinations(range(dimension), degree))
-
-
-def _wedge_sign(left: tuple[int, ...], right: tuple[int, ...], /) -> int:
-    inversions = sum(left_axis > right_axis for left_axis in left for right_axis in right)
-    return -1 if inversions % 2 else 1
 
 
 def _require_same_chart(
@@ -67,7 +58,7 @@ class DifferentialForm(StrictModule):
         self.coefficient_function = coefficients
         self.chart = chart
         self.degree = degree_value
-        self.indices = _multi_indices(chart.dimension, degree_value)
+        self.indices = exterior_indices(chart.dimension, degree_value)
 
     @property
     def coefficient_count(self) -> int:
@@ -103,7 +94,9 @@ class _WedgeCoefficient(StrictModule):
     output_count: int
 
     def __init__(self, left: DifferentialForm, right: DifferentialForm, /):
-        output_indices = _multi_indices(left.chart.dimension, left.degree + right.degree)
+        output_indices = exterior_indices(
+            left.chart.dimension, left.degree + right.degree
+        )
         output_lookup = {index: position for position, index in enumerate(output_indices)}
         left_terms: list[int] = []
         right_terms: list[int] = []
@@ -118,7 +111,7 @@ class _WedgeCoefficient(StrictModule):
                     result_terms.append(
                         output_lookup[tuple(sorted(left_index + right_index))]
                     )
-                    signs.append(_wedge_sign(left_index, right_index))
+                    signs.append(wedge_sign(left_index, right_index))
         self.left = left
         self.right = right
         self.left_terms = tuple(left_terms)
@@ -149,7 +142,7 @@ class _ExteriorDerivativeCoefficient(StrictModule):
     output_count: int
 
     def __init__(self, form: DifferentialForm, /):
-        output_indices = _multi_indices(form.chart.dimension, form.degree + 1)
+        output_indices = exterior_indices(form.chart.dimension, form.degree + 1)
         source_lookup = {index: position for position, index in enumerate(form.indices)}
         source_terms: list[int] = []
         derivative_axes: list[int] = []
@@ -191,7 +184,7 @@ class _PullbackFormCoefficient(StrictModule):
         self.form = form
         self.map = map
         self.target_indices = form.indices
-        self.source_indices = _multi_indices(map.source.dimension, form.degree)
+        self.source_indices = exterior_indices(map.source.dimension, form.degree)
 
     def __call__(self, coordinates: Array, /) -> Array:
         target_coordinates = self.map.map_function(coordinates)
@@ -223,7 +216,7 @@ class _InteriorProductCoefficient(StrictModule):
         form: DifferentialForm,
         /,
     ):
-        output_indices = _multi_indices(form.chart.dimension, form.degree - 1)
+        output_indices = exterior_indices(form.chart.dimension, form.degree - 1)
         source_lookup = {index: position for position, index in enumerate(form.indices)}
         vector_terms: list[int] = []
         source_terms: list[int] = []
@@ -310,7 +303,9 @@ class _HodgeStarCoefficient(StrictModule):
         /,
     ):
         source = form.indices
-        output = _multi_indices(form.chart.dimension, form.chart.dimension - form.degree)
+        output = exterior_indices(
+            form.chart.dimension, form.chart.dimension - form.degree
+        )
         output_lookup = {index: position for position, index in enumerate(output)}
         complements: list[tuple[int, ...]] = []
         output_terms: list[int] = []
@@ -320,7 +315,7 @@ class _HodgeStarCoefficient(StrictModule):
             complement = tuple(sorted(full.difference(source_index)))
             complements.append(complement)
             output_terms.append(output_lookup[complement])
-            signs.append(_wedge_sign(source_index, complement))
+            signs.append(wedge_sign(source_index, complement))
         self.form = form
         self.metric = metric
         self.source_indices = source

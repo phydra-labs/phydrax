@@ -18,7 +18,7 @@ from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_remap import UnstructuredConservativeRemapPlan
 
 
-def _identity(value: str, name: str, /) -> str:
+def _amr_identity(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a nonempty canonical string.")
     return value
@@ -164,14 +164,16 @@ class UnstructuredAMRFluxRegister(StrictModule):
         if mismatch.shape != first.shape:
             raise ValueError("AMR flux-register correction has an inconsistent shape.")
 
-        topology = None if topology_id is None else _identity(topology_id, "topology_id")
-        coarse_topology = _identity(coarse_topology_id, "coarse_topology_id")
-        fine_topology = _identity(fine_topology_id, "fine_topology_id")
+        topology = (
+            None if topology_id is None else _amr_identity(topology_id, "topology_id")
+        )
+        coarse_topology = _amr_identity(coarse_topology_id, "coarse_topology_id")
+        fine_topology = _amr_identity(fine_topology_id, "fine_topology_id")
         if topology is not None:
             coarse_topology = topology
             fine_topology = topology
-        route = _identity(route_id, "route_id")
-        layout = _identity(layout_id, "layout_id")
+        route = _amr_identity(route_id, "route_id")
+        layout = _amr_identity(layout_id, "layout_id")
         interval = _interval(coarse_interval, "coarse_interval")
         if interval is None:
             start = None if start_time is None else _scalar_time(start_time, "start_time")
@@ -429,7 +431,7 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
             ()
             if coarse_interface_route_ids is None
             else tuple(
-                _identity(value, "coarse_interface_route_id")
+                _amr_identity(value, "coarse_interface_route_id")
                 for value in coarse_interface_route_ids
             )
         )
@@ -437,7 +439,7 @@ class UnstructuredAMRHierarchyPlan(StrictModule, NonTrainableState):
             ()
             if fine_interface_route_ids is None
             else tuple(
-                _identity(value, "fine_interface_route_id")
+                _amr_identity(value, "fine_interface_route_id")
                 for value in fine_interface_route_ids
             )
         )

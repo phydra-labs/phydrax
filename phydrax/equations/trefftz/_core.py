@@ -27,11 +27,13 @@ TrialEquationFamily = Literal[
     "polyharmonic",
     "helmholtz",
     "linear-elasticity",
+    "dirac",
 ]
 TrialExactness = Literal["algebraic"]
 TrialCoverage = Literal["finite-subspace", "finite-parametric-family"]
 TrialValidityRegion = Literal["all-space", "off-singular-support"]
 TRIAL_SPACE_CERTIFICATE_KEY = next(iter(MODEL_CONSTRUCTION_CERTIFICATE_KEYS))
+TRIAL_SPACE_REPRESENTATION_KEY = "trial_space_runtime_representation"
 
 
 class SimilarityNormalization(StrictModule, NonTrainableState):
@@ -187,6 +189,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
     normalization_id: str = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
     rank: int = eqx.field(static=True)
+    representation_id: str | None = eqx.field(static=True)
     assumptions: tuple[str, ...] = eqx.field(static=True)
     construction_residual: Array
     construction_tolerance: float = eqx.field(static=True)
@@ -207,6 +210,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
         assumptions: Sequence[str],
         construction_residual: ArrayLike,
         construction_tolerance: float,
+        representation_id: str | None = None,
         coverage: TrialCoverage = "finite-subspace",
         linear_in_coefficients: bool = True,
         validity_region: TrialValidityRegion = "all-space",
@@ -217,6 +221,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
             "polyharmonic",
             "helmholtz",
             "linear-elasticity",
+            "dirac",
         ):
             raise ValueError("Unknown Trefftz equation family.")
         dimension = int(ambient_dimension)
@@ -276,6 +281,9 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
                 "Trefftz construction residual exceeds tolerance: "
                 f"{residual_host:.3e} > {tolerance:.3e}."
             )
+        representation = None if representation_id is None else str(representation_id)
+        if representation_id is not None and not representation:
+            raise ValueError("Trefftz representation_id must be non-empty when supplied.")
         self.equation_family = equation_family
         self.ambient_dimension = dimension
         self.field_shape = shape
@@ -289,6 +297,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
         self.singular_support_id = singular_support
         self.normalization_id = str(normalization_id)
         self.basis_id = str(basis_id)
+        self.representation_id = representation
         self.rank = rank_
         self.assumptions = assumptions_
         self.construction_residual = residual
@@ -303,6 +312,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
                 "equation_parameters": list(parameters),
                 "normalization_id": normalization_id,
                 "basis_id": basis_id,
+                "representation_id": self.representation_id,
                 "rank": rank_,
                 "assumptions": list(assumptions_),
                 "exactness": self.exactness,
@@ -322,6 +332,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
             equation_parameters=self.equation_parameters,
             normalization_id=self.normalization_id,
             basis_id=self.basis_id,
+            representation_id=self.representation_id,
             rank=self.rank,
             assumptions=self.assumptions,
             construction_residual=self.construction_residual,
@@ -540,6 +551,7 @@ __all__ = [
     "TrefftzResourceBudget",
     "TrefftzResourceEvidence",
     "TRIAL_SPACE_CERTIFICATE_KEY",
+    "TRIAL_SPACE_REPRESENTATION_KEY",
     "TrialCoverage",
     "trial_target_fingerprint",
     "TrialEquationFamily",

@@ -12,10 +12,12 @@ import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...domain import DomainFunction, GridBatch, PointBatch
-from ...operators.differential import laplacian
+from ...metrix.clifford import CliffordAlgebraSpec, CliffordBladeLayout
+from ...operators.differential import clifford_dirac, laplacian
 from ._core import (
     AbstractTrialSpaceAdmissibility,
     TRIAL_SPACE_CERTIFICATE_KEY,
+    TRIAL_SPACE_REPRESENTATION_KEY,
     trial_target_fingerprint,
     TrialSpaceAuditReport,
     TrialSpaceCertificate,
@@ -64,15 +66,12 @@ def _validate_admissibility(
         )
     if admissibility.singular_support_id != certificate.singular_support_id:
         raise ValueError(
-            "Target admissibility evidence does not match the certified "
-            "singular support."
+            "Target admissibility evidence does not match the certified singular support."
         )
     points = _audit_target_points(batch, var, certificate.ambient_dimension)
     fingerprint = trial_target_fingerprint(points, certificate.ambient_dimension)
     if admissibility.target_fingerprint != fingerprint:
-        raise ValueError(
-            "Target admissibility evidence does not match the audit batch."
-        )
+        raise ValueError("Target admissibility evidence does not match the audit batch.")
     point_count = int(points.size) // certificate.ambient_dimension
     if admissibility.target_count != point_count:
         raise ValueError(
@@ -139,8 +138,34 @@ def audit_trial_space(
         wavenumber = float(parameters["wavenumber"])
         residual = laplacian(field, var=var, mode=mode) + (wavenumber**2) * field
         differential_order = 2
+    elif certificate.equation_family == "dirac":
+        representation = field.metadata.get(TRIAL_SPACE_REPRESENTATION_KEY)
+        if (
+            not isinstance(representation, tuple)
+            or len(representation) != 2
+            or not isinstance(representation[0], CliffordAlgebraSpec)
+            or not isinstance(representation[1], CliffordBladeLayout)
+        ):
+            raise TypeError(
+                "Dirac trial audit requires bound Clifford algebra and layout metadata."
+            )
+        algebra, layout = representation
+        if certificate.representation_id != algebra.algebra_id:
+            raise ValueError(
+                "Dirac trial certificate and runtime Clifford algebra do not match."
+            )
+        residual = clifford_dirac(
+            field,
+            algebra,
+            layout,
+            var=var,
+            mode=mode,
+        )
+        differential_order = 1
     else:
-        raise ValueError(f"Unsupported trial-space family {certificate.equation_family!r}.")
+        raise ValueError(
+            f"Unsupported trial-space family {certificate.equation_family!r}."
+        )
 
     residual_values = jnp.asarray(residual(batch).data)
     field_values = jnp.asarray(field(batch).data)

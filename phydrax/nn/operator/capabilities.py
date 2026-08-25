@@ -57,6 +57,7 @@ OperatorFieldRepresentation: TypeAlias = Literal[
     "vector",
     "covector",
     "tensor",
+    "clifford_multivector",
 ]
 OperatorTrainingRegime: TypeAlias = Literal[
     "task_specific",
@@ -92,6 +93,8 @@ OperatorCompatibilityCode: TypeAlias = Literal[
     "COCHAIN_DEGREE_MISMATCH",
     "COCHAIN_TOPOLOGY_MISMATCH",
     "COCHAIN_METRIC_REQUIRED",
+    "CLIFFORD_LAYOUT_REQUIRED",
+    "CLIFFORD_LAYOUT_MISMATCH",
     "UNSUPPORTED_SYMMETRY_GROUP",
     "RESOLUTION_TRANSFER_UNSUPPORTED",
     "ENCODE_ONCE_DECODE_MANY_UNSUPPORTED",
@@ -401,6 +404,9 @@ def _field_schema_signature(field: Any, /) -> tuple[Any, ...]:
             cochain.cell_orientation,
             cochain.sampling,
         ),
+        None
+        if field.clifford_layout is None
+        else field.clifford_layout.representation_id,
     )
 
 

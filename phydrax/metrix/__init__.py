@@ -4,6 +4,7 @@
 
 """Differentiable coordinate, Riemannian, and signed geometry for Phydrax."""
 
+from . import clifford
 from ._adm import (
     ADMDecomposition,
     ADMParameterization,
@@ -332,6 +333,7 @@ __all__ = [
     "ComplexAtlasStructure",
     "CoordinateAtlas",
     "ComplexCoordinateConvention",
+    "clifford",
     "SpecialUnitaryGroup",
     "SpecialUnitaryManifold",
     "CoordinateChart",

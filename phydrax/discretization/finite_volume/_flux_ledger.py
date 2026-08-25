@@ -20,7 +20,7 @@ _ACCEPTED_INTEGRAL_UNITS = "content"
 _SSPRK33_WEIGHTS = (1.0 / 6.0, 1.0 / 6.0, 2.0 / 3.0)
 
 
-def _identity(value: str, name: str, /) -> str:
+def _flux_identity(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a nonempty canonical string.")
     return value
@@ -271,8 +271,8 @@ class FiniteVolumeStageFluxRateBlock(StrictModule):
         block_kind: str,
         /,
     ):
-        block_id_ = _identity(block_id, "block_id")
-        block_kind_ = _identity(block_kind, "block_kind")
+        block_id_ = _flux_identity(block_id, "block_id")
+        block_kind_ = _flux_identity(block_kind, "block_kind")
         owner, owner_host = _route_array(owner_cells, "owner_cells")
         neighbour, neighbour_host = _route_array(neighbour_cells, "neighbour_cells")
         if neighbour.shape != owner.shape:
@@ -363,12 +363,12 @@ class FiniteVolumeStageFluxRateLedger(StrictModule):
         evidence_version: ArrayLike,
         topology_epoch_id: str,
     ):
-        geometry_family = _identity(geometry_family_id, "geometry_family_id")
-        geometry_layout = _identity(geometry_layout_id, "geometry_layout_id")
+        geometry_family = _flux_identity(geometry_family_id, "geometry_family_id")
+        geometry_layout = _flux_identity(geometry_layout_id, "geometry_layout_id")
         version = _integer_scalar(geometry_version, "geometry_version")
-        evidence_policy = _identity(evidence_policy_id, "evidence_policy_id")
+        evidence_policy = _flux_identity(evidence_policy_id, "evidence_policy_id")
         evidence = _integer_scalar(evidence_version, "evidence_version")
-        topology_id = _identity(topology_epoch_id, "topology_epoch_id")
+        topology_id = _flux_identity(topology_epoch_id, "topology_epoch_id")
         source = _finite_values(source_rate, "source_rate")
         if source.ndim == 0 or source.shape[0] == 0:
             raise ValueError("source_rate must begin with a nonempty cell axis.")
@@ -450,8 +450,8 @@ class FiniteVolumeAcceptedFluxIntegralBlock(StrictModule):
         block_kind: str,
         /,
     ):
-        block_id_ = _identity(block_id, "block_id")
-        block_kind_ = _identity(block_kind, "block_kind")
+        block_id_ = _flux_identity(block_id, "block_id")
+        block_kind_ = _flux_identity(block_kind, "block_kind")
         owner, owner_host = _route_array(owner_cells, "owner_cells")
         neighbour, neighbour_host = _route_array(neighbour_cells, "neighbour_cells")
         if neighbour.shape != owner.shape:
@@ -590,8 +590,8 @@ class FiniteVolumeAcceptedFluxIntegralLedger(StrictModule):
             accepted_step_ < 0,
             "accepted_step must be nonnegative.",
         )
-        geometry_family = _identity(geometry_family_id, "geometry_family_id")
-        geometry_layout = _identity(geometry_layout_id, "geometry_layout_id")
+        geometry_family = _flux_identity(geometry_family_id, "geometry_family_id")
+        geometry_layout = _flux_identity(geometry_layout_id, "geometry_layout_id")
         if (
             not isinstance(stage_geometry_versions, tuple)
             or len(stage_geometry_versions) != 3
@@ -606,7 +606,7 @@ class FiniteVolumeAcceptedFluxIntegralLedger(StrictModule):
         )
         start_version = _integer_scalar(start_geometry_version, "start_geometry_version")
         end_version = _integer_scalar(end_geometry_version, "end_geometry_version")
-        evidence_policy = _identity(evidence_policy_id, "evidence_policy_id")
+        evidence_policy = _flux_identity(evidence_policy_id, "evidence_policy_id")
         if (
             not isinstance(stage_evidence_versions, tuple)
             or len(stage_evidence_versions) != 3
@@ -621,8 +621,10 @@ class FiniteVolumeAcceptedFluxIntegralLedger(StrictModule):
         )
         start_evidence = _integer_scalar(start_evidence_version, "start_evidence_version")
         end_evidence = _integer_scalar(end_evidence_version, "end_evidence_version")
-        start_topology = _identity(start_topology_epoch_id, "start_topology_epoch_id")
-        end_topology = _identity(end_topology_epoch_id, "end_topology_epoch_id")
+        start_topology = _flux_identity(
+            start_topology_epoch_id, "start_topology_epoch_id"
+        )
+        end_topology = _flux_identity(end_topology_epoch_id, "end_topology_epoch_id")
         if end_topology != start_topology:
             raise ValueError(
                 "An accepted flux-integral ledger cannot span a topology epoch change."
@@ -721,8 +723,10 @@ class FiniteVolumeAcceptedFluxIntegralLedger(StrictModule):
         end_version = _integer_scalar(end_geometry_version, "end_geometry_version")
         start_evidence = _integer_scalar(start_evidence_version, "start_evidence_version")
         end_evidence = _integer_scalar(end_evidence_version, "end_evidence_version")
-        start_topology = _identity(start_topology_epoch_id, "start_topology_epoch_id")
-        end_topology = _identity(end_topology_epoch_id, "end_topology_epoch_id")
+        start_topology = _flux_identity(
+            start_topology_epoch_id, "start_topology_epoch_id"
+        )
+        end_topology = _flux_identity(end_topology_epoch_id, "end_topology_epoch_id")
         start_time_ = _finite_scalar(start_time, "start_time")
         end_time_ = _finite_scalar(end_time, "end_time")
         end_time_ = eqx.error_if(

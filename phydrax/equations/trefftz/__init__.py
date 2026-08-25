@@ -26,6 +26,7 @@ from ._core import (
 )
 from ._helmholtz import HelmholtzPlaneWaveBasis, sample_unit_directions
 from ._holomorphic import HolomorphicPolynomialPotential
+from ._monogenic import LinearMonogenicField, MonogenicPolynomialBasis
 from ._polynomial import HarmonicPolynomialBasis, PolyharmonicAlmansiBasis
 
 
@@ -43,6 +44,8 @@ __all__ = [
     "HolomorphicParameterCoverage",
     "HolomorphicPotentialProvider",
     "LinearTrefftzField",
+    "LinearMonogenicField",
+    "MonogenicPolynomialBasis",
     "PolyharmonicAlmansiBasis",
     "PlaneElasticityPotential2D",
     "PlaneIsotropicMaterial",
