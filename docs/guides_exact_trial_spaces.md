@@ -9,7 +9,8 @@ boundary fitting. They complement PINNs and exact boundary enforcement:
   solution space, so Phydrax rejects that composition.
 
 The stable substrate covers finite real trial spaces for the Euclidean Laplace,
-polyharmonic, and homogeneous Helmholtz equations in dimension two or greater.
+polyharmonic, homogeneous Helmholtz, and flat constant-metric Dirac equations in
+dimension two or greater.
 Every public basis carries a construction certificate. A certificate proves equation
 satisfaction for the represented finite span; it does not claim that a fixed finite
 span is complete or that a boundary-value problem is unique.
@@ -89,6 +90,28 @@ basis = phx.equations.HelmholtzPlaneWaveBasis(
 
 The basis alone does not impose an exterior radiation condition or guarantee uniqueness
 at an interior resonance.
+
+## Monogenic Clifford polynomials
+
+`MonogenicPolynomialBasis` constructs a deterministic exact-rational kernel of the
+left Dirac map over full Clifford-valued polynomials. The associated
+`LinearMonogenicField` has real trainable coefficients and multivector-valued basis
+features.
+
+```python
+algebra = phx.metrix.clifford.CliffordAlgebraSpec((1, 1, 1))
+basis = phx.equations.MonogenicPolynomialBasis(algebra, 2)
+model = phx.equations.LinearMonogenicField(basis)
+```
+
+The certificate family is `"dirac"`. It records the algebra identity, signature,
+normalization, degree, basis rank, and left-action convention. For a nondegenerate
+constant diagonal metric, the squared Dirac operator is the corresponding flat signed
+Laplacian, so every component is metric-harmonic. Degenerate metrics are rejected
+because they do not admit the reciprocal frame required by this operator.
+
+Generic products and nonlinearities do not preserve monogenicity and therefore drop
+the exact trial certificate.
 
 ## Binding and boundary fitting
 

@@ -1,3 +1,16 @@
+from .clifford_models import (
+    DifferentialCliffordOperatorBlock,
+    PeriodicCliffordLaplacian,
+)
+from .clifford_scenarios import (
+    clifford_benchmark_scenarios,
+    CliffordBenchmarkScenario,
+    CliffordDecisionSmokeReport,
+    entropy_euler_scenario,
+    multigrade_incompressible_scenario,
+    multigrade_maxwell_scenario,
+    run_clifford_decision_smoke,
+)
 from .external import (
     audit_external_candidate,
     ExternalCandidateAudit,
@@ -181,6 +194,13 @@ __all__ = [
     "audit_scenario_difficulty",
     "assert_resolution_independent_parameters",
     "benchmark_metadata",
+    "clifford_benchmark_scenarios",
+    "CliffordBenchmarkScenario",
+    "CliffordDecisionSmokeReport",
+    "DifferentialCliffordOperatorBlock",
+    "entropy_euler_scenario",
+    "multigrade_incompressible_scenario",
+    "multigrade_maxwell_scenario",
     "compatible_architectures",
     "OperatorBenchmarkEvaluation",
     "OperatorBenchmarkResult",
@@ -210,6 +230,8 @@ __all__ = [
     "NearIdentityDiagnostic",
     "native_kernel_parity_checks",
     "parameter_count",
+    "PeriodicCliffordLaplacian",
+    "run_clifford_decision_smoke",
     "profile_resolution_scaling",
     "periodic_burgers_scenario",
     "polynomial_poisson_scenario",

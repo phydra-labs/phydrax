@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._clifford import clifford_dirac
 from ._dimension_estimators import (
     coordinate_divergence_samples,
     coordinate_second_derivative_samples,
@@ -148,6 +149,7 @@ from ._time_fractional_ops import (
 
 
 __all__ = [
+    "clifford_dirac",
     "coordinate_divergence_samples",
     "coordinate_second_derivative_samples",
     "DimensionOperatorEstimate",

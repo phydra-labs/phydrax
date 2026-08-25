@@ -1299,6 +1299,24 @@ existing lattice callable and costs one model evaluation per group element.
 cross-dimensional embeddings and rejects a projected kernel whose discarded
 relative residual exceeds the configured tolerance.
 
+#### Clifford grade fields
+
+`CliffordGradeRepresentation` packs complete exterior grades under one explicit
+`CliffordAlgebraSpec`. `CliffordGradeLinear` applies scalar multiplicity maps within
+each grade. `CliffordGeometricProductLayer` couples grades through exact prepared
+geometric products and explicit output-grade projections. These are algebra and
+field-frame contracts; they do not by themselves impose spatial lattice symmetry or
+PDE exactness.
+
+Initial nonlinear gating is restricted to positive-definite Euclidean signatures.
+Finite Euclidean groups, finite metric-isometry groups, and standalone sampled
+isometries retain different closure/evidence semantics. In particular, sampled
+Lorentz boosts never acquire a finite-group multiplication table.
+
+`OperatorFieldSpec(representation=\"clifford_multivector\", ...)` requires a matching
+Clifford layout. Affine scales must be constant across the blades of each channel and
+non-scalar grade offsets must be zero.
+
 ::: phydrax.nn.operator.representations.TensorType
 
 ---

@@ -25,6 +25,18 @@
 - Added genuine 2D Laplace M2M/M2L/L2L translations and global QBX/FMM coupling
   with prepared target associations, continuous expansion clearance, separate FMM
   truncation, coefficient-quadrature, and local expansion error evidence.
+- Added a metric-dependent Clifford algebra substrate with canonical blade layouts,
+  sparse/dense prepared geometric, exterior, and contraction products, involutions,
+  resource evidence, differential-form bridges, finite and standalone metric
+  isometries, outermorphism actions, and exhaustive algebra-automorphism audits.
+- Added flat constant-metric Dirac operators and exact-rational monogenic polynomial
+  Trefftz fields with analytic partial derivatives, algebraic trial certificates,
+  boundary-only linear fitting, and independent Dirac residual audits.
+- Added complete-grade Clifford neural representations, grade-wise equivariant
+  linear and geometric-product layers, Euclidean invariant gating, operator field
+  schemas, sampled equivariance evidence, and non-promoted differential-context
+  benchmark scenarios for incompressible flow, entropy-aware Euler, and Maxwell
+  fields.
 - Added likelihood-backed binary and multiclass empirical classification terms
   with encoded target schemas, case masks, positive statistical sample weights,
   posterior-compatible raw log probabilities, classification diagnostics, and a

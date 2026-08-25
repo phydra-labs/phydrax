@@ -15,7 +15,10 @@ from ...discretization import CochainFieldSpec
 from .._utils import _get_size
 from .capabilities import OperatorFieldRepresentation
 from .data import OperatorOutputSpec
-from .representations import TensorFieldLayout
+from .representations import (
+    CliffordGradeRepresentation,
+    TensorFieldLayout,
+)
 
 
 OperatorFieldRole = Literal["source", "target", "both"]
@@ -37,6 +40,7 @@ class OperatorFieldSpec(StrictModule):
     offset: tuple[float, ...]
     cochain: CochainFieldSpec | None
     tensor_layout: TensorFieldLayout | None
+    clifford_layout: CliffordGradeRepresentation | None
     required: bool
 
     def __init__(
@@ -56,6 +60,7 @@ class OperatorFieldSpec(StrictModule):
         offset: float | Sequence[float] = 0.0,
         cochain: CochainFieldSpec | None = None,
         tensor_layout: TensorFieldLayout | None = None,
+        clifford_layout: CliffordGradeRepresentation | None = None,
         required: bool = True,
     ):
         resolved_name = str(name)
@@ -64,15 +69,19 @@ class OperatorFieldSpec(StrictModule):
         if role not in ("source", "target", "both"):
             raise ValueError("Operator field role must be 'source', 'target', or 'both'.")
         channel_count = _get_size(channels)
-        resolved_representation: OperatorFieldRepresentation = (
-            "tensor"
-            if representation is None and tensor_layout is not None
-            else (
-                "scalar"
-                if representation is None and channels == "scalar"
-                else ("generic_channels" if representation is None else representation)
-            )
-        )
+        if representation is None:
+            if clifford_layout is not None:
+                resolved_representation: OperatorFieldRepresentation = (
+                    "clifford_multivector"
+                )
+            elif tensor_layout is not None:
+                resolved_representation = "tensor"
+            elif channels == "scalar":
+                resolved_representation = "scalar"
+            else:
+                resolved_representation = "generic_channels"
+        else:
+            resolved_representation = representation
         if resolved_representation not in (
             "generic_channels",
             "scalar",
@@ -80,6 +89,7 @@ class OperatorFieldSpec(StrictModule):
             "vector",
             "covector",
             "tensor",
+            "clifford_multivector",
         ):
             raise ValueError("Unknown operator field representation.")
         names = tuple(str(value) for value in component_names)
@@ -119,6 +129,26 @@ class OperatorFieldSpec(StrictModule):
                     "Tensor layout width must equal the declared field channel count."
                 )
             tensor_layout.validate_affine_normalization(scales, offsets)
+        if clifford_layout is not None:
+            if not isinstance(clifford_layout, CliffordGradeRepresentation):
+                raise TypeError(
+                    "clifford_layout must be CliffordGradeRepresentation or None."
+                )
+            if resolved_representation != "clifford_multivector":
+                raise ValueError(
+                    "Clifford layouts require representation='clifford_multivector'."
+                )
+            if clifford_layout.packed_size != channel_count:
+                raise ValueError(
+                    "Clifford packed width must equal the declared field channel count."
+                )
+            if tensor_layout is not None or cochain is not None:
+                raise ValueError(
+                    "Clifford fields cannot also declare tensor or cochain layouts."
+                )
+            clifford_layout.validate_affine_normalization(scales, offsets)
+        elif resolved_representation == "clifford_multivector":
+            raise ValueError("Clifford multivector fields require a clifford_layout.")
         if cochain is not None and not isinstance(cochain, CochainFieldSpec):
             raise TypeError("cochain must be a CochainFieldSpec or None.")
         if (
@@ -162,6 +192,7 @@ class OperatorFieldSpec(StrictModule):
                 or offsets != (0.0,)
                 or cochain is not None
                 or tensor_layout is not None
+                or clifford_layout is not None
             ):
                 raise ValueError(
                     "Classification fields must have no physical channels: use a "
@@ -181,6 +212,7 @@ class OperatorFieldSpec(StrictModule):
         self.offset = offsets
         self.cochain = cochain
         self.tensor_layout = tensor_layout
+        self.clifford_layout = clifford_layout
         self.required = bool(required)
 
     @property
@@ -250,6 +282,9 @@ class OperatorFieldSpec(StrictModule):
             "tensor_layout": (
                 None if self.tensor_layout is None else self.tensor_layout.to_dict()
             ),
+            "clifford_layout": (
+                None if self.clifford_layout is None else self.clifford_layout.to_dict()
+            ),
             "required": self.required,
         }
 
@@ -281,6 +316,11 @@ class OperatorFieldSpec(StrictModule):
                 None
                 if value.get("tensor_layout") is None
                 else TensorFieldLayout.from_dict(value["tensor_layout"])
+            ),
+            clifford_layout=(
+                None
+                if value.get("clifford_layout") is None
+                else CliffordGradeRepresentation.from_dict(value["clifford_layout"])
             ),
             required=bool(value.get("required", True)),
         )

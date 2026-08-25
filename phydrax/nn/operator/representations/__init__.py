@@ -1,5 +1,6 @@
 """Static physical representations used by neural operators."""
 
+from ._clifford import CliffordGradeFeatures, CliffordGradeRepresentation
 from ._groups import FiniteOrthogonalGroup
 from ._o3 import O3Features, O3Parity, O3Representation
 from ._tensor import (
@@ -12,6 +13,8 @@ from ._tensor import (
 
 
 __all__ = [
+    "CliffordGradeFeatures",
+    "CliffordGradeRepresentation",
     "FiniteOrthogonalGroup",
     "O3Features",
     "O3Parity",

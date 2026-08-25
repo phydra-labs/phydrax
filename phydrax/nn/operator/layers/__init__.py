@@ -7,6 +7,14 @@ from ._attention import (
     SliceAttention,
 )
 from ._basis_transfer import InvariantBasisTransferPlan, InvariantBasisTransferReport
+from ._clifford import (
+    audit_clifford_equivariance,
+    clifford_gated_activation,
+    CliffordEquivarianceAuditReport,
+    CliffordEquivarianceCertificate,
+    CliffordGeometricProductLayer,
+    CliffordGradeLinear,
+)
 from ._graph_transfer import (
     GeometryMomentEmbedding,
     GraphAttentionTransfer,
@@ -33,9 +41,15 @@ from ._transformer import OperatorTransformerProcessor
 
 
 __all__ = [
+    "audit_clifford_equivariance",
     "AxialOperatorAttention",
     "BasisSpectralConvND",
     "BasisTransformPlan",
+    "clifford_gated_activation",
+    "CliffordEquivarianceAuditReport",
+    "CliffordEquivarianceCertificate",
+    "CliffordGeometricProductLayer",
+    "CliffordGradeLinear",
     "EquivariantIntegralLayer",
     "InvariantBasisTransferPlan",
     "InvariantBasisTransferReport",

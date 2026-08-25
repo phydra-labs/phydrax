@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from itertools import combinations
 from math import comb
 from typing import Any, Literal
 
@@ -20,16 +19,8 @@ from ...metrix import (
     CoordinateChart,
     LorentzianMetric,
 )
+from ...metrix._exterior_basis import exterior_indices, wedge_sign
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
-
-
-def _indices(dimension: int, degree: int, /) -> tuple[tuple[int, ...], ...]:
-    return tuple(combinations(range(dimension), degree))
-
-
-def _wedge_sign(left: tuple[int, ...], right: tuple[int, ...], /) -> int:
-    inversions = sum(left_axis > right_axis for left_axis in left for right_axis in right)
-    return -1 if inversions % 2 else 1
 
 
 def _positions(deps: tuple[str, ...], function: DomainFunction, /) -> tuple[int, ...]:
@@ -118,7 +109,7 @@ class DomainDifferentialForm(StrictModule):
         self.chart = chart
         self.var = variable
         self.degree = degree_value
-        self.indices = _indices(chart.dimension, degree_value)
+        self.indices = exterior_indices(chart.dimension, degree_value)
 
     @property
     def coefficient_count(self) -> int:
@@ -162,7 +153,7 @@ class _DomainWedgeCallable(StrictModule):
         deps: tuple[str, ...],
         /,
     ):
-        output = _indices(left.chart.dimension, left.degree + right.degree)
+        output = exterior_indices(left.chart.dimension, left.degree + right.degree)
         lookup = {index: position for position, index in enumerate(output)}
         left_terms: list[int] = []
         right_terms: list[int] = []
@@ -175,7 +166,7 @@ class _DomainWedgeCallable(StrictModule):
                     left_terms.append(left_position)
                     right_terms.append(right_position)
                     output_terms.append(lookup[tuple(sorted(left_index + right_index))])
-                    signs.append(_wedge_sign(left_index, right_index))
+                    signs.append(wedge_sign(left_index, right_index))
         self.left = left
         self.right = right
         self.left_positions = _positions(deps, left.coefficients)
@@ -231,7 +222,7 @@ class _DomainExteriorCallable(StrictModule):
         deps: tuple[str, ...],
         /,
     ):
-        output = _indices(form.chart.dimension, form.degree + 1)
+        output = exterior_indices(form.chart.dimension, form.degree + 1)
         lookup = {index: position for position, index in enumerate(form.indices)}
         source_terms: list[int] = []
         derivative_axes: list[int] = []
@@ -301,7 +292,7 @@ class _DomainInteriorCallable(StrictModule):
         deps: tuple[str, ...],
         /,
     ):
-        output = _indices(form.chart.dimension, form.degree - 1)
+        output = exterior_indices(form.chart.dimension, form.degree - 1)
         lookup = {index: position for position, index in enumerate(form.indices)}
         vector_terms: list[int] = []
         source_terms: list[int] = []
@@ -377,7 +368,9 @@ class _DomainHodgeCallable(StrictModule):
         orientation: int,
         /,
     ):
-        output = _indices(form.chart.dimension, form.chart.dimension - form.degree)
+        output = exterior_indices(
+            form.chart.dimension, form.chart.dimension - form.degree
+        )
         output_lookup = {index: position for position, index in enumerate(output)}
         full = set(range(form.chart.dimension))
         output_terms: list[int] = []
@@ -385,7 +378,7 @@ class _DomainHodgeCallable(StrictModule):
         for source in form.indices:
             complement = tuple(sorted(full.difference(source)))
             output_terms.append(output_lookup[complement])
-            signs.append(_wedge_sign(source, complement))
+            signs.append(wedge_sign(source, complement))
         self.form = form
         self.metric = metric
         self.form_positions = _positions(deps, form.coefficients)
