@@ -21,6 +21,12 @@ from ._conservation import (
     CompiledConservationProblem,
     ConservationProblemIR,
 )
+from ._entropy_pair import (
+    ConvexEntropyPair,
+    ConvexEntropyValidationReport,
+    ideal_gas_euler_entropy_pair,
+    validate_convex_entropy_pair,
+)
 from ._fd_boundary_lowering import (
     BoundaryTarget,
     FDBoundaryBinding,
@@ -209,6 +215,8 @@ __all__ = [
     "CompiledVariationalProblem",
     "CompiledConservationProblem",
     "ConservationProblemIR",
+    "ConvexEntropyPair",
+    "ConvexEntropyValidationReport",
     "CompiledRandomizedPDETerm",
     "DifferentialBackend",
     "ResolvedSemidiscreteMethod",
@@ -238,6 +246,7 @@ __all__ = [
     "ShallowWaterSystem",
     "PrandtlTransport",
     "StiffenedGasMaterial",
+    "ideal_gas_euler_entropy_pair",
     "TwoMaterialEOSClosure",
     "TwoMaterialEOSReport",
     "TwoMaterialPrimitiveState",
@@ -332,5 +341,6 @@ __all__ = [
     "TrialValidityRegion",
     "StencilStateLayout",
     "validate_pde_ir",
+    "validate_convex_entropy_pair",
     "VariationalProblemIR",
 ]

@@ -28,6 +28,14 @@
 
 ::: phydrax.discretization.FiniteVolumeResidualDiagnostics
 
+---
+
+::: phydrax.discretization.FiniteVolumeEntropyDiagnostics
+
+---
+
+::: phydrax.discretization.integrated_finite_volume_relative_entropy
+
 ## Reconstruction and limiting
 
 ::: phydrax.discretization.PiecewiseConstantReconstruction

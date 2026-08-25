@@ -49,11 +49,11 @@ from ..discretization.finite_volume import (
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumeMethodPlan,
 )
+from ._entropy_pair import ConvexEntropyPair
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
     AbstractConservationSystem,
-    AbstractEntropySystem,
     CompressibleNavierStokesSystem,
     EulerSystem,
     ShallowWaterSystem,
@@ -257,9 +257,28 @@ class CompiledConservationProblem(StrictModule):
         return self.dynamics(time, state, args)
 
 
+def _validate_entropy_pair(
+    problem: ConservationProblemIR,
+    entropy_pair: ConvexEntropyPair | None,
+    /,
+) -> None:
+    if entropy_pair is None:
+        return
+    if not isinstance(entropy_pair, ConvexEntropyPair):
+        raise TypeError("entropy_pair must be a ConvexEntropyPair or None.")
+    system = problem.system
+    if entropy_pair.system.system_id != system.system_id:
+        raise ValueError("entropy_pair must target the conservation problem system.")
+    if entropy_pair.component_count != system.component_count:
+        raise ValueError("entropy_pair component count must match the system.")
+    if entropy_pair.dimension != system.dimension:
+        raise ValueError("entropy_pair dimension must match the system.")
+
+
 def _validate_method(
     problem: ConservationProblemIR,
     method: FiniteVolumeMethodPlan,
+    entropy_pair: ConvexEntropyPair | None,
     /,
 ) -> None:
     system = problem.system
@@ -281,8 +300,6 @@ def _validate_method(
         raise ValueError("Euler entropy fluxes require an Euler-compatible system.")
     if method.positivity is not None and not isinstance(system, AbstractAdmissibleSystem):
         raise ValueError("Positivity limiting requires an admissible system.")
-    if method.entropy_diagnostics and not isinstance(system, AbstractEntropySystem):
-        raise ValueError("Entropy diagnostics require an entropy system.")
     if isinstance(solver, FWaveShallowWaterPlan) and not isinstance(
         system, ShallowWaterSystem
     ):
@@ -297,6 +314,17 @@ def _validate_method(
         method.positivity, ConvexStateLimiterPlan
     ):
         raise TypeError("Finite-volume positivity policy is invalid.")
+    if entropy_pair is not None:
+        if method.viscous is not None:
+            raise ValueError(
+                "Entropy pair diagnostics are unsupported with viscous "
+                "finite-volume fluxes until viscous entropy production is "
+                "represented separately."
+            )
+        if not isinstance(solver, AbstractNumericalFluxPlan):
+            raise ValueError(
+                "Entropy pair diagnostics require a numerical flux interface solver."
+            )
 
 
 def compile_conservation_problem(
@@ -318,10 +346,12 @@ def compile_conservation_problem(
     bathymetry=None,
     precision: FiniteVolumePrecisionPolicy | None = None,
     coupling: UnstructuredFiniteVolumeCouplingPlan | None = None,
+    entropy_pair: ConvexEntropyPair | None = None,
 ) -> CompiledConservationProblem:
-    """Lower one conservation system onto prepared structured finite volumes."""
+    """Lower one conservation system onto prepared finite-volume geometry."""
     if not isinstance(problem, ConservationProblemIR):
         raise TypeError("problem must be a ConservationProblemIR.")
+    _validate_entropy_pair(problem, entropy_pair)
     if isinstance(problem.system, TwoMaterialVOFSystem) and not isinstance(
         discretization, UnstructuredFiniteVolumeDiscretization
     ):
@@ -336,6 +366,11 @@ def compile_conservation_problem(
             )
         if not isinstance(problem.boundaries, UnstructuredFiniteVolumeBoundarySet):
             raise TypeError("Unstructured geometry requires patch boundary ownership.")
+        if entropy_pair is not None:
+            raise ValueError(
+                "entropy_pair diagnostics currently support structured and mapped "
+                "finite-volume geometry only."
+            )
         if isinstance(
             method.interface_solver, (HLLCFluxPlan, EinfeldtHLLFluxPlan)
         ) and not isinstance(
@@ -448,6 +483,11 @@ def compile_conservation_problem(
             raise TypeError("Triangle geometry requires TriangleFiniteVolumeMethodPlan.")
         if not isinstance(problem.boundaries, TriangleFiniteVolumeBoundarySet):
             raise TypeError("Triangle geometry requires patch boundary ownership.")
+        if entropy_pair is not None:
+            raise ValueError(
+                "entropy_pair diagnostics currently support structured and mapped "
+                "finite-volume geometry only."
+            )
         if isinstance(
             method.interface_solver, (HLLCFluxPlan, EinfeldtHLLFluxPlan)
         ) and not isinstance(
@@ -520,7 +560,7 @@ def compile_conservation_problem(
         raise TypeError("discretization must be prepared finite-volume geometry.")
     if not isinstance(method, FiniteVolumeMethodPlan):
         raise TypeError("Structured geometry requires FiniteVolumeMethodPlan.")
-    _validate_method(problem, method)
+    _validate_method(problem, method, entropy_pair)
     dynamics = PreparedFiniteVolumeDynamics(
         problem.system,
         discretization,
@@ -530,6 +570,7 @@ def compile_conservation_problem(
         bathymetry=bathymetry,
         precision=precision,
         source=problem.source,
+        entropy_pair=entropy_pair,
     )
     return CompiledConservationProblem(problem, discretization, method, dynamics)
 

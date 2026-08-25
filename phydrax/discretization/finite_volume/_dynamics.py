@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -20,6 +20,10 @@ from ..._trainable import NonTrainableState
 from ._boundary import (
     FiniteVolumeBoundarySet,
     PrescribedNormalFluxBoundary,
+)
+from ._entropy import (
+    _evaluate_finite_volume_entropy_diagnostics,
+    FiniteVolumeEntropyDiagnostics,
 )
 from ._halo import FiniteVolumeHaloPlan, PreparedFiniteVolumeHaloPlan
 from ._high_resolution import (
@@ -40,6 +44,10 @@ from ._structured import FiniteVolumeDiscretization
 from ._viscous import ViscousFluxPlan
 from ._wave import AbstractWavePropagationPlan, WaveFamilyLimiterPlan
 from ._weno import WENOReconstructionPlan
+
+
+if TYPE_CHECKING:
+    from ...equations import ConvexEntropyPair
 
 
 DifferentiabilityPolicy: TypeAlias = Literal[
@@ -98,7 +106,6 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
     positivity: ConvexStateLimiterPlan | None
     wave_limiter: WaveFamilyLimiterPlan | None
     viscous: ViscousFluxPlan | None
-    entropy_diagnostics: bool = eqx.field(static=True)
     differentiability: DifferentiabilityPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
@@ -115,7 +122,6 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         positivity: ConvexStateLimiterPlan | None = None,
         wave_limiter: WaveFamilyLimiterPlan | None = None,
         viscous: ViscousFluxPlan | None = None,
-        entropy_diagnostics: bool = False,
         differentiability: DifferentiabilityPolicy = "branchwise",
     ):
         if not isinstance(
@@ -165,7 +171,6 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         self.positivity = positivity
         self.wave_limiter = wave_limiter
         self.viscous = viscous
-        self.entropy_diagnostics = bool(entropy_diagnostics)
         self.differentiability = differentiability
         self.method_id = canonical_fingerprint(
             {
@@ -175,14 +180,13 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
                 "positivity": None if positivity is None else positivity.limiter_id,
                 "wave_limiter": None if wave_limiter is None else wave_limiter.limiter_id,
                 "viscous": None if viscous is None else viscous.plan_id,
-                "entropy_diagnostics": bool(entropy_diagnostics),
                 "differentiability": differentiability,
             }
         )
 
 
 class FiniteVolumeResidualDiagnostics(StrictModule):
-    """Observable flux, signal-speed, and global-balance evidence."""
+    """Observable flux, signal-speed, global-balance, and entropy evidence."""
 
     normal_fluxes: tuple[Array, ...]
     signal_speeds: tuple[Array, ...]
@@ -191,7 +195,7 @@ class FiniteVolumeResidualDiagnostics(StrictModule):
     conservation_defect: Array
     maximum_rate: Array
     precision_evidence: PrecisionEvidenceEnvelope
-    entropy_dissipation: Array
+    entropy: FiniteVolumeEntropyDiagnostics | None
 
 
 class PreparedFiniteVolumeDynamics(StrictModule):
@@ -206,6 +210,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
     bathymetry: Array | None
     axis_reconstructions: tuple[Any, ...]
     precision: FiniteVolumePrecisionPolicy
+    entropy_pair: ConvexEntropyPair | None
     source: SourceFunction | None = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
@@ -221,6 +226,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         bathymetry: ArrayLike | None = None,
         source: SourceFunction | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
+        entropy_pair: ConvexEntropyPair | None = None,
     ):
         if not isinstance(
             discretization,
@@ -237,6 +243,30 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             raise ValueError("Conservation-system dimension must match the grid.")
         if system.component_count != discretization.component_count:
             raise ValueError("System and finite-volume component counts must match.")
+        if entropy_pair is not None:
+            from ...equations import ConvexEntropyPair
+
+            if not isinstance(entropy_pair, ConvexEntropyPair):
+                raise TypeError("entropy_pair must be a ConvexEntropyPair or None.")
+            if entropy_pair.system.system_id != system.system_id:
+                raise ValueError(
+                    "entropy_pair must target the prepared conservation system."
+                )
+            if entropy_pair.component_count != system.component_count:
+                raise ValueError("entropy_pair component count must match the system.")
+            if entropy_pair.dimension != system.dimension:
+                raise ValueError("entropy_pair dimension must match the system.")
+            if method.viscous is not None:
+                raise ValueError(
+                    "Entropy pair diagnostics are unsupported with viscous "
+                    "finite-volume fluxes until viscous entropy production is "
+                    "represented separately."
+                )
+            if not isinstance(method.interface_solver, AbstractNumericalFluxPlan):
+                raise ValueError(
+                    "Entropy pair diagnostics require a numerical flux interface "
+                    "solver."
+                )
         for axis, structured_axis in enumerate(discretization.grid.structured_axes):
             pair = boundaries.pairs[axis]
             if structured_axis.periodic and pair is not None:
@@ -312,6 +342,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         self.axis_reconstructions = axis_reconstructions
         self.precision = precision_
         self.source = source
+        self.entropy_pair = entropy_pair
         self.dynamics_id = canonical_fingerprint(
             {
                 "kind": "prepared-finite-volume-dynamics",
@@ -328,6 +359,9 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                 if bathymetry_ is None
                 else array_tree_fingerprint(np.asarray(bathymetry_)),
                 "precision": precision_.policy_id,
+                "entropy_pair": None
+                if entropy_pair is None
+                else entropy_pair.pair_id,
             }
         )
 
@@ -753,9 +787,10 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         source = self._source_value(time, value, args)
         if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan):
             fluxes, speeds = self.face_fluxes(time, value, args)
-            residual = self.precision.reduction(
+            convective_residual = self.precision.reduction(
                 self._flux_residual(fluxes)
-            ) + self.precision.reduction(source)
+            )
+            residual = convective_residual + self.precision.reduction(source)
             if self.method.viscous is not None:
                 residual = residual + self.precision.reduction(
                     self.method.viscous.residual(
@@ -802,6 +837,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             residual = self.precision.reduction(residual) + self.precision.reduction(
                 source
             )
+            convective_residual = None
             fluxes = ()
             boundary_flux = jnp.full(
                 (self.discretization.component_count,),
@@ -819,16 +855,19 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         )
         defect = change_integral - source_integral + boundary_flux
         rate = self._rate_from_speeds(speeds)
-        entropy = jnp.asarray(
-            0.0,
-            dtype=jnp.dtype(self.precision.reduction_dtype),
-        )
-        if self.method.entropy_diagnostics and fluxes:
-            entropy = jnp.sum(
-                self.precision.reduction(
-                    self.system.entropy_variables(self.precision.flux(value))
-                    * self.precision.reduction(residual)
+        entropy = None
+        if self.entropy_pair is not None:
+            if convective_residual is None:
+                raise RuntimeError(
+                    "Entropy pair diagnostics require a numerical flux residual."
                 )
+            entropy = _evaluate_finite_volume_entropy_diagnostics(
+                self.entropy_pair,
+                value,
+                self.effective_volumes,
+                convective_residual,
+                source,
+                precision=self.precision,
             )
         diagnostics = FiniteVolumeResidualDiagnostics(
             normal_fluxes=fluxes,
@@ -837,8 +876,8 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             source_integral=source_integral,
             conservation_defect=defect,
             maximum_rate=self.precision.decision(jnp.max(rate)),
-            entropy_dissipation=self.precision.decision(entropy),
             precision_evidence=self.precision.evidence(),
+            entropy=entropy,
         )
         return self.precision.storage(residual), diagnostics
 

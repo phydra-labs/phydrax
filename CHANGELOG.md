@@ -37,7 +37,13 @@
   retain geometry masks and physical measures, operator schemas use canonical
   JSON-safe ordered class names, and zero-weight objectives bypass evaluation.
 
-
+- Added explicit convex entropy pairs with Euler mathematical-entropy factories,
+  entropy-variable and flux compatibility validation, relative-entropy diagnostics,
+  and volume-weighted structured/mapped finite-volume entropy evidence. Compiler
+  integration rejects viscous, triangle, and modern unstructured pair diagnostics
+  until those contributions have separate certified contracts.
+- Promoted `h5py>=3.16.0` to a core dependency so finite-volume checkpoint and
+  restart persistence is available in the default installation.
 - Added domain-aware Legendre geometry with explicit primal/dual supports,
   conjugate and Fenchel--Young operations, representative validation, and direct
   dual translations. Added fixed-step mirror descent over mixed trainable

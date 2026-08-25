@@ -242,7 +242,7 @@ def test_finite_volume_precision_controls_runtime_reductions_and_restart(tmp_pat
         (8, 3),
     )
     state = precision.storage(system.primitive_to_conserved(primitive))
-    initial = phx.solver.FiniteVolumeRuntimeState(
+    initial = runtime.initialize_state(
         state,
         precision.decision(0.0),
         precision.decision(1e-4),
@@ -263,15 +263,15 @@ def test_finite_volume_precision_controls_runtime_reductions_and_restart(tmp_pat
     phx.solver.write_finite_volume_checkpoint(path, checkpoint_plan, initial)
     restored = phx.solver.read_finite_volume_checkpoint(path, checkpoint_plan)
 
-    assert advanced.runtime_state.conservative_state.dtype == jnp.float32
-    assert advanced.accepted_integrated_fluxes[0].dtype == jnp.float64
+    assert advanced.runtime_state.cell_average().dtype == jnp.float32
+    assert advanced.accepted_flux_integrals.blocks[0].flux_integral.dtype == jnp.float64
     assert diagnostics.conservation_defect.dtype == jnp.float64
     assert advanced.precision_evidence.evidence_id == precision.evidence().evidence_id
     assert dict(advanced.precision_evidence.observed)["accumulation"] == "float64"
     assert dict(advanced.precision_evidence.children)["reconstruction"].domain == (
         "finite-volume-reconstruction"
     )
-    assert restored.runtime_state.conservative_state.dtype == jnp.float32
+    assert restored.runtime_state.cell_average().dtype == jnp.float32
     assert restored.precision_evidence.evidence_id == precision.evidence().evidence_id
 
 

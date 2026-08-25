@@ -184,6 +184,7 @@ nav:
             - Temporal and stochastic composition: "api/discretization/stochastic.md"
             - Finite differences: "api/discretization/finite_difference.md"
             - Structured finite volume: "api/discretization/finite_volume.md"
+            - Convex entropy pairs: "api/discretization/entropy_pairs.md"
             - Unstructured finite volume: "api/discretization/unstructured_finite_volume.md"
             - Modal and constrained solvers: "api/discretization/modal_solvers.md"
             - Fixed-capacity AMR: "api/discretization/amr.md"
