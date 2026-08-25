@@ -21,6 +21,7 @@ from ._evaluation import (
     LayerEvaluationReport,
     LayerEvaluationResult,
 )
+from ._fmm2d import LaplaceFMMBackend2D, LaplaceFMMEvaluation2D
 from ._helmholtz2d import (
     HelmholtzCombinedField2D,
     HelmholtzLayerKernel2D,
@@ -101,4 +102,6 @@ __all__ = [
     "LayerBackendEvaluation2D",
     "LaplaceTreecodeBackend2D",
     "LaplaceTreecodeEvaluation2D",
+    "LaplaceFMMBackend2D",
+    "LaplaceFMMEvaluation2D",
 ]
