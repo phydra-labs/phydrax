@@ -54,10 +54,9 @@ def evaluate_single_layer_self_triangle_3d(
     start = panel_id * nodes_per_panel
     stop = start + nodes_per_panel
     reference_data = reference_rule_data(ReferenceTriangleRule(GaussLegendreRule(order)))
-    first = jnp.unique(reference_data.points[:, 0])
-    second = jnp.unique(
-        reference_data.points[:, 1] / (1.0 - reference_data.points[:, 0])
-    )
+    reference_grid = reference_data.points.reshape((order, order, 2))
+    first = reference_grid[:, 0, 0]
+    second = reference_grid[0, :, 1] / (1.0 - first[0])
     density_grid = potential.density[start:stop].reshape((order, order))
     first_weights = _barycentric_weights(first)
     second_weights = _barycentric_weights(second)
@@ -170,8 +169,9 @@ def evaluate_double_layer_self_triangle_3d(
     start = panel_id * node_count
     stop = start + node_count
     reference_data = reference_rule_data(ReferenceTriangleRule(GaussLegendreRule(order)))
-    first = jnp.unique(reference_data.points[:, 0])
-    second = jnp.unique(reference_data.points[:, 1] / (1.0 - reference_data.points[:, 0]))
+    reference_grid = reference_data.points.reshape((order, order, 2))
+    first = reference_grid[:, 0, 0]
+    second = reference_grid[0, :, 1] / (1.0 - first[0])
     density_grid = potential.density[start:stop].reshape((order, order))
     first_weights = _barycentric_weights(first)
     second_weights = _barycentric_weights(second)

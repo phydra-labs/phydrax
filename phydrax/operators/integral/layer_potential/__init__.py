@@ -15,6 +15,7 @@ from ._core import (
     LayerDiscretizationReport,
     LayerPotentialTargetReport,
 )
+from ._corner_block import CornerBlockInversePreconditioner2D
 from ._evaluation import (
     evaluate_layer_potential,
     LayerEvaluationPlan2D,
@@ -90,6 +91,7 @@ __all__ = [
     "evaluate_single_layer_self_triangle_3d",
     "QBXEvaluation3D",
     "evaluate_qbx_3d",
+    "CornerBlockInversePreconditioner2D",
     "DirectNearFarReferenceBackend2D",
     "HelmholtzCombinedField3D",
     "HelmholtzLayerKernel3D",

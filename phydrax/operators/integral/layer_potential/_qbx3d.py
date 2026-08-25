@@ -37,6 +37,10 @@ class QBXEvaluation3D(StrictModule):
     num_evaluations: Array
     accuracy_supported: Array
     clearance: Array
+    association_id: str = eqx.field(static=True)
+    expansion_order: int = eqx.field(static=True)
+
+
 def _derivative_flat(
     potential,
     center: Array,
@@ -95,7 +99,9 @@ def evaluate_qbx_3d(
         raise ValueError("3D QBX order and radius_factor must be positive and finite.")
     panelization = potential.panelization
     geometry = panelization.geometry
-    if geometry is None or not geometry.has_capability(GeometryCapability.SIGNED_DISTANCE):
+    if geometry is None or not geometry.has_capability(
+        GeometryCapability.SIGNED_DISTANCE
+    ):
         raise TypeError("3D QBX requires compiled signed-distance geometry.")
     certificate = geometry.field_certificate
     if (
@@ -116,10 +122,11 @@ def evaluate_qbx_3d(
     reference_data = reference_rule_data(
         ReferenceTriangleRule(GaussLegendreRule(quadrature_order))
     )
-    first_nodes = jnp.unique(reference_data.points[:, 0])
-    second_nodes = jnp.unique(
-        reference_data.points[:, 1] / (1.0 - reference_data.points[:, 0])
+    reference_grid = reference_data.points.reshape(
+        (quadrature_order, quadrature_order, 2)
     )
+    first_nodes = reference_grid[:, 0, 0]
+    second_nodes = reference_grid[0, :, 1] / (1.0 - first_nodes[0])
     first_weights = jnp.reciprocal(
         jnp.prod(
             first_nodes[:, None] - first_nodes[None, :] + jnp.eye(quadrature_order),
@@ -160,7 +167,11 @@ def evaluate_qbx_3d(
             clearance = jnp.abs(geometry.signed_distance(center[None, :])[0]) - radius
             target_clearance = jnp.minimum(target_clearance, clearance)
             tolerance = 64.0 * jnp.finfo(values.dtype).eps
-            allowed = clearance >= -tolerance if target_side == "boundary" else clearance > tolerance
+            allowed = (
+                clearance >= -tolerance
+                if target_side == "boundary"
+                else clearance > tolerance
+            )
             if not bool(allowed):
                 center_values.append(jnp.asarray(jnp.nan))
                 center_errors.append(jnp.asarray(jnp.inf))
@@ -214,13 +225,17 @@ def evaluate_qbx_3d(
                     densities = density_at(reference)
 
                     def one(source, source_normal, jacobian, density):
-                        return _derivative_flat(
-                            potential,
-                            center,
-                            source,
-                            source_normal,
-                            expansion_order,
-                        ) * jacobian * density
+                        return (
+                            _derivative_flat(
+                                potential,
+                                center,
+                                source,
+                                source_normal,
+                                expansion_order,
+                            )
+                            * jacobian
+                            * density
+                        )
 
                     return jax.vmap(one)(
                         frame.origin,
@@ -234,7 +249,11 @@ def evaluate_qbx_3d(
                     reference_vertices[None, ...],
                     triangle_plan,
                 )
-                coefficients = estimate.value if coefficients is None else coefficients + estimate.value
+                coefficients = (
+                    estimate.value
+                    if coefficients is None
+                    else coefficients + estimate.value
+                )
                 if estimate.error_estimate is not None:
                     coefficient_error = coefficient_error + estimate.error_estimate
                 status = jnp.maximum(status, estimate.status)
@@ -278,11 +297,16 @@ def evaluate_qbx_3d(
         if target_side == "boundary"
         else jnp.all(clearance_values > clearance_tolerance)
     )
-    accuracy_supported = finite & (status == 0) & clearance_supported & (
-        error_estimate <= absolute + relative * jnp.max(jnp.abs(values_))
+    accuracy_supported = (
+        finite
+        & (status == 0)
+        & clearance_supported
+        & (error_estimate <= absolute + relative * jnp.max(jnp.abs(values_)))
     )
     if triangle_plan.throw:
-        values_ = eqx.error_if(values_, ~accuracy_supported, "3D QBX failed its contract.")
+        values_ = eqx.error_if(
+            values_, ~accuracy_supported, "3D QBX failed its contract."
+        )
     return QBXEvaluation3D(
         values=values_,
         coefficient_quadrature_error=coefficient_error,

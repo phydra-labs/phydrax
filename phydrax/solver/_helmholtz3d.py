@@ -160,6 +160,7 @@ def _trace_matrices_3d(
     )
     if not bool(report.accuracy_supported):
         raise ValueError("3D Helmholtz singular assembly failed its quadrature contract.")
+    return single, double, report
 
 
 def solve_exterior_helmholtz_dirichlet_3d(
