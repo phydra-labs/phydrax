@@ -184,6 +184,105 @@ def test_3d_surface_layer_uses_continuous_target_evidence():
     assert report.target_fingerprint
 
 
+def test_3d_qbx_directional_expansion_covers_real_and_complex_layers():
+    geometry = phx.geometry.Sphere((0.0, 0.0, 0.0), 1.0).compile()
+    panelization = phx.operators.SurfacePanelization3D(
+        geometry.boundary_atlas,
+        quadrature_order=2,
+        geometry=geometry,
+    )
+    triangle_plan = phx.integration.AdaptiveTrianglePlan(
+        phx.integration.CubatureRule("triangle", 1),
+        phx.integration.CubatureRule("triangle", 2),
+        absolute_tolerance=10.0,
+        relative_tolerance=10.0,
+        max_cells=1,
+        throw=False,
+    )
+    targets = jnp.asarray([[0.0, 0.0, 0.0]])
+    density = jnp.ones((panelization.node_count,))
+
+    single = phx.operators.evaluate_qbx_3d(
+        phx.operators.LaplaceLayerPotential3D(
+            panelization,
+            kind="single",
+            density=density,
+        ),
+        targets,
+        target_side="interior",
+        order=1,
+        radius_factor=0.05,
+        triangle_plan=triangle_plan,
+    )
+    double = phx.operators.evaluate_qbx_3d(
+        phx.operators.LaplaceLayerPotential3D(
+            panelization,
+            kind="double",
+            density=density,
+        ),
+        targets,
+        target_side="interior",
+        order=1,
+        radius_factor=0.05,
+        triangle_plan=triangle_plan,
+    )
+    helmholtz = phx.operators.evaluate_qbx_3d(
+        phx.operators.HelmholtzLayerPotential3D(
+            panelization,
+            2.0,
+            kind="single",
+            density=density.astype(complex),
+        ),
+        targets,
+        target_side="interior",
+        order=1,
+        radius_factor=0.05,
+        triangle_plan=triangle_plan,
+    )
+
+    assert jnp.allclose(single.values, 0.5, atol=1e-2)
+    assert jnp.allclose(double.values, -0.5, atol=1e-2)
+    for result in (single, double, helmholtz):
+        assert result.values.shape == (1,)
+        assert jnp.all(jnp.isfinite(result.values))
+        assert jnp.isfinite(result.error_estimate)
+        assert int(result.status) == 0
+        assert bool(result.accuracy_supported)
+        assert int(result.num_evaluations) > 0
+
+
+def test_helmholtz_qbx_uses_directional_hankel_expansion():
+    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    panelization = _circle_panelization(panels=1, order=2)
+    potential = phx.operators.HelmholtzLayerPotential2D(
+        panelization,
+        2.0,
+        kind="single",
+        density=jnp.ones((panelization.node_count,), dtype=complex),
+    )
+    result = phx.operators.evaluate_layer_potential(
+        potential,
+        panelization.points[0][None, :],
+        phx.operators.LayerEvaluationPlan2D(
+            "qbx",
+            qbx_order=1,
+            qbx_radius_factor=0.05,
+            adaptive_plan=phx.integration.AdaptiveQuadraturePlan(
+                absolute_tolerance=10.0,
+                relative_tolerance=10.0,
+                max_intervals=1,
+                throw=False,
+            ),
+        ),
+        target_side="boundary",
+    )
+
+    assert result.values.shape == (1,)
+    assert jnp.all(jnp.isfinite(result.values))
+    assert jnp.isfinite(result.evaluation_report.error_estimate)
+    assert bool(result.evaluation_report.accuracy_supported)
+
+
 def test_direct_near_far_backend_matches_direct_representation():
     panelization = _circle_panelization()
     potential = phx.operators.LaplaceLayerPotential2D(
