@@ -52,6 +52,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
     weights: Array
     panel_ids: Array
     quadrature_order: int = eqx.field(static=True)
+    nodes_per_panel: int = eqx.field(static=True)
     quadrature_rule_id: str = eqx.field(static=True)
     source_support_id: str = eqx.field(static=True)
     panelization_id: str = eqx.field(static=True)
@@ -118,6 +119,7 @@ class SurfacePanelization3D(StrictModule, NonTrainableState):
         self.weights = physical_weights
         self.panel_ids = jnp.asarray(panel_ids, dtype=jnp.int32)
         self.quadrature_order = order
+        self.nodes_per_panel = int(data.points.shape[0])
         rule_id = f"reference-triangle:{type(rule.rule).__name__}"
         self.quadrature_rule_id = rule_id
         self.source_support_id = support_id

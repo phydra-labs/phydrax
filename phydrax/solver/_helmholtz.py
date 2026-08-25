@@ -25,6 +25,7 @@ from ..operators.integral.layer_potential import (
     HelmholtzLayerKernel2D,
 )
 from ..operators.integral.layer_potential._quadrature2d import (
+    evaluate_double_layer_self_panel_weights_2d,
     evaluate_helmholtz_single_layer_self_panel_block_2d,
 )
 
@@ -95,27 +96,46 @@ def _helmholtz_trace_matrices_2d(
         )(target, sources, normals)
     )(targets)
     order = panelization.quadrature_order
+    weights = panelization.weights[None, :]
+    single = single * weights
+    double = double * weights
     block_status = []
     block_errors = []
     block_evaluations = []
     for panel_id in range(panelization.panel_count):
         start = panel_id * order
         stop = start + order
-        self_weights = evaluate_helmholtz_single_layer_self_panel_block_2d(
+        single_weights = evaluate_helmholtz_single_layer_self_panel_block_2d(
             panelization,
             kernel,
             panel_id,
             panelization.references[start:stop, 0],
             quadrature,
         )
-        single = single.at[start:stop, start:stop].set(self_weights.value)
-        block_status.append(self_weights.status)
+        single = single.at[start:stop, start:stop].set(single_weights.value)
+        block_status.append(single_weights.status)
         block_errors.append(
             jnp.inf
-            if self_weights.error_estimate is None
-            else self_weights.error_estimate
+            if single_weights.error_estimate is None
+            else single_weights.error_estimate
         )
-        block_evaluations.append(self_weights.num_evaluations)
+        block_evaluations.append(single_weights.num_evaluations)
+        for target_index in range(start, stop):
+            double_weights = evaluate_double_layer_self_panel_weights_2d(
+                panelization,
+                kernel,
+                panel_id,
+                panelization.references[target_index, 0],
+                quadrature,
+            )
+            double = double.at[target_index, start:stop].set(double_weights.value)
+            block_status.append(double_weights.status)
+            block_errors.append(
+                jnp.inf
+                if double_weights.error_estimate is None
+                else double_weights.error_estimate
+            )
+            block_evaluations.append(double_weights.num_evaluations)
     policy_id = (
         f"adaptive:{type(quadrature.rule).__name__}:"
         f"abs={quadrature.absolute_tolerance}:"
@@ -126,7 +146,7 @@ def _helmholtz_trace_matrices_2d(
         panelization=panelization,
         kernel_id=kernel.kernel_id,
         policy_id=policy_id,
-        trace_policy="exterior-brakhage-werner-single-self-product-double-shift",
+        trace_policy="exterior-brakhage-werner-single-and-double-pv-product",
         block_status=jnp.stack(block_status),
         block_errors=jnp.stack(block_errors),
         block_evaluations=jnp.stack(block_evaluations),
@@ -135,25 +155,7 @@ def _helmholtz_trace_matrices_2d(
         raise ValueError(
             "Helmholtz singular trace assembly failed its quadrature contract."
         )
-    step = 1.0 / (
-        panelization.panels_per_chart * panelization.quadrature_order * 1_000_000.0
-    )
-    reference = panelization.references[:, 0]
-    direction = jnp.where(reference + step < 1.0, 1.0, -1.0)
-    shifted_reference = (reference + direction * step)[:, None]
-    shifted = panelization.atlas.frame(
-        panelization.chart_indices,
-        shifted_reference,
-    )
-    diagonal = jax.vmap(kernel.source_normal_derivative)(
-        targets,
-        shifted.origin,
-        shifted.normal,
-    )
-    indices = jnp.arange(panelization.node_count)
-    double = double.at[indices, indices].set(diagonal)
-    weights = panelization.weights[None, :]
-    return single * weights, double * weights, assembly
+    return single, double, assembly
 def solve_exterior_helmholtz_dirichlet_2d(
     panelization: BoundaryPanelization2D,
     boundary_values: ArrayLike,

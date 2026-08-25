@@ -504,6 +504,129 @@ def evaluate_helmholtz_single_layer_self_panel_block_2d(
     )
 
 
+def evaluate_double_layer_self_panel_weights_2d(
+    panelization: BoundaryPanelization2D,
+    kernel,
+    panel_id: int,
+    target_reference: ArrayLike,
+    plan: AdaptiveQuadraturePlan,
+    /,
+) -> IntegrationEstimate:
+    """Evaluate principal-value double-layer self weights by symmetric cancellation."""
+    target_reference_ = jnp.asarray(target_reference, dtype=float).reshape(())
+    bounds = panelization.panel_reference_bounds[panel_id]
+    chart = panelization.panel_chart_indices[panel_id]
+    target_frame = panelization.atlas.frame(
+        jnp.asarray([chart], dtype=jnp.int32),
+        target_reference_[None, None],
+    )
+    target = target_frame.origin[0]
+    order = panelization.quadrature_order
+    start = panel_id * order
+    stop = start + order
+    node_reference = panelization.references[start:stop, 0]
+    differences = node_reference[:, None] - node_reference[None, :]
+    barycentric_weights = jnp.reciprocal(
+        jnp.prod(differences + jnp.eye(order), axis=1)
+    )
+    left_span = target_reference_ - bounds[0]
+    right_span = bounds[1] - target_reference_
+    symmetric_span = jnp.minimum(left_span, right_span)
+    self_plan = AdaptiveQuadraturePlan(
+        plan.rule,
+        absolute_tolerance=plan.absolute_tolerance,
+        relative_tolerance=plan.relative_tolerance,
+        max_intervals=plan.max_intervals,
+        max_evaluations=plan.max_evaluations,
+        breakpoints=(),
+        collect_partition=plan.collect_partition,
+        throw=False,
+    )
+
+    def values_at(reference: Array) -> Array:
+        frame = panelization.atlas.frame(
+            jnp.full(reference.shape, chart, dtype=jnp.int32),
+            reference[:, None],
+        )
+        basis_values = jax.vmap(
+            lambda location: barycentric_basis(
+                location,
+                node_reference,
+                barycentric_weights,
+            )
+        )(reference)
+        kernels = jax.vmap(
+            kernel.source_normal_derivative,
+            in_axes=(None, 0, 0),
+        )(target, frame.origin, frame.normal)
+        return kernels[:, None] * basis_values * frame.jacobian[:, None]
+
+    def symmetric(reference_distance: Array) -> Array:
+        plus = target_reference_ + reference_distance
+        minus = target_reference_ - reference_distance
+        plus_values = values_at(plus)
+        minus_values = values_at(minus)
+        return jnp.where(
+            reference_distance[:, None] == 0.0,
+            0.0,
+            plus_values + minus_values,
+        )
+
+    estimates = []
+    if bool(symmetric_span > 0.0):
+        estimates.append(
+            adaptive_interval_callable(
+                symmetric,
+                jnp.asarray((0.0, symmetric_span)),
+                self_plan,
+            )
+        )
+    if bool(left_span > symmetric_span):
+        estimates.append(
+            adaptive_interval_callable(
+                values_at,
+                jnp.asarray((bounds[0], target_reference_ - symmetric_span)),
+                self_plan,
+            )
+        )
+    if bool(right_span > symmetric_span):
+        estimates.append(
+            adaptive_interval_callable(
+                values_at,
+                jnp.asarray((target_reference_ + symmetric_span, bounds[1])),
+                self_plan,
+            )
+        )
+    if not estimates:
+        estimates.append(
+            adaptive_interval_callable(
+                symmetric,
+                jnp.asarray((0.0, symmetric_span)),
+                self_plan,
+            )
+        )
+    value = jnp.sum(jnp.stack([estimate.value for estimate in estimates]), axis=0)
+    errors = jnp.stack(
+        [
+            jnp.inf if estimate.error_estimate is None else estimate.error_estimate
+            for estimate in estimates
+        ]
+    )
+    status = jnp.max(jnp.stack([estimate.status for estimate in estimates]))
+    evaluations = jnp.sum(jnp.stack([estimate.num_evaluations for estimate in estimates]))
+    return IntegrationEstimate(
+        value,
+        status=status,
+        num_evaluations=evaluations,
+        error_estimate=jnp.sum(errors),
+        error_kind="adaptive-principal-value-symmetric-cancellation",
+        diagnostics=None,
+        provenance=IntegrationProvenance(
+            "adaptive-double-self", "layer", type(plan.rule).__name__
+        ),
+    )
+
+
 def _panel_direct(potential, target: Array, panel_id: int, /) -> Array:
     order = potential.panelization.quadrature_order
     start = panel_id * order

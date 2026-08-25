@@ -26,6 +26,11 @@ from ._helmholtz2d import (
     HelmholtzLayerKernel2D,
     HelmholtzLayerPotential2D,
 )
+from ._helmholtz3d import (
+    HelmholtzCombinedField3D,
+    HelmholtzLayerKernel3D,
+    HelmholtzLayerPotential3D,
+)
 from ._laplace2d import (
     double_layer_principal_value_matrix,
     LaplaceLayerKernel2D,
@@ -37,11 +42,16 @@ from ._laplace3d import (
     LaplaceLayerPotential3D,
 )
 from ._qbx2d import evaluate_qbx_2d, QBXEvaluation2D
+from ._qbx3d import evaluate_qbx_3d, QBXEvaluation3D
 from ._quadrature2d import (
     AdaptiveLayerEvaluation2D,
     classify_panel_interactions_2d,
     evaluate_laplace_single_layer_self_panel_2d,
     PanelInteractionReport2D,
+)
+from ._quadrature3d import (
+    evaluate_double_layer_self_triangle_3d,
+    evaluate_single_layer_self_triangle_3d,
 )
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 
@@ -76,7 +86,14 @@ __all__ = [
     "SurfacePanelization3D",
     "SurfaceTargetReport3D",
     "evaluate_laplace_layer_3d",
+    "evaluate_double_layer_self_triangle_3d",
+    "evaluate_single_layer_self_triangle_3d",
+    "QBXEvaluation3D",
+    "evaluate_qbx_3d",
     "DirectNearFarReferenceBackend2D",
+    "HelmholtzCombinedField3D",
+    "HelmholtzLayerKernel3D",
+    "HelmholtzLayerPotential3D",
     "AbstractLayerBackend",
     "LayerBackendEvaluation2D",
 ]

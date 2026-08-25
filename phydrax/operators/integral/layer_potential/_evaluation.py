@@ -304,9 +304,7 @@ def evaluate_layer_potential(
         near_panel_count = targets_.shape[0]
         far_panel_count = 0
         failed_panel_count = int(not bool(qbx.accuracy_supported))
-        accuracy_supported = (
-            finite & qbx.accuracy_supported & target_report.accuracy_supported
-        )
+        accuracy_supported = finite & qbx.accuracy_supported
     evaluation_report = LayerEvaluationReport(
         plan=plan,
         representation_id=potential.representation_id,
