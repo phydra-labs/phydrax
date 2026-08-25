@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -156,7 +157,9 @@ def test_helmholtz_cfie_requires_and_reports_explicit_self_policy():
     )
 
     assert bool(result.valid)
-    assert result.assembly_report.corrected_block_count == panelization.panel_count
+    assert result.assembly_report.corrected_block_count == (
+        panelization.panel_count * (1 + panelization.quadrature_order)
+    )
     assert bool(result.assembly_report.accuracy_supported)
     assert jnp.all(jnp.isfinite(result.density))
 
@@ -282,6 +285,76 @@ def test_helmholtz_qbx_uses_directional_hankel_expansion():
     assert jnp.all(jnp.isfinite(result.values))
     assert jnp.isfinite(result.evaluation_report.error_estimate)
     assert bool(result.evaluation_report.accuracy_supported)
+
+
+@pytest.mark.parametrize("field_kind", ("single", "double", "combined"))
+def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
+    from phydrax.operators.integral.layer_potential._qbx2d import _directional_terms
+
+    panelization = _circle_panelization(panels=1, order=2)
+    density = jnp.ones((panelization.node_count,), dtype=complex)
+    if field_kind == "combined":
+        potential = phx.operators.HelmholtzCombinedField2D(
+            panelization,
+            2.0,
+            density,
+            eta=1.3,
+        )
+    else:
+        potential = phx.operators.HelmholtzLayerPotential2D(
+            panelization,
+            2.0,
+            kind=field_kind,
+            density=density,
+        )
+
+    center = jnp.asarray([1.2, -0.1])
+    source = panelization.points[0]
+    normal = panelization.normals[0]
+    direction = jnp.asarray([0.6, 0.8])
+
+    if field_kind == "combined":
+        def kernel(distance):
+            target = center + distance * direction
+            return potential.kernel.source_normal_derivative(
+                target,
+                source,
+                normal,
+            ) - 1j * potential.eta * potential.kernel.value(target, source)
+    elif field_kind == "single":
+        def kernel(distance):
+            return potential.kernel.value(
+                center + distance * direction,
+                source,
+            )
+    else:
+        def kernel(distance):
+            return potential.kernel.source_normal_derivative(
+                center + distance * direction,
+                source,
+                normal,
+            )
+
+    actual = _directional_terms(
+        potential,
+        center,
+        source,
+        normal,
+        direction,
+        3,
+    )
+    derivative = kernel
+    expected = [derivative(jnp.asarray(0.0))]
+    for _ in range(3):
+        derivative = jax.jacfwd(derivative)
+        expected.append(derivative(jnp.asarray(0.0)))
+
+    assert jnp.allclose(
+        actual,
+        jnp.stack(expected),
+        rtol=1e-11,
+        atol=1e-11,
+    )
 
 
 def test_direct_near_far_backend_matches_direct_representation():
