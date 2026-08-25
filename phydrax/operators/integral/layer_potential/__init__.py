@@ -1,8 +1,8 @@
 """Prepared boundary layer representations, discretizations, and evaluators."""
 
 from ._acceleration import (
-    AbstractLayerAccelerationBackend,
-    DirectNearFarBackend2D,
+    AbstractLayerBackend,
+    DirectNearFarReferenceBackend2D,
     LayerBackendEvaluation2D,
 )
 from ._core import (
@@ -76,7 +76,7 @@ __all__ = [
     "SurfacePanelization3D",
     "SurfaceTargetReport3D",
     "evaluate_laplace_layer_3d",
-    "DirectNearFarBackend2D",
-    "AbstractLayerAccelerationBackend",
+    "DirectNearFarReferenceBackend2D",
+    "AbstractLayerBackend",
     "LayerBackendEvaluation2D",
 ]

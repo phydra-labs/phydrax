@@ -139,25 +139,25 @@ one-sided local expansions; PDE membership remains off-support only.
 rule. `LaplaceLayerPotential3D` and `evaluate_laplace_layer_3d` require compiled,
 continuous geometry evidence and reject unresolved or on-surface direct targets.
 
-## Near/far backend contract
+## Reference near/far backend
 
-`AbstractLayerAccelerationBackend` separates backend execution from layer
-representation. `DirectNearFarBackend2D` is the exact corrected decomposition used as
-the reference backend; it reports near/far work counts and direct parity. An external
-FMM backend must satisfy the same contract and must add its approximation error rather
-than replacing singular or near-panel corrections.
+`AbstractLayerBackend` separates backend execution from layer representation.
+`DirectNearFarReferenceBackend2D` is an exact direct decomposition used for parity
+and work-accounting tests. It is not an acceleration backend and makes no FMM claim.
+An eventual FMM backend must add its own approximation and adjoint evidence without
+replacing singular or near-panel corrections.
 
 ## Current support boundary
 
-- 2D Laplace direct, adaptive near/self, corner grading, and local QBX;
+- 2D Laplace direct, adaptive near/self, corner grading, and coefficient-quadrature QBX;
 - 2D outgoing Helmholtz kernels and explicit Brakhage--Werner CFIE assembly;
 - direct 3D Laplace triangular surface panels;
-- explicit near/far direct backend accounting.
+- explicit direct near/far reference accounting.
 
 Still separate:
 
 - RCIP corner preconditioning;
-- 3D singular self quadrature and 3D QBX;
-- Burton--Miller, transmission, and Maxwell systems;
-- external FMM integration and global QBX/FMM coupling;
+- 3D singular quadrature and 3D QBX;
+- 3D Helmholtz combined fields;
+- FMM acceleration and global QBX/FMM coupling;
 - topology-changing geometry derivatives.

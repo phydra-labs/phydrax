@@ -8,7 +8,7 @@ from ._local_ops import local_integral, local_integral_ball
 from ._spatial_ops import nonlocal_integral, spatial_integral
 from ._time_convolution import time_convolution
 from .layer_potential import (
-    AbstractLayerAccelerationBackend,
+    AbstractLayerBackend,
     AbstractLayerKernel,
     AdaptiveLayerEvaluation2D,
     BoundaryCornerTopology2D,
@@ -16,7 +16,7 @@ from .layer_potential import (
     BoundaryPanelization2D,
     BoundaryPanelPartition2D,
     classify_panel_interactions_2d,
-    DirectNearFarBackend2D,
+    DirectNearFarReferenceBackend2D,
     double_layer_principal_value_matrix,
     evaluate_laplace_layer_3d,
     evaluate_layer_potential,
@@ -73,8 +73,8 @@ __all__ = [
     "SurfacePanelization3D",
     "SurfaceTargetReport3D",
     "evaluate_laplace_layer_3d",
-    "DirectNearFarBackend2D",
-    "AbstractLayerAccelerationBackend",
+    "DirectNearFarReferenceBackend2D",
+    "AbstractLayerBackend",
     "LayerBackendEvaluation2D",
     "BoundaryOperatorAssemblyReport",
     "QBXEvaluation2D",

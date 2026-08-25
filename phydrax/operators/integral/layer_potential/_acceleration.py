@@ -31,8 +31,8 @@ class LayerBackendEvaluation2D(StrictModule, NonTrainableState):
     far_panel_count: int = eqx.field(static=True)
 
 
-class AbstractLayerAccelerationBackend(StrictModule, NonTrainableState):
-    """Explicit backend contract for far-field layer acceleration."""
+class AbstractLayerBackend(StrictModule, NonTrainableState):
+    """Explicit backend contract for layer evaluation."""
 
     @property
     @abc.abstractmethod
@@ -51,12 +51,12 @@ class AbstractLayerAccelerationBackend(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class DirectNearFarBackend2D(AbstractLayerAccelerationBackend):
-    """Corrected near/far decomposition using direct point interactions."""
+class DirectNearFarReferenceBackend2D(AbstractLayerBackend):
+    """Corrected near/far decomposition reference using direct interactions."""
 
     @property
     def backend_id(self) -> str:
-        return "direct-near-far-2d-v1"
+        return "direct-near-far-reference-2d-v1"
 
     def evaluate(
         self,
@@ -67,7 +67,7 @@ class DirectNearFarBackend2D(AbstractLayerAccelerationBackend):
         near_ratio: float,
     ) -> LayerBackendEvaluation2D:
         if not isinstance(potential.panelization, BoundaryPanelization2D):
-            raise TypeError("DirectNearFarBackend2D requires 2D panelization.")
+            raise TypeError("DirectNearFarReferenceBackend2D requires 2D panelization.")
         values = jnp.asarray(targets, dtype=float)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Backend targets must have shape (target_count, 2).")
@@ -104,7 +104,7 @@ class DirectNearFarBackend2D(AbstractLayerAccelerationBackend):
 
 
 __all__ = [
-    "AbstractLayerAccelerationBackend",
-    "DirectNearFarBackend2D",
+    "AbstractLayerBackend",
+    "DirectNearFarReferenceBackend2D",
     "LayerBackendEvaluation2D",
 ]

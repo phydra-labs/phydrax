@@ -111,8 +111,8 @@ PDE-certificate and operator-approximation guarantee split.
 
 ---
 
-::: phydrax.operators.AbstractLayerAccelerationBackend
+::: phydrax.operators.AbstractLayerBackend
 
 ---
 
-::: phydrax.operators.DirectNearFarBackend2D
+::: phydrax.operators.DirectNearFarReferenceBackend2D

@@ -120,7 +120,10 @@ def test_qbx_boundary_average_is_reported_separately():
     )
 
     assert jnp.isfinite(result.values)
-    assert result.evaluation_report.error_kind == "qbx-taylor-truncation"
+    assert (
+        result.evaluation_report.error_kind
+        == "qbx-coefficient-quadrature-and-truncation"
+    )
     assert result.evaluation_report.near_panel_count == 1
     assert float(result.values) == pytest.approx(-0.5, abs=2e-2)
 
@@ -189,12 +192,12 @@ def test_direct_near_far_backend_matches_direct_representation():
         density=jnp.ones((panelization.node_count,)),
     )
     targets = jnp.asarray([[0.0, 0.0], [0.5, 0.1]])
-    backend = phx.operators.DirectNearFarBackend2D()
-    accelerated = backend.evaluate(potential, targets, near_ratio=3.0)
+    backend = phx.operators.DirectNearFarReferenceBackend2D()
+    reference = backend.evaluate(potential, targets, near_ratio=3.0)
 
-    assert backend.backend_id == "direct-near-far-2d-v1"
-    assert jnp.allclose(accelerated.values, potential._evaluate_direct(targets))
-    assert bool(accelerated.accuracy_supported)
-    assert accelerated.near_panel_count + accelerated.far_panel_count == (
+    assert backend.backend_id == "direct-near-far-reference-2d-v1"
+    assert jnp.allclose(reference.values, potential._evaluate_direct(targets))
+    assert bool(reference.accuracy_supported)
+    assert reference.near_panel_count + reference.far_panel_count == (
         targets.shape[0] * panelization.panel_count
     )

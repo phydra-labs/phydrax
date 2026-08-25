@@ -85,7 +85,8 @@ def test_panelization_measure_and_reports_separate_pde_from_accuracy():
     )
     interior_values = evaluation.values
     interior_report = evaluation.target_report
-    assert bool(evaluation.valid)
+    assert bool(interior_report.pde_membership_valid)
+    assert bool(evaluation.evaluation_report.finite)
     assert evaluation.evaluation_report.error_kind == "unestimated-direct"
     assert not bool(evaluation.evaluation_report.accuracy_supported)
     assert bool(interior_report.pde_membership_valid)

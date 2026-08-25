@@ -161,7 +161,6 @@ class LayerEvaluationResult(StrictModule, NonTrainableState):
     values: Array
     target_report: LayerPotentialTargetReport
     evaluation_report: LayerEvaluationReport
-    valid: Array
 
     def __init__(
         self,
@@ -182,7 +181,6 @@ class LayerEvaluationResult(StrictModule, NonTrainableState):
         self.values = jnp.asarray(values)
         self.target_report = target_report
         self.evaluation_report = evaluation_report
-        self.valid = target_report.pde_membership_valid & evaluation_report.finite
 
 
 def evaluate_layer_potential(
@@ -295,15 +293,13 @@ def evaluate_layer_potential(
             target_side=target_side,
             order=plan.qbx_order,
             radius_factor=plan.qbx_radius_factor,
-            absolute_tolerance=plan.adaptive_plan.absolute_tolerance,
-            relative_tolerance=plan.adaptive_plan.relative_tolerance,
-            throw=plan.adaptive_plan.throw,
+            adaptive_plan=plan.adaptive_plan,
         )
         values = qbx.values
         finite = jnp.all(jnp.isfinite(values))
         status = qbx.status
         error_estimate = qbx.error_estimate
-        error_kind = "qbx-taylor-truncation"
+        error_kind = "qbx-coefficient-quadrature-and-truncation"
         num_evaluations = qbx.num_evaluations
         near_panel_count = targets_.shape[0]
         far_panel_count = 0
