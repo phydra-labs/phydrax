@@ -17,6 +17,8 @@
   quadrature 3D QBX with continuous signed-distance clearance, outgoing 3D
   Helmholtz fields, and explicit Duffy-based 3D CFIE assembly reports. The
   reference near/far backend remains explicitly direct; no FMM claim is attached.
+- Split the analytic sphere boundary atlas into two trimmed reference triangles,
+  preserving full-sphere measure under triangular 3D panel quadrature and sampling.
 - Added a fixed-topology Laplace multipole treecode reference with truncation
   estimates and direct/multipole work accounting; the production FMM path and
   global QBX coupling are recorded separately below.
