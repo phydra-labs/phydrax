@@ -152,3 +152,17 @@ PDE-certificate and operator-approximation guarantee split.
 ---
 
 ::: phydrax.operators.LaplaceTreecodeEvaluation2D
+
+::: phydrax.operators.LaplaceFMMBackend2D
+
+---
+
+::: phydrax.operators.LaplaceFMMEvaluation2D
+
+---
+
+::: phydrax.operators.GlobalQBXFMMEvaluation2D
+
+---
+
+::: phydrax.operators.evaluate_global_qbx_fmm_2d

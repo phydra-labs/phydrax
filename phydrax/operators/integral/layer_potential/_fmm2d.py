@@ -229,6 +229,8 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
         potential: LaplaceLayerPotential2D,
         centers: ArrayLike,
         /,
+        *,
+        excluded_source_indices: tuple[int, ...] = (),
     ) -> tuple[Array, tuple[int, ...], tuple[Array, ...], tuple[tuple[Array, ...], ...]]:
         """Return far-field local coefficients with M2M/M2L/L2L evidence."""
         values = jnp.asarray(centers, dtype=float)
@@ -246,6 +248,7 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
             for _ in range(len(target_indices))
         ]
         near_sources: list[list[Array]] = [[] for _ in target_indices]
+        excluded = {int(index) for index in excluded_source_indices}
         m2l_count = [0]
         l2l_count = [0]
 
@@ -259,7 +262,10 @@ class LaplaceFMMBackend2D(StrictModule, NonTrainableState):
             )
             source_children = np.asarray(self.source_children[source_node])
             target_children_local = np.asarray(target_children_global[target_node])
-            if separated:
+            source_contains_excluded = bool(
+                any(int(index) in excluded for index in self.source_indices[source_node])
+            )
+            if separated and not source_contains_excluded:
                 local[target_node] = local[target_node] + _m2l(
                     moments[source_node], source_center, target_center
                 )

@@ -22,6 +22,7 @@ from ._evaluation import (
     LayerEvaluationResult,
 )
 from ._fmm2d import LaplaceFMMBackend2D, LaplaceFMMEvaluation2D
+from ._global_qbx_fmm2d import evaluate_global_qbx_fmm_2d, GlobalQBXFMMEvaluation2D
 from ._helmholtz2d import (
     HelmholtzCombinedField2D,
     HelmholtzLayerKernel2D,
@@ -104,4 +105,6 @@ __all__ = [
     "LaplaceTreecodeEvaluation2D",
     "LaplaceFMMBackend2D",
     "LaplaceFMMEvaluation2D",
+    "GlobalQBXFMMEvaluation2D",
+    "evaluate_global_qbx_fmm_2d",
 ]

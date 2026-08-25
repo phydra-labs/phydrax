@@ -153,10 +153,10 @@ replacing singular or near-panel corrections.
 - 2D outgoing Helmholtz kernels and explicit Brakhage--Werner CFIE assembly;
 - direct 3D Laplace triangular surface panels with target-centered Duffy self rules;
 - 3D coefficient-quadrature QBX with continuous signed-distance clearance;
-- explicit direct near/far reference accounting and a Laplace multipole treecode.
+- explicit direct near/far reference accounting;
+- genuine 2D Laplace FMM M2M/M2L/L2L translations;
+- global 2D QBX/FMM coupling with panel coefficient near corrections.
 
 Still separate:
 
-- true RCIP recursive fine-grid/coarse-grid compression;
-- external FMM acceleration and global QBX/FMM coupling;
 - topology-changing geometry derivatives.

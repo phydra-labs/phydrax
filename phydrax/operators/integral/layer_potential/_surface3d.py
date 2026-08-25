@@ -210,7 +210,7 @@ class SurfaceTargetReport3D(AbstractTrialSpaceAdmissibility):
         self.intersects_singular_support = intersects
         self.pde_membership_valid = membership
         self.requested_accuracy_clearance = jnp.asarray(clearance)
-        self.accuracy_supported = membership & (minimum >= clearance)
+        self.accuracy_supported = minimum >= clearance
         self.target_count = int(values.shape[0])
         self.singular_support_id = panelization.source_support_id
         self.target_side = target_side

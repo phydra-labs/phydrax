@@ -17,9 +17,12 @@
   quadrature 3D QBX with continuous signed-distance clearance, outgoing 3D
   Helmholtz fields, and explicit Duffy-based 3D CFIE assembly reports. The
   reference near/far backend remains explicitly direct; no FMM claim is attached.
-- Added a fixed-topology Laplace multipole treecode with truncation estimates and
-  direct/multipole work accounting. It is explicitly not presented as a full FMM;
-  fine-grid RCIP compression and FMM M2M/M2L/L2L coupling remain separate.
+- Added a fixed-topology Laplace multipole treecode reference with truncation
+  estimates and direct/multipole work accounting; the production FMM path and
+  global QBX coupling are recorded separately below.
+- Added genuine 2D Laplace M2M/M2L/L2L translations and global QBX/FMM coupling
+  with prepared target associations, continuous expansion clearance, separate FMM
+  truncation, coefficient-quadrature, and local expansion error evidence.
 - Added likelihood-backed binary and multiclass empirical classification terms
   with encoded target schemas, case masks, positive statistical sample weights,
   posterior-compatible raw log probabilities, classification diagnostics, and a
