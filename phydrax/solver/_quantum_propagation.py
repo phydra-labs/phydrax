@@ -24,6 +24,7 @@ from ..metrix import (
 from ..operators.quantum._propagation import unitarity_residual
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
+from ._diffrax_state_packing import DiffraxComplexStatePolicy
 from ._geometric import CommutatorFreeSolver
 from ._temporal_precision import TemporalPrecisionPolicy
 
@@ -273,6 +274,7 @@ def solve_unitary_propagator(
         max_steps=max_steps,
         throw=False,
         precision=precision_,
+        complex_state_policy=DiffraxComplexStatePolicy("native"),
     )
     geometry_precision = problem.geometry_precision
     unitarity = geometry_precision.decision(

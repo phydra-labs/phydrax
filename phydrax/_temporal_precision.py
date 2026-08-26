@@ -203,6 +203,15 @@ class TemporalPrecisionPolicy(StrictModule, NonTrainableState):
     ) -> None:
         observed = self.validate_state(state)
         state_real = _real_component(observed)
+        if (
+            observed != state_real
+            and self.output_dtype is not None
+            and _real_component(self.output_dtype) == self.output_dtype
+        ):
+            raise ValueError(
+                "Complex Diffrax state requires a complex output dtype; explicit "
+                "real/imaginary projection belongs outside the temporal backend."
+            )
         coefficient = (
             state_real if self.coefficient_dtype is None else self.coefficient_dtype
         )
