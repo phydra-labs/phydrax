@@ -65,6 +65,12 @@ from ._calabi_yau_campaigns import (
     prepare_fermat_quintic,
     prepare_quartic_k3,
 )
+from ._channel_flow import (
+    ChannelFlowDiagnosticsHistory,
+    ChannelFlowSolution,
+    ChannelSBDF2Method,
+    solve_channel_sbdf2,
+)
 from ._cochain_multirate import (
     CochainMultirateDiagnostics,
     CochainMultiratePlan,
@@ -231,6 +237,11 @@ from ._driving_path import (
 )
 from ._dynamics_evolution import DiffraxEvolution
 from ._etdrk import ETDRKMethod, solve_etdrk
+from ._evolution_observation import (
+    BoundedEvolutionObservation,
+    BoundedEvolutionObservationPlan,
+    observe_evolution_bounded,
+)
 from ._fbsde import (
     CoupledFBSDEProblem,
     CoupledFBSDEResult,
@@ -649,6 +660,12 @@ from ._spde import (
     semidiscretize_semilinear_spde,
     semidiscretize_spde,
 )
+from ._spectral_artifacts import (
+    read_spectral_state_artifact,
+    SpectralStateArtifact,
+    write_spectral_state_artifact,
+)
+from ._spectral_coordinates import HermitianCoordinateEvolution
 from ._split_differential import (
     split_differential_problem,
     SplitDifferentialProblem,
@@ -821,6 +838,8 @@ __all__ = [
     "UnitaryPropagatorSolution",
     "solve_unitary_propagator",
     "AbstractDifferentiableDrivingPath",
+    "BoundedEvolutionObservation",
+    "BoundedEvolutionObservationPlan",
     "AbstractGeometricSolver",
     "AbstractBSDERegressionBasis",
     "assemble_stochastic_collocation",
@@ -856,6 +875,9 @@ __all__ = [
     "ControlledDifferentialSolution",
     "ConstantDelay",
     "maxwell",
+    "ChannelFlowDiagnosticsHistory",
+    "ChannelFlowSolution",
+    "ChannelSBDF2Method",
     "CochainMultirateDiagnostics",
     "CochainMultiratePlan",
     "CochainRatePartition",
@@ -1033,13 +1055,16 @@ __all__ = [
     "RosenbrockAdaptivePolicy",
     "RosenbrockWMethod",
     "ETDRKMethod",
+    "HermitianCoordinateEvolution",
     "SemidiscreteSPDE",
     "SemilinearDrift",
     "SemilinearFallback",
+    "solve_channel_sbdf2",
     "SemilinearSPDEScheme",
     "solve_etdrk",
     "SPDEConvergenceLevel",
     "PreparedSplitFieldPML",
+    "SpectralStateArtifact",
     "PreparedStaggeredAcoustics",
     "SPDEConvergenceMetric",
     "SPDEConvergenceStudy",
@@ -1096,6 +1121,9 @@ __all__ = [
     "solve_generalized_alpha",
     "solve_implicit_runge_kutta",
     "solve_multirate",
+    "observe_evolution_bounded",
+    "read_spectral_state_artifact",
+    "write_spectral_state_artifact",
     "solve_rosenbrock",
     "solve_rosenbrock_adaptive",
     "SplitFieldPMLPlan",

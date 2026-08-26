@@ -38,6 +38,19 @@ from ._covariant import (
     CovariantDirectionResult,
     CovariantMemoryMode,
 )
+from ._edge import (
+    EDGE_EVOLUTION_FAILED,
+    EDGE_INVALID_BRACKET,
+    EDGE_MAXIMUM_ITERATIONS,
+    EDGE_NONFINITE,
+    EDGE_SUCCESS,
+    EdgeTrackingProblem,
+    EdgeTrackingResult,
+    recurrence_seed_candidates,
+    RecurrenceSeedCandidates,
+    RecurrenceSeedMetric,
+    track_basin_edge,
+)
 from ._lyapunov import (
     finite_time_lyapunov_spectrum,
     kaplan_yorke_dimension,
@@ -77,9 +90,11 @@ from ._periodic import (
     PeriodicOrbitHistory,
     PeriodicOrbitKind,
     PeriodicOrbitProblem,
+    PeriodicOrbitResidual,
     PeriodicOrbitResult,
     solve_periodic_orbit,
 )
+from ._relative import RelativeEquilibriumProblem, RelativePeriodicOrbitProblem
 from ._section import (
     AbstractSection,
     AffineSection,
@@ -129,6 +144,13 @@ __all__ = [
     "CovariantDirectionKind",
     "CovariantDirectionResult",
     "CovariantMemoryMode",
+    "EDGE_EVOLUTION_FAILED",
+    "EDGE_INVALID_BRACKET",
+    "EDGE_MAXIMUM_ITERATIONS",
+    "EDGE_NONFINITE",
+    "EDGE_SUCCESS",
+    "EdgeTrackingProblem",
+    "EdgeTrackingResult",
     "DistanceMetric",
     "ComponentPhaseCondition",
     "FLOQUET_INVALID_ORBIT",
@@ -162,7 +184,12 @@ __all__ = [
     "PeriodicOrbitKind",
     "PeriodicOrbitProblem",
     "PeriodicOrbitResult",
+    "PeriodicOrbitResidual",
     "RecurrenceQuantificationResult",
+    "RelativeEquilibriumProblem",
+    "RelativePeriodicOrbitProblem",
+    "RecurrenceSeedCandidates",
+    "RecurrenceSeedMetric",
     "SECTION_EVOLUTION_FAILED",
     "SECTION_NONFINITE",
     "SECTION_REFINEMENT_FAILED",
@@ -198,5 +225,7 @@ __all__ = [
     "summarize_chaos_uncertainty",
     "surrogate_significance",
     "solve_periodic_orbit",
+    "recurrence_seed_candidates",
+    "track_basin_edge",
     "zero_one_test",
 ]

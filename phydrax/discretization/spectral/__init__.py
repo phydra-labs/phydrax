@@ -16,6 +16,14 @@ from ._basis import (
     SpectralBoundaryKind,
     SpectralModeLayout,
 )
+from ._channel import (
+    ChannelMeanConstraint,
+    ChannelMeanConstraintKind,
+    ChannelStokesDiagnostics,
+    ChannelStokesPlan,
+    ChannelStokesSolveResult,
+    PreparedChannelStokesSolver,
+)
 from ._conservation import (
     PreparedSpectralConservationDynamics,
     PreparedSpectralConservationMethod,
@@ -30,6 +38,7 @@ from ._constraints import (
     PreparedBoundaryLift,
     SpectralBoundaryConditionPlan,
 )
+from ._coordinates import HermitianSpectralCoordinates
 from ._dealias import (
     AbstractDealiasingPlan,
     DealiasingKind,
@@ -40,6 +49,10 @@ from ._dealias import (
     PreparedDealiasingPlan,
 )
 from ._galerkin import PreparedSpectralGalerkin, SpectralGalerkinMethodPlan
+from ._incompressible import (
+    IncompressibleSpectralDiagnostics,
+    PeriodicLerayProjector,
+)
 from ._method import (
     PreparedPseudospectralMethod,
     PseudospectralMethodPlan,
@@ -53,6 +66,10 @@ from ._operators import (
 )
 from ._precision import SpectralPrecisionPolicy
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
+from ._symmetry import (
+    project_tensor_spectral_symmetries,
+    TensorSpectralSymmetry,
+)
 from ._tau import GeneralizedTauPlan, PreparedTauSystem, TauSolveResult
 
 
@@ -63,24 +80,34 @@ __all__ = [
     "ChebyshevBasisPlan",
     "ConstrainedBasisPlan",
     "CosineBasisPlan",
+    "ChannelMeanConstraint",
+    "ChannelMeanConstraintKind",
+    "ChannelStokesDiagnostics",
+    "ChannelStokesPlan",
+    "ChannelStokesSolveResult",
     "DealiasingKind",
     "DealiasingReport",
     "EndpointConstraint",
     "FourierBasisPlan",
+    "HermitianSpectralCoordinates",
+    "IncompressibleSpectralDiagnostics",
     "GeneralizedTauPlan",
     "LegendreBasisPlan",
     "ModalFilterPlan",
     "NoDealiasingPlan",
     "PaddingDealiasingPlan",
+    "PeriodicLerayProjector",
     "PreparedBoundaryLift",
     "PreparedDealiasingPlan",
     "PreparedPseudospectralMethod",
     "PreparedSpectralAxis",
     "PreparedSpectralConservationDynamics",
     "PreparedSpectralConservationMethod",
+    "PreparedChannelStokesSolver",
     "PreparedSpectralGalerkin",
     "PreparedSpectralOperator",
     "PreparedTauSystem",
+    "TensorSpectralSymmetry",
     "PseudospectralMethodPlan",
     "SineBasisPlan",
     "SpectralBasisFamily",
@@ -93,6 +120,7 @@ __all__ = [
     "SpectralGalerkinMethodPlan",
     "SpectralModeLayout",
     "SpectralPrecisionPolicy",
+    "project_tensor_spectral_symmetries",
     "SpectralResidualDiagnostics",
     "TauSolveResult",
     "TensorSpectralDiscretization",

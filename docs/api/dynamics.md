@@ -286,11 +286,12 @@ truncated. Interpolation refines within saved data. Evolution refinement re-inte
 bracket with the supplied evolution.
 
 Periodic-map problems solve a fixed point. Periodic-flow problems use multiple shooting
-with continuity and a declared phase condition. Dense Newton is dimension guarded;
-matrix-free Newton--Krylov uses tangent actions. Floquet analysis can materialize a dense
-monodromy matrix or retain a matrix-free action. A neutral multiplier is identified and
-reported for autonomous flow orbits rather than silently removed from the returned
-spectrum.
+with continuity and a declared phase condition. `PeriodicOrbitResidual` exposes the same
+equations as a `NonlinearSystemProblem`; `solve_periodic_orbit` delegates Newton,
+globalization, linear solve evidence, and work accounting to `phydrax.nonlinear`.
+Floquet analysis routes dense or matrix-free monodromy operators through the shared
+general-eigen runtime. A neutral multiplier is identified and reported for autonomous
+flow orbits rather than silently removed from the returned spectrum.
 
 ::: phydrax.dynamics.analysis.AffineSection
 
@@ -305,6 +306,8 @@ spectrum.
 ::: phydrax.dynamics.analysis.SectionReturnMap
 
 ::: phydrax.dynamics.analysis.PeriodicOrbitProblem
+::: phydrax.dynamics.analysis.PeriodicOrbitResidual
+
 
 ::: phydrax.dynamics.analysis.ComponentPhaseCondition
 
@@ -319,6 +322,10 @@ spectrum.
 ::: phydrax.dynamics.analysis.floquet_spectrum
 
 ::: phydrax.dynamics.analysis.FloquetResult
+::: phydrax.dynamics.analysis.RelativeEquilibriumProblem
+
+::: phydrax.dynamics.analysis.RelativePeriodicOrbitProblem
+
 
 ## Continuation boundary
 
@@ -349,6 +356,13 @@ measures local-retraction separation at the declared amplitude, and rescales on 
 cadence. RQA returns both recurrence and eligibility masks. The Theiler window excludes
 temporally close pairs before line statistics are computed.
 
+`recurrence_seed_candidates` turns a bounded unbatched trajectory into ordered,
+temporally separated shooting seeds; it does not perform Newton correction. Edge
+tracking evolves two opposite-outcome states over one fixed horizon and bisects their
+initial-condition bracket. The classifier remains problem-owned, while validity,
+overflow-free fixed iteration history, bracket width, and terminal status remain
+explicit.
+
 ::: phydrax.dynamics.analysis.finite_time_lyapunov_spectrum
 
 ::: phydrax.dynamics.analysis.LyapunovSpectrumCheckpoint
@@ -368,6 +382,16 @@ temporally close pairs before line statistics are computed.
 ::: phydrax.dynamics.analysis.recurrence_quantification
 
 ::: phydrax.dynamics.analysis.RecurrenceQuantificationResult
+::: phydrax.dynamics.analysis.recurrence_seed_candidates
+
+::: phydrax.dynamics.analysis.RecurrenceSeedCandidates
+
+::: phydrax.dynamics.analysis.EdgeTrackingProblem
+
+::: phydrax.dynamics.analysis.track_basin_edge
+
+::: phydrax.dynamics.analysis.EdgeTrackingResult
+
 
 ## Statistical chaos diagnostics and uncertainty
 

@@ -16,16 +16,34 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
 from ...linalg import (
+    AbstractLinearOperator,
     ArraySpace,
     DenseLinearOperator,
-    DenseSVD,
-    FunctionLinearOperator,
+    DenseLU,
     GMRES,
-    LeastSquaresProblem,
+    LinearCapabilityError,
     LinearSolvePolicy,
-    LinearSystem,
-    solve,
+    OperatorCapabilities,
+    OperatorProperties,
     TolerancePolicy,
+)
+from ...linalg.eigen import (
+    general_eigensolve,
+    GeneralEigenproblem,
+    GeneralEigenSelection,
+    GeneralEigenSolvePolicy,
+    GeneralEigenTolerancePolicy,
+    RestartedArnoldi,
+)
+from ...nonlinear import (
+    JacobianPolicy,
+    NewtonKrylov,
+    NonlinearResult,
+    NonlinearStatus,
+    NonlinearSystemProblem,
+    NonlinearTermination,
+    root,
+    RootLineSearch,
 )
 from .._evolution import AbstractDifferentiableEvolution
 from .._layout import StateLayout
@@ -273,6 +291,7 @@ class PeriodicOrbitResult(StrictModule):
     iterations: Array
     history: PeriodicOrbitHistory
     problem: PeriodicOrbitProblem
+    nonlinear_result: NonlinearResult
     method_id: str = eqx.field(static=True)
 
     @property
@@ -307,6 +326,7 @@ class FloquetResult(StrictModule):
     status: Array
     orbit: PeriodicOrbitResult
     method: FloquetMethod = eqx.field(static=True)
+    eigen_result: Any
     stability: FloquetStability = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
@@ -432,6 +452,62 @@ def _orbit_evolution_valid(
     return valid
 
 
+class PeriodicOrbitResidual(StrictModule):
+    """Public real-coordinate multiple-shooting residual adapter."""
+
+    problem: PeriodicOrbitProblem
+    residual_id: str = eqx.field(static=True)
+
+    def __init__(self, problem: PeriodicOrbitProblem, /):
+        if not isinstance(problem, PeriodicOrbitProblem):
+            raise TypeError("problem must be a PeriodicOrbitProblem.")
+        self.problem = problem
+        self.residual_id = f"{problem.problem_id}:multiple-shooting-residual"
+
+    @property
+    def unknown_size(self) -> int:
+        return self.problem.num_segments * self.problem.state_layout.size + int(
+            self.problem.kind == "flow"
+        )
+
+    def pack(self, nodes: ArrayLike, period: ArrayLike, /) -> Array:
+        return _pack(self.problem, jnp.asarray(nodes), jnp.asarray(period))
+
+    def unpack(self, values: ArrayLike, /) -> tuple[Array, Array]:
+        value = jnp.asarray(values)
+        if value.shape != (self.unknown_size,):
+            raise ValueError(f"Periodic unknowns must have shape {(self.unknown_size,)}.")
+        return _unpack(self.problem, value)
+
+    def residual(self, values: Array, args: Any = None, /) -> Array:
+        return _orbit_residual(values, self.problem, args)
+
+    def valid(
+        self,
+        values: Array,
+        residual: Array,
+        auxiliary: Any,
+        args: Any = None,
+        /,
+    ) -> Array:
+        del auxiliary
+        return (
+            _orbit_evolution_valid(values, self.problem, args)
+            & jnp.all(jnp.isfinite(values))
+            & jnp.all(jnp.isfinite(residual))
+        )
+
+    def as_nonlinear_problem(self, dtype: Any, /) -> NonlinearSystemProblem:
+        space = ArraySpace((self.unknown_size,), dtype=dtype)
+        return NonlinearSystemProblem(
+            self.residual,
+            state_space=space,
+            residual_space=space,
+            validity=self.valid,
+            problem_id=self.residual_id,
+        )
+
+
 def solve_periodic_orbit(
     problem: PeriodicOrbitProblem,
     initial_nodes: ArrayLike,
@@ -449,7 +525,7 @@ def solve_periodic_orbit(
     krylov_tolerance: float = 1e-8,
     krylov_max_iterations: int = 256,
 ) -> PeriodicOrbitResult:
-    """Solve square multiple-shooting equations by damped dense or JVP Newton."""
+    """Solve real-coordinate multiple shooting through the shared nonlinear runtime."""
     if not isinstance(problem, PeriodicOrbitProblem):
         raise TypeError("problem must be a PeriodicOrbitProblem.")
     if linear_method not in ("dense", "matrix_free"):
@@ -470,6 +546,11 @@ def solve_periodic_orbit(
     ):
         raise ValueError("Periodic solver tolerances or min_step_scale are invalid.")
     nodes = jnp.asarray(initial_nodes)
+    if jnp.issubdtype(nodes.dtype, jnp.complexfloating):
+        raise TypeError(
+            "Periodic orbit solves require independent real coordinates; wrap a "
+            "full-complex spectral evolution with HermitianCoordinateEvolution."
+        )
     expected = (problem.num_segments,) + problem.state_layout.shape
     if nodes.shape == problem.state_layout.shape:
         nodes = periodic_nodes_from_state(
@@ -485,147 +566,112 @@ def solve_periodic_orbit(
     if problem.kind == "flow":
         if initial_period is None:
             raise ValueError("Flow periodic solves require initial_period.")
-        period = jnp.asarray(initial_period)
+        period = jnp.asarray(initial_period, dtype=nodes.dtype)
         if period.shape != () or not bool(jnp.isfinite(period) & (period > 0.0)):
             raise ValueError("initial_period must be finite and positive.")
     else:
         if initial_period is not None:
             raise ValueError("Map periodic solves do not accept initial_period.")
         period = jnp.asarray(float(problem.num_segments), dtype=nodes.dtype)
-    values = _pack(problem, nodes, period)
+    adapter = PeriodicOrbitResidual(problem)
+    values = adapter.pack(nodes, period)
     dimension = int(values.size)
     if linear_method == "dense" and dimension > int(max_dense_dimension):
         raise ValueError(
             f"Dense periodic solve dimension {dimension} exceeds "
             f"max_dense_dimension={int(max_dense_dimension)}."
         )
-
-    def residual_function(candidate: Array) -> Array:
-        return _orbit_residual(candidate, problem, args)
-
-    residual = residual_function(values)
-    residual_norm = jnp.linalg.norm(residual)
-    initial_norm = residual_norm
-    threshold = absolute_tolerance + relative_tolerance * initial_norm
-    history_residual = [residual_norm]
-    history_steps = [jnp.asarray(0.0, dtype=residual_norm.dtype)]
-    history_scales = [jnp.asarray(0.0, dtype=residual_norm.dtype)]
-    history_valid = [
-        _orbit_evolution_valid(values, problem, args) & jnp.all(jnp.isfinite(residual))
-    ]
-    converged = bool(history_valid[-1] & (residual_norm <= threshold))
-    status = PERIODIC_SUCCESS if converged else PERIODIC_MAX_ITERATIONS
-    completed_iterations = 0
-    for iteration in range(1, iterations_limit + 1):
-        if converged:
-            break
-        if not bool(history_valid[-1]):
-            status = (
-                PERIODIC_NONFINITE
-                if not bool(jnp.all(jnp.isfinite(residual)))
-                else PERIODIC_EVOLUTION_FAILED
-            )
-            break
-        if linear_method == "dense":
-            jacobian = jax.jacfwd(residual_function)(values)
-            linear_result = solve(
-                LeastSquaresProblem(DenseLinearOperator(jacobian)),
-                -residual,
-                policy=LinearSolvePolicy(DenseSVD()),
-            )
-            step = linear_result.value
-            linear_valid = (
-                linear_result.successful
-                & jnp.all(jnp.isfinite(jacobian))
-                & jnp.all(jnp.isfinite(step))
-            )
-        else:
-            _, tangent = jax.linearize(residual_function, values)
-            space = ArraySpace(values.shape, dtype=values.dtype)
-            linear_result = solve(
-                LinearSystem(
-                    FunctionLinearOperator(
-                        tangent,
-                        source=space,
-                        target=space,
-                        operator_id="periodic-orbit-newton-jacobian",
-                    )
-                ),
-                -residual,
-                policy=LinearSolvePolicy(
-                    GMRES(),
-                    tolerance=TolerancePolicy(
-                        relative=krylov_tolerance,
-                        absolute=0.0,
-                        max_steps=krylov_max_iterations,
-                    ),
-                ),
-            )
-            step = linear_result.value
-            linear_valid = linear_result.successful & jnp.all(jnp.isfinite(step))
-        if not bool(linear_valid):
-            status = PERIODIC_LINEAR_SOLVE_FAILED
-            break
-        step_norm = jnp.linalg.norm(step)
-        scale = 1.0
-        accepted = False
-        candidate_values = values
-        candidate_residual = residual
-        candidate_norm = residual_norm
-        candidate_valid = jnp.asarray(False)
-        for _ in range(line_search_limit):
-            trial_values = values + scale * step
-            trial_residual = residual_function(trial_values)
-            trial_valid = _orbit_evolution_valid(trial_values, problem, args) & jnp.all(
-                jnp.isfinite(trial_residual)
-            )
-            trial_norm = jnp.linalg.norm(trial_residual)
-            if bool(trial_valid & (trial_norm < residual_norm)):
-                candidate_values = trial_values
-                candidate_residual = trial_residual
-                candidate_norm = trial_norm
-                candidate_valid = trial_valid
-                accepted = True
-                break
-            scale *= 0.5
-            if scale < minimum_scale:
-                break
-        if not accepted:
-            status = PERIODIC_LINE_SEARCH_FAILED
-            break
-        values = candidate_values
-        residual = candidate_residual
-        residual_norm = candidate_norm
-        completed_iterations = iteration
-        history_residual.append(residual_norm)
-        history_steps.append(step_norm)
-        history_scales.append(jnp.asarray(scale, dtype=residual_norm.dtype))
-        history_valid.append(candidate_valid)
-        converged = bool(candidate_valid & (residual_norm <= threshold))
-        status = PERIODIC_SUCCESS if converged else PERIODIC_MAX_ITERATIONS
-    final_nodes, final_period = _unpack(problem, values)
-    valid = (
-        jnp.asarray(converged)
-        & jnp.all(jnp.isfinite(final_nodes))
-        & jnp.isfinite(final_period)
+    linear_policy = (
+        LinearSolvePolicy(DenseLU())
+        if linear_method == "dense"
+        else LinearSolvePolicy(
+            GMRES(),
+            tolerance=TolerancePolicy(
+                relative=krylov_tolerance,
+                absolute=0.0,
+                max_steps=krylov_max_iterations,
+            ),
+        )
+    )
+    method = NewtonKrylov(
+        jacobian_policy=JacobianPolicy(),
+        linear_policy=linear_policy,
+        line_search=RootLineSearch(
+            minimum_rate=minimum_scale,
+            maximum_steps=line_search_limit,
+        ),
+    )
+    termination = NonlinearTermination(
+        absolute_residual=absolute_tolerance,
+        relative_residual=relative_tolerance,
+        maximum_steps=iterations_limit,
+        maximum_evaluations=1 + iterations_limit * (line_search_limit + 2),
+        maximum_linear_iterations=iterations_limit
+        * max(int(krylov_max_iterations), dimension),
+    )
+    nonlinear_result = root(
+        adapter.as_nonlinear_problem(values.dtype),
+        values,
+        method=method,
+        termination=termination,
+        args=args,
+    )
+    final_values = jnp.asarray(nonlinear_result.state)
+    final_nodes, final_period = adapter.unpack(final_values)
+    nonlinear_status = nonlinear_result.status
+    linear_failure = (
+        (nonlinear_status == int(NonlinearStatus.LINEAR_SOLVE_FAILED))
+        | (nonlinear_status == int(NonlinearStatus.SINGULAR_JACOBIAN))
+        | (nonlinear_status == int(NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED))
+    )
+    globalization_failure = (
+        nonlinear_status == int(NonlinearStatus.LINE_SEARCH_FAILED)
+    ) | (nonlinear_status == int(NonlinearStatus.TRUST_REGION_FAILED))
+    nonfinite = (nonlinear_status == int(NonlinearStatus.NONFINITE_INPUT)) | (
+        nonlinear_status == int(NonlinearStatus.NONFINITE_EVALUATION)
+    )
+    periodic_status = jnp.where(
+        nonlinear_result.successful,
+        PERIODIC_SUCCESS,
+        jnp.where(
+            linear_failure,
+            PERIODIC_LINEAR_SOLVE_FAILED,
+            jnp.where(
+                globalization_failure,
+                PERIODIC_LINE_SEARCH_FAILED,
+                jnp.where(nonfinite, PERIODIC_NONFINITE, PERIODIC_MAX_ITERATIONS),
+            ),
+        ),
+    ).astype(jnp.int32)
+    evolution_valid = _orbit_evolution_valid(final_values, problem, args)
+    finite = jnp.all(jnp.isfinite(final_nodes)) & jnp.isfinite(final_period)
+    valid = nonlinear_result.successful & evolution_valid & finite
+    diagnostics = nonlinear_result.diagnostics
+    history = PeriodicOrbitHistory(
+        residual_norm=jnp.stack(
+            (diagnostics.initial_residual_norm, diagnostics.final_residual_norm)
+        ),
+        step_norm=jnp.stack(
+            (jnp.zeros_like(diagnostics.final_step_norm), diagnostics.final_step_norm)
+        ),
+        accepted_scale=jnp.asarray(
+            (0.0, jnp.nan), dtype=diagnostics.final_residual_norm.dtype
+        ),
+        valid=jnp.stack((jnp.asarray(True), valid)),
     )
     return PeriodicOrbitResult(
         nodes=final_nodes,
         period=final_period,
-        residual=residual,
-        residual_norm=residual_norm,
-        converged=jnp.asarray(converged),
+        residual=jnp.asarray(nonlinear_result.residual),
+        residual_norm=diagnostics.final_residual_norm,
+        converged=nonlinear_result.successful,
         valid=valid,
-        status=jnp.asarray(status, dtype=jnp.int32),
-        iterations=jnp.asarray(completed_iterations, dtype=jnp.int32),
-        history=PeriodicOrbitHistory(
-            residual_norm=jnp.stack(tuple(history_residual)),
-            step_norm=jnp.stack(tuple(history_steps)),
-            accepted_scale=jnp.stack(tuple(history_scales)),
-            valid=jnp.stack(tuple(history_valid)),
-        ),
+        status=periodic_status,
+        iterations=diagnostics.iterations,
+        history=history,
         problem=problem,
-        method_id=f"multiple-shooting:newton:{linear_method}",
+        nonlinear_result=nonlinear_result,
+        method_id=f"multiple-shooting:{nonlinear_result.provenance.method_id}",
     )
 
 
@@ -666,49 +712,46 @@ def monodromy_action(
     )
 
 
-def _arnoldi(
-    orbit: PeriodicOrbitResult,
-    subspace_dimension: int,
-    args: Any,
-    /,
-) -> tuple[Array, Array, bool]:
-    size = orbit.problem.state_layout.size
-    initial = jnp.arange(1, size + 1, dtype=orbit.nodes.dtype)
-    initial = initial / jnp.linalg.norm(initial)
-    basis = [initial]
-    hessenberg = jnp.zeros(
-        (subspace_dimension + 1, subspace_dimension), dtype=orbit.nodes.dtype
-    )
-    valid = True
-    completed = 0
-    for column in range(subspace_dimension):
-        action = monodromy_action(
-            orbit,
-            basis[column].reshape(orbit.problem.state_layout.shape),
-            args=args,
+class _MonodromyLinearOperator(AbstractLinearOperator):
+    orbit: PeriodicOrbitResult
+    args: Any
+
+    def __init__(self, orbit: PeriodicOrbitResult, args: Any, /):
+        self.source = ArraySpace(
+            (orbit.problem.state_layout.size,), dtype=orbit.nodes.dtype
         )
-        if not bool(action.valid):
-            valid = False
-            break
-        vector = action.tangent.reshape((-1,))
-        for row in range(column + 1):
-            projection = jnp.vdot(basis[row], vector)
-            hessenberg = hessenberg.at[row, column].set(projection)
-            vector = vector - projection * basis[row]
-        norm = jnp.linalg.norm(vector)
-        hessenberg = hessenberg.at[column + 1, column].set(norm)
-        completed = column + 1
-        if column + 1 < subspace_dimension:
-            if not bool(jnp.isfinite(norm) & (norm > jnp.finfo(norm.dtype).eps)):
-                break
-            basis.append(vector / norm)
-    square = hessenberg[:completed, :completed]
-    if completed == 0:
-        return jnp.asarray([], dtype=complex), jnp.empty((size, 0)), False
-    multipliers, vectors = jnp.linalg.eig(square)
-    basis_matrix = jnp.stack(tuple(basis[:completed]), axis=-1)
-    modes = basis_matrix.astype(vectors.dtype) @ vectors
-    return multipliers, modes, valid
+        self.target = self.source
+        self.orbit = orbit
+        self.args = args
+        self.properties = OperatorProperties()
+        self.capabilities = OperatorCapabilities(
+            transpose=True,
+            adjoint=True,
+            materialize=False,
+        )
+        self.batch_shape = ()
+        self.operator_id = f"{orbit.problem.problem_id}:monodromy"
+
+    def mv(self, vector: ArrayLike, /) -> Array:
+        values = self.source.validate(vector)
+        result = monodromy_action(
+            self.orbit,
+            values.reshape(self.orbit.problem.state_layout.shape),
+            args=self.args,
+        )
+        return result.tangent.reshape((-1,))
+
+    def transpose_mv(self, vector: ArrayLike, /) -> Array:
+        values = self.target.validate(vector)
+        zero = self.source.zeros()
+        return jax.linear_transpose(self.mv, zero)(values)[0]
+
+    def adjoint_mv(self, vector: ArrayLike, /) -> Array:
+        values = self.target.validate(vector)
+        return jnp.conj(self.transpose_mv(jnp.conj(values)))
+
+    def _materialize(self, /) -> Array:
+        raise LinearCapabilityError("Monodromy materialization must be explicit.")
 
 
 def floquet_spectrum(
@@ -722,7 +765,7 @@ def floquet_spectrum(
     stability_tolerance: float = 1e-6,
     max_full_dimension: int = 128,
 ) -> FloquetResult:
-    """Compute full dense or leading matrix-free Floquet multipliers."""
+    """Compute Floquet multipliers through the shared general-eigen runtime."""
     if not isinstance(orbit, PeriodicOrbitResult):
         raise TypeError("orbit must be a PeriodicOrbitResult.")
     if method not in ("full", "leading"):
@@ -732,6 +775,7 @@ def floquet_spectrum(
         raise ValueError("stability_tolerance must be finite and positive.")
     dimension = orbit.problem.state_layout.size
     monodromy = None
+    eigen_result = None
     status = FLOQUET_SUCCESS
     if not bool(orbit.valid):
         multipliers = jnp.full((dimension,), jnp.nan + 0.0j)
@@ -753,9 +797,18 @@ def floquet_spectrum(
             columns.append(action.tangent.reshape((-1,)))
             action_valid = action_valid and bool(action.valid)
         monodromy = jnp.stack(tuple(columns), axis=-1)
-        multipliers, modes = jnp.linalg.eig(monodromy)
+        eigen_result = general_eigensolve(
+            GeneralEigenproblem(
+                DenseLinearOperator(monodromy),
+                problem_id=f"{orbit.problem.problem_id}:floquet-full",
+            )
+        )
+        multipliers = eigen_result.eigenvalues
+        modes = eigen_result.right_eigenvector_coordinates
         if not action_valid:
             status = FLOQUET_TANGENT_FAILED
+        elif not bool(eigen_result.successful):
+            status = FLOQUET_NONFINITE
     else:
         count = min(dimension, 1 if leading_k is None else int(leading_k))
         if count < 1:
@@ -769,11 +822,27 @@ def floquet_spectrum(
             raise ValueError(
                 "krylov_dimension must lie between leading_k and state size."
             )
-        all_multipliers, all_modes, arnoldi_valid = _arnoldi(orbit, subspace, args)
-        order = jnp.argsort(jnp.abs(all_multipliers))[::-1][:count]
-        multipliers = all_multipliers[order]
-        modes = all_modes[:, order]
-        if not arnoldi_valid:
+        eigen_result = general_eigensolve(
+            GeneralEigenproblem(
+                _MonodromyLinearOperator(orbit, args),
+                problem_id=f"{orbit.problem.problem_id}:floquet-leading",
+            ),
+            policy=GeneralEigenSolvePolicy(
+                RestartedArnoldi(subspace_dimension=subspace),
+                selection=GeneralEigenSelection(
+                    "largest-magnitude",
+                    count=count,
+                ),
+                max_steps=max(4 * subspace, dimension),
+                tolerance=GeneralEigenTolerancePolicy(
+                    relative=min(tolerance, 1e-8),
+                    absolute=0.0,
+                ),
+            ),
+        )
+        multipliers = eigen_result.eigenvalues
+        modes = eigen_result.right_eigenvector_coordinates
+        if not bool(eigen_result.successful):
             status = FLOQUET_KRYLOV_BREAKDOWN
     finite = jnp.all(jnp.isfinite(multipliers)) & jnp.all(jnp.isfinite(modes))
     if status == FLOQUET_SUCCESS and not bool(finite):
@@ -823,7 +892,11 @@ def floquet_spectrum(
         orbit=orbit,
         method=method,
         stability=stability,
-        method_id=f"floquet:{method}:{orbit.problem.evolution.tangent_method_id}",
+        method_id=(
+            f"floquet:{method}:"
+            + ("not-run" if eigen_result is None else eigen_result.provenance.backend)
+        ),
+        eigen_result=eigen_result,
     )
 
 
@@ -851,6 +924,7 @@ __all__ = [
     "PeriodicOrbitHistory",
     "PeriodicOrbitKind",
     "PeriodicOrbitProblem",
+    "PeriodicOrbitResidual",
     "PeriodicOrbitResult",
     "floquet_spectrum",
     "monodromy_action",
