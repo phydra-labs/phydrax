@@ -59,9 +59,13 @@ class _RichardsonRun(StrictModule):
     step_norm: Array
     iteration: Array
     residual_evaluations: Array
+    jvp_evaluations: Array
+    vjp_evaluations: Array
     jacobian_preparations: Array
     linear_solves: Array
     linear_iterations: Array
+    setup_refreshes: Array
+    numeric_refreshes: Array
     accepted_steps: Array
     rejected_steps: Array
     domain_failures: Array
@@ -177,9 +181,13 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             step_norm=jnp.asarray(0.0, dtype=initial_norm.dtype),
             iteration=jnp.asarray(0, dtype=jnp.int32),
             residual_evaluations=jnp.asarray(1, dtype=jnp.int32),
+            jvp_evaluations=jnp.asarray(0, dtype=jnp.int32),
+            vjp_evaluations=jnp.asarray(0, dtype=jnp.int32),
             jacobian_preparations=jnp.asarray(0, dtype=jnp.int32),
             linear_solves=jnp.asarray(0, dtype=jnp.int32),
             linear_iterations=jnp.asarray(0, dtype=jnp.int32),
+            setup_refreshes=jnp.asarray(0, dtype=jnp.int32),
+            numeric_refreshes=jnp.asarray(0, dtype=jnp.int32),
             accepted_steps=jnp.asarray(0, dtype=jnp.int32),
             rejected_steps=jnp.asarray(0, dtype=jnp.int32),
             domain_failures=(finite & ~valid).astype(jnp.int32),
@@ -389,12 +397,20 @@ class NonlinearRichardson(AbstractNonlinearMethod):
                 residual_evaluations=current.residual_evaluations
                 + update_result.diagnostics.residual_evaluations
                 + search.steps,
+                jvp_evaluations=current.jvp_evaluations
+                + update_result.diagnostics.jvp_evaluations,
+                vjp_evaluations=current.vjp_evaluations
+                + update_result.diagnostics.vjp_evaluations,
                 jacobian_preparations=current.jacobian_preparations
                 + update_result.diagnostics.jacobian_preparations,
                 linear_solves=current.linear_solves
                 + update_result.diagnostics.linear_solves,
                 linear_iterations=current.linear_iterations
                 + update_result.diagnostics.linear_iterations,
+                setup_refreshes=current.setup_refreshes
+                + update_result.diagnostics.linear_setups,
+                numeric_refreshes=current.numeric_refreshes
+                + update_result.diagnostics.linear_refreshes,
                 accepted_steps=current.accepted_steps
                 + update_result.diagnostics.accepted_steps
                 + search.accepted.astype(jnp.int32),
@@ -450,9 +466,13 @@ class NonlinearRichardson(AbstractNonlinearMethod):
             final_step_norm=run.step_norm,
             iterations=run.iteration,
             residual_evaluations=run.residual_evaluations + 1,
+            jvp_evaluations=run.jvp_evaluations,
+            vjp_evaluations=run.vjp_evaluations,
             jacobian_preparations=run.jacobian_preparations,
             linear_solves=run.linear_solves,
             linear_iterations=run.linear_iterations,
+            setup_refreshes=run.setup_refreshes,
+            numeric_refreshes=run.numeric_refreshes,
             accepted_steps=run.accepted_steps,
             rejected_steps=run.rejected_steps,
             domain_failures=run.domain_failures,

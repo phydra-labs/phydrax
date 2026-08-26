@@ -72,6 +72,14 @@ solvers a dimension-scaled work ceiling; PCG with Jacobi and GMRES with identity
 preconditioning remain different algorithms, so that case is a lifecycle and scaling
 reference rather than an algorithm-matched speed contest.
 
+The best-nonlinear root campaign additionally includes `phydrax-lagged` on
+declared frozen-factor problems. `diagonal-polynomial` freezes one polynomial
+factor; `quasilinear-diffusion` freezes the positive state-dependent
+diffusivity inside one periodic implicit stage. Cases without an explicit
+lagged operator retain an `unsupported-mathematics` row. Every lagged result is
+certified with the same original physical residual as Newton and peer methods;
+convergence of the inner linear solve is not a root certificate.
+
 The opt-in `convex` preset selects Phydrax, MPAX, and Clarabel across the LP/QP/SOCP
 cases. Unsupported backends remain explicit skipped rows. Preparation, numeric refresh,
 solve, certificates, and memory/transfer evidence use the same phase schema as every

@@ -29,6 +29,23 @@ physical problem
   -> certify the original physical residual
 ```
 
+`LaggedLinearSolveUpdate` is the state-dependent linear-model path:
+
+```text
+physical residual at state
+  -> refresh a structure-preserving lagged operator
+  -> solve one canonical prepared linear system
+  -> propose a finite physical state
+  -> globalize and certify the original residual
+```
+
+This targets quasilinear problems whose useful frozen-coefficient structure is
+not a time-independent semilinear split. Eligible semilinear problems should
+continue to use `SemilinearDrift`, ETDRK, SBDF2, or the corresponding split
+method. The lagged operator may accelerate the primal solve or precondition an
+exact derivative solve; it never replaces the exact root Jacobian in an implicit
+JVP or adjoint.
+
 Linear subspace correction and nonlinear Schwarz reuse explicit restriction and
 prolongation ideas, but not one result type: nonlinear local work owns a local
 problem, update status, domain validity, and physical reconstruction.

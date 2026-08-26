@@ -91,6 +91,23 @@ basis = phx.equations.HelmholtzPlaneWaveBasis(
 The basis alone does not impose an exterior radiation condition or guarantee uniqueness
 at an interior resonance.
 
+## Holomorphic composition and coefficient linearity
+
+Two-dimensional complex-potential wrappers derive PDE exactness from a separate
+`HolomorphicMapCertificate`. Dense and low-rank complex-affine HMLP layers preserve
+that map-level exactness. Concatenating independent holomorphic branches also
+preserves it.
+
+Coefficient linearity is stricter. A branch bundle is a finite linear subspace only
+when every child is linear in its coefficients. Multiplying two trainable
+holomorphic factors creates a finite parametric family that is nonlinear in the
+combined parameters, even when each child is individually polynomial-linear.
+Consequently, `HolomorphicProductPotential` is not eligible for the direct linear
+trial-space solver when it has multiple trainable factors.
+
+Generic real-coordinate separation and arbitrary post-activations cannot attach this
+certificate.
+
 ## Monogenic Clifford polynomials
 
 `MonogenicPolynomialBasis` constructs a deterministic exact-rational kernel of the

@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._strict import StrictModule
 from ..linalg import (
     AbstractVectorSpace,
     FGMRES,
@@ -36,6 +37,59 @@ from ._types import (
 
 
 _DEFAULT_ARGS = object()
+
+class ImplicitRootDerivativePolicy(StrictModule):
+    """Linear policies for exact tangent and adjoint root derivatives."""
+
+    tangent_linear_policy: LinearSolvePolicy | None
+    adjoint_linear_policy: LinearSolvePolicy | None
+
+    def __init__(
+        self,
+        *,
+        tangent_linear_policy: LinearSolvePolicy | None = None,
+        adjoint_linear_policy: LinearSolvePolicy | None = None,
+    ):
+        if tangent_linear_policy is not None and not isinstance(
+            tangent_linear_policy, LinearSolvePolicy
+        ):
+            raise TypeError(
+                "tangent_linear_policy must be LinearSolvePolicy or None."
+            )
+        if adjoint_linear_policy is not None and not isinstance(
+            adjoint_linear_policy, LinearSolvePolicy
+        ):
+            raise TypeError(
+                "adjoint_linear_policy must be LinearSolvePolicy or None."
+            )
+        self.tangent_linear_policy = tangent_linear_policy
+        self.adjoint_linear_policy = adjoint_linear_policy
+
+
+def _resolve_derivative_policies(
+    method: AbstractNonlinearMethod,
+    policy: ImplicitRootDerivativePolicy | None,
+    /,
+) -> tuple[LinearSolvePolicy, LinearSolvePolicy]:
+    policy_ = ImplicitRootDerivativePolicy() if policy is None else policy
+    if not isinstance(policy_, ImplicitRootDerivativePolicy):
+        raise TypeError(
+            "derivative_policy must be ImplicitRootDerivativePolicy or None."
+        )
+    tangent = policy_.tangent_linear_policy
+    if tangent is None:
+        if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
+            raise ValueError(
+                "A tangent linear policy is required when the nonlinear method "
+                "has no native linear policy."
+            )
+        tangent = method.linear_policy
+    adjoint = (
+        tangent
+        if policy_.adjoint_linear_policy is None
+        else policy_.adjoint_linear_policy
+    )
+    return tangent, adjoint
 
 
 def _diagnostic_counts(
@@ -162,7 +216,7 @@ def implicit_root_result(
     *,
     method: AbstractNonlinearMethod | None = None,
     termination: NonlinearTermination | None = None,
-    linear_policy: LinearSolvePolicy | None = None,
+    derivative_policy: ImplicitRootDerivativePolicy | None = None,
     args: Any = _DEFAULT_ARGS,
 ) -> NonlinearResult:
     """Return one nonlinear result whose root has implicit derivatives.
@@ -205,16 +259,10 @@ def implicit_root_result(
         raise TypeError("method must be AbstractNonlinearMethod or None.")
     if not isinstance(termination_, NonlinearTermination):
         raise TypeError("termination must be NonlinearTermination or None.")
-    if linear_policy is None:
-        if not isinstance(method_, (NewtonKrylov, NewtonTrustRegion)):
-            raise ValueError(
-                "linear_policy is required when the nonlinear method has no linear policy."
-            )
-        derivative_policy = method_.linear_policy
-    else:
-        derivative_policy = linear_policy
-    if not isinstance(derivative_policy, LinearSolvePolicy):
-        raise TypeError("linear_policy must be LinearSolvePolicy or None.")
+    tangent_policy, adjoint_policy = _resolve_derivative_policies(
+        method_,
+        derivative_policy,
+    )
 
     initial_residual = problem.residual(initial, runtime_args)
     source = PyTreeSpace(initial) if problem.state_space is None else problem.state_space
@@ -257,10 +305,10 @@ def implicit_root_result(
             linearized,
             right_hand_side,
             solve=lambda action, rhs: _checked_tangent_solve(
-                action, rhs, derivative_policy
+                action, rhs, tangent_policy
             ),
             transpose_solve=lambda action, rhs: _checked_tangent_solve(
-                action, rhs, derivative_policy
+                action, rhs, adjoint_policy
             ),
         )
 
@@ -291,7 +339,7 @@ def implicit_root(
     *,
     method: AbstractNonlinearMethod | None = None,
     termination: NonlinearTermination | None = None,
-    linear_policy: LinearSolvePolicy | None = None,
+    derivative_policy: ImplicitRootDerivativePolicy | None = None,
     args: Any = None,
 ) -> PyTree[Array]:
     """Return a successful root with forward- and reverse-mode implicit derivatives."""
@@ -300,7 +348,7 @@ def implicit_root(
         initial_state,
         method=method,
         termination=termination,
-        linear_policy=linear_policy,
+        derivative_policy=derivative_policy,
         args=args,
     )
     state = problem.validate_state(result.state)
@@ -308,4 +356,8 @@ def implicit_root(
     return _checked_root_state(result, source)
 
 
-__all__ = ["implicit_root", "implicit_root_result"]
+__all__ = [
+    "ImplicitRootDerivativePolicy",
+    "implicit_root",
+    "implicit_root_result",
+]

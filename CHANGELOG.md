@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added independently selectable tangent and adjoint linear policies for exact
+  implicit root derivatives, plus prepared lagged-linear nonlinear updates that
+  refresh structure-preserving operators, retain complete failure evidence, and
+  certify every accepted root against the original physical residual.
 - Added coefficient-resident global Fourier, sine, cosine, Chebyshev, Legendre,
   constrained, and mixed tensor spectral spaces; explicit padding/filter dealiasing;
   modal PDE and periodic conservation lowering; entropy diagnostics;
@@ -32,6 +36,11 @@
   resource-bounded sparse/dense products, shared real-coordinate maps, algebra-valued
   spaces and operators, Diffrax algebra state policies, and unit complex/quaternion
   state geometries.
+- Added canonical-complex holomorphic construction dependencies, spectrally
+  initialized low-rank complex-affine layers, per-layer factorized
+  `HolomorphicMLP` plans, certified independent branch bundles, same-coordinate
+  holomorphic product potentials with exact Taylor-convolution jets, multiplicative
+  gauge diagnostics, and a deterministic separability benchmark.
 - Expanded compatible electromagnetics around conservative electric-displacement and
   magnetic-flux cochains: canonical structured/unstructured calculus, diagonal and
   metric-Hermitian constitutive maps, conductivity, Lorentz/Drude ADEs, Kerr/Pockels,

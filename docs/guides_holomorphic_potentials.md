@@ -31,10 +31,11 @@ generic hard enforcement is rejected.
 
 ## Holomorphic MLP
 
-`phx.nn.models.HolomorphicMLP` uses only `ComplexLinear` layers and the entire complex
-exponential. Every trainable leaf is real Cartesian state; complex values are assembled
-only during evaluation. Split activations, clipping, modulus operations, conjugation,
-dropout, and batch normalization are not part of this contract.
+`phx.nn.models.HolomorphicMLP` uses dense or explicitly low-rank complex-affine
+layers and the entire complex exponential. Every trainable leaf is real Cartesian
+state; complex values are assembled only during evaluation. Split activations,
+clipping, modulus operations, conjugation, dropout, and batch normalization are not
+part of this contract.
 
 ```python
 model = phx.nn.models.HolomorphicMLP(
@@ -46,6 +47,80 @@ model = phx.nn.models.HolomorphicMLP(
 
 The model accepts complex coordinates directly. Physical wrappers convert real `(x,y)`
 coordinates to `z=x+iy` and request the required holomorphic jet.
+
+Low-rank affine plans are declared per layer:
+
+```python
+factorized = phx.nn.models.HolomorphicMLP(
+    in_size=1,
+    out_size=2,
+    hidden_sizes=(16, 16),
+    linear_ranks=(1, 4, 2),
+)
+```
+
+`LowRankComplexLinear` realizes one complex-affine map as two complex-linear
+contractions without materializing the dense effective weight. Construction begins
+from the existing dense initializer and records retained spectral energy and
+truncation residual. This changes parameterization, not holomorphicity.
+
+## Certified branch and product compositions
+
+`HolomorphicBranchBundle` concatenates independent certified providers. It is useful
+when the Goursat or elasticity branches need different architectures, normalizations,
+or singular structure:
+
+```python
+potentials = phx.equations.HolomorphicBranchBundle((phi, psi))
+```
+
+The bundle concatenates child jets order by order. It remains a linear finite
+subspace only when every child has that property.
+
+`HolomorphicProductPotential` represents a finite sum of products evaluated at the
+same scalar complex coordinate:
+
+```text
+F_b(z) = Σ_r Π_j f_{j,r,b}(z).
+```
+
+Every factor outputs `latent_rank * branches` values. Product jets are assembled by
+convolving the factors' normalized Taylor coefficients, so higher derivatives use
+the exact generalized Leibniz rule rather than nested differentiation.
+
+```python
+potential = phx.equations.HolomorphicProductPotential(
+    (factor_a, factor_b),
+    latent_rank=4,
+    branches=2,
+)
+```
+
+Multiplying two trainable factor spaces is nonlinear in the combined parameters even
+when each factor is individually linear. The certificate therefore reports a finite
+parametric family. `gauge_report` exposes the multiplicative factor-scale imbalance;
+the implementation does not silently renormalize factors or optimizer state.
+
+The current generic `Separable` and `LatentContractionModel` wrappers remain
+uncertified. They accept arbitrary factors and activations and may project complex
+outputs to real values.
+
+## What separability does not mean
+
+Arbitrary real-coordinate products such as `a(x)b(y)` are not generally
+holomorphic in `z=x+iy`. Cauchy--Riemann compatibility ties such factors to a narrow
+exponential-type family. Split `x`/`y` MLPs therefore cannot mint a holomorphic-map
+certificate.
+
+Parameter/query separation is safe when coefficients are independent of `z`:
+
+```text
+φ(z; μ) = Σ_r c_r(μ) h_r(z).
+```
+
+A conditional operator based on this form remains a separate follow-up because its
+source-schema and query-holomorphic evidence differ from a pointwise potential
+provider.
 
 `HolomorphicMapCertificate` records parameter coverage and linearity independently.
 Physical wrappers inherit both values without widening the claim. Polynomial potentials
