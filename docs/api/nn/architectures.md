@@ -62,6 +62,28 @@ compile and execution time, parameter counts, and available peak memory.
 
 ---
 
+## Holomorphic coordinate models
+
+`HolomorphicMLP` uses complex-affine maps and the entire exponential while keeping
+all trainable leaves in real Cartesian coordinates. Each affine stage may remain
+dense or declare one explicit low-rank factorization through `linear_ranks`.
+Low-rank factors alter parameterization and effective matrix rank without changing
+the model's Cauchy--Riemann construction.
+
+Independent potential architectures compose through
+`HolomorphicBranchBundle`. Same-coordinate multiplicative structure composes through
+`HolomorphicProductPotential`, whose jets use exact Taylor-coefficient convolution.
+The generic `Separable` model remains uncertified because arbitrary coordinate
+factors, output activations, and real projection do not preserve holomorphicity.
+
+Arbitrary `x`/`y` separation is not a holomorphic architecture. Safe separability
+uses complex-linear weight factors, same-`z` holomorphic factors, independent output
+branches, or problem-data coefficients multiplying a holomorphic query trunk.
+
+::: phydrax.nn.models.HolomorphicMLP
+
+---
+
 ## Convex potentials and port-Hamiltonian dynamics
 
 `InputConvexNetwork` returns one scalar potential whose Hessian with respect to

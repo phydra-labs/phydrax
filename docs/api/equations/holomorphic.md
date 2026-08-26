@@ -11,6 +11,14 @@ assumptions and workflows.
 
 ---
 
+::: phydrax.nn.layers.LowRankComplexLinear
+
+---
+
+::: phydrax.nn.layers.LowRankComplexLinearInitializationReport
+
+---
+
 ::: phydrax.nn.models.HolomorphicMLP
 
 ---
@@ -24,6 +32,22 @@ assumptions and workflows.
 ---
 
 ::: phydrax.equations.HolomorphicPolynomialPotential
+
+---
+
+::: phydrax.equations.HolomorphicBranchBundle
+
+---
+
+::: phydrax.equations.HolomorphicProductPotential
+
+---
+
+::: phydrax.equations.HolomorphicFactorizationEvidence
+
+---
+
+::: phydrax.equations.HolomorphicFactorGaugeReport
 
 ---
 

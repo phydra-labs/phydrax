@@ -12,6 +12,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
+from ..._fingerprint import canonical_fingerprint
 from ..._holomorphic import (
     ComplexAffineNormalization,
     HolomorphicJet,
@@ -94,6 +95,14 @@ class HolomorphicPolynomialPotential(StrictModule):
         self.normalization = normalization_
         self.branches = branches_
         self.maximum_degree = degree
+        architecture_id = canonical_fingerprint(
+            {
+                "kind": "holomorphic-polynomial-architecture",
+                "branches": branches_,
+                "maximum_degree": degree,
+                "normalization": normalization_.normalization_id,
+            }
+        )
         self._certificate = HolomorphicMapCertificate(
             complex_input_size=1,
             complex_output_size=branches_,
@@ -103,6 +112,7 @@ class HolomorphicPolynomialPotential(StrictModule):
             operations=("complex-affine", "complex-polynomial"),
             parameter_coverage="finite-subspace",
             linear_in_parameters=True,
+            construction_dependencies=(architecture_id,),
         )
 
     @property
