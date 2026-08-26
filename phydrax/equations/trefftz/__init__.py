@@ -26,6 +26,12 @@ from ._core import (
 )
 from ._helmholtz import HelmholtzPlaneWaveBasis, sample_unit_directions
 from ._holomorphic import HolomorphicPolynomialPotential
+from ._holomorphic_composition import (
+    HolomorphicBranchBundle,
+    HolomorphicFactorGaugeReport,
+    HolomorphicFactorizationEvidence,
+    HolomorphicProductPotential,
+)
 from ._monogenic import LinearMonogenicField, MonogenicPolynomialBasis
 from ._polynomial import HarmonicPolynomialBasis, PolyharmonicAlmansiBasis
 
@@ -38,6 +44,10 @@ __all__ = [
     "HarmonicPolynomialBasis",
     "HarmonicPotential2D",
     "HelmholtzPlaneWaveBasis",
+    "HolomorphicBranchBundle",
+    "HolomorphicFactorGaugeReport",
+    "HolomorphicFactorizationEvidence",
+    "HolomorphicProductPotential",
     "HolomorphicPolynomialPotential",
     "HolomorphicJet",
     "HolomorphicMapCertificate",

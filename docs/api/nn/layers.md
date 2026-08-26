@@ -7,6 +7,9 @@ Low-level model building blocks.
 
     - `Linear` supports Random Weight Factorization (RWF) or one explicit
       shape-preserving physical weight transform.
+    - `ComplexLinear` and `LowRankComplexLinear` keep trainable leaves real while
+      evaluating exact complex-affine maps. The low-rank layer records spectral
+      initializer truncation evidence and materializes its dense weight only on request.
     - `Dropout(mode="feature")` shares one feature/channel mask over leading field axes.
     - Named LeCun, He/Kaiming, and Glorot/Xavier initializers follow JAX's
       post-truncation target-variance definitions; orthogonal initialization
@@ -23,6 +26,25 @@ Low-level model building blocks.
         members:
             - __init__
             - __call__
+
+---
+
+::: phydrax.nn.layers.ComplexLinear
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.layers.LowRankComplexLinear
+    options:
+        members:
+            - __init__
+            - __call__
+            - materialize_weight
+
+::: phydrax.nn.layers.LowRankComplexLinearInitializationReport
 
 ---
 ::: phydrax.nn.layers.SineLayer
