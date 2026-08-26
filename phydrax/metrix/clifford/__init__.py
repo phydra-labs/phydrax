@@ -35,6 +35,7 @@ from ._product import (
     CliffordProductPlan,
     prepare_product,
 )
+from ._provider import CliffordFiniteAlgebraProvider
 from ._reports import CliffordProductEvidence
 from ._resources import CliffordResourceBudget, CliffordResourceEvidence
 from ._spec import CliffordAlgebraSpec
@@ -56,6 +57,7 @@ __all__ = [
     "CliffordProductPlan",
     "CliffordResourceBudget",
     "CliffordResourceEvidence",
+    "CliffordFiniteAlgebraProvider",
     "FiniteMetricIsometryGroup",
     "embed_layout",
     "extract_layout",

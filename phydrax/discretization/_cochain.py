@@ -16,6 +16,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
+    apply_real_map_componentwise,
     ArraySpace,
     DenseCholesky,
     DenseLinearOperator,
@@ -536,19 +537,13 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         """Apply the degree Hodge Riesz operator, including its complexification."""
         degree_, value = self._values(degree, values)
         space = self.field_spaces[degree_].vector_space
-        if jnp.iscomplexobj(value):
-            return space.riesz(jnp.real(value)) + 1j * space.riesz(jnp.imag(value))
-        return space.riesz(value)
+        return apply_real_map_componentwise(space.riesz, value)
 
     def solve_hodge(self, degree: int, values: ArrayLike, /) -> Array:
         """Apply the prepared inverse Hodge Riesz operator and its complexification."""
         degree_, value = self._values(degree, values)
         space = self.field_spaces[degree_].vector_space
-        if jnp.iscomplexobj(value):
-            return space.inverse_riesz(jnp.real(value)) + 1j * space.inverse_riesz(
-                jnp.imag(value)
-            )
-        return space.inverse_riesz(value)
+        return apply_real_map_componentwise(space.inverse_riesz, value)
 
     def codifferential(
         self,

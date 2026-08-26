@@ -12,6 +12,17 @@ from ._adaptive_spectral import (
     AdaptiveStochasticEstimate,
     AdaptiveStochasticPolicy,
 )
+from ._algebra_coordinates import (
+    AlgebraCoordinatePlan,
+    AlgebraCoordinateStorage,
+    PreparedAlgebraCoordinates,
+)
+from ._algebra_operators import (
+    apply_real_map_componentwise,
+    complexify_real_operator,
+    lift_real_operator_to_algebra,
+)
+from ._algebra_spaces import AlgebraArraySpace, AlgebraCoefficientPairing
 from ._assembly import (
     assemble_diagonal,
     assemble_sparse,
@@ -294,6 +305,13 @@ from ._rational_functions import (
     RationalFunctionStatus,
     refresh_rational_function_action,
 )
+from ._real_coordinates import (
+    AbstractRealCoordinateMap,
+    ComplexCartesianCoordinates,
+    RealCoordinateDomainKind,
+    RealCoordinateEvidence,
+    RealCoordinateNormRelation,
+)
 from ._recycling import (
     prepare_recycling_subspace,
     RecyclingState,
@@ -503,6 +521,11 @@ __all__ = [
     "AbstractPreconditioner",
     "AbstractPreconditionerBuilder",
     "AbstractVectorSpace",
+    "AbstractRealCoordinateMap",
+    "AlgebraArraySpace",
+    "AlgebraCoefficientPairing",
+    "AlgebraCoordinatePlan",
+    "AlgebraCoordinateStorage",
     "AdditiveSubspaceCorrectionBuilder",
     "AdditiveSubspaceCorrectionPreconditioner",
     "AdjointLinearOperator",
@@ -530,6 +553,8 @@ __all__ = [
     "CertificateEvidence",
     "CertificateScope",
     "ConjugateGradient",
+    "ComplexCartesianCoordinates",
+    "PreparedAlgebraCoordinates",
     "CoordaxSpace",
     "ChebyshevBoundsSource",
     "ChebyshevPreconditioner",
@@ -552,6 +577,12 @@ __all__ = [
     "DualSpace",
     "EmpiricalGramLinearOperator",
     "EuclideanPairing",
+    "RealCoordinateDomainKind",
+    "RealCoordinateEvidence",
+    "RealCoordinateNormRelation",
+    "apply_real_map_componentwise",
+    "complexify_real_operator",
+    "lift_real_operator_to_algebra",
     "FGMRES",
     "FactorizationCapabilities",
     "FactorizationKind",

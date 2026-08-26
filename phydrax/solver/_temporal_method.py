@@ -14,7 +14,10 @@ from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._diffrax_state_packing import ComplexStatePackingEvidence
+from ._diffrax_state_packing import (
+    AlgebraStatePackingEvidence,
+    ComplexStatePackingEvidence,
+)
 
 
 TemporalEquationForm: TypeAlias = Literal[
@@ -176,7 +179,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
     dense: bool = eqx.field(static=True)
     maximum_steps: int | None = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope | None
-    state_packing: ComplexStatePackingEvidence | None
+    state_packing: ComplexStatePackingEvidence | AlgebraStatePackingEvidence | None
 
     def __init__(
         self,
@@ -193,7 +196,9 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         dense: bool,
         maximum_steps: int | None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
-        state_packing: ComplexStatePackingEvidence | None = None,
+        state_packing: ComplexStatePackingEvidence
+        | AlgebraStatePackingEvidence
+        | None = None,
     ):
         if not isinstance(capabilities, TemporalMethodCapabilities):
             raise TypeError("capabilities must be TemporalMethodCapabilities.")
@@ -220,9 +225,11 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
             )
         if state_packing is not None and not isinstance(
             state_packing,
-            ComplexStatePackingEvidence,
+            (ComplexStatePackingEvidence, AlgebraStatePackingEvidence),
         ):
-            raise TypeError("state_packing must be ComplexStatePackingEvidence or None.")
+            raise TypeError(
+                "state_packing must be complex/algebra packing evidence or None."
+            )
         self.capabilities = capabilities
         self.equation_form = equation_form
         self.backend_id, self.configuration_id, self.controller_id, self.adjoint_id = (

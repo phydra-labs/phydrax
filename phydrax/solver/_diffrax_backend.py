@@ -21,6 +21,7 @@ from ._diffrax_state_packing import (
     _prepare_diffrax_state_adapter,
     _PreparedDiffraxStateAdapter,
     _validate_real_backend_tree,
+    DiffraxAlgebraStatePolicy,
     DiffraxComplexStatePolicy,
 )
 from ._geometric import (
@@ -760,6 +761,7 @@ def solve_diffrax(
     solver_configuration_id: str | None = None,
     precision: TemporalPrecisionPolicy | None = None,
     complex_state_policy: DiffraxComplexStatePolicy | None = None,
+    algebra_state_policy: DiffraxAlgebraStatePolicy | None = None,
 ) -> DifferentialSolution:
     """Solve one explicit, additive-split, or stochastic differential problem."""
     if not isinstance(problem, (DifferentialProblem, SplitDifferentialProblem)):
@@ -792,6 +794,7 @@ def solve_diffrax(
     state_adapter = _prepare_diffrax_state_adapter(
         problem.initial_state,
         complex_state_policy,
+        algebra_state_policy,
         problem.state_geometry,
     )
     if state_adapter.active and isinstance(selected_solver, AbstractGeometricSolver):
@@ -891,6 +894,7 @@ def solve_diffrax_ensemble(
     solver_configuration_id: str | None = None,
     precision: TemporalPrecisionPolicy | None = None,
     complex_state_policy: DiffraxComplexStatePolicy | None = None,
+    algebra_state_policy: DiffraxAlgebraStatePolicy | None = None,
 ) -> DifferentialSolution:
     """Solve the coupled SDE batch encoded by one Wiener realization."""
     if not isinstance(problem, DifferentialProblem):
@@ -916,6 +920,7 @@ def solve_diffrax_ensemble(
     state_adapter = _prepare_diffrax_state_adapter(
         problem.initial_state,
         complex_state_policy,
+        algebra_state_policy,
         problem.state_geometry,
     )
     if state_adapter.active and isinstance(selected_solver, AbstractGeometricSolver):
