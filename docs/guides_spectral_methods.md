@@ -139,6 +139,75 @@ and admissibility. Spectral diagnostics report total entropy and its semidiscret
 rate. They do not claim entropy stability; a proven entropy-stable split form is a
 separate numerical contract.
 
+## Incompressible periodic and channel flow
+
+`compile_periodic_incompressible_flow` prepares a velocity-only rotational
+Navier–Stokes system on a two- or three-axis Fourier tensor space. The prepared
+`PeriodicLerayProjector` removes longitudinal modes, assigns the pressure zero-mode
+gauge, and zeros self-conjugate Nyquist modes that are incompatible with odd
+real-field derivatives:
+
+```python
+space = phx.discretization.TensorSpectralPlan(
+    (
+        phx.discretization.FourierBasisPlan(64),
+        phx.discretization.FourierBasisPlan(64),
+    ),
+    axis_names=("x", "y"),
+    field_name="velocity",
+).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+problem = phx.equations.IncompressibleFlowProblem(2, viscosity=1e-3)
+method = phx.discretization.PseudospectralMethodPlan(
+    dealiasing=phx.discretization.PaddingDealiasingPlan(2),
+)
+compiled = phx.equations.compile_periodic_incompressible_flow(
+    problem, space, method
+)
+```
+
+The public state remains full complex. `HermitianSpectralCoordinates` provides an
+independent real chart for Newton, continuation, Lyapunov, and periodic-orbit
+analysis without changing DNS storage. Paired Fourier modes use norm-preserving
+real/imaginary coordinates; zero and Nyquist fixed points remain real.
+`TensorSpectralSymmetry` applies normalized Fourier translations, supported
+reflections, and an orthogonal component action directly in modal space.
+
+Wall-bounded channel flow uses a Fourier x Chebyshev x Fourier tensor plan and a
+separate constrained Stokes preparation:
+
+```python
+constraint = phx.discretization.ChannelMeanConstraint(
+    "pressure_gradient", (1.0, 0.0)
+)
+stokes = phx.discretization.ChannelStokesPlan(
+    channel_space,
+    viscosity=1e-3,
+    mean_constraint=constraint,
+)
+channel = phx.equations.compile_channel_flow(stokes, method)
+solution = phx.solver.solve_channel_sbdf2(
+    channel,
+    initial_velocity_coefficients,
+    uniform_time_grid,
+)
+```
+
+`ChannelStokesPlan` is a budgeted dense primitive velocity–pressure reference
+solve. Persistent state contains velocity only; pressure, affine pressure gradient,
+divergence, wall traces, gauge, and bulk velocity are returned as solve evidence.
+`ChannelMeanConstraint("bulk_flux", target)` augments the zero horizontal mode with
+pressure-gradient Lagrange multipliers. The fixed-step SBDF2 path uses backward
+Euler initialization and rejects nonuniform time grids rather than applying
+constant-step history formulas to variable steps.
+
+Long runs can use `BoundedEvolutionObservationPlan` to retain fixed-capacity
+observables while returning only the final evolution state. `SpectralStateArtifact`
+stores full-complex coefficients in the atomic checksum-validated array archive.
+Artifacts without a step size are seeds. Setting `restartable=True` requires a
+positive fixed step size and is only an exact checkpoint for a one-step method whose
+complete runtime state is represented by `(state, time, step, step_size)`.
+
+
 ## Bounded Galerkin spaces
 
 Common homogeneous endpoint constraints are built into polynomial trial bases:
