@@ -15,6 +15,14 @@
   channel SBDF2 integration, shared-runtime periodic/Floquet analysis, relative
   invariant residuals, bounded evolution observation, portable spectral state
   artifacts, recurrence seeding, and finite-horizon edge tracking.
+- Hardened incompressible spectral workflows around one shared flow problem,
+  semidiscrete energy-balance diagnostics, constraint-valid channel initialization,
+  fail-closed SBDF2 histories, and reproducible qualification artifacts. Added
+  structured periodic compact first/second derivatives and staggered interpolation
+  without dense line solves; periodic diagonal-norm SBP flux differencing with a
+  reusable symmetric entropy-conservative Euler volume flux; and a geometry/solver
+  split for structured MAC pressure projection with exact transform and refreshed
+  variable-coefficient linalg routes.
 - Added explicit real/imaginary Diffrax state packing for complex ODE, split, CDE,
   and stochastic paths. Public states remain complex; temporal evidence records the
   doubled real backend shape, dtype, tolerance geometry, and policy, while native and

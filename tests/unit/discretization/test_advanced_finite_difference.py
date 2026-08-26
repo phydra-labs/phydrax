@@ -38,20 +38,6 @@ def test_diagonal_norm_sbp_identity_and_boundary_order():
     assert sbp.operator.stencil_set.interior_accuracy_order == 2
 
 
-def test_periodic_compact_derivative_is_fourth_order_accurate():
-    grid = _periodic_grid()
-    derivative = phx.discretization.CompactFirstDerivative(grid)
-    nodes = grid.axes[0].nodes
-    values = jnp.sin(2.0 * jnp.pi * nodes)
-
-    result = derivative.mv(values)
-
-    assert jnp.max(jnp.abs(result - 2.0 * jnp.pi * jnp.cos(2.0 * jnp.pi * nodes))) < 2e-4
-    assert jnp.allclose(
-        jnp.vdot(values, derivative.mv(values)),
-        0.0,
-        atol=2e-5,
-    )
 
 
 def test_mapped_derivative_preserves_free_stream_and_physical_polynomial():

@@ -290,6 +290,7 @@ nav:
             - Time integrators: "api/solver/time_integrators.md"
             - Exponential Runge--Kutta: "api/solver/etdrk.md"
             - Differential equations: "api/solver/differential.md"
+            - Incompressible flow: "api/solver/incompressible.md"
             - Non-Markovian and many-body quantum systems: "api/solver/nonmarkov_manybody.md"
             - Production open quantum systems: "api/solver/production_open_quantum.md"
             - Hardened open quantum systems: "api/solver/hardened_open_quantum.md"

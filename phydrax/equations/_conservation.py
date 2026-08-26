@@ -17,6 +17,11 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization.finite_difference import (
+    PreparedSBPConservationDynamics,
+    SBPFluxDifferencingMethodPlan,
+    TensorSBPDiscretization,
+)
 from ..discretization.finite_volume import (
     AbstractNumericalFluxPlan,
     AbstractWavePropagationPlan,
@@ -161,18 +166,21 @@ class CompiledConservationProblem(StrictModule):
         | TriangleFiniteVolumeDiscretization
         | UnstructuredFiniteVolumeDiscretization
         | TensorSpectralDiscretization
+        | TensorSBPDiscretization
     )
     method: (
         FiniteVolumeMethodPlan
         | TriangleFiniteVolumeMethodPlan
         | UnstructuredFiniteVolumeMethodPlan
         | SpectralConservationMethodPlan
+        | SBPFluxDifferencingMethodPlan
     )
     dynamics: (
         PreparedFiniteVolumeDynamics
         | PreparedTriangleFiniteVolumeDynamics
         | PreparedUnstructuredFiniteVolumeDynamics
         | PreparedSpectralConservationDynamics
+        | PreparedSBPConservationDynamics
     )
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
@@ -186,24 +194,29 @@ class CompiledConservationProblem(StrictModule):
             | TriangleFiniteVolumeDiscretization
             | UnstructuredFiniteVolumeDiscretization
             | TensorSpectralDiscretization
+            | TensorSBPDiscretization
         ),
         method: (
             FiniteVolumeMethodPlan
             | TriangleFiniteVolumeMethodPlan
             | UnstructuredFiniteVolumeMethodPlan
             | SpectralConservationMethodPlan
+            | SBPFluxDifferencingMethodPlan
         ),
         dynamics: (
             PreparedFiniteVolumeDynamics
             | PreparedTriangleFiniteVolumeDynamics
             | PreparedUnstructuredFiniteVolumeDynamics
             | PreparedSpectralConservationDynamics
+            | PreparedSBPConservationDynamics
         ),
         /,
     ):
         state_space_name = (
             discretization.modal_space.name
             if isinstance(discretization, TensorSpectralDiscretization)
+            else discretization.state_space.name
+            if isinstance(discretization, TensorSBPDiscretization)
             else discretization.cell_space.name
         )
         if problem.field_name != state_space_name:
@@ -376,12 +389,14 @@ def compile_conservation_problem(
         | TriangleFiniteVolumeDiscretization
         | UnstructuredFiniteVolumeDiscretization
         | TensorSpectralDiscretization
+        | TensorSBPDiscretization
     ),
     method: (
         FiniteVolumeMethodPlan
         | TriangleFiniteVolumeMethodPlan
         | UnstructuredFiniteVolumeMethodPlan
         | SpectralConservationMethodPlan
+        | SBPFluxDifferencingMethodPlan
     ),
     /,
     *,
@@ -395,6 +410,36 @@ def compile_conservation_problem(
     if not isinstance(problem, ConservationProblemIR):
         raise TypeError("problem must be a ConservationProblemIR.")
     _validate_entropy_pair(problem, entropy_pair)
+    if isinstance(discretization, TensorSBPDiscretization):
+        if not isinstance(method, SBPFluxDifferencingMethodPlan):
+            raise TypeError(
+                "Tensor SBP geometry requires SBPFluxDifferencingMethodPlan."
+            )
+        if not isinstance(problem.system, EulerSystem):
+            raise TypeError(
+                "Initial SBP flux differencing supports inviscid EulerSystem only."
+            )
+        if problem.boundaries is not None:
+            raise ValueError("Periodic SBP conservation requires boundaries=None.")
+        if any(
+            value is not None for value in (capacity, bathymetry, precision, coupling)
+        ):
+            raise ValueError(
+                "SBP conservation does not accept finite-volume capacity, "
+                "bathymetry, precision, or coupling options."
+            )
+        if method.entropy_diagnostics != (entropy_pair is not None):
+            raise ValueError(
+                "SBP entropy diagnostics and entropy_pair must be enabled together."
+            )
+        dynamics = PreparedSBPConservationDynamics(
+            problem.system,
+            discretization,
+            method,
+            source=problem.source,
+            entropy_pair=entropy_pair,
+        )
+        return CompiledConservationProblem(problem, discretization, method, dynamics)
     if isinstance(discretization, TensorSpectralDiscretization):
         if not isinstance(method, SpectralConservationMethodPlan):
             raise TypeError(

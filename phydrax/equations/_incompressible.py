@@ -145,6 +145,20 @@ class _PeriodicRotationalDrift(StrictModule):
             product = jnp.cross(vorticity, velocity, axis=-1)
         return dealiasing.project(product)
 
+    def nonlinear_rhs(self, state: ArrayLike, /) -> Array:
+        value = self.projector.validate_state(state)
+        return self.projector.project(-self._rotational_product(value))
+
+    def forcing_rhs(self, time: Array, state: ArrayLike, args: Any, /) -> Array:
+        value = self.projector.validate_state(state)
+        if self.problem.forcing is None:
+            return jnp.zeros_like(value)
+        forcing = self.projector.validate_state(
+            self.problem.forcing(time, value, args), owner="Modal forcing"
+        )
+        return self.projector.project(forcing)
+
+
     def unconstrained_rhs(self, time: Array, state: Array, args: Any, /) -> Array:
         value = self.projector.validate_state(state)
         result = -self._rotational_product(value)
@@ -252,14 +266,20 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
         )
         return self.projector.pressure_from_unconstrained_rhs(raw)
 
-    def diagnostics(self, state: ArrayLike, /) -> IncompressibleSpectralDiagnostics:
+    def diagnostics(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> IncompressibleSpectralDiagnostics:
+        time_ = jnp.asarray(time)
         value = self.projector.validate_state(state)
         admissible = self.projector.project(value)
         physical = self.discretization.reconstruct(admissible)
+        weights = self.discretization.quadrature_weights
         speed_squared = jnp.sum(jnp.real(physical * jnp.conj(physical)), axis=-1)
-        kinetic_energy = 0.5 * jnp.sum(
-            self.discretization.quadrature_weights * speed_squared
-        )
+        kinetic_energy = 0.5 * jnp.sum(weights * speed_squared)
         gradient_squared = jnp.zeros(
             self.discretization.physical_shape, dtype=physical.real.dtype
         )
@@ -270,16 +290,48 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             gradient_squared = gradient_squared + jnp.sum(
                 jnp.real(derivative * jnp.conj(derivative)), axis=-1
             )
-        dissipation = self.problem.viscosity * jnp.sum(
-            self.discretization.quadrature_weights * gradient_squared
+        dissipation = self.problem.viscosity * jnp.sum(weights * gradient_squared)
+        nonlinear_modal = self.nonlinear_drift.nonlinear_rhs(admissible)
+        forcing_modal = self.nonlinear_drift.forcing_rhs(
+            time_, admissible, args
+        )
+        viscous_modal = (
+            -self.problem.viscosity
+            * self.projector.wavenumber_squared[..., None]
+            * admissible
+        )
+        total_modal = nonlinear_modal + forcing_modal + viscous_modal
+
+        def energy_rate(rate: Array, /) -> Array:
+            physical_rate = self.discretization.reconstruct(rate)
+            density = jnp.sum(
+                jnp.real(jnp.conj(physical) * physical_rate), axis=-1
+            )
+            return jnp.sum(weights * density)
+
+        nonlinear_energy_rate = energy_rate(nonlinear_modal)
+        forcing_power = energy_rate(forcing_modal)
+        viscous_energy_rate = energy_rate(viscous_modal)
+        semidiscrete_energy_rate = energy_rate(total_modal)
+        energy_balance_defect = semidiscrete_energy_rate - (
+            forcing_power - dissipation
         )
         forbidden = value - self.projector.zero_forbidden_modes(value)
+        pressure = self.pressure_coefficients(time_, admissible, args)
+        zero_mode = self.projector.wavenumber_squared == 0.0
+        pressure_gauge = jnp.max(jnp.where(zero_mode, jnp.abs(pressure), 0.0))
         return IncompressibleSpectralDiagnostics(
             kinetic_energy=kinetic_energy,
+            nonlinear_energy_rate=nonlinear_energy_rate,
+            forcing_power=forcing_power,
+            viscous_energy_rate=viscous_energy_rate,
             dissipation=dissipation,
+            semidiscrete_energy_rate=semidiscrete_energy_rate,
+            energy_balance_defect=energy_balance_defect,
             divergence_norm=self.projector.divergence_norm(value),
             imaginary_leakage=self.discretization.imaginary_leakage(admissible),
             forbidden_mode_norm=GeometryPrecisionPolicy().norm(forbidden.reshape((-1,))),
+            pressure_gauge_residual=pressure_gauge,
             projector_id=self.projector.projector_id,
         )
 

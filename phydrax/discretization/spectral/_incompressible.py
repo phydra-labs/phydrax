@@ -145,33 +145,51 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
 
 
 class IncompressibleSpectralDiagnostics(StrictModule):
-    """Physical and modal evidence for one incompressible spectral state."""
+    """Physical, modal, and energy-balance evidence for one spectral state."""
 
     kinetic_energy: Array
+    nonlinear_energy_rate: Array
+    forcing_power: Array
+    viscous_energy_rate: Array
     dissipation: Array
+    semidiscrete_energy_rate: Array
+    energy_balance_defect: Array
     divergence_norm: Array
     imaginary_leakage: Array
     forbidden_mode_norm: Array
+    pressure_gauge_residual: Array
     projector_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         kinetic_energy: ArrayLike,
+        nonlinear_energy_rate: ArrayLike,
+        forcing_power: ArrayLike,
+        viscous_energy_rate: ArrayLike,
         dissipation: ArrayLike,
+        semidiscrete_energy_rate: ArrayLike,
+        energy_balance_defect: ArrayLike,
         divergence_norm: ArrayLike,
         imaginary_leakage: ArrayLike,
         forbidden_mode_norm: ArrayLike,
+        pressure_gauge_residual: ArrayLike,
         projector_id: str,
     ):
         identifier = str(projector_id)
         if not identifier:
             raise ValueError("projector_id must be non-empty.")
         self.kinetic_energy = jnp.asarray(kinetic_energy)
+        self.nonlinear_energy_rate = jnp.asarray(nonlinear_energy_rate)
+        self.forcing_power = jnp.asarray(forcing_power)
+        self.viscous_energy_rate = jnp.asarray(viscous_energy_rate)
         self.dissipation = jnp.asarray(dissipation)
+        self.semidiscrete_energy_rate = jnp.asarray(semidiscrete_energy_rate)
+        self.energy_balance_defect = jnp.asarray(energy_balance_defect)
         self.divergence_norm = jnp.asarray(divergence_norm)
         self.imaginary_leakage = jnp.asarray(imaginary_leakage)
         self.forbidden_mode_norm = jnp.asarray(forbidden_mode_norm)
+        self.pressure_gauge_residual = jnp.asarray(pressure_gauge_residual)
         self.projector_id = identifier
 
 

@@ -24,7 +24,8 @@ def _compiled_channel():
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2)
     )
-    return space, phx.equations.compile_channel_flow(plan, method)
+    problem = phx.equations.IncompressibleFlowProblem(3, 0.1)
+    return space, phx.equations.compile_channel_flow(problem, plan, method)
 
 
 def test_channel_sbdf2_preserves_steady_couette_profile():
@@ -44,6 +45,34 @@ def test_channel_sbdf2_preserves_steady_couette_profile():
     assert jnp.nanmax(solution.diagnostics.divergence_norm) < 1e-10
     assert jnp.nanmax(solution.diagnostics.wall_residual) < 1e-10
     assert jnp.nanmax(solution.diagnostics.pressure_gauge_residual) < 1e-10
+
+
+def test_channel_compiler_rejects_mismatched_problem_viscosity():
+    space, dynamics = _compiled_channel()
+    with pytest.raises(ValueError, match="viscosities"):
+        phx.equations.compile_channel_flow(
+            phx.equations.IncompressibleFlowProblem(3, 0.2),
+            dynamics.stokes_plan,
+            phx.discretization.PseudospectralMethodPlan(
+                dealiasing=phx.discretization.PaddingDealiasingPlan(2)
+            ),
+        )
+    assert space.prepared_id == dynamics.discretization.prepared_id
+
+
+def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancing():
+    _, dynamics = _compiled_channel()
+    initial = jnp.zeros(dynamics.state_shape, dtype=complex)
+    solution = phx.solver.solve_channel_sbdf2(
+        dynamics,
+        initial,
+        jnp.asarray([0.0, 0.01, 0.02]),
+    )
+
+    assert not bool(solution.successful)
+    assert int(solution.diagnostics.status[0]) == phx.solver.CHANNEL_FLOW_INITIAL_CONSTRAINT
+    assert jnp.all(~solution.diagnostics.valid)
+    np.testing.assert_allclose(solution.velocity, 0.0, atol=0.0)
 
 
 def test_bounded_observer_reports_overflow_without_growing_state():

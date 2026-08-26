@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
 from ..discretization.spectral import (
     ChannelStokesPlan,
@@ -18,30 +19,46 @@ from ..discretization.spectral import (
     PreparedPseudospectralMethod,
     PseudospectralMethodPlan,
 )
+from ._incompressible import IncompressibleFlowProblem
+
+
+class ChannelVelocityDiagnostics(StrictModule):
+    """Constraint and kinetic-energy evidence for one channel velocity state."""
+
+    kinetic_energy: Array
+    divergence_norm: Array
+    wall_residual: Array
+    finite: Array
+    valid: Array
+
 
 
 class CompiledChannelFlowDynamics(StrictModule):
     """Dealiased rotational channel nonlinearity plus prepared Stokes solves."""
 
+    problem: IncompressibleFlowProblem
     stokes_plan: ChannelStokesPlan
     spatial_method: PreparedPseudospectralMethod
-    forcing: Any
     horizontal_admissibility: Array
     state_shape: tuple[int, ...] = eqx.field(static=True)
-    forcing_id: str = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
+    source_hash: str = eqx.field(static=True)
 
     def __init__(
         self,
+        problem: IncompressibleFlowProblem,
         stokes_plan: ChannelStokesPlan,
         spatial_method: PreparedPseudospectralMethod,
         /,
-        *,
-        forcing: Any = None,
-        forcing_id: str | None = None,
     ):
+        if not isinstance(problem, IncompressibleFlowProblem):
+            raise TypeError("problem must be an IncompressibleFlowProblem.")
+        if problem.spatial_dimension != 3:
+            raise ValueError("Channel flow requires a three-dimensional problem.")
         if not isinstance(stokes_plan, ChannelStokesPlan):
             raise TypeError("stokes_plan must be a ChannelStokesPlan.")
+        if not bool(jnp.array_equal(problem.viscosity, stokes_plan.viscosity)):
+            raise ValueError("Problem and channel Stokes viscosities must match exactly.")
         if not isinstance(spatial_method, PreparedPseudospectralMethod):
             raise TypeError("spatial_method must be PreparedPseudospectralMethod.")
         if (
@@ -49,16 +66,6 @@ class CompiledChannelFlowDynamics(StrictModule):
             != stokes_plan.discretization.prepared_id
         ):
             raise ValueError("Channel Stokes and pseudospectral discretizations differ.")
-        if forcing is not None and not callable(forcing):
-            raise TypeError("forcing must be callable or None.")
-        if forcing is None:
-            source_id = "none"
-            if forcing_id is not None:
-                raise ValueError("forcing_id must be omitted when forcing is None.")
-        else:
-            source_id = "" if forcing_id is None else str(forcing_id)
-            if not source_id:
-                raise ValueError("A forcing callable requires a non-empty forcing_id.")
         x_axis, _, z_axis = stokes_plan.discretization.axes
         admissible = (~x_axis.modes.nyquist_mask)[:, None] & (~z_axis.modes.nyquist_mask)[
             None, :
@@ -66,20 +73,20 @@ class CompiledChannelFlowDynamics(StrictModule):
         state_shape = stokes_plan.discretization.modal_shape + (3,)
         identifier = canonical_fingerprint(
             {
-                "kind": "compiled-channel-flow-v1",
+                "kind": "compiled-channel-flow-v2",
+                "problem": problem.problem_id,
                 "stokes_plan": stokes_plan.plan_id,
                 "spatial_method": spatial_method.prepared_id,
-                "forcing": source_id,
                 "state_shape": list(state_shape),
             }
         )
+        self.problem = problem
         self.stokes_plan = stokes_plan
         self.spatial_method = spatial_method
-        self.forcing = forcing
         self.horizontal_admissibility = admissible
         self.state_shape = state_shape
-        self.forcing_id = source_id
         self.compilation_id = identifier
+        self.source_hash = problem.problem_id
 
     @property
     def discretization(self):
@@ -113,6 +120,58 @@ class CompiledChannelFlowDynamics(StrictModule):
     def reconstruct_state(self, state: ArrayLike, /) -> Array:
         return self.discretization.reconstruct(self.admissible_modes(state))
 
+    def state_diagnostics(self, state: ArrayLike, /) -> ChannelVelocityDiagnostics:
+        value = self.admissible_modes(state)
+        physical = self.discretization.reconstruct(value)
+        speed_squared = jnp.sum(jnp.real(physical * jnp.conj(physical)), axis=-1)
+        kinetic_energy = 0.5 * jnp.sum(
+            self.discretization.quadrature_weights * speed_squared
+        )
+        x_axis, _, z_axis = self.discretization.axes
+        kx = (
+            2.0
+            * jnp.pi
+            * x_axis.modes.mode_numbers
+            / x_axis.length
+        )[:, None, None]
+        kz = (
+            2.0
+            * jnp.pi
+            * z_axis.modes.mode_numbers
+            / z_axis.length
+        )[None, None, :]
+        divergence = (
+            1j * kx * value[..., 0]
+            + self.discretization.modal_derivative(value[..., 1], axis=1)
+            + 1j * kz * value[..., 2]
+        )
+        precision = GeometryPrecisionPolicy()
+        divergence_norm = precision.norm(divergence.reshape((-1,)))
+        lower = physical[:, 0, :, :]
+        upper = physical[:, -1, :, :]
+        wall_residual = jnp.maximum(
+            precision.norm(
+                (lower - self.stokes_plan.lower_wall_velocity).reshape((-1,))
+            ),
+            precision.norm(
+                (upper - self.stokes_plan.upper_wall_velocity).reshape((-1,))
+            ),
+        )
+        finite = jnp.all(jnp.isfinite(value)) & jnp.all(jnp.isfinite(physical))
+        valid = (
+            finite
+            & (divergence_norm <= self.stokes_plan.constraint_tolerance)
+            & (wall_residual <= self.stokes_plan.constraint_tolerance)
+        )
+        return ChannelVelocityDiagnostics(
+            kinetic_energy=kinetic_energy,
+            divergence_norm=divergence_norm,
+            wall_residual=wall_residual,
+            finite=finite,
+            valid=valid,
+        )
+
+
     def nonlinear(self, time: Array, state: ArrayLike, args: Any = None, /) -> Array:
         value = self.admissible_modes(state)
         dealiasing = self.spatial_method.dealiasing
@@ -132,9 +191,10 @@ class CompiledChannelFlowDynamics(StrictModule):
         )
         vorticity = evaluation.reconstruct(vorticity_modal)
         result = -dealiasing.project(jnp.cross(vorticity, velocity, axis=-1))
-        if self.forcing is not None:
+        if self.problem.forcing is not None:
             forcing = self.validate_state(
-                self.forcing(jnp.asarray(time), value, args), owner="Channel forcing"
+                self.problem.forcing(jnp.asarray(time), value, args),
+                owner="Channel forcing",
             )
             result = result + forcing
         return self.admissible_modes(result)
@@ -144,14 +204,14 @@ class CompiledChannelFlowDynamics(StrictModule):
 
 
 def compile_channel_flow(
+    problem: IncompressibleFlowProblem,
     stokes_plan: ChannelStokesPlan,
     method: PseudospectralMethodPlan,
     /,
-    *,
-    forcing: Any = None,
-    forcing_id: str | None = None,
 ) -> CompiledChannelFlowDynamics:
     """Compile one Fourier–Chebyshev–Fourier rotational channel flow."""
+    if not isinstance(problem, IncompressibleFlowProblem):
+        raise TypeError("problem must be an IncompressibleFlowProblem.")
     if not isinstance(stokes_plan, ChannelStokesPlan):
         raise TypeError("stokes_plan must be a ChannelStokesPlan.")
     if not isinstance(method, PseudospectralMethodPlan):
@@ -161,12 +221,11 @@ def compile_channel_flow(
         required_polynomial_degree=2,
         nonlinear=True,
     )
-    return CompiledChannelFlowDynamics(
-        stokes_plan,
-        prepared,
-        forcing=forcing,
-        forcing_id=forcing_id,
-    )
+    return CompiledChannelFlowDynamics(problem, stokes_plan, prepared)
 
 
-__all__ = ["CompiledChannelFlowDynamics", "compile_channel_flow"]
+__all__ = [
+    "ChannelVelocityDiagnostics",
+    "CompiledChannelFlowDynamics",
+    "compile_channel_flow",
+]

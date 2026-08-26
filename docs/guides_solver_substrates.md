@@ -222,11 +222,34 @@ compatibility-checked. See [Structured finite volume](guides_finite_volume.md).
 
 ## SBP-SAT, mapped grids, and multiblock coupling
 
-`SBPDerivativePlan` prepares diagonal-norm orders 2, 4, 6, and 8 with compatible
-second derivatives and algebraically checked `H D + Dᵀ H = B`. `SATBoundaryPlan` and
-`SATInterfacePlan` separate boundary residuals from penalties and carry explicit
-energy evidence. `CompactFirstDerivative` remains the budgeted fourth-order periodic
-cyclic line solve.
+`SBPDerivativePlan` prepares periodic or bounded diagonal-norm orders 2, 4, 6,
+and 8 with compatible second derivatives and algebraically checked
+`H D + Dᵀ H = B`. Periodic operators have `B = 0` and a skew norm derivative.
+`SATBoundaryPlan` and `SATInterfacePlan` separate bounded boundary residuals from
+penalties and carry explicit energy evidence.
+
+`CompactDerivativePlan` and `CompactInterpolationPlan` prepare periodic implicit
+line actions `A q = B u` without dense matrices. The cyclic target operator is a
+tridiagonal base plus rank-two correction and reuses `phydrax.linalg` Woodbury
+planning for multiple right-hand sides. Fourth/sixth-order first/second
+derivatives and staggered interpolation retain exact source/target locations,
+transpose and pairing-adjoint actions, modified-symbol evidence, and resource
+counts. The acted-on line axis is nonlocal and must remain unsharded.
+
+`TensorSBPPlan` combines periodic tensor axes with
+`SBPFluxDifferencingMethodPlan`. The method evaluates one symmetric two-point
+flux per nonzero SBP pair and scatters equal/opposite contributions; it does not
+allocate a dense all-pairs state tensor. Initial compilation supports periodic
+inviscid Euler. Bounded SAT fluxes and viscous entropy production remain separate
+future contracts.
+
+The compact, SBP conservation, and MAC projection qualification campaign is:
+
+```bash
+python tools/structured_flow_benchmarks.py \
+  --output benchmarks/structured_flow.json
+```
+
 
 `MappedTensorGridPlan` prepares one-, two-, or three-dimensional stationary mappings.
 Discrete curl metrics enforce metric identities and free-stream preservation;

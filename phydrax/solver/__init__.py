@@ -66,6 +66,9 @@ from ._calabi_yau_campaigns import (
     prepare_quartic_k3,
 )
 from ._channel_flow import (
+    CHANNEL_FLOW_INITIAL_CONSTRAINT,
+    CHANNEL_FLOW_STOKES_FAILURE,
+    CHANNEL_FLOW_SUCCESS,
     ChannelFlowDiagnosticsHistory,
     ChannelFlowSolution,
     ChannelSBDF2Method,
@@ -693,6 +696,11 @@ from ._stinespring_tomography import (
     StinespringTomographyProblem,
     StinespringTomographyResult,
 )
+from ._structured_incompressible import (
+    MACPressureProjectionPlan,
+    MACPressureProjectionResult,
+    MACPressureSolveMethod,
+)
 from ._symplectic import (
     integrate_stormer_verlet,
     SeparableHamiltonianResult,
@@ -883,6 +891,9 @@ __all__ = [
     "ControlledDifferentialSolution",
     "ConstantDelay",
     "maxwell",
+    "CHANNEL_FLOW_INITIAL_CONSTRAINT",
+    "CHANNEL_FLOW_STOKES_FAILURE",
+    "CHANNEL_FLOW_SUCCESS",
     "ChannelFlowDiagnosticsHistory",
     "ChannelFlowSolution",
     "ChannelSBDF2Method",
@@ -1064,6 +1075,9 @@ __all__ = [
     "ETDRKMethod",
     "HermitianCoordinateEvolution",
     "HERMITIAN_COORDINATE_INVALID",
+    "MACPressureProjectionPlan",
+    "MACPressureProjectionResult",
+    "MACPressureSolveMethod",
     "SemidiscreteSPDE",
     "SemilinearDrift",
     "SemilinearFallback",

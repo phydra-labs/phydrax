@@ -69,6 +69,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
     upper_wall_velocity: Array
     mean_constraint: ChannelMeanConstraint
     maximum_factor_bytes: int = eqx.field(static=True)
+    constraint_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -81,6 +82,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         upper_wall_velocity: ArrayLike = (0.0, 0.0, 0.0),
         mean_constraint: ChannelMeanConstraint | None = None,
         maximum_factor_bytes: int = 512 * 1024**2,
+        constraint_tolerance: float = 1e-8,
     ):
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
@@ -123,15 +125,19 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         maximum = index(maximum_factor_bytes)
         if maximum <= 0:
             raise ValueError("maximum_factor_bytes must be positive.")
+        tolerance = float(constraint_tolerance)
+        if not np.isfinite(tolerance) or tolerance <= 0.0:
+            raise ValueError("constraint_tolerance must be finite and positive.")
         identifier = canonical_fingerprint(
             {
-                "kind": "channel-stokes-plan-v1",
+                "kind": "channel-stokes-plan-v2",
                 "discretization": discretization.prepared_id,
                 "viscosity": float(viscosity_),
                 "lower_wall": [float(value) for value in lower],
                 "upper_wall": [float(value) for value in upper],
                 "mean_constraint": constraint.constraint_id,
                 "maximum_factor_bytes": maximum,
+                "constraint_tolerance": tolerance,
             }
         )
         self.discretization = discretization
@@ -140,6 +146,7 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
         self.upper_wall_velocity = upper
         self.mean_constraint = constraint
         self.maximum_factor_bytes = maximum
+        self.constraint_tolerance = tolerance
         self.plan_id = identifier
 
     def prepare(self, shift: ArrayLike, /) -> PreparedChannelStokesSolver:
@@ -458,13 +465,23 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(pressure))
             & jnp.all(jnp.isfinite(residual))
         )
+        momentum_residual = precision.norm(residual.reshape((-1,)))
+        divergence_norm = precision.norm(divergence.reshape((-1,)))
+        tolerance = self.plan.constraint_tolerance
         return ChannelStokesDiagnostics(
-            momentum_constraint_residual=precision.norm(residual.reshape((-1,))),
-            divergence_norm=precision.norm(divergence.reshape((-1,))),
+            momentum_constraint_residual=momentum_residual,
+            divergence_norm=divergence_norm,
             wall_residual=wall_residual,
             pressure_gauge_residual=gauge,
             bulk_velocity=bulk,
-            failed=failed | ~finite,
+            failed=(
+                failed
+                | ~finite
+                | (momentum_residual > tolerance)
+                | (divergence_norm > tolerance)
+                | (wall_residual > tolerance)
+                | (gauge > tolerance)
+            ),
         )
 
 

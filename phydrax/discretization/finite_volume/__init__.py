@@ -123,10 +123,10 @@ from ._high_resolution_extended import (
     TENOQualification,
 )
 from ._incompressible import (
-    FunctionalPressureCorrectionPlan,
-    MACPressureProjectionPlan,
-    PressureCorrectionResult,
-    PressureProjectionResult,
+    FaceVelocity,
+    MACOperatorPlan,
+    MACOperatorReport,
+    PreparedMACOperators,
 )
 from ._mapped import (
     evaluate_mapped_finite_volume_geometry,
@@ -169,6 +169,7 @@ from ._reconstruction import (
 )
 from ._riemann import (
     AbstractNumericalFluxPlan,
+    AbstractSymmetricTwoPointFluxPlan,
     EntropyConservativeEulerFluxPlan,
     EntropyStableEulerFluxPlan,
     HLLCFluxPlan,
@@ -414,6 +415,7 @@ __all__ = [
     "AbstractFaceReconstructionPlan",
     "AbstractFiniteVolumeBoundary",
     "AbstractNumericalFluxPlan",
+    "AbstractSymmetricTwoPointFluxPlan",
     "AbstractSlopeLimiter",
     "AbstractWavePropagationPlan",
     "ConservativeMultiblockFluxResult",
@@ -446,10 +448,10 @@ __all__ = [
     "MappedFiniteVolumePlan",
     "evaluate_mapped_finite_volume_geometry",
     "FiniteVolumePlan",
-    "FunctionalPressureCorrectionPlan",
-    "MACPressureProjectionPlan",
-    "PressureCorrectionResult",
-    "PressureProjectionResult",
+    "FaceVelocity",
+    "MACOperatorPlan",
+    "MACOperatorReport",
+    "PreparedMACOperators",
     "FiniteVolumeEntropyDiagnostics",
     "FiniteVolumeResidualDiagnostics",
     "integrated_finite_volume_relative_entropy",

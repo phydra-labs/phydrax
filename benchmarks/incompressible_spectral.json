@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "periodic_mode_count": 32,
+  "channel_shape": [
+    8,
+    16,
+    8
+  ],
+  "periodic_first_jit_ms": 175.6624589997955,
+  "periodic_steady_ms": 0.17780000016500708,
+  "periodic_divergence_norm": 4.832932358935919e-15,
+  "periodic_nonlinear_energy_rate": 2.9653781076908238e-18,
+  "periodic_energy_balance_defect": -1.6653345369377348e-16,
+  "periodic_finite": true,
+  "channel_prepare_ms": 2442.334540999582,
+  "channel_solve_ms": 1662.3571250001987,
+  "channel_factor_bytes": 8388608,
+  "couette_maximum_error": 1.1102230246251565e-15,
+  "fixed_flux_error": 1.1102230246251565e-16,
+  "channel_divergence_norm": 0.0,
+  "channel_sbdf2_error": 1.1102230246251565e-15,
+  "finite": true,
+  "passed": true
+}

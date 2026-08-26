@@ -179,15 +179,16 @@ Wall-bounded channel flow uses a Fourier x Chebyshev x Fourier tensor plan and a
 separate constrained Stokes preparation:
 
 ```python
+problem = phx.equations.IncompressibleFlowProblem(3, viscosity=1e-3)
 constraint = phx.discretization.ChannelMeanConstraint(
     "pressure_gradient", (1.0, 0.0)
 )
 stokes = phx.discretization.ChannelStokesPlan(
     channel_space,
-    viscosity=1e-3,
+    viscosity=problem.viscosity,
     mean_constraint=constraint,
 )
-channel = phx.equations.compile_channel_flow(stokes, method)
+channel = phx.equations.compile_channel_flow(problem, stokes, method)
 solution = phx.solver.solve_channel_sbdf2(
     channel,
     initial_velocity_coefficients,
@@ -195,27 +196,40 @@ solution = phx.solver.solve_channel_sbdf2(
 )
 ```
 
-`ChannelStokesPlan` is a budgeted dense primitive velocity–pressure reference
-solve. Persistent state contains velocity only; pressure, affine pressure gradient,
-divergence, wall traces, gauge, and bulk velocity are returned as solve evidence.
-`ChannelMeanConstraint("bulk_flux", target)` augments the zero horizontal mode with
-pressure-gradient Lagrange multipliers. The fixed-step SBDF2 path uses backward
-Euler initialization and rejects nonuniform time grids rather than applying
-constant-step history formulas to variable steps. The Stokes factor budget is checked
-before any factorization. Incompressibility also requires equal lower/upper wall-normal
-velocities. Callable periodic or channel forcing must provide a non-empty `forcing_id`;
-callable identity is never inferred from `repr` or a generic fallback.
+`IncompressibleFlowProblem` is shared by periodic and channel spectral compilers and
+owns viscosity plus an optional modal forcing with a required stable identity.
+`ChannelStokesPlan` is a budgeted dense primitive velocity–pressure reference solve;
+channel compilation requires its viscosity to match the problem exactly. Persistent
+state contains velocity only; pressure, affine pressure gradient, divergence, wall
+traces, gauge, bulk velocity, kinetic energy, and status are returned as solve
+evidence. `ChannelMeanConstraint("bulk_flux", target)` augments the zero horizontal
+mode with pressure-gradient Lagrange multipliers. The fixed-step SBDF2 path uses
+backward Euler initialization, rejects nonuniform time grids, validates initial wall
+and divergence constraints, latches the first failed Stokes step, and retains the
+last accepted state through the remainder of its fixed-shape scan.
 
-Long runs can use `BoundedEvolutionObservationPlan` to retain fixed-capacity
-observables while returning only the final evolution state. Because the observable is
-a callable, `observer_id` is required. The result latches the first failed evolution or
-nonfinite-observable status even if later fixed-shape scan steps continue.
+Periodic diagnostics separately report nonlinear energy rate, forcing power,
+viscous energy rate, positive dissipation, total semidiscrete energy rate, and the
+energy-balance defect. Exact quadratic dealiasing supports the stated rotational
+nonlinear energy identity; it is not an entropy-stability claim.
+
+`BoundedEvolutionObservationPlan` applies to implementations of
+`AbstractEvolution`. The specialized channel SBDF2 service currently returns its
+declared saved grid and is not silently adapted into that one-step evolution
+contract. Callable observables and modal forcing always require explicit stable IDs.
 `SpectralStateArtifact` stores full-complex coefficients in the atomic
 checksum-validated array archive. Reads revalidate shape, dtype, restart kind, and the
 content-derived artifact fingerprint. Artifacts without a step size are seeds.
 Setting `restartable=True` requires a positive fixed step size and is only an exact
 checkpoint for a one-step method whose complete runtime state is represented by
 `(state, time, step, step_size)`.
+
+The periodic/channel qualification campaign is:
+
+```bash
+python tools/incompressible_spectral_benchmarks.py \
+  --output benchmarks/incompressible_spectral.json
+```
 
 
 ## Bounded Galerkin spaces

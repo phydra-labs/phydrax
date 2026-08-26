@@ -19,6 +19,11 @@ from ..equations._channel_flow import CompiledChannelFlowDynamics
 from ._temporal_method import TemporalMethodCapabilities
 
 
+CHANNEL_FLOW_SUCCESS = 0
+CHANNEL_FLOW_INITIAL_CONSTRAINT = -1
+CHANNEL_FLOW_STOKES_FAILURE = -2
+
+
 class ChannelSBDF2Method(StrictModule, NonTrainableState):
     """Fixed-step semi-implicit BDF2 with backward-Euler initialization."""
 
@@ -52,11 +57,13 @@ class ChannelFlowDiagnosticsHistory(StrictModule):
     wall_residual: Array
     pressure_gauge_residual: Array
     bulk_velocity: Array
+    kinetic_energy: Array
     valid: Array
+    status: Array
 
 
 class ChannelFlowSolution(StrictModule):
-    """Velocity, pressure, mean forcing, and constraint evidence at every step."""
+    """Accepted velocity, pressure, forcing, and constraint evidence at every step."""
 
     times: Array
     velocity: Array
@@ -69,7 +76,9 @@ class ChannelFlowSolution(StrictModule):
 
     @property
     def successful(self) -> Array:
-        return jnp.all(self.diagnostics.valid)
+        return jnp.all(self.diagnostics.valid) & jnp.all(
+            self.diagnostics.status == CHANNEL_FLOW_SUCCESS
+        )
 
 
 def solve_channel_sbdf2(
@@ -102,144 +111,195 @@ def solve_channel_sbdf2(
     durations = np.diff(saved_host)
     if not np.allclose(durations, durations[0], rtol=1e-12, atol=1e-14):
         raise ValueError("ChannelSBDF2Method requires one fixed time step.")
+
     initial = dynamics.admissible_modes(initial_state)
+    initial_evidence = dynamics.state_diagnostics(initial)
+    initial_valid = initial_evidence.valid
+    initial_status = jnp.where(
+        initial_valid,
+        jnp.asarray(CHANNEL_FLOW_SUCCESS, dtype=jnp.int32),
+        jnp.asarray(CHANNEL_FLOW_INITIAL_CONSTRAINT, dtype=jnp.int32),
+    )
+    initial_pressure = jnp.zeros(dynamics.discretization.modal_shape, dtype=initial.dtype)
+    initial_gradient = jnp.full((2,), jnp.nan, dtype=initial.real.dtype)
     step = jnp.asarray(durations[0], dtype=initial.real.dtype)
     nonlinear_initial = dynamics.nonlinear(saved[0], initial, args)
     backward_euler = dynamics.prepare_stokes(1.0 / step)
-    first = backward_euler.solve(initial / step + nonlinear_initial)
-    nonlinear_first = dynamics.nonlinear(saved[1], first.velocity, args)
+    first_candidate = backward_euler.solve(initial / step + nonlinear_initial)
+    first_valid = initial_valid & first_candidate.successful
+    first_velocity = jnp.where(first_valid, first_candidate.velocity, initial)
+    first_pressure = jnp.where(
+        first_valid, first_candidate.pressure, initial_pressure
+    )
+    first_gradient = jnp.where(
+        first_valid, first_candidate.pressure_gradient, initial_gradient
+    )
+    first_status = jnp.where(
+        initial_valid,
+        jnp.where(
+            first_candidate.successful,
+            jnp.asarray(CHANNEL_FLOW_SUCCESS, dtype=jnp.int32),
+            jnp.asarray(CHANNEL_FLOW_STOKES_FAILURE, dtype=jnp.int32),
+        ),
+        initial_status,
+    )
+    first_energy = dynamics.state_diagnostics(first_velocity).kinetic_energy
+    nonlinear_first = dynamics.nonlinear(saved[1], first_velocity, args)
+    first_diagnostics = first_candidate.diagnostics
+    first_output = (
+        first_velocity,
+        first_pressure,
+        first_gradient,
+        first_diagnostics.momentum_constraint_residual,
+        first_diagnostics.divergence_norm,
+        first_diagnostics.wall_residual,
+        first_diagnostics.pressure_gauge_residual,
+        first_diagnostics.bulk_velocity,
+        first_energy,
+        first_valid,
+        first_status,
+    )
+
+    bdf2 = dynamics.prepare_stokes(3.0 / (2.0 * step))
 
     def advance(carry, time):
-        previous, current, previous_nonlinear, current_nonlinear = carry
+        (
+            previous,
+            current,
+            previous_nonlinear,
+            current_nonlinear,
+            current_pressure,
+            current_gradient,
+            cumulative_valid,
+            latched_status,
+        ) = carry
         right_hand_side = (
             (4.0 * current - previous) / (2.0 * step)
             + 2.0 * current_nonlinear
             - previous_nonlinear
         )
-        following = bdf2.solve(right_hand_side)
-        following_nonlinear = dynamics.nonlinear(time + step, following.velocity, args)
-        next_carry = (
-            current,
-            following.velocity,
-            current_nonlinear,
-            following_nonlinear,
+        candidate = bdf2.solve(right_hand_side)
+        accepted = cumulative_valid & candidate.successful
+        following_velocity = jnp.where(accepted, candidate.velocity, current)
+        following_pressure = jnp.where(accepted, candidate.pressure, current_pressure)
+        following_gradient = jnp.where(
+            accepted, candidate.pressure_gradient, current_gradient
         )
-        output = _stokes_output(following)
+        following_nonlinear = jax.lax.cond(
+            accepted,
+            lambda _: dynamics.nonlinear(time + step, candidate.velocity, args),
+            lambda _: current_nonlinear,
+            operand=None,
+        )
+        next_status = jnp.where(
+            cumulative_valid,
+            jnp.where(
+                candidate.successful,
+                jnp.asarray(CHANNEL_FLOW_SUCCESS, dtype=jnp.int32),
+                jnp.asarray(CHANNEL_FLOW_STOKES_FAILURE, dtype=jnp.int32),
+            ),
+            latched_status,
+        )
+        next_carry = (
+            jnp.where(accepted, current, previous),
+            following_velocity,
+            jnp.where(accepted, current_nonlinear, previous_nonlinear),
+            following_nonlinear,
+            following_pressure,
+            following_gradient,
+            accepted,
+            next_status,
+        )
+        diagnostics = candidate.diagnostics
+        output = (
+            following_velocity,
+            following_pressure,
+            following_gradient,
+            diagnostics.momentum_constraint_residual,
+            diagnostics.divergence_norm,
+            diagnostics.wall_residual,
+            diagnostics.pressure_gauge_residual,
+            diagnostics.bulk_velocity,
+            dynamics.state_diagnostics(following_velocity).kinetic_energy,
+            accepted,
+            next_status,
+        )
         return next_carry, output
 
-    bdf2 = dynamics.prepare_stokes(3.0 / (2.0 * step))
-    first_output = _stokes_output(first)
     if int(saved.size) > 2:
         _, scanned = jax.lax.scan(
             advance,
-            (initial, first.velocity, nonlinear_initial, nonlinear_first),
+            (
+                initial,
+                first_velocity,
+                nonlinear_initial,
+                nonlinear_first,
+                first_pressure,
+                first_gradient,
+                first_valid,
+                first_status,
+            ),
             saved[1:-1],
         )
-        advanced_velocity = jnp.concatenate(
-            (first.velocity[None, ...], scanned[0]), axis=0
-        )
-        advanced_pressure = jnp.concatenate(
-            (first.pressure[None, ...], scanned[1]), axis=0
-        )
-        advanced_gradient = jnp.concatenate(
-            (first.pressure_gradient[None, ...], scanned[2]), axis=0
-        )
-        diagnostic_values = tuple(
-            jnp.concatenate(
-                (first_output[index + 3][None, ...], scanned[index + 3]),
-                axis=0,
-            )
-            for index in range(6)
+        advanced = tuple(
+            jnp.concatenate((first_output[index][None, ...], scanned[index]), axis=0)
+            for index in range(len(first_output))
         )
     else:
-        advanced_velocity = first.velocity[None, ...]
-        advanced_pressure = first.pressure[None, ...]
-        advanced_gradient = first.pressure_gradient[None, ...]
-        diagnostic_values = tuple(
-            first_output[index + 3][None, ...] for index in range(6)
-        )
-    initial_pressure = jnp.zeros(dynamics.discretization.modal_shape, dtype=initial.dtype)
-    initial_gradient = jnp.full(
-        (2,),
-        jnp.nan,
-        dtype=initial.real.dtype,
-    )
-    initial_valid = jnp.all(jnp.isfinite(initial))
+        advanced = tuple(value[None, ...] for value in first_output)
+
     diagnostics = ChannelFlowDiagnosticsHistory(
         stokes_residual=jnp.concatenate(
-            (
-                jnp.asarray([jnp.nan], dtype=diagnostic_values[0].dtype),
-                diagnostic_values[0],
-            ),
-            axis=0,
+            (jnp.asarray([jnp.nan], dtype=advanced[3].dtype), advanced[3]), axis=0
         ),
         divergence_norm=jnp.concatenate(
-            (
-                jnp.asarray([jnp.nan], dtype=diagnostic_values[1].dtype),
-                diagnostic_values[1],
-            ),
-            axis=0,
+            (initial_evidence.divergence_norm[None], advanced[4]), axis=0
         ),
         wall_residual=jnp.concatenate(
-            (
-                jnp.asarray([jnp.nan], dtype=diagnostic_values[2].dtype),
-                diagnostic_values[2],
-            ),
-            axis=0,
+            (initial_evidence.wall_residual[None], advanced[5]), axis=0
         ),
         pressure_gauge_residual=jnp.concatenate(
-            (
-                jnp.asarray([jnp.nan], dtype=diagnostic_values[3].dtype),
-                diagnostic_values[3],
-            ),
-            axis=0,
+            (jnp.asarray([jnp.nan], dtype=advanced[6].dtype), advanced[6]), axis=0
         ),
         bulk_velocity=jnp.concatenate(
-            (jnp.full((1, 2), jnp.nan, dtype=initial.dtype), diagnostic_values[4]),
+            (jnp.full((1, 2), jnp.nan, dtype=initial.real.dtype), advanced[7]),
             axis=0,
         ),
-        valid=jnp.concatenate((initial_valid[None], diagnostic_values[5]), axis=0),
+        kinetic_energy=jnp.concatenate(
+            (initial_evidence.kinetic_energy[None], advanced[8]), axis=0
+        ),
+        valid=jnp.concatenate((initial_valid[None], advanced[9]), axis=0),
+        status=jnp.concatenate((initial_status[None], advanced[10]), axis=0),
     )
     return ChannelFlowSolution(
         times=saved,
-        velocity=jnp.concatenate((initial[None, ...], advanced_velocity), axis=0),
-        pressure=jnp.concatenate(
-            (initial_pressure[None, ...], advanced_pressure), axis=0
-        ),
+        velocity=jnp.concatenate((initial[None, ...], advanced[0]), axis=0),
+        pressure=jnp.concatenate((initial_pressure[None, ...], advanced[1]), axis=0),
         pressure_gradient=jnp.concatenate(
-            (initial_gradient[None, ...], advanced_gradient), axis=0
+            (initial_gradient[None, ...], advanced[2]), axis=0
         ),
         diagnostics=diagnostics,
         method=selected,
         dynamics=dynamics,
         solver_id=canonical_fingerprint(
             {
-                "kind": "channel-sbdf2-solve-v1",
+                "kind": "channel-sbdf2-solve-v2",
                 "method": selected.method_id,
                 "dynamics": dynamics.compilation_id,
                 "step_size": float(durations[0]),
                 "steps": int(saved.size) - 1,
+                "failure_policy": "retain-last-accepted",
             }
         ),
     )
 
 
-def _stokes_output(result, /):
-    diagnostics = result.diagnostics
-    return (
-        result.velocity,
-        result.pressure,
-        result.pressure_gradient,
-        diagnostics.momentum_constraint_residual,
-        diagnostics.divergence_norm,
-        diagnostics.wall_residual,
-        diagnostics.pressure_gauge_residual,
-        diagnostics.bulk_velocity,
-        result.successful,
-    )
 
 
 __all__ = [
+    "CHANNEL_FLOW_INITIAL_CONSTRAINT",
+    "CHANNEL_FLOW_STOKES_FAILURE",
+    "CHANNEL_FLOW_SUCCESS",
     "ChannelFlowDiagnosticsHistory",
     "ChannelFlowSolution",
     "ChannelSBDF2Method",

@@ -241,16 +241,18 @@ face contributions remain separate until conservative divergence.
 
 ## Incompressible projection
 
-`MACPressureProjectionPlan` stores normal velocity on directional faces and pressure in
-cells. Its divergence and gradient are a compatible pair. The pressure solve:
+`MACOperatorPlan` prepares geometry-only normal-face velocity and cell-pressure
+operators. `PreparedMACOperators` owns the compatible divergence, gradient,
+constant/variable-coefficient pressure actions, volume gauge, coefficient
+interpolation, weighted-adjoint evidence, and exact transform eligibility.
 
-- removes the volume-weighted compatibility component;
-- solves a matrix-free positive Laplacian;
-- enforces a volume-weighted zero-mean gauge;
-- reports divergence before and after correction and the pressure residual.
-
-`FunctionalPressureCorrectionPlan` composes a fixed number of predictor/projection
-correctors and returns an immutable residual history.
+`phydrax.solver.MACPressureProjectionPlan` owns pressure-solver execution. Uniform
+constant-coefficient operators may use an exact FFT/DCT transform after an
+independent action-identity check; general positive coefficients refresh one
+prepared `phydrax.linalg` problem. Every route removes the volume-weighted
+compatibility component, enforces a zero-mean pressure gauge, reports the original
+pressure residual and pre/post divergence, and retains incoming state on failure.
+The obsolete repeated predictor/projection correction loop has been removed.
 
 ## Stationary mapped grids
 

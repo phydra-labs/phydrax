@@ -81,6 +81,26 @@ class AbstractNumericalFluxPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
+class AbstractSymmetricTwoPointFluxPlan(AbstractNumericalFluxPlan):
+    """Symmetric consistent flux reusable in interface and volume methods."""
+
+    symmetric: bool = eqx.field(static=True)
+    consistent: bool = eqx.field(static=True)
+
+    @abc.abstractmethod
+    def two_point_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+        /,
+    ) -> Array:
+        raise NotImplementedError
+
+
+
 class RusanovFluxPlan(AbstractNumericalFluxPlan):
     """Local Lax–Friedrichs flux with optional smooth wave-speed magnitude."""
 
@@ -628,21 +648,31 @@ def _logarithmic_mean(left: Array, right: Array, /) -> Array:
     average = 0.5 * (left + right)
     difference = right - left
     log_difference = jnp.log(right) - jnp.log(left)
-    return jnp.where(
-        jnp.abs(difference) <= 1e-7 * jnp.abs(average),
-        average,
-        difference / log_difference,
+    near = jnp.abs(difference) <= 1e-7 * jnp.abs(average)
+    safe_difference = jnp.where(near, jnp.ones_like(difference), difference)
+    safe_log_difference = jnp.where(
+        near, jnp.ones_like(log_difference), log_difference
     )
+    ratio = safe_difference / safe_log_difference
+    return jnp.where(near, average, ratio)
 
 
-class EntropyConservativeEulerFluxPlan(AbstractNumericalFluxPlan):
-    """Chandrashekar-type entropy-conservative Euler flux."""
+class EntropyConservativeEulerFluxPlan(AbstractSymmetricTwoPointFluxPlan):
+    """Chandrashekar-type symmetric entropy-conservative Euler flux."""
 
     def __init__(self):
+        self.symmetric = True
+        self.consistent = True
         self.differentiability = "smooth_discrete"
-        self.flux_id = canonical_fingerprint({"kind": "entropy-conservative-euler-flux"})
+        self.flux_id = canonical_fingerprint(
+            {
+                "kind": "entropy-conservative-euler-flux-v2",
+                "symmetric": True,
+                "consistent": True,
+            }
+        )
 
-    def face_flux(
+    def two_point_flux(
         self,
         system: Any,
         left: Array,
@@ -650,7 +680,7 @@ class EntropyConservativeEulerFluxPlan(AbstractNumericalFluxPlan):
         axis: int,
         args: Any = None,
         /,
-    ) -> NumericalFluxResult:
+    ) -> Array:
         del args
         axis_ = int(axis)
         if system.component_count != system.dimension + 2:
@@ -679,10 +709,21 @@ class EntropyConservativeEulerFluxPlan(AbstractNumericalFluxPlan):
         energy_flux = mass_flux * (
             internal_energy - 0.5 * jnp.sum(velocity_square_average, axis=-1)
         ) + jnp.sum(velocity_average * momentum_flux, axis=-1)
-        flux = jnp.concatenate(
+        return jnp.concatenate(
             (mass_flux[..., None], momentum_flux, energy_flux[..., None]), axis=-1
         )
-        speed = system.max_wave_speed(left, right, axis_, None)
+
+    def face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        flux = self.two_point_flux(system, left, right, axis, args)
+        speed = system.max_wave_speed(left, right, int(axis), args)
         return NumericalFluxResult(flux, speed)
 
 
@@ -731,6 +772,7 @@ class EntropyStableEulerFluxPlan(AbstractNumericalFluxPlan):
 
 __all__ = [
     "AbstractNumericalFluxPlan",
+    "AbstractSymmetricTwoPointFluxPlan",
     "EntropyConservativeEulerFluxPlan",
     "EntropyStableEulerFluxPlan",
     "HLLCFluxPlan",
