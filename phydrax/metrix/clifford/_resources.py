@@ -62,6 +62,16 @@ class CliffordResourceBudget(StrictModule, NonTrainableState):
                 f"{self.maximum_blades}."
             )
 
+    def admit_product_pairs(self, pair_count: int, /) -> None:
+        count = int(pair_count)
+        if count < 0:
+            raise ValueError("Clifford product pair count must be nonnegative.")
+        if count > self.maximum_product_terms:
+            raise ValueError(
+                f"Clifford product enumeration requests {count} blade pairs; budget "
+                f"allows {self.maximum_product_terms}."
+            )
+
     def admit_product(
         self,
         term_count: int,

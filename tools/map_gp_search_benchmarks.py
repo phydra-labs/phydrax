@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -278,7 +280,7 @@ def _design_trace(problem, *, budget, key, design, method):
         objective_evaluations=budget,
         proposal_seconds=proposal_seconds,
         objective_seconds=objective_seconds,
-        metadata={},
+        metadata={"proposal_evaluations": budget - 1},
     )
 
 
@@ -354,6 +356,7 @@ def _gp_trace(problem, *, budget, key):
         metadata={
             "fallback_count": evidence.fallback_count,
             "surrogate_failure_count": evidence.surrogate_failure_count,
+            "proposal_evaluations": budget - 1,
         },
     )
 
@@ -378,13 +381,21 @@ def _record(problem, trace, *, budget, seed, elapsed, perform_local):
         local_valid, local_objective = _local_refine(problem, trace.best_vector)
     else:
         local_valid, local_objective = None, None
+    proposal_count = int(
+        trace.metadata.get(
+            "proposal_evaluations",
+            max(trace.objective_evaluations - 1, 1),
+        )
+    )
     proposal_per_evaluation = (
         None
         if trace.proposal_seconds is None
-        else trace.proposal_seconds / max(1, budget - 8)
+        else trace.proposal_seconds / max(1, proposal_count)
     )
     objective_per_evaluation = (
-        None if trace.objective_seconds is None else trace.objective_seconds / budget
+        None
+        if trace.objective_seconds is None
+        else trace.objective_seconds / max(1, trace.objective_evaluations)
     )
     return {
         "problem": problem.name,
@@ -660,6 +671,31 @@ def _gate(records, summaries, budget, overhead_benchmark):
     }
 
 
+def _source_provenance() -> dict[str, object]:
+    root = Path(__file__).resolve().parents[1]
+    revision = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    diff = subprocess.run(
+        ("git", "diff", "--binary", "HEAD"),
+        cwd=root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    return {
+        "git_revision": revision,
+        "working_tree_clean": not bool(diff),
+        "working_tree_diff_sha256": hashlib.sha256(diff).hexdigest(),
+        "benchmark_source_sha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
+    }
+
+
 def run_benchmark(arguments):
     if arguments.seeds < 1:
         raise ValueError("--seeds must be positive.")
@@ -752,6 +788,7 @@ def run_benchmark(arguments):
             "device": jax.devices()[0].device_kind,
             "x64": bool(jax.config.x64_enabled),
         },
+        "source_provenance": _source_provenance(),
         "overhead_benchmark": overhead_benchmark,
         "gate": gate,
         "summaries": summaries,

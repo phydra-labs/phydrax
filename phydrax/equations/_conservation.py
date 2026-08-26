@@ -77,6 +77,7 @@ class ConservationProblemIR(StrictModule):
         | None
     )
     source: Any = eqx.field(static=True)
+    source_id: str | None = eqx.field(static=True)
     name: str = eqx.field(static=True)
     field_name: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -95,6 +96,7 @@ class ConservationProblemIR(StrictModule):
         /,
         *,
         source=None,
+        source_id: str | None = None,
         problem_id: str | None = None,
     ):
         name_ = str(name)
@@ -117,6 +119,11 @@ class ConservationProblemIR(StrictModule):
             )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
+        source_identifier = None if source_id is None else str(source_id)
+        if (source is None) != (source_identifier is None) or source_identifier == "":
+            raise ValueError(
+                "A source callable requires exactly one non-empty source_id."
+            )
         identifier = (
             canonical_fingerprint(
                 {
@@ -127,7 +134,7 @@ class ConservationProblemIR(StrictModule):
                     "boundaries": (
                         "periodic" if boundaries is None else boundaries.boundary_set_id
                     ),
-                    "source": None if source is None else repr(source),
+                    "source": source_identifier,
                 }
             )
             if problem_id is None
@@ -138,6 +145,7 @@ class ConservationProblemIR(StrictModule):
         self.system = system
         self.boundaries = boundaries
         self.source = source
+        self.source_id = source_identifier
         self.name = name_
         self.field_name = field
         self.problem_id = identifier
@@ -535,6 +543,7 @@ def compile_conservation_problem(
             method,
             problem.boundaries,
             source=problem.source,
+            source_id=problem.source_id,
             precision=precision,
             coupling=prepared_coupling,
         )
@@ -615,6 +624,7 @@ def compile_conservation_problem(
             method,
             problem.boundaries,
             source=problem.source,
+            source_id=problem.source_id,
             precision=precision,
         )
         return CompiledConservationProblem(problem, discretization, method, dynamics)
@@ -635,6 +645,7 @@ def compile_conservation_problem(
         bathymetry=bathymetry,
         precision=precision,
         source=problem.source,
+        source_id=problem.source_id,
         entropy_pair=entropy_pair,
     )
     return CompiledConservationProblem(problem, discretization, method, dynamics)

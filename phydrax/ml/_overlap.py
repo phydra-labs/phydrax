@@ -94,7 +94,25 @@ def _statistics(
     target_ = target_.astype(dtype)
     if prediction_.shape != intersection_.shape or target_.shape != intersection_.shape:
         raise ValueError("Overlap sufficient statistics must have identical shapes.")
-    return intersection_, prediction_, target_
+    scale = jnp.maximum(
+        1.0,
+        jnp.maximum(jnp.abs(prediction_), jnp.abs(target_)),
+    )
+    tolerance = 32.0 * jnp.finfo(dtype).eps * scale
+    valid = (
+        jnp.isfinite(intersection_)
+        & jnp.isfinite(prediction_)
+        & jnp.isfinite(target_)
+        & (intersection_ >= -tolerance)
+        & (prediction_ >= -tolerance)
+        & (target_ >= -tolerance)
+        & (intersection_ <= prediction_ + tolerance)
+        & (intersection_ <= target_ + tolerance)
+    )
+    return tuple(
+        jnp.where(valid, jnp.maximum(value, 0.0), jnp.nan)
+        for value in (intersection_, prediction_, target_)
+    )
 
 
 def _empty_value(reference: Array, policy: OverlapEmptyPolicy, /) -> Array:

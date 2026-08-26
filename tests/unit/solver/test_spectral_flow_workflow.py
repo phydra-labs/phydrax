@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -57,6 +58,7 @@ def test_bounded_observer_reports_overflow_without_growing_state():
         lambda coordinate, state, args: state,
         (1,),
         3,
+        observer_id="bounded-state-observer",
     )
     result = phx.solver.observe_evolution_bounded(
         evolution,
@@ -69,6 +71,30 @@ def test_bounded_observer_reports_overflow_without_growing_state():
     assert bool(result.overflow)
     np.testing.assert_allclose(np.asarray(result.values[:, 0]), [1.0, 0.5, 0.25])
     np.testing.assert_allclose(np.asarray(result.final_state), [0.03125])
+
+
+def test_bounded_observer_latches_nonfinite_observable_status():
+    layout = phx.dynamics.StateLayout((1,))
+    system = phx.dynamics.DiscreteSystem(
+        lambda step, state, args: state,
+        state_layout=layout,
+        system_id="bounded-observer-nonfinite-map",
+    )
+    plan = phx.solver.BoundedEvolutionObservationPlan(
+        lambda coordinate, state, args: jnp.where(coordinate > 0.0, jnp.nan, state),
+        (1,),
+        3,
+        observer_id="bounded-nonfinite-observer",
+    )
+    result = phx.solver.observe_evolution_bounded(
+        phx.dynamics.DiscreteEvolution(system),
+        jnp.asarray([1.0]),
+        jnp.arange(3.0),
+        plan,
+    )
+
+    assert not bool(result.final_valid)
+    assert int(result.final_status) == phx.solver.OBSERVATION_NONFINITE
 
 
 def test_spectral_seed_and_fixed_step_checkpoint_roundtrip(tmp_path):
@@ -85,6 +111,19 @@ def test_spectral_seed_and_fixed_step_checkpoint_roundtrip(tmp_path):
         restartable=True,
         extra={"constraint": "mean-zero"},
     )
+    with pytest.raises(ValueError, match="artifact_id"):
+        phx.solver.SpectralStateArtifact(
+            state,
+            0.5,
+            5,
+            discretization_id="spectral-space",
+            compilation_id="compiled-flow",
+            method_id="etdrk4",
+            source_hash="problem-source",
+            step_size=0.1,
+            restartable=True,
+            artifact_id="0" * 64,
+        )
     path = phx.solver.write_spectral_state_artifact(
         tmp_path / "state.phx",
         artifact,

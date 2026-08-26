@@ -15,7 +15,19 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..linalg import ArraySpace, DiagonalPairing
+from ..linalg import (
+    ArraySpace,
+    DenseCholesky,
+    DenseLinearOperator,
+    DiagonalPairing,
+    FailurePolicy,
+    HermitianSpectrum,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorPairing,
+    OperatorProperties,
+    prepare,
+)
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -203,31 +215,73 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         )
         spaces = []
         measures = []
-        for degree, (entity_set, star, primal_value) in enumerate(
-            zip(topology.entity_sets, stars, primal, strict=True)
+        for degree, (entity_set, star, matrix, primal_value) in enumerate(
+            zip(topology.entity_sets, stars, matrices, primal, strict=True)
         ):
             layout = EntityDofLayout(
                 entity_set.entity_set_id,
                 entity_set.count,
                 entity_set.count,
             )
-            pairing = DiagonalPairing(star)
+            coordinate_space_id = canonical_fingerprint(
+                {
+                    "kind": "cochain-coordinate-space",
+                    "support": support.support_id,
+                    "degree": degree,
+                }
+            )
+            if matrix is None:
+                vector_space = ArraySpace(
+                    (entity_set.count,),
+                    dtype=star.dtype,
+                    pairing=DiagonalPairing(star),
+                    space_id=coordinate_space_id,
+                )
+            else:
+                euclidean_space = ArraySpace(
+                    (entity_set.count,),
+                    dtype=matrix.dtype,
+                    space_id=f"{coordinate_space_id}:euclidean",
+                )
+                riesz = DenseLinearOperator(
+                    matrix,
+                    source=euclidean_space,
+                    target=euclidean_space,
+                    properties=OperatorProperties(
+                        self_adjoint=True,
+                        positive_definite=True,
+                        evidence={
+                            "self_adjoint": "construction",
+                            "positive_definite": "construction",
+                        },
+                    ),
+                    operator_id=f"{coordinate_space_id}:hodge-riesz",
+                )
+                prepared_inverse = prepare(
+                    LinearSystem(
+                        riesz,
+                        problem_id=f"{coordinate_space_id}:hodge-system",
+                    ),
+                    LinearSolvePolicy(
+                        DenseCholesky(),
+                        failure=FailurePolicy("error"),
+                    ),
+                )
+                vector_space = ArraySpace(
+                    (entity_set.count,),
+                    dtype=matrix.dtype,
+                    pairing=OperatorPairing(
+                        riesz,
+                        prepared_inverse=prepared_inverse,
+                    ),
+                    space_id=coordinate_space_id,
+                )
             spaces.append(
                 DiscreteFieldSpace(
                     f"cochain_{degree}",
                     support.support_id,
                     layout,
-                    ArraySpace(
-                        (entity_set.count,),
-                        pairing=pairing,
-                        space_id=canonical_fingerprint(
-                            {
-                                "kind": "cochain-coordinate-space",
-                                "support": support.support_id,
-                                "degree": degree,
-                            }
-                        ),
-                    ),
+                    vector_space,
                     representation="cochain",
                     conformity="cochain",
                 )
@@ -371,8 +425,14 @@ class CochainDiscretization(AbstractPreparedDiscretization):
                 atol=tolerance,
             ):
                 raise ValueError(f"hodge_matrices[{degree}] must be Hermitian.")
-            eigenvalues = np.linalg.eigvalsh(0.5 * (matrix + matrix.conj().T))
-            if float(eigenvalues[0]) <= tolerance:
+            spectrum = HermitianSpectrum(
+                jnp.asarray(matrix),
+                tolerance=float(tolerance),
+            )
+            if (
+                not bool(spectrum.valid)
+                or float(spectrum.minimum_eigenvalue) <= tolerance
+            ):
                 raise ValueError(f"hodge_matrices[{degree}] must be positive definite.")
             matrices.append(jnp.asarray(matrix))
         return tuple(matrices)
@@ -458,7 +518,11 @@ class CochainDiscretization(AbstractPreparedDiscretization):
             raise ValueError("Exterior derivative degree must be below max_degree.")
         source = jnp.where(self.active_mask(degree_, boundary_policy), value, 0)
         output = self.topology.incidences[degree_].exterior_derivative().mv(source)
-        return jnp.where(self.active_mask(degree_ + 1, boundary_policy), output, 0)
+        return jnp.where(
+            self.active_mask(degree_ + 1, boundary_policy),
+            output,
+            0,
+        )
 
     def hodge_metric(self, degree: int, /) -> Array:
         """Return the full Hodge matrix when present, otherwise its diagonal."""
@@ -469,20 +533,22 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         return self.hodge_stars[degree_] if matrix is None else matrix
 
     def apply_hodge(self, degree: int, values: ArrayLike, /) -> Array:
-        """Apply the degree Hodge operator without materializing a diagonal."""
+        """Apply the degree Hodge Riesz operator, including its complexification."""
         degree_, value = self._values(degree, values)
-        matrix = self.hodge_matrices[degree_]
-        return self.hodge_stars[degree_] * value if matrix is None else matrix @ value
+        space = self.field_spaces[degree_].vector_space
+        if jnp.iscomplexobj(value):
+            return space.riesz(jnp.real(value)) + 1j * space.riesz(jnp.imag(value))
+        return space.riesz(value)
 
     def solve_hodge(self, degree: int, values: ArrayLike, /) -> Array:
-        """Apply the inverse degree Hodge operator."""
+        """Apply the prepared inverse Hodge Riesz operator and its complexification."""
         degree_, value = self._values(degree, values)
-        matrix = self.hodge_matrices[degree_]
-        return (
-            value / self.hodge_stars[degree_]
-            if matrix is None
-            else jnp.linalg.solve(matrix, value)
-        )
+        space = self.field_spaces[degree_].vector_space
+        if jnp.iscomplexobj(value):
+            return space.inverse_riesz(jnp.real(value)) + 1j * space.inverse_riesz(
+                jnp.imag(value)
+            )
+        return space.inverse_riesz(value)
 
     def codifferential(
         self,

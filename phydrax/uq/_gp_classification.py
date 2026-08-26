@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from operator import index
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -25,7 +27,15 @@ class BernoulliGaussianProcessLikelihood(StrictModule):
     def log_probability(self, observation: ArrayLike, latent: ArrayLike, /) -> Array:
         y = jnp.asarray(observation)
         f = jnp.asarray(latent)
-        return y * jax.nn.log_sigmoid(f) + (1.0 - y) * jax.nn.log_sigmoid(-f)
+        if y.shape != f.shape:
+            raise ValueError("Bernoulli observations and latent values must share shape.")
+        valid = jnp.isfinite(y) & jnp.isfinite(f) & ((y == 0) | (y == 1))
+        safe_y = jnp.where(valid, y, 0)
+        safe_f = jnp.where(valid, f, 0)
+        value = safe_y * jax.nn.log_sigmoid(safe_f) + (1.0 - safe_y) * jax.nn.log_sigmoid(
+            -safe_f
+        )
+        return jnp.where(valid, value, -jnp.inf)
 
 
 class CategoricalGaussianProcessLikelihood(StrictModule):
@@ -34,9 +44,12 @@ class CategoricalGaussianProcessLikelihood(StrictModule):
     class_count: int = eqx.field(static=True)
 
     def __init__(self, class_count: int):
-        if int(class_count) < 2:
+        if isinstance(class_count, bool):
+            raise TypeError("class_count must be an integer.")
+        count = index(class_count)
+        if count < 2:
             raise ValueError("class_count must be at least two.")
-        self.class_count = int(class_count)
+        self.class_count = count
 
     def probabilities(self, latent: ArrayLike, /) -> Array:
         logits = jnp.asarray(latent)
@@ -45,11 +58,26 @@ class CategoricalGaussianProcessLikelihood(StrictModule):
         return jax.nn.softmax(logits, axis=-1)
 
     def log_probability(self, observation: ArrayLike, latent: ArrayLike, /) -> Array:
-        labels = jnp.asarray(observation, dtype=jnp.int32)
+        raw_labels = jnp.asarray(observation)
         logits = jnp.asarray(latent)
-        return jnp.take_along_axis(
-            jax.nn.log_softmax(logits, axis=-1), labels[..., None], axis=-1
+        if logits.ndim == 0 or raw_labels.shape != logits.shape[:-1]:
+            raise ValueError("Categorical labels must match the latent batch shape.")
+        labels_value = raw_labels.astype(jnp.result_type(raw_labels, 0.0))
+        valid = (
+            jnp.all(jnp.isfinite(logits), axis=-1)
+            & jnp.isfinite(labels_value)
+            & (labels_value >= 0)
+            & (labels_value < self.class_count)
+            & (labels_value == jnp.floor(labels_value))
+        )
+        labels = jnp.where(valid, labels_value, 0).astype(jnp.int32)
+        safe_logits = jnp.where(valid[..., None], logits, 0)
+        selected = jnp.take_along_axis(
+            jax.nn.log_softmax(safe_logits, axis=-1),
+            labels[..., None],
+            axis=-1,
         )[..., 0]
+        return jnp.where(valid, selected, -jnp.inf)
 
 
 class BernoulliGaussianProcessPosterior(StrictModule):
@@ -220,9 +248,15 @@ def condition_categorical_gaussian_process(
     curvature_floor: ArrayLike = 1e-6,
 ) -> CategoricalGaussianProcessPosterior:
     """Fit fixed-capacity one-vs-rest Laplace sites sharing one GP kernel state."""
-    labels = jnp.asarray(observations, dtype=jnp.int32)
-    if int(class_count) < 2:
+    raw_labels = jnp.asarray(observations)
+    if isinstance(class_count, bool):
+        raise TypeError("class_count must be an integer.")
+    classes = index(class_count)
+    if classes < 2:
         raise ValueError("class_count must be at least two.")
+    labels_value = raw_labels.astype(jnp.result_type(raw_labels, 0.0))
+    exact_labels = jnp.isfinite(labels_value) & (labels_value == jnp.floor(labels_value))
+    labels = jnp.where(exact_labels, labels_value, 0).astype(jnp.int32)
     active = (
         jnp.ones_like(labels, dtype=bool)
         if observation_weight is None
@@ -230,7 +264,7 @@ def condition_categorical_gaussian_process(
     )
     labels = eqx.error_if(
         labels,
-        jnp.any(active & ((labels < 0) | (labels >= class_count))),
+        jnp.any(active & (~exact_labels | (labels < 0) | (labels >= classes))),
         "Positive-weight categorical labels exceed the configured class capacity.",
     )
     labels = jnp.where(active, labels, 0)
@@ -243,7 +277,7 @@ def condition_categorical_gaussian_process(
             iterations=iterations,
             curvature_floor=curvature_floor,
         )
-        for class_index in range(int(class_count))
+        for class_index in range(classes)
     )
     return CategoricalGaussianProcessPosterior(factors)
 

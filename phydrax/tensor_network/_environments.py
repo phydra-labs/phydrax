@@ -11,30 +11,36 @@ from jaxtyping import Array, ArrayLike
 from ._core import LocallyPurifiedDensity, MatrixProductState
 
 
+def _mps_inner_accumulation(
+    left: MatrixProductState,
+    right: MatrixProductState,
+    /,
+) -> Array:
+    left_tensors = tuple(left.precision.accumulation(value) for value in left.tensors)
+    right_tensors = tuple(right.precision.accumulation(value) for value in right.tensors)
+    environment = jnp.ones(
+        (1, 1), dtype=jnp.result_type(left_tensors[0], right_tensors[0])
+    )
+    for left_tensor, right_tensor in zip(left_tensors, right_tensors, strict=True):
+        environment = oe.contract(
+            "ab,api,bpj->ij",
+            environment,
+            jnp.conj(left_tensor),
+            right_tensor,
+        )
+    return environment.reshape(())
+
+
 def mps_inner(left: MatrixProductState, right: MatrixProductState, /) -> Array:
     if left.physical_dimensions != right.physical_dimensions:
         raise ValueError("MPS physical dimensions must match.")
     if left.precision.policy_id != right.precision.policy_id:
         raise ValueError("MPS precision policies must match.")
-    left_tensors = left.precision.contraction(left.tensors)
-    right_tensors = right.precision.contraction(right.tensors)
-    environment = jnp.ones(
-        (1, 1), dtype=jnp.result_type(left_tensors[0], right_tensors[0])
-    )
-    for left_tensor, right_tensor in zip(left_tensors, right_tensors, strict=True):
-        environment = left.precision.accumulation(
-            oe.contract(
-                "ab,api,bpj->ij",
-                environment,
-                jnp.conj(left_tensor),
-                right_tensor,
-            )
-        )
-    return left.precision.output(environment.reshape(()))
+    return left.precision.output(_mps_inner_accumulation(left, right))
 
 
 def mps_norm_squared(state: MatrixProductState, /) -> Array:
-    return jnp.real(mps_inner(state, state))
+    return state.precision.decision(jnp.real(_mps_inner_accumulation(state, state)))
 
 
 def mps_one_site_expectation(
@@ -46,17 +52,17 @@ def mps_one_site_expectation(
     site_ = int(site)
     if not 0 <= site_ < state.site_count:
         raise ValueError("One-site expectation site is outside the MPS.")
-    value = state.precision.contraction(jnp.asarray(operator))
+    value = state.precision.accumulation(jnp.asarray(operator))
     if value.shape != (
         state.physical_dimensions[site_],
         state.physical_dimensions[site_],
     ):
         raise ValueError("One-site operator shape does not match the MPS.")
-    tensors = state.precision.contraction(state.tensors)
+    tensors = tuple(state.precision.accumulation(value) for value in state.tensors)
     environment = jnp.ones((1, 1), dtype=tensors[0].dtype)
     for index, tensor in enumerate(tensors):
         if index == site_:
-            updated = oe.contract(
+            environment = oe.contract(
                 "ab,api,pq,bqj->ij",
                 environment,
                 jnp.conj(tensor),
@@ -64,24 +70,21 @@ def mps_one_site_expectation(
                 tensor,
             )
         else:
-            updated = oe.contract(
+            environment = oe.contract(
                 "ab,api,bpj->ij", environment, jnp.conj(tensor), tensor
             )
-        environment = state.precision.accumulation(updated)
     return state.precision.output(environment.reshape(()))
 
 
 def lpdo_raw_trace(state: LocallyPurifiedDensity, /) -> Array:
-    tensors = state.precision.contraction(state.tensors)
+    tensors = tuple(state.precision.accumulation(value) for value in state.tensors)
     environment = jnp.ones((1, 1), dtype=tensors[0].dtype)
     for tensor in tensors:
-        environment = state.precision.accumulation(
-            oe.contract(
-                "ab,apkr,bpks->rs",
-                environment,
-                jnp.conj(tensor),
-                tensor,
-            )
+        environment = oe.contract(
+            "ab,apkr,bpks->rs",
+            environment,
+            jnp.conj(tensor),
+            tensor,
         )
     return state.precision.decision(jnp.real(environment.reshape(())))
 
@@ -110,12 +113,12 @@ def lpdo_one_site_reduced(state: LocallyPurifiedDensity, site: int, /) -> Array:
 def _lpdo_one_site_expectation(
     state: LocallyPurifiedDensity, site: int, operator: Array, /
 ) -> Array:
-    tensors = state.precision.contraction(state.tensors)
-    operator_ = state.precision.contraction(operator)
+    tensors = tuple(state.precision.accumulation(value) for value in state.tensors)
+    operator_ = state.precision.accumulation(operator)
     environment = jnp.ones((1, 1), dtype=tensors[0].dtype)
     for index, tensor in enumerate(tensors):
         if index == site:
-            updated = oe.contract(
+            environment = oe.contract(
                 "ab,apkr,pq,bqks->rs",
                 environment,
                 jnp.conj(tensor),
@@ -123,13 +126,12 @@ def _lpdo_one_site_expectation(
                 tensor,
             )
         else:
-            updated = oe.contract(
+            environment = oe.contract(
                 "ab,apkr,bpks->rs",
                 environment,
                 jnp.conj(tensor),
                 tensor,
             )
-        environment = state.precision.accumulation(updated)
     return state.precision.output(environment.reshape(()))
 
 

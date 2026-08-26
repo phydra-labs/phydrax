@@ -858,10 +858,28 @@ class OperatorOutputSpec(StrictModule):
             raise ValueError(
                 f"Operator prediction shape must be {expected}; got {array.shape}."
             )
-        if self.classification is not None and not jnp.issubdtype(
-            array.dtype, jnp.inexact
-        ):
-            raise TypeError("Operator classification predictions must be inexact logits.")
+        classification = self.classification
+        if classification is not None:
+            if not jnp.issubdtype(array.dtype, jnp.inexact):
+                raise TypeError(
+                    "Operator classification predictions must be inexact logits."
+                )
+            query = (
+                batch.require_single_query()
+                if query_name is None
+                else batch.query(query_name)
+            )
+            mask = query.mask_array(case_shape=batch.case_shape)
+            finite = (
+                jnp.all(jnp.isfinite(array), axis=-1)
+                if self.channel_shape
+                else jnp.isfinite(array)
+            )
+            array = eqx.error_if(
+                array,
+                jnp.any(mask & ~finite),
+                "Active operator classification logits must be finite.",
+            )
         return array
 
     def validate_target(
@@ -880,6 +898,12 @@ class OperatorOutputSpec(StrictModule):
             )
         classification = self.classification
         if classification is not None:
+            query = (
+                batch.require_single_query()
+                if query_name is None
+                else batch.query(query_name)
+            )
+            mask = query.mask_array(case_shape=batch.case_shape)
             if classification.target == "hard":
                 if not (
                     jnp.issubdtype(array.dtype, jnp.integer)
@@ -889,8 +913,27 @@ class OperatorOutputSpec(StrictModule):
                         "Hard operator classification targets must retain an integer "
                         "or Boolean dtype."
                     )
-            elif not jnp.issubdtype(array.dtype, jnp.inexact):
-                raise TypeError("Soft operator classification targets must be inexact.")
+                if classification.kind in ("binary", "multilabel"):
+                    valid = (array == 0) | (array == 1)
+                else:
+                    valid = (array >= 0) & (array < classification.class_count)
+            else:
+                if not jnp.issubdtype(array.dtype, jnp.inexact):
+                    raise TypeError(
+                        "Soft operator classification targets must be inexact."
+                    )
+                valid = jnp.isfinite(array) & (array >= 0.0) & (array <= 1.0)
+                if classification.kind == "multiclass":
+                    valid = jnp.all(valid, axis=-1) & (
+                        jnp.abs(jnp.sum(array, axis=-1) - 1.0) <= 1e-6
+                    )
+            if valid.ndim > mask.ndim:
+                mask = mask.reshape(mask.shape + (1,) * (valid.ndim - mask.ndim))
+            array = eqx.error_if(
+                array,
+                jnp.any(mask & ~valid),
+                "Active operator classification targets violate their declared semantics.",
+            )
         return array
 
     def validate(

@@ -53,22 +53,37 @@ class SpectralStateArtifact(StrictModule):
         artifact_id: str | None = None,
     ):
         state_ = jnp.asarray(state)
-        time_ = jnp.asarray(time, dtype=float)
-        step_ = jnp.asarray(step, dtype=jnp.int64)
-        step_size_ = None if step_size is None else jnp.asarray(step_size, dtype=float)
+        raw_time = jnp.asarray(time)
+        raw_step = jnp.asarray(step)
+        raw_step_size = None if step_size is None else jnp.asarray(step_size)
+        if jnp.iscomplexobj(raw_time) or (
+            raw_step_size is not None and jnp.iscomplexobj(raw_step_size)
+        ):
+            raise TypeError("Spectral artifact time and step_size must be real.")
+        if raw_step.shape != () or not jnp.issubdtype(raw_step.dtype, jnp.signedinteger):
+            raise TypeError("Artifact step must be one signed integer scalar.")
+        time_ = raw_time.astype(jnp.result_type(raw_time.dtype, jnp.float32))
+        step_ = raw_step
+        step_size_ = (
+            None
+            if raw_step_size is None
+            else raw_step_size.astype(jnp.result_type(raw_step_size.dtype, jnp.float32))
+        )
         if not jnp.issubdtype(state_.dtype, jnp.complexfloating):
             raise TypeError("Spectral artifact state must be full complex coefficients.")
         if state_.size < 1 or not bool(jnp.all(jnp.isfinite(state_))):
             raise ValueError("Spectral artifact state must be finite and nonempty.")
         if time_.shape != () or not bool(jnp.isfinite(time_)):
             raise ValueError("Artifact time must be one finite scalar.")
-        if step_.shape != () or int(step_) < 0:
-            raise ValueError("Artifact step must be one nonnegative integer.")
+        if int(step_) < 0:
+            raise ValueError("Artifact step must be nonnegative.")
         if step_size_ is not None and (
             step_size_.shape != ()
             or not bool(jnp.isfinite(step_size_) & (step_size_ > 0.0))
         ):
             raise ValueError("step_size must be one finite positive scalar or None.")
+        if not isinstance(restartable, (bool, np.bool_)):
+            raise TypeError("restartable must be Boolean.")
         if bool(restartable) != (step_size_ is not None):
             raise ValueError(
                 "restartable fixed-step artifacts require step_size, and seeds omit it."
@@ -85,25 +100,24 @@ class SpectralStateArtifact(StrictModule):
         if any(not value for value in identifiers):
             raise ValueError("Artifact provenance identifiers must be non-empty.")
         extra_ = {} if extra is None else dict(extra)
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "spectral-state-artifact-v1",
-                    "state": array_tree_fingerprint(np.asarray(state_)),
-                    "time": float(time_),
-                    "step": int(step_),
-                    "step_size": None if step_size_ is None else float(step_size_),
-                    "discretization": identifiers[0],
-                    "compilation": identifiers[1],
-                    "method": identifiers[2],
-                    "source_hash": identifiers[3],
-                    "restartable": bool(restartable),
-                    "extra": extra_,
-                }
-            )
-            if artifact_id is None
-            else str(artifact_id)
+        computed_id = canonical_fingerprint(
+            {
+                "kind": "spectral-state-artifact-v1",
+                "state": array_tree_fingerprint(state_),
+                "time": float(time_),
+                "step": int(step_),
+                "step_size": None if step_size_ is None else float(step_size_),
+                "discretization": identifiers[0],
+                "compilation": identifiers[1],
+                "method": identifiers[2],
+                "source_hash": identifiers[3],
+                "restartable": bool(restartable),
+                "extra": extra_,
+            }
         )
+        if artifact_id is not None and str(artifact_id) != computed_id:
+            raise ValueError("artifact_id does not match spectral artifact contents.")
+        identifier = computed_id
         if not identifier:
             raise ValueError("artifact_id must be non-empty.")
         self.state = state_
@@ -167,6 +181,11 @@ def read_spectral_state_artifact(
         raise ValueError("Unsupported spectral artifact schema version.")
     if set(arrays) != {"state"}:
         raise ValueError("Spectral artifact must contain exactly one state array.")
+    state = arrays["state"]
+    if list(state.shape) != manifest.get("state_shape"):
+        raise ValueError("Spectral artifact state shape does not match its manifest.")
+    if np.dtype(state.dtype).str != manifest.get("state_dtype"):
+        raise ValueError("Spectral artifact state dtype does not match its manifest.")
     discretization_id = str(manifest["discretization_id"])
     compilation_id = str(manifest["compilation_id"])
     if expected_discretization_id is not None and discretization_id != str(
@@ -177,9 +196,16 @@ def read_spectral_state_artifact(
         expected_compilation_id
     ):
         raise ValueError("Spectral artifact compilation identity does not match.")
-    restartable = bool(manifest["restartable"])
-    return SpectralStateArtifact(
-        arrays["state"],
+    restartable_value = manifest["restartable"]
+    if not isinstance(restartable_value, bool):
+        raise TypeError("Spectral artifact restartable manifest value must be Boolean.")
+    restartable = restartable_value
+    expected_kind = "spectral-fixed-step-checkpoint" if restartable else "spectral-seed"
+    if manifest.get("kind") != expected_kind:
+        raise ValueError("Spectral artifact kind and restartability disagree.")
+    stored_id = str(manifest["artifact_id"])
+    artifact = SpectralStateArtifact(
+        state,
         manifest["time"],
         manifest["step"],
         discretization_id=discretization_id,
@@ -189,8 +215,10 @@ def read_spectral_state_artifact(
         step_size=manifest["step_size"],
         restartable=restartable,
         extra=dict(manifest["extra"]),
-        artifact_id=str(manifest["artifact_id"]),
     )
+    if artifact.artifact_id != stored_id:
+        raise ValueError("Spectral artifact content fingerprint does not match.")
+    return artifact
 
 
 __all__ = [

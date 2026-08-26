@@ -10,7 +10,6 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
 
@@ -315,6 +314,11 @@ def _result_regularity(prepared: PreparedConicSensitivity, linear_result, /) -> 
     precision = prepared.linear_policy.precision
     if precision is not None and precision.condition_limit is not None:
         condition_ok = condition_ok & (condition <= precision.condition_limit)
+    evidence_finite = (
+        jnp.all(jnp.isfinite(linear_result.value), axis=-1)
+        & ~jnp.isnan(prepared.projection_margin)
+        & jnp.isfinite(prepared.root_residual_norm)
+    )
     return (
         prepared.forward_valid
         & prepared.projection_regular
@@ -322,6 +326,7 @@ def _result_regularity(prepared: PreparedConicSensitivity, linear_result, /) -> 
         & diagnostics.finite
         & diagnostics.converged
         & condition_ok
+        & evidence_finite
     )
 
 
@@ -394,8 +399,8 @@ def _lower_tangent(
         )
     else:
         tangent_quadratic = tangent.quadratic.reshape((count, variables, variables))
-        tangent_quadratic = 0.5 * (
-            tangent_quadratic + jnp.swapaxes(tangent_quadratic, -1, -2)
+        tangent_quadratic = 0.5 * tangent_quadratic + 0.5 * jnp.swapaxes(
+            tangent_quadratic, -1, -2
         )
     tangent_linear = tangent.linear.reshape((count, variables))
     tangent_matrix = tangent.constraint_matrix.reshape(
@@ -418,7 +423,7 @@ def _lower_tangent(
     tangent_rhs = jnp.concatenate(
         (
             tangent_rhs,
-            0.5 * (lower_tangent[:, fixed] + upper_tangent[:, fixed]),
+            0.5 * lower_tangent[:, fixed] + 0.5 * upper_tangent[:, fixed],
             -lower_tangent[:, lower],
             upper_tangent[:, upper],
         ),
@@ -441,7 +446,7 @@ def _pullback_data(
     fixed = jnp.asarray(prepared.fixed_indices, dtype=jnp.int32)
     lower = jnp.asarray(prepared.lower_indices, dtype=jnp.int32)
     upper = jnp.asarray(prepared.upper_indices, dtype=jnp.int32)
-    quadratic = 0.5 * (quadratic + jnp.swapaxes(quadratic, -1, -2))
+    quadratic = 0.5 * quadratic + 0.5 * jnp.swapaxes(quadratic, -1, -2)
     original_matrix = matrix[:, :original_constraints, :]
     original_rhs = rhs[:, :original_constraints]
     cursor = original_constraints
@@ -512,14 +517,32 @@ def prepare_conic_sensitivity(
         program.bounds,
         program.batch_shape,
         program.num_variables,
+        program.linear.dtype,
     )
-    fixed_indices = tuple(int(index) for index in fixed_array)
-    lower_indices = tuple(int(index) for index in lower_array)
-    upper_indices = tuple(int(index) for index in upper_array)
-    count = int(np.prod(program.batch_shape)) if program.batch_shape else 1
+    fixed_indices = tuple(int(value) for value in fixed_array)
+    lower_indices = tuple(int(value) for value in lower_array)
+    upper_indices = tuple(int(value) for value in upper_array)
+    count = math.prod(program.batch_shape) if program.batch_shape else 1
     variables = program.num_variables
     original_constraints = program.num_constraints
     dtype = program.linear.dtype
+    state_dimension = (
+        variables
+        + original_constraints
+        + len(fixed_indices)
+        + len(lower_indices)
+        + len(upper_indices)
+    )
+    jacobian_entries = count * state_dimension * state_dimension
+    jacobian_bytes = jacobian_entries * int(dtype.itemsize)
+    materialization = prepared.plan.policy.materialization
+    if (
+        jacobian_entries > materialization.max_entries
+        or jacobian_bytes > materialization.max_bytes
+    ):
+        raise ValueError(
+            "Conic sensitivity Jacobian exceeds the solve materialization budget."
+        )
     fixed = jnp.asarray(fixed_indices, dtype=jnp.int32)
     lower = jnp.asarray(lower_indices, dtype=jnp.int32)
     upper = jnp.asarray(upper_indices, dtype=jnp.int32)
@@ -539,7 +562,7 @@ def prepare_conic_sensitivity(
     rhs = jnp.concatenate(
         (
             rhs,
-            0.5 * (lower_values[:, fixed] + upper_values[:, fixed]),
+            0.5 * lower_values[:, fixed] + 0.5 * upper_values[:, fixed],
             -lower_values[:, lower],
             upper_values[:, upper],
         ),

@@ -4,16 +4,17 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, TypeAlias
-from uuid import uuid4
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._bounds import Bounds
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ._cones import NonnegativeCone, ProductCone, ZeroCone
 from ._policy import (
@@ -86,6 +87,13 @@ def _program_arrays(program: CanonicalProgram, /) -> tuple[Array, ...]:
         program.upper_bounds,
     )
     return arrays if program.quadratic is None else (program.quadratic, *arrays)
+
+
+def _program_numeric_fingerprint(program: CanonicalProgram, /) -> str:
+    arrays = _program_arrays(program)
+    if any(isinstance(value, jax.core.Tracer) for value in arrays):
+        return "traced-numeric-program"
+    return array_tree_fingerprint(arrays)
 
 
 def _validate_program_resources(
@@ -197,10 +205,24 @@ class PreparedConvexProgram(StrictModule):
             raise TypeError("template must be a ConvexProgramTemplate.")
         if _program_signature(program) != template.plan.problem_signature:
             raise ValueError("Program structure does not match the prepared template.")
-        version = jnp.asarray(numeric_version, dtype=jnp.int32)
-        if version.shape != ():
-            raise ValueError("numeric_version must be scalar.")
-        binding = uuid4().hex if numeric_binding_id is None else str(numeric_binding_id)
+        raw_version = jnp.asarray(numeric_version)
+        if raw_version.shape != () or not jnp.issubdtype(
+            raw_version.dtype, jnp.signedinteger
+        ):
+            raise TypeError("numeric_version must be one signed integer scalar.")
+        version = raw_version.astype(jnp.int32)
+        binding = (
+            canonical_fingerprint(
+                {
+                    "kind": "convex-program-numeric-binding",
+                    "structure": _program_signature(program),
+                    "arrays": _program_numeric_fingerprint(program),
+                    "instance": uuid.uuid4().hex,
+                }
+            )
+            if numeric_binding_id is None
+            else str(numeric_binding_id)
+        )
         if not binding:
             raise ValueError("numeric_binding_id must be non-empty.")
         self.program = program
@@ -247,8 +269,37 @@ class ConvexProgramExecution(StrictModule):
             raise ValueError(
                 "Execution result provenance does not match its numeric binding."
             )
-        self.result = result
-        self.numeric_version = jnp.asarray(numeric_version, dtype=jnp.int32)
+        raw_version = jnp.asarray(numeric_version)
+        if raw_version.shape != () or not jnp.issubdtype(
+            raw_version.dtype, jnp.signedinteger
+        ):
+            raise TypeError("numeric_version must be one signed integer scalar.")
+        iterations = jnp.asarray(result.iterations)
+        converged = jnp.asarray(result.backend_converged)
+        if (
+            iterations.shape != result.batch_shape
+            or not jnp.issubdtype(iterations.dtype, jnp.signedinteger)
+            or converged.shape != result.batch_shape
+            or converged.dtype != jnp.bool_
+        ):
+            raise TypeError(
+                "Result iterations/convergence must match the batch with integer/Boolean dtypes."
+            )
+        checked_iterations = eqx.error_if(
+            iterations,
+            jnp.any((iterations < 0) | (iterations > result.max_iterations)),
+            "Result iterations must lie within the declared solver limit.",
+        )
+        self.result = eqx.tree_at(
+            lambda value: value.iterations,
+            result,
+            checked_iterations,
+        )
+        self.numeric_version = eqx.error_if(
+            raw_version.astype(jnp.int32),
+            raw_version < 0,
+            "numeric_version must be non-negative.",
+        )
         self.plan_id = identifier
         self.numeric_binding_id = binding
 

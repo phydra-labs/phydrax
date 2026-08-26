@@ -129,8 +129,21 @@ def _handle_zero_measure(
     return jnp.where(measure > 0.0, values, jnp.zeros_like(values))
 
 
-def _reduce_cases(values: Array, reduction: OperatorCaseReduction, /) -> Array:
-    return jnp.mean(values) if reduction == "mean" else jnp.sum(values)
+def _reduce_cases(
+    values: Array,
+    reduction: OperatorCaseReduction,
+    /,
+    *,
+    active: Array | None = None,
+) -> Array:
+    if reduction == "sum":
+        return jnp.sum(values)
+    if active is None:
+        return jnp.mean(values)
+    included = jnp.asarray(active, dtype=bool)
+    safe = jnp.where(included, values, 0.0)
+    mass = jnp.sum(included)
+    return jnp.where(mass > 0, jnp.sum(safe) / mass, 0.0)
 
 
 def _reduce_pointwise(
@@ -159,7 +172,7 @@ def _reduce_pointwise(
             jnp.zeros_like(per_case),
         )
     per_case = _handle_zero_measure(per_case, measure, zero_measure)
-    return _reduce_cases(per_case, case_reduction)
+    return _reduce_cases(per_case, case_reduction, active=measure > 0.0)
 
 
 def _fingerprint(kind: str, values: dict[str, Any], /) -> str:
@@ -528,8 +541,13 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
             self.prediction_field,
             self.target_field,
         )
+        mask = query.mask_array(case_shape=prediction.case_shape)
+        logit_mask = (
+            mask[..., None] if self.classification.prediction_channel_shape else mask
+        )
+        safe_logits = jnp.where(logit_mask, logits, 0.0)
         probabilities = classification_probabilities(
-            logits,
+            safe_logits,
             kind=self.classification.kind,
             class_count=self.classification.class_count,
             thresholds=(
@@ -538,7 +556,6 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
                 else None
             ),
         )
-        mask = query.mask_array(case_shape=prediction.case_shape)
         raw_weights, measure, axes = _query_measure(query, prediction.case_shape)
         if self.support_reduction == "mean":
             broadcast_measure = measure.reshape(
@@ -672,7 +689,11 @@ class OperatorOverlapLoss(AbstractOperatorLossTerm):
                     jnp.asarray(fallback, dtype=weighted.dtype),
                 )
         per_case = _handle_zero_measure(1.0 - score, measure, self.zero_measure)
-        value = _reduce_cases(per_case, self.case_reduction)
+        value = _reduce_cases(
+            per_case,
+            self.case_reduction,
+            active=measure > 0.0,
+        )
         return jnp.asarray(self.weight, dtype=value.dtype) * value
 
     @property

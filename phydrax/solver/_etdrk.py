@@ -125,6 +125,8 @@ def solve_etdrk(
     if not isinstance(drift, SemilinearDrift):
         raise TypeError("drift must be a SemilinearDrift.")
     saved = jnp.asarray(times)
+    if jnp.iscomplexobj(saved):
+        raise TypeError("ETDRK times must be real-valued.")
     if saved.ndim != 1 or saved.size < 2:
         raise ValueError("ETDRK times must be a rank-one grid with at least two values.")
     saved_host = np.asarray(saved, dtype=float)

@@ -234,16 +234,30 @@ class MaxwellInterfaceJump(StrictModule):
     ):
         left = np.asarray(left_indices)
         right = np.asarray(right_indices)
-        if left.ndim != 1 or right.shape != left.shape:
-            raise ValueError("Interface trace indices must be paired rank-one arrays.")
-        if not np.issubdtype(left.dtype, np.integer) or not np.issubdtype(
-            right.dtype, np.integer
+        if (
+            left.ndim != 1
+            or right.shape != left.shape
+            or not np.issubdtype(left.dtype, np.signedinteger)
+            or not np.issubdtype(right.dtype, np.signedinteger)
+            or np.any(left < 0)
+            or np.any(right < 0)
+            or np.unique(left).size != left.size
+            or np.unique(right).size != right.size
         ):
-            raise TypeError("Interface trace indices must be integers.")
+            raise ValueError(
+                "Interface trace indices must be unique paired nonnegative signed "
+                "integers."
+            )
         orientation_ = jnp.broadcast_to(jnp.asarray(orientation), left.shape)
         jump_ = jnp.broadcast_to(jnp.asarray(jump), left.shape)
-        if bool(jnp.any(jnp.abs(orientation_) != 1.0)):
-            raise ValueError("Interface orientation coefficients must be ±1.")
+        if bool(
+            jnp.any(~jnp.isfinite(orientation_))
+            | jnp.any(jnp.abs(orientation_) != 1.0)
+            | jnp.any(~jnp.isfinite(jump_))
+        ):
+            raise ValueError(
+                "Interface orientations must be finite ±1 and jumps must be finite."
+            )
         self.left_indices = jnp.asarray(left, dtype=jnp.int32)
         self.right_indices = jnp.asarray(right, dtype=jnp.int32)
         self.orientation = orientation_
@@ -259,15 +273,31 @@ class MaxwellInterfaceJump(StrictModule):
         )
 
     def residual(self, left: ArrayLike, right: ArrayLike, /) -> Array:
-        left_ = jnp.asarray(left)[self.left_indices]
-        right_ = jnp.asarray(right)[self.right_indices]
-        return right_ - self.orientation * left_ - self.jump
+        left_value = jnp.asarray(left)
+        right_value = jnp.asarray(right)
+        if (
+            left_value.ndim != 1
+            or right_value.ndim != 1
+            or bool(jnp.any(self.left_indices >= left_value.size))
+            or bool(jnp.any(self.right_indices >= right_value.size))
+        ):
+            raise ValueError("Interface trace indices exceed the supplied traces.")
+        selected_left = left_value[self.left_indices]
+        selected_right = right_value[self.right_indices]
+        return selected_right - self.orientation * selected_left - self.jump
 
     def enforce(self, left: ArrayLike, right: ArrayLike, /) -> tuple[Array, Array]:
-        left_ = jnp.asarray(left)
-        right_ = jnp.asarray(right)
-        target = self.orientation * left_[self.left_indices] + self.jump
-        return left_, right_.at[self.right_indices].set(target)
+        left_value = jnp.asarray(left)
+        right_value = jnp.asarray(right)
+        if (
+            left_value.ndim != 1
+            or right_value.ndim != 1
+            or bool(jnp.any(self.left_indices >= left_value.size))
+            or bool(jnp.any(self.right_indices >= right_value.size))
+        ):
+            raise ValueError("Interface trace indices exceed the supplied traces.")
+        target = self.orientation * left_value[self.left_indices] + self.jump
+        return left_value, right_value.at[self.right_indices].set(target)
 
 
 class MaxwellInterfaceMortar(StrictModule, NonTrainableState):

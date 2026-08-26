@@ -50,7 +50,7 @@ class HermitianSpectrum(StrictModule):
             raise ValueError("Hermitian spectrum requires square trailing matrix axes.")
         if tolerance < 0.0:
             raise ValueError("tolerance must be non-negative.")
-        hermitian = precision_.factorization(0.5 * (value + _adjoint(value)))
+        hermitian = precision_.factorization(0.5 * value + 0.5 * _adjoint(value))
         eigenvalues, eigenvectors = jnp.linalg.eigh(hermitian)
         differences = jnp.abs(eigenvalues[..., 1:] - eigenvalues[..., :-1])
         minimum_gap = (

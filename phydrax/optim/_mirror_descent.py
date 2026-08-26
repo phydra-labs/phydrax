@@ -119,6 +119,10 @@ class MirrorDescent(AbstractMirrorOptimizer):
         rate = jnp.asarray(value)
         if rate.shape != ():
             raise ValueError("Mirror-descent learning rate must be scalar.")
+        if jnp.issubdtype(rate.dtype, jnp.complexfloating):
+            raise TypeError("Mirror-descent learning rate must be real.")
+        if not jnp.issubdtype(rate.dtype, jnp.inexact):
+            rate = rate.astype(jnp.result_type(rate, 0.0))
         return eqx.error_if(
             rate,
             (~jnp.isfinite(rate)) | (rate < 0.0),
@@ -155,7 +159,20 @@ class MirrorDescent(AbstractMirrorOptimizer):
         )
         rate = self._resolved_learning_rate(state.step)
         dual_displacements = jax.tree.map(
-            lambda gradient: -rate * gradient,
+            lambda gradient: (
+                -jnp.asarray(
+                    rate,
+                    dtype=jnp.asarray(gradient).real.dtype,
+                )
+                * (
+                    jnp.conj(gradient)
+                    if jnp.issubdtype(
+                        jnp.asarray(gradient).dtype,
+                        jnp.complexfloating,
+                    )
+                    else gradient
+                )
+            ),
             gradients,
         )
         dual_displacement_norm = self.parameter_geometry.dual_displacement_norm(

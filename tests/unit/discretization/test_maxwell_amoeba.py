@@ -288,7 +288,10 @@ def test_high_order_teno_filter_lowering_and_neutral_guardrails():
 
     characteristic = phx.discretization.CharacteristicReconstructionPlan(
         phx.discretization.HighResolutionReconstructionPlan("teno", order=8),
-        phx.discretization.CharacteristicSystem(identity_eigensystem),
+        phx.discretization.CharacteristicSystem(
+            identity_eigensystem,
+            system_id="identity-eigensystem",
+        ),
     )
     characteristic_left, characteristic_right, _ = characteristic.reconstruct(
         vector_values
@@ -299,7 +302,10 @@ def test_high_order_teno_filter_lowering_and_neutral_guardrails():
     np.testing.assert_allclose(characteristic_left, component_left)
     np.testing.assert_allclose(characteristic_right, component_right)
     assert phx.discretization.reconstruction_ghost_width(characteristic) == 4
-    filtered = phx.discretization.ExplicitStabilizationPlan(0.1).apply(values)
+    filtered = phx.discretization.ExplicitStabilizationPlan(0.1).apply(
+        values,
+        measure=jnp.ones_like(values),
+    )
     np.testing.assert_allclose(jnp.mean(filtered), jnp.mean(values), atol=2e-12)
 
     buffers = (
@@ -312,6 +318,7 @@ def test_high_order_teno_filter_lowering_and_neutral_guardrails():
         ("y",),
         lambda state: {"y": 2.0 * state["x"]},
         lambda state: {"y": 2.0 * state["x"]},
+        implementation_id="double-v1",
     )
     parity = phx.discretization.compare_lowered_backends(
         phx.discretization.LoweredOperatorProgram(buffers, (kernel,)),

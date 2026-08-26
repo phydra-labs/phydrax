@@ -176,7 +176,9 @@ class QuadraticProgram(StrictModule):
         if not jnp.issubdtype(dtype, jnp.floating):
             raise TypeError("QuadraticProgram data must be real-valued.")
         quadratic_value = quadratic_value.astype(dtype)
-        quadratic_value = 0.5 * (quadratic_value + jnp.swapaxes(quadratic_value, -1, -2))
+        quadratic_value = 0.5 * quadratic_value + 0.5 * jnp.swapaxes(
+            quadratic_value, -1, -2
+        )
         linear_value = linear_value.astype(dtype)
         equality_value, equality_rhs_value = _canonical_matrix(
             equality_matrix,

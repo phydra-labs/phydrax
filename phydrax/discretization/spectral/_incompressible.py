@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._space import TensorSpectralDiscretization
@@ -136,7 +137,7 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
         return pressure * self.admissibility_mask
 
     def divergence_norm(self, state: ArrayLike, /) -> Array:
-        return jnp.linalg.norm(self.divergence(state).reshape((-1,)))
+        return GeometryPrecisionPolicy().norm(self.divergence(state).reshape((-1,)))
 
     @property
     def state_size(self) -> int:

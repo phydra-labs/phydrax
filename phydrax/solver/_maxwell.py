@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -23,6 +23,16 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
     StructuredCochainBridge,
+)
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    FailurePolicy,
+    LinearSolvePolicy,
+    MinimumNormProblem,
+    prepare,
+    RankPolicy,
+    solve as solve_linear,
 )
 from ._maxwell_boundaries import MaxwellBoundaryPlan, PreparedMaxwellBoundary
 from ._maxwell_observers import (
@@ -288,10 +298,8 @@ class DiagonalMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
             canonical_fingerprint(
                 {
                     "kind": "diagonal-maxwell-constitutive-plan",
-                    "permittivity_shape": list(epsilon.shape),
-                    "permittivity_dtype": str(epsilon.dtype),
-                    "permeability_shape": list(mu.shape),
-                    "permeability_dtype": str(mu.dtype),
+                    "permittivity": array_tree_fingerprint(epsilon),
+                    "permeability": array_tree_fingerprint(mu),
                 }
             )
             if plan_id is None
@@ -542,6 +550,7 @@ class PreparedCompatibleMaxwell(StrictModule):
     observers: tuple[AbstractPreparedMaxwellObserver, ...]
     capabilities: MaxwellCapabilities
     pml: PreparedMaxwellCPML | None
+    magnetic_constraint_solver: Any
     cfl_limit: Array
     stable_dt: Array
     discretization_bundle: DiscretizationBundle
@@ -586,6 +595,18 @@ class PreparedCompatibleMaxwell(StrictModule):
                 ),
             )
         )
+        magnetic_incidence = cochain.topology.incidences[2].exterior_derivative()
+        magnetic_constraint_solver = prepare(
+            MinimumNormProblem(
+                DenseLinearOperator(magnetic_incidence.as_dense()),
+                problem_id=f"{plan.plan_id}:magnetic-constraint-projection",
+            ),
+            LinearSolvePolicy(
+                DenseSVD(),
+                rank=RankPolicy(require_full_rank=False),
+                failure=FailurePolicy("error"),
+            ),
+        )
         self.plan = plan
         self.constitutive = constitutive
         self.capabilities = MaxwellCapabilities(
@@ -612,6 +633,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         self.observers = observers
         self.cfl_limit = cfl_limit
         self.pml = pml
+        self.magnetic_constraint_solver = magnetic_constraint_solver
         self.stable_dt = stable_dt
         self.discretization_bundle = bundle
         self.prepared_id = canonical_fingerprint(
@@ -660,12 +682,23 @@ class PreparedCompatibleMaxwell(StrictModule):
             if charge is None
             else jnp.asarray(charge)
         )
+        dtype = jnp.result_type(displacement, flux, charge_)
+        if not jnp.issubdtype(dtype, jnp.inexact):
+            dtype = jnp.dtype(float)
+        displacement = displacement.astype(dtype)
+        flux = flux.astype(dtype)
+        charge_ = charge_.astype(dtype)
         if boundary_state is None:
             boundary_state_ = None if self.pml is None else self.pml.initialize()
         else:
             boundary_state_ = boundary_state
             if self.pml is None or not isinstance(boundary_state_, MaxwellCPMLState):
                 raise ValueError("Maxwell boundary state is incompatible with CPML.")
+            self.pml._validate_state(
+                boundary_state_,
+                self.pml.electric_sigma.shape,
+                self.pml.magnetic_sigma.shape,
+            )
         displacement, flux = self._constrain_primary(displacement, flux)
         if observations is None:
             observation_state = tuple(value.initialize() for value in self.observers)
@@ -681,6 +714,16 @@ class PreparedCompatibleMaxwell(StrictModule):
             or charge_.shape != (charge_count,)
         ):
             raise ValueError("Maxwell D, B, and charge cochains have wrong sizes.")
+        finite = (
+            jnp.all(jnp.isfinite(displacement))
+            & jnp.all(jnp.isfinite(flux))
+            & jnp.all(jnp.isfinite(charge_))
+        )
+        displacement = eqx.error_if(
+            displacement,
+            ~finite,
+            "Maxwell primary cochains must be finite.",
+        )
         self.constitutive.validate_state(material_state)
         return CompatibleMaxwellState(
             primary=MaxwellPrimaryState(
@@ -719,7 +762,7 @@ class PreparedCompatibleMaxwell(StrictModule):
     def _state(self, state: CompatibleMaxwellState, /) -> CompatibleMaxwellState:
         if not isinstance(state, CompatibleMaxwellState):
             raise TypeError("state must be CompatibleMaxwellState.")
-        self.pack(
+        return self.pack(
             state.primary.electric_displacement,
             state.primary.magnetic_flux,
             state.primary.charge,
@@ -727,7 +770,6 @@ class PreparedCompatibleMaxwell(StrictModule):
             boundary_state=state.auxiliary.boundary,
             observations=state.observations,
         )
-        return state
 
     def electric_field(self, state: CompatibleMaxwellState, /) -> Array:
         state_ = self._state(state)
@@ -793,6 +835,8 @@ class PreparedCompatibleMaxwell(StrictModule):
         return self.pml.diagnostics(
             self.electric_field(state),
             self.magnetic_field(state),
+            self.plan.bridge.cochain.hodge_metric(1),
+            self.plan.bridge.cochain.hodge_metric(2),
         ).absorbed_power
 
     def material_dissipation(self, state: CompatibleMaxwellState, /) -> Array:
@@ -805,6 +849,32 @@ class PreparedCompatibleMaxwell(StrictModule):
             self.plan.bridge.cochain.hodge_metric(2),
         )
 
+    def _electric_curl_components(self, magnetic: Array, /) -> Array:
+        return jnp.stack(
+            tuple(
+                self.plan.bridge.directional_codifferential(
+                    2,
+                    magnetic,
+                    axis,
+                )
+                for axis in range(self.plan.bridge.dimension)
+            ),
+            axis=0,
+        )
+
+    def _magnetic_curl_components(self, electric: Array, /) -> Array:
+        return jnp.stack(
+            tuple(
+                -self.plan.bridge.directional_exterior_derivative(
+                    1,
+                    electric,
+                    axis,
+                )
+                for axis in range(self.plan.bridge.dimension)
+            ),
+            axis=0,
+        )
+
     def _rates_with_current(
         self,
         state: CompatibleMaxwellState,
@@ -813,7 +883,6 @@ class PreparedCompatibleMaxwell(StrictModule):
     ) -> MaxwellPrimaryState:
         electric = self.electric_field(state)
         magnetic = self.magnetic_field(state)
-        bridge = self.plan.bridge
         total_current = (
             current
             + self._boundary_current(electric)
@@ -826,10 +895,29 @@ class PreparedCompatibleMaxwell(StrictModule):
             magnetic,
             state.auxiliary.material,
         )
+        electric_components = self._electric_curl_components(magnetic)
+        magnetic_components = self._magnetic_curl_components(electric)
+        if self.pml is None:
+            electric_curl = jnp.sum(electric_components, axis=0)
+            magnetic_curl = jnp.sum(magnetic_components, axis=0)
+        else:
+            boundary_state = state.auxiliary.boundary
+            if not isinstance(boundary_state, MaxwellCPMLState):
+                raise ValueError("Prepared CPML requires MaxwellCPMLState.")
+            electric_curl = self.pml.electric_rate(
+                electric_components,
+                boundary_state,
+            )
+            magnetic_curl = self.pml.magnetic_rate(
+                magnetic_components,
+                boundary_state,
+            )
+        displacement_rate = electric_curl - total_current
+        magnetic_rate = magnetic_curl - magnetic_loss
         return MaxwellPrimaryState(
-            electric_displacement=bridge.codifferential(2, magnetic) - total_current,
-            magnetic_flux=-bridge.exterior_derivative(1, electric) - magnetic_loss,
-            charge=-bridge.codifferential(1, total_current),
+            electric_displacement=displacement_rate,
+            magnetic_flux=magnetic_rate,
+            charge=self.plan.bridge.codifferential(1, displacement_rate),
         )
 
     def drift(
@@ -838,18 +926,11 @@ class PreparedCompatibleMaxwell(StrictModule):
         state: CompatibleMaxwellState,
         args: Any = None,
         /,
-    ) -> CompatibleMaxwellState:
+    ) -> MaxwellPrimaryState:
+        """Return primary D/B/charge rates; complete carries use ``leapfrog_step``."""
         state_ = self._state(state)
         current = self._current(jnp.asarray(time), state_, args)
-        rates = self._rates_with_current(state_, current)
-        return self.pack(
-            rates.electric_displacement,
-            rates.magnetic_flux,
-            rates.charge,
-            material_state=state_.auxiliary.material,
-            boundary_state=state_.auxiliary.boundary,
-            observations=state_.observations,
-        )
+        return self._rates_with_current(state_, current)
 
     def _step_size(self, step_size: ArrayLike, /) -> Array:
         dt = jnp.asarray(step_size)
@@ -860,6 +941,28 @@ class PreparedCompatibleMaxwell(StrictModule):
             ~jnp.isfinite(dt) | (dt <= 0.0) | (dt > self.stable_dt),
             "Maxwell step_size must be finite, positive, and no larger than stable_dt.",
         )
+
+    def _project_magnetic_constraint(self, magnetic_flux: Array, /) -> Array:
+        incidence = self.plan.bridge.cochain.topology.incidences[2].exterior_derivative()
+        residual = incidence.mv(magnetic_flux)
+        if jnp.iscomplexobj(residual):
+            correction = (
+                solve_linear(
+                    self.magnetic_constraint_solver,
+                    jnp.real(residual),
+                ).value
+                + 1j
+                * solve_linear(
+                    self.magnetic_constraint_solver,
+                    jnp.imag(residual),
+                ).value
+            )
+        else:
+            correction = solve_linear(
+                self.magnetic_constraint_solver,
+                residual,
+            ).value
+        return magnetic_flux - correction
 
     def leapfrog_step(
         self,
@@ -873,20 +976,24 @@ class PreparedCompatibleMaxwell(StrictModule):
         dt = self._step_size(step_size)
         half_step = 0.5 * dt
         electric = self.electric_field(state_)
-        magnetic_forcing = -self.plan.bridge.exterior_derivative(
-            1, electric
-        ) - self.constitutive.magnetic_conduction(
-            self.magnetic_field(state_),
-            state_.auxiliary.material,
-        )
+        magnetic_components = self._magnetic_curl_components(electric)
         boundary_half = state_.auxiliary.boundary
-        if self.pml is not None:
-            _, boundary_half = self.pml.apply_magnetic(
-                magnetic_forcing,
+        if self.pml is None:
+            magnetic_curl = jnp.sum(magnetic_components, axis=0)
+        else:
+            if not isinstance(boundary_half, MaxwellCPMLState):
+                raise ValueError("Prepared CPML requires MaxwellCPMLState.")
+            magnetic_curl, boundary_half = self.pml.apply_magnetic(
+                magnetic_components,
                 boundary_half,
                 half_step,
             )
+        magnetic_forcing = magnetic_curl - self.constitutive.magnetic_conduction(
+            self.magnetic_field(state_),
+            state_.auxiliary.material,
+        )
         magnetic_half_flux = state_.primary.magnetic_flux + half_step * magnetic_forcing
+        magnetic_half_flux = self._project_magnetic_constraint(magnetic_half_flux)
         material_half = self.constitutive.advance_state(
             jnp.asarray(time),
             state_.auxiliary.material,
@@ -909,15 +1016,18 @@ class PreparedCompatibleMaxwell(StrictModule):
             + self._boundary_current(electric_half)
             + self.constitutive.electric_conduction(electric_half, material_half)
         )
-        electric_forcing = (
-            self.plan.bridge.codifferential(2, magnetic_half) - total_current
-        )
-        if self.pml is not None:
-            electric_forcing, boundary_half = self.pml.apply_electric(
-                electric_forcing,
+        electric_components = self._electric_curl_components(magnetic_half)
+        if self.pml is None:
+            electric_curl = jnp.sum(electric_components, axis=0)
+        else:
+            if not isinstance(boundary_half, MaxwellCPMLState):
+                raise ValueError("Prepared CPML requires MaxwellCPMLState.")
+            electric_curl, boundary_half = self.pml.apply_electric(
+                electric_components,
                 boundary_half,
                 dt,
             )
+        electric_forcing = electric_curl - total_current
         displacement_new = state_.primary.electric_displacement + dt * electric_forcing
         charge_new = state_.primary.charge + dt * self.plan.bridge.codifferential(
             1, electric_forcing
@@ -934,24 +1044,28 @@ class PreparedCompatibleMaxwell(StrictModule):
             displacement_new,
             material_new,
         )
-        magnetic_forcing_new = -self.plan.bridge.exterior_derivative(
-            1, electric_new
-        ) - self.constitutive.magnetic_conduction(
-            self.constitutive.magnetic_field(magnetic_half_flux, material_new),
-            material_new,
-        )
+        magnetic_components_new = self._magnetic_curl_components(electric_new)
         boundary_new = boundary_half
-        if self.pml is not None:
-            _, boundary_new = self.pml.apply_magnetic(
-                magnetic_forcing_new,
+        if self.pml is None:
+            magnetic_curl_new = jnp.sum(magnetic_components_new, axis=0)
+        else:
+            if not isinstance(boundary_half, MaxwellCPMLState):
+                raise ValueError("Prepared CPML requires MaxwellCPMLState.")
+            magnetic_curl_new, boundary_new = self.pml.apply_magnetic(
+                magnetic_components_new,
                 boundary_half,
                 half_step,
             )
+        magnetic_forcing_new = magnetic_curl_new - self.constitutive.magnetic_conduction(
+            self.constitutive.magnetic_field(magnetic_half_flux, material_new),
+            material_new,
+        )
         magnetic_new = magnetic_half_flux + half_step * magnetic_forcing_new
         displacement_new, magnetic_new = self._constrain_primary(
             displacement_new,
             magnetic_new,
         )
+        magnetic_new = self._project_magnetic_constraint(magnetic_new)
         charge_new = self.plan.bridge.codifferential(
             1, displacement_new
         ) - self.electric_constraint(state_)

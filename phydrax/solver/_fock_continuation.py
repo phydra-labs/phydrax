@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from math import isfinite
 
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -30,12 +31,25 @@ class FockContinuationPolicy(StrictModule):
     ):
         maxima = tuple(int(value) for value in maximum_cutoffs)
         increments_ = tuple(int(value) for value in increments)
-        if len(maxima) != len(increments_) or any(value < 1 for value in increments_):
-            raise ValueError("Fock continuation cutoffs/increments are invalid.")
+        top_tolerance = float(top_probability_tolerance)
+        observable_tolerance_ = float(observable_tolerance)
+        if (
+            not maxima
+            or len(maxima) != len(increments_)
+            or any(value < 2 for value in maxima)
+            or any(value < 1 for value in increments_)
+            or not isfinite(top_tolerance)
+            or top_tolerance < 0.0
+            or not isfinite(observable_tolerance_)
+            or observable_tolerance_ < 0.0
+        ):
+            raise ValueError(
+                "Fock continuation cutoffs, increments, or tolerances are invalid."
+            )
         self.maximum_cutoffs = maxima
         self.increments = increments_
-        self.top_probability_tolerance = float(top_probability_tolerance)
-        self.observable_tolerance = float(observable_tolerance)
+        self.top_probability_tolerance = top_tolerance
+        self.observable_tolerance = observable_tolerance_
 
 
 class FockContinuationStage(StrictModule):
@@ -55,6 +69,7 @@ class FockContinuationStage(StrictModule):
         /,
         *,
         cutoffs: tuple[int, ...],
+        evidence_valid: ArrayLike = True,
     ):
         self.state = jnp.asarray(state)
         self.observable = jnp.asarray(observable)
@@ -65,6 +80,7 @@ class FockContinuationStage(StrictModule):
             jnp.all(jnp.isfinite(self.state))
             & jnp.all(jnp.isfinite(self.observable))
             & jnp.all(jnp.isfinite(self.top_probabilities))
+            & jnp.asarray(evidence_valid, dtype=bool)
         )
 
 
@@ -93,10 +109,23 @@ def solve_fock_continuation(
     policy: FockContinuationPolicy,
     /,
 ) -> FockContinuationResult:
+    if not isinstance(initial_space, BosonicFockSpace):
+        raise TypeError("initial_space must be BosonicFockSpace.")
+    if not isinstance(policy, FockContinuationPolicy):
+        raise TypeError("policy must be FockContinuationPolicy.")
     if not callable(solve_stage):
         raise TypeError("solve_stage must be callable.")
     if len(initial_space.cutoffs) != len(policy.maximum_cutoffs):
         raise ValueError("Fock space and continuation policy mode counts differ.")
+    if any(
+        maximum < cutoff
+        for cutoff, maximum in zip(
+            initial_space.cutoffs,
+            policy.maximum_cutoffs,
+            strict=True,
+        )
+    ):
+        raise ValueError("Fock continuation maxima cannot be below initial cutoffs.")
     space = initial_space
     state = jnp.asarray(initial_state)
     stages = []
@@ -117,13 +146,15 @@ def solve_fock_continuation(
             evidence.top_level_probability,
             change,
             cutoffs=space.cutoffs,
+            evidence_valid=evidence.valid,
         )
         stages.append(stage)
         observable_converged = previous_observable is not None and bool(
             change <= policy.observable_tolerance
         )
         if (
-            bool(
+            bool(evidence.valid)
+            and bool(
                 jnp.all(
                     evidence.top_level_probability <= policy.top_probability_tolerance
                 )
@@ -132,7 +163,11 @@ def solve_fock_continuation(
         ):
             converged = True
             break
-        force_validation_refinement = previous_observable is None
+        force_validation_refinement = (
+            previous_observable is None
+            or not observable_converged
+            or not bool(evidence.valid)
+        )
         next_cutoffs = tuple(
             min(
                 cutoff + increment

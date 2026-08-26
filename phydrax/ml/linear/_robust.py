@@ -593,6 +593,7 @@ class RANSACRegressorRecipe(AbstractRecipe):
         inlier_candidates = []
         subsets = []
         scores = []
+        trial_validities = []
         for trial_key in keys:
             random_score = jax.random.uniform(trial_key, (cases, samples))
             random_score = jnp.where(active, random_score, jnp.inf)
@@ -634,13 +635,18 @@ class RANSACRegressorRecipe(AbstractRecipe):
             inlier_candidates.append(inlier)
             subsets.append(subset)
             scores.append(score)
+            trial_validities.append(candidate.valid)
         score_array = jnp.stack(scores, axis=-1)
+        trial_valid = jnp.stack(trial_validities, axis=-1)
+        valid_trial_available = jnp.any(trial_valid, axis=-1)
         choice = jnp.argmax(score_array, axis=-1)
         inlier_array = jnp.stack(inlier_candidates, axis=1)
         subset_array = jnp.stack(subsets, axis=1)
         row = jnp.arange(cases)
         selected_inlier = inlier_array[row, choice]
         selected_subset = subset_array[row, choice]
+        selected_inlier = selected_inlier & valid_trial_available[..., None]
+        selected_subset = selected_subset & valid_trial_available[..., None]
         refit = _normal_solve(
             _subset_prepared(prepared, prepared.weights * selected_inlier[..., None]),
             penalty_gram=zero,
@@ -664,11 +670,17 @@ class RANSACRegressorRecipe(AbstractRecipe):
             case_shape=prepared.case_shape,
             target_shape=prepared.target_shape,
         )
+        valid = refit.valid & valid_trial_available.reshape(prepared.case_shape)
+        status = jnp.where(
+            valid_trial_available.reshape(prepared.case_shape),
+            refit.status,
+            ML_INSUFFICIENT_DATA,
+        )
         return FitResult(
             model,
             diagnostics,
-            valid=refit.valid,
-            status=refit.status,
+            valid=valid,
+            status=status,
             method="ransac-hard-consensus-refit",
             gradient_contract=_hard_contract("RANSAC"),
         )

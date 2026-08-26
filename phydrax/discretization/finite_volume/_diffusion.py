@@ -153,6 +153,7 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
     function: Callable[[Array, Array, Array | None], Array] | None = eqx.field(
         static=True
     )
+    function_id: str | None = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -162,6 +163,7 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
         *,
         kind: FaceInterpolationKind = "harmonic",
         function: Callable[[Array, Array, Array | None], Array] | None = None,
+        function_id: str | None = None,
     ):
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Face coefficient plan requires PreparedTensorGrid.")
@@ -169,15 +171,23 @@ class FaceCoefficientPlan(StrictModule, NonTrainableState):
             raise ValueError("Unknown face interpolation kind.")
         if (kind == "callable") != (function is not None):
             raise ValueError("Callable face interpolation requires exactly one function.")
+        function_identifier = None if function_id is None else str(function_id)
+        if (function is None) != (
+            function_identifier is None
+        ) or function_identifier == "":
+            raise ValueError(
+                "Callable face interpolation requires exactly one non-empty function_id."
+            )
         self.grid = grid
         self.kind = kind
         self.function = function
+        self.function_id = function_identifier
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "face-coefficient-plan",
                 "grid": grid.prepared_id,
                 "interpolation": kind,
-                "function": None if function is None else repr(function),
+                "function": function_identifier,
             }
         )
 

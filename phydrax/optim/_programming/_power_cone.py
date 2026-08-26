@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from numbers import Real
 from typing import Any
 
 import equinox as eqx
@@ -13,6 +14,16 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FactorizationPolicy,
+    factorize,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
 from ._cone_root import safeguarded_newton_bisection, SafeguardedRootResult
 from ._cones import AbstractConvexCone
 
@@ -246,6 +257,28 @@ def _boundary_kkt_matrix(
     return matrix
 
 
+def _kkt_solve(matrix: Array, right: Array, /) -> Array:
+    return solve(
+        LinearSystem(
+            DenseLinearOperator(matrix),
+            problem_id="power-cone-projection-kkt",
+        ),
+        right,
+        policy=LinearSolvePolicy(
+            DenseLU(),
+            failure=FailurePolicy("status"),
+        ),
+    ).value
+
+
+def _minimum_singular_value(matrix: Array, /) -> Array:
+    decomposition = factorize(
+        DenseLinearOperator(matrix),
+        FactorizationPolicy("svd"),
+    )
+    return decomposition.singular_values()[-1]
+
+
 def _projection_jvp(
     value: Array,
     projected: Array,
@@ -260,7 +293,7 @@ def _projection_jvp(
     def general(_):
         matrix = _boundary_kkt_matrix(value, projected, exponent)
         right = jnp.concatenate((tangent, jnp.zeros(1, dtype=value.dtype)))
-        return jnp.linalg.solve(matrix, right)[:3]
+        return _kkt_solve(matrix, right)[:3]
 
     face_action = jnp.asarray(
         [
@@ -293,9 +326,8 @@ def _homogeneous_scale(value: Array, /) -> Array:
 
 
 def _working_value(value: Array, /) -> Array:
-    if jnp.finfo(value.dtype).bits < 64:
-        return value.astype(jnp.float64)
-    return value
+    working_dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
+    return value.astype(jnp.result_type(value.dtype, working_dtype))
 
 
 @jax.custom_jvp
@@ -355,6 +387,22 @@ def _project_power_single_jvp(primals, tangents):
     )
 
 
+def _project_power_dual_single(value: Array, exponent: float, /) -> Array:
+    working = _working_value(value)
+    scale = _homogeneous_scale(working)
+    normalized = working / scale
+    candidate = normalized + _project_power_single(-normalized, exponent)
+    positive = jnp.maximum(candidate[:2], 0.0)
+    boundary = _geometric_mean(
+        positive[0] / exponent,
+        positive[1] / (1.0 - exponent),
+        exponent,
+    )
+    candidate = candidate.at[:2].set(positive)
+    candidate = candidate.at[2].set(jnp.clip(candidate[2], -boundary, boundary))
+    return (scale * candidate).astype(value.dtype)
+
+
 def _smoothness_margin(value: Array, exponent: float, /) -> Array:
     working = _working_value(value)
     scale = _homogeneous_scale(working)
@@ -365,10 +413,10 @@ def _smoothness_margin(value: Array, exponent: float, /) -> Array:
     strict_polar = polar_slack > 0.0
     projected, root = _power_root_projection(normalized, exponent)
     kkt = _boundary_kkt_matrix(normalized, projected, exponent)
-    singular_values = jnp.linalg.svd(kkt, compute_uv=False)
+    minimum_singular = _minimum_singular_value(kkt)
     general_margin = scale * jnp.minimum(
         jnp.minimum(jnp.minimum(projected[0], projected[1]), jnp.abs(projected[2])),
-        jnp.where(root.converged, singular_values[-1], 0.0),
+        jnp.where(root.converged, minimum_singular, 0.0),
     )
     margin = jnp.where(
         strict_primal,
@@ -393,6 +441,8 @@ class PowerCone(AbstractConvexCone):
     exponent: float = eqx.field(static=True)
 
     def __init__(self, exponent: float, /):
+        if isinstance(exponent, bool) or not isinstance(exponent, Real):
+            raise TypeError("PowerCone exponent must be a real scalar.")
         value = float(exponent)
         if not math.isfinite(value) or not 0.0 < value < 1.0:
             raise ValueError(
@@ -412,7 +462,11 @@ class PowerCone(AbstractConvexCone):
 
     def project_dual(self, value: Any, /) -> Array:
         array = self._validate(value)
-        return array + self.project(-array)
+        flat = array.reshape((-1, 3))
+        projected = jax.vmap(
+            lambda item: _project_power_dual_single(item, self.exponent)
+        )(flat)
+        return projected.reshape(array.shape)
 
     def interior_margin(self, value: Any, /) -> Array:
         array = self._validate(value)

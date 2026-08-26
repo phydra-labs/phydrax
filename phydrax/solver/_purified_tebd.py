@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
 from ..tensor_network import LocallyPurifiedDensity, NearestNeighborHamiltonian
 from ..tensor_network._canonical import canonicalize_lpdo
@@ -40,6 +41,13 @@ def apply_lpdo_two_site_unitary(
     maximum_bond_dimension: int,
 ) -> tuple[LocallyPurifiedDensity, LPDOBondEvidence]:
     index = int(bond)
+    if index < 0 or index >= state.site_count - 1:
+        raise ValueError("LPDO bond is outside the open-boundary chain.")
+    if int(maximum_bond_dimension) < 1:
+        raise ValueError("maximum_bond_dimension must be positive.")
+    from ..tensor_network._canonical import canonicalize_lpdo
+
+    state, _ = canonicalize_lpdo(state, center=index)
     left = state.tensors[index]
     right = state.tensors[index + 1]
     gate_ = jnp.asarray(gate)
@@ -66,7 +74,7 @@ def apply_lpdo_two_site_unitary(
     tensors = list(state.tensors)
     tensors[index] = new_left
     tensors[index + 1] = new_right
-    result = LocallyPurifiedDensity(tuple(tensors))
+    result = LocallyPurifiedDensity(tuple(tensors), precision=state.precision)
     return result, LPDOBondEvidence(retained, available, discarded)
 
 
@@ -140,18 +148,30 @@ def solve_purified_strang(
 ) -> PurifiedStrangResult:
     state = problem.initial_state
     step = jnp.asarray(step_size, dtype=float).reshape(())
+    count = int(steps)
+    if (
+        count < 0
+        or int(maximum_bond_dimension) < 1
+        or int(maximum_purification_dimension) < 1
+        or not bool(jnp.isfinite(step) & (step > 0.0))
+    ):
+        raise ValueError(
+            "Purified Strang steps, step size, and truncation capacities are invalid."
+        )
     traces = [state.raw_trace()]
     bond_records = []
     kraus_records = []
     canonical_records = []
-    for _ in range(int(steps)):
+    for _ in range(count):
         for channel in problem.half_step_channels:
             state, evidence = apply_local_kraus_channel(
                 state,
                 channel,
                 maximum_purification_dimension=maximum_purification_dimension,
             )
-            kraus_records.append(evidence.discarded_weight)
+            kraus_records.append(
+                jnp.where(evidence.valid, evidence.discarded_weight, jnp.nan)
+            )
         for bond in range(0, state.site_count - 1, 2):
             state, evidence = apply_lpdo_two_site_unitary(
                 state,
@@ -176,13 +196,15 @@ def solve_purified_strang(
                 maximum_bond_dimension=maximum_bond_dimension,
             )
             bond_records.append(evidence.discarded_weight)
-        for channel in problem.half_step_channels:
+        for channel in reversed(problem.half_step_channels):
             state, evidence = apply_local_kraus_channel(
                 state,
                 channel,
                 maximum_purification_dimension=maximum_purification_dimension,
             )
-            kraus_records.append(evidence.discarded_weight)
+            kraus_records.append(
+                jnp.where(evidence.valid, evidence.discarded_weight, jnp.nan)
+            )
         state, canonical = canonicalize_lpdo(state, center=state.site_count // 2)
         canonical_records.append(
             jnp.maximum(
@@ -219,29 +241,50 @@ class PurifiedStationarityDiagnostic(StrictModule):
         truncation_tolerance: float,
     ):
         observables = jnp.asarray(observable_history)
-        if observables.shape[0] < int(window) + 1:
+        window_ = int(window)
+        tolerance_ = float(tolerance)
+        truncation_tolerance_ = float(truncation_tolerance)
+        if observables.ndim < 1:
+            raise ValueError("Observable history requires a leading time dimension.")
+        if window_ < 1 or observables.shape[0] < window_ + 1:
             raise ValueError(
-                "Observable history is shorter than the steady-state window."
+                "Observable history is shorter than the positive steady-state window."
             )
+        if (
+            not bool(jnp.all(jnp.isfinite(observables)))
+            or not jnp.isfinite(tolerance_)
+            or tolerance_ < 0.0
+            or not jnp.isfinite(truncation_tolerance_)
+            or truncation_tolerance_ < 0.0
+        ):
+            raise ValueError("Stationarity values and tolerances must be finite.")
         self.maximum_trace_residual = jnp.max(jnp.abs(result.raw_trace_history - 1.0))
-        self.maximum_canonical_residual = jnp.max(result.canonical_residual_history)
+        self.maximum_canonical_residual = jnp.max(
+            result.canonical_residual_history, initial=0.0
+        )
         self.maximum_bond_discarded_weight = jnp.max(
             result.bond_discarded_history, initial=0.0
         )
         self.maximum_kraus_discarded_weight = jnp.max(
             result.kraus_discarded_history, initial=0.0
         )
-        recent = observables[-int(window) - 1 :]
-        self.observable_window_change = jnp.max(
-            jnp.linalg.norm(recent[1:] - recent[:-1], axis=-1)
+        recent_difference = observables[-window_:][...] - observables[-window_ - 1 : -1]
+        per_step_change = (
+            jnp.abs(recent_difference)
+            if observables.ndim == 1
+            else GeometryPrecisionPolicy().norm(
+                recent_difference.reshape((window_, -1)),
+                axis=-1,
+            )
         )
+        self.observable_window_change = jnp.max(per_step_change)
         self.valid = (
             result.valid
-            & (self.maximum_trace_residual <= tolerance)
-            & (self.maximum_canonical_residual <= tolerance)
-            & (self.maximum_bond_discarded_weight <= truncation_tolerance)
-            & (self.maximum_kraus_discarded_weight <= truncation_tolerance)
-            & (self.observable_window_change <= tolerance)
+            & (self.maximum_trace_residual <= tolerance_)
+            & (self.maximum_canonical_residual <= tolerance_)
+            & (self.maximum_bond_discarded_weight <= truncation_tolerance_)
+            & (self.maximum_kraus_discarded_weight <= truncation_tolerance_)
+            & (self.observable_window_change <= tolerance_)
         )
 
 

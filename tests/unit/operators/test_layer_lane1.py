@@ -122,11 +122,11 @@ def test_qbx_boundary_average_is_reported_separately():
 
     assert jnp.isfinite(result.values)
     assert (
-        result.evaluation_report.error_kind
-        == "qbx-coefficient-quadrature-and-truncation"
+        result.evaluation_report.error_kind == "qbx-coefficient-quadrature-and-truncation"
     )
     assert result.evaluation_report.near_panel_count == 1
     assert float(result.values) == pytest.approx(-0.5, abs=2e-2)
+
 
 def test_barycentric_self_weights_are_partition_unity_and_nodal_delta():
     panelization = _circle_panelization(panels=1, order=5)
@@ -314,6 +314,7 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
     direction = jnp.asarray([0.6, 0.8])
 
     if field_kind == "combined":
+
         def kernel(distance):
             target = center + distance * direction
             return potential.kernel.source_normal_derivative(
@@ -322,12 +323,14 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
                 normal,
             ) - 1j * potential.eta * potential.kernel.value(target, source)
     elif field_kind == "single":
+
         def kernel(distance):
             return potential.kernel.value(
                 center + distance * direction,
                 source,
             )
     else:
+
         def kernel(distance):
             return potential.kernel.source_normal_derivative(
                 center + distance * direction,
@@ -442,9 +445,7 @@ def test_rcip_uses_nonzero_nested_corner_hierarchy():
         ),
         jnp.eye(8) * 2.0,
     )
-    restriction_0 = jnp.asarray(
-        ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0))
-    )
+    restriction_0 = jnp.asarray(((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0)))
     restriction_1 = jnp.concatenate(
         (jnp.eye(4), jnp.zeros((4, 4))),
         axis=1,
@@ -508,7 +509,7 @@ def test_fmm_mixed_excluded_leaf_is_kept_in_near_correction():
         expansion_order=6,
         leaf_size=4,
     )
-    _, _, _, near_sources, _ = backend.local_expansions(
+    _, _, _, near_sources, _, _ = backend.local_expansions(
         potential,
         jnp.asarray([[2.8, 0.0], [3.2, 0.0]]),
         excluded_source_indices=(0,),

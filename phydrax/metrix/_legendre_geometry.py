@@ -21,7 +21,7 @@ from ._chart import ChartTransition
 from ._hessian_geometry import HessianGeometry
 from ._information_operator import InformationMetricOperator
 from ._metric import RiemannianMetric
-from ._utils import _coordinates
+from ._utils import _coordinates, _pointwise_array
 from ._validation import MetricValidationReport, validate_metric
 
 
@@ -35,6 +35,28 @@ def _real_coordinates(value: ArrayLike, dimension: int, name: str, /) -> Array:
 def _maximum_point_norm(value: Array, precision: GeometryPrecisionPolicy, /) -> Array:
     norms = precision.norm(value, axis=-1)
     return precision.decision(jnp.max(norms, initial=0.0))
+
+
+class _LegendreDualMap(StrictModule):
+    geometry: "LegendreGeometry"
+
+    def __call__(self, coordinates: Array, /) -> Array:
+        return self.geometry.dual_coordinates(coordinates)
+
+
+class _LegendreInverseMap(StrictModule):
+    geometry: "LegendreGeometry"
+
+    def __call__(self, coordinates: Array, /) -> Array:
+        return self.geometry.inverse_dual_coordinates(coordinates)
+
+
+class _SupportedLegendreMetricMap(StrictModule):
+    geometry: "LegendreGeometry"
+
+    def __call__(self, coordinates: Array, /) -> Array:
+        primal = self.geometry._primal(coordinates, "Metric coordinates")
+        return self.geometry.hessian_geometry.metric()(primal)
 
 
 class LegendreGeometry(StrictModule):
@@ -93,12 +115,12 @@ class LegendreGeometry(StrictModule):
 
     @property
     def dual_transition(self) -> ChartTransition:
-        """Return the declared primal-to-dual chart transition."""
+        """Return the support-enforcing primal-to-dual chart transition."""
         return ChartTransition(
             self.primal_chart,
             self.dual_chart,
-            self.hessian_geometry.dual_coordinates,
-            inverse=self.inverse_dual_function,
+            _LegendreDualMap(self),
+            inverse=_LegendreInverseMap(self),
         )
 
     def _primal(self, value: ArrayLike, name: str, /) -> Array:
@@ -127,9 +149,7 @@ class LegendreGeometry(StrictModule):
 
     def dual_contains(self, coordinates: ArrayLike, /) -> Array:
         values = _real_coordinates(coordinates, self.dimension, "Dual coordinates")
-        return self.dual_support.contains(values) & jnp.all(
-            jnp.isfinite(values), axis=-1
-        )
+        return self.dual_support.contains(values) & jnp.all(jnp.isfinite(values), axis=-1)
 
     def potential(self, coordinates: ArrayLike, /) -> Array:
         primal = self._primal(coordinates, "Potential coordinates")
@@ -142,11 +162,22 @@ class LegendreGeometry(StrictModule):
 
     def inverse_dual_coordinates(self, coordinates: ArrayLike, /) -> Array:
         dual = self._dual(coordinates, "Dual coordinates")
-        primal = self.dual_transition.inverse(dual)
+        primal = _pointwise_array(
+            self.inverse_dual_function,
+            dual,
+            self.dimension,
+        )
+        if primal.shape != dual.shape:
+            raise ValueError(
+                "Inverse Legendre coordinates must preserve all leading axes."
+            )
         return self._primal(primal, "Mapped primal coordinates")
 
     def metric(self) -> RiemannianMetric:
-        return self.hessian_geometry.metric()
+        return RiemannianMetric(
+            _SupportedLegendreMetricMap(self),
+            chart=self.primal_chart,
+        )
 
     def information_operator(
         self,
@@ -201,7 +232,9 @@ class LegendreGeometry(StrictModule):
         primal_coordinates = self._primal(primal, "Fenchel--Young primal point")
         dual_coordinates = self._dual(dual, "Fenchel--Young dual point")
         if primal_coordinates.shape != dual_coordinates.shape:
-            raise ValueError("Fenchel--Young primal and dual points must have equal shapes.")
+            raise ValueError(
+                "Fenchel--Young primal and dual points must have equal shapes."
+            )
         return (
             self.potential(primal_coordinates)
             + self.dual_potential(dual_coordinates)
@@ -268,19 +301,13 @@ class LegendreValidationReport(StrictModule):
         self.metric_validation = metric_validation
         self.primal_support_valid = jnp.asarray(primal_support_valid, dtype=bool)
         self.dual_support_valid = jnp.asarray(dual_support_valid, dtype=bool)
-        self.maximum_primal_roundtrip_error = jnp.asarray(
-            maximum_primal_roundtrip_error
-        )
+        self.maximum_primal_roundtrip_error = jnp.asarray(maximum_primal_roundtrip_error)
         self.maximum_dual_roundtrip_error = jnp.asarray(maximum_dual_roundtrip_error)
-        self.maximum_jacobian_inverse_error = jnp.asarray(
-            maximum_jacobian_inverse_error
-        )
+        self.maximum_jacobian_inverse_error = jnp.asarray(maximum_jacobian_inverse_error)
         self.maximum_fenchel_young_diagonal_gap = jnp.asarray(
             maximum_fenchel_young_diagonal_gap
         )
-        self.maximum_bregman_diagonal_error = jnp.asarray(
-            maximum_bregman_diagonal_error
-        )
+        self.maximum_bregman_diagonal_error = jnp.asarray(maximum_bregman_diagonal_error)
         self.precision_evidence = precision_evidence
 
 
@@ -309,7 +336,9 @@ def validate_legendre_geometry(
         symmetry_tolerance,
     )
     if any(not isfinite(float(value)) or float(value) < 0.0 for value in tolerances):
-        raise ValueError("Legendre validation tolerances must be finite and non-negative.")
+        raise ValueError(
+            "Legendre validation tolerances must be finite and non-negative."
+        )
     precision_ = GeometryPrecisionPolicy() if precision is None else precision
     if not isinstance(precision_, GeometryPrecisionPolicy):
         raise TypeError("precision must be a GeometryPrecisionPolicy or None.")
@@ -319,7 +348,12 @@ def validate_legendre_geometry(
     primal_compute = precision_.compute(primal)
     input_primal_support = geometry.primal_contains(primal_compute)
 
-    transition = geometry.dual_transition
+    transition = ChartTransition(
+        geometry.primal_chart,
+        geometry.dual_chart,
+        geometry.hessian_geometry.dual_coordinates,
+        inverse=geometry.inverse_dual_function,
+    )
     mapped_dual = precision_.compute(transition(primal_compute))
     mapped_dual_support = geometry.dual_contains(mapped_dual)
     primal_roundtrip = precision_.compute(transition.inverse(mapped_dual))
@@ -367,8 +401,7 @@ def validate_legendre_geometry(
         geometry.hessian_geometry.potential(primal_roundtrip)
     )
     dual_potential = (
-        precision_.sum(primal_roundtrip * mapped_dual, axis=-1)
-        - roundtrip_potential
+        precision_.sum(primal_roundtrip * mapped_dual, axis=-1) - roundtrip_potential
     )
     fenchel_young = (
         primal_potential

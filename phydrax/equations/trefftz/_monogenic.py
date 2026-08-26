@@ -13,6 +13,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._doc import DOC_KEY0
@@ -196,14 +197,15 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
             _monogenic_rank(algebra.dimension, value, layout.blade_count)
             for value in range(degree + 1)
         )
-        monomial_count = sum(
-            len(_multiindices(value, algebra.dimension)) for value in range(degree + 1)
+        monomial_counts = tuple(
+            math.comb(algebra.dimension + value - 1, value) for value in range(degree + 1)
         )
+        monomial_count = sum(monomial_counts)
         basis_entries = sum(
-            len(_multiindices(value, algebra.dimension))
+            count
             * _monogenic_rank(algebra.dimension, value, layout.blade_count)
             * layout.blade_count
-            for value in range(degree + 1)
+            for value, count in enumerate(monomial_counts)
         )
         resource_evidence = resources_.check(
             rank=rank,
@@ -295,7 +297,9 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
             self.coefficient_blocks,
         ):
             monomials = jnp.prod(normalized[None, :] ** exponents, axis=1)
-            features.append(jnp.einsum("m,mrb->rb", monomials, coefficients))
+            features.append(
+                oe.contract("m,mrb->rb", monomials, coefficients, backend="jax")
+            )
         return jnp.concatenate(features, axis=0)
 
     def evaluate_partial(
@@ -327,7 +331,9 @@ class MonogenicPolynomialBasis(AbstractTrefftzBasis):
                 * jnp.prod(normalized[None, :] ** reduced, axis=1)
                 / self.normalization.scale.astype(normalized.dtype) ** order_
             )
-            features.append(jnp.einsum("m,mrb->rb", monomials, coefficients))
+            features.append(
+                oe.contract("m,mrb->rb", monomials, coefficients, backend="jax")
+            )
         return jnp.concatenate(features, axis=0)
 
 
@@ -376,7 +382,7 @@ class LinearMonogenicField(AbstractArrayModel, StructuredDerivativeProvider):
         )
 
     def _contract(self, features: Array, /) -> Array:
-        values = jnp.einsum("cr,rb->cb", self.coefficients, features)
+        values = oe.contract("cr,rb->cb", self.coefficients, features, backend="jax")
         return values[0] if self.channels == 1 else values
 
     def __call__(self, point: Array, /, *, key: Any = None) -> Array:

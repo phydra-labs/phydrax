@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from itertools import product
+from math import comb
+from operator import index
 
 import equinox as eqx
 import jax
@@ -33,12 +35,31 @@ class HEOMHierarchy(StrictModule):
     depth: int = eqx.field(static=True)
     term_count: int = eqx.field(static=True)
     auxiliary_count: int = eqx.field(static=True)
+    edge_count: int = eqx.field(static=True)
 
-    def __init__(self, term_count: int, depth: int, /):
-        terms = int(term_count)
-        depth_ = int(depth)
-        if terms < 1 or depth_ < 0:
-            raise ValueError("HEOM term count/depth are invalid.")
+    def __init__(
+        self,
+        term_count: int,
+        depth: int,
+        /,
+        *,
+        maximum_auxiliaries: int = 1_000_000,
+    ):
+        if any(
+            isinstance(value, bool) for value in (term_count, depth, maximum_auxiliaries)
+        ):
+            raise TypeError("HEOM dimensions and capacity must be integers.")
+        terms = index(term_count)
+        depth_ = index(depth)
+        capacity = index(maximum_auxiliaries)
+        if terms < 1 or depth_ < 0 or capacity < 1:
+            raise ValueError("HEOM term count/depth/capacity are invalid.")
+        auxiliary_count = comb(terms + depth_, depth_)
+        if auxiliary_count > capacity:
+            raise ValueError(
+                f"HEOM hierarchy requires {auxiliary_count} auxiliaries; "
+                f"capacity is {capacity}."
+            )
         indices = tuple(
             values
             for values in product(range(depth_ + 1), repeat=terms)
@@ -66,6 +87,9 @@ class HEOMHierarchy(StrictModule):
         self.depth = depth_
         self.term_count = terms
         self.auxiliary_count = len(indices)
+        self.edge_count = sum(
+            neighbour >= 0 for row in upward + downward for neighbour in row
+        )
 
 
 class HEOMProblem(StrictModule):
@@ -332,9 +356,11 @@ def solve_heom(
     step = temporal_.coefficient(
         jnp.asarray(step_size, dtype=problem.initial_state.real.dtype)
     ).reshape(())
-    count = int(steps)
-    if count < 0 or float(step) <= 0.0:
-        raise ValueError("HEOM steps and step_size must be positive.")
+    if isinstance(steps, bool):
+        raise TypeError("HEOM steps must be an integer.")
+    count = index(steps)
+    if count < 0 or not bool(jnp.isfinite(step) & (step > 0.0)):
+        raise ValueError("HEOM steps must be nonnegative and step_size positive.")
 
     def advance(state, _):
         k1 = temporal_.stage(problem.rhs(state, precision=temporal_))

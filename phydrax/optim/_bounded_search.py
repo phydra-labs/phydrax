@@ -18,6 +18,7 @@ class _BoundedVectorDomain(StrictModule):
     initial: Array
     lower: Array
     upper: Array
+    affine_scale: Array
     dimension: int = eqx.field(static=True)
 
     def __init__(
@@ -52,9 +53,14 @@ class _BoundedVectorDomain(StrictModule):
             raise ValueError("Every lower bound must be smaller than its upper bound.")
         if np.any((initial < lower) | (initial > upper)):
             raise ValueError("initial_vector lies outside the search bounds.")
+        scale = np.maximum(
+            np.maximum(np.abs(lower), np.abs(upper)),
+            1.0,
+        )
         self.initial = jnp.asarray(initial)
         self.lower = jnp.asarray(lower)
         self.upper = jnp.asarray(upper)
+        self.affine_scale = jnp.asarray(scale)
         self.dimension = int(initial.size)
 
     def to_unit(self, physical: ArrayLike, /) -> Array:
@@ -64,7 +70,10 @@ class _BoundedVectorDomain(StrictModule):
                 "Physical search vectors must have trailing shape "
                 f"({self.dimension},), got {value.shape}."
             )
-        return (value - self.lower) / (self.upper - self.lower)
+        scale = self.affine_scale
+        lower = self.lower / scale
+        upper = self.upper / scale
+        return (value / scale - lower) / (upper - lower)
 
     def from_unit(self, unit: ArrayLike, /) -> Array:
         value = jnp.asarray(unit, dtype=self.initial.dtype)
@@ -73,7 +82,10 @@ class _BoundedVectorDomain(StrictModule):
                 "Unit search vectors must have trailing shape "
                 f"({self.dimension},), got {value.shape}."
             )
-        return self.lower + value * (self.upper - self.lower)
+        scale = self.affine_scale
+        lower = self.lower / scale
+        upper = self.upper / scale
+        return scale * ((1.0 - value) * lower + value * upper)
 
 
 __all__: list[str] = []

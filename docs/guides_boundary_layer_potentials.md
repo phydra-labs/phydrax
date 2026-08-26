@@ -106,10 +106,13 @@ unit circle.
 ## Adaptive near and self evaluation
 
 `LayerEvaluationPlan2D("adaptive", ...)` classifies target-to-panel regimes and
-uses the shared `AdaptiveQuadraturePlan` engine for every panel. The global report
-aggregates all panel errors and refuses accuracy support unless the accumulated
-bound satisfies the requested tolerance. A boundary source-node single layer uses
-logarithmic product regularization; its status and error remain in the evaluator report.
+uses the shared `AdaptiveQuadraturePlan` engine for every panel. Breakpoints are
+routed only to panels whose reference intervals contain them, and `throw=True`
+remains authoritative through panel correction and QBX coefficient quadrature.
+The global report aggregates all panel errors and refuses accuracy support unless
+the accumulated bound satisfies the requested tolerance. A boundary source-node
+single layer uses one shared barycentric density reconstruction and logarithmic
+product regularization; its status and error remain in the evaluator report.
 
 ## Corners and grading
 
@@ -129,23 +132,32 @@ corrected blocks cannot enter the CFIE matrix.
 ## Local QBX expansions
 
 `LayerEvaluationPlan2D("qbx", qbx_order=..., qbx_radius_factor=...)` evaluates the
-analytic finite layer field from target-associated local Taylor expansions. Truncation
-error is reported separately. Boundary targets are evaluated by averaging the two
-one-sided local expansions; PDE membership remains off-support only.
+analytic finite layer field from target-associated local Taylor expansions.
+Centers use the geometry's target boundary normal rather than a nearest quadrature
+normal. Coefficient-quadrature errors propagate, and the omitted analytic tail is
+bounded from the retained term and certified expansion clearance. Boundary targets
+are evaluated by averaging the two one-sided local expansions; a tangent expansion
+disk without positive convergence margin cannot claim finite accuracy.
 
 ## Three-dimensional surfaces
 
-`SurfacePanelization3D` lowers triangular boundary charts through a reference-triangle
-rule. `LaplaceLayerPotential3D` and `evaluate_laplace_layer_3d` require compiled,
-continuous geometry evidence and reject unresolved or on-surface direct targets.
+`SurfacePanelization3D` maps the reference rule through each declared affine
+triangular trim cell, retains that cell and its prepared inverse map, and rejects
+non-triangular or holed reference cells rather than integrating the wrong domain.
+QBX and target-centered Duffy evaluation share its panel-polynomial density
+reconstruction. `LaplaceLayerPotential3D` and `evaluate_laplace_layer_3d` require
+compiled, continuous geometry evidence and reject unresolved or on-surface direct
+targets.
 
 ## Reference near/far backend
 
 `AbstractLayerBackend` separates backend execution from layer representation.
-`DirectNearFarReferenceBackend2D` is an exact direct decomposition used for parity
-and work-accounting tests. It is not an acceleration backend and makes no FMM claim.
-An eventual FMM backend must add its own approximation and adjoint evidence without
-replacing singular or near-panel corrections.
+`DirectNearFarReferenceBackend2D` remains the exact parity reference. Treecode and
+FMM backends bind the source panelization, require an opening angle strictly inside
+`(0, 1)`, and report geometric upper bounds for omitted multipoles rather than the
+last retained term. Global QBX/FMM adds coefficient and local-expansion bounds.
+Evaluation fingerprints include targets, densities, policy controls, and source
+revision identities; singular and near-panel corrections remain direct.
 
 ## Current support boundary
 

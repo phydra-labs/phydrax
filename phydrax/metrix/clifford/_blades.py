@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from math import comb
 
 import equinox as eqx
 
@@ -68,6 +69,7 @@ class CliffordBladeLayout(StrictModule, NonTrainableState):
 
     @classmethod
     def full(cls, algebra: CliffordAlgebraSpec, /) -> "CliffordBladeLayout":
+        algebra.budget.admit_blades(algebra.blade_count)
         return cls(algebra, tuple(range(algebra.blade_count)))
 
     @classmethod
@@ -82,6 +84,9 @@ class CliffordBladeLayout(StrictModule, NonTrainableState):
             raise ValueError("Clifford grades must lie in the algebra dimension.")
         if len(set(selected)) != len(selected):
             raise ValueError("Clifford grade selection must be unique.")
+        algebra.budget.admit_blades(
+            sum(comb(algebra.dimension, grade) for grade in selected)
+        )
         bitmaps = tuple(
             axes_bitmap(index, algebra.dimension)
             for grade in sorted(selected)

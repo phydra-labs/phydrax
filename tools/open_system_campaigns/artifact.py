@@ -25,6 +25,7 @@ from phydrax.operators.quantum import (
 )
 
 from .contracts import (
+    _OpenSystemArtifactVerification,
     CampaignCapacityEvidence,
     CampaignPrecisionBundle,
     OpenSystemCampaignRecord,
@@ -66,9 +67,7 @@ def _record_manifest(record: OpenSystemCampaignRecord, /) -> dict[str, Any]:
                     "name": axis.name,
                     "value": _scalar(axis.value),
                     "parent_value": (
-                        None
-                        if axis.parent_value is None
-                        else _scalar(axis.parent_value)
+                        None if axis.parent_value is None else _scalar(axis.parent_value)
                     ),
                     "units": axis.units,
                 }
@@ -96,9 +95,7 @@ def _record_manifest(record: OpenSystemCampaignRecord, /) -> dict[str, Any]:
             "certified_properties": list(physicality.certified_properties),
             "status": physicality.status,
             "trace_residual": _optional_scalar(physicality.trace_residual),
-            "hermiticity_residual": _optional_scalar(
-                physicality.hermiticity_residual
-            ),
+            "hermiticity_residual": _optional_scalar(physicality.hermiticity_residual),
             "positivity_margin": _optional_scalar(physicality.positivity_margin),
             "channel_cp_margin": _optional_scalar(physicality.channel_cp_margin),
             "trace_preservation_residual": _optional_scalar(
@@ -154,9 +151,7 @@ def _optional_scalar(value: Any, /) -> float | None:
 def _record_arrays(record: OpenSystemCampaignRecord, /) -> dict[str, np.ndarray]:
     return {
         name: np.asarray(value)
-        for name, value in zip(
-            record.artifact_names, record.artifact_arrays, strict=True
-        )
+        for name, value in zip(record.artifact_names, record.artifact_arrays, strict=True)
     }
 
 
@@ -231,9 +226,7 @@ def _physicality(payload: dict[str, Any], precision: CampaignPrecisionBundle):
         hermiticity_tolerance=payload["hermiticity_tolerance"],
         positivity_tolerance=payload["positivity_tolerance"],
         channel_cp_tolerance=payload["channel_cp_tolerance"],
-        trace_preservation_tolerance=payload[
-            "trace_preservation_tolerance"
-        ],
+        trace_preservation_tolerance=payload["trace_preservation_tolerance"],
         closure_tolerance=payload["closure_tolerance"],
         certified_properties=payload["certified_properties"],
         precision_evidence=precision.evidence,
@@ -268,9 +261,7 @@ def _record_from_manifest(
             units=value["units"],
             norm_id=value["norm_id"],
             estimate_kind=value["estimate_kind"],
-            confidence=(
-                np.nan if value["confidence"] is None else value["confidence"]
-            ),
+            confidence=(np.nan if value["confidence"] is None else value["confidence"]),
         )
         for value in approximation_payload["quantities"]
     )
@@ -371,20 +362,32 @@ def verify_open_system_artifact(
     /,
     *,
     expected_runner_id: str,
+    expected_problem_id: str,
+    expected_plan_id: str,
+    expected_backend: str,
+    expected_code_fingerprint: str,
 ) -> VerifiedOpenSystemCampaign:
-    """Verify integrity and exact independent campaign reproduction."""
-    stored, _ = read_open_system_artifact(
+    """Verify integrity, provenance, and exact independent campaign reproduction."""
+    stored, manifest = read_open_system_artifact(
         path,
         expected_campaign_id=reproduced.campaign_id,
         expected_representation_id=reproduced.representation_id,
         expected_runner_id=expected_runner_id,
     )
+    expected = {
+        "problem_id": str(expected_problem_id),
+        "plan_id": str(expected_plan_id),
+        "backend": str(expected_backend),
+        "code_fingerprint": str(expected_code_fingerprint),
+    }
+    if any(manifest[name] != value for name, value in expected.items()):
+        raise ValueError("Open-system artifact provenance does not match expectations.")
     digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-    return VerifiedOpenSystemCampaign(
-        stored,
+    verification = _OpenSystemArtifactVerification(
         digest,
-        reproduction_verified=_records_equal(stored, reproduced),
+        np.asarray(_records_equal(stored, reproduced), dtype=bool),
     )
+    return VerifiedOpenSystemCampaign(stored, verification)
 
 
 __all__ = [

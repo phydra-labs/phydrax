@@ -15,6 +15,14 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
 from ._point_cloud import PreparedPointCloudDiscretization
 
 
@@ -81,9 +89,15 @@ def point_sbp_report(
     *,
     tolerance: float = 1e-8,
 ) -> PointSBPReport:
+    threshold = float(tolerance)
+    if not np.isfinite(threshold) or threshold < 0.0:
+        raise ValueError("SBP tolerance must be finite and nonnegative.")
+    boundary_weights = discretization.plan.boundary_quadrature_weights
+    if boundary_weights is None:
+        raise ValueError("Point SBP evidence requires boundary_quadrature_weights.")
     count = discretization.state_shape[0]
     mass = np.diag(np.asarray(discretization.quadrature_weights))
-    boundary = np.diag(np.asarray(discretization.plan.boundary_mask, dtype=float))
+    boundary = np.diag(np.asarray(boundary_weights))
     maximum_green = 0.0
     maximum_conservation = 0.0
     for axis in range(discretization.spatial_dimension):
@@ -94,6 +108,8 @@ def point_sbp_report(
                     column,
                     axis=_axis,
                 ),
+                in_axes=1,
+                out_axes=1,
             )(identity)
         )
         normal = np.asarray(discretization.plan.boundary_normals)[:, axis]
@@ -104,14 +120,14 @@ def point_sbp_report(
         maximum_conservation = max(
             maximum_conservation, float(np.max(np.abs(conservation)))
         )
-    passed = maximum_green <= tolerance and maximum_conservation <= tolerance
+    passed = maximum_green <= threshold and maximum_conservation <= threshold
     report_id = canonical_fingerprint(
         {
             "kind": "point-sbp-report",
             "discretization": discretization.prepared_id,
             "green": maximum_green,
             "conservation": maximum_conservation,
-            "tolerance": float(tolerance),
+            "tolerance": threshold,
         }
     )
     return PointSBPReport(
@@ -165,18 +181,23 @@ class DissipativePointDiffusion(StrictModule, NonTrainableState):
 
     def mv(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)
-        mass = self.discretization.quadrature_weights
+        if value.ndim < 1 or value.shape[0] != self.discretization.state_shape[0]:
+            raise ValueError("Point diffusion values must begin with the point count.")
+        payload_rank = value.ndim - 1
+        reshape = (self.discretization.state_shape[0],) + (1,) * payload_rank
+        mass = self.discretization.quadrature_weights.reshape(reshape)
+        diffusivity = self.diffusivity.reshape(reshape)
         output = jnp.zeros_like(value)
         for gradient in self.gradient_matrices:
-            flux = self.diffusivity * (gradient @ value)
+            flux = diffusivity * (gradient @ value)
             output = output - (jnp.conj(gradient.T) @ (mass * flux)) / mass
         return output
 
     def energy_rate(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)
-        return jnp.real(
-            jnp.vdot(value, self.discretization.quadrature_weights * self.mv(value))
-        )
+        reshape = (self.discretization.state_shape[0],) + (1,) * (value.ndim - 1)
+        mass = self.discretization.quadrature_weights.reshape(reshape)
+        return jnp.real(jnp.vdot(value, mass * self.mv(value)))
 
 
 class PointCloudPoissonResult(StrictModule):
@@ -193,18 +214,26 @@ def solve_point_cloud_poisson(
     *,
     diffusivity: ArrayLike = 1.0,
 ) -> PointCloudPoissonResult:
+    if not isinstance(discretization, PreparedPointCloudDiscretization):
+        raise TypeError("discretization must be PreparedPointCloudDiscretization.")
+    if not isinstance(boundary, PointBoundaryPlan):
+        raise TypeError("boundary must be PointBoundaryPlan.")
     count = discretization.state_shape[0]
-    source_ = jnp.asarray(source)
+    dtype = jnp.result_type(source, boundary.values, float)
+    source_ = jnp.asarray(source, dtype=dtype)
     if source_.shape != (count,) or boundary.values.shape != (count,):
         raise ValueError("Point Poisson source/boundary values must match point count.")
     boundary_mask = discretization.plan.boundary_mask
     diffusion = DissipativePointDiffusion(discretization, diffusivity)
-    identity = jnp.eye(count)
-    matrix = jax.vmap(diffusion.mv, in_axes=1, out_axes=1)(identity)
+    identity = jnp.eye(count, dtype=dtype)
+    matrix = jax.vmap(diffusion.mv, in_axes=1, out_axes=1)(identity).astype(dtype)
     rhs = source_
+    augmented = None
+    augmented_rhs = None
     if boundary.kind == "dirichlet":
         matrix = jnp.where(boundary_mask[:, None], identity, matrix)
-        rhs = jnp.where(boundary_mask, boundary.values, rhs)
+        rhs = jnp.where(boundary_mask, boundary.values.astype(dtype), rhs)
+        compatibility = jnp.asarray(0.0, dtype=source_.real.dtype)
     else:
         normal_derivative = jnp.sum(
             discretization.gradient(identity)
@@ -213,23 +242,56 @@ def solve_point_cloud_poisson(
         )
         boundary_matrix = normal_derivative
         if boundary.kind == "robin":
+            assert boundary.robin_coefficient is not None
             boundary_matrix = (
-                boundary_matrix + boundary.robin_coefficient[:, None] * identity
+                boundary_matrix
+                + boundary.robin_coefficient[:, None].astype(dtype) * identity
             )
-        matrix = jnp.where(boundary_mask[:, None], boundary_matrix, matrix)
-        rhs = jnp.where(boundary_mask, boundary.values, rhs)
         if boundary.kind == "neumann":
-            weights = discretization.quadrature_weights
-            compatibility = jnp.abs(jnp.sum(weights * rhs))
-            rhs = rhs - jnp.sum(weights * rhs) / jnp.sum(weights)
-            matrix = matrix.at[0].set(weights / jnp.sum(weights))
-            rhs = rhs.at[0].set(0.0)
+            boundary_weights = discretization.plan.boundary_quadrature_weights
+            if boundary_weights is None:
+                raise ValueError(
+                    "Neumann point Poisson requires boundary_quadrature_weights."
+                )
+            volume_weights = discretization.quadrature_weights.astype(dtype)
+            boundary_weights_ = boundary_weights.astype(dtype)
+            mismatch = jnp.sum(volume_weights * source_) + jnp.sum(
+                boundary_weights_ * boundary.values.astype(dtype)
+            )
+            compatibility = jnp.abs(mismatch)
+            corrected_source = source_ - mismatch / jnp.sum(volume_weights)
+            rhs = jnp.where(
+                boundary_mask,
+                boundary.values.astype(dtype),
+                corrected_source,
+            )
+            matrix = jnp.where(boundary_mask[:, None], boundary_matrix, matrix)
+            augmented = jnp.zeros((count + 1, count + 1), dtype=dtype)
+            augmented = augmented.at[:count, :count].set(matrix)
+            augmented = augmented.at[:count, count].set(volume_weights)
+            augmented = augmented.at[count, :count].set(volume_weights)
+            augmented_rhs = jnp.concatenate((rhs, jnp.zeros((1,), dtype=dtype)))
         else:
-            compatibility = jnp.asarray(0.0)
-    if boundary.kind == "dirichlet":
-        compatibility = jnp.asarray(0.0)
-    values = jnp.linalg.solve(matrix, rhs)
-    residual = jnp.linalg.norm(matrix @ values - rhs)
+            matrix = jnp.where(boundary_mask[:, None], boundary_matrix, matrix)
+            rhs = jnp.where(boundary_mask, boundary.values.astype(dtype), rhs)
+            compatibility = jnp.asarray(0.0, dtype=source_.real.dtype)
+    solve_matrix = matrix if augmented is None else augmented
+    solve_rhs = rhs if augmented is None else augmented_rhs
+    if solve_rhs is None:
+        raise RuntimeError("Point Poisson right-hand side was not prepared.")
+    solved = solve(
+        LinearSystem(
+            DenseLinearOperator(solve_matrix),
+            problem_id=f"{discretization.prepared_id}:point-poisson",
+        ),
+        solve_rhs,
+        policy=LinearSolvePolicy(
+            DenseLU(),
+            failure=FailurePolicy("error"),
+        ),
+    )
+    values = solved.value if augmented is None else solved.value[:count]
+    residual = solved.diagnostics.residual_norm
     return PointCloudPoissonResult(values, residual, compatibility <= 1e-8)
 
 
@@ -251,15 +313,33 @@ class PointConormalInterface(StrictModule):
         *,
         jump: ArrayLike = 0.0,
     ):
-        left = jnp.asarray(left_indices, dtype=jnp.int32)
-        right = jnp.asarray(right_indices, dtype=jnp.int32)
-        if left.ndim != 1 or right.shape != left.shape:
-            raise ValueError("Point interface indices must be paired vectors.")
+        left_host = np.asarray(left_indices)
+        right_host = np.asarray(right_indices)
+        if (
+            left_host.ndim != 1
+            or right_host.shape != left_host.shape
+            or not np.issubdtype(left_host.dtype, np.signedinteger)
+            or not np.issubdtype(right_host.dtype, np.signedinteger)
+            or np.any(left_host < 0)
+            or np.any(right_host < 0)
+        ):
+            raise ValueError(
+                "Point interface indices must be paired nonnegative signed integers."
+            )
+        left = jnp.asarray(left_host, dtype=jnp.int32)
+        right = jnp.asarray(right_host, dtype=jnp.int32)
         left_k = jnp.broadcast_to(jnp.asarray(left_diffusivity), left.shape)
         right_k = jnp.broadcast_to(jnp.asarray(right_diffusivity), left.shape)
         jump_ = jnp.broadcast_to(jnp.asarray(jump), left.shape)
-        if bool(jnp.any(left_k <= 0.0)) or bool(jnp.any(right_k <= 0.0)):
-            raise ValueError("Point interface diffusivities must be positive.")
+        if bool(
+            jnp.any(~jnp.isfinite(left_k) | (left_k <= 0.0))
+            | jnp.any(~jnp.isfinite(right_k) | (right_k <= 0.0))
+            | jnp.any(~jnp.isfinite(jump_))
+        ):
+            raise ValueError(
+                "Point interface diffusivities must be finite and positive and "
+                "jumps must be finite."
+            )
         self.left_indices = left
         self.right_indices = right
         self.left_diffusivity = left_k
@@ -270,6 +350,9 @@ class PointConormalInterface(StrictModule):
                 "kind": "point-conormal-interface",
                 "left": array_tree_fingerprint(left),
                 "right": array_tree_fingerprint(right),
+                "left_diffusivity": array_tree_fingerprint(left_k),
+                "right_diffusivity": array_tree_fingerprint(right_k),
+                "jump": array_tree_fingerprint(jump_),
             }
         )
 
@@ -285,10 +368,18 @@ class DistributedPointPartition(StrictModule, NonTrainableState):
     partition_id: str = eqx.field(static=True)
 
     def __init__(self, owners: ArrayLike, partition_count: int, /):
-        owners_ = jnp.asarray(owners, dtype=jnp.int32)
+        owners_host = np.asarray(owners)
         count = int(partition_count)
-        if owners_.ndim != 1 or count <= 0:
-            raise ValueError("Distributed point partition inputs are invalid.")
+        if (
+            owners_host.ndim != 1
+            or count <= 0
+            or not np.issubdtype(owners_host.dtype, np.signedinteger)
+        ):
+            raise ValueError(
+                "Distributed point owners must be a signed-integer vector and "
+                "partition_count must be positive."
+            )
+        owners_ = jnp.asarray(owners_host, dtype=jnp.int32)
         if bool(jnp.any((owners_ < 0) | (owners_ >= count))):
             raise ValueError("Point owners are outside partition_count.")
         self.owners = owners_

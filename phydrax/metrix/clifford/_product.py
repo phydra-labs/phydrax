@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+from operator import index
 from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -34,21 +36,35 @@ def basis_blade_product(
     /,
 ) -> tuple[int, int]:
     """Return the exact coefficient and bitmap of two canonical basis blades."""
+    if not isinstance(algebra, CliffordAlgebraSpec):
+        raise TypeError("algebra must be a CliffordAlgebraSpec.")
+    maximum_bitmap = 1 << algebra.dimension
+    if isinstance(left_bitmap, bool) or isinstance(right_bitmap, bool):
+        raise TypeError("Basis-blade bitmaps must be integers.")
+    left_value = index(left_bitmap)
+    right_value = index(right_bitmap)
+    if (
+        left_value < 0
+        or right_value < 0
+        or left_value >= maximum_bitmap
+        or right_value >= maximum_bitmap
+    ):
+        raise ValueError("Basis-blade bitmaps must lie in the Clifford algebra.")
     left_axes = tuple(
-        axis for axis in range(algebra.dimension) if left_bitmap & (1 << axis)
+        axis for axis in range(algebra.dimension) if left_value & (1 << axis)
     )
     right_axes = tuple(
-        axis for axis in range(algebra.dimension) if right_bitmap & (1 << axis)
+        axis for axis in range(algebra.dimension) if right_value & (1 << axis)
     )
     inversions = sum(left > right for left in left_axes for right in right_axes)
     coefficient = -1 if inversions % 2 else 1
-    repeated = left_bitmap & right_bitmap
+    repeated = left_value & right_value
     for axis in range(algebra.dimension):
         if repeated & (1 << axis):
             coefficient *= algebra.diagonal[axis]
             if coefficient == 0:
                 break
-    return coefficient, left_bitmap ^ right_bitmap
+    return coefficient, left_value ^ right_value
 
 
 def _retain_product(
@@ -116,6 +132,9 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
         if backend not in ("auto", "dense", "sparse"):
             raise ValueError("backend must be 'auto', 'dense', or 'sparse'.")
 
+        algebra.budget.admit_product_pairs(
+            left_layout.blade_count * right_layout.blade_count
+        )
         terms: list[tuple[int, int, int, int]] = []
         structural_zeros = 0
         output_bitmaps: set[int] = set()
@@ -263,6 +282,14 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
             )
         leading = jnp.broadcast_shapes(left_.shape[:-1], right_.shape[:-1])
         dtype = jnp.result_type(left_, right_)
+        if not (
+            jnp.issubdtype(dtype, jnp.signedinteger)
+            or jnp.issubdtype(dtype, jnp.floating)
+            or jnp.issubdtype(dtype, jnp.complexfloating)
+        ):
+            raise TypeError(
+                "Clifford products require signed-integer, floating, or complex values."
+            )
         left_ = jnp.broadcast_to(left_, leading + (self.left_layout.blade_count,)).astype(
             dtype
         )
@@ -272,11 +299,12 @@ class CliffordProductPlan(StrictModule, NonTrainableState):
         if self.backend == "dense":
             if self.dense_kernel is None:
                 raise RuntimeError("Dense Clifford plan lost its kernel.")
-            return jnp.einsum(
+            return oe.contract(
                 "...l,olr,...r->...o",
                 left_,
                 self.dense_kernel.astype(dtype),
                 right_,
+                backend="jax",
             )
         output = jnp.zeros(leading + (self.output_layout.blade_count,), dtype=dtype)
         if self.left_indices.size == 0:

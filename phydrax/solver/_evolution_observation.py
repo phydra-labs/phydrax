@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from operator import index
 from typing import Any
 
 import equinox as eqx
@@ -13,10 +14,12 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..dynamics import AbstractEvolution
+
+
+OBSERVATION_NONFINITE = -1
 
 
 class BoundedEvolutionObservationPlan(StrictModule, NonTrainableState):
@@ -42,26 +45,24 @@ class BoundedEvolutionObservationPlan(StrictModule, NonTrainableState):
     ):
         if not callable(observable):
             raise TypeError("observable must be callable.")
-        shape = tuple(int(size) for size in observable_shape)
+        if any(isinstance(size, bool) for size in observable_shape):
+            raise TypeError("observable_shape dimensions must be integers.")
+        shape = tuple(index(size) for size in observable_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("observable_shape dimensions must be positive.")
-        capacity_ = int(capacity)
-        stride = int(sample_stride)
+        if isinstance(capacity, bool) or isinstance(sample_stride, bool):
+            raise TypeError("capacity and sample_stride must be integers.")
+        capacity_ = index(capacity)
+        stride = index(sample_stride)
         if capacity_ < 1 or stride < 1:
             raise ValueError("capacity and sample_stride must be positive.")
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "bounded-evolution-observer-v1",
-                    "observable_shape": list(shape),
-                    "capacity": capacity_,
-                    "sample_stride": stride,
-                    "include_initial": bool(include_initial),
-                }
+        if not isinstance(include_initial, (bool, np.bool_)):
+            raise TypeError("include_initial must be Boolean.")
+        if observer_id is None:
+            raise ValueError(
+                "observer_id is required because observable callables have no stable identity."
             )
-            if observer_id is None
-            else str(observer_id)
-        )
+        identifier = str(observer_id)
         if not identifier:
             raise ValueError("observer_id must be non-empty.")
         self.observable = observable
@@ -103,7 +104,10 @@ def observe_evolution_bounded(
         raise TypeError("evolution must be an AbstractEvolution.")
     if not isinstance(plan, BoundedEvolutionObservationPlan):
         raise TypeError("plan must be BoundedEvolutionObservationPlan.")
-    grid = jnp.asarray(coordinates, dtype=float)
+    raw_grid = jnp.asarray(coordinates)
+    if jnp.iscomplexobj(raw_grid):
+        raise TypeError("coordinates must be real.")
+    grid = raw_grid.astype(jnp.result_type(raw_grid.dtype, jnp.float32))
     grid_host = np.asarray(grid)
     if (
         grid.ndim != 1
@@ -128,6 +132,11 @@ def observe_evolution_bounded(
     valid_buffer = jnp.zeros((plan.capacity,), dtype=bool)
     initial_finite = jnp.all(jnp.isfinite(initial)) & jnp.all(jnp.isfinite(initial_value))
     initial_count = jnp.asarray(int(plan.include_initial), dtype=jnp.int32)
+    initial_status = jnp.where(
+        initial_finite,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(OBSERVATION_NONFINITE, dtype=jnp.int32),
+    )
     if plan.include_initial:
         coordinate_buffer = coordinate_buffer.at[0].set(grid[0])
         value_buffer = value_buffer.at[0].set(initial_value)
@@ -142,13 +151,18 @@ def observe_evolution_bounded(
             saved_valid,
             count,
             overflow,
-            _,
+            previous_status,
         ) = carry
         index, source, target = data
         step = evolution.advance(state, source, target, args)
         value = jnp.asarray(plan.observable(target, step.final_state, args))
         finite_value = jnp.all(jnp.isfinite(value))
         step_valid = cumulative_valid & step.valid & finite_value
+        next_status = jnp.where(
+            cumulative_valid,
+            jnp.where(finite_value, step.status, OBSERVATION_NONFINITE),
+            previous_status,
+        )
         requested = ((index + 1) % plan.sample_stride) == 0
         available = count < plan.capacity
         write = requested & available
@@ -179,7 +193,7 @@ def observe_evolution_bounded(
             saved_valid,
             count + write.astype(jnp.int32),
             overflow | (requested & ~available),
-            step.status,
+            next_status,
         ), None
 
     initial_carry = (
@@ -190,7 +204,7 @@ def observe_evolution_bounded(
         valid_buffer,
         initial_count,
         jnp.asarray(False),
-        jnp.asarray(0, dtype=jnp.int32),
+        initial_status,
     )
     indices = jnp.arange(grid.size - 1, dtype=jnp.int32)
     final, _ = jax.lax.scan(
@@ -216,4 +230,5 @@ __all__ = [
     "BoundedEvolutionObservation",
     "BoundedEvolutionObservationPlan",
     "observe_evolution_bounded",
+    "OBSERVATION_NONFINITE",
 ]

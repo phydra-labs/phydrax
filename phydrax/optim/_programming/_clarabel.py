@@ -121,7 +121,10 @@ def _prepare_structure(
     prepared = prepare_clarabel(_provider_plan(policy))
     cones, transforms, slices = _clarabel_cones(prepared, program.cone)
     fixed, lower, upper = _conic_bound_indices(
-        program.bounds, program.batch_shape, program.num_variables
+        program.bounds,
+        program.batch_shape,
+        program.num_variables,
+        program.linear.dtype,
     )
     module = prepared.module
     cones = cones + (
@@ -522,15 +525,23 @@ def solve_clarabel_program(
     prepared = selected.provider
     structure = selected.structure
     count = int(np.prod(program.batch_shape)) if program.batch_shape else 1
-    linear = np.asarray(program.linear).reshape((count, program.num_variables))
+    linear = np.asarray(program.linear, dtype=np.float64).reshape(
+        (count, program.num_variables)
+    )
     quadratic = (
-        np.zeros((count, program.num_variables, program.num_variables))
+        np.zeros(
+            (count, program.num_variables, program.num_variables),
+            dtype=np.float64,
+        )
         if program.quadratic is None
-        else np.asarray(program.quadratic).reshape(
+        else np.asarray(program.quadratic, dtype=np.float64).reshape(
             (count, program.num_variables, program.num_variables)
         )
     )
-    quadratic = quadratic + policy.regularization * np.eye(program.num_variables)
+    quadratic = quadratic + policy.regularization * np.eye(
+        program.num_variables,
+        dtype=np.float64,
+    )
     primal_values = []
     slack_values = []
     dual_values = []
@@ -540,6 +551,8 @@ def solve_clarabel_program(
     iteration_values = []
     for index in range(count):
         matrix, rhs = _transformed_constraint_data(program, structure, index)
+        matrix = np.asarray(matrix, dtype=np.float64)
+        rhs = np.asarray(rhs, dtype=np.float64)
         solver = prepared.module.DefaultSolver(
             sp.triu(sp.csc_matrix(quadratic[index])).tocsc(),
             linear[index],
@@ -571,17 +584,20 @@ def solve_clarabel_program(
         solved_values.append(str(solution.status) == "Solved")
         iteration_values.append(int(solution.iterations))
     shape = program.batch_shape
-    primal = jnp.asarray(np.stack(primal_values)).reshape(
+    dtype = program.linear.dtype
+    primal = jnp.asarray(np.stack(primal_values), dtype=dtype).reshape(
         shape + (program.num_variables,)
     )
-    slack = jnp.asarray(np.stack(slack_values)).reshape(
+    slack = jnp.asarray(np.stack(slack_values), dtype=dtype).reshape(
         shape + (program.num_constraints,)
     )
-    dual = jnp.asarray(np.stack(dual_values)).reshape(shape + (program.num_constraints,))
-    lower_dual = jnp.asarray(np.stack(lower_values)).reshape(
+    dual = jnp.asarray(np.stack(dual_values), dtype=dtype).reshape(
+        shape + (program.num_constraints,)
+    )
+    lower_dual = jnp.asarray(np.stack(lower_values), dtype=dtype).reshape(
         shape + (program.num_variables,)
     )
-    upper_dual = jnp.asarray(np.stack(upper_values)).reshape(
+    upper_dual = jnp.asarray(np.stack(upper_values), dtype=dtype).reshape(
         shape + (program.num_variables,)
     )
     return _audit_result(

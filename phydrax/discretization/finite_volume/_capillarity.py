@@ -21,9 +21,17 @@ import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
 from ._cell_polynomial import PreparedCellPolynomialReconstruction
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
@@ -128,21 +136,48 @@ class CurvatureEvidence(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-6,
     ):
         kappa = jnp.asarray(curvature)
-        fit_residual = jnp.asarray(residual, dtype=kappa.dtype)
-        state = jnp.asarray(status, dtype=jnp.int8)
+        fit_residual = jnp.asarray(residual)
+        if (
+            jnp.iscomplexobj(kappa)
+            or jnp.iscomplexobj(fit_residual)
+            or not jnp.issubdtype(kappa.dtype, jnp.floating)
+            or not jnp.issubdtype(fit_residual.dtype, jnp.floating)
+        ):
+            raise TypeError(
+                "Curvature and residual evidence must be real floating arrays."
+            )
+        state = jnp.asarray(status)
+        if not jnp.issubdtype(state.dtype, jnp.signedinteger):
+            raise TypeError("Curvature status must have a signed integer dtype.")
+        state = state.astype(jnp.int8)
+        state = eqx.error_if(
+            state,
+            jnp.any(
+                (state < int(CurvatureStatus.VALID))
+                | (state > int(CurvatureStatus.MISMATCHED_GEOMETRY))
+            ),
+            "Curvature status contains an unknown code.",
+        )
+        fit_residual = fit_residual.astype(kappa.dtype)
         if (
             kappa.ndim != 1
             or fit_residual.shape != kappa.shape
             or state.shape != kappa.shape
         ):
             raise ValueError("Curvature evidence arrays must have one value per cell.")
-        active = (
-            state == int(CurvatureStatus.VALID)
-            if interface_active is None
-            else jnp.asarray(interface_active, dtype=bool)
-        )
+        if interface_active is None:
+            active = state != int(CurvatureStatus.MISSING_INTERFACE)
+        else:
+            active = jnp.asarray(interface_active)
+            if active.dtype != jnp.bool_:
+                raise TypeError("interface_active must have boolean dtype.")
         if active.shape != kappa.shape:
             raise ValueError("interface_active must have one value per cell.")
+        kappa = eqx.error_if(
+            kappa,
+            jnp.any((~active) & ((kappa != 0.0) | (fit_residual != 0.0))),
+            "Inactive curvature evidence must be exactly zero.",
+        )
         tol = float(tolerance)
         if not np.isfinite(tol) or tol <= 0.0:
             raise ValueError("Curvature tolerance must be finite and positive.")
@@ -157,6 +192,10 @@ class CurvatureEvidence(StrictModule, NonTrainableState):
                     "geometry": geometry,
                     "reconstruction": reconstruction,
                     "tolerance": tol,
+                    "curvature": array_tree_fingerprint(kappa),
+                    "residual": array_tree_fingerprint(fit_residual),
+                    "status": array_tree_fingerprint(state),
+                    "active": array_tree_fingerprint(active),
                 }
             )
             if evidence_id is None
@@ -175,7 +214,13 @@ class CurvatureEvidence(StrictModule, NonTrainableState):
 
     @property
     def valid_mask(self) -> Array:
-        return self.interface_active & (self.status == int(CurvatureStatus.VALID))
+        return (
+            self.interface_active
+            & jnp.isfinite(self.curvature)
+            & jnp.isfinite(self.residual)
+            & (self.status == int(CurvatureStatus.VALID))
+            & (self.residual <= self.tolerance)
+        )
 
     @property
     def uncertain(self) -> Array:
@@ -530,7 +575,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         )
         offsets = centres[routes] - centres[:, None, :]
         differences = normals[routes] - normals[:, None, :]
-        distance = jnp.linalg.norm(offsets, axis=-1)
+        distance = jnp.sqrt(jnp.sum(offsets * offsets, axis=-1))
         weights = jnp.where(
             usable, 1.0 / jnp.maximum(distance, jnp.finfo(dtype).tiny) ** 2, 0.0
         )
@@ -538,22 +583,29 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         rhs = oe.contract("csi,csj,cs->cij", differences, offsets, weights)
         scale = jnp.maximum(jnp.trace(gram, axis1=-2, axis2=-1), jnp.finfo(dtype).tiny)
         regularizer = jnp.finfo(dtype).eps * scale[:, None, None]
-        jacobian = jnp.swapaxes(
-            jnp.linalg.solve(
-                gram
-                + regularizer * jnp.eye(self.discretization.cell_dimension, dtype=dtype),
-                jnp.swapaxes(rhs, -1, -2),
-            ),
-            -1,
-            -2,
+        fit_matrix = gram + regularizer * jnp.eye(
+            self.discretization.cell_dimension,
+            dtype=dtype,
         )
+        solved = solve(
+            LinearSystem(
+                DenseLinearOperator(fit_matrix),
+                problem_id=f"{self.operator_id}:curvature-fit",
+            ),
+            jnp.swapaxes(rhs, -1, -2),
+            policy=LinearSolvePolicy(
+                DenseLU(),
+                failure=FailurePolicy("status"),
+            ),
+        )
+        jacobian = jnp.swapaxes(solved.value, -1, -2)
         predicted = oe.contract("cij,csj->csi", jacobian, offsets)
         error = differences - predicted
         residual = jnp.sqrt(
             oe.contract("csi,csi,cs->c", error, error, weights)
             / jnp.maximum(jnp.sum(weights, axis=1), 1.0)
         )
-        determinant = jnp.linalg.det(gram)
+        determinant = gram[:, 0, 0] * gram[:, 1, 1] - gram[:, 0, 1] * gram[:, 1, 0]
         trace = jnp.trace(gram, axis1=-2, axis2=-1)
         discriminant = jnp.sqrt(jnp.maximum(trace * trace - 4.0 * determinant, 0.0))
         minimum = 0.5 * (trace - discriminant)
@@ -562,7 +614,11 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         neighbour_count = jnp.sum(usable, axis=1)
         constant_normal = (neighbour_count >= 1) & (
             jnp.max(
-                jnp.where(usable, jnp.linalg.norm(differences, axis=-1), 0.0),
+                jnp.where(
+                    usable,
+                    jnp.sqrt(jnp.sum(differences * differences, axis=-1)),
+                    0.0,
+                ),
                 axis=1,
             )
             <= self.curvature_tolerance
@@ -578,6 +634,7 @@ class BalancedCapillaryOperator(StrictModule, NonTrainableState):
         kappa = jnp.trace(jacobian, axis1=-2, axis2=-1)
         kappa = jnp.where(constant_normal, 0.0, kappa)
         kappa = jnp.where(valid, kappa, 0.0)
+        residual = jnp.where(active_raw, residual, 0.0)
         status = jnp.where(
             mismatch,
             int(CurvatureStatus.MISMATCHED_GEOMETRY),

@@ -206,6 +206,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
     overset_mapping_id: str | None = eqx.field(static=True)
     overset_epoch_id: str | None = eqx.field(static=True)
     source: SourceFunction | None = eqx.field(static=True)
+    source_id: str | None = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
     def __init__(
@@ -217,6 +218,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         /,
         *,
         source: SourceFunction | None = None,
+        source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
         coupling: PreparedUnstructuredFiniteVolumeCoupling | None = None,
     ):
@@ -276,6 +278,11 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
+        source_identifier = None if source_id is None else str(source_id)
+        if (source is None) != (source_identifier is None) or source_identifier == "":
+            raise ValueError(
+                "A source callable requires exactly one non-empty source_id."
+            )
         precision_ = (
             FiniteVolumePrecisionPolicy(jnp.dtype(discretization.cell_volumes.dtype).name)
             if precision is None
@@ -296,53 +303,26 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     "Overset dynamics require donor and receptor cell layouts "
                     "to share one single-device content axis."
                 )
-            donor_active = np.asarray(
-                getattr(
-                    overset,
-                    "donor_active_mask",
-                    np.ones((donor_count,), dtype=bool),
-                ),
-                dtype=bool,
+            donor_active = np.asarray(overset.donor_active_mask)
+            donor_hole = np.asarray(overset.donor_hole_mask)
+            donor_eligible = np.asarray(overset.donor_eligible_mask)
+            receptor_active = np.asarray(overset.receptor_active_mask)
+            receptor_hole = np.asarray(overset.receptor_hole_mask)
+            masks = (
+                donor_active,
+                donor_hole,
+                donor_eligible,
+                receptor_active,
+                receptor_hole,
             )
-            donor_hole = np.asarray(
-                getattr(
-                    overset,
-                    "donor_hole_mask",
-                    np.zeros((donor_count,), dtype=bool),
-                ),
-                dtype=bool,
-            )
-            donor_eligible = np.asarray(
-                getattr(
-                    overset,
-                    "donor_eligible",
-                    getattr(overset, "donor_eligibility", donor_active & ~donor_hole),
-                ),
-                dtype=bool,
-            )
-            receptor_active = np.asarray(
-                getattr(
-                    overset,
-                    "receptor_active_mask",
-                    ~np.asarray(overset.hole_mask, dtype=bool),
-                ),
-                dtype=bool,
-            )
-            receptor_hole = np.asarray(
-                getattr(overset, "receptor_hole_mask", overset.hole_mask),
-                dtype=bool,
-            )
+            if any(value.dtype.kind != "b" for value in masks):
+                raise TypeError("Overset activity and hole masks must be Boolean.")
             donor_active = donor_active & ~donor_hole
             donor_eligible = donor_eligible & ~donor_hole
             receptor_active = receptor_active & ~receptor_hole
-            receptor_fringe = np.asarray(
-                getattr(
-                    overset,
-                    "receptor_fringe_mask",
-                    getattr(overset, "fringe_mask", overset.receptor_mask),
-                ),
-                dtype=bool,
-            )
+            receptor_fringe = np.asarray(overset.receptor_fringe_mask)
+            if receptor_fringe.dtype.kind != "b":
+                raise TypeError("Overset receptor fringe mask must be Boolean.")
             if (
                 donor_active.shape != (donor_count,)
                 or donor_hole.shape != (donor_count,)
@@ -531,6 +511,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         self.coupling = coupling_
         self.precision = precision_
         self.source = source
+        self.source_id = source_identifier
         self.boundary_face_indices = boundary_face_indices
         self.stage_rate_block_templates = stage_rate_block_templates
         self.stage_boundary_face_indices = stage_boundary_face_indices
@@ -554,7 +535,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 "overset_policy": overset_policy_id,
                 "overset_mapping": overset_mapping_id,
                 "overset_epoch": overset_epoch_id,
-                "source": None if source is None else repr(source),
+                "source": source_identifier,
             }
         )
 
@@ -575,6 +556,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             self.method,
             self.boundaries,
             source=self.source,
+            source_id=self.source_id,
             precision=self.precision,
             coupling=coupling,
         )
@@ -590,6 +572,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             ),
             self.boundaries,
             source=self.source,
+            source_id=self.source_id,
             precision=self.precision,
             coupling=self.coupling,
         )

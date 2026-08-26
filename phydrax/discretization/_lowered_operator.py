@@ -66,6 +66,7 @@ class LoweredKernel(StrictModule):
         static=True
     )
     halo_widths: tuple[int, ...] = eqx.field(static=True)
+    implementation_id: str = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
     def __init__(
@@ -78,13 +79,22 @@ class LoweredKernel(StrictModule):
         /,
         *,
         halo_widths: Sequence[int] = (),
+        implementation_id: str,
     ):
         identifier = str(name)
+        implementation = str(implementation_id)
         reads_ = tuple(str(value) for value in reads)
         writes_ = tuple(str(value) for value in writes)
         halos = tuple(int(value) for value in halo_widths)
-        if not identifier or not writes_ or len(set(writes_)) != len(writes_):
-            raise ValueError("Lowered kernel name/writes are invalid.")
+        if (
+            not identifier
+            or not implementation
+            or not writes_
+            or len(set(writes_)) != len(writes_)
+        ):
+            raise ValueError(
+                "Lowered kernel name, implementation_id, and writes are invalid."
+            )
         if any(not value for value in reads_ + writes_) or any(
             value < 0 for value in halos
         ):
@@ -97,10 +107,12 @@ class LoweredKernel(StrictModule):
         self.jax_action = jax_action
         self.numpy_action = numpy_action
         self.halo_widths = halos
+        self.implementation_id = implementation
         self.kernel_id = canonical_fingerprint(
             {
                 "kind": "lowered-kernel",
                 "name": identifier,
+                "implementation": implementation,
                 "reads": list(reads_),
                 "writes": list(writes_),
                 "halos": list(halos),
@@ -155,9 +167,28 @@ class LoweredOperatorProgram(StrictModule, NonTrainableState):
         if set(values) != {value.name for value in self.buffers}:
             raise ValueError("Lowered state keys must exactly match program buffers.")
         for spec in self.buffers:
-            array = np.asarray(values[spec.name])
+            array = jnp.asarray(values[spec.name])
             if array.shape != spec.shape or str(array.dtype) != spec.dtype:
                 raise ValueError(f"Lowered buffer {spec.name!r} has wrong shape/dtype.")
+            values[spec.name] = array
+        return values
+
+    def validate_updates(
+        self,
+        updates: Mapping[str, Any],
+        writes: tuple[str, ...],
+        /,
+    ) -> dict[str, Any]:
+        values = dict(updates)
+        if set(values) != set(writes):
+            raise ValueError("Lowered kernel returned the wrong write set.")
+        specs = {spec.name: spec for spec in self.buffers}
+        for name in writes:
+            array = jnp.asarray(values[name])
+            spec = specs[name]
+            if array.shape != spec.shape or str(array.dtype) != spec.dtype:
+                raise ValueError(f"Lowered kernel output {name!r} has wrong shape/dtype.")
+            values[name] = array
         return values
 
 
@@ -165,13 +196,14 @@ class LoweredJAXBackend(StrictModule, NonTrainableState):
     program: LoweredOperatorProgram
 
     def __call__(self, state: Mapping[str, Any], /) -> dict[str, Array]:
-        values = {name: jnp.asarray(value) for name, value in state.items()}
+        values = self.program.validate_state(state)
         for kernel in self.program.kernels:
-            updates = dict(kernel.jax_action(values))
-            if set(updates) != set(kernel.writes):
-                raise ValueError("JAX lowered kernel returned wrong write set.")
+            updates = self.program.validate_updates(
+                kernel.jax_action(values),
+                kernel.writes,
+            )
             values.update(updates)
-        return values
+        return {name: jnp.asarray(value) for name, value in values.items()}
 
     def compile(self, /):
         return jax.jit(self)
@@ -181,11 +213,13 @@ class LoweredNumPyBackend(StrictModule, NonTrainableState):
     program: LoweredOperatorProgram
 
     def __call__(self, state: Mapping[str, Any], /) -> dict[str, np.ndarray]:
-        values = {name: np.asarray(value) for name, value in state.items()}
+        validated = self.program.validate_state(state)
+        values = {name: np.asarray(value) for name, value in validated.items()}
         for kernel in self.program.kernels:
-            updates = dict(kernel.numpy_action(values))
-            if set(updates) != set(kernel.writes):
-                raise ValueError("NumPy lowered kernel returned wrong write set.")
+            updates = self.program.validate_updates(
+                kernel.numpy_action(values),
+                kernel.writes,
+            )
             values.update({name: np.asarray(value) for name, value in updates.items()})
         return values
 

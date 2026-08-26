@@ -67,6 +67,7 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
             {
                 "kind": "clifford-grade-representation-v1",
                 "algebra": algebra.algebra_id,
+                "orientation": algebra.orientation,
                 "multiplicities": list(resolved),
                 "layouts": [layout.layout_id for layout in layouts],
             }
@@ -129,10 +130,12 @@ class CliffordGradeRepresentation(StrictModule, NonTrainableState):
                 dtype = array.dtype
             elif array.shape[:-2] != leading:
                 raise ValueError("Clifford grade features must share leading axes.")
+            elif array.dtype != dtype:
+                raise TypeError("Clifford grade features must share one dtype.")
             flattened.append(array.reshape(array.shape[:-2] + (-1,)))
         if dtype is None or leading is None:
             raise RuntimeError("Clifford grade representation lost all feature grades.")
-        return jnp.concatenate(flattened, axis=-1).astype(dtype)
+        return jnp.concatenate(flattened, axis=-1)
 
     def validate_affine_normalization(
         self,

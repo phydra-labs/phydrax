@@ -1296,7 +1296,12 @@ initializer records a deterministic space-filling fallback.
 validity flag, proposal kind, running best value, fallback count, surrogate-failure
 count, bounds, root key, design identity, and exact evaluation count. It reports
 budget exhaustion rather than convergence. The implementation is sequential and
-exact-GP based, with cubic observation-count cost; it does not support parallel
+refactors the exact GP after every observation. For evaluation budget `B`,
+candidate-pool width `C`, and bounded-position dimension `d`, the total surrogate
+work is `O(B^4 + C B^3)` (the sums of dense `O(n^3)` refactorizations and
+`O(C n^2)` posterior predictions), plus kernel-evaluation work and the user
+objective. Peak retained storage is `O(B^2 + B C d)`: the largest covariance and
+the pre-materialized, disjoint candidate pools. It does not support parallel
 fantasies, categorical variables, constraints, or automatic kernel fitting.
 
 ### Local MAP refinement

@@ -196,6 +196,22 @@ def _validate_objective_schema(
             raise ValueError("Ordinal objective thresholds must be strictly increasing.")
     elif thresholds is not None:
         raise ValueError("Objective thresholds are supported only for ordinal targets.")
+    if objective.kind == "focal" and objective.alpha is not None:
+        alpha = objective.alpha
+        if target_schema.kind in ("binary", "multilabel"):
+            if not isinstance(alpha, float) or not 0.0 < alpha < 1.0:
+                raise ValueError(
+                    f"{target_schema.kind} focal alpha must be scalar in (0, 1)."
+                )
+        elif target_schema.kind == "multiclass":
+            if (
+                not isinstance(alpha, tuple)
+                or len(alpha) != class_count
+                or any(value <= 0.0 for value in alpha)
+            ):
+                raise ValueError(
+                    "Multiclass focal alpha must contain one positive weight per class."
+                )
 
 
 def _normalize_reduction_measure(
@@ -646,19 +662,24 @@ def _gather_target_mask(
         else jnp.broadcast_to(case_indices[:, None], times.shape)
     )
     if isinstance(domain, IrregularTrajectoryDatasetDomain):
-        lower, upper, _ = domain.bracketing_time_indices(
-            case_grid.reshape((-1,)), times.reshape((-1,))
+        lower, upper, fraction = domain.bracketing_time_indices(
+            case_grid.reshape((-1)), times.reshape((-1,))
         )
+        fraction = fraction.reshape(times.shape)
     else:
         tau = (times - domain.start) / domain.dt
         lower = jnp.floor(tau).astype(jnp.int32).reshape((-1,))
         lengths = domain.lengths[case_grid].reshape((-1,))
         upper = jnp.minimum(lower + 1, lengths - 1)
+        fraction = (tau - jnp.floor(tau)).reshape(times.shape)
     flat_cases = case_grid.reshape((-1,))
     lower_mask = target_mask[flat_cases, lower]
     upper_mask = target_mask[flat_cases, upper]
     result_shape = times.shape + lower_mask.shape[1:]
-    return (lower_mask & upper_mask).reshape(result_shape)
+    event_axes = (1,) * (lower_mask.ndim - 1)
+    fraction_ = fraction.reshape((-1,) + event_axes)
+    combined = ((fraction_ >= 1.0) | lower_mask) & ((fraction_ <= 0.0) | upper_mask)
+    return combined.reshape(result_shape)
 
 
 def _active_mass(
@@ -718,7 +739,11 @@ def _reduce_scores(
     if measure == "physical" or reduction == "sum":
         return jnp.sum(weighted_score).reshape(())
     denominator = jnp.sum(active_mass * statistical_weight)
-    return (jnp.sum(weighted_score) / denominator).reshape(())
+    return jnp.where(
+        denominator > 0.0,
+        jnp.sum(weighted_score) / denominator,
+        0.0,
+    ).reshape(())
 
 
 def _classification_loss(
@@ -1160,12 +1185,28 @@ class RaggedTimeSeriesClassificationTerm(AbstractSamplingTerm):
             raise TypeError("Case-time grid sampling requires a tuple point count.")
         num_cases, num_times = count
         key_case, key_time = jr.split(key)
-        case_indices = _sample_case_indices(
-            size=domain.size,
-            num_samples=num_cases,
-            key=key_case,
-            indices=self.case_indices,
-        )
+        if self.selection == "observation_uniform":
+            allowed = (
+                jnp.arange(domain.size, dtype=jnp.int32)
+                if self.case_indices is None
+                else self.case_indices
+            )
+            probability = domain.lengths[allowed].astype(float)
+            probability = probability / jnp.sum(probability)
+            positions = jr.choice(
+                key_case,
+                int(allowed.shape[0]),
+                shape=(num_cases,),
+                p=probability,
+            )
+            case_indices = allowed[positions]
+        else:
+            case_indices = _sample_case_indices(
+                size=domain.size,
+                num_samples=num_cases,
+                key=key_case,
+                indices=self.case_indices,
+            )
         lengths = domain.lengths[case_indices]
         case_grid = jnp.broadcast_to(case_indices[:, None], (num_cases, num_times))
         if self.selection == "case_time_uniform":

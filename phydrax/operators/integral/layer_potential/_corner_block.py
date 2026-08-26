@@ -13,23 +13,55 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
 
 
-def _recursive_inverse(matrix: Array, levels: int, /) -> Array:
+def _inverse(matrix: Array, problem_id: str, /) -> Array:
+    return solve(
+        LinearSystem(DenseLinearOperator(matrix), problem_id=problem_id),
+        jnp.eye(matrix.shape[0], dtype=matrix.dtype),
+        policy=LinearSolvePolicy(
+            DenseLU(),
+            failure=FailurePolicy("error"),
+        ),
+    ).value
+
+
+def _recursive_inverse(
+    matrix: Array,
+    levels: int,
+    /,
+    *,
+    problem_id: str,
+) -> Array:
     size = int(matrix.shape[0])
     if size <= 1 or levels <= 1:
-        return jnp.linalg.inv(matrix)
+        return _inverse(matrix, f"{problem_id}:leaf")
     coarse_size = max(size // 2, 1)
     coarse = matrix[:coarse_size, :coarse_size]
     coarse_fine = matrix[:coarse_size, coarse_size:]
     fine_coarse = matrix[coarse_size:, :coarse_size]
     fine = matrix[coarse_size:, coarse_size:]
-    fine_inverse = _recursive_inverse(fine, levels - 1)
+    fine_inverse = _recursive_inverse(
+        fine,
+        levels - 1,
+        problem_id=f"{problem_id}:fine",
+    )
     schur = coarse - coarse_fine @ fine_inverse @ fine_coarse
-    schur_inverse = jnp.linalg.inv(schur)
+    schur_inverse = _inverse(schur, f"{problem_id}:schur")
     upper_right = -schur_inverse @ coarse_fine @ fine_inverse
     lower_left = -fine_inverse @ fine_coarse @ schur_inverse
-    lower_right = fine_inverse + fine_inverse @ fine_coarse @ schur_inverse @ coarse_fine @ fine_inverse
+    lower_right = (
+        fine_inverse
+        + fine_inverse @ fine_coarse @ schur_inverse @ coarse_fine @ fine_inverse
+    )
     return jnp.block(((schur_inverse, upper_right), (lower_left, lower_right)))
 
 
@@ -56,14 +88,25 @@ class CornerBlockInversePreconditioner2D(StrictModule, NonTrainableState):
         depth = int(levels)
         if depth < 1:
             raise ValueError("Corner block recursion levels must be positive.")
-        blocks = tuple(jnp.asarray(block, dtype=jnp.int32).reshape((-1,)) for block in corner_blocks)
-        all_indices = jnp.concatenate(blocks) if blocks else jnp.asarray((), dtype=jnp.int32)
+        blocks = tuple(
+            jnp.asarray(block, dtype=jnp.int32).reshape((-1,)) for block in corner_blocks
+        )
+        all_indices = (
+            jnp.concatenate(blocks) if blocks else jnp.asarray((), dtype=jnp.int32)
+        )
         if blocks and jnp.unique(all_indices).size != all_indices.size:
             raise ValueError("Corner blocks must be disjoint.")
-        if blocks and bool(jnp.any((all_indices < 0) | (all_indices >= matrix_.shape[0]))):
+        if blocks and bool(
+            jnp.any((all_indices < 0) | (all_indices >= matrix_.shape[0]))
+        ):
             raise ValueError("Corner block index is outside the matrix.")
         inverses = tuple(
-            _recursive_inverse(matrix_[jnp.ix_(block, block)], depth) for block in blocks
+            _recursive_inverse(
+                matrix_[jnp.ix_(block, block)],
+                depth,
+                problem_id=f"corner-block-{index}",
+            )
+            for index, block in enumerate(blocks)
         )
         self.matrix = matrix_
         self.corner_blocks = blocks

@@ -11,6 +11,16 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FactorizationPolicy,
+    factorize,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
 from ._cone_root import safeguarded_newton_bisection, SafeguardedRootResult
 from ._cones import AbstractConvexCone
 
@@ -236,9 +246,10 @@ def _root_bracket(
         return jnp.maximum(lo, candidate), hi
 
     lower, upper = jax.lax.cond(y > 0.0, positive_y, lambda item: item, (lower, upper))
-    ordered_lower = jnp.clip(jnp.minimum(lower, upper), -limit, limit)
-    ordered_upper = jnp.clip(jnp.maximum(lower, upper), -limit, limit)
-    return ordered_lower, ordered_upper
+    return (
+        jnp.clip(lower, -limit, limit),
+        jnp.clip(upper, -limit, limit),
+    )
 
 
 def _boundary_projection(value: Array, rho: Array, /) -> tuple[Array, Array]:
@@ -331,6 +342,28 @@ def _boundary_kkt_matrix(value: Array, projected: Array, /) -> tuple[Array, Arra
     return matrix, gradient
 
 
+def _kkt_solve(matrix: Array, right: Array, /) -> Array:
+    return solve(
+        LinearSystem(
+            DenseLinearOperator(matrix),
+            problem_id="exponential-cone-projection-kkt",
+        ),
+        right,
+        policy=LinearSolvePolicy(
+            DenseLU(),
+            failure=FailurePolicy("status"),
+        ),
+    ).value
+
+
+def _minimum_singular_value(matrix: Array, /) -> Array:
+    decomposition = factorize(
+        DenseLinearOperator(matrix),
+        FactorizationPolicy("svd"),
+    )
+    return decomposition.singular_values()[-1]
+
+
 def _projection_jvp(value: Array, projected: Array, tangent: Array, /) -> Array:
     in_primal = _in_primal(value)
     in_polar = _in_dual(-value)
@@ -339,7 +372,7 @@ def _projection_jvp(value: Array, projected: Array, tangent: Array, /) -> Array:
     def general(_):
         matrix, _ = _boundary_kkt_matrix(value, projected)
         right = jnp.concatenate((tangent, jnp.zeros(1, dtype=value.dtype)))
-        return jnp.linalg.solve(matrix, right)[:3]
+        return _kkt_solve(matrix, right)[:3]
 
     face_action = jnp.asarray(
         [tangent[0], 0.0, jnp.where(value[2] > 0.0, tangent[2], 0.0)]
@@ -357,17 +390,67 @@ def _projection_jvp(value: Array, projected: Array, tangent: Array, /) -> Array:
     )
 
 
+def _working_value(value: Array, /) -> Array:
+    working_dtype = jnp.float64 if jax.config.x64_enabled else jnp.float32
+    return value.astype(jnp.result_type(value.dtype, working_dtype))
+
+
+def _homogeneous_scale(value: Array, /) -> Array:
+    scale = jnp.max(jnp.abs(value))
+    return jnp.where(jnp.isfinite(scale) & (scale > 0.0), scale, 1.0)
+
+
 @jax.custom_jvp
 def _project_exp_single(value: Array, /) -> Array:
-    return _projection_value(value)
+    working = _working_value(value)
+    scale = _homogeneous_scale(working)
+    projected = jax.lax.cond(
+        _in_primal(working),
+        lambda _: working,
+        lambda _: scale * _projection_value(working / scale),
+        operand=None,
+    )
+    return projected.astype(value.dtype)
 
 
 @_project_exp_single.defjvp
 def _project_exp_single_jvp(primals, tangents):
     (value,) = primals
     (tangent,) = tangents
-    projected = _projection_value(value)
-    return projected, _projection_jvp(value, projected, tangent)
+    working = _working_value(value)
+    working_tangent = tangent.astype(working.dtype)
+
+    def exterior(_):
+        scale = _homogeneous_scale(working)
+        normalized = working / scale
+        projected = _projection_value(normalized)
+        derivative = _projection_jvp(normalized, projected, working_tangent)
+        return scale * projected, derivative
+
+    projected, derivative = jax.lax.cond(
+        _in_primal(working),
+        lambda _: (working, working_tangent),
+        exterior,
+        operand=None,
+    )
+    return projected.astype(value.dtype), derivative.astype(tangent.dtype)
+
+
+def _project_exp_dual_single(value: Array, /) -> Array:
+    working = _working_value(value)
+
+    def exterior(_):
+        scale = _homogeneous_scale(working)
+        normalized = working / scale
+        return scale * (normalized + _project_exp_single(-normalized))
+
+    projected = jax.lax.cond(
+        _in_dual(working),
+        lambda _: working,
+        exterior,
+        operand=None,
+    )
+    return projected.astype(value.dtype)
 
 
 def _smoothness_margin(value: Array, /) -> Array:
@@ -383,10 +466,10 @@ def _smoothness_margin(value: Array, /) -> Array:
     )
     projected, root = _exp_root_projection(normalized)
     kkt, _ = _boundary_kkt_matrix(normalized, projected)
-    singular_values = jnp.linalg.svd(kkt, compute_uv=False)
+    minimum_singular = _minimum_singular_value(kkt)
     general_margin = jnp.minimum(
         jnp.maximum(projected[1], 0.0),
-        jnp.where(root.converged, singular_values[-1], 0.0),
+        jnp.where(root.converged, minimum_singular, 0.0),
     )
     margin = jnp.where(
         strict_primal,
@@ -419,7 +502,9 @@ class ExponentialCone(AbstractConvexCone):
 
     def project_dual(self, value: Any, /) -> Array:
         array = self._validate(value)
-        return array + self.project(-array)
+        flat = array.reshape((-1, 3))
+        projected = jax.vmap(_project_exp_dual_single)(flat)
+        return projected.reshape(array.shape)
 
     def interior_margin(self, value: Any, /) -> Array:
         array = self._validate(value)

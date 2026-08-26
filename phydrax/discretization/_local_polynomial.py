@@ -13,6 +13,16 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    FailurePolicy,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    RankPolicy,
+    RHSLayout,
+    solve,
+)
 
 
 class WeightedLeastSquaresReport(StrictModule, NonTrainableState):
@@ -57,7 +67,10 @@ def prepare_weighted_least_squares(
 ) -> PreparedWeightedLeastSquares:
     design_ = np.asarray(design, dtype=float)
     weights_ = np.asarray(weights, dtype=float)
-    valid_ = np.asarray(valid, dtype=bool)
+    valid_host = np.asarray(valid)
+    if valid_host.dtype != np.dtype(bool):
+        raise TypeError("valid must have boolean dtype.")
+    valid_ = np.asarray(valid_host, dtype=bool)
     if design_.ndim != 3:
         raise ValueError("design must have shape (rows, support, features).")
     if weights_.shape != design_.shape[:2] or valid_.shape != design_.shape[:2]:
@@ -87,21 +100,36 @@ def prepare_weighted_least_squares(
             )
         root = np.sqrt(weight)
         weighted = root[:, None] * matrix
-        scale = np.linalg.norm(weighted, axis=0)
+        scale = np.sqrt(np.sum(weighted * weighted, axis=0))
         if np.any(scale <= 0.0) or np.any(~np.isfinite(scale)):
             raise ValueError(
                 f"Weighted least-squares row {row} has a zero feature column."
             )
         normalized = weighted / scale[None, :]
-        left, singular, right_t = np.linalg.svd(normalized, full_matrices=False)
-        rank = int(np.sum(singular > float(rcond) * singular[0]))
-        condition = float(singular[0] / singular[-1])
-        if rank != features or not np.isfinite(condition) or condition > condition_limit:
-            raise ValueError(
-                f"Weighted least-squares row {row} violates rank/condition policy."
-            )
-        pseudoinverse = (right_t.T / singular[None, :]) @ left.T
-        factors[row][:, active] = (pseudoinverse * root[None, :]) / scale[:, None]
+        solved = solve(
+            LeastSquaresProblem(
+                DenseLinearOperator(jnp.asarray(normalized)),
+                problem_id=f"weighted-least-squares-row-{row}",
+            ),
+            jnp.asarray(np.diag(root)),
+            policy=LinearSolvePolicy(
+                DenseSVD(),
+                rank=RankPolicy(
+                    relative_cutoff=float(rcond),
+                    require_full_rank=True,
+                ),
+                failure=FailurePolicy("error"),
+            ),
+            rhs_layout=RHSLayout((active.size,)),
+        )
+        pseudoinverse = np.asarray(solved.value)
+        if solved.diagnostics.singular_values is None:
+            raise RuntimeError("Dense SVD did not return singular-value evidence.")
+        singular_values = np.asarray(solved.diagnostics.singular_values)
+        singular = singular_values.reshape((-1, singular_values.shape[-1]))[0]
+        rank = int(np.min(np.asarray(solved.diagnostics.rank)))
+        condition = float(np.max(np.asarray(solved.diagnostics.condition_estimate)))
+        factors[row][:, active] = pseudoinverse / scale[:, None]
         conditions[row] = condition
         singular_minimum[row] = singular[-1]
         ranks[row] = rank
@@ -110,6 +138,7 @@ def prepare_weighted_least_squares(
         {
             "kind": "weighted-least-squares-report",
             "design": array_tree_fingerprint(design_),
+            "weights": array_tree_fingerprint(weights_),
             "valid": array_tree_fingerprint(valid_),
             "rcond": float(rcond),
             "condition_limit": float(condition_limit),

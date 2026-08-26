@@ -52,6 +52,7 @@ class PointCloudPlan(eqx.Module):
     quadrature_weights: Array
     boundary_mask: Array
     boundary_normals: Array
+    boundary_quadrature_weights: Array | None
     degree: int = eqx.field(static=True)
     neighbor_count: int = eqx.field(static=True)
     condition_limit: float = eqx.field(static=True)
@@ -65,6 +66,7 @@ class PointCloudPlan(eqx.Module):
         *,
         boundary_mask: ArrayLike | None = None,
         boundary_normals: ArrayLike | None = None,
+        boundary_quadrature_weights: ArrayLike | None = None,
         degree: int = 2,
         neighbor_count: int | None = None,
         condition_limit: float = 1e8,
@@ -84,8 +86,8 @@ class PointCloudPlan(eqx.Module):
         if np.unique(points_, axis=0).shape[0] != points_.shape[0]:
             raise ValueError("Point cloud must not contain duplicate coordinates.")
         degree_ = int(degree)
-        if degree_ <= 0:
-            raise ValueError("Point polynomial degree must be positive.")
+        if degree_ < 2:
+            raise ValueError("Point polynomial degree must be at least two.")
         feature_count = math.comb(points_.shape[1] + degree_, degree_)
         neighbors = (
             max(feature_count + points_.shape[1], 2 * feature_count)
@@ -100,10 +102,11 @@ class PointCloudPlan(eqx.Module):
         boundary = (
             np.zeros(points_.shape[0], dtype=bool)
             if boundary_mask is None
-            else np.asarray(boundary_mask, dtype=bool)
+            else np.asarray(boundary_mask)
         )
-        if boundary.shape != points_.shape[:1]:
-            raise ValueError("boundary_mask must have shape (points,).")
+        if boundary.dtype != np.dtype(bool) or boundary.shape != points_.shape[:1]:
+            raise ValueError("boundary_mask must be Boolean with shape (points,).")
+        boundary = np.asarray(boundary, dtype=bool)
         normals = (
             np.zeros_like(points_)
             if boundary_normals is None
@@ -116,10 +119,29 @@ class PointCloudPlan(eqx.Module):
             raise ValueError("Boundary point normals must be nonzero.")
         if lengths.size:
             normals[boundary] /= lengths[:, None]
+        boundary_weights = (
+            None
+            if boundary_quadrature_weights is None
+            else np.asarray(boundary_quadrature_weights, dtype=float)
+        )
+        if boundary_weights is not None:
+            if (
+                boundary_weights.shape != points_.shape[:1]
+                or np.any(~np.isfinite(boundary_weights))
+                or np.any(boundary_weights[boundary] <= 0.0)
+                or np.any(boundary_weights[~boundary] != 0.0)
+            ):
+                raise ValueError(
+                    "boundary_quadrature_weights must be positive on boundary "
+                    "points and zero elsewhere."
+                )
         self.points = jnp.asarray(points_)
         self.quadrature_weights = jnp.asarray(weights)
         self.boundary_mask = jnp.asarray(boundary)
         self.boundary_normals = jnp.asarray(normals)
+        self.boundary_quadrature_weights = (
+            None if boundary_weights is None else jnp.asarray(boundary_weights)
+        )
         self.degree = degree_
         self.neighbor_count = neighbors
         self.condition_limit = condition
@@ -129,6 +151,12 @@ class PointCloudPlan(eqx.Module):
                 "points": array_tree_fingerprint(points_),
                 "weights": array_tree_fingerprint(weights),
                 "boundary": array_tree_fingerprint(boundary),
+                "boundary_normals": array_tree_fingerprint(normals),
+                "boundary_weights": (
+                    None
+                    if boundary_weights is None
+                    else array_tree_fingerprint(boundary_weights)
+                ),
                 "degree": degree_,
                 "neighbor_count": neighbors,
                 "condition_limit": condition,
@@ -353,6 +381,26 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             raise ValueError("Point-cloud state must begin with point count.")
         return value
 
+    def _selected_axes(
+        self,
+        axes: int | Sequence[int] | None,
+        /,
+    ) -> tuple[int, ...]:
+        selected = (
+            tuple(range(self.spatial_dimension))
+            if axes is None
+            else (int(axes),)
+            if isinstance(axes, int)
+            else tuple(int(axis) for axis in axes)
+        )
+        if (
+            not selected
+            or len(set(selected)) != len(selected)
+            or any(axis < 0 or axis >= self.spatial_dimension for axis in selected)
+        ):
+            raise ValueError("Point-cloud axes must be unique valid spatial axes.")
+        return selected
+
     def _apply_weights(self, state: Array, weights: Array, /) -> Array:
         patches = state[self.relation.source_indices]
         payload = patches.shape[2:]
@@ -392,7 +440,13 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         order: int = 1,
     ) -> Array:
         value = self._validate_state(cotangent)
-        weights = self.derivative_weights[int(axis)][int(order) - 1]
+        axis_ = int(axis)
+        order_ = int(order)
+        if axis_ < 0 or axis_ >= self.spatial_dimension or order_ not in (1, 2):
+            raise ValueError(
+                "Point-cloud transpose derivatives support valid axes and orders one/two."
+            )
+        weights = self.derivative_weights[axis_][order_ - 1]
         payload = value.shape[1:]
         messages = weights.reshape(weights.shape + (1,) * len(payload)) * value[:, None]
         messages = jnp.where(
@@ -410,15 +464,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         *,
         axes: int | Sequence[int] | None = None,
     ) -> Array:
-        selected = (
-            tuple(range(self.spatial_dimension))
-            if axes is None
-            else (
-                (int(axes),)
-                if isinstance(axes, int)
-                else tuple(int(axis) for axis in axes)
-            )
-        )
+        selected = self._selected_axes(axes)
         return jnp.stack(
             tuple(self.partial_derivative(state, axis=axis) for axis in selected), axis=-1
         )
@@ -433,15 +479,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
     ) -> Array:
         del dual
         value = jnp.asarray(state)
-        selected = (
-            tuple(range(self.spatial_dimension))
-            if axes is None
-            else (
-                (int(axes),)
-                if isinstance(axes, int)
-                else tuple(int(axis) for axis in axes)
-            )
-        )
+        selected = self._selected_axes(axes)
         if value.shape[-1] != len(selected):
             raise ValueError(
                 "Point-cloud divergence components must match selected axes."
@@ -458,15 +496,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         *,
         axes: int | Sequence[int] | None = None,
     ) -> Array:
-        selected = (
-            tuple(range(self.spatial_dimension))
-            if axes is None
-            else (
-                (int(axes),)
-                if isinstance(axes, int)
-                else tuple(int(axis) for axis in axes)
-            )
-        )
+        selected = self._selected_axes(axes)
         result = jnp.zeros_like(self._validate_state(state))
         for axis in selected:
             result = result + self.partial_derivative(state, axis=axis, order=2)
@@ -505,13 +535,11 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
         return jax.vmap(self.laplacian, in_axes=1, out_axes=1)(identity)
 
     def eigenpairs(self, *, rank: int | None = None) -> tuple[Array, Array]:
-        matrix = -self.laplacian_matrix()
-        root = jnp.sqrt(self.quadrature_weights)
-        symmetric = root[:, None] * matrix / root[None, :]
-        values, vectors = jnp.linalg.eigh(0.5 * (symmetric + symmetric.T))
-        retained = values.size if rank is None else int(rank)
-        order = jnp.argsort(values)[:retained]
-        return values[order], vectors[:, order] / root[:, None]
+        del rank
+        raise ValueError(
+            "Raw point-cloud Laplacians are not certified self-adjoint; use a "
+            "certified dissipative point operator for spectral analysis."
+        )
 
 
 __all__ = [

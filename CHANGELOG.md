@@ -562,6 +562,31 @@
 - Causal interval clustering now uses the Jacobian of the original reference
   coordinate, and zero-duration convolution and Caputo evaluations return exact
   zeros without evaluating singular kernels.
+- Spectral, cochain, point-cloud, Maxwell, finite-volume, Clifford, and entropy
+  contracts now preserve numeric identity and dtype, validate selectors and evidence,
+  use exact Hodge pairings, apply directional CPML forcing, and fail closed when an
+  advertised decomposition or eigenproblem is unsupported.
+- Open-system solvers now enforce complete positivity and physical process evidence,
+  preserve tensor precision and canonical gauges, process every event up to explicit
+  capacity, align comparison time grids, propagate truncation failures, and mint
+  verified campaigns only through provenance-bound artifact reproduction.
+- Conic projections and sensitivities now classify canonical bounds, respect
+  materialization budgets, avoid overflow in symmetric/fixed-bound arithmetic, and
+  robustly handle low-precision PSD, exponential, and power-cone edge cases through
+  the Phydrax linear-algebra substrate.
+- Classification now preserves scalar and batch axes, validates vocabularies, labels,
+  focal policies, masks, and operator semantics, excludes zero-support observations,
+  and uses stable ordinal tails and positive-class binary overlap.
+- Layer-potential QBX/FMM paths now use target normals and declared source reference
+  triangles, share polynomial density reconstruction, propagate quadrature failures,
+  report bounded omitted tails, bind source provenance, and route dense solves through
+  `phydrax.linalg`. Bounded GP MAP maps avoid overflow, use disjoint design streams,
+  and report source-bound, correctly normalized benchmark timings.
+- Incompressible spectral workflows now bind every callable identity, preflight
+  Hermitian-coordinate, recurrence, and channel-factor resources, compose reflected
+  translations correctly, preserve linear-algebra precision, certify autonomous-flow
+  neutral multipliers, latch bounded-observer failures, and verify spectral artifact
+  content fingerprints on read.
 
 - Masked BSDE and deep-splitting losses now sanitize inactive residuals before
   nonlinear reductions, Flower sanitizes masked source and normalization state,

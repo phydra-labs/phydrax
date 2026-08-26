@@ -149,6 +149,7 @@ class ProcessTensorPhysicality(StrictModule):
         local_cp_margins: ArrayLike,
         local_tp_residuals: ArrayLike,
         initial_state_valid: ArrayLike,
+        causality_residual: ArrayLike,
         /,
         *,
         status: str,
@@ -156,14 +157,26 @@ class ProcessTensorPhysicality(StrictModule):
     ):
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
-        self.local_cp_margins = jnp.asarray(local_cp_margins)
-        self.local_tp_residuals = jnp.asarray(local_tp_residuals)
-        self.initial_state_valid = jnp.asarray(initial_state_valid, dtype=bool)
-        self.causality_residual = jnp.max(self.local_tp_residuals)
+        cp_margins = jnp.asarray(local_cp_margins)
+        tp_residuals = jnp.asarray(local_tp_residuals)
+        initial_valid = jnp.asarray(initial_state_valid)
+        causality = jnp.asarray(causality_residual)
+        if initial_valid.shape != () or initial_valid.dtype != jnp.bool_:
+            raise TypeError("initial_state_valid must be one scalar Boolean.")
+        if causality.shape != ():
+            raise ValueError("causality_residual must be one scalar.")
+        self.local_cp_margins = cp_margins
+        self.local_tp_residuals = tp_residuals
+        self.initial_state_valid = initial_valid
+        self.causality_residual = causality
         self.valid = (
-            jnp.all(self.local_cp_margins >= -1e-8)
-            & jnp.all(self.local_tp_residuals <= 1e-8)
-            & self.initial_state_valid
+            jnp.all(jnp.isfinite(cp_margins))
+            & jnp.all(jnp.isfinite(tp_residuals))
+            & jnp.isfinite(causality)
+            & jnp.all(cp_margins >= -1e-8)
+            & jnp.all(tp_residuals <= 1e-8)
+            & (causality <= 1e-8)
+            & initial_valid
         )
         self.precision_evidence = precision_evidence
         self.status = str(status)
@@ -290,16 +303,27 @@ class ProcessTensorMPO(StrictModule):
 
     def physicality(self) -> ProcessTensorPhysicality:
         hermitian = 0.5 * (self.initial_density + jnp.conj(self.initial_density.T))
+        hermiticity_residual = jnp.max(
+            jnp.abs(self.initial_density - jnp.conj(self.initial_density.T))
+        )
         initial_valid = (
             jnp.all(jnp.isfinite(self.initial_density))
             & (jnp.abs(jnp.trace(self.initial_density) - 1.0) <= 1e-8)
-            & (jnp.min(jnp.linalg.eigvalsh(hermitian)) >= -1e-8)
+            & (hermiticity_residual <= 1e-8)
+            & (
+                HermitianSpectrum(
+                    hermitian,
+                    precision=self.hermitian_precision,
+                ).minimum_eigenvalue
+                >= -1e-8
+            )
         )
         if any(tensor.shape[0] != 1 or tensor.shape[-1] != 1 for tensor in self.tensors):
             return ProcessTensorPhysicality(
                 jnp.asarray([jnp.nan]),
                 jnp.asarray([jnp.nan]),
                 initial_valid,
+                jnp.asarray(jnp.nan),
                 status="unknown-general-temporal-bond",
                 precision_evidence=self.precision_evidence,
             )
@@ -319,10 +343,13 @@ class ProcessTensorMPO(StrictModule):
                 for index, report in enumerate(reports)
             },
         )
+        _, identity_probability = self.contract()
+        causality_residual = jnp.abs(identity_probability - 1.0)
         return ProcessTensorPhysicality(
             jnp.stack([report.cp_margin for report in reports]),
             jnp.stack([report.trace_preservation_residual for report in reports]),
             initial_valid,
+            causality_residual,
             status="local-markov-factorization",
             precision_evidence=evidence,
         )

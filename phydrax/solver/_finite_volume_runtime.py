@@ -364,6 +364,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 bathymetry=dynamics.bathymetry,
                 precision=dynamics.precision,
                 source=dynamics.source,
+                source_id=dynamics.source_id,
             )
         discretization = dynamics.discretization
         embedded_redistribution = None

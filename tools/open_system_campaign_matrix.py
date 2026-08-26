@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import inspect
 import json
+import subprocess
 from pathlib import Path
 
 import jax
@@ -29,7 +30,19 @@ from tools.open_system_campaigns import (
 
 
 def _runner_fingerprint(runner) -> str:
-    return hashlib.sha256(inspect.getsource(runner).encode("utf-8")).hexdigest()
+    root = Path(__file__).resolve().parents[1]
+    revision = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    source_path = Path(inspect.getsourcefile(runner)).resolve()
+    digest = hashlib.sha256()
+    digest.update(revision.encode("ascii"))
+    digest.update(source_path.read_bytes())
+    return digest.hexdigest()
 
 
 def run_campaign_matrix(output_directory: str):
@@ -51,21 +64,29 @@ def run_campaign_matrix(output_directory: str):
     for runner in runners:
         record = runner()
         runner_id = f"{runner.__module__}:{runner.__name__}"
+        problem_id = record.campaign_id
+        plan_id = f"{record.campaign_id}:runner"
+        backend = jax.default_backend()
+        code_fingerprint = _runner_fingerprint(runner)
         path = directory / f"{record.campaign_id}.zip"
         write_open_system_artifact(
             path,
             record,
-            problem_id=record.campaign_id,
-            plan_id=f"{record.campaign_id}:runner",
-            backend=jax.default_backend(),
+            problem_id=problem_id,
+            plan_id=plan_id,
+            backend=backend,
             runner_id=runner_id,
-            code_fingerprint=_runner_fingerprint(runner),
+            code_fingerprint=code_fingerprint,
         )
         reproduced = runner()
         verified = verify_open_system_artifact(
             path,
             reproduced,
             expected_runner_id=runner_id,
+            expected_problem_id=problem_id,
+            expected_plan_id=plan_id,
+            expected_backend=backend,
+            expected_code_fingerprint=code_fingerprint,
         )
         verified_campaigns.append(verified)
         summaries[record.campaign_id] = {

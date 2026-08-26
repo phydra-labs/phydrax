@@ -87,6 +87,8 @@ def solve_heom_continuation(
             base_problem.expansion,
             hierarchy,
             initial_root,
+            geometry_precision=base_problem.geometry_precision,
+            hermitian_precision=base_problem.hermitian_precision,
             problem_id=f"{base_problem.problem_id}:depth-{depth}",
         )
         solution = solve_heom(problem, step_size=step_size, steps=steps)
@@ -158,6 +160,8 @@ def solve_heom_continuation_grid(
                 expansion,
                 HEOMHierarchy(expansion.rank, depth),
                 initial,
+                geometry_precision=base_problem.geometry_precision,
+                hermitian_precision=base_problem.hermitian_precision,
                 problem_id=(
                     f"{base_problem.problem_id}:bath-{expansion.expansion_id}:"
                     f"depth-{depth}"

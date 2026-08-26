@@ -10,6 +10,7 @@ import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import HermitianSpectrum
 
 
 def _adjoint(value: Array, /) -> Array:
@@ -78,16 +79,25 @@ def prepare_local_lindblad_channel(
     *,
     tolerance: float = 1e-9,
 ) -> PreparedLocalKrausChannel:
-    hamiltonian_ = jnp.asarray(hamiltonian)
-    jumps = jnp.asarray(jump_operators, dtype=hamiltonian_.dtype)
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    raw_hamiltonian = jnp.asarray(hamiltonian)
+    raw_jumps = jnp.asarray(jump_operators)
+    dtype = jnp.result_type(raw_hamiltonian, raw_jumps, jnp.complex64)
+    hamiltonian_ = raw_hamiltonian.astype(dtype)
+    jumps = raw_jumps.astype(dtype)
+    step = jnp.asarray(step_size, dtype=hamiltonian_.real.dtype).reshape(())
     if hamiltonian_.ndim != 2 or hamiltonian_.shape[0] != hamiltonian_.shape[1]:
         raise ValueError("Local Hamiltonian must be square.")
     dimension = hamiltonian_.shape[0]
     if jumps.ndim != 3 or jumps.shape[1:] != (dimension, dimension):
         raise ValueError("Local jumps require shape (count,d,d).")
-    if float(step) <= 0.0:
-        raise ValueError("Local channel step_size must be positive.")
+    if not bool(jnp.isfinite(step) & (step > 0.0)):
+        raise ValueError("Local channel step_size must be finite and positive.")
+    if not bool(
+        jnp.all(jnp.isfinite(hamiltonian_))
+        & jnp.all(jnp.isfinite(jumps))
+        & jnp.allclose(hamiltonian_, _adjoint(hamiltonian_), rtol=1e-10, atol=1e-12)
+    ):
+        raise ValueError("Local Hamiltonian must be finite and Hermitian; jumps finite.")
 
     def generator(density):
         result = -1j * (hamiltonian_ @ density - density @ hamiltonian_)
@@ -120,13 +130,15 @@ def prepare_local_lindblad_channel(
             choi = choi.at[row, :, column, :].set(output)
     flat = choi.reshape((size, size))
     hermiticity = jnp.max(jnp.abs(flat - _adjoint(flat)))
-    hermitian = 0.5 * (flat + _adjoint(flat))
-    eigenvalues, eigenvectors = jnp.linalg.eigh(hermitian)
-    minimum = jnp.min(eigenvalues)
+    hermitian = 0.5 * flat + 0.5 * _adjoint(flat)
+    spectrum = HermitianSpectrum(hermitian)
+    eigenvalues = spectrum.eigenvalues
+    eigenvectors = spectrum.eigenvectors
+    minimum = spectrum.minimum_eigenvalue
     if bool(jax.device_get(minimum < -tolerance)):
         raise ValueError("Finite local Lindblad channel has a nonpositive Choi matrix.")
     cleaned = jnp.maximum(eigenvalues, 0.0)
-    cleanup = jnp.linalg.norm(cleaned - eigenvalues)
+    cleanup = jnp.sqrt(jnp.sum(jnp.abs(cleaned - eigenvalues) ** 2))
     active = cleaned > tolerance
     kraus = jnp.stack(
         [

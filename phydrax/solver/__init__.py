@@ -240,6 +240,7 @@ from ._etdrk import ETDRKMethod, solve_etdrk
 from ._evolution_observation import (
     BoundedEvolutionObservation,
     BoundedEvolutionObservationPlan,
+    OBSERVATION_NONFINITE,
     observe_evolution_bounded,
 )
 from ._fbsde import (
@@ -513,6 +514,7 @@ from ._nonmarkov_campaign import (
     spin_boson_dephasing_comparison,
     SpinBosonComparisonResult,
 )
+from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
 from ._particles import (
     InteractingParticleProblem,
     InteractingParticleSolution,
@@ -665,7 +667,10 @@ from ._spectral_artifacts import (
     SpectralStateArtifact,
     write_spectral_state_artifact,
 )
-from ._spectral_coordinates import HermitianCoordinateEvolution
+from ._spectral_coordinates import (
+    HERMITIAN_COORDINATE_INVALID,
+    HermitianCoordinateEvolution,
+)
 from ._split_differential import (
     split_differential_problem,
     SplitDifferentialProblem,
@@ -840,6 +845,7 @@ __all__ = [
     "AbstractDifferentiableDrivingPath",
     "BoundedEvolutionObservation",
     "BoundedEvolutionObservationPlan",
+    "OBSERVATION_NONFINITE",
     "AbstractGeometricSolver",
     "AbstractBSDERegressionBasis",
     "assemble_stochastic_collocation",
@@ -1010,7 +1016,6 @@ __all__ = [
     "ProbabilisticODESolution",
     "ProbabilisticODEStatus",
     "ProbabilisticODEUpdate",
-    "IdentityStateTransfer",
     "CaputoFractionalProblem",
     "ConvolutionKernel",
     "ConvolutionVolterraProblem",
@@ -1056,6 +1061,7 @@ __all__ = [
     "RosenbrockWMethod",
     "ETDRKMethod",
     "HermitianCoordinateEvolution",
+    "HERMITIAN_COORDINATE_INVALID",
     "SemidiscreteSPDE",
     "SemilinearDrift",
     "SemilinearFallback",

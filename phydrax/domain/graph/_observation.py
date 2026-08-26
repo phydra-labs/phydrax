@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any, Literal
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
@@ -638,6 +639,7 @@ class _GraphTrajectoryClassificationSignalCallable(
     entity_sizes: Array
     kind: GraphComponentKind
     interpolation: GraphTargetInterpolation
+    logical_interpolation: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -649,6 +651,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         entity_sizes: Array,
         kind: GraphComponentKind,
         interpolation: GraphTargetInterpolation,
+        logical_interpolation: bool = False,
     ):
         self.domain = domain
         self.values = jax.lax.stop_gradient(jnp.asarray(values))
@@ -657,6 +660,7 @@ class _GraphTrajectoryClassificationSignalCallable(
         self.entity_sizes = jnp.asarray(entity_sizes, dtype=jnp.int32)
         self.kind = kind
         self.interpolation = interpolation
+        self.logical_interpolation = bool(logical_interpolation)
 
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
         del args, key, kwargs
@@ -716,9 +720,20 @@ class _GraphTrajectoryClassificationSignalCallable(
         lo = jnp.clip(lo, 0, lengths - 1)
         hi = jnp.clip(lo + 1, 0, lengths - 1)
         fraction = jnp.clip(tau - lo.astype(float), 0.0, 1.0)
+        lower_index = self._flat_index(case_idx, lo, local_idx)
+        upper_index = self._flat_index(case_idx, hi, local_idx)
+        if self.logical_interpolation:
+            lower_value = self.values[lower_index]
+            upper_value = self.values[upper_index]
+            event_axes = (1,) * (lower_value.ndim - fraction.ndim)
+            fraction_ = fraction.reshape(fraction.shape + event_axes)
+            interpolated = ((fraction_ >= 1.0) | lower_value) & (
+                (fraction_ <= 0.0) | upper_value
+            )
+            return _field_from_target(batch, interpolated)
         stencil = linear_stencil_from_indices(
-            self._flat_index(case_idx, lo, local_idx),
-            self._flat_index(case_idx, hi, local_idx),
+            lower_index,
+            upper_index,
             fraction,
             source_size=int(self.values.shape[0]),
         )
@@ -797,7 +812,7 @@ def _graph_trajectory_classification_signal(
         )
     if interpolation not in ("nearest", "linear"):
         raise ValueError("interpolation must be 'nearest' or 'linear'.")
-    if target_encoding == "hard" and interpolation != "nearest":
+    if target_encoding == "hard" and interpolation != "nearest" and not require_boolean:
         raise ValueError(
             "Hard graph trajectory classification targets require nearest interpolation."
         )
@@ -821,6 +836,7 @@ def _graph_trajectory_classification_signal(
             entity_sizes=entity_sizes,
             kind=component_kind,
             interpolation=interpolation,
+            logical_interpolation=require_boolean,
         ),
         metadata={},
     )

@@ -140,6 +140,13 @@ def physicalize_prediction(
                 f"Model output {target.name!r} is bound to query "
                 f"{raw_field.query_name!r}, expected {target.query_name!r}."
             )
+        if (
+            target.output_spec.classification is not None
+            and raw_field.spec.to_dict() != target.output_spec.to_dict()
+        ):
+            raise ValueError(
+                f"Model output {target.name!r} does not preserve classification semantics."
+            )
         values = raw_field.values
         if normalization is not None and target.output_spec.classification is None:
             if target.name not in normalization.targets:
@@ -183,12 +190,20 @@ def executionize_prediction(
         target = by_name[target_name]
         physical_field = prediction.field(target_name)
         template_field = template.field(model_name)
+        if (
+            target.output_spec is not None
+            and target.output_spec.classification is not None
+            and template_field.spec.to_dict() != target.output_spec.to_dict()
+        ):
+            raise ValueError(
+                f"Execution template {model_name!r} does not preserve classification semantics."
+            )
         values = target.nondimensionalize(physical_field.values)
         if normalization is not None and target.output_spec.classification is None:
             if target_name not in normalization.targets:
                 raise KeyError(f"Missing normalizer for target field {target_name!r}.")
             values = normalization.targets[target_name].normalize(values)
-        query = execution_batch.query(physical_field.query_name)
+        query = execution_batch.query(template_field.query_name)
         mask = query.mask_array(case_shape=execution_batch.case_shape)
         trailing = (1,) * (values.ndim - mask.ndim)
         values = jnp.where(

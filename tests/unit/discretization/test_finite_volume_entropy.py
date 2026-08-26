@@ -44,6 +44,7 @@ def _compiled_entropy_problem(
         system_,
         boundaries,
         source=source,
+        source_id=None if source is None else "entropy-test-source",
     )
     compiled = phx.equations.compile_conservation_problem(
         problem,

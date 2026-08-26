@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from operator import index
 from typing import Any
 
 import equinox as eqx
@@ -11,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from .._geometry_precision import GeometryPrecisionPolicy
 from .._strict import StrictModule
 from ..discretization import (
     DiscretizationBundle,
@@ -49,21 +51,31 @@ class IncompressibleFlowProblem(StrictModule):
         forcing_id: str | None = None,
         problem_id: str | None = None,
     ):
-        dimension = int(spatial_dimension)
+        if isinstance(spatial_dimension, bool):
+            raise TypeError("spatial_dimension must be an integer.")
+        dimension = index(spatial_dimension)
         if dimension not in (2, 3):
             raise ValueError(
                 "Incompressible flow requires spatial dimension two or three."
             )
-        viscosity_ = jnp.asarray(viscosity, dtype=float)
+        raw_viscosity = jnp.asarray(viscosity)
+        if jnp.iscomplexobj(raw_viscosity):
+            raise TypeError("viscosity must be real.")
+        viscosity_ = raw_viscosity.astype(float)
         if viscosity_.shape != () or not bool(
             jnp.isfinite(viscosity_) & (viscosity_ >= 0.0)
         ):
             raise ValueError("viscosity must be one finite nonnegative scalar.")
         if forcing is not None and not callable(forcing):
             raise TypeError("forcing must be callable or None.")
-        source_id = "none" if forcing is None else str(forcing_id or "modal-forcing")
-        if not source_id:
-            raise ValueError("forcing_id must be non-empty.")
+        if forcing is None:
+            source_id = "none"
+            if forcing_id is not None:
+                raise ValueError("forcing_id must be omitted when forcing is None.")
+        else:
+            source_id = "" if forcing_id is None else str(forcing_id)
+            if not source_id:
+                raise ValueError("A forcing callable requires a non-empty forcing_id.")
         identifier = (
             canonical_fingerprint(
                 {
@@ -267,7 +279,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             dissipation=dissipation,
             divergence_norm=self.projector.divergence_norm(value),
             imaginary_leakage=self.discretization.imaginary_leakage(admissible),
-            forbidden_mode_norm=jnp.linalg.norm(forbidden.reshape((-1,))),
+            forbidden_mode_norm=GeometryPrecisionPolicy().norm(forbidden.reshape((-1,))),
             projector_id=self.projector.projector_id,
         )
 

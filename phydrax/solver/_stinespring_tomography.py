@@ -169,24 +169,30 @@ def fit_stinespring_process(
     value_and_grad = jax.value_and_grad(loss, argnums=(0, 1))
     history = []
     for _ in range(iteration_count):
-        value, (factor_gradient, isometry_gradients) = value_and_grad(
-            factor, isometries
+        value, (factor_gradient, isometry_gradients) = value_and_grad(factor, isometries)
+        factor_direction = (
+            jnp.conj(factor_gradient)
+            if jnp.iscomplexobj(factor_gradient)
+            else factor_gradient
         )
-        factor = factor - learning_rate_ * factor_gradient
+        factor = factor - learning_rate_ * factor_direction
         if optimize_isometries:
             updated = []
-            for isometry, gradient in zip(
-                isometries, isometry_gradients, strict=True
-            ):
-                manifold = ComplexStiefelManifold(
-                    isometry.shape[0], isometry.shape[1]
-                )
-                tangent = manifold.egrad_to_rgrad(isometry, gradient)
-                updated.append(
-                    manifold.retract(isometry, -learning_rate_ * tangent)
-                )
+            for isometry, gradient in zip(isometries, isometry_gradients, strict=True):
+                manifold = ComplexStiefelManifold(isometry.shape[0], isometry.shape[1])
+                ambient = jnp.conj(gradient) if jnp.iscomplexobj(gradient) else gradient
+                tangent = manifold.egrad_to_rgrad(isometry, ambient)
+                updated.append(manifold.retract(isometry, -learning_rate_ * tangent))
             isometries = tuple(updated)
         history.append(value)
+    held_out_values = tuple(held_out_experiments)
+    if held_out_values and not tomography_designs_disjoint(
+        problem.experiments,
+        held_out_values,
+    ):
+        raise ValueError(
+            "Held-out tomography experiments must be disjoint from training."
+        )
     model = SequentialStinespringProcess(
         problem.model.spec,
         factor,
@@ -195,8 +201,8 @@ def fit_stinespring_process(
         process_id=problem.model.process_id,
     )
     held_out = (
-        _nll(model.materialize(), tuple(held_out_experiments))
-        if held_out_experiments
+        _nll(model.materialize(), held_out_values)
+        if held_out_values
         else jnp.asarray(0.0)
     )
     values = (factor,) + isometries
@@ -220,14 +226,9 @@ def fit_stinespring_process(
                 manifold = ComplexStiefelManifold(base.shape[0], base.shape[1])
                 candidates.append(manifold.retract(base, perturbation))
             cursor += 2 * size
-        process = _materialize(
-            problem.model, candidates[0], tuple(candidates[1:])
-        )
+        process = _materialize(problem.model, candidates[0], tuple(candidates[1:]))
         return jnp.stack(
-            [
-                experiment.probability(process)
-                for experiment in problem.experiments
-            ]
+            [experiment.probability(process) for experiment in problem.experiments]
         )
 
     jacobian = jax.jacfwd(probabilities)(coordinates)
@@ -334,9 +335,7 @@ def _experiment_probabilities(
     experiments: tuple[ProcessTomographyExperiment, ...],
     /,
 ) -> Array:
-    return jnp.stack(
-        [experiment.probability(process) for experiment in experiments]
-    )
+    return jnp.stack([experiment.probability(process) for experiment in experiments])
 
 
 def _experiment_observed_probabilities(
@@ -348,9 +347,7 @@ def _experiment_observed_probabilities(
         for experiment in experiments
     ):
         raise ValueError("Observed process probabilities require valid trials.")
-    return jnp.stack(
-        [experiment.count / experiment.trials for experiment in experiments]
-    )
+    return jnp.stack([experiment.count / experiment.trials for experiment in experiments])
 
 
 def fit_causal_process_memory(

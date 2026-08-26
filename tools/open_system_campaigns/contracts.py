@@ -37,6 +37,13 @@ PERMANENT_OPEN_SYSTEM_STOP_CLAIMS = (
 )
 
 
+def _boolean_scalar(value: ArrayLike, name: str, /) -> Array:
+    array = jnp.asarray(value)
+    if array.shape != () or array.dtype != jnp.bool_:
+        raise TypeError(f"{name} must be one scalar Boolean.")
+    return array
+
+
 class SemanticReplayEvidence(StrictModule):
     variates_equal: Array
     address_schema_equal: Array
@@ -61,8 +68,11 @@ class SemanticReplayEvidence(StrictModule):
         disagreement_tolerance: float,
         observable_tolerance: float,
     ):
-        self.variates_equal = jnp.asarray(variates_equal, dtype=bool)
-        self.address_schema_equal = jnp.asarray(address_schema_equal, dtype=bool)
+        self.variates_equal = _boolean_scalar(variates_equal, "variates_equal")
+        self.address_schema_equal = _boolean_scalar(
+            address_schema_equal,
+            "address_schema_equal",
+        )
         self.event_time_difference = jnp.asarray(event_time_difference)
         self.channel_disagreement_probability = jnp.asarray(
             channel_disagreement_probability
@@ -83,9 +93,7 @@ class SemanticReplayEvidence(StrictModule):
             self.variates_equal.shape != ()
             or self.address_schema_equal.shape != ()
             or any(
-                value.shape != ()
-                or not bool(jnp.isfinite(value))
-                or bool(value < 0.0)
+                value.shape != () or not bool(jnp.isfinite(value)) or bool(value < 0.0)
                 for value in values
             )
         ):
@@ -97,10 +105,7 @@ class SemanticReplayEvidence(StrictModule):
             self.variates_equal
             & self.address_schema_equal
             & (self.event_time_difference <= self.event_time_tolerance)
-            & (
-                self.channel_disagreement_probability
-                <= self.disagreement_tolerance
-            )
+            & (self.channel_disagreement_probability <= self.disagreement_tolerance)
             & (self.observable_difference <= self.observable_tolerance)
         )
 
@@ -150,7 +155,7 @@ class CampaignCapacityEvidence(StrictModule):
         identifier = str(name)
         used_ = int(used)
         limit_ = int(limit)
-        saturated_ = jnp.asarray(saturated, dtype=bool)
+        saturated_ = _boolean_scalar(saturated, "saturated")
         if not identifier:
             raise ValueError("Capacity evidence name must be non-empty.")
         if used_ < 0 or limit_ <= 0 or used_ > limit_:
@@ -197,7 +202,7 @@ class OpenSystemCampaignRecord(StrictModule):
     ):
         campaign = str(campaign_id)
         representation = str(representation_id)
-        execution = jnp.asarray(execution_success, dtype=bool)
+        execution = _boolean_scalar(execution_success, "execution_success")
         capacities = tuple(capacity_evidence)
         if not campaign or not representation:
             raise ValueError("Campaign and representation IDs must be non-empty.")
@@ -209,6 +214,21 @@ class OpenSystemCampaignRecord(StrictModule):
             raise TypeError("precision must be CampaignPrecisionBundle.")
         if not isinstance(replay, SemanticReplayEvidence):
             raise TypeError("replay must be SemanticReplayEvidence.")
+        if approximation.representation_id != representation:
+            raise ValueError(
+                "Campaign representation_id must match approximation evidence."
+            )
+        nested_precision = (
+            approximation.precision_evidence,
+            physicality.precision_evidence,
+        )
+        if any(
+            value is None or value.evidence_id != precision.evidence.evidence_id
+            for value in nested_precision
+        ):
+            raise ValueError(
+                "Campaign approximation/physicality precision must match its bundle."
+            )
         if execution.shape != ():
             raise ValueError("Campaign execution gate must be scalar.")
         if not capacities or any(
@@ -265,6 +285,20 @@ class OpenSystemCampaignRecord(StrictModule):
         )
 
 
+class _OpenSystemArtifactVerification(StrictModule):
+    artifact_sha256: str = eqx.field(static=True)
+    reproduced: Array
+
+    def __init__(self, artifact_sha256: str, reproduced: ArrayLike, /):
+        digest = str(artifact_sha256)
+        if len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            raise ValueError("artifact_sha256 must be one lowercase SHA-256 digest.")
+        self.artifact_sha256 = digest
+        self.reproduced = _boolean_scalar(reproduced, "reproduced")
+
+
 class VerifiedOpenSystemCampaign(StrictModule):
     record: OpenSystemCampaignRecord
     artifact_sha256: str = eqx.field(static=True)
@@ -274,25 +308,19 @@ class VerifiedOpenSystemCampaign(StrictModule):
     def __init__(
         self,
         record: OpenSystemCampaignRecord,
-        artifact_sha256: str,
+        verification: _OpenSystemArtifactVerification,
         /,
-        *,
-        reproduction_verified: ArrayLike,
     ):
-        digest = str(artifact_sha256)
-        reproduced = jnp.asarray(reproduction_verified, dtype=bool)
         if not isinstance(record, OpenSystemCampaignRecord):
             raise TypeError("record must be an OpenSystemCampaignRecord.")
-        if len(digest) != 64 or any(
-            character not in "0123456789abcdef" for character in digest
-        ):
-            raise ValueError("artifact_sha256 must be one lowercase SHA-256 digest.")
-        if reproduced.shape != ():
-            raise ValueError("reproduction_verified must be one scalar Boolean.")
+        if not isinstance(verification, _OpenSystemArtifactVerification):
+            raise TypeError(
+                "Verified campaigns can only be minted by artifact verification."
+            )
         self.record = record
-        self.artifact_sha256 = digest
-        self.reproduction_verified = reproduced
-        self.valid = reproduced
+        self.artifact_sha256 = verification.artifact_sha256
+        self.reproduction_verified = verification.reproduced
+        self.valid = verification.reproduced
 
     def evaluate(
         self, policy: OpenSystemPromotionPolicy, /

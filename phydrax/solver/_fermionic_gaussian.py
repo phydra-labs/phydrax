@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import HermitianSpectrum, solve_matrix_equation, sylvester_equation
 from ..metrix import FermionicGaussianState
 
 
@@ -27,6 +28,8 @@ class FermionicGaussianProblem(StrictModule):
         *,
         problem_id: str = "fermionic-gaussian",
     ):
+        if not isinstance(initial_state, FermionicGaussianState):
+            raise TypeError("initial_state must be FermionicGaussianState.")
         drift_ = jnp.asarray(drift, dtype=float)
         diffusion_ = jnp.asarray(diffusion, dtype=float)
         if (
@@ -34,8 +37,20 @@ class FermionicGaussianProblem(StrictModule):
             or diffusion_.shape != drift_.shape
         ):
             raise ValueError("Fermionic drift/diffusion shapes are invalid.")
+        diffusion_ = 0.5 * (diffusion_ - diffusion_.T)
+        generator_cp = -(drift_ + drift_.T) - 1j * diffusion_
+        generator_spectrum = HermitianSpectrum(generator_cp)
+        cp_margin = generator_spectrum.minimum_eigenvalue
+        if not bool(
+            jax.device_get(
+                generator_spectrum.valid & jnp.isfinite(cp_margin) & (cp_margin >= -1e-10)
+            )
+        ):
+            raise ValueError(
+                "Fermionic drift/diffusion violate the Gaussian CP generator condition."
+            )
         self.drift = drift_
-        self.diffusion = 0.5 * (diffusion_ - diffusion_.T)
+        self.diffusion = diffusion_
         self.initial_state = initial_state
         self.problem_id = str(problem_id)
 
@@ -44,12 +59,15 @@ class FermionicGaussianProblem(StrictModule):
         return self.drift @ value + value @ self.drift.T + self.diffusion
 
     def stationary_state(self) -> FermionicGaussianState:
-        dimension = self.drift.shape[0]
-        identity = jnp.eye(dimension)
-        operator = jnp.kron(identity, self.drift) + jnp.kron(self.drift, identity)
-        covariance = jnp.linalg.solve(operator, -self.diffusion.reshape(-1)).reshape(
-            self.diffusion.shape
+        solved = solve_matrix_equation(
+            sylvester_equation(
+                self.drift,
+                self.drift.T,
+                -self.diffusion,
+                problem_id=f"{self.problem_id}:stationary-covariance",
+            )
         )
+        covariance = solved.value
         return FermionicGaussianState(covariance)
 
 
@@ -69,13 +87,28 @@ class FermionicGaussianSolution(StrictModule):
         problem_id: str,
     ):
         values = jnp.asarray(covariances)
+        times_ = jnp.asarray(times)
+        if (
+            values.ndim != 3
+            or values.shape[1] != values.shape[2]
+            or times_.shape != (values.shape[0],)
+        ):
+            raise ValueError("Fermionic solution covariance/time shapes are invalid.")
+        antisymmetry = jnp.max(
+            jnp.abs(values + jnp.swapaxes(values, -1, -2)),
+            axis=(-2, -1),
+        )
+        antisymmetric = 0.5 * (values - jnp.swapaxes(values, -1, -2))
+        spectra = HermitianSpectrum(1j * antisymmetric)
+        mode_spectra = jnp.sort(jnp.abs(spectra.eigenvalues), axis=-1)[:, ::2]
+        margins = 1.0 - jnp.max(mode_spectra, axis=-1)
         self.covariances = values
-        self.times = jnp.asarray(times)
-        self.physicality_margins = jax.vmap(
-            lambda covariance: FermionicGaussianState(covariance).physicality_margin
-        )(values)
-        self.valid = jnp.all(jnp.isfinite(values)) & jnp.all(
-            self.physicality_margins >= -1e-8
+        self.times = times_
+        self.physicality_margins = margins
+        self.valid = (
+            jnp.all(jnp.isfinite(values))
+            & jnp.all(antisymmetry <= 1e-8)
+            & jnp.all(margins >= -1e-8)
         )
         self.problem_id = str(problem_id)
 
@@ -88,6 +121,9 @@ def solve_fermionic_gaussian(
     steps: int,
 ) -> FermionicGaussianSolution:
     step = jnp.asarray(step_size, dtype=float).reshape(())
+    count = int(steps)
+    if count < 0 or not bool(jnp.isfinite(step) & (step > 0.0)):
+        raise ValueError("steps must be nonnegative and step_size finite and positive.")
 
     def advance(covariance, _):
         first = problem.rhs(covariance)
@@ -98,11 +134,11 @@ def solve_fermionic_gaussian(
         return 0.5 * (result - result.T), 0.5 * (result - result.T)
 
     _, trajectory = jax.lax.scan(
-        advance, problem.initial_state.covariance, xs=None, length=int(steps)
+        advance, problem.initial_state.covariance, xs=None, length=count
     )
     values = jnp.concatenate((problem.initial_state.covariance[None, ...], trajectory))
     return FermionicGaussianSolution(
-        values, step * jnp.arange(int(steps) + 1), problem_id=problem.problem_id
+        values, step * jnp.arange(count + 1), problem_id=problem.problem_id
     )
 
 
@@ -158,7 +194,7 @@ def open_kitaev_chain(
         ]
     )
     target = jnp.kron(jnp.eye(count), block)
-    diffusion = -drift @ target - target @ drift.T
+    diffusion = float(damping) * target
     vacuum = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
     initial = FermionicGaussianState(jnp.kron(jnp.eye(count), vacuum))
     return FermionicGaussianProblem(

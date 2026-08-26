@@ -130,15 +130,12 @@ def _profiles(
         kappa_axes.append(1.0 + (kappa_max - 1.0) * depth**order)
         alpha_axes.append(alpha_max * (1.0 - depth) * (depth > 0.0))
         depth_axes.append(depth)
-    sigma_stack = jnp.stack(tuple(sigma_axes), axis=1)
-    kappa_stack = jnp.stack(tuple(kappa_axes), axis=1)
-    alpha_stack = jnp.stack(tuple(alpha_axes), axis=1)
-    depth_stack = jnp.stack(tuple(depth_axes), axis=1)
-    sigma = jnp.sum(sigma_stack, axis=1)
-    kappa = jnp.prod(kappa_stack, axis=1)
-    alpha = jnp.sum(alpha_stack, axis=1)
-    corner_order = jnp.sum(depth_stack > 0.0, axis=1)
-    return sigma, kappa, alpha, corner_order
+    sigma_stack = jnp.stack(tuple(sigma_axes), axis=0)
+    kappa_stack = jnp.stack(tuple(kappa_axes), axis=0)
+    alpha_stack = jnp.stack(tuple(alpha_axes), axis=0)
+    depth_stack = jnp.stack(tuple(depth_axes), axis=0)
+    corner_order = jnp.sum(depth_stack > 0.0, axis=0)
+    return sigma_stack, kappa_stack, alpha_stack, corner_order
 
 
 class PreparedMaxwellCPML(StrictModule):
@@ -233,6 +230,21 @@ class PreparedMaxwellCPML(StrictModule):
         )
 
     @staticmethod
+    def _validate_state(
+        state: MaxwellCPMLState,
+        electric_shape: tuple[int, ...],
+        magnetic_shape: tuple[int, ...],
+        /,
+    ) -> None:
+        if not isinstance(state, MaxwellCPMLState):
+            raise TypeError("CPML state must be MaxwellCPMLState.")
+        if (
+            state.electric_memory.shape != electric_shape
+            or state.magnetic_memory.shape != magnetic_shape
+        ):
+            raise ValueError("CPML memory shapes do not match the prepared profiles.")
+
+    @staticmethod
     def _apply(
         forcing: Array,
         memory: Array,
@@ -254,11 +266,21 @@ class PreparedMaxwellCPML(StrictModule):
 
     def apply_electric(
         self,
-        forcing: Array,
+        forcing_components: Array,
         state: MaxwellCPMLState,
         step_size: Array,
         /,
     ) -> tuple[Array, MaxwellCPMLState]:
+        self._validate_state(
+            state,
+            self.electric_sigma.shape,
+            self.magnetic_sigma.shape,
+        )
+        forcing = jnp.asarray(forcing_components)
+        if forcing.shape != self.electric_sigma.shape:
+            raise ValueError(
+                "Electric CPML forcing must have one component per axis and cochain."
+            )
         value, memory = self._apply(
             forcing,
             state.electric_memory,
@@ -267,15 +289,28 @@ class PreparedMaxwellCPML(StrictModule):
             self.electric_alpha,
             step_size,
         )
-        return value, MaxwellCPMLState(memory, state.magnetic_memory)
+        return jnp.sum(value, axis=0), MaxwellCPMLState(
+            memory,
+            state.magnetic_memory,
+        )
 
     def apply_magnetic(
         self,
-        forcing: Array,
+        forcing_components: Array,
         state: MaxwellCPMLState,
         step_size: Array,
         /,
     ) -> tuple[Array, MaxwellCPMLState]:
+        self._validate_state(
+            state,
+            self.electric_sigma.shape,
+            self.magnetic_sigma.shape,
+        )
+        forcing = jnp.asarray(forcing_components)
+        if forcing.shape != self.magnetic_sigma.shape:
+            raise ValueError(
+                "Magnetic CPML forcing must have one component per axis and cochain."
+            )
         value, memory = self._apply(
             forcing,
             state.magnetic_memory,
@@ -284,19 +319,87 @@ class PreparedMaxwellCPML(StrictModule):
             self.magnetic_alpha,
             step_size,
         )
-        return value, MaxwellCPMLState(state.electric_memory, memory)
+        return jnp.sum(value, axis=0), MaxwellCPMLState(
+            state.electric_memory,
+            memory,
+        )
+
+    def electric_rate(
+        self,
+        forcing_components: Array,
+        state: MaxwellCPMLState,
+        /,
+    ) -> Array:
+        forcing = jnp.asarray(forcing_components)
+        self._validate_state(
+            state,
+            self.electric_sigma.shape,
+            self.magnetic_sigma.shape,
+        )
+        if forcing.shape != self.electric_sigma.shape:
+            raise ValueError("Electric CPML rate components have the wrong shape.")
+        return jnp.sum(
+            forcing / self.electric_kappa + state.electric_memory,
+            axis=0,
+        )
+
+    def magnetic_rate(
+        self,
+        forcing_components: Array,
+        state: MaxwellCPMLState,
+        /,
+    ) -> Array:
+        forcing = jnp.asarray(forcing_components)
+        self._validate_state(
+            state,
+            self.electric_sigma.shape,
+            self.magnetic_sigma.shape,
+        )
+        if forcing.shape != self.magnetic_sigma.shape:
+            raise ValueError("Magnetic CPML rate components have the wrong shape.")
+        return jnp.sum(
+            forcing / self.magnetic_kappa + state.magnetic_memory,
+            axis=0,
+        )
 
     def diagnostics(
         self,
         electric: ArrayLike,
         magnetic: ArrayLike,
+        electric_metric: ArrayLike,
+        magnetic_metric: ArrayLike,
         /,
     ) -> MaxwellCPMLDiagnostics:
         electric_ = jnp.asarray(electric)
         magnetic_ = jnp.asarray(magnetic)
+        electric_weight = jnp.asarray(electric_metric)
+        magnetic_weight = jnp.asarray(magnetic_metric)
+        if (
+            electric_weight.ndim != 1
+            or magnetic_weight.ndim != 1
+            or electric_weight.shape != electric_.shape
+            or magnetic_weight.shape != magnetic_.shape
+        ):
+            raise ValueError(
+                "Structured CPML diagnostics require diagonal Hodge metrics."
+            )
+        electric_attenuation = jnp.sum(
+            self.electric_sigma / self.electric_kappa,
+            axis=0,
+        )
+        magnetic_attenuation = jnp.sum(
+            self.magnetic_sigma / self.magnetic_kappa,
+            axis=0,
+        )
         absorbed = jnp.sum(
-            self.electric_sigma * jnp.real(electric_ * jnp.conj(electric_))
-        ) + jnp.sum(self.magnetic_sigma * jnp.real(magnetic_ * jnp.conj(magnetic_)))
+            electric_weight
+            * electric_attenuation
+            * jnp.real(electric_ * jnp.conj(electric_))
+        ) + jnp.sum(
+            magnetic_weight
+            * magnetic_attenuation
+            * jnp.real(magnetic_ * jnp.conj(magnetic_))
+        )
         return MaxwellCPMLDiagnostics(
             absorbed_power=absorbed,
             maximum_electric_sigma=jnp.max(self.electric_sigma),

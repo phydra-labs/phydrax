@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import HermitianSpectrum
 
 
 class CombLegSpec(StrictModule):
@@ -143,14 +144,19 @@ class CausalProcessTensor(StrictModule):
                 jnp.max(jnp.abs(total - jnp.eye(composite, dtype=values.dtype)))
             )
         trace_residual = jnp.abs(jnp.trace(state) - 1.0)
-        minimum = jnp.min(jnp.linalg.eigvalsh(0.5 * (state + jnp.conj(state.T))))
+        hermiticity_residual = jnp.max(jnp.abs(state - jnp.conj(state.T)))
+        spectrum = HermitianSpectrum(0.5 * state + 0.5 * jnp.conj(state.T))
+        minimum = spectrum.minimum_eigenvalue
         self.spec = spec
         self.initial_state = state
         self.channel_kraus = channels
         self.channel_completeness_residuals = jnp.stack(residuals)
         self.valid = (
-            jnp.all(self.channel_completeness_residuals <= 1e-8)
+            spectrum.valid
+            & jnp.all(jnp.isfinite(state))
+            & jnp.all(self.channel_completeness_residuals <= 1e-8)
             & (trace_residual <= 1e-8)
+            & (hermiticity_residual <= 1e-8)
             & (minimum >= -1e-8)
         )
         self.process_id = str(process_id)

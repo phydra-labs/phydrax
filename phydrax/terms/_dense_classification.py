@@ -42,7 +42,6 @@ from ..ml._overlap import (
 from ..ml._schema import TargetSchema
 from ._data_metrics import (
     configured_case_indices,
-    reduce_supervised_loss,
     sample_case_indices,
     validate_case_weights,
     validate_supervised_targets,
@@ -214,6 +213,30 @@ def _objective_alpha(objective: ClassificationObjective, /) -> ArrayLike | float
     return jnp.asarray(objective.alpha, dtype=float)
 
 
+def _validate_focal_alpha(
+    objective: ClassificationObjective,
+    schema: TargetSchema,
+    /,
+) -> None:
+    alpha = objective.alpha
+    if objective.kind != "focal" or alpha is None:
+        return
+    if schema.kind in ("binary", "multilabel"):
+        if not isinstance(alpha, float) or not 0.0 < alpha < 1.0:
+            raise ValueError(f"{schema.kind} focal alpha must be scalar in (0, 1).")
+    elif schema.kind == "multiclass":
+        if (
+            not isinstance(alpha, tuple)
+            or len(alpha) != schema.num_classes
+            or any(value <= 0.0 for value in alpha)
+        ):
+            raise ValueError(
+                "Multiclass focal alpha must contain one positive weight per class."
+            )
+    else:
+        raise ValueError("Ordinal focal objectives are unsupported.")
+
+
 def _output_contract(
     value: cx.Field,
     schema: TargetSchema,
@@ -234,6 +257,13 @@ def _output_contract(
                 f"{schema.kind} logits must end in {expected} coordinates; "
                 f"got {logits.shape}."
             )
+        observation_dims = dims[:-1]
+    elif logits.ndim > 0 and dims[-1] is None:
+        if int(logits.shape[-1]) != 1:
+            raise ValueError(
+                f"{schema.kind} scalar logits can only have a singleton statistical axis."
+            )
+        logits = logits[..., 0]
         observation_dims = dims[:-1]
     else:
         observation_dims = dims
@@ -437,8 +467,12 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         if case_reduction not in ("mean", "sum"):
             raise ValueError("case_reduction must be 'mean' or 'sum'.")
         term_weight = jnp.asarray(weight, dtype=float)
-        if term_weight.shape != () or not bool(jnp.isfinite(term_weight)):
-            raise ValueError("weight must be a finite scalar.")
+        if (
+            term_weight.shape != ()
+            or not bool(jnp.isfinite(term_weight))
+            or bool(term_weight < 0.0)
+        ):
+            raise ValueError("weight must be a finite nonnegative scalar.")
         self.fields = (str(field),)
         self.field = str(field)
         self.component = component
@@ -562,11 +596,18 @@ class _AbstractDenseClassificationTerm(AbstractSamplingTerm):
         return jnp.where(active, combined_data, 0.0)
 
     def _case_reduce(self, per_case: Array, batch: DenseSiteClassificationBatch) -> Array:
-        return reduce_supervised_loss(
-            per_case,
-            reduction=self.case_reduction,
-            sample_weight=batch.sample_weight,
+        values = jnp.asarray(per_case)
+        active = jnp.isfinite(values)
+        safe = jnp.where(active, values, 0.0)
+        weights = (
+            active.astype(values.dtype)
+            if batch.sample_weight is None
+            else jnp.where(active, batch.sample_weight, 0.0)
         )
+        if self.case_reduction == "sum":
+            return jnp.sum(weights * safe)
+        mass = jnp.sum(weights)
+        return jnp.where(mass > 0.0, jnp.sum(weights * safe) / mass, 0.0)
 
 
 class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
@@ -617,6 +658,7 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
         )
         if target_schema.kind == "ordinal" and objective_.kind != "nll":
             raise ValueError("Ordinal dense classification currently requires NLL.")
+        _validate_focal_alpha(objective_, target_schema)
         self.objective = objective_
         self.site_reduction = site_reduction
 
@@ -692,10 +734,13 @@ class DenseSiteClassificationTerm(_AbstractDenseClassificationTerm):
             support_weight * safe_pointwise,
             axis=tuple(range(1, pointwise.ndim)),
         )
-        if self.site_reduction == "integral":
-            return weighted_sum
         mass = jnp.sum(support_weight, axis=tuple(range(1, pointwise.ndim)))
-        return weighted_sum / mass
+        reduced = (
+            weighted_sum
+            if self.site_reduction == "integral"
+            else weighted_sum / jnp.where(mass > 0.0, mass, 1.0)
+        )
+        return jnp.where(mass > 0.0, reduced, jnp.nan)
 
     def loss(
         self,
@@ -870,17 +915,13 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
                 f"canonical order {expected_dims!r}; got {observation_dims!r}."
             )
         target = jnp.asarray(batch.target)
-        probability = classification_probabilities(
-            logits,
-            kind=self.target_schema.kind,
-            class_count=self.class_count,
-            thresholds=self.objective.thresholds,
+        observation_shape = (
+            logits.shape
+            if self.target_schema.kind == "binary"
+            else logits.shape[:-1]
+            if self.target_schema.kind in ("multiclass", "multilabel")
+            else logits.shape
         )
-        probability_shape = probability.shape
-        if self.target_schema.kind == "binary":
-            observation_shape = probability_shape
-        else:
-            observation_shape = probability_shape[:-1]
         full_mask, observation_mask = _target_observation_mask(
             target,
             batch.target_mask,
@@ -889,7 +930,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
             observation_shape,
         )
         reference = cx.Field(
-            jnp.zeros(observation_shape, dtype=probability.dtype),
+            jnp.zeros(observation_shape, dtype=logits.dtype),
             dims=observation_dims,
         )
         support_weight = self._support_weight(
@@ -900,20 +941,37 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
             target_observed=observation_mask,
             **kwargs,
         )
+        effective_observation = observation_mask & (support_weight != 0.0)
+        logit_mask = (
+            full_mask & effective_observation[..., None]
+            if self.target_schema.kind == "multilabel"
+            else effective_observation[..., None]
+            if self.target_schema.kind == "multiclass"
+            else effective_observation
+        )
+        safe_logits = jnp.where(logit_mask, logits, 0.0)
+        probability = classification_probabilities(
+            safe_logits,
+            kind=self.target_schema.kind,
+            class_count=self.class_count,
+            thresholds=self.objective.thresholds,
+        )
+        target_mask = (
+            full_mask & effective_observation
+            if full_mask.shape == effective_observation.shape
+            else full_mask & effective_observation[..., None]
+        )
+        safe_target = jnp.where(target_mask, target, 0)
 
         if self.target_schema.kind == "binary":
-            probability_ = jnp.stack((1.0 - probability, probability), axis=-1)
-            target_ = jnp.stack((1.0 - target, target), axis=-1)
-            if full_mask.shape == observation_shape:
-                support_weight_ = support_weight
-            else:
-                support_weight_ = support_weight[..., None] * full_mask
-            statistics = _soft_statistics(probability_, target_, support_weight_)
+            probability_ = probability[..., None]
+            target_ = safe_target[..., None]
+            statistics = _soft_statistics(probability_, target_, support_weight)
         elif (
             self.target_schema.kind in ("multiclass", "ordinal")
             and target.shape == observation_shape
         ):
-            statistics = _categorical_statistics(probability, target, support_weight)
+            statistics = _categorical_statistics(probability, safe_target, support_weight)
         else:
             if target.shape != probability.shape:
                 raise ValueError(
@@ -925,7 +983,7 @@ class DenseOverlapClassificationTerm(_AbstractDenseClassificationTerm):
                 if full_mask.shape == probability.shape
                 else support_weight
             )
-            statistics = _soft_statistics(probability, target, support_weight_)
+            statistics = _soft_statistics(probability, safe_target, support_weight_)
         return reduce_overlap_score(*statistics, self.score)
 
     def loss(

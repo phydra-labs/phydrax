@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from operator import index
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -13,6 +14,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg._local_blocks import (
@@ -41,7 +43,10 @@ class ChannelMeanConstraint(StrictModule, NonTrainableState):
     ):
         if kind not in ("pressure_gradient", "bulk_flux"):
             raise ValueError("Unknown channel mean constraint kind.")
-        values_ = jnp.asarray(values, dtype=float)
+        raw_values = jnp.asarray(values)
+        if jnp.iscomplexobj(raw_values):
+            raise TypeError("Channel mean constraint values must be real.")
+        values_ = raw_values.astype(float)
         if values_.shape != (2,) or not bool(jnp.all(jnp.isfinite(values_))):
             raise ValueError("Channel mean constraint values must have shape (2,).")
         self.values = values_
@@ -84,25 +89,38 @@ class ChannelStokesPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Channel Stokes requires Fourier x Chebyshev x Fourier axes."
             )
-        viscosity_ = jnp.asarray(viscosity, dtype=float)
+        raw_viscosity = jnp.asarray(viscosity)
+        raw_lower = jnp.asarray(lower_wall_velocity)
+        raw_upper = jnp.asarray(upper_wall_velocity)
+        if any(
+            jnp.iscomplexobj(value) for value in (raw_viscosity, raw_lower, raw_upper)
+        ):
+            raise TypeError("Channel viscosity and wall velocities must be real.")
+        viscosity_ = raw_viscosity.astype(float)
         if viscosity_.shape != () or not bool(
             jnp.isfinite(viscosity_) & (viscosity_ > 0.0)
         ):
             raise ValueError("viscosity must be one finite positive scalar.")
-        lower = jnp.asarray(lower_wall_velocity, dtype=float)
-        upper = jnp.asarray(upper_wall_velocity, dtype=float)
+        lower = raw_lower.astype(float)
+        upper = raw_upper.astype(float)
         if (
             lower.shape != (3,)
             or upper.shape != (3,)
             or not bool(jnp.all(jnp.isfinite(lower)) & jnp.all(jnp.isfinite(upper)))
         ):
             raise ValueError("Wall velocities must be finite vectors with shape (3,).")
+        if not bool(jnp.isclose(lower[1], upper[1], rtol=1e-10, atol=1e-12)):
+            raise ValueError(
+                "Incompressible channel walls must have matching normal velocities."
+            )
         constraint = (
             ChannelMeanConstraint() if mean_constraint is None else mean_constraint
         )
         if not isinstance(constraint, ChannelMeanConstraint):
             raise TypeError("mean_constraint must be ChannelMeanConstraint or None.")
-        maximum = int(maximum_factor_bytes)
+        if isinstance(maximum_factor_bytes, bool):
+            raise TypeError("maximum_factor_bytes must be an integer.")
+        maximum = index(maximum_factor_bytes)
         if maximum <= 0:
             raise ValueError("maximum_factor_bytes must be positive.")
         identifier = canonical_fingerprint(
@@ -173,7 +191,10 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
     def __init__(self, plan: ChannelStokesPlan, shift: ArrayLike, /):
         if not isinstance(plan, ChannelStokesPlan):
             raise TypeError("plan must be a ChannelStokesPlan.")
-        shift_ = jnp.asarray(shift, dtype=float)
+        raw_shift = jnp.asarray(shift)
+        if jnp.iscomplexobj(raw_shift):
+            raise TypeError("shift must be real.")
+        shift_ = raw_shift.astype(float)
         if shift_.shape != () or not bool(jnp.isfinite(shift_) & (shift_ > 0.0)):
             raise ValueError("shift must be one finite positive scalar.")
         discretization = plan.discretization
@@ -236,7 +257,6 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 wall_axis.length,
                 horizontal_scale,
             )
-            bulk_factorization = prepare_local_block_factorization(bulk_block[None, ...])
         factor_entries = blocks.size + (0 if bulk_block is None else bulk_block.size)
         factor_bytes = int(factor_entries * blocks.dtype.itemsize * 2)
         if factor_bytes > plan.maximum_factor_bytes:
@@ -244,6 +264,8 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
                 f"Channel Stokes factors require {factor_bytes} bytes, exceeding "
                 f"maximum_factor_bytes={plan.maximum_factor_bytes}."
             )
+        if bulk_block is not None:
+            bulk_factorization = prepare_local_block_factorization(bulk_block[None, ...])
         factorization = prepare_local_block_factorization(blocks)
         admissible = (~x_axis.modes.nyquist_mask)[:, None] & (~z_axis.modes.nyquist_mask)[
             None, :
@@ -408,11 +430,12 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             oe.contract("j,xjzc->xzc", self.synthesis[-1], velocity, backend="jax")
             / self.horizontal_constant_scale
         )
+        precision = GeometryPrecisionPolicy()
         wall_residual = jnp.maximum(
-            jnp.linalg.norm(
+            precision.norm(
                 lower.at[0, 0].add(-self.plan.lower_wall_velocity).reshape((-1,))
             ),
-            jnp.linalg.norm(
+            precision.norm(
                 upper.at[0, 0].add(-self.plan.upper_wall_velocity).reshape((-1,))
             ),
         )
@@ -436,8 +459,8 @@ class PreparedChannelStokesSolver(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(residual))
         )
         return ChannelStokesDiagnostics(
-            momentum_constraint_residual=jnp.linalg.norm(residual.reshape((-1,))),
-            divergence_norm=jnp.linalg.norm(divergence.reshape((-1,))),
+            momentum_constraint_residual=precision.norm(residual.reshape((-1,))),
+            divergence_norm=precision.norm(divergence.reshape((-1,))),
             wall_residual=wall_residual,
             pressure_gauge_residual=gauge,
             bulk_velocity=bulk,

@@ -24,6 +24,7 @@ from .layer_potential import (
     evaluate_layer_potential,
     evaluate_qbx_2d,
     evaluate_qbx_3d,
+    evaluate_single_layer_self_triangle_3d,
     GlobalQBXFMMEvaluation2D,
     HelmholtzCombinedField2D,
     HelmholtzCombinedField3D,

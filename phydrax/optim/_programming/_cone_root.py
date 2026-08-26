@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from operator import index
 
 import jax
 import jax.numpy as jnp
@@ -34,13 +35,48 @@ def safeguarded_newton_bisection(
 ) -> SafeguardedRootResult:
     """Solve one bracketed scalar root with static Newton-bisection control flow."""
 
-    steps = int(maximum_steps)
+    if isinstance(maximum_steps, bool):
+        raise TypeError("maximum_steps must be an integer.")
+    steps = index(maximum_steps)
     if steps < 1:
         raise ValueError("maximum_steps must be positive.")
     lower_ = jnp.asarray(lower)
-    upper_ = jnp.asarray(upper, dtype=lower_.dtype)
-    absolute = jnp.asarray(absolute_tolerance, dtype=lower_.dtype)
-    relative = jnp.asarray(relative_tolerance, dtype=lower_.dtype)
+    upper_ = jnp.asarray(upper)
+    absolute = jnp.asarray(absolute_tolerance)
+    relative = jnp.asarray(relative_tolerance)
+    if (
+        not jnp.issubdtype(lower_.dtype, jnp.floating)
+        or upper_.dtype != lower_.dtype
+        or absolute.dtype != lower_.dtype
+        or relative.dtype != lower_.dtype
+    ):
+        raise TypeError("Root brackets and tolerances must share a real floating dtype.")
+    if lower_.shape != upper_.shape:
+        raise ValueError("Root lower and upper brackets must share shape.")
+    if absolute.shape not in ((), lower_.shape) or relative.shape not in (
+        (),
+        lower_.shape,
+    ):
+        raise ValueError("Root tolerances must be scalar or match the bracket shape.")
+    broadcast_shape = jnp.broadcast_shapes(
+        lower_.shape,
+        absolute.shape,
+        relative.shape,
+    )
+    lower_ = jnp.broadcast_to(lower_, broadcast_shape)
+    upper_ = jnp.broadcast_to(upper_, broadcast_shape)
+    absolute = jnp.broadcast_to(absolute, broadcast_shape)
+    relative = jnp.broadcast_to(relative, broadcast_shape)
+    invalid = (
+        ~jnp.isfinite(lower_)
+        | ~jnp.isfinite(upper_)
+        | ~jnp.isfinite(absolute)
+        | ~jnp.isfinite(relative)
+        | (lower_ > upper_)
+        | (absolute < 0.0)
+        | (relative < 0.0)
+    )
+    lower_ = jnp.where(invalid, jnp.nan, lower_)
     f_lower, _ = function(lower_)
     f_upper, _ = function(upper_)
     endpoint_finite = (
@@ -55,7 +91,7 @@ def safeguarded_newton_bisection(
         | (f_upper == 0.0)
         | (jnp.signbit(f_lower) != jnp.signbit(f_upper))
     )
-    midpoint = 0.5 * (lower_ + upper_)
+    midpoint = 0.5 * lower_ + 0.5 * upper_
     endpoint_exact = (f_lower == 0.0) | (f_upper == 0.0)
     endpoint_root = jnp.where(jnp.abs(f_lower) <= jnp.abs(f_upper), lower_, upper_)
     root = jnp.where(endpoint_exact, endpoint_root, midpoint)
@@ -69,7 +105,7 @@ def safeguarded_newton_bisection(
         f_lower,
         f_upper,
         root,
-        jnp.asarray(0, dtype=jnp.int32),
+        jnp.zeros_like(lower_, dtype=jnp.int32),
         bracketed,
     )
 
@@ -98,7 +134,7 @@ def safeguarded_newton_bisection(
         )
         newton_value, _ = function(newton)
         improving = jnp.isfinite(newton_value) & (jnp.abs(newton_value) < jnp.abs(value))
-        bisected = 0.5 * (lo + hi)
+        bisected = 0.5 * lo + 0.5 * hi
         candidate = jnp.where(newton_valid & improving, newton, bisected)
         candidate_value, _ = function(candidate)
         lower_side = (flo == 0.0) | (jnp.signbit(flo) != jnp.signbit(candidate_value))

@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._polynomial._orthogonal import (
     standard_derivative_matrix,
     standard_vandermonde,
@@ -275,23 +275,32 @@ class BoundaryLiftPlan(StrictModule, NonTrainableState):
         values_ = jnp.asarray(values).reshape((-1,))
         if values_.shape != (len(conditions.constraints),):
             raise ValueError("Boundary lift values must match endpoint constraints.")
+        if not jnp.issubdtype(values_.dtype, jnp.inexact):
+            values_ = values_.astype(float)
+        values_ = eqx.error_if(
+            values_,
+            jnp.any(~jnp.isfinite(values_)),
+            "Boundary lift values must be finite.",
+        )
         self.conditions = conditions
         self.values = values_
         self.lift_id = canonical_fingerprint(
             {
                 "kind": "spectral-boundary-lift-plan",
                 "conditions": conditions.plan_id,
-                "value_shape": list(values_.shape),
+                "values": array_tree_fingerprint(values_),
             }
         )
 
     def prepare(self, base: PreparedSpectralAxis, /) -> "PreparedBoundaryLift":
         matrix = _constraint_matrix(base, self.conditions)
-        operator = DenseLinearOperator(jnp.asarray(matrix))
-        factorization = factorize(operator, FactorizationPolicy("svd"))
-        result = factorization.solve(
-            jnp.asarray(self.values, dtype=operator.target.structure().dtype)
+        dtype = jnp.result_type(
+            jnp.dtype(base.precision.coefficient_dtype),
+            self.values.dtype,
         )
+        operator = DenseLinearOperator(jnp.asarray(matrix, dtype=dtype))
+        factorization = factorize(operator, FactorizationPolicy("svd"))
+        result = factorization.solve(jnp.asarray(self.values, dtype=dtype))
         if not bool(result.successful):
             raise RuntimeError("Boundary lift minimum-norm solve did not converge.")
         coefficients = result.value

@@ -235,26 +235,30 @@ def _bounded_gaussian_process_map_search(
 ) -> _GaussianProcessMAPEvidence:
     box = _BoundedVectorDomain(initial_vector, lower_bounds, upper_bounds)
     root_key = key
-    key, initial_key = jax.random.split(key)
-    unit_points = _initial_points(box, search, initial_key)
-    objective_started = perf_counter()
-    raw_objectives = jax.block_until_ready(_evaluate_batch(objective, unit_points, box))
-    objective_seconds = perf_counter() - objective_started
+    key, design_key = jax.random.split(key)
     proposal_started = perf_counter()
-    key, candidate_key = jax.random.split(key)
     proposal_count = search.max_evaluations - search.initial_evaluations
-    candidate_pools = materialize_design(
+    initial_design_count = search.initial_evaluations - 1
+    design_points = materialize_design(
         search.design,
-        count=proposal_count * search.candidate_count,
+        count=initial_design_count + proposal_count * search.candidate_count,
         dimension=box.dimension,
-        key=candidate_key,
-    ).astype(unit_points.dtype)
-    candidate_pools = candidate_pools.reshape(
+        key=design_key,
+    ).astype(box.initial.dtype)
+    initial = box.to_unit(box.initial)[None, :]
+    unit_points = jnp.concatenate(
+        (initial, design_points[:initial_design_count]),
+        axis=0,
+    )
+    candidate_pools = design_points[initial_design_count:].reshape(
         proposal_count,
         search.candidate_count,
         box.dimension,
     )
     proposal_seconds = perf_counter() - proposal_started
+    objective_started = perf_counter()
+    raw_objectives = jax.block_until_ready(_evaluate_batch(objective, unit_points, box))
+    objective_seconds = perf_counter() - objective_started
     proposal_kinds = jnp.full(
         (search.initial_evaluations,),
         _PROPOSAL_INITIAL,

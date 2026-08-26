@@ -52,39 +52,22 @@ def _broadcast_shape(shapes: Sequence[tuple[int, ...]], /) -> tuple[int, ...]:
     return tuple(int(size) for size in np.broadcast_shapes(*shapes))
 
 
-def _static_bound_values(
-    bounds: Bounds,
-    batch_shape: tuple[int, ...],
-    variables: int,
-    /,
-) -> tuple[np.ndarray, np.ndarray]:
-    lower_metadata = bounds._lower_metadata
-    upper_metadata = bounds._upper_metadata
-    if (
-        lower_metadata is None
-        or upper_metadata is None
-        or len(lower_metadata) != 1
-        or len(upper_metadata) != 1
-    ):
-        raise ValueError("Program bounds require static scalar or array role metadata.")
-    metadata = (lower_metadata, upper_metadata)
-    arrays = []
-    for bound_metadata in metadata:
-        shape, dtype, values = bound_metadata[0]
-        raw = np.asarray(values, dtype=np.dtype(dtype)).reshape(shape)
-        arrays.append(np.broadcast_to(raw, batch_shape + (variables,)))
-    return arrays[0], arrays[1]
-
-
 def _conic_bound_indices(
     bounds: Bounds,
     batch_shape: tuple[int, ...],
     variables: int,
+    dtype: jnp.dtype,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    lower, upper = _static_bound_values(bounds, batch_shape, variables)
-    lower = lower.reshape((-1, variables))
-    upper = upper.reshape((-1, variables))
+    expected = batch_shape + (variables,)
+    lower = np.broadcast_to(
+        np.asarray(bounds.lower, dtype=np.dtype(dtype)),
+        expected,
+    ).reshape((-1, variables))
+    upper = np.broadcast_to(
+        np.asarray(bounds.upper, dtype=np.dtype(dtype)),
+        expected,
+    ).reshape((-1, variables))
     lower_finite = np.isfinite(lower)
     upper_finite = np.isfinite(upper)
     fixed = lower_finite & upper_finite & (lower == upper)
@@ -170,7 +153,7 @@ class ConicProgram(StrictModule):
         rhs = rhs.astype(dtype)
         if quadratic_ is not None:
             quadratic_ = quadratic_.astype(dtype)
-            quadratic_ = 0.5 * (quadratic_ + jnp.swapaxes(quadratic_, -1, -2))
+            quadratic_ = 0.5 * quadratic_ + 0.5 * jnp.swapaxes(quadratic_, -1, -2)
         batch = _broadcast_shape(
             (
                 linear_.shape[:-1],
@@ -191,7 +174,10 @@ class ConicProgram(StrictModule):
         lower = jnp.asarray(lower, dtype=dtype)
         upper = jnp.asarray(upper, dtype=dtype)
         fixed_indices, lower_indices, upper_indices = _conic_bound_indices(
-            bounds_, batch, variables
+            bounds_,
+            batch,
+            variables,
+            dtype,
         )
         identifier = str(problem_id)
         evidence = str(convexity_evidence)

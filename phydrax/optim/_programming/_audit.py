@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import NamedTuple
 
 import jax.numpy as jnp
@@ -44,7 +45,16 @@ def audit_primal_recession_ray(
 ) -> PrimalRayAudit:
     """Audit a primal recession direction proving dual infeasibility."""
 
-    ray, _ = _normalize_vector(jnp.asarray(candidate, dtype=problem.linear.dtype))
+    raw_candidate = jnp.asarray(candidate)
+    expected = problem.batch_shape + (problem.num_variables,)
+    if raw_candidate.shape != expected:
+        raise ValueError(f"Primal recession candidate must have shape {expected}.")
+    if not jnp.issubdtype(raw_candidate.dtype, jnp.floating):
+        raise TypeError("Primal recession candidate must be real floating-point.")
+    tolerance_ = float(tolerance)
+    if not isfinite(tolerance_) or tolerance_ < 0.0:
+        raise ValueError("Ray-audit tolerance must be finite and non-negative.")
+    ray, _ = _normalize_vector(raw_candidate.astype(problem.linear.dtype))
     quadratic_residual = _max_abs(oe.contract("...ij,...j->...i", problem.quadratic, ray))
     equality_residual = _max_abs(
         oe.contract(
@@ -84,7 +94,7 @@ def audit_primal_recession_ray(
         jnp.maximum(quadratic_residual, equality_residual),
         jnp.maximum(inequality_residual, bound_residual),
     )
-    threshold = jnp.asarray(tolerance, dtype=ray.dtype)
+    threshold = jnp.asarray(tolerance_, dtype=ray.dtype)
     valid = (
         jnp.all(jnp.isfinite(ray), axis=-1)
         & (residual <= threshold)
@@ -105,10 +115,34 @@ def audit_dual_infeasibility_ray(
 ) -> DualRayAudit:
     """Audit a Farkas ray proving that the primal constraint set is empty."""
 
-    equality = jnp.asarray(equality_candidate, dtype=problem.linear.dtype)
-    inequality = jnp.asarray(inequality_candidate, dtype=problem.linear.dtype)
-    lower = jnp.asarray(lower_bound_candidate, dtype=problem.linear.dtype)
-    upper = jnp.asarray(upper_bound_candidate, dtype=problem.linear.dtype)
+    raw_values = tuple(
+        jnp.asarray(value)
+        for value in (
+            equality_candidate,
+            inequality_candidate,
+            lower_bound_candidate,
+            upper_bound_candidate,
+        )
+    )
+    expected_shapes = (
+        problem.batch_shape + (problem.num_user_equalities,),
+        problem.batch_shape + (problem.num_user_inequalities,),
+        problem.batch_shape + (problem.num_variables,),
+        problem.batch_shape + (problem.num_variables,),
+    )
+    if any(
+        value.shape != expected
+        for value, expected in zip(raw_values, expected_shapes, strict=True)
+    ):
+        raise ValueError("Dual infeasibility candidates have incompatible shapes.")
+    if any(not jnp.issubdtype(value.dtype, jnp.floating) for value in raw_values):
+        raise TypeError("Dual infeasibility candidates must be real floating-point.")
+    tolerance_ = float(tolerance)
+    if not isfinite(tolerance_) or tolerance_ < 0.0:
+        raise ValueError("Ray-audit tolerance must be finite and non-negative.")
+    equality, inequality, lower, upper = tuple(
+        value.astype(problem.linear.dtype) for value in raw_values
+    )
     scale = jnp.maximum(
         1.0,
         jnp.maximum(
@@ -153,7 +187,7 @@ def audit_dual_infeasibility_ray(
         + jnp.sum(upper_term, axis=-1)
     )
     residual = _max_abs(stationarity)
-    threshold = jnp.asarray(tolerance, dtype=problem.linear.dtype)
+    threshold = jnp.asarray(tolerance_, dtype=problem.linear.dtype)
     valid = (
         (residual <= threshold)
         & (objective < -threshold)

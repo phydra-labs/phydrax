@@ -29,6 +29,28 @@ def _array(name: str, value: ArrayLike, /, *, rank: int | None = None) -> Array:
     return array
 
 
+def _integer_array(name: str, value: ArrayLike, /) -> Array:
+    host = np.asarray(value)
+    if not np.issubdtype(host.dtype, np.integer):
+        raise TypeError(f"{name} must have an integer dtype.")
+    limits = np.iinfo(np.int32)
+    if np.any(host < limits.min) or np.any(host > limits.max):
+        raise ValueError(f"{name} contains values outside signed int32.")
+    return jnp.asarray(host, dtype=jnp.int32)
+
+
+def _portable_array(value: ArrayLike, /) -> Any:
+    array = np.asarray(value)
+    if np.iscomplexobj(array):
+        return {
+            "dtype": array.dtype.str,
+            "shape": list(array.shape),
+            "real": np.real(array).tolist(),
+            "imag": np.imag(array).tolist(),
+        }
+    return array.tolist()
+
+
 class NeutralGeometrySchema(StrictModule, NonTrainableState):
     coordinates: Array
     cells: Array | None
@@ -44,7 +66,9 @@ class NeutralGeometrySchema(StrictModule, NonTrainableState):
         units: str = "dimensionless",
     ):
         coordinates_ = _array("coordinates", coordinates, rank=2)
-        cells_ = None if cells is None else jnp.asarray(cells, dtype=jnp.int32)
+        if jnp.iscomplexobj(coordinates_):
+            raise TypeError("Geometry coordinates must be real-valued.")
+        cells_ = None if cells is None else _integer_array("cells", cells)
         if cells_ is not None and (
             cells_.ndim != 2
             or bool(jnp.any(cells_ < 0))
@@ -69,8 +93,8 @@ class NeutralGeometrySchema(StrictModule, NonTrainableState):
     def to_dict(self, /) -> dict[str, Any]:
         return {
             "kind": "geometry",
-            "coordinates": np.asarray(self.coordinates).tolist(),
-            "cells": None if self.cells is None else np.asarray(self.cells).tolist(),
+            "coordinates": _portable_array(self.coordinates),
+            "cells": None if self.cells is None else _portable_array(self.cells),
             "units": self.units,
             "schema_id": self.schema_id,
         }
@@ -105,6 +129,8 @@ class NeutralMaterialSchema(StrictModule, NonTrainableState):
         if unknown:
             raise ValueError(f"Material units contain unknown fields {sorted(unknown)}.")
         units_ = tuple((name, unit_map.get(name, "dimensionless")) for name, _ in arrays)
+        if any(not unit for _, unit in units_):
+            raise ValueError("Material units must be nonempty.")
         self.fields = arrays
         self.units = units_
         self.schema_id = canonical_fingerprint(
@@ -118,7 +144,7 @@ class NeutralMaterialSchema(StrictModule, NonTrainableState):
     def to_dict(self, /) -> dict[str, Any]:
         return {
             "kind": "material",
-            "fields": {name: np.asarray(value).tolist() for name, value in self.fields},
+            "fields": {name: _portable_array(value) for name, value in self.fields},
             "units": dict(self.units),
             "schema_id": self.schema_id,
         }
@@ -149,6 +175,8 @@ class NeutralFieldSchema(StrictModule, NonTrainableState):
         degree = None if cochain_degree is None else int(cochain_degree)
         if not name_ or (degree is not None and degree < 0):
             raise ValueError("Field name/cochain_degree are invalid.")
+        if not str(units):
+            raise ValueError("Field units must be nonempty.")
         time_ = None if time is None else float(time)
         frequency = None if angular_frequency is None else float(angular_frequency)
         if time_ is not None and not np.isfinite(time_):
@@ -177,7 +205,7 @@ class NeutralFieldSchema(StrictModule, NonTrainableState):
         return {
             "kind": "field",
             "name": self.name,
-            "values": np.asarray(self.values).tolist(),
+            "values": _portable_array(self.values),
             "cochain_degree": self.cochain_degree,
             "time": self.time,
             "angular_frequency": self.angular_frequency,
@@ -203,14 +231,18 @@ class NeutralPointCloudSchema(StrictModule, NonTrainableState):
         neighborhoods: ArrayLike | None = None,
     ):
         points_ = _array("point cloud", points, rank=2)
+        if jnp.iscomplexobj(points_):
+            raise TypeError("Point-cloud coordinates must be real-valued.")
         weights = _array("point weights", quadrature_weights, rank=1)
-        labels = jnp.asarray(boundary_labels, dtype=jnp.int32)
+        labels = _integer_array("boundary_labels", boundary_labels)
         if weights.shape != points_.shape[:1] or labels.shape != points_.shape[:1]:
             raise ValueError("Point cloud weights/labels must match point count.")
         if bool(jnp.any(weights <= 0.0)) or bool(jnp.any(labels < 0)):
             raise ValueError("Point weights must be positive and labels nonnegative.")
         routes = (
-            None if neighborhoods is None else jnp.asarray(neighborhoods, dtype=jnp.int32)
+            None
+            if neighborhoods is None
+            else _integer_array("neighborhoods", neighborhoods)
         )
         if routes is not None and (
             routes.ndim != 2
@@ -237,12 +269,14 @@ class NeutralPointCloudSchema(StrictModule, NonTrainableState):
     def to_dict(self, /) -> dict[str, Any]:
         return {
             "kind": "point_cloud",
-            "points": np.asarray(self.points).tolist(),
-            "quadrature_weights": np.asarray(self.quadrature_weights).tolist(),
-            "boundary_labels": np.asarray(self.boundary_labels).tolist(),
-            "neighborhoods": None
-            if self.neighborhoods is None
-            else np.asarray(self.neighborhoods).tolist(),
+            "points": _portable_array(self.points),
+            "quadrature_weights": _portable_array(self.quadrature_weights),
+            "boundary_labels": _portable_array(self.boundary_labels),
+            "neighborhoods": (
+                None
+                if self.neighborhoods is None
+                else _portable_array(self.neighborhoods)
+            ),
             "schema_id": self.schema_id,
         }
 
