@@ -29,6 +29,8 @@ FORBIDDEN_RUNTIME_PACKAGES = frozenset(
 CANONICAL_CORE_OWNERS = {
     "cochain": "phydrax.discretization.CochainDiscretization",
     "linear_operator": "phydrax.linalg.AbstractLinearOperator",
+    "real_coordinate_map": "phydrax.linalg.AbstractRealCoordinateMap",
+    "finite_real_algebra": "phydrax.metrix.algebra.AbstractFiniteRealAlgebraSpec",
     "point_topology": "phydrax.discretization.PointTopology",
     "weno_teno": "phydrax.discretization.finite_volume",
     "maxwell": "phydrax.solver.CompatibleMaxwellPlan",

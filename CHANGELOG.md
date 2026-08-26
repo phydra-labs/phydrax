@@ -19,6 +19,11 @@
   and stochastic paths. Public states remain complex; temporal evidence records the
   doubled real backend shape, dtype, tolerance geometry, and policy, while native and
   reject strategies remain explicit.
+- Added exact finite real algebra specifications for real, complex, quaternion,
+  octonion, Cayley--Dickson, and multicomplex families; three-valued law evidence,
+  resource-bounded sparse/dense products, shared real-coordinate maps, algebra-valued
+  spaces and operators, Diffrax algebra state policies, and unit complex/quaternion
+  state geometries.
 - Expanded compatible electromagnetics around conservative electric-displacement and
   magnetic-flux cochains: canonical structured/unstructured calculus, diagonal and
   metric-Hermitian constitutive maps, conductivity, Lorentz/Drude ADEs, Kerr/Pockels,

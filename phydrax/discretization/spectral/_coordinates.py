@@ -15,13 +15,16 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace
+from ...linalg import (
+    AbstractRealCoordinateMap,
+    ArraySpace,
+    RealCoordinateEvidence,
+)
 from ._space import TensorSpectralDiscretization
 
 
-class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
+class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState):
     """Independent real coordinates for a real field in full complex storage."""
 
     discretization: TensorSpectralDiscretization
@@ -108,11 +111,31 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
         self.fixed_indices = jnp.asarray(fixed, dtype=jnp.int32)
         self.representative_indices = jnp.asarray(representatives, dtype=jnp.int32)
         self.partner_indices = jnp.asarray(partners, dtype=jnp.int32)
-        self.coordinate_space = ArraySpace(
+        source_space = ArraySpace(
+            state_shape,
+            dtype=coefficient_dtype,
+            space_id=f"hermitian-source:{identifier}",
+        )
+        coordinate_space = ArraySpace(
             (coordinate_size,),
             dtype=coordinate_dtype,
             space_id=f"hermitian-coordinates:{identifier}",
         )
+        evidence = RealCoordinateEvidence(
+            domain_kind="constrained_subspace",
+            source_space_id=source_space.space_id,
+            coordinate_space_id=coordinate_space.space_id,
+            source_dtype=str(coefficient_dtype),
+            coordinate_dtype=str(coordinate_dtype),
+            source_shape=state_shape,
+            coordinate_shape=(coordinate_size,),
+            norm_relation="isometry",
+            projection_kind="hermitian-orthogonal-v1",
+            map_id=identifier,
+        )
+        self.source_space = source_space
+        self.coordinate_space = coordinate_space
+        self.evidence = evidence
         self.state_shape = state_shape
         self.component_shape = components
         self.coordinate_size = coordinate_size
@@ -140,6 +163,9 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
         value = self.validate_state(state).reshape((-1,))
         expected = jnp.conj(value[self.conjugate_indices])
         return jnp.max(jnp.abs(value - expected), initial=0.0)
+
+    def defect(self, state: ArrayLike, /) -> Array:
+        return self.reality_defect(state)
 
     def project(self, state: ArrayLike, /) -> Array:
         """Orthogonally project onto the Hermitian real-field subspace."""

@@ -222,7 +222,9 @@ from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._diffrax_cde import ControlledDifferentialSolution, solve_diffrax_cde
 from ._diffrax_delay_backend import solve_diffrax_delay
 from ._diffrax_state_packing import (
+    AlgebraStatePackingEvidence,
     ComplexStatePackingEvidence,
+    DiffraxAlgebraStatePolicy,
     DiffraxComplexStatePolicy,
     DiffraxComplexStateStrategy,
 )
@@ -1101,6 +1103,8 @@ __all__ = [
     "TemporalEquationForm",
     "TemporalMethodCapabilities",
     "TemporalMethodClass",
+    "AlgebraStatePackingEvidence",
+    "DiffraxAlgebraStatePolicy",
     "ComplexStatePackingEvidence",
     "DiffraxComplexStatePolicy",
     "DiffraxComplexStateStrategy",

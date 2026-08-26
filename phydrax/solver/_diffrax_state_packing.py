@@ -16,10 +16,19 @@ from .._fingerprint import canonical_fingerprint
 from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import (
+    ArraySpace,
+    ComplexCartesianCoordinates,
+    PreparedAlgebraCoordinates,
+)
 
 
 DiffraxComplexStateStrategy: TypeAlias = Literal["real_imag", "native", "reject"]
-RealizedDiffraxStateStrategy: TypeAlias = Literal["real_imag", "native"]
+RealizedDiffraxStateStrategy: TypeAlias = Literal[
+    "real_imag",
+    "native",
+    "algebra_coordinates",
+]
 ToleranceGeometry: TypeAlias = Literal["componentwise_real", "backend_native"]
 
 
@@ -40,6 +49,64 @@ class DiffraxComplexStatePolicy(StrictModule, NonTrainableState):
             {
                 "kind": "diffrax-complex-state-policy",
                 "strategy": strategy,
+            }
+        )
+
+
+class DiffraxAlgebraStatePolicy(StrictModule, NonTrainableState):
+    """Bind an explicit algebra-coordinate map to a Diffrax solve."""
+
+    coordinates: PreparedAlgebraCoordinates
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(self, coordinates: PreparedAlgebraCoordinates, /):
+        if not isinstance(coordinates, PreparedAlgebraCoordinates):
+            raise TypeError("coordinates must be PreparedAlgebraCoordinates.")
+        self.coordinates = coordinates
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "diffrax-algebra-state-policy-v1",
+                "coordinates": coordinates.coordinate_id,
+                "algebra": coordinates.plan.algebra.algebra_id,
+            }
+        )
+
+
+class AlgebraStatePackingEvidence(StrictModule, NonTrainableState):
+    algebra_id: str = eqx.field(static=True)
+    coordinate_evidence_id: str = eqx.field(static=True)
+    public_dtype: str = eqx.field(static=True)
+    backend_dtype: str = eqx.field(static=True)
+    public_shape: tuple[int, ...] = eqx.field(static=True)
+    backend_shape: tuple[int, ...] = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        coordinates: PreparedAlgebraCoordinates,
+        policy_id: str,
+    ):
+        if not isinstance(coordinates, PreparedAlgebraCoordinates):
+            raise TypeError("coordinates must be PreparedAlgebraCoordinates.")
+        self.algebra_id = coordinates.plan.algebra.algebra_id
+        self.coordinate_evidence_id = coordinates.evidence.evidence_id
+        self.public_dtype = coordinates.evidence.source_dtype
+        self.backend_dtype = coordinates.evidence.coordinate_dtype
+        self.public_shape = coordinates.public_shape
+        self.backend_shape = coordinates.coordinate_space.shape
+        self.policy_id = str(policy_id)
+        self.evidence_id = canonical_fingerprint(
+            {
+                "kind": "algebra-state-packing-evidence-v1",
+                "algebra": self.algebra_id,
+                "coordinates": self.coordinate_evidence_id,
+                "public_dtype": self.public_dtype,
+                "backend_dtype": self.backend_dtype,
+                "public_shape": list(self.public_shape),
+                "backend_shape": list(self.backend_shape),
+                "policy": self.policy_id,
             }
         )
 
@@ -162,7 +229,8 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
     backend_shape: tuple[int, ...] = eqx.field(static=True)
     public_dtype: str = eqx.field(static=True)
     backend_dtype: str = eqx.field(static=True)
-    evidence: ComplexStatePackingEvidence | None
+    evidence: ComplexStatePackingEvidence | AlgebraStatePackingEvidence | None
+    coordinates: ComplexCartesianCoordinates | PreparedAlgebraCoordinates | None
 
     def __init__(
         self,
@@ -171,23 +239,52 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
         state_shape: tuple[int, ...],
         public_dtype: str,
         backend_dtype: str,
-        evidence: ComplexStatePackingEvidence | None,
+        evidence: ComplexStatePackingEvidence | AlgebraStatePackingEvidence | None,
+        coordinates: PreparedAlgebraCoordinates | None = None,
     ):
         shape = tuple(int(size) for size in state_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("Diffrax state shape must contain positive dimensions.")
-        if mode not in ("real_imag", "native"):
+        if mode not in ("real_imag", "native", "algebra_coordinates"):
             raise ValueError("Unknown prepared Diffrax state mode.")
+        resolved_coordinates: (
+            ComplexCartesianCoordinates | PreparedAlgebraCoordinates | None
+        ) = None
+        backend_shape = shape
+        if mode == "real_imag":
+            source_space = ArraySpace(
+                shape,
+                dtype=jnp.dtype(public_dtype),
+                space_id=canonical_fingerprint(
+                    {
+                        "kind": "diffrax-complex-source-space-v1",
+                        "shape": list(shape),
+                        "dtype": public_dtype,
+                    }
+                ),
+            )
+            resolved_coordinates = ComplexCartesianCoordinates(source_space, pair_axis=0)
+            backend_shape = resolved_coordinates.coordinate_space.shape
+        elif mode == "algebra_coordinates":
+            if not isinstance(coordinates, PreparedAlgebraCoordinates):
+                raise TypeError("Algebra Diffrax mode requires prepared coordinates.")
+            if coordinates.public_shape != shape:
+                raise ValueError(
+                    "Algebra coordinates do not match the public state shape."
+                )
+            resolved_coordinates = coordinates
+            backend_shape = coordinates.coordinate_space.shape
         self.mode = mode
         self.state_shape = shape
-        self.backend_shape = (2,) + shape if mode == "real_imag" else shape
+        self.backend_shape = backend_shape
         self.public_dtype = public_dtype
         self.backend_dtype = backend_dtype
         self.evidence = evidence
+        self.coordinates = resolved_coordinates
 
     @property
     def active(self) -> bool:
-        return self.mode == "real_imag"
+        return self.mode != "native"
 
     def _public_value(self, value: ArrayLike, owner: str, /) -> Array:
         array = jnp.asarray(value)
@@ -200,9 +297,9 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
 
     def pack_state(self, value: ArrayLike, /, *, owner: str = "State") -> Array:
         array = self._public_value(value, owner)
-        if not self.active:
+        if self.coordinates is None:
             return array
-        return jnp.stack((jnp.real(array), jnp.imag(array)), axis=0)
+        return self.coordinates.to_real_coordinates(array)
 
     def unpack_state(self, value: ArrayLike, /) -> Array:
         array = jnp.asarray(value)
@@ -211,9 +308,9 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
                 f"Packed backend state must have shape {self.backend_shape}; "
                 f"got {array.shape}."
             )
-        if not self.active:
+        if self.coordinates is None:
             return array
-        return jax.lax.complex(array[0], array[1]).astype(jnp.dtype(self.public_dtype))
+        return self.coordinates.from_real_coordinates(array)
 
     def pack_diffusion(
         self,
@@ -229,24 +326,17 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
                 f"got {array.shape}."
             )
         array = array.astype(jnp.dtype(self.public_dtype))
-        if not self.active:
+        if self.coordinates is None:
             return array
-        return jnp.stack((jnp.real(array), jnp.imag(array)), axis=0)
+        return self.coordinates.pack_diffusion(
+            array, tuple(int(size) for size in noise_shape)
+        )
 
     def unpack_values(self, value: ArrayLike, pair_axis: int, /) -> Array:
         array = jnp.asarray(value)
-        if not self.active:
+        if self.coordinates is None:
             return array
-        axis = int(pair_axis)
-        if axis < 0:
-            axis += array.ndim
-        if axis < 0 or axis >= array.ndim or int(array.shape[axis]) != 2:
-            raise ValueError(
-                "Packed Diffrax values must expose one size-two real/imaginary axis."
-            )
-        real = jnp.take(array, 0, axis=axis)
-        imag = jnp.take(array, 1, axis=axis)
-        return jax.lax.complex(real, imag).astype(jnp.dtype(self.public_dtype))
+        return self.coordinates.unpack_values(array, pair_axis)
 
     def pack_args(self, args: Any, /) -> Any:
         return _pack_complex_tree(args) if self.active else args
@@ -259,7 +349,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
             return event
         if not isinstance(event, dfx.Event):
             raise TypeError(
-                "Complex packed Diffrax solves require event to be diffrax.Event or None."
+                "Packed Diffrax solves require event to be diffrax.Event or None."
             )
         conditions = jax.tree.map(
             lambda condition: _PackedEventCondition(condition, self),
@@ -276,12 +366,41 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
 def _prepare_diffrax_state_adapter(
     initial_state: ArrayLike,
     policy: DiffraxComplexStatePolicy | None,
+    algebra_policy: DiffraxAlgebraStatePolicy | None,
     state_geometry: Any | None,
     /,
 ) -> _PreparedDiffraxStateAdapter:
     state = jnp.asarray(initial_state)
     shape = tuple(int(size) for size in state.shape)
     public_dtype = precision_dtype_name(state.dtype)
+    if algebra_policy is not None:
+        if policy is not None:
+            raise ValueError(
+                "complex_state_policy and algebra_state_policy are mutually exclusive."
+            )
+        if not isinstance(algebra_policy, DiffraxAlgebraStatePolicy):
+            raise TypeError(
+                "algebra_state_policy must be DiffraxAlgebraStatePolicy or None."
+            )
+        if state_geometry is not None and not state_geometry.trivial:
+            raise ValueError(
+                "Algebra-coordinate Diffrax execution requires trivial Euclidean "
+                "state geometry."
+            )
+        coordinates = algebra_policy.coordinates
+        coordinates.validate_state(state)
+        evidence = AlgebraStatePackingEvidence(
+            coordinates=coordinates,
+            policy_id=algebra_policy.policy_id,
+        )
+        return _PreparedDiffraxStateAdapter(
+            mode="algebra_coordinates",
+            state_shape=shape,
+            public_dtype=public_dtype,
+            backend_dtype=evidence.backend_dtype,
+            evidence=evidence,
+            coordinates=coordinates,
+        )
     resolved = DiffraxComplexStatePolicy() if policy is None else policy
     if not isinstance(resolved, DiffraxComplexStatePolicy):
         raise TypeError("complex_state_policy must be DiffraxComplexStatePolicy or None.")
@@ -347,7 +466,9 @@ def _validate_real_backend_tree(tree: Any, /) -> None:
 
 
 __all__ = [
+    "AlgebraStatePackingEvidence",
     "ComplexStatePackingEvidence",
+    "DiffraxAlgebraStatePolicy",
     "DiffraxComplexStatePolicy",
     "DiffraxComplexStateStrategy",
 ]
