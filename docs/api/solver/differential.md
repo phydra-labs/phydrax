@@ -123,6 +123,40 @@ solve. Native implicit methods likewise require coefficient, stage, and residual
 precision to match storage while permitting wider accumulation and decisions.
 Dense output applies the declared output dtype instead of leaking backend storage.
 
+### Complex Diffrax state representation
+
+`solve_diffrax`, `solve_diffrax_ensemble`, and `solve_diffrax_cde` keep their public
+state complex while defaulting Diffrax execution to one real array with shape
+`(2,) + state_shape`. The leading entries are the real and imaginary components.
+Drift, diffusion, events, dense interpolation, arguments, and saved trajectories are
+adapted at the backend boundary; the packed axis never appears in
+`DifferentialSolution`.
+
+For a complex diffusion with shape `state_shape + noise_shape`, the backend diffusion
+has shape `(2,) + state_shape + noise_shape`. Both components use the same real
+Wiener controls. This realizes the complex SDE as one coupled real system and avoids
+Diffrax's native array contraction conjugating a complex diffusion column.
+
+Adaptive tolerances use componentwise real geometry over the doubled system.
+`TemporalSolveEvidence.state_packing` records the public/backend dtypes and shapes,
+tolerance geometry, policy, and realized adapter identity.
+
+`DiffraxComplexStatePolicy` provides three explicit strategies:
+
+- `\"real_imag\"` is the default safe adapter;
+- `\"native\"` opts into Diffrax's native complex path and its upstream limitation;
+- `\"reject\"` refuses complex initial state.
+
+Real states retain the native path and existing configuration identity. Nontrivial
+state geometry is not silently doubled: real/imaginary packing rejects it until an
+explicit product-geometry contract exists.
+
+::: phydrax.solver.DiffraxComplexStatePolicy
+
+---
+
+::: phydrax.solver.ComplexStatePackingEvidence
+
 ## Markov cubature weak solve
 
 `solve_markov_cubature` consumes the same stochastic `DifferentialProblem`, but

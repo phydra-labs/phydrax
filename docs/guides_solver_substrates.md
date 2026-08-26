@@ -221,6 +221,20 @@ coarse pseudoinverse. V/W/F/full cycle semantics come from the generic
 `FDExecutionPrecisionPolicy`; compatibility, gauge, and residual-norm decisions
 remain in its certification precision.
 
+## Temporal backend state representation
+
+`DifferentialProblem` owns the public state dtype and shape independently of the
+temporal backend representation. Standard Diffrax solves preserve real states
+natively. Complex states default to `DiffraxComplexStatePolicy(\"real_imag\")`, which
+prepares a real backend state with shape `(2,) + state_shape`, componentwise real
+adaptive tolerance geometry, and explicit packing evidence.
+
+Vector fields, stochastic coefficients, complex argument leaves, events, dense
+interpolation, and saved trajectories cross this boundary through one prepared
+adapter. Diffusion control axes remain trailing, so both real components contract
+against the same declared Wiener controls. Nontrivial state geometry and the separate
+delay/jump Diffrax backends are not assigned an inferred packing contract.
+
 ## Execution, distribution, and production lifecycle
 
 `StencilExecutionPlan` lowers regular interiors to one offset/weight kernel and retains

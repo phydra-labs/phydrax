@@ -9,6 +9,10 @@
   conjugacy-preserving modal spatial noise; internal-linalg Galerkin, boundary-lift,
   and generalized tau formulations; and diagonal ETDRK2/4 integration with shared
   stable phi-three matrix actions.
+- Added explicit real/imaginary Diffrax state packing for complex ODE, split, CDE,
+  and stochastic paths. Public states remain complex; temporal evidence records the
+  doubled real backend shape, dtype, tolerance geometry, and policy, while native and
+  reject strategies remain explicit.
 - Added public callable adaptive interval and triangle engines that reuse
   `AdaptiveQuadraturePlan`, `AdaptiveTrianglePlan`, `IntegrationPrecisionPolicy`,
   `IntegrationEstimate`, bounded partitions, statuses, and error-kind diagnostics.

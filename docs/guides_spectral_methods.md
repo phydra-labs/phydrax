@@ -102,11 +102,11 @@ weighted-orthonormal Laplacian modes and then projects them into full complex
 storage. Its complex modal columns preserve conjugate symmetry under real Wiener
 coefficients; independent one-sided Fourier modes are never substituted.
 
-!!! warning
-    Diffrax currently labels complex-dtype integration as work in progress. The
-    conjugate-symmetric spectral SPDE paths are covered by replay, reality, and
-    analytic-moment tests, but Phydrax does not strengthen that upstream guarantee.
-    Use an explicitly real-valued state formulation when that guarantee is required.
+Diffrax solves keep this public modal state complex but execute it as one coupled
+real system with backend shape `(2,) + modal_shape`. The adapter applies the same
+real Wiener controls to both components and reconstructs complex states before every
+spectral callback, event, dense query, and saved output. Explicit native-complex and
+reject policies remain available through `DiffraxComplexStatePolicy`.
 
 The compiled state is modal. Use `compiled.project_state` for initial data and
 `compiled.reconstruct_state` for observables and output. Constant-coefficient scalar
