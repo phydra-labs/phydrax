@@ -35,7 +35,9 @@ def _spatiotemporal_trajectory():
         state_axes=("space",),
         realizations=(realization,),
     )
-    discretization = phx.discretization.SeparableSpectralDiscretization((spatial_axis,))
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
+        (spatial_axis,)
+    )
     return trajectory, discretization
 
 

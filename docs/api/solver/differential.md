@@ -678,25 +678,25 @@ lower-precision spatial or covariance stages.
 
 ### Spatial discretizations
 
-`SeparableSpectralDiscretization` consumes materialized Fourier, sine, or cosine
-`AxisDiscretization` objects:
+`TensorSpectralPlan` prepares global Fourier, sine, cosine, Chebyshev, Legendre,
+constrained, and mixed tensor bases. `TensorSpectralDiscretization` exposes separate
+modal and physical field spaces, explicit projection/reconstruction, physical
+quadrature, and modal Laplacian modes. `compile_semidiscrete_pde` accepts an explicit
+`PseudospectralMethodPlan` for coefficient-resident dealiased evolution.
 
-| Axis basis | Laplacian | Boundary semantics |
+| Basis | Fast or dense execution | Boundary semantics |
 | --- | --- | --- |
-| `fourier` | FFT spectral derivative | periodic |
-| `sine` | odd-extension spectral derivative | homogeneous Dirichlet |
-| `cosine` | even-extension spectral derivative | homogeneous Neumann |
+| `fourier` | FFT | periodic |
+| `sine` | DST | homogeneous Dirichlet |
+| `cosine` | DCT | homogeneous Neumann |
+| `chebyshev` | budgeted dense polynomial transform | unconstrained or explicit |
+| `legendre` | weighted dense modal transform | unconstrained or explicit |
 
-Uniform axes use `PreparedTensorGrid` plus `periodic_finite_difference` or an explicit
-`FiniteDifferencePlan`; polynomial axes use a collocation method. The methods are not
-silently reinterpreted as spectral bases.
+Physical conveniences preserve trailing channel axes. Modal operators act on the
+coefficient state used by spectral PDE and SPDE execution. Resolution transfer is
+mode-aware and handles even Fourier Nyquist modes explicitly.
 
-Tensor-grid states begin with the declared spatial shape; trailing channel axes are
-preserved by `laplacian`, `flatten`, and `unflatten`. `eigenpairs(rank=...)` selects
-the lowest requested real modes without assembling the full tensor Laplacian.
-`laplacian_matrix()` remains an explicit diagnostic for small systems.
-
-`SpectralDiscretization` wraps a canonical
+`EigenbasisDiscretization` wraps a canonical
 `phydrax.discretization.SpectralDecomposition`. It reuses a `ModalTransform` and the
 selected `OperatorSpectrum`; transform and operator identities remain separate.
 
@@ -704,11 +704,11 @@ selected `OperatorSpectrum`; transform and operator identities remain separate.
 
 ---
 
-::: phydrax.discretization.SeparableSpectralDiscretization
+::: phydrax.discretization.TensorSpectralDiscretization
 
 ---
 
-::: phydrax.discretization.SpectralDiscretization
+::: phydrax.discretization.EigenbasisDiscretization
 
 ### Finite-rank spatial noise
 
@@ -755,13 +755,20 @@ import jax.random as jr
 import phydrax as phx
 
 axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
-space = phx.discretization.SeparableSpectralDiscretization((axis,))
+space = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     space,
     lambda eigenvalue: 0.02 * jnp.exp(-0.05 * eigenvalue),
     rank=6,
 )
-initial = jnp.sin(2.0 * jnp.pi * axis.nodes)
+method = phx.discretization.PseudospectralMethodPlan(
+    dealiasing=phx.discretization.PaddingDealiasingPlan(3),
+).prepare(
+    space,
+    required_polynomial_degree=3,
+    nonlinear=True,
+)
+initial = space.project(jnp.sin(2.0 * jnp.pi * axis.nodes))
 
 spde = phx.solver.semidiscretize_reaction_diffusion(
     initial,
@@ -769,7 +776,10 @@ spde = phx.solver.semidiscretize_reaction_diffusion(
     t0=0.0,
     t1=0.2,
     kappa=0.01,
-    reaction=lambda t, state, args: state - state**3,
+    reaction=lambda t, coefficients, args: method.nonlinear_action(
+        coefficients,
+        lambda values: values - values**3,
+    ),
     noise_basis=noise,
     interpretation="ito",
 )
@@ -791,8 +801,10 @@ ensemble = phx.solver.solve_diffrax_ensemble(
 `SpatialNoiseBasis` or an explicit diffusion plus `noise_shape`.
 `semidiscretize_reaction_diffusion` supplies
 \(\kappa\Delta_hU+R(t,U,a)\) and optionally scales a basis with a scalar,
-pointwise, or full diffusion amplitude. Initial state, drift, diffusion, basis,
-and noise shapes are checked eagerly.
+state-shaped, or full diffusion amplitude. Tensor-spectral states and callbacks are
+modal; the example projects its initial values and routes its physical cubic through
+the prepared dealiasing schedule. Initial state, drift, diffusion, basis, and noise
+shapes are checked eagerly.
 
 Both Itô and Stratonovich interpretations pass into `DifferentialProblem`.
 Phydrax validates interpretation and Lévy-area compatibility before calling Diffrax.

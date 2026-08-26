@@ -49,6 +49,11 @@ from ..discretization.finite_volume import (
     UnstructuredFiniteVolumeDiscretization,
     UnstructuredFiniteVolumeMethodPlan,
 )
+from ..discretization.spectral import (
+    PreparedSpectralConservationDynamics,
+    SpectralConservationMethodPlan,
+    TensorSpectralDiscretization,
+)
 from ._entropy_pair import ConvexEntropyPair
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
@@ -69,6 +74,7 @@ class ConservationProblemIR(StrictModule):
         FiniteVolumeBoundarySet
         | TriangleFiniteVolumeBoundarySet
         | UnstructuredFiniteVolumeBoundarySet
+        | None
     )
     source: Any = eqx.field(static=True)
     name: str = eqx.field(static=True)
@@ -84,6 +90,7 @@ class ConservationProblemIR(StrictModule):
             FiniteVolumeBoundarySet
             | TriangleFiniteVolumeBoundarySet
             | UnstructuredFiniteVolumeBoundarySet
+            | None
         ),
         /,
         *,
@@ -96,7 +103,7 @@ class ConservationProblemIR(StrictModule):
             raise ValueError("Conservation problem and field names must be non-empty.")
         if not isinstance(system, AbstractConservationSystem):
             raise TypeError("system must be an AbstractConservationSystem.")
-        if not isinstance(
+        if boundaries is not None and not isinstance(
             boundaries,
             (
                 FiniteVolumeBoundarySet,
@@ -104,7 +111,10 @@ class ConservationProblemIR(StrictModule):
                 UnstructuredFiniteVolumeBoundarySet,
             ),
         ):
-            raise TypeError("boundaries must be a prepared finite-volume boundary set.")
+            raise TypeError(
+                "boundaries must be a prepared finite-volume boundary set or None "
+                "for a fully periodic method."
+            )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
         identifier = (
@@ -114,7 +124,9 @@ class ConservationProblemIR(StrictModule):
                     "name": name_,
                     "field": field,
                     "system": system.system_id,
-                    "boundaries": boundaries.boundary_set_id,
+                    "boundaries": (
+                        "periodic" if boundaries is None else boundaries.boundary_set_id
+                    ),
                     "source": None if source is None else repr(source),
                 }
             )
@@ -140,16 +152,19 @@ class CompiledConservationProblem(StrictModule):
         | MappedFiniteVolumeDiscretization
         | TriangleFiniteVolumeDiscretization
         | UnstructuredFiniteVolumeDiscretization
+        | TensorSpectralDiscretization
     )
     method: (
         FiniteVolumeMethodPlan
         | TriangleFiniteVolumeMethodPlan
         | UnstructuredFiniteVolumeMethodPlan
+        | SpectralConservationMethodPlan
     )
     dynamics: (
         PreparedFiniteVolumeDynamics
         | PreparedTriangleFiniteVolumeDynamics
         | PreparedUnstructuredFiniteVolumeDynamics
+        | PreparedSpectralConservationDynamics
     )
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
@@ -162,21 +177,31 @@ class CompiledConservationProblem(StrictModule):
             | MappedFiniteVolumeDiscretization
             | TriangleFiniteVolumeDiscretization
             | UnstructuredFiniteVolumeDiscretization
+            | TensorSpectralDiscretization
         ),
         method: (
             FiniteVolumeMethodPlan
             | TriangleFiniteVolumeMethodPlan
             | UnstructuredFiniteVolumeMethodPlan
+            | SpectralConservationMethodPlan
         ),
         dynamics: (
             PreparedFiniteVolumeDynamics
             | PreparedTriangleFiniteVolumeDynamics
             | PreparedUnstructuredFiniteVolumeDynamics
+            | PreparedSpectralConservationDynamics
         ),
         /,
     ):
-        if problem.field_name != discretization.cell_space.name:
-            raise ValueError("Conserved field name must match the finite-volume space.")
+        state_space_name = (
+            discretization.modal_space.name
+            if isinstance(discretization, TensorSpectralDiscretization)
+            else discretization.cell_space.name
+        )
+        if problem.field_name != state_space_name:
+            raise ValueError(
+                "Conserved field name must match the prepared spatial state space."
+            )
         identity_payload = {
             "kind": "compiled-conservation-problem",
             "problem": problem.problem_id,
@@ -229,6 +254,10 @@ class CompiledConservationProblem(StrictModule):
         self.compilation_id = compilation_id
 
     def face_fluxes(self, time: Array, state: Array, args: Any = None, /):
+        if isinstance(self.dynamics, PreparedSpectralConservationDynamics):
+            raise NotImplementedError(
+                "Global spectral conservation has no interface face-flux array."
+            )
         return self.dynamics.face_fluxes(time, state, args)
 
     def residual_with_diagnostics(
@@ -248,6 +277,10 @@ class CompiledConservationProblem(StrictModule):
         *,
         cfl: float = 0.45,
     ) -> Array:
+        if isinstance(self.dynamics, PreparedSpectralConservationDynamics):
+            raise NotImplementedError(
+                "Spectral stable-step selection requires a separate modal CFL policy."
+            )
         return self.dynamics.stable_step(state, args, cfl=cfl)
 
     def linearize(self, time: Array, state: Array, args: Any = None, /):
@@ -334,11 +367,13 @@ def compile_conservation_problem(
         | MappedFiniteVolumeDiscretization
         | TriangleFiniteVolumeDiscretization
         | UnstructuredFiniteVolumeDiscretization
+        | TensorSpectralDiscretization
     ),
     method: (
         FiniteVolumeMethodPlan
         | TriangleFiniteVolumeMethodPlan
         | UnstructuredFiniteVolumeMethodPlan
+        | SpectralConservationMethodPlan
     ),
     /,
     *,
@@ -348,10 +383,40 @@ def compile_conservation_problem(
     coupling: UnstructuredFiniteVolumeCouplingPlan | None = None,
     entropy_pair: ConvexEntropyPair | None = None,
 ) -> CompiledConservationProblem:
-    """Lower one conservation system onto prepared finite-volume geometry."""
+    """Lower one conservation system onto a prepared spatial method."""
     if not isinstance(problem, ConservationProblemIR):
         raise TypeError("problem must be a ConservationProblemIR.")
     _validate_entropy_pair(problem, entropy_pair)
+    if isinstance(discretization, TensorSpectralDiscretization):
+        if not isinstance(method, SpectralConservationMethodPlan):
+            raise TypeError(
+                "Tensor spectral geometry requires SpectralConservationMethodPlan."
+            )
+        if problem.boundaries is not None:
+            raise ValueError("Periodic spectral conservation requires boundaries=None.")
+        if any(
+            value is not None for value in (capacity, bathymetry, precision, coupling)
+        ):
+            raise ValueError(
+                "Spectral conservation does not accept finite-volume capacity, "
+                "bathymetry, precision, or coupling options."
+            )
+        if method.entropy_diagnostics != (entropy_pair is not None):
+            raise ValueError(
+                "Spectral entropy diagnostics and entropy_pair must be enabled together."
+            )
+        dynamics = PreparedSpectralConservationDynamics(
+            problem.system,
+            discretization,
+            method,
+            source=problem.source,
+            entropy_pair=entropy_pair,
+        )
+        return CompiledConservationProblem(problem, discretization, method, dynamics)
+    if problem.boundaries is None:
+        raise ValueError(
+            "Finite-volume conservation requires an explicit prepared boundary set."
+        )
     if isinstance(problem.system, TwoMaterialVOFSystem) and not isinstance(
         discretization, UnstructuredFiniteVolumeDiscretization
     ):

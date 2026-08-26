@@ -268,6 +268,11 @@ class SpatialBasisSynthesis(StrictModule):
 
         if not isinstance(basis, SpatialNoiseBasis):
             raise TypeError("basis must be a SpatialNoiseBasis.")
+        if jnp.iscomplexobj(basis.modes):
+            raise ValueError(
+                "Static random-field synthesis requires a real point-value basis; "
+                "reconstruct modal spectral modes before creating the synthesis."
+            )
         return cls(
             basis.modes,
             basis.eigenvalues,

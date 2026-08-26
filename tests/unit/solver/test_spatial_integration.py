@@ -8,7 +8,7 @@ import phydrax.discretization as spectral
 def _tensor_grid():
     x_axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
     y_axis = phx.discretization.CosineAxisSpec(7).materialize(-1.0, 1.0)
-    return phx.discretization.SeparableSpectralDiscretization((x_axis, y_axis))
+    return phx.discretization.TensorSpectralDiscretization.from_axes((x_axis, y_axis))
 
 
 def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes():
@@ -92,7 +92,7 @@ def test_spectral_spatial_measure_reduces_precomputed_fields_without_coordinates
         jnp.asarray([0.2, 0.3, 0.5]),
         decomposition_id="integration-plan",
     )
-    discretization = phx.discretization.SpectralDiscretization(plan)
+    discretization = phx.discretization.EigenbasisDiscretization(plan)
     target = phx.integration.spatial_measure(discretization)
     values = cx.Field(jnp.asarray([1.0, 2.0, 4.0]), dims=("space",))
 

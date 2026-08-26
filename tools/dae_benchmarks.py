@@ -983,7 +983,7 @@ def _reaction_diffusion(steps: int, spatial_points: int) -> _Case:
         ),
     )
     axis = phx.discretization.FourierAxisSpec(spatial_points).materialize(0.0, 1.0)
-    spatial = phx.discretization.SeparableSpectralDiscretization((axis,))
+    spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     compiled = phx.equations.compile_semidiscrete_dae(
         problem_ir,
         spatial,

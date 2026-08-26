@@ -193,9 +193,33 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
     assert trajectory.basis_id == basis.basis_id
 
 
+def test_spectral_reaction_diffusion_requires_real_diffusivity():
+    axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
+    initial = discretization.project(jnp.sin(2.0 * jnp.pi * axis.nodes))
+    semidiscrete = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=jnp.asarray(0.1 + 0.0j),
+    )
+
+    assert semidiscrete.semilinear_drift is not None
+    assert not jnp.iscomplexobj(semidiscrete.semilinear_drift.linear_operator.diagonal)
+    with pytest.raises(ValueError, match="real-valued"):
+        phx.solver.semidiscretize_reaction_diffusion(
+            initial,
+            discretization,
+            t0=0.0,
+            t1=0.1,
+            kappa=jnp.asarray(0.1j),
+        )
+
+
 def _geometric_spde(*, duration, rate=-0.2, noise=0.7, structure="commutative"):
     axis = phx.discretization.FourierAxisSpec(2).materialize(0.0, 1.0)
-    discretization = phx.discretization.SeparableSpectralDiscretization((axis,))
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     initial = jnp.asarray([0.8, 1.3])
     operator = phx.linalg.DenseLinearOperator(
         rate * jnp.eye(2),

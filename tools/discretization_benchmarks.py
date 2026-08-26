@@ -49,7 +49,7 @@ def _triangular_grid(width):
 def _tensor_case(size, repeats):
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
     started = time.perf_counter()
-    discretization = phx.discretization.SeparableSpectralDiscretization((axis,))
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     preparation = time.perf_counter() - started
     state = jnp.sin(2.0 * jnp.pi * axis.nodes)
     action = eqx.filter_jit(discretization.laplacian)
@@ -95,16 +95,12 @@ def _finite_volume_case(width, repeats):
         axis_names=("x", "y"),
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
     started = time.perf_counter()
-    discretization = phx.discretization.FiniteVolumePlan(
-        grid, field_name="u"
-    ).prepare()
+    discretization = phx.discretization.FiniteVolumePlan(grid, field_name="u").prepare()
     velocity = (0.7, -0.2)
     system = phx.equations.ScalarConservationSystem(
         2,
         lambda state, axis, args: velocity[axis] * state,
-        lambda left, right, axis, args: jnp.full(
-            left.shape[:-1], abs(velocity[axis])
-        ),
+        lambda left, right, axis, args: jnp.full(left.shape[:-1], abs(velocity[axis])),
         system_id="benchmark-transport",
     )
     pair = phx.discretization.FiniteVolumeBoundaryPair(
@@ -121,9 +117,7 @@ def _finite_volume_case(width, repeats):
         phx.discretization.MUSCLReconstruction(),
         phx.discretization.HLLFluxPlan(),
     )
-    compiled = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     preparation = time.perf_counter() - started
     state = jnp.sin(jnp.pi * discretization.cell_centers[..., :1])
     action = eqx.filter_jit(lambda value: compiled(jnp.asarray(0.0), value))

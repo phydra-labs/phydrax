@@ -34,6 +34,7 @@ the backward equation is
 A manufactured Brownian solution gives a direct residual check:
 
 ```python
+import coordax as cx
 import jax
 import jax.scipy.special as jsp_special
 import jax.numpy as jnp
@@ -335,7 +336,7 @@ Choose the spatial discretization and retained covariance modes explicitly:
 
 ```python
 axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
-space = phx.discretization.SeparableSpectralDiscretization((axis,))
+space = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 
 # q(lambda) is evaluated on low eigenvalues of -Delta_h.
 noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
@@ -343,7 +344,7 @@ noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     lambda eigenvalue: 0.02 * jnp.exp(-0.05 * eigenvalue),
     rank=6,
 )
-initial = jnp.sin(2.0 * jnp.pi * axis.nodes)
+initial = space.project(jnp.sin(2.0 * jnp.pi * axis.nodes))
 
 heat = phx.solver.semidiscretize_reaction_diffusion(
     initial,
@@ -369,7 +370,7 @@ paths = phx.solver.solve_diffrax_ensemble(
 prediction = paths.to_predictive(
     sample_dim="path",
     time_dim="time",
-    state_dims=("space",),
+    state_dims=("mode",),
 )
 ```
 
@@ -379,17 +380,21 @@ Convert the solver result once, then compose deterministic space and time
 quadrature with the empirical path measure:
 
 ```python
-trajectory = paths.to_stochastic_trajectory(
+modal_trajectory = paths.to_stochastic_trajectory(
     realization_axes=("path",),
-    state_axes=("space",),
+    state_axes=("mode",),
     discretization_id=space.discretization_id,
     basis_id=noise.basis_id,
 )
-path_measure = phx.stochastic.trajectory_measure(trajectory, mode="path")
-time_measure = phx.stochastic.time_measure(trajectory, rule="trapezoid")
+physical_values = cx.Field(
+    jax.vmap(jax.vmap(space.reconstruct))(paths.states),
+    dims=("path", "time", "space"),
+)
+path_measure = phx.stochastic.trajectory_measure(modal_trajectory, mode="path")
+time_measure = phx.stochastic.time_measure(modal_trajectory, rule="trapezoid")
 space_measure = phx.integration.spatial_measure(space, spatial_dims="space")
 
-space_integrals = phx.integration.integrate(path_measure.samples, space_measure)
+space_integrals = phx.integration.integrate(physical_values, space_measure)
 time_integrals = phx.integration.integrate(space_integrals.value, time_measure)
 expected_space_time_integral = phx.integration.integrate(
     time_integrals.value,
@@ -398,8 +403,9 @@ expected_space_time_integral = phx.integration.integrate(
 assert expected_space_time_integral.successful
 ```
 
-The three stages have distinct semantics: physical spatial quadrature,
-irregular saved-time quadrature per path, then empirical expectation over
+The solver trajectory is modal; reconstruct it before applying physical spatial
+quadrature. The three reductions then have distinct semantics: physical spatial
+quadrature, irregular saved-time quadrature per path, and empirical expectation over
 complete paths. A failed path can produce `NO_VALID_SAMPLES` at the time stage
 without poisoning the final expectation because the path measure excludes it.
 Use `mode="marginal"` instead when the estimand is a time-indexed ensemble
@@ -410,9 +416,14 @@ same global Brownian paths, even when a time horizon is split across solves. Cha
 the root key changes paths; changing the grid, rank, spectrum, or modes changes
 `noise_id`.
 
-`SeparableSpectralDiscretization` composes Fourier, sine, and cosine tensor bases.
+`TensorSpectralDiscretization` composes global tensor spectral bases. Its solver state
+and `SpatialNoiseBasis.from_spectrum` modes are modal; use `project` and `reconstruct`
+at physical boundaries. Fourier noise modes are projections of real
+weighted-orthonormal eigenfunctions, so their complex columns preserve conjugate
+symmetry under real Wiener coefficients.
+
 Uniform periodic finite differences use `periodic_finite_difference`; bounded FD2
-operators can use `diagonalize_fd_laplacian`. `SpectralDiscretization` reuses a
+operators can use `diagonalize_fd_laplacian`. `EigenbasisDiscretization` reuses a
 precomputed `phydrax.discretization.SpectralDecomposition` while preserving
 independent transform and operator-spectrum identities.
 
@@ -425,13 +436,23 @@ dU_t=[\kappa\Delta U_t+U_t-U_t^3]dt+dW_t^Q.
 \]
 
 ```python
+allen_cahn_method = phx.discretization.PseudospectralMethodPlan(
+    dealiasing=phx.discretization.PaddingDealiasingPlan(3),
+).prepare(
+    space,
+    required_polynomial_degree=3,
+    nonlinear=True,
+)
 allen_cahn = phx.solver.semidiscretize_reaction_diffusion(
-    0.25 * jnp.cos(2.0 * jnp.pi * axis.nodes),
+    space.project(0.25 * jnp.cos(2.0 * jnp.pi * axis.nodes)),
     space,
     t0=0.0,
     t1=0.2,
     kappa=0.01,
-    reaction=lambda t, state, args: state - state**3,
+    reaction=lambda t, coefficients, args: allen_cahn_method.nonlinear_action(
+        coefficients,
+        lambda values: values - values**3,
+    ),
     noise_basis=noise,
 )
 ```

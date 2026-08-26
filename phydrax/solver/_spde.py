@@ -25,9 +25,11 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization.spectral import TensorSpectralDiscretization
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
+    DiagonalLinearOperator,
     DiagonalPairing,
     FunctionLinearOperator,
     OperatorProperties,
@@ -46,6 +48,43 @@ from ._differential import (
     WienerTerm,
 )
 from ._semilinear_drift import SemilinearDrift
+
+
+SpatialDiscretization = AbstractStrongFormDiscretization | TensorSpectralDiscretization
+
+
+def _spatial_laplacian(
+    discretization: SpatialDiscretization,
+    state: Array,
+    /,
+) -> Array:
+    return (
+        discretization.modal_laplacian(state)
+        if isinstance(discretization, TensorSpectralDiscretization)
+        else discretization.laplacian(state)
+    )
+
+
+def _spatial_weights(
+    discretization: SpatialDiscretization,
+    /,
+) -> Array:
+    return (
+        jnp.ones(
+            discretization.modal_shape,
+            dtype=jnp.dtype(discretization.plan.precision.physical_dtype),
+        )
+        if isinstance(discretization, TensorSpectralDiscretization)
+        else jnp.asarray(discretization.quadrature_weights)
+    )
+
+
+def _spatial_id(discretization: SpatialDiscretization, /) -> str:
+    return (
+        discretization.prepared_id
+        if isinstance(discretization, TensorSpectralDiscretization)
+        else discretization.discretization_id
+    )
 
 
 class _ValidatedVectorField(StrictModule):
@@ -91,7 +130,7 @@ class _BasisAmplitudeDiffusion(StrictModule):
 
 
 class _ReactionDiffusionDrift(StrictModule):
-    discretization: AbstractStrongFormDiscretization
+    discretization: SpatialDiscretization
     kappa: Any
     reaction: Callable[[Array, Array, Any], ArrayLike] | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -116,19 +155,22 @@ class _ReactionDiffusionDrift(StrictModule):
             raise ValueError(
                 f"reaction must return shape {self.state_shape}; got {reaction.shape}."
             )
-        return coefficient_array * self.discretization.laplacian(state_array) + reaction
+        return (
+            coefficient_array * _spatial_laplacian(self.discretization, state_array)
+            + reaction
+        )
 
 
 class _ScaledLaplacianOperator(StrictModule):
-    discretization: AbstractStrongFormDiscretization
+    discretization: SpatialDiscretization
     coefficient: Array
 
     def __call__(self, state: Array) -> Array:
-        return self.coefficient * self.discretization.laplacian(state)
+        return self.coefficient * _spatial_laplacian(self.discretization, state)
 
 
 def _compatible_noise_eigenvalues(
-    discretization: AbstractStrongFormDiscretization,
+    discretization: SpatialDiscretization,
     noise_basis: SpatialNoiseBasis | None,
     coefficient: Array,
     /,
@@ -139,6 +181,17 @@ def _compatible_noise_eigenvalues(
         or noise_basis.field_space_id != discretization.field_spaces[0].field_space_id
     ):
         return None
+    if isinstance(discretization, TensorSpectralDiscretization):
+        values, point_value_modes = discretization.eigenpairs(rank=noise_basis.rank)
+        modes = discretization.project(point_value_modes)
+        comparison_dtype = jnp.result_type(modes.dtype, noise_basis.modes.dtype)
+        modes = modes.astype(comparison_dtype)
+        basis_modes = noise_basis.modes.astype(comparison_dtype)
+        if modes.shape != basis_modes.shape or not bool(
+            jnp.allclose(modes, basis_modes, rtol=1e-6, atol=1e-7)
+        ):
+            return None
+        return -coefficient * values
     laplacian_eigenvalues, modes = discretization.eigenpairs(rank=noise_basis.rank)
     if modes.shape != noise_basis.modes.shape or not bool(
         jnp.allclose(modes, noise_basis.modes, rtol=1e-6, atol=1e-7)
@@ -149,14 +202,14 @@ def _compatible_noise_eigenvalues(
 
 def _spectral_linear_representation(
     operator: AbstractLinearOperator,
-    discretization: AbstractStrongFormDiscretization,
+    discretization: SpatialDiscretization,
     coefficient: Array,
     state_shape: tuple[int, ...],
     /,
 ) -> TransformDiagonalRepresentation | None:
-    from ..discretization._tensor import SpectralDiscretization
+    from ..discretization._tensor import EigenbasisDiscretization
 
-    if not isinstance(discretization, SpectralDiscretization):
+    if not isinstance(discretization, EigenbasisDiscretization):
         return None
     if coefficient.shape != () or state_shape != discretization.state_shape:
         return None
@@ -173,7 +226,7 @@ class SemidiscreteSPDE(StrictModule):
     """Finite-dimensional method-of-lines problem plus spatial/noise provenance."""
 
     problem: DifferentialProblem
-    spatial_discretization: AbstractStrongFormDiscretization
+    spatial_discretization: SpatialDiscretization
     noise_basis: SpatialNoiseBasis | None
     semilinear_drift: SemilinearDrift | None
     discretization_bundle: DiscretizationBundle
@@ -189,7 +242,7 @@ class SemidiscreteSPDE(StrictModule):
         self,
         *,
         problem: DifferentialProblem,
-        spatial_discretization: AbstractStrongFormDiscretization,
+        spatial_discretization: SpatialDiscretization,
         noise_basis: SpatialNoiseBasis | None,
         semilinear_drift: SemilinearDrift | None = None,
         solution_spec: SPDESolutionSpec | None = None,
@@ -199,9 +252,13 @@ class SemidiscreteSPDE(StrictModule):
     ):
         if not isinstance(problem, DifferentialProblem):
             raise TypeError("problem must be a DifferentialProblem.")
-        if not isinstance(spatial_discretization, AbstractStrongFormDiscretization):
+        if not isinstance(
+            spatial_discretization,
+            (AbstractStrongFormDiscretization, TensorSpectralDiscretization),
+        ):
             raise TypeError(
-                "spatial_discretization must implement AbstractStrongFormDiscretization."
+                "spatial_discretization must provide a strong-form or tensor-spectral "
+                "state space."
             )
         if noise_basis is not None and not isinstance(noise_basis, SpatialNoiseBasis):
             raise TypeError("noise_basis must be a SpatialNoiseBasis or None.")
@@ -256,7 +313,7 @@ class SemidiscreteSPDE(StrictModule):
         self.semilinear_drift = semilinear_drift
         self.solution_spec = resolved_solution
         self.noise_shape = noise
-        self.discretization_id = spatial_discretization.discretization_id
+        self.discretization_id = _spatial_id(spatial_discretization)
         self.basis_id = basis_id
         spatial_precision = spatial_discretization.precision_evidence
         spatial_precision_id = (
@@ -373,7 +430,7 @@ class SemidiscreteSPDE(StrictModule):
 def semidiscretize_spde(
     drift: Callable[[Array, Array, Any], ArrayLike],
     initial_state: ArrayLike,
-    spatial_discretization: AbstractStrongFormDiscretization,
+    spatial_discretization: SpatialDiscretization,
     /,
     *,
     t0: ArrayLike,
@@ -394,12 +451,19 @@ def semidiscretize_spde(
     gives a scalar/pointwise amplitude :math:`G_h` (or a fully composed diffusion
     factor) multiplying the retained basis :math:`B`. Without a basis, stochastic
     problems must supply both ``diffusion`` and ``noise_shape``.
+
+    A ``TensorSpectralDiscretization`` supplies a modal primary state, so its drift,
+    diffusion, and initial state use modal representation.
     """
     if not callable(drift):
         raise TypeError("drift must be callable.")
-    if not isinstance(spatial_discretization, AbstractStrongFormDiscretization):
+    if not isinstance(
+        spatial_discretization,
+        (AbstractStrongFormDiscretization, TensorSpectralDiscretization),
+    ):
         raise TypeError(
-            "spatial_discretization must implement AbstractStrongFormDiscretization."
+            "spatial_discretization must provide a strong-form or tensor-spectral "
+            "state space."
         )
     state = jnp.asarray(initial_state)
     spatial_shape = spatial_discretization.state_shape
@@ -523,7 +587,7 @@ def semidiscretize_semilinear_spde(
     linear_operator: AbstractLinearOperator,
     nonlinear_drift: Callable[[Array, Array, Any], ArrayLike] | None,
     initial_state: ArrayLike,
-    spatial_discretization: AbstractStrongFormDiscretization,
+    spatial_discretization: SpatialDiscretization,
     /,
     *,
     t0: ArrayLike,
@@ -588,7 +652,7 @@ def semidiscretize_semilinear_spde(
 
 def semidiscretize_reaction_diffusion(
     initial_state: ArrayLike,
-    spatial_discretization: AbstractStrongFormDiscretization,
+    spatial_discretization: SpatialDiscretization,
     /,
     *,
     t0: ArrayLike,
@@ -612,6 +676,12 @@ def semidiscretize_reaction_diffusion(
 
     When a noise basis is supplied and ``noise_amplitude`` is omitted, the noise is
     additive. Tensor state shape is preserved.
+
+    ``TensorSpectralDiscretization`` uses modal primary state. Its
+    ``initial_state``, ``reaction`` result, and state-shaped noise amplitude are
+    therefore modal. Evaluate physical nonlinearities through a prepared
+    ``PreparedPseudospectralMethod.nonlinear_action`` so the declared dealiasing
+    policy remains explicit.
     """
     if reaction is not None and not callable(reaction):
         raise TypeError("reaction must be callable or None.")
@@ -626,8 +696,14 @@ def semidiscretize_reaction_diffusion(
         )
         semilinear = None
     else:
-        state_dtype = jnp.asarray(initial_state).dtype
-        coefficient = jnp.asarray(kappa, dtype=state_dtype)
+        initial = jnp.asarray(initial_state)
+        state_dtype = initial.dtype
+        coefficient_values = jnp.asarray(kappa)
+        if jnp.iscomplexobj(coefficient_values):
+            if not bool(jnp.all(jnp.imag(coefficient_values) == 0)):
+                raise ValueError("kappa must be real-valued.")
+            coefficient_values = jnp.real(coefficient_values)
+        coefficient = coefficient_values.astype(initial.real.dtype)
         if coefficient.shape not in ((), state_shape):
             raise ValueError("kappa must be scalar or have exact initial-state shape.")
         linear_operator = _ScaledLaplacianOperator(
@@ -640,9 +716,9 @@ def semidiscretize_reaction_diffusion(
             coefficient,
         )
         operator_id = (
-            f"{spatial_discretization.discretization_id}:scaled-laplacian:{coefficient!r}"
+            f"{_spatial_id(spatial_discretization)}:scaled-laplacian:{coefficient!r}"
         )
-        weights = jnp.asarray(spatial_discretization.quadrature_weights)
+        weights = _spatial_weights(spatial_discretization)
         expanded_weights = jnp.broadcast_to(
             weights.reshape(weights.shape + (1,) * (len(state_shape) - weights.ndim)),
             state_shape,
@@ -660,37 +736,68 @@ def semidiscretize_reaction_diffusion(
             dtype=state_dtype,
             pairing=pairing,
         )
-        canonical_operator = FunctionLinearOperator(
-            linear_operator,
-            source=operator_space,
-            target=operator_space,
-            properties=OperatorProperties(
-                self_adjoint=coefficient.shape == (),
-                evidence=(
-                    {"self_adjoint": "construction"} if coefficient.shape == () else None
+        if (
+            isinstance(spatial_discretization, TensorSpectralDiscretization)
+            and coefficient.shape == ()
+        ):
+            eigenvalues = spatial_discretization.laplacian_eigenvalues()
+            diagonal = -coefficient * jnp.broadcast_to(
+                eigenvalues.reshape(
+                    eigenvalues.shape + (1,) * (len(state_shape) - eigenvalues.ndim)
                 ),
-            ),
-            operator_id=operator_id,
-        )
-        spectral = _spectral_linear_representation(
-            canonical_operator,
-            spatial_discretization,
-            coefficient,
-            state_shape,
-        )
-        bounds = None
-        if spectral is not None:
-            lower = float(jnp.min(spectral.modal_values))
-            upper = float(jnp.max(spectral.modal_values))
-            if lower < upper:
-                bounds = (lower, upper)
+                state_shape,
+            )
+            canonical_operator = DiagonalLinearOperator(
+                diagonal.reshape((-1,)),
+                space=operator_space,
+                properties=OperatorProperties(
+                    diagonal=True,
+                    self_adjoint=True,
+                    evidence={
+                        "diagonal": "construction",
+                        "self_adjoint": "construction",
+                    },
+                ),
+                operator_id=operator_id,
+            )
+            spectral = None
+            lower = float(jnp.min(jnp.real(diagonal)))
+            upper = float(jnp.max(jnp.real(diagonal)))
+            bounds = (lower, upper) if lower < upper else None
+        else:
+            canonical_operator = FunctionLinearOperator(
+                linear_operator,
+                source=operator_space,
+                target=operator_space,
+                properties=OperatorProperties(
+                    self_adjoint=coefficient.shape == (),
+                    evidence=(
+                        {"self_adjoint": "construction"}
+                        if coefficient.shape == ()
+                        else None
+                    ),
+                ),
+                operator_id=operator_id,
+            )
+            spectral = _spectral_linear_representation(
+                canonical_operator,
+                spatial_discretization,
+                coefficient,
+                state_shape,
+            )
+            bounds = None
+            if spectral is not None:
+                lower = float(jnp.min(spectral.modal_values))
+                upper = float(jnp.max(spectral.modal_values))
+                if lower < upper:
+                    bounds = (lower, upper)
         semilinear = SemilinearDrift(
             canonical_operator,
             reaction,
             state_shape=state_shape,
             operator_id=operator_id,
             mass_self_adjoint=coefficient.shape == (),
-            mass_weights=spatial_discretization.quadrature_weights,
+            mass_weights=weights,
             spectral_bounds=bounds,
             spectral_representation=spectral,
             compatible_noise_eigenvalues=compatible_eigenvalues,

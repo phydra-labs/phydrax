@@ -122,6 +122,15 @@ objects for convenience.
 compatibility and gauge policy for singular systems; projecting an incompatible RHS
 is never implicit.
 
+`TensorSpectralPlan` composes these execution transforms with mode layouts, physical
+measures, modal field spaces, precision, and resource evidence. Nonlinear
+`PseudospectralMethodPlan` execution owns explicit mode-aware padding or filtering.
+Chebyshev and Legendre construction reuses the internal polynomial rules, Vandermonde
+evaluation, derivative recurrences, and canonical dense linalg factorization. Common
+endpoint constraints, Galerkin solves, boundary lifts, and generalized tau block
+systems also route through `phydrax.linalg`; no parallel polynomial or solve substrate
+is introduced. Eligible diagonal semilinear systems integrate with `ETDRKMethod`.
+
 Periodic one-dimensional FD stencils expose a certified FFT representation via
 `PreparedFiniteDifferenceDiscretization.transform_diagonalization`.
 `diagonalize_fd_laplacian` additionally certifies tensor FD2 operators on uniform point

@@ -62,14 +62,14 @@ import jax.random as jr
 import phydrax as phx
 
 axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
-space = phx.discretization.SeparableSpectralDiscretization((axis,))
+space = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     space,
     lambda eigenvalue: 0.01 * jnp.exp(-0.1 * eigenvalue),
     rank=6,
 )
 spde = phx.solver.semidiscretize_reaction_diffusion(
-    jnp.sin(2.0 * jnp.pi * axis.nodes),
+    space.project(jnp.sin(2.0 * jnp.pi * axis.nodes)),
     space,
     t0=0.0,
     t1=0.2,
@@ -91,7 +91,7 @@ solution = phx.solver.solve_diffrax_ensemble(
 prediction = solution.to_predictive(
     sample_dim="path",
     time_dim="time",
-    state_dims=("space",),
+    state_dims=("mode",),
 )
 ```
 
@@ -101,21 +101,32 @@ records the spatial noise modes, eigenvalues, quadrature, and discretization ide
 A refined grid or changed truncation therefore receives a different fingerprint and
 cannot be paired accidentally.
 
-For tensor grids, `space.eigenpairs(rank=...)` forms exact separable modes and
-selects only the requested lowest tensor sums. Kernel-defined covariance uses
-`SpatialNoiseBasis.from_kernel_covariance`, whose Matfree pivoted-Cholesky path
-queries entries on demand. A covariance available only as a state-shaped matvec
-uses `SpatialNoiseBasis.from_covariance_operator(..., key=..., oversampling=...)`
-and randomized Nyström. Both routes expose their method, rank, tolerance,
+The tensor-spectral trajectory is modal. Reconstruct it before computing
+point-value observables or applying the physical spatial quadrature measure.
+
+`space.eigenpairs(rank=...)` forms weighted-orthonormal real point-value modes and
+selects only the requested lowest tensor sums. `SpatialNoiseBasis.from_spectrum`
+instead constructs modes in the modal primary field space. Kernel-defined point-value
+covariance uses `SpatialNoiseBasis.from_kernel_covariance`, whose Matfree
+pivoted-Cholesky path queries entries on demand. A covariance available only as a
+point-value matvec uses
+`SpatialNoiseBasis.from_covariance_operator(..., key=..., oversampling=...)` and
+randomized Nyström. Both routes expose their method, rank, tolerance,
 residual estimate, convergence flag, and seed/sketch provenance through
 `noise.approximation`; check that record before treating a truncation as
 numerically adequate.
 
+For a tensor-spectral discretization, kernel and covariance-operator factories label
+their point-value basis with `space.physical_space`; it cannot be attached silently
+to a modal SPDE. Use `from_spectrum` for modal noise, or perform an explicit
+covariance pushforward through the spectral projection.
+
 `SpatialNoisePrecisionPolicy` independently places covariance construction,
-retained basis storage, runtime diffusion, and certification. All basis
-factories consume it. `SemidiscreteSPDE.precision_evidence` nests the available
-spatial-discretization and noise-basis evidence rather than reducing the coupled
-problem to one nominal dtype.
+retained basis storage, runtime diffusion, and certification. Complex modal bases
+lift each requested real width to its paired complex dtype; the basis precision
+evidence records that effective storage and runtime kind. All factories consume the
+policy. `SemidiscreteSPDE.precision_evidence` nests the available spatial and
+noise-basis evidence rather than reducing the coupled problem to one nominal dtype.
 
 The path axis alone says nothing about numerical uncertainty. To quantify
 spatial truncation, time stepping, or solver error, run an explicit discretization
@@ -191,10 +202,13 @@ conditions.
 synthesis and semantic use:
 
 ```python
-basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
-    space,
-    lambda eigenvalue: 0.2 / (1.0 + eigenvalue),
-    rank=8,
+eigenvalues, point_value_modes = space.eigenpairs(rank=8)
+basis = phx.stochastic.SpatialNoiseBasis.from_modes(
+    point_value_modes,
+    0.2 / (1.0 + eigenvalues),
+    quadrature_weights=space.quadrature_weights,
+    state_shape=space.physical_shape,
+    field_space_id=space.physical_space.field_space_id,
 )
 synthesis = phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(
     basis,

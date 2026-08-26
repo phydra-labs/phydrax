@@ -19,6 +19,7 @@ from matfree.low_rank import cholesky_partial_pivot
 from matfree.stochtrace import nystrom_eigh
 
 from .._precision import (
+    precision_dtype_name,
     precision_itemsize,
     PrecisionEvidenceEnvelope,
     PrecisionRequest,
@@ -27,6 +28,53 @@ from .._precision import (
 )
 from .._strict import StrictModule
 from ..discretization._tensor import AbstractStrongFormDiscretization
+from ..discretization.spectral import TensorSpectralDiscretization
+
+
+def _point_value_basis_metadata(
+    discretization: AbstractStrongFormDiscretization,
+    /,
+) -> tuple[tuple[int, ...], str]:
+    if isinstance(discretization, TensorSpectralDiscretization):
+        return (
+            discretization.physical_shape,
+            discretization.physical_space.field_space_id,
+        )
+    return (
+        discretization.state_shape,
+        discretization.field_spaces[0].field_space_id,
+    )
+
+
+def _mode_dtype(real_dtype: str, complex_modes: bool, /) -> str:
+    if not complex_modes:
+        return real_dtype
+    return "complex64" if precision_itemsize(real_dtype) == 4 else "complex128"
+
+
+def _basis_precision_evidence(
+    policy: SpatialNoisePrecisionPolicy,
+    mode_storage_dtype: str,
+    mode_runtime_dtype: str,
+    mode_certification_dtype: str,
+    /,
+) -> PrecisionEvidenceEnvelope:
+    request = PrecisionRequest(
+        "spatial-noise",
+        {
+            "factorization": policy.construction_dtype,
+            "storage": mode_storage_dtype,
+            "compute": mode_runtime_dtype,
+            "certification": mode_certification_dtype,
+            "output": mode_runtime_dtype,
+        },
+    )
+    resolution = PrecisionResolution(
+        request,
+        "phydrax-spatial-noise",
+        dict(request.requested),
+    )
+    return PrecisionEvidenceEnvelope(resolution, dict(resolution.effective))
 
 
 def _canonicalize_signs(modes: np.ndarray, /) -> np.ndarray:
@@ -267,9 +315,12 @@ class SpatialNoisePrecisionPolicy(StrictModule):
 class SpatialNoiseBasis(StrictModule):
     r"""Finite-rank spatial basis for a discrete :math:`Q`-Wiener process.
 
-    Modes satisfy :math:`\Phi^\mathsf{T}M\Phi=I`. The diffusion factor is
+    Modes satisfy :math:`\Phi^\mathsf{H}M\Phi=I`. The diffusion factor is
     :math:`B=\Phi\operatorname{diag}(\sqrt{q_1},\ldots,\sqrt{q_r})` and has shape
     ``state_shape + (rank,)``.
+
+    Modes may be real or complex; covariance eigenvalues and quadrature weights
+    remain real. Complex modes use the Hermitian weighted Gram contract.
     """
 
     modes: Array
@@ -281,6 +332,8 @@ class SpatialNoiseBasis(StrictModule):
     basis_id: str = eqx.field(static=True)
     approximation: SpatialNoiseApproximation | None = eqx.field(static=True)
     precision: SpatialNoisePrecisionPolicy
+    mode_storage_dtype: str = eqx.field(static=True)
+    mode_runtime_dtype: str = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
     def __init__(
@@ -302,11 +355,22 @@ class SpatialNoiseBasis(StrictModule):
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
         raw_modes = jnp.asarray(modes)
-        if jnp.iscomplexobj(raw_modes):
-            raise ValueError("SpatialNoiseBasis modes must be real-valued.")
+        complex_modes = bool(jnp.iscomplexobj(raw_modes))
+        mode_storage_dtype = _mode_dtype(
+            precision_.basis_storage_dtype,
+            complex_modes,
+        )
+        mode_runtime_dtype = _mode_dtype(
+            precision_.runtime_dtype,
+            complex_modes,
+        )
+        mode_certification_dtype = _mode_dtype(
+            precision_.certification_dtype,
+            complex_modes,
+        )
         modes_array = jnp.asarray(
             raw_modes,
-            dtype=precision_.basis_storage_dtype,
+            dtype=mode_storage_dtype,
         )
         if modes_array.ndim < 2:
             raise ValueError("modes must have shape state_shape + (rank,).")
@@ -340,7 +404,10 @@ class SpatialNoiseBasis(StrictModule):
                 "quadrature_weights must have exact state_shape "
                 f"{resolved_shape}; got {weights.shape}."
             )
-        modes_host = np.asarray(modes_array, dtype=precision_.certification_dtype)
+        modes_host = np.asarray(
+            modes_array,
+            dtype=mode_certification_dtype,
+        )
         eigenvalues_host = np.asarray(
             eigenvalue_array,
             dtype=precision_.certification_dtype,
@@ -353,7 +420,7 @@ class SpatialNoiseBasis(StrictModule):
         if np.any(~np.isfinite(weights_host)) or np.any(weights_host <= 0.0):
             raise ValueError("Quadrature weights must be finite and positive.")
         flat_modes = modes_host.reshape((-1, rank))
-        gram = flat_modes.T @ (weights_host.reshape((-1, 1)) * flat_modes)
+        gram = flat_modes.conj().T @ (weights_host.reshape((-1, 1)) * flat_modes)
         if not np.allclose(
             gram,
             np.eye(rank),
@@ -361,7 +428,7 @@ class SpatialNoiseBasis(StrictModule):
             atol=float(orthonormal_atol),
         ):
             raise ValueError(
-                "Noise modes must satisfy the weighted Gram contract Phi.T M Phi = I."
+                "Noise modes must satisfy the weighted Gram contract Phi.H M Phi = I."
             )
         if mode_ids is None:
             identifiers = tuple(f"mode:{index}" for index in range(rank))
@@ -390,7 +457,14 @@ class SpatialNoiseBasis(StrictModule):
         self.field_space_id = None if field_space_id is None else str(field_space_id)
         self.approximation = approximation
         self.precision = precision_
-        self.precision_evidence = precision_.evidence()
+        self.mode_storage_dtype = precision_dtype_name(modes_array.dtype)
+        self.mode_runtime_dtype = precision_dtype_name(jnp.dtype(mode_runtime_dtype))
+        self.precision_evidence = _basis_precision_evidence(
+            precision_,
+            self.mode_storage_dtype,
+            self.mode_runtime_dtype,
+            precision_dtype_name(jnp.dtype(mode_certification_dtype)),
+        )
         self.basis_id = _basis_digest(
             state_shape=resolved_shape,
             modes=modes_host,
@@ -411,7 +485,7 @@ class SpatialNoiseBasis(StrictModule):
     @property
     def diffusion(self) -> Array:
         eigenvalues = self.eigenvalues.astype(self.precision.runtime_dtype)
-        modes = self.modes.astype(self.precision.runtime_dtype)
+        modes = self.modes.astype(self.mode_runtime_dtype)
         scale = jnp.sqrt(eigenvalues).reshape((1,) * len(self.state_shape) + (self.rank,))
         return modes * scale
 
@@ -421,7 +495,7 @@ class SpatialNoiseBasis(StrictModule):
 
     def reconstructed_covariance(self) -> Array:
         factor = self.diffusion_matrix
-        return factor @ factor.T
+        return factor @ factor.conj().T
 
     @classmethod
     def from_modes(
@@ -450,7 +524,7 @@ class SpatialNoiseBasis(StrictModule):
     @classmethod
     def from_spectrum(
         cls,
-        discretization: AbstractStrongFormDiscretization,
+        discretization: (AbstractStrongFormDiscretization | TensorSpectralDiscretization),
         spectrum: Callable[[Array], ArrayLike] | ArrayLike,
         /,
         *,
@@ -460,13 +534,41 @@ class SpatialNoiseBasis(StrictModule):
         r"""Select low Laplacian modes and evaluate a spectral covariance law.
 
         ``spectrum`` receives the retained non-negative eigenvalues of
-        ``-laplacian`` and returns the corresponding :math:`Q` eigenvalues.
+        ``-laplacian`` and returns the corresponding covariance eigenvalues.
         """
-        if not isinstance(discretization, AbstractStrongFormDiscretization):
+        if not isinstance(
+            discretization,
+            (AbstractStrongFormDiscretization, TensorSpectralDiscretization),
+        ):
             raise TypeError(
-                "discretization must implement AbstractStrongFormDiscretization."
+                "discretization must provide strong-form or tensor-spectral "
+                "Laplacian modes."
             )
-        laplacian_eigenvalues, modes = discretization.eigenpairs(rank=int(rank))
+        retained = int(rank)
+        if isinstance(discretization, TensorSpectralDiscretization):
+            laplacian_eigenvalues, point_value_modes = discretization.eigenpairs(
+                rank=retained
+            )
+            modes = discretization.project(point_value_modes)
+            basis_weights = jnp.ones(
+                discretization.modal_shape,
+                dtype=jnp.dtype(discretization.plan.precision.physical_dtype),
+            )
+            state_shape = discretization.modal_shape
+            field_space_id = discretization.modal_space.field_space_id
+            mode_ids = tuple(
+                f"laplacian:{index}:{float(value):.17g}"
+                for index, value in enumerate(np.asarray(laplacian_eigenvalues))
+            )
+        else:
+            laplacian_eigenvalues, modes = discretization.eigenpairs(rank=retained)
+            basis_weights = discretization.quadrature_weights
+            state_shape = discretization.state_shape
+            field_space_id = discretization.field_spaces[0].field_space_id
+            mode_ids = tuple(
+                f"laplacian:{index}:{float(value):.17g}"
+                for index, value in enumerate(np.asarray(laplacian_eigenvalues))
+            )
         if callable(spectrum):
             spectrum_function = cast(Callable[[Array], ArrayLike], spectrum)
             values = spectrum_function(laplacian_eigenvalues)
@@ -481,22 +583,18 @@ class SpatialNoiseBasis(StrictModule):
         )
         if covariance_eigenvalues.shape == ():
             covariance_eigenvalues = jnp.full(
-                (int(rank),),
+                (retained,),
                 covariance_eigenvalues,
                 dtype=precision_.construction_dtype,
             )
         covariance_eigenvalues = covariance_eigenvalues.reshape((-1,))
-        mode_ids = tuple(
-            f"laplacian:{index}:{float(value):.17g}"
-            for index, value in enumerate(np.asarray(laplacian_eigenvalues))
-        )
         return cls(
             modes,
             covariance_eigenvalues,
-            quadrature_weights=discretization.quadrature_weights,
-            state_shape=discretization.state_shape,
+            quadrature_weights=basis_weights,
+            state_shape=state_shape,
             mode_ids=mode_ids,
-            field_space_id=discretization.field_spaces[0].field_space_id,
+            field_space_id=field_space_id,
             precision=precision_,
         )
 
@@ -619,6 +717,7 @@ class SpatialNoiseBasis(StrictModule):
         precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
+        basis_shape, field_space_id = _point_value_basis_metadata(discretization)
         count = discretization.num_points
         retained = int(rank)
         if retained <= 0 or retained > count:
@@ -650,7 +749,7 @@ class SpatialNoiseBasis(StrictModule):
             discretization.quadrature_weights,
             dtype=np.dtype(precision_.construction_dtype),
         )
-        if weights_host.shape != discretization.state_shape:
+        if weights_host.shape != basis_shape:
             raise ValueError("discretization quadrature weights have an invalid shape.")
         if np.any(~np.isfinite(weights_host)) or np.any(weights_host <= 0.0):
             raise ValueError("Quadrature weights must be finite and positive.")
@@ -690,7 +789,7 @@ class SpatialNoiseBasis(StrictModule):
         eigenvalues, modes, weighted_factor = _factor_eigenpairs(
             weighted_cholesky,
             weights_host,
-            discretization.state_shape,
+            basis_shape,
             rank=retained,
             dtype=precision_.construction_dtype,
         )
@@ -726,9 +825,9 @@ class SpatialNoiseBasis(StrictModule):
             modes,
             eigenvalues,
             quadrature_weights=discretization.quadrature_weights,
-            state_shape=discretization.state_shape,
+            state_shape=basis_shape,
             mode_ids=tuple(f"kernel-pivot:{index}" for index in range(retained)),
-            field_space_id=discretization.field_spaces[0].field_space_id,
+            field_space_id=field_space_id,
             approximation=approximation,
             precision=precision_,
         )
@@ -749,9 +848,10 @@ class SpatialNoiseBasis(StrictModule):
     ) -> "SpatialNoiseBasis":
         r"""Randomize a matrix-free covariance with Matfree Nyström.
 
-        ``covariance_operator`` receives and returns arrays with
-        ``discretization.state_shape``. Internally the operator is transformed by
-        the quadrature mass matrix before randomized factorization.
+        ``covariance_operator`` receives and returns point-value arrays. For
+        tensor-spectral spaces this is ``discretization.physical_shape`` rather than
+        the modal primary-state shape. Internally the operator is transformed by the
+        quadrature mass matrix before randomized factorization.
         """
         if not callable(covariance_operator):
             raise TypeError("covariance_operator must be callable.")
@@ -762,6 +862,7 @@ class SpatialNoiseBasis(StrictModule):
         precision_ = SpatialNoisePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, SpatialNoisePrecisionPolicy):
             raise TypeError("precision must be a SpatialNoisePrecisionPolicy.")
+        basis_shape, field_space_id = _point_value_basis_metadata(discretization)
         count = discretization.num_points
         retained = int(rank)
         if retained <= 0 or retained > count:
@@ -786,23 +887,23 @@ class SpatialNoiseBasis(StrictModule):
             discretization.quadrature_weights,
             dtype=np.dtype(precision_.construction_dtype),
         )
-        if weights_host.shape != discretization.state_shape:
+        if weights_host.shape != basis_shape:
             raise ValueError("discretization quadrature weights have an invalid shape.")
         if np.any(~np.isfinite(weights_host)) or np.any(weights_host <= 0.0):
             raise ValueError("Quadrature weights must be finite and positive.")
         root = jnp.sqrt(jnp.asarray(weights_host).reshape((-1,)))
 
         def weighted_matvec(vector):
-            state = discretization.unflatten(root * vector)
+            state = (root * vector).reshape(basis_shape)
             result = jnp.asarray(
                 covariance_operator(state),
                 dtype=precision_.construction_dtype,
             )
-            if tuple(result.shape) != discretization.state_shape:
+            if tuple(result.shape) != basis_shape:
                 raise ValueError(
-                    "covariance_operator must preserve discretization.state_shape."
+                    "covariance_operator must preserve the point-value state shape."
                 )
-            flattened = discretization.flatten(result)
+            flattened = result.reshape((-1,))
             if flattened.shape != (count,):
                 raise ValueError(
                     "covariance_operator must return a scalar spatial field."
@@ -835,7 +936,7 @@ class SpatialNoiseBasis(StrictModule):
         eigenvalues, modes, weighted_factor = _factor_eigenpairs(
             raw_factor,
             weights_host,
-            discretization.state_shape,
+            basis_shape,
             rank=retained,
             dtype=precision_.construction_dtype,
         )
@@ -890,9 +991,9 @@ class SpatialNoiseBasis(StrictModule):
             modes,
             eigenvalues,
             quadrature_weights=discretization.quadrature_weights,
-            state_shape=discretization.state_shape,
+            state_shape=basis_shape,
             mode_ids=tuple(f"nystrom:{seed_label}:{index}" for index in range(retained)),
-            field_space_id=discretization.field_spaces[0].field_space_id,
+            field_space_id=field_space_id,
             approximation=approximation,
             precision=precision_,
         )

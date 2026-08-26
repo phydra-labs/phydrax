@@ -137,6 +137,11 @@ from ._serialize import (
     pde_ir_to_dict,
     pde_ir_to_json,
 )
+from ._spectral_compile import (
+    compile_spectral_pde,
+    CompiledSpectralDynamics,
+    SpectralStateLayout,
+)
 from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
@@ -212,6 +217,7 @@ __all__ = [
     "CompiledPDEProblem",
     "CompiledDiscreteDynamics",
     "CompiledDiscreteResidual",
+    "CompiledSpectralDynamics",
     "CompiledFiniteDifferenceDynamics",
     "CompiledStencilDynamics",
     "CompiledVariationalProblem",
@@ -228,6 +234,7 @@ __all__ = [
     "FDInterfaceConditionKind",
     "SemidiscreteDAEStructuralReport",
     "DiscreteStateLayout",
+    "SpectralStateLayout",
     "FiniteDifferenceCompilationPolicy",
     "CompressibleNavierStokesSystem",
     "ConstantTransport",
@@ -319,6 +326,7 @@ __all__ = [
     "prepare_fd_boundary_runtime",
     "PreparedFDBoundaryPair",
     "compile_semidiscrete_pde",
+    "compile_spectral_pde",
     "compile_stencil_dynamics",
     "infer_expression_type",
     "make_pde_operator",

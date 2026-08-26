@@ -655,7 +655,9 @@ time_integrals = phx.integration.integrate(path.samples, time)
 path_expectation = phx.integration.integrate(time_integrals.value, path)
 
 space_axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
-spatial_discretization = phx.discretization.SeparableSpectralDiscretization((space_axis,))
+spatial_discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
+    (space_axis,)
+)
 space = phx.integration.spatial_measure(
     spatial_discretization,
     spatial_dims="space",

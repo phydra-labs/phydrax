@@ -1,19 +1,19 @@
+import jax
 import jax.numpy as jnp
 import jax.random as jr
-import jax.scipy.linalg as jsp_linalg
 
 import phydrax as phx
 
 
 def _periodic_discretization(size):
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
-    return phx.discretization.SeparableSpectralDiscretization((axis,))
+    return phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
 
 
 def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
     discretization = _periodic_discretization(4)
     kappa, duration = 0.1, 0.05
-    initial = jnp.asarray([0.7, -0.2, 0.1, 0.4])
+    initial = discretization.project(jnp.asarray([0.7, -0.2, 0.1, 0.4]))
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         0.04,
@@ -41,10 +41,11 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
     )
     terminal = solution.states[:, 0, :]
 
-    drift_matrix = kappa * discretization.laplacian_matrix()
-    expected_mean = jsp_linalg.expm(duration * drift_matrix) @ initial
-    laplacian_eigenvalues, _ = discretization.eigenpairs(rank=basis.rank)
-    expected_covariance = jnp.zeros((4, 4))
+    laplacian_values = discretization.laplacian_eigenvalues().reshape((-1,))
+    expected_mean = jnp.exp(-duration * kappa * laplacian_values) * initial
+    retained_indices = jnp.argsort(laplacian_values)[: basis.rank]
+    laplacian_eigenvalues = laplacian_values[retained_indices]
+    expected_covariance = jnp.zeros((4, 4), dtype=terminal.dtype)
     for mode in range(basis.rank):
         rate = float(kappa * laplacian_eigenvalues[mode])
         factor = (
@@ -53,10 +54,12 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
             else (1.0 - jnp.exp(-2.0 * rate * duration)) / (2.0 * rate)
         )
         column = basis.diffusion_matrix[:, mode]
-        expected_covariance = expected_covariance + factor * jnp.outer(column, column)
+        expected_covariance = expected_covariance + factor * jnp.outer(
+            column, jnp.conj(column)
+        )
     empirical_mean = jnp.mean(terminal, axis=0)
     centered = terminal - empirical_mean
-    empirical_covariance = centered.T @ centered / float(terminal.shape[0] - 1)
+    empirical_covariance = jnp.conj(centered).T @ centered / float(terminal.shape[0] - 1)
     relative_covariance_error = jnp.linalg.norm(
         empirical_covariance - expected_covariance
     ) / jnp.linalg.norm(expected_covariance)
@@ -71,7 +74,7 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
     predictive = solution.to_predictive(
         sample_dim="path",
         time_dim="time",
-        state_dims=("space",),
+        state_dims=("mode",),
     )
     assert predictive.sample_axes == (phx.uq.SampleAxis("path", "process"),)
     assert predictive.samples.shape == (2048, 1, 4)
@@ -84,8 +87,9 @@ def test_semidiscrete_heat_replays_realization_and_changes_with_key():
         0.02,
         rank=2,
     )
+    initial = discretization.project(jnp.sin(2.0 * jnp.pi * discretization.axes[0].nodes))
     spde = phx.solver.semidiscretize_reaction_diffusion(
-        jnp.sin(2.0 * jnp.pi * discretization.axes[0].nodes),
+        initial,
         discretization,
         t0=0.0,
         t1=0.03,
@@ -127,14 +131,26 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
         0.01,
         rank=3,
     )
-    initial = 0.25 * jnp.cos(2.0 * jnp.pi * discretization.axes[0].nodes)
+    method = phx.discretization.PseudospectralMethodPlan(
+        dealiasing=phx.discretization.PaddingDealiasingPlan(3)
+    ).prepare(
+        discretization,
+        required_polynomial_degree=3,
+        nonlinear=True,
+    )
+    initial = discretization.project(
+        0.25 * jnp.cos(2.0 * jnp.pi * discretization.axes[0].nodes)
+    )
     spde = phx.solver.semidiscretize_reaction_diffusion(
         initial,
         discretization,
         t0=0.0,
         t1=0.04,
         kappa=0.02,
-        reaction=lambda t, state, args: state - state**3,
+        reaction=lambda t, state, args: method.nonlinear_action(
+            state,
+            lambda values: values - values**3,
+        ),
         noise_basis=basis,
     )
     realization = spde.wiener_realization(
@@ -154,29 +170,40 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
         realization=realization,
         dt0=1e-3,
     )
+    physical_states = jax.vmap(
+        jax.vmap(
+            lambda coefficients: discretization.reconstruct(
+                coefficients,
+                real_output=False,
+            )
+        )
+    )(first.states)
 
     assert first.states.shape == (32, 2, 6)
     assert jnp.all(jnp.isfinite(first.states))
     assert jnp.array_equal(first.states, replay.states)
+    assert jnp.max(jnp.abs(jnp.imag(physical_states))) < 1e-10
 
 
 def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
     x_axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
     y_axis = phx.discretization.FourierAxisSpec(5).materialize(0.0, 1.0)
-    discretization = phx.discretization.SeparableSpectralDiscretization((x_axis, y_axis))
+    discretization = phx.discretization.TensorSpectralDiscretization.from_axes(
+        (x_axis, y_axis)
+    )
     x, y = x_axis.nodes[:, None], y_axis.nodes[None, :]
     scalar = 0.1 * jnp.sin(2.0 * jnp.pi * x) * jnp.cos(2.0 * jnp.pi * y)
-    initial = jnp.stack((scalar, -scalar), axis=-1)
+    initial = discretization.project(jnp.stack((scalar, -scalar), axis=-1))
     state_shape = initial.shape
-    weights = jnp.broadcast_to(discretization.quadrature_weights[..., None], state_shape)
-    mode = jnp.ones(state_shape) / jnp.sqrt(jnp.sum(weights))
+    weights = jnp.ones(state_shape)
+    mode = jnp.zeros(state_shape).at[0, 0, :].set(1.0 / jnp.sqrt(2.0))
     basis = phx.stochastic.SpatialNoiseBasis.from_modes(
         mode[..., None],
         jnp.asarray([0.005]),
         quadrature_weights=weights,
         state_shape=state_shape,
         mode_ids=("shared-channel-mode",),
-        field_space_id=discretization.field_spaces[0].field_space_id,
+        field_space_id=discretization.modal_space.field_space_id,
     )
     spde = phx.solver.semidiscretize_reaction_diffusion(
         initial,

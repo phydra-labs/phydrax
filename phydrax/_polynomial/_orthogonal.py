@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from numbers import Integral
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -142,6 +142,111 @@ def standard_series_value(
     if family == "laguerre":
         return _orthax_laguerre.lagval(x_, coefficients_)
     raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+
+
+def standard_vandermonde(
+    family: OrthogonalFamily,
+    nodes: ArrayLike,
+    degree: int,
+    /,
+) -> Array:
+    """Evaluate all standard-family modes through one declared degree."""
+    nodes_ = jnp.asarray(nodes)
+    degree_ = int(degree)
+    if nodes_.ndim != 1 or degree_ < 0:
+        raise ValueError(
+            "Orthogonal Vandermonde nodes must be rank one and degree non-negative."
+        )
+    if family == "chebyshev":
+        return _orthax_chebyshev.chebvander(nodes_, degree_)
+    if family == "legendre":
+        return _orthax_legendre.legvander(nodes_, degree_)
+    if family == "hermite":
+        return _orthax_hermite.hermvander(nodes_, degree_)
+    if family == "hermite_e":
+        return _orthax_hermite_e.hermevander(nodes_, degree_)
+    if family == "laguerre":
+        return _orthax_laguerre.lagvander(nodes_, degree_)
+    raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+
+
+def standard_series_derivative_coefficients(
+    family: OrthogonalFamily,
+    coefficients: ArrayLike,
+    order: int = 1,
+    /,
+    *,
+    scale: ArrayLike = 1.0,
+) -> Array:
+    """Differentiate a fixed-capacity standard series without changing shape."""
+    coefficients_ = jnp.asarray(coefficients)
+    order_ = int(order)
+    if coefficients_.ndim < 1 or order_ < 0:
+        raise ValueError(
+            "Orthogonal derivative coefficients need a leading mode axis and "
+            "non-negative order."
+        )
+    if order_ == 0:
+        return coefficients_
+    if family == "chebyshev":
+        derivative = _orthax_chebyshev.chebder(
+            coefficients_,
+            m=order_,
+            scl=scale,
+            axis=0,
+        )
+    elif family == "legendre":
+        derivative = _orthax_legendre.legder(
+            coefficients_,
+            m=order_,
+            scl=scale,
+            axis=0,
+        )
+    elif family == "hermite":
+        derivative = _orthax_hermite.hermder(
+            coefficients_,
+            m=order_,
+            scl=scale,
+            axis=0,
+        )
+    elif family == "hermite_e":
+        derivative = _orthax_hermite_e.hermeder(
+            coefficients_,
+            m=order_,
+            scl=scale,
+            axis=0,
+        )
+    elif family == "laguerre":
+        derivative = _orthax_laguerre.lagder(
+            coefficients_,
+            m=order_,
+            scl=scale,
+            axis=0,
+        )
+    else:
+        raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
+    padding = [(0, coefficients_.shape[0] - derivative.shape[0])]
+    padding.extend((0, 0) for _ in coefficients_.shape[1:])
+    return jnp.pad(derivative, tuple(padding))
+
+
+def standard_derivative_matrix(
+    family: OrthogonalFamily,
+    count: int,
+    order: int = 1,
+    /,
+    *,
+    scale: ArrayLike = 1.0,
+    dtype: Any = float,
+) -> Array:
+    """Return the fixed-capacity coefficient derivative matrix."""
+    count_ = _node_count(count)
+    return standard_series_derivative_coefficients(
+        family,
+        jnp.eye(count_, dtype=dtype),
+        order,
+        scale=scale,
+    )
 
 
 def standard_affine_coefficients(
@@ -296,7 +401,10 @@ __all__ = [
     "OrthogonalFamily",
     "OrthogonalRuleData",
     "legendre_rule_data",
+    "standard_derivative_matrix",
     "standard_affine_coefficients",
     "standard_normal_hermite_rule_data",
+    "standard_series_derivative_coefficients",
     "standard_series_value",
+    "standard_vandermonde",
 ]

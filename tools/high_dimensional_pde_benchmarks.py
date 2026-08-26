@@ -354,7 +354,7 @@ def run_semidiscrete_pde_compiler_benchmark(
         ),
     )
     axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
-    spatial = phx.discretization.SeparableSpectralDiscretization((axis,))
+    spatial = phx.discretization.TensorSpectralDiscretization.from_axes((axis,))
     started = time.perf_counter()
     compiled = phx.equations.compile_semidiscrete_pde(problem, spatial)
     if compiled.semilinear_drift is None:
