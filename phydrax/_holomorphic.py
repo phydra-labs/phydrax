@@ -16,7 +16,10 @@ from jaxtyping import Array, ArrayLike
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from .metrix.algebra import ComplexAlgebraSpec
 
+
+_CANONICAL_COMPLEX_ALGEBRA_ID = ComplexAlgebraSpec().algebra_id
 
 HolomorphicParameterCoverage = Literal[
     "finite-subspace",
@@ -109,6 +112,8 @@ class HolomorphicMapCertificate(StrictModule, NonTrainableState):
     parameter_mode: str = eqx.field(static=True)
     parameter_coverage: HolomorphicParameterCoverage = eqx.field(static=True)
     linear_in_parameters: bool = eqx.field(static=True)
+    complex_algebra_id: str = eqx.field(static=True)
+    construction_dependencies: tuple[str, ...] = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
 
     def __init__(
@@ -123,11 +128,19 @@ class HolomorphicMapCertificate(StrictModule, NonTrainableState):
         parameter_coverage: HolomorphicParameterCoverage,
         linear_in_parameters: bool,
         parameter_mode: str = "real-cartesian",
+        complex_algebra_id: str | None = None,
+        construction_dependencies: Sequence[str] = (),
     ):
         input_size = int(complex_input_size)
         output_size = int(complex_output_size)
         derivative_order = int(maximum_derivative_order)
         operations_ = tuple(str(value) for value in operations)
+        algebra_id = (
+            _CANONICAL_COMPLEX_ALGEBRA_ID
+            if complex_algebra_id is None
+            else str(complex_algebra_id)
+        )
+        dependencies = tuple(str(value) for value in construction_dependencies)
         if input_size <= 0 or output_size <= 0:
             raise ValueError("Holomorphic map dimensions must be positive.")
         if derivative_order < 0:
@@ -136,6 +149,12 @@ class HolomorphicMapCertificate(StrictModule, NonTrainableState):
             raise ValueError("Holomorphic certificate identifiers must be nonempty.")
         if not operations_ or any(not value for value in operations_):
             raise ValueError("Holomorphic certificates require declared operations.")
+        if algebra_id != _CANONICAL_COMPLEX_ALGEBRA_ID:
+            raise ValueError(
+                "Holomorphic maps require the canonical real two-coordinate complex algebra."
+            )
+        if any(not value for value in dependencies):
+            raise ValueError("Holomorphic construction dependency IDs must be non-empty.")
         if parameter_coverage not in (
             "finite-subspace",
             "finite-parametric-family",
@@ -154,9 +173,11 @@ class HolomorphicMapCertificate(StrictModule, NonTrainableState):
         self.parameter_mode = str(parameter_mode)
         self.parameter_coverage = parameter_coverage
         self.linear_in_parameters = bool(linear_in_parameters)
+        self.complex_algebra_id = algebra_id
+        self.construction_dependencies = dependencies
         self.certificate_id = canonical_fingerprint(
             {
-                "kind": "holomorphic-map-certificate-v2",
+                "kind": "holomorphic-map-certificate",
                 "complex_input_size": input_size,
                 "complex_output_size": output_size,
                 "construction": construction,
@@ -166,6 +187,8 @@ class HolomorphicMapCertificate(StrictModule, NonTrainableState):
                 "parameter_mode": parameter_mode,
                 "parameter_coverage": parameter_coverage,
                 "linear_in_parameters": bool(linear_in_parameters),
+                "complex_algebra_id": algebra_id,
+                "construction_dependencies": list(dependencies),
             }
         )
 
