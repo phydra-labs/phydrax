@@ -13,6 +13,18 @@
   and stochastic paths. Public states remain complex; temporal evidence records the
   doubled real backend shape, dtype, tolerance geometry, and policy, while native and
   reject strategies remain explicit.
+- Expanded compatible electromagnetics around conservative electric-displacement and
+  magnetic-flux cochains: canonical structured/unstructured calculus, diagonal and
+  metric-Hermitian constitutive maps, conductivity, Lorentz/Drude ADEs, Kerr/Pockels,
+  gyrotropy, active/saturable gain, PEC/PMC/impedance/interface policies, periodic and
+  Bloch calculus, electromagnetic CPML, probes/DFT/energy/Poynting observers, modal and
+  near-to-far outputs, time/frequency/reversible adjoints, tetrahedral Whitney Hodge
+  assembly, distribution metadata, and complete energy/constraint/CFL evidence.
+- Added certified point-cloud differential functionals and dissipative Poisson
+  execution, sixth/eighth-order smooth-exact TENO, explicit stabilization filters,
+  cochain multirate scheduling, a backend-neutral lowered operator program with JAX
+  and NumPy parity, neutral data interchange schemas, and runtime-integration
+  guardrails for external research packages.
 - Added public callable adaptive interval and triangle engines that reuse
   `AdaptiveQuadraturePlan`, `AdaptiveTrianglePlan`, `IntegrationPrecisionPolicy`,
   `IntegrationEstimate`, bounded partitions, statuses, and error-kind diagnostics.
@@ -473,6 +485,11 @@
   resource accounting.
 
 ### Changed
+- Compatible Maxwell state now stores electric displacement `D`, magnetic flux `B`,
+  charge, material/boundary auxiliary state, and observer state. `E` and `H` are
+  constitutive outputs. Construction uses `CompatibleMaxwellPlan(...).prepare()` and
+  `PreparedCompatibleMaxwell`; the scalar-only direct `CompatibleMaxwellDynamics`
+  path and E/B-primary state were removed.
 - `MomentPenalty` now rejects resampled stochastic integration rather than
   silently optimizing a variance-biased squared estimate. `time_convolution`
   now accepts a deterministic `IntervalRule`; randomized QMC and importance

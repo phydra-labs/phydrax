@@ -9,6 +9,7 @@ from math import factorial
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
@@ -17,6 +18,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._high_resolution_extended import _HighOrderTENOPlan, TENOQualification
 
 
 HighResolutionMethod: TypeAlias = Literal["weno_z", "teno", "mp5"]
@@ -142,9 +144,11 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
     """Ghost-fed WENO-Z, TENO, or MP5 face reconstruction."""
 
     method: HighResolutionMethod = eqx.field(static=True)
+    order: int = eqx.field(static=True)
     epsilon: float = eqx.field(static=True)
     power: int = eqx.field(static=True)
     cutoff: float = eqx.field(static=True)
+    _high_order: _HighOrderTENOPlan | None
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -152,6 +156,7 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         method: HighResolutionMethod = "weno_z",
         /,
         *,
+        order: int = 5,
         epsilon: float = 1e-12,
         power: int = 2,
         cutoff: float = 1e-6,
@@ -159,8 +164,15 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
         epsilon_ = float(epsilon)
         cutoff_ = float(cutoff)
         power_ = int(power)
+        order_ = int(order)
         if method not in ("weno_z", "teno", "mp5"):
             raise ValueError("Unknown high-resolution reconstruction method.")
+        if (
+            order_ != order
+            or (method == "teno" and order_ not in (5, 6, 8))
+            or (method != "teno" and order_ != 5)
+        ):
+            raise ValueError("Order must be five, or six/eight for TENO reconstruction.")
         if (
             not np.isfinite(epsilon_)
             or epsilon_ <= 0.0
@@ -170,14 +182,22 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
             or cutoff_ >= 1.0
         ):
             raise ValueError("High-resolution epsilon, power, or cutoff is invalid.")
+        high_order = (
+            _HighOrderTENOPlan(order_, cutoff=cutoff_, epsilon=epsilon_)
+            if order_ > 5
+            else None
+        )
         self.method = method
+        self.order = order_
         self.epsilon = epsilon_
         self.power = power_
         self.cutoff = cutoff_
+        self._high_order = high_order
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "high-resolution-reconstruction",
                 "method": method,
+                "order": order_,
                 "epsilon": epsilon_,
                 "power": power_,
                 "cutoff": cutoff_,
@@ -186,7 +206,11 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
 
     @property
     def radius(self) -> int:
-        return 3
+        return 3 if self._high_order is None else self._high_order.radius
+
+    @property
+    def qualification(self) -> TENOQualification | None:
+        return None if self._high_order is None else self._high_order.qualification
 
     def _left(self, windows: Array, /) -> Array:
         if self.method == "mp5":
@@ -203,6 +227,8 @@ class HighResolutionReconstructionPlan(StrictModule, NonTrainableState):
 
     def reconstruct(self, values: ArrayLike, /) -> tuple[Array, Array]:
         value = jnp.asarray(values)
+        if self._high_order is not None:
+            return self._high_order.reconstruct(value)
         if value.ndim < 1 or value.shape[0] < 6:
             raise ValueError(
                 "High-resolution reconstruction requires at least six cells."
@@ -300,6 +326,15 @@ class CharacteristicReconstructionPlan(StrictModule):
             raise ValueError("Characteristic eigenvector matrices have wrong shape.")
         if wave_speeds.shape != value.shape:
             raise ValueError("Characteristic wave speeds must match state components.")
+        if self.reconstruction._high_order is not None:
+            projected = oe.contract("nij,mj->nmi", left_matrix, value)
+            left_all, right_all = jax.vmap(self.reconstruction.reconstruct)(projected)
+            face = jnp.arange(value.shape[0])
+            return (
+                oe.contract("nij,nj->ni", right_matrix, left_all[face, face]),
+                oe.contract("nij,nj->ni", right_matrix, right_all[face, face]),
+                wave_speeds,
+            )
         left_windows = _uniform_windows(
             value,
             (-2, -1, 0, 1, 2),

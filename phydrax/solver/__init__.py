@@ -44,6 +44,7 @@ term evaluation.
     ```
 """
 
+from . import maxwell
 from ._bdf_method import BDFMethod
 from ._boundary_integral import (
     InteriorLaplaceDirichletResult,
@@ -63,6 +64,11 @@ from ._calabi_yau_campaigns import (
     prepare_fermat_calabi_yau,
     prepare_fermat_quintic,
     prepare_quartic_k3,
+)
+from ._cochain_multirate import (
+    CochainMultirateDiagnostics,
+    CochainMultiratePlan,
+    CochainRatePartition,
 )
 from ._collocation import (
     assemble_stochastic_collocation,
@@ -86,8 +92,6 @@ from ._compatible_systems import (
     CompatibleIdealMHDInductionDynamics,
     CompatibleIdealMHDState,
     CompatibleIncompressibleProjection,
-    CompatibleMaxwellDynamics,
-    CompatibleMaxwellState,
     CompatiblePoroelasticDynamics,
     CompatiblePoroelasticState,
     CompatibleThermoelasticDynamics,
@@ -720,6 +724,12 @@ from ._xxz_open import (
     qualify_boundary_driven_xxz,
     XXZQualificationResult,
 )
+from .maxwell import (
+    CompatibleMaxwellDiagnostics,
+    CompatibleMaxwellPlan,
+    CompatibleMaxwellState,
+    PreparedCompatibleMaxwell,
+)
 
 
 __all__ = [
@@ -845,18 +855,24 @@ __all__ = [
     "CausalBackwardHermiteDrivingPath",
     "ControlledDifferentialSolution",
     "ConstantDelay",
+    "maxwell",
+    "CochainMultirateDiagnostics",
+    "CochainMultiratePlan",
+    "CochainRatePartition",
     "CompatibleElasticityDynamics",
     "CompatibleElasticityState",
     "CompatibleIdealMHDInductionDynamics",
     "CompatibleIdealMHDState",
     "CompatibleIncompressibleProjection",
-    "CompatibleMaxwellDynamics",
+    "CompatibleMaxwellDiagnostics",
+    "CompatibleMaxwellPlan",
     "CompatibleMaxwellState",
     "CompatiblePoroelasticDynamics",
     "CompatiblePoroelasticState",
     "CompatibleThermoelasticDynamics",
     "CompatibleThermoelasticState",
     "CompatibleVariableDensityProjection",
+    "PreparedCompatibleMaxwell",
     "CheckpointedDelayAdjoint",
     "SegmentedDelayAdjoint",
     "DelayDifferentialProblem",

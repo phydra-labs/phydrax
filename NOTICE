@@ -142,3 +142,15 @@ Version 2.0. Phydrax implements a narrower sequential expected-improvement metho
 independently against its own kernel, Gaussian-process, posterior, search-evidence,
 and state-space contracts. No Hyperoptax source code is copied or redistributed,
 and randomized Kriging Believer is not implemented.
+
+Compatible electromagnetics and point-cloud calculus
+The compatible Maxwell, CPML, Whitney-form, adjoint, targeted-reconstruction, and
+point-cloud implementations are native Phydrax implementations derived from public
+mathematical specifications, including Yee's staggered Maxwell method (IEEE TAP,
+1966), Roden and Gedney's convolutional PML formulation (Microwave and Optical
+Technology Letters, 2000), standard Whitney differential forms, and polynomial
+reproduction identities. The design study inspected OpenSBLI, Meep, juolrabi/gfd,
+rmanak/FD, GFDFlow, mGFD, and fdtdx. Phydrax does not copy, translate, bundle, link,
+or import their solver source, generated tables, runtime types, templates, fixtures,
+or executables. GPL/CC projects remain outside the distribution; neutral adapters
+accept data schemas only.

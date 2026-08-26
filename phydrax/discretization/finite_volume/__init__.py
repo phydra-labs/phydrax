@@ -117,6 +117,11 @@ from ._high_resolution import (
     HighResolutionReconstructionPlan,
     NonuniformWENOReconstructionPlan,
 )
+from ._high_resolution_extended import (
+    ExplicitStabilizationPlan,
+    FilterADPolicy,
+    TENOQualification,
+)
 from ._incompressible import (
     FunctionalPressureCorrectionPlan,
     MACPressureProjectionPlan,
@@ -456,6 +461,9 @@ __all__ = [
     "PositivityBlendResult",
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",
+    "ExplicitStabilizationPlan",
+    "FilterADPolicy",
+    "TENOQualification",
     "MCLimiter",
     "MUSCLReconstruction",
     "MinmodLimiter",

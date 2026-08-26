@@ -662,7 +662,7 @@ class _SemidiscreteEvaluator(StrictModule):
         return self._components(expression.args[0])
 
     def _unknown_parities(self, components: int, /) -> tuple[tuple[int, ...], ...]:
-        rank = len(self.discretization.state_shape)
+        rank = self.discretization.spatial_dimension
         return tuple((2,) * rank for _ in range(components))
 
     def _toggle_parity(
@@ -689,7 +689,7 @@ class _SemidiscreteEvaluator(StrictModule):
         expression: PDEExpression,
         /,
     ) -> tuple[tuple[int, ...], ...] | None:
-        rank = len(self.discretization.state_shape)
+        rank = self.discretization.spatial_dimension
         components = self._components(expression)
         if expression.op == "field":
             return tuple((0,) * rank for _ in range(components))
@@ -1841,6 +1841,7 @@ def _coordinate_axis_map(
     discretization: Any,
     /,
 ) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    from ..discretization._tensor import AbstractStrongFormDiscretization
     from ..discretization.spectral import TensorSpectralDiscretization
 
     spatial = tuple(
@@ -1885,11 +1886,20 @@ def _coordinate_axis_map(
             output.append((coordinate.name, axes))
             offset += coordinate.size
         return tuple(output)
-    if len(spatial) != 1 or spatial[0].size != 1:
+    if not isinstance(discretization, AbstractStrongFormDiscretization):
+        raise TypeError("Semidiscrete compilation requires a strong-form discretization.")
+    if rank != discretization.spatial_dimension:
         raise ValueError(
-            "Manifold spectral compilation requires one scalar spatial coordinate."
+            "PDE spatial coordinate size must match discretization spatial_dimension; "
+            f"got {rank} and {discretization.spatial_dimension}."
         )
-    return ((spatial[0].name, (0,)),)
+    output = []
+    offset = 0
+    for coordinate in spatial:
+        axes = tuple(range(offset, offset + coordinate.size))
+        output.append((coordinate.name, axes))
+        offset += coordinate.size
+    return tuple(output)
 
 
 def _region_axis_map(
@@ -2578,7 +2588,7 @@ def compile_semidiscrete_pde(
         allow_temporal_derivatives=False,
     )
 
-    full_spatial_axes = tuple(range(len(discretization.state_shape)))
+    full_spatial_axes = tuple(range(discretization.spatial_dimension))
     full_spatial_coordinates = {
         name for name, axes in coordinate_axes if axes == full_spatial_axes
     }

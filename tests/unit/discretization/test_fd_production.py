@@ -164,23 +164,103 @@ def test_structured_cochain_bridge_satisfies_boundary_of_boundary_identity(dimen
     np.testing.assert_allclose(bridge.pack(0, components), values)
 
 
-def test_maxwell_constraint_elastic_energy_and_incompressible_projection_are_compatible():
+def test_prepared_maxwell_preserves_constraints_and_material_gradients():
     bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3, 3, 3)))
-    maxwell = phx.solver.CompatibleMaxwellDynamics(bridge)
-    scalar = jnp.sin(jnp.arange(bridge.cochain.cell_counts[1], dtype=float))
-    electric = scalar
+    degree_zero = bridge.cochain.cell_counts[0]
+    degree_one = bridge.cochain.cell_counts[1]
+    degree_two = bridge.cochain.cell_counts[2]
+    permittivity = 1.0 + 0.2 * (jnp.arange(degree_one, dtype=float) + 1.0) / degree_one
+    permeability = 1.0 + 0.1 * (jnp.arange(degree_two, dtype=float) + 1.0) / degree_two
+    electric = jnp.sin(jnp.arange(degree_one, dtype=float) / 7.0)
     magnetic = bridge.exterior_derivative(1, electric)
-    state = maxwell.pack(electric, magnetic)
+    charge = bridge.codifferential(1, permittivity * electric)
+    current = bridge.exterior_derivative(
+        0,
+        jnp.cos(jnp.arange(degree_zero, dtype=float) / 5.0),
+    )
 
-    stepped = maxwell.leapfrog_step(state, 1e-3)
+    def current_source(time, coordinates, args):
+        del coordinates
+        return args["amplitude"] * jnp.cos(time) * current
 
+    maxwell = phx.solver.CompatibleMaxwellPlan(
+        bridge,
+        constitutive=phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
+            permittivity=permittivity,
+            permeability=permeability,
+        ),
+        current_source=current_source,
+    ).prepare()
+    state = maxwell.pack(permittivity * electric, magnetic, charge)
+    step_size = 0.1 * maxwell.stable_dt
+    diagnostics = maxwell.diagnostics(
+        0.0,
+        state,
+        {"amplitude": jnp.asarray(0.3)},
+        step_size=step_size,
+    )
+    stepped = maxwell.leapfrog_step(
+        0.0,
+        state,
+        step_size,
+        {"amplitude": jnp.asarray(0.3)},
+    )
+
+    np.testing.assert_allclose(
+        maxwell.electric_constraint(stepped),
+        maxwell.electric_constraint(state),
+        rtol=0.0,
+        atol=2e-11,
+    )
     np.testing.assert_allclose(
         maxwell.magnetic_constraint(stepped),
         0.0,
         rtol=0.0,
+        atol=2e-11,
+    )
+    assert diagnostics.electric_constraint_linf < 2e-11
+    assert diagnostics.magnetic_constraint_linf < 2e-11
+    assert diagnostics.gauss_rate_linf < 2e-11
+    assert jnp.abs(diagnostics.power_balance_residual) < 2e-11
+    np.testing.assert_allclose(diagnostics.step_fraction, 0.1)
+    assert jnp.isfinite(maxwell.energy(stepped))
+
+    def material_energy(epsilon):
+        prepared = phx.solver.CompatibleMaxwellPlan(
+            bridge,
+            constitutive=phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
+                permittivity=epsilon,
+                permeability=permeability,
+            ),
+        ).prepare()
+        displacement = epsilon * electric
+        state_ = prepared.pack(
+            displacement,
+            magnetic,
+            bridge.codifferential(1, displacement),
+        )
+        return prepared.energy(state_)
+
+    energy_gradient = jax.grad(material_energy)(permittivity)
+    np.testing.assert_allclose(
+        energy_gradient,
+        0.5 * bridge.cochain.hodge_stars[1] * electric**2,
+        rtol=2e-12,
         atol=2e-12,
     )
-    assert jnp.isfinite(maxwell.energy(stepped))
+
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="stable_dt"):
+        invalid = maxwell.leapfrog_step(
+            0.0,
+            state,
+            1.01 * maxwell.stable_dt,
+            {"amplitude": jnp.asarray(0.3)},
+        )
+        jax.block_until_ready(invalid.primary.electric_displacement)
+
+
+def test_elastic_energy_and_incompressible_projection_are_compatible():
+    bridge = phx.discretization.StructuredCochainBridge(_cell_grid((3, 3, 3)))
 
     elasticity = phx.solver.CompatibleElasticityDynamics(
         bridge,
