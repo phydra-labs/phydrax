@@ -107,8 +107,11 @@ class FrequencyMaxwellOperator(StrictModule):
         if not constitutive.capabilities.frequency_domain:
             raise ValueError("Constitutive law does not support frequency-domain use.")
         frequency = jnp.asarray(angular_frequency)
+        if jnp.iscomplexobj(frequency):
+            raise TypeError("angular_frequency must be real.")
         if (
             frequency.shape != ()
+            or not jnp.issubdtype(frequency.dtype, jnp.inexact)
             or bool(jnp.any(~jnp.isfinite(frequency)))
             or bool(frequency < 0.0)
         ):

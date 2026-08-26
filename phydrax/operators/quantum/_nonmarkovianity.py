@@ -8,6 +8,14 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
+from ...linalg import (
+    DenseLinearOperator,
+    FactorizationPolicy,
+    factorize,
+    FailurePolicy,
+    HermitianSpectrum,
+    svd as svd_linalg,
+)
 
 
 class DynamicalMapSeriesPhysicality(StrictModule):
@@ -59,10 +67,16 @@ def _choi_evidence(superoperator: Array, dimension: int, /) -> tuple[Array, Arra
             output = (superoperator @ basis.reshape(-1)).reshape((size, size))
             choi = choi.at[row, :, column, :].set(output)
     flat = choi.reshape((size * size, size * size))
-    flat = 0.5 * (flat + jnp.conj(flat.T))
+    hermiticity_residual = jnp.max(jnp.abs(flat - jnp.conj(flat.T)))
+    hermitian = 0.5 * flat + 0.5 * jnp.conj(flat.T)
+    spectrum = HermitianSpectrum(hermitian)
     partial = jnp.trace(choi, axis1=1, axis2=3)
     return (
-        jnp.min(jnp.linalg.eigvalsh(flat)),
+        jnp.where(
+            (hermiticity_residual <= 1e-8) & spectrum.valid,
+            spectrum.minimum_eigenvalue,
+            jnp.nan,
+        ),
         jnp.max(jnp.abs(partial - jnp.eye(size, dtype=superoperator.dtype))),
     )
 
@@ -83,12 +97,29 @@ def analyze_dynamical_map_series(
     conditions = []
     solve_residuals = []
     for previous, current in zip(maps[:-1], maps[1:], strict=True):
-        condition = jnp.linalg.cond(previous)
+        decomposition = factorize(
+            DenseLinearOperator(previous.T),
+            FactorizationPolicy("svd"),
+        )
+        singular_values = decomposition.singular_values()
+        condition = singular_values[0] / jnp.maximum(
+            singular_values[-1],
+            jnp.finfo(singular_values.dtype).tiny,
+        )
         conditions.append(condition)
-        intermediate = jnp.linalg.solve(previous.T, current.T).T
-        solve_residual = jnp.linalg.norm(intermediate @ previous - current)
+        solved = decomposition.solve(current.T)
+        intermediate = solved.value.T
+        residual_matrix = intermediate @ previous - current
+        residual_scale = jnp.maximum(jnp.max(jnp.abs(current)), 1.0)
+        solve_residual = jnp.max(jnp.abs(residual_matrix)) / residual_scale
         solve_residuals.append(
-            jnp.where(condition <= condition_limit, solve_residual, jnp.nan)
+            jnp.where(
+                solved.successful
+                & jnp.isfinite(solve_residual)
+                & (condition <= condition_limit),
+                solve_residual,
+                jnp.nan,
+            )
         )
         margin, _ = _choi_evidence(intermediate, dimension)
         intermediate_margins.append(
@@ -105,8 +136,20 @@ def analyze_dynamical_map_series(
 
 def trace_distance(left: ArrayLike, right: ArrayLike, /) -> Array:
     difference = jnp.asarray(left) - jnp.asarray(right)
-    singular_values = jnp.linalg.svd(difference, compute_uv=False)
-    return 0.5 * jnp.sum(singular_values)
+    if difference.ndim != 2:
+        raise ValueError("Trace distance requires two matrices.")
+    decomposition = svd_linalg.svd(
+        svd_linalg.SVDProblem(
+            DenseLinearOperator(difference),
+            problem_id="trace-distance",
+        ),
+        policy=svd_linalg.SVDSolvePolicy(
+            count=min(difference.shape),
+            failure=FailurePolicy("status"),
+        ),
+    )
+    value = 0.5 * jnp.sum(decomposition.singular_values)
+    return jnp.where(decomposition.successful, value, jnp.nan)
 
 
 def blp_information_backflow(

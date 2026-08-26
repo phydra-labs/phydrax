@@ -79,6 +79,7 @@ def _runtime(
         system,
         boundaries,
         source=source,
+        source_id=None if source is None else f"{field_id}-source",
     )
     dynamics = phx.equations.compile_conservation_problem(
         problem,

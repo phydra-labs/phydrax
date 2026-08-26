@@ -176,6 +176,7 @@ class PaddingDealiasingPlan(AbstractDealiasingPlan):
         padded = padded_plan.prepare(
             bounds, numeric_version=discretization.numeric_version
         )
+        exact = all(axis.family != "sine" for axis in discretization.axes)
         return PreparedDealiasingPlan(
             self,
             discretization,
@@ -185,7 +186,7 @@ class PaddingDealiasingPlan(AbstractDealiasingPlan):
                 retained_shape=discretization.modal_shape,
                 evaluation_shape=target,
                 maximum_polynomial_degree=self.maximum_polynomial_degree,
-                exact=True,
+                exact=exact,
             ),
         )
 

@@ -68,7 +68,7 @@ def solve_heom_backward_euler(
     steps: int,
 ) -> HEOMImplicitResult:
     """Matrix-free backward Euler for the linear HEOM generator."""
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=problem.initial_state.real.dtype).reshape(())
     if int(steps) <= 0 or not bool(jnp.isfinite(step)) or float(step) <= 0.0:
         raise ValueError("Backward Euler steps and step_size must be positive.")
     state = problem.initial_state
@@ -175,7 +175,7 @@ def solve_heom_bdf(
     order_limit = int(maximum_order)
     if not 1 <= order_limit <= 5:
         raise ValueError("maximum_order must lie in [1,5].")
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=problem.initial_state.real.dtype).reshape(())
     if int(steps) <= 0 or not bool(jnp.isfinite(step)) or float(step) <= 0.0:
         raise ValueError("HEOM BDF steps and step_size must be positive.")
     state = problem.initial_state
@@ -389,8 +389,8 @@ def solve_heom_adaptive_bdf(
         space_id=f"{problem.problem_id}:adaptive-bdf-ado",
     )
     time = 0.0
-    step = min(initial, maximum, final)
-    times = [jnp.asarray(0.0)]
+    step = min(max(initial, minimum), maximum, final)
+    times = [jnp.asarray(0.0, dtype=state.real.dtype)]
     roots = [state[0]]
     attempted_steps = []
     accepted = []
@@ -399,10 +399,8 @@ def solve_heom_adaptive_bdf(
     attempts = 0
     while time < final and attempts < attempt_limit:
         step = min(step, maximum, final - time)
-        step_array = jnp.asarray(step)
-        full, full_result = _backward_euler_step(
-            problem, state, step_array, space
-        )
+        step_array = jnp.asarray(step, dtype=state.real.dtype)
+        full, full_result = _backward_euler_step(problem, state, step_array, space)
         half, first_half_result = _backward_euler_step(
             problem, state, 0.5 * step_array, space
         )
@@ -464,7 +462,7 @@ def solve_heom_adaptive_bdf(
         jnp.stack(roots),
         state,
         jnp.stack(times),
-        step_size=jnp.maximum(accepted_step, initial),
+        step_size=accepted_step,
         temporal_precision=_heom_temporal_precision(state),
         geometry_precision=problem.geometry_precision,
         hermitian_precision=problem.hermitian_precision,
@@ -475,8 +473,6 @@ def solve_heom_adaptive_bdf(
         evidence,
         maximum_attempts=attempt_limit,
     )
-
-
 
 
 __all__ = [

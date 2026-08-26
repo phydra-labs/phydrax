@@ -31,6 +31,10 @@ def test_artifact_is_exactly_reconstructed_and_verified(tmp_path):
         path,
         campaigns.gaussian_campaign(),
         expected_runner_id="gaussian-test-runner",
+        expected_problem_id=record.campaign_id,
+        expected_plan_id="gaussian-test",
+        expected_backend="cpu",
+        expected_code_fingerprint="gaussian-test-code",
     )
     assert manifest["record"]["campaign_id"] == record.campaign_id
     assert stored.artifact_names == record.artifact_names
@@ -69,7 +73,7 @@ def test_evidence_contracts_reject_malformed_values():
         )
 
 
-def test_promotion_requires_named_physicality_and_verified_archive():
+def test_promotion_requires_named_physicality_and_verified_archive(tmp_path):
     record = campaigns.gaussian_campaign()
     policy = phx.operators.quantum.OpenSystemPromotionPolicy(
         ("time-step",),
@@ -78,10 +82,24 @@ def test_promotion_requires_named_physicality_and_verified_archive():
         policy_id="gaussian-test-policy",
     )
     unverified = record.evaluate(policy, archive_verified=False)
-    verified = campaigns.VerifiedOpenSystemCampaign(
+    path = tmp_path / "promotion.zip"
+    campaigns.write_open_system_artifact(
+        path,
         record,
-        "0" * 64,
-        reproduction_verified=True,
+        problem_id=record.campaign_id,
+        plan_id="promotion-plan",
+        backend="cpu",
+        runner_id="promotion-runner",
+        code_fingerprint="promotion-code",
+    )
+    verified = campaigns.verify_open_system_artifact(
+        path,
+        campaigns.gaussian_campaign(),
+        expected_runner_id="promotion-runner",
+        expected_problem_id=record.campaign_id,
+        expected_plan_id="promotion-plan",
+        expected_backend="cpu",
+        expected_code_fingerprint="promotion-code",
     ).evaluate(policy)
     assert not bool(unverified.promoted)
     assert bool(verified.promoted)
@@ -127,17 +145,15 @@ def test_mps_campaign_exercises_event_root_and_capacity_evidence():
     arrays = dict(zip(record.artifact_names, record.artifact_arrays, strict=True))
     assert bool(record.execution_success)
     assert bool(jnp.any(arrays["active-events"]))
-    assert jnp.max(
-        jnp.where(arrays["active-events"], arrays["root-residuals"], 0.0)
-    ) <= 1e-8
+    assert (
+        jnp.max(jnp.where(arrays["active-events"], arrays["root-residuals"], 0.0)) <= 1e-8
+    )
     assert not bool(record.capacity_exhausted)
 
 
 def test_adaptive_heom_accepts_steps_and_reaches_final_time():
     density = jnp.asarray([[0.6 + 0j, 0j], [0j, 0.4 + 0j]])
-    expansion = phx.operators.quantum.drude_lorentz_matsubara(
-        0.01, 1.0, 2.0, 1
-    )
+    expansion = phx.operators.quantum.drude_lorentz_matsubara(0.01, 1.0, 2.0, 1)
     problem = phx.solver.HEOMProblem(
         jnp.zeros((2, 2), dtype=complex),
         jnp.asarray([[1, 0], [0, -1]], dtype=complex),

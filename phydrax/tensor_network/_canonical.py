@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -119,9 +120,17 @@ def canonicalize_mps(
         rank = q.shape[-1]
         tensors[index] = q.T.reshape((rank, tensor.shape[1], tensor.shape[2]))
         tensors[index - 1] = jnp.tensordot(tensors[index - 1], r.T, axes=(-1, 0))
-    canonical = MatrixProductState(tuple(tensors))
+    canonical = MatrixProductState(tuple(tensors), precision=state.precision)
     if normalize:
-        canonical = canonical.normalized()
+        norm = canonical.norm()
+        norm = eqx.error_if(
+            norm,
+            ~jnp.isfinite(norm) | (norm <= 0.0),
+            "MPS norm must be finite and positive.",
+        )
+        tensors = list(canonical.tensors)
+        tensors[center_] = tensors[center_] / norm
+        canonical = MatrixProductState(tuple(tensors), precision=state.precision)
     return canonical, _evidence(canonical.tensors, center_)
 
 
@@ -155,7 +164,7 @@ def canonicalize_lpdo(
             (rank, tensor.shape[1], tensor.shape[2], tensor.shape[3])
         )
         tensors[index - 1] = jnp.tensordot(tensors[index - 1], r.T, axes=(-1, 0))
-    result = LocallyPurifiedDensity(tuple(tensors))
+    result = LocallyPurifiedDensity(tuple(tensors), precision=state.precision)
     left = []
     right = []
     for index, tensor in enumerate(result.tensors):

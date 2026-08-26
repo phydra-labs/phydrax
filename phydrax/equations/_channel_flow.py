@@ -38,7 +38,7 @@ class CompiledChannelFlowDynamics(StrictModule):
         /,
         *,
         forcing: Any = None,
-        forcing_id: str = "none",
+        forcing_id: str | None = None,
     ):
         if not isinstance(stokes_plan, ChannelStokesPlan):
             raise TypeError("stokes_plan must be a ChannelStokesPlan.")
@@ -51,9 +51,14 @@ class CompiledChannelFlowDynamics(StrictModule):
             raise ValueError("Channel Stokes and pseudospectral discretizations differ.")
         if forcing is not None and not callable(forcing):
             raise TypeError("forcing must be callable or None.")
-        source_id = "none" if forcing is None else str(forcing_id)
-        if not source_id:
-            raise ValueError("forcing_id must be non-empty.")
+        if forcing is None:
+            source_id = "none"
+            if forcing_id is not None:
+                raise ValueError("forcing_id must be omitted when forcing is None.")
+        else:
+            source_id = "" if forcing_id is None else str(forcing_id)
+            if not source_id:
+                raise ValueError("A forcing callable requires a non-empty forcing_id.")
         x_axis, _, z_axis = stokes_plan.discretization.axes
         admissible = (~x_axis.modes.nyquist_mask)[:, None] & (~z_axis.modes.nyquist_mask)[
             None, :
@@ -144,7 +149,7 @@ def compile_channel_flow(
     /,
     *,
     forcing: Any = None,
-    forcing_id: str = "none",
+    forcing_id: str | None = None,
 ) -> CompiledChannelFlowDynamics:
     """Compile one Fourier–Chebyshev–Fourier rotational channel flow."""
     if not isinstance(stokes_plan, ChannelStokesPlan):

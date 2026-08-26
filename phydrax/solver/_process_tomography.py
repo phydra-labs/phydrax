@@ -15,6 +15,12 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    FailurePolicy,
+    HermitianSpectrum,
+    svd as svd_linalg,
+)
 from ..metrix import faithful_density_from_cholesky
 from ..tensor_network import CausalProcessTensor, QuantumInstrument
 
@@ -53,7 +59,17 @@ def _informationally_complete_vectors(
     raw = jax.random.normal(real_key, (dimension, dimension)) + 1j * jax.random.normal(
         imaginary_key, (dimension, dimension)
     )
-    unitary, _ = jnp.linalg.qr(raw)
+    decomposition = svd_linalg.svd(
+        svd_linalg.SVDProblem(
+            DenseLinearOperator(raw),
+            problem_id=f"process-design-unitary-{design_seed}",
+        ),
+        policy=svd_linalg.SVDSolvePolicy(
+            count=dimension,
+            failure=FailurePolicy("error"),
+        ),
+    )
+    unitary = decomposition.left_vectors @ jnp.conj(decomposition.right_vectors.T)
     return tuple(unitary @ vector for vector in vectors)
 
 
@@ -68,12 +84,10 @@ def _rank_one_instrument(
     remainder = jnp.eye(probe.size, dtype=operator.dtype) - jnp.outer(
         probe, jnp.conj(probe)
     )
-    eigenvalues, eigenvectors = jnp.linalg.eigh(
-        0.5 * (remainder + jnp.conj(remainder.T))
-    )
-    complement = (eigenvectors * jnp.sqrt(jnp.maximum(eigenvalues, 0.0))) @ jnp.conj(
-        eigenvectors.T
-    )
+    spectrum = HermitianSpectrum(0.5 * remainder + 0.5 * jnp.conj(remainder.T))
+    complement = (
+        spectrum.eigenvectors * jnp.sqrt(jnp.maximum(spectrum.eigenvalues, 0.0))
+    ) @ jnp.conj(spectrum.eigenvectors.T)
     return QuantumInstrument(
         jnp.stack((operator, complement))[:, None, ...],
         jnp.asarray([True, True]),
@@ -82,13 +96,9 @@ def _rank_one_instrument(
     )
 
 
-
-
 def _canonical_complex_array(value: ArrayLike, /) -> np.ndarray:
     array = np.asarray(value, dtype=np.complex128)
-    rounded = np.round(array.real, decimals=12) + 1j * np.round(
-        array.imag, decimals=12
-    )
+    rounded = np.round(array.real, decimals=12) + 1j * np.round(array.imag, decimals=12)
     return np.ascontiguousarray(rounded)
 
 
@@ -119,6 +129,8 @@ def _setting_fingerprint(
     digest.update(np.asarray(effect.shape, dtype=np.int64).tobytes())
     digest.update(effect.tobytes(order="C"))
     return digest.hexdigest()
+
+
 class ProcessTomographyExperiment(StrictModule):
     instruments: tuple[QuantumInstrument, ...]
     outcomes: tuple[int, ...]
@@ -143,9 +155,7 @@ class ProcessTomographyExperiment(StrictModule):
         operations = tuple(instruments)
         selected = tuple(int(value) for value in outcomes)
         if not operations or len(operations) != len(selected):
-            raise ValueError(
-                "Tomography experiments require one outcome per instrument."
-            )
+            raise ValueError("Tomography experiments require one outcome per instrument.")
         if any(not isinstance(value, QuantumInstrument) for value in operations):
             raise TypeError("instruments must contain QuantumInstrument values.")
         dimension = operations[0].dimension
@@ -179,14 +189,13 @@ class ProcessTomographyExperiment(StrictModule):
         )
         successes = jnp.asarray(count, dtype=float).reshape(())
         attempts = (
-            successes
-            if trials is None
-            else jnp.asarray(trials, dtype=float).reshape(())
+            successes if trials is None else jnp.asarray(trials, dtype=float).reshape(())
         )
         counts_valid = (
             jnp.isfinite(successes)
             & jnp.isfinite(attempts)
             & (successes >= 0.0)
+            & (attempts > 0.0)
             & (attempts >= successes)
         )
         identifier = str(experiment_id)
@@ -203,9 +212,7 @@ class ProcessTomographyExperiment(StrictModule):
             & jnp.all(jnp.stack([value.valid for value in operations]))
         )
         self.experiment_id = identifier
-        self.setting_fingerprint = _setting_fingerprint(
-            operations, selected, effect
-        )
+        self.setting_fingerprint = _setting_fingerprint(operations, selected, effect)
 
     def probability(self, process: CausalProcessTensor, /) -> Array:
         if not isinstance(process, CausalProcessTensor):
@@ -254,6 +261,7 @@ def tomography_designs_disjoint(
     first_fingerprints = {experiment.setting_fingerprint for experiment in first}
     second_fingerprints = {experiment.setting_fingerprint for experiment in second}
     return first_fingerprints.isdisjoint(second_fingerprints)
+
 
 class CausalProcessTomographyProblem(StrictModule):
     process: CausalProcessTensor
@@ -323,9 +331,7 @@ class CausalProcessTomographyProblem(StrictModule):
         jacobian = jax.jacfwd(probabilities)(realified)
         singular_values = jnp.linalg.svd(jacobian, compute_uv=False)
         scale = jnp.max(singular_values, initial=0.0)
-        rank = jnp.sum(
-            singular_values > tolerance * jnp.maximum(scale, 1e-30)
-        )
+        rank = jnp.sum(singular_values > tolerance * jnp.maximum(scale, 1e-30))
         physical_parameter_count = value.shape[0] ** 2 - 1
         return rank, jnp.maximum(physical_parameter_count - rank, 0)
 
@@ -387,9 +393,14 @@ def fit_causal_process_initial_state(
 
     value_and_grad = jax.value_and_grad(loss)
     history = []
-    for _ in range(int(iterations)):
+    count = int(iterations)
+    rate = float(learning_rate)
+    if count < 1 or not jnp.isfinite(rate) or rate <= 0.0:
+        raise ValueError("iterations and learning_rate must be positive and finite.")
+    for _ in range(count):
         value, gradient = value_and_grad(factor)
-        factor = factor - float(learning_rate) * gradient
+        direction = jnp.conj(gradient) if jnp.iscomplexobj(gradient) else gradient
+        factor = factor - rate * direction
         history.append(value)
     rank, nullity = problem.initial_state_identifiability(factor)
     return CausalProcessTomographyResult(

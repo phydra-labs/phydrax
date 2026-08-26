@@ -112,7 +112,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
             raise TypeError("Dense interpolation query times must be real-valued.")
         if query.size == 0:
             raise ValueError("Dense interpolation query times must be non-empty.")
-        query = query.astype(float)
+        query = query.astype(jnp.dtype(self.state_adapter.backend_dtype))
         query = eqx.error_if(
             query,
             ~jnp.all(jnp.isfinite(query)),

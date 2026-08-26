@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ...._fingerprint import canonical_fingerprint
+from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....integration import AdaptiveQuadraturePlan, IntegrationStatus
@@ -67,17 +67,24 @@ class LayerEvaluationPlan2D(StrictModule, NonTrainableState):
         self.adaptive_plan = adaptive_plan_
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "layer-evaluation-plan-2d-v3",
+                "kind": "layer-evaluation-plan-2d-v4",
                 "method": method,
                 "accuracy_clearance": clearance,
                 "near_ratio": ratio,
                 "qbx_order": order,
                 "qbx_radius_factor": radius_factor,
-                "adaptive_rule": type(adaptive_plan_.rule).__name__,
+                "adaptive_rule": (
+                    f"{type(adaptive_plan_.rule).__module__}."
+                    f"{type(adaptive_plan_.rule).__qualname__}"
+                ),
+                "adaptive_rule_data": array_tree_fingerprint(adaptive_plan_.rule),
                 "adaptive_max_intervals": adaptive_plan_.max_intervals,
                 "adaptive_max_evaluations": adaptive_plan_.max_evaluations,
                 "adaptive_absolute_tolerance": adaptive_plan_.absolute_tolerance,
                 "adaptive_relative_tolerance": adaptive_plan_.relative_tolerance,
+                "adaptive_breakpoints": list(adaptive_plan_.breakpoints),
+                "adaptive_collect_partition": adaptive_plan_.collect_partition,
+                "adaptive_throw": adaptive_plan_.throw,
             }
         )
 
@@ -131,9 +138,7 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
         self.error_kind = str(error_kind)
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.finite = jnp.asarray(finite, dtype=bool).reshape(())
-        self.accuracy_supported = jnp.asarray(
-            accuracy_supported, dtype=bool
-        ).reshape(())
+        self.accuracy_supported = jnp.asarray(accuracy_supported, dtype=bool).reshape(())
         self.near_panel_count = int(near_panel_count)
         self.far_panel_count = int(far_panel_count)
         self.failed_panel_count = int(failed_panel_count)
@@ -150,9 +155,12 @@ class LayerEvaluationReport(StrictModule, NonTrainableState):
                 "near_panel_count": self.near_panel_count,
                 "far_panel_count": self.far_panel_count,
                 "failed_panel_count": self.failed_panel_count,
+                "error_estimate": array_tree_fingerprint(self.error_estimate),
+                "finite": array_tree_fingerprint(self.finite),
+                "accuracy_supported": array_tree_fingerprint(self.accuracy_supported),
+                "num_evaluations_value": array_tree_fingerprint(self.num_evaluations),
             }
         )
-
 
 
 class LayerEvaluationResult(StrictModule, NonTrainableState):
@@ -237,18 +245,14 @@ def evaluate_layer_potential(
                 "self correction at source nodes."
             )
     elif not bool(target_report.pde_membership_valid):
-        raise ValueError(
-            "Layer evaluators require targets in the declared target side."
-        )
+        raise ValueError("Layer evaluators require targets in the declared target side.")
     if plan.method == "direct":
         values = potential._evaluate_direct(targets_)
         finite = jnp.all(jnp.isfinite(values))
         status = jnp.asarray(int(IntegrationStatus.CONVERGED), dtype=jnp.int32)
         error_estimate = jnp.asarray(jnp.inf)
         error_kind = "unestimated-direct"
-        num_evaluations = (
-            targets_.shape[0] * potential.panelization.node_count
-        )
+        num_evaluations = targets_.shape[0] * potential.panelization.node_count
         near_panel_count = 0
         far_panel_count = targets_.shape[0] * potential.panelization.panel_count
         failed_panel_count = 0
@@ -307,7 +311,12 @@ def evaluate_layer_potential(
         accuracy_supported = finite & qbx.accuracy_supported
     evaluation_report = LayerEvaluationReport(
         plan=plan,
-        representation_id=potential.representation_id,
+        representation_id=canonical_fingerprint(
+            {
+                "representation": potential.representation_id,
+                "density": array_tree_fingerprint(potential.density),
+            }
+        ),
         target_report=target_report,
         num_evaluations=num_evaluations,
         error_estimate=error_estimate,
@@ -319,6 +328,12 @@ def evaluate_layer_potential(
         far_panel_count=far_panel_count,
         failed_panel_count=failed_panel_count,
     )
+    if plan.method != "direct" and plan.adaptive_plan.throw:
+        values = eqx.error_if(
+            values,
+            ~jnp.asarray(accuracy_supported),
+            "Layer evaluation failed its requested adaptive accuracy policy.",
+        )
     result = LayerEvaluationResult(
         values=values,
         target_report=target_report,

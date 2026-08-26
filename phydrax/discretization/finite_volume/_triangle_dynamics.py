@@ -170,6 +170,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
     boundaries: TriangleFiniteVolumeBoundarySet
     precision: FiniteVolumePrecisionPolicy
     source: SourceFunction | None = eqx.field(static=True)
+    source_id: str | None = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
     def __init__(
@@ -181,6 +182,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         /,
         *,
         source: SourceFunction | None = None,
+        source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
     ):
         if not isinstance(discretization, TriangleFiniteVolumeDiscretization):
@@ -200,6 +202,11 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
+        source_identifier = None if source_id is None else str(source_id)
+        if (source is None) != (source_identifier is None) or source_identifier == "":
+            raise ValueError(
+                "A source callable requires exactly one non-empty source_id."
+            )
         precision_ = (
             FiniteVolumePrecisionPolicy(jnp.dtype(discretization.cell_volumes.dtype).name)
             if precision is None
@@ -213,6 +220,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
         self.boundaries = boundaries
         self.precision = precision_
         self.source = source
+        self.source_id = source_identifier
         self.dynamics_id = canonical_fingerprint(
             {
                 "kind": "prepared-triangle-fv-dynamics",
@@ -221,7 +229,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
                 "method": method.method_id,
                 "boundaries": boundaries.boundary_set_id,
                 "precision": precision_.policy_id,
-                "source": None if source is None else repr(source),
+                "source": source_identifier,
             }
         )
 
@@ -274,6 +282,7 @@ class PreparedTriangleFiniteVolumeDynamics(StrictModule):
             method,
             self.boundaries,
             source=self.source,
+            source_id=self.source_id,
             precision=self.precision,
         )
 

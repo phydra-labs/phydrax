@@ -212,6 +212,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
     precision: FiniteVolumePrecisionPolicy
     entropy_pair: ConvexEntropyPair | None
     source: SourceFunction | None = eqx.field(static=True)
+    source_id: str | None = eqx.field(static=True)
     dynamics_id: str = eqx.field(static=True)
 
     def __init__(
@@ -225,6 +226,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         capacity: ArrayLike | None = None,
         bathymetry: ArrayLike | None = None,
         source: SourceFunction | None = None,
+        source_id: str | None = None,
         precision: FiniteVolumePrecisionPolicy | None = None,
         entropy_pair: ConvexEntropyPair | None = None,
     ):
@@ -264,8 +266,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                 )
             if not isinstance(method.interface_solver, AbstractNumericalFluxPlan):
                 raise ValueError(
-                    "Entropy pair diagnostics require a numerical flux interface "
-                    "solver."
+                    "Entropy pair diagnostics require a numerical flux interface solver."
                 )
         for axis, structured_axis in enumerate(discretization.grid.structured_axes):
             pair = boundaries.pairs[axis]
@@ -297,6 +298,11 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             raise ValueError("bathymetry must match the finite-volume cell shape.")
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
+        source_identifier = None if source_id is None else str(source_id)
+        if (source is None) != (source_identifier is None) or source_identifier == "":
+            raise ValueError(
+                "A source callable requires exactly one non-empty source_id."
+            )
         halo = FiniteVolumeHaloPlan(
             discretization, method.reconstruction, boundaries
         ).prepare()
@@ -342,6 +348,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         self.axis_reconstructions = axis_reconstructions
         self.precision = precision_
         self.source = source
+        self.source_id = source_identifier
         self.entropy_pair = entropy_pair
         self.dynamics_id = canonical_fingerprint(
             {
@@ -359,9 +366,8 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                 if bathymetry_ is None
                 else array_tree_fingerprint(np.asarray(bathymetry_)),
                 "precision": precision_.policy_id,
-                "entropy_pair": None
-                if entropy_pair is None
-                else entropy_pair.pair_id,
+                "entropy_pair": None if entropy_pair is None else entropy_pair.pair_id,
+                "source": source_identifier,
             }
         )
 
@@ -787,9 +793,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         source = self._source_value(time, value, args)
         if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan):
             fluxes, speeds = self.face_fluxes(time, value, args)
-            convective_residual = self.precision.reduction(
-                self._flux_residual(fluxes)
-            )
+            convective_residual = self.precision.reduction(self._flux_residual(fluxes))
             residual = convective_residual + self.precision.reduction(source)
             if self.method.viscous is not None:
                 residual = residual + self.precision.reduction(

@@ -257,20 +257,11 @@ class CharacteristicSystem(StrictModule):
         eigensystem: Callable[[Array, Array, Any], tuple[Array, Array, Array]],
         /,
         *,
-        system_id: str | None = None,
+        system_id: str,
     ):
         if not callable(eigensystem):
             raise TypeError("Characteristic eigensystem must be callable.")
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "characteristic-system",
-                    "eigensystem": repr(eigensystem),
-                }
-            )
-            if system_id is None
-            else str(system_id)
-        )
+        identifier = str(system_id)
         if not identifier:
             raise ValueError("system_id must be non-empty.")
         self.eigensystem = eigensystem

@@ -8,7 +8,6 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ...._interpolation import barycentric_basis
 from ....integration import (
     adaptive_interval_callable,
     AdaptiveQuadraturePlan,
@@ -16,15 +15,31 @@ from ....integration import (
     IntegrationEstimate,
     IntegrationProvenance,
     interval_rule_data,
-    reference_rule_data,
-    ReferenceTriangleRule,
 )
-from ._surface3d import SurfacePanelization3D
+from ._surface3d import interpolate_surface_panel_density, SurfacePanelization3D
 
 
-def _barycentric_weights(nodes: Array) -> Array:
-    differences = nodes[:, None] - nodes[None, :]
-    return jnp.reciprocal(jnp.prod(differences + jnp.eye(nodes.size), axis=1))
+def _target_reference_cell(
+    panelization: SurfacePanelization3D,
+    panel_id: int,
+    target_reference: ArrayLike,
+    /,
+) -> tuple[Array, Array]:
+    if panel_id < 0 or panel_id >= panelization.panel_count:
+        raise ValueError("panel_id is outside the surface panelization.")
+    target = jnp.asarray(target_reference, dtype=float)
+    if target.shape != (2,) or not bool(jnp.all(jnp.isfinite(target))):
+        raise ValueError("target_reference must be one finite reference point.")
+    vertices = panelization.panel_reference_vertices[panel_id]
+    local = panelization.panel_reference_inverses[panel_id] @ (target - vertices[0])
+    tolerance = 64.0 * jnp.finfo(target.dtype).eps
+    if not bool(
+        (local[0] >= -tolerance)
+        & (local[1] >= -tolerance)
+        & (jnp.sum(local) <= 1.0 + tolerance)
+    ):
+        raise ValueError("target_reference lies outside its source reference triangle.")
+    return target, vertices
 
 
 def evaluate_single_layer_self_triangle_3d(
@@ -42,7 +57,11 @@ def evaluate_single_layer_self_triangle_3d(
         raise TypeError("Duffy self quadrature requires SurfacePanelization3D.")
     if not isinstance(interval_plan, AdaptiveQuadraturePlan):
         raise TypeError("interval_plan must be an AdaptiveQuadraturePlan.")
-    target_reference_ = jnp.asarray(target_reference, dtype=float).reshape((2,))
+    target_reference_, reference_vertices = _target_reference_cell(
+        panelization,
+        panel_id,
+        target_reference,
+    )
     chart = panelization.chart_indices[panel_id * panelization.nodes_per_panel]
     target_frame = panelization.atlas.frame(
         jnp.asarray([chart], dtype=jnp.int32),
@@ -50,20 +69,6 @@ def evaluate_single_layer_self_triangle_3d(
     )
     target = target_frame.origin[0]
     order = panelization.quadrature_order
-    nodes_per_panel = panelization.nodes_per_panel
-    start = panel_id * nodes_per_panel
-    stop = start + nodes_per_panel
-    reference_data = reference_rule_data(ReferenceTriangleRule(GaussLegendreRule(order)))
-    reference_grid = reference_data.points.reshape((order, order, 2))
-    first = reference_grid[:, 0, 0]
-    second = reference_grid[0, :, 1] / (1.0 - first[0])
-    density_grid = potential.density[start:stop].reshape((order, order))
-    first_weights = _barycentric_weights(first)
-    second_weights = _barycentric_weights(second)
-    interval_data = interval_rule_data(GaussLegendreRule(order))
-    t_nodes = 0.5 * (interval_data.nodes + 1.0)
-    t_weights = 0.5 * interval_data.weights
-    reference_vertices = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     subtriangles = jnp.stack(
         (
             jnp.stack((target_reference_, reference_vertices[0], reference_vertices[1])),
@@ -71,16 +76,17 @@ def evaluate_single_layer_self_triangle_3d(
             jnp.stack((target_reference_, reference_vertices[2], reference_vertices[0])),
         )
     )
+    interval_data = interval_rule_data(GaussLegendreRule(order))
+    t_nodes = 0.5 * (interval_data.nodes + 1.0)
+    t_weights = 0.5 * interval_data.weights
 
     def density_at(reference: Array) -> Array:
-        first_basis = jax.vmap(
-            lambda value: barycentric_basis(value, first, first_weights)
-        )(reference[:, 0])
-        second_coordinate = reference[:, 1] / jnp.maximum(1.0 - reference[:, 0], 1e-15)
-        second_basis = jax.vmap(
-            lambda value: barycentric_basis(value, second, second_weights)
-        )(second_coordinate)
-        return jnp.einsum("ni,nj,ij->n", first_basis, second_basis, density_grid)
+        return interpolate_surface_panel_density(
+            panelization,
+            potential.density,
+            panel_id,
+            reference,
+        )
 
     estimates = []
     for triangle in subtriangles:
@@ -90,6 +96,8 @@ def evaluate_single_layer_self_triangle_3d(
         reference_jacobian = jnp.abs(
             jnp.linalg.det(jnp.stack((edge_first, edge_second), axis=-1))
         )
+        if bool(reference_jacobian <= 64.0 * jnp.finfo(target_reference_.dtype).eps):
+            continue
 
         def duffy_integrand(scale: Array) -> Array:
             reference = target_vertex[None, None, :] + scale[:, None, None] * (
@@ -97,9 +105,7 @@ def evaluate_single_layer_self_triangle_3d(
                 + t_nodes[None, :, None] * edge_second[None, None, :]
             )
             flat_reference = reference.reshape((-1, 2))
-            chart_indices = jnp.full(
-                (flat_reference.shape[0],), chart, dtype=jnp.int32
-            )
+            chart_indices = jnp.full((flat_reference.shape[0],), chart, dtype=jnp.int32)
             frame = panelization.atlas.frame(chart_indices, flat_reference)
             kernel = jax.vmap(
                 potential.kernel.value,
@@ -113,7 +119,9 @@ def evaluate_single_layer_self_triangle_3d(
                 * scale[:, None].repeat(t_nodes.size, axis=1).reshape((-1,))
                 * reference_jacobian
             )
-            return jnp.sum(values.reshape((scale.shape[0], t_nodes.size)) * t_weights, axis=1)
+            return jnp.sum(
+                values.reshape((scale.shape[0], t_nodes.size)) * t_weights, axis=1
+            )
 
         estimates.append(
             adaptive_interval_callable(
@@ -122,6 +130,8 @@ def evaluate_single_layer_self_triangle_3d(
                 interval_plan,
             )
         )
+    if not estimates:
+        raise ValueError("Duffy decomposition contains no nondegenerate subtriangle.")
     value = jnp.sum(jnp.stack([estimate.value for estimate in estimates]))
     errors = jnp.stack(
         [
@@ -157,7 +167,11 @@ def evaluate_double_layer_self_triangle_3d(
     panelization = potential.panelization
     if not isinstance(panelization, SurfacePanelization3D):
         raise TypeError("Duffy self quadrature requires SurfacePanelization3D.")
-    target_reference_ = jnp.asarray(target_reference, dtype=float).reshape((2,))
+    target_reference_, reference_vertices = _target_reference_cell(
+        panelization,
+        panel_id,
+        target_reference,
+    )
     chart = panelization.chart_indices[panel_id * panelization.nodes_per_panel]
     target_frame = panelization.atlas.frame(
         jnp.asarray([chart], dtype=jnp.int32),
@@ -165,20 +179,6 @@ def evaluate_double_layer_self_triangle_3d(
     )
     target = target_frame.origin[0]
     order = panelization.quadrature_order
-    node_count = panelization.nodes_per_panel
-    start = panel_id * node_count
-    stop = start + node_count
-    reference_data = reference_rule_data(ReferenceTriangleRule(GaussLegendreRule(order)))
-    reference_grid = reference_data.points.reshape((order, order, 2))
-    first = reference_grid[:, 0, 0]
-    second = reference_grid[0, :, 1] / (1.0 - first[0])
-    density_grid = potential.density[start:stop].reshape((order, order))
-    first_weights = _barycentric_weights(first)
-    second_weights = _barycentric_weights(second)
-    interval_data = interval_rule_data(GaussLegendreRule(order))
-    t_nodes = 0.5 * (interval_data.nodes + 1.0)
-    t_weights = 0.5 * interval_data.weights
-    reference_vertices = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     subtriangles = jnp.stack(
         (
             jnp.stack((target_reference_, reference_vertices[0], reference_vertices[1])),
@@ -186,16 +186,17 @@ def evaluate_double_layer_self_triangle_3d(
             jnp.stack((target_reference_, reference_vertices[2], reference_vertices[0])),
         )
     )
+    interval_data = interval_rule_data(GaussLegendreRule(order))
+    t_nodes = 0.5 * (interval_data.nodes + 1.0)
+    t_weights = 0.5 * interval_data.weights
 
     def density_at(reference: Array) -> Array:
-        first_basis = jax.vmap(
-            lambda value: barycentric_basis(value, first, first_weights)
-        )(reference[:, 0])
-        second_coordinate = reference[:, 1] / jnp.maximum(1.0 - reference[:, 0], 1e-15)
-        second_basis = jax.vmap(
-            lambda value: barycentric_basis(value, second, second_weights)
-        )(second_coordinate)
-        return jnp.einsum("ni,nj,ij->n", first_basis, second_basis, density_grid)
+        return interpolate_surface_panel_density(
+            panelization,
+            potential.density,
+            panel_id,
+            reference,
+        )
 
     def combined(scale: Array) -> Array:
         total = jnp.zeros_like(scale)
@@ -205,6 +206,9 @@ def evaluate_double_layer_self_triangle_3d(
             edge_second = second_vertex - target_vertex
             reference_jacobian = jnp.abs(
                 jnp.linalg.det(jnp.stack((edge_first, edge_second), axis=-1))
+            )
+            active_triangle = (
+                reference_jacobian > 64.0 * jnp.finfo(target_reference_.dtype).eps
             )
             reference = target_vertex[None, None, :] + scale[:, None, None] * (
                 (1.0 - t_nodes)[None, :, None] * edge_first[None, None, :]
@@ -225,7 +229,7 @@ def evaluate_double_layer_self_triangle_3d(
                 * scale[:, None].repeat(t_nodes.size, axis=1).reshape((-1,))
                 * reference_jacobian
             )
-            total = total + jnp.sum(
+            contribution = jnp.sum(
                 jnp.where(
                     scale[:, None].repeat(t_nodes.size, axis=1).reshape((-1,)) == 0.0,
                     0.0,
@@ -234,6 +238,7 @@ def evaluate_double_layer_self_triangle_3d(
                 * t_weights,
                 axis=1,
             )
+            total = total + jnp.where(active_triangle, contribution, 0.0)
         return total
 
     estimate = adaptive_interval_callable(

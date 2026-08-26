@@ -96,10 +96,16 @@ def solve_neural_jump_projection(
     value_and_grad = jax.value_and_grad(loss)
     parameters = problem.parameters
     history = []
-    for _ in range(int(iterations)):
+    count = int(iterations)
+    if count < 1 or not jnp.isfinite(learning_rate) or learning_rate <= 0.0:
+        raise ValueError("iterations and learning_rate must be positive and finite.")
+    for _ in range(count):
         value, gradient = value_and_grad(parameters)
-        parameters = parameters - float(learning_rate) * gradient
+        direction = jnp.conj(gradient) if jnp.iscomplexobj(gradient) else gradient
+        parameters = parameters - float(learning_rate) * direction
         history.append(value)
+    final_value = loss(parameters)
+    history.append(final_value)
     projected = jnp.asarray(problem.state_function(parameters))
     projected = projected / jnp.linalg.norm(projected)
     return NeuralJumpProjectionResult(
@@ -150,6 +156,8 @@ class NeuralNoJumpTDVPResult(StrictModule):
     projection_residuals: Array
     active_events: Array
     valid: Array
+    saturated: Array
+    successful: Array
     problem_id: str
 
     def __init__(
@@ -164,6 +172,8 @@ class NeuralNoJumpTDVPResult(StrictModule):
         /,
         *,
         problem_id: str,
+        saturated: bool = False,
+        successful: bool = True,
     ):
         self.parameters = jnp.asarray(parameters)
         self.parameter_history = jnp.asarray(parameter_history)
@@ -172,9 +182,12 @@ class NeuralNoJumpTDVPResult(StrictModule):
         self.event_channels = jnp.asarray(event_channels, dtype=jnp.int32)
         self.projection_residuals = jnp.asarray(projection_residuals)
         self.active_events = jnp.asarray(active_events, dtype=bool)
+        self.saturated = jnp.asarray(saturated, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=bool)
         self.valid = (
             jnp.all(jnp.isfinite(self.parameter_history))
             & jnp.all(jnp.isfinite(self.rate_history))
+            & jnp.all(self.rate_history >= 0.0)
             & jnp.all(
                 jnp.where(
                     self.active_events,
@@ -182,6 +195,8 @@ class NeuralNoJumpTDVPResult(StrictModule):
                     True,
                 )
             )
+            & ~self.saturated
+            & self.successful
         )
         self.problem_id = str(problem_id)
 
@@ -196,13 +211,25 @@ def solve_neural_no_jump_tdvp(
     maximum_events: int = 64,
     damping: float = 1e-6,
 ) -> NeuralNoJumpTDVPResult:
+    count = int(steps)
+    capacity = int(maximum_events)
+    step = float(step_size)
+    if (
+        count < 1
+        or capacity < 1
+        or not jnp.isfinite(step)
+        or step <= 0.0
+        or not jnp.isfinite(damping)
+        or damping < 0.0
+    ):
+        raise ValueError("Neural trajectory steps, capacity, and scales are invalid.")
     parameters = problem.parameters
     history = [parameters]
     rates_history = []
-    event_times = jnp.zeros((maximum_events,))
-    event_channels = -jnp.ones((maximum_events,), dtype=jnp.int32)
-    projection_residuals = jnp.zeros((maximum_events,))
-    active = jnp.zeros((maximum_events,), dtype=bool)
+    event_times = jnp.zeros((capacity,))
+    event_channels = -jnp.ones((capacity,), dtype=jnp.int32)
+    projection_residuals = jnp.zeros((capacity,))
+    active = jnp.zeros((capacity,), dtype=bool)
     threshold_address = SampleAddress(
         "neural-quantum-trajectory",
         "jump-threshold",
@@ -223,7 +250,9 @@ def solve_neural_no_jump_tdvp(
         )
     )
     hazard = jnp.asarray(0.0)
-    for index in range(int(steps)):
+    saturated = False
+    successful = True
+    for index in range(count):
         force = jnp.asarray(problem.force(parameters))
         metric = InformationMetricOperator(
             lambda vector: problem.qgt_action(parameters, vector),
@@ -231,26 +260,56 @@ def solve_neural_no_jump_tdvp(
             damping=damping,
             metric_id=f"{problem.problem_id}:qgt",
         )
-        velocity = metric.solve(force).value
-        parameters = parameters + float(step_size) * velocity
+        solve_result = metric.solve(force)
+        if not bool(jax.device_get(jnp.all(solve_result.successful))):
+            successful = False
+            break
+        parameters = parameters + step * solve_result.value
         rates = jnp.asarray(problem.channel_rates(parameters))
+        if (
+            jnp.iscomplexobj(rates)
+            or rates.ndim != 1
+            or not bool(jax.device_get(jnp.all(jnp.isfinite(rates) & (rates >= 0.0))))
+        ):
+            successful = False
+            break
         rates_history.append(rates)
         total = jnp.sum(rates)
-        hazard = hazard + float(step_size) * total
-        if bool(jax.device_get(hazard >= threshold)) and event_count < maximum_events:
+        if not bool(jax.device_get(jnp.isfinite(total) & (total >= 0.0))):
+            successful = False
+            break
+        hazard = hazard + step * total
+        while bool(jax.device_get((total > 0.0) & (hazard >= threshold))):
+            if event_count >= capacity:
+                saturated = True
+                break
+            hazard = hazard - threshold
+            event_time = (index + 1) * step - hazard / total
             channel = jax.random.categorical(
                 derive_key(key, channel_address, event_count),
                 jnp.log(jnp.maximum(rates / total, 1e-30)),
             )
             parameters, residual = problem.jump_projection(int(channel), parameters)
-            event_times = event_times.at[event_count].set((index + 1) * step_size)
+            residual = jnp.asarray(residual)
+            if residual.shape != () or not bool(jax.device_get(jnp.isfinite(residual))):
+                successful = False
+                break
+            event_times = event_times.at[event_count].set(event_time)
             event_channels = event_channels.at[event_count].set(
                 jnp.asarray(channel, dtype=jnp.int32)
             )
             projection_residuals = projection_residuals.at[event_count].set(residual)
             active = active.at[event_count].set(True)
             event_count += 1
-            hazard = jnp.asarray(0.0)
+            rates = jnp.asarray(problem.channel_rates(parameters))
+            if (
+                jnp.iscomplexobj(rates)
+                or rates.ndim != 1
+                or not bool(jax.device_get(jnp.all(jnp.isfinite(rates) & (rates >= 0.0))))
+            ):
+                successful = False
+                break
+            total = jnp.sum(rates)
             threshold = -jnp.log(
                 jnp.maximum(
                     1.0
@@ -259,15 +318,24 @@ def solve_neural_no_jump_tdvp(
                 )
             )
         history.append(parameters)
+        if saturated or not successful:
+            break
+    rate_array = (
+        jnp.stack(rates_history)
+        if rates_history
+        else jnp.zeros((0, 0), dtype=parameters.real.dtype)
+    )
     return NeuralNoJumpTDVPResult(
         parameters,
         jnp.stack(history),
-        jnp.stack(rates_history),
+        rate_array,
         event_times,
         event_channels,
         projection_residuals,
         active,
         problem_id=problem.problem_id,
+        saturated=saturated,
+        successful=successful,
     )
 
 

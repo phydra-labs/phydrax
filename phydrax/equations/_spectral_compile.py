@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import (
     DiscreteFieldSpace,
@@ -1023,6 +1023,20 @@ def compile_spectral_pde(
     defaults = tuple(
         supplied.get(parameter.name, parameter.value) for parameter in problem.parameters
     )
+    parameter_fingerprints = {
+        parameter.name: (
+            None if value is None else array_tree_fingerprint(jnp.asarray(value))
+        )
+        for parameter, value in zip(problem.parameters, defaults, strict=True)
+    }
+    unresolved_parameters = tuple(
+        name for name, value in parameter_fingerprints.items() if value is None
+    )
+    if splitting == "semilinear" and unresolved_parameters:
+        raise ValueError(
+            "Semilinear spectral compilation requires concrete values for parameters "
+            f"{unresolved_parameters}."
+        )
     layout = SpectralStateLayout(problem.fields, discretization)
     evaluator = _SpectralEvaluator(
         problem,
@@ -1036,7 +1050,10 @@ def compile_spectral_pde(
         _region_axes(problem, coordinate_axes),
     )
     semilinear = None
-    if splitting == "direct":
+    use_direct = splitting == "direct" or (
+        splitting == "auto" and bool(unresolved_parameters)
+    )
+    if use_direct:
         drift: Any = evaluator
         resolved = "spectral-direct"
     else:
@@ -1072,6 +1089,7 @@ def compile_spectral_pde(
                 "problem": problem.canonical_hash,
                 "discretization": discretization.prepared_id,
                 "method": prepared_method.prepared_id,
+                "parameters": parameter_fingerprints,
             }
         )
         if diagonal_data is None:
@@ -1105,7 +1123,7 @@ def compile_spectral_pde(
             "method": prepared_method.prepared_id,
             "layout": layout.layout_id,
             "splitting": resolved,
-            "parameters": sorted(supplied),
+            "parameters": parameter_fingerprints,
         }
     )
     return CompiledSpectralDynamics(

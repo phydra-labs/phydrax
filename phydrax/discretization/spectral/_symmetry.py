@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from operator import index
 from typing import Any
 
 import equinox as eqx
@@ -14,6 +15,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._coordinates import HermitianSpectralCoordinates
@@ -45,10 +47,14 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
         rank = len(discretization.axes)
+        if axis_signs is not None and any(
+            isinstance(value, bool) for value in axis_signs
+        ):
+            raise TypeError("axis_signs values must be integers.")
         signs = (
             (1,) * rank
             if axis_signs is None
-            else tuple(int(value) for value in axis_signs)
+            else tuple(index(value) for value in axis_signs)
         )
         if len(signs) != rank or any(value not in (-1, 1) for value in signs):
             raise ValueError("axis_signs must contain one +1 or -1 per spectral axis.")
@@ -64,8 +70,10 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Reflections require Fourier, Chebyshev, or Legendre axes."
                 )
+        if isinstance(component_count, bool):
+            raise TypeError("component_count must be an integer.")
         count = (
-            int(component_count)
+            index(component_count)
             if component_count is not None
             else 1
             if component_matrix is None
@@ -171,8 +179,8 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
             for left, right in zip(self.axis_signs, other.axis_signs, strict=True)
         )
         translations = np.mod(
-            np.asarray(self.axis_signs) * np.asarray(other.translations)
-            + np.asarray(self.translations),
+            np.asarray(other.axis_signs) * np.asarray(self.translations)
+            + np.asarray(other.translations),
             1.0,
         )
         matrix = np.asarray(self.component_matrix) @ np.asarray(other.component_matrix)
@@ -198,7 +206,9 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
 
     def translation_generator(self, state: ArrayLike, axis: int, /) -> Array:
         value = self.validate_state(state)
-        axis_index = int(axis)
+        if isinstance(axis, bool):
+            raise TypeError("axis must be an integer.")
+        axis_index = index(axis)
         if axis_index < 0 or axis_index >= len(self.discretization.axes):
             raise ValueError("axis is outside the tensor spectral rank.")
         prepared = self.discretization.axes[axis_index]
@@ -212,7 +222,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
 
     def fixed_subspace_defect(self, state: ArrayLike, /) -> Array:
         value = self.validate_state(state)
-        return jnp.linalg.norm((self.apply(value) - value).reshape((-1,)))
+        return GeometryPrecisionPolicy().norm((self.apply(value) - value).reshape((-1,)))
 
     def apply_real_coordinates(
         self,

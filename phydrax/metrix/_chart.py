@@ -130,11 +130,15 @@ class ChartTransition(StrictModule):
         return result
 
     def jacobian(self, coordinates: ArrayLike, /) -> Array:
-        return _pointwise_jacfwd(
+        result = _pointwise_jacfwd(
             self.map_function,
             coordinates,
             self.source.dimension,
         )
+        expected = (self.target.dimension, self.source.dimension)
+        if result.shape[-2:] != expected:
+            raise ValueError(f"Chart transition Jacobian must end in shape {expected}.")
+        return result
 
     def inverse_jacobian(self, coordinates: ArrayLike, /) -> Array:
         if self.inverse_function is None:
@@ -142,11 +146,17 @@ class ChartTransition(StrictModule):
                 f"Chart transition {self.source.name!r} -> {self.target.name!r} "
                 "does not provide an inverse."
             )
-        return _pointwise_jacfwd(
+        result = _pointwise_jacfwd(
             self.inverse_function,
             coordinates,
             self.target.dimension,
         )
+        expected = (self.source.dimension, self.target.dimension)
+        if result.shape[-2:] != expected:
+            raise ValueError(
+                f"Inverse chart transition Jacobian must end in shape {expected}."
+            )
+        return result
 
     def hessian(self, coordinates: ArrayLike, /) -> Array:
         return _pointwise_jacfwd(

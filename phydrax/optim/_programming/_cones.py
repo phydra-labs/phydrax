@@ -7,6 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 from math import sqrt
+from operator import index
 from typing import Any
 
 import equinox as eqx
@@ -22,6 +23,15 @@ def _scaled_norm(value: Array, /) -> Array:
     safe_scale = jnp.where(jnp.isfinite(scale) & (scale > 0.0), scale, 1.0)
     residual = scale * jnp.linalg.norm(value / safe_scale[..., None], axis=-1)
     return jnp.where(jnp.isinf(scale), jnp.inf, residual)
+
+
+def _cone_dimension(value: int, name: str, minimum: int, /) -> int:
+    if isinstance(value, bool):
+        raise TypeError(f"{name} dimension must be an integer.")
+    size = index(value)
+    if size < minimum:
+        raise ValueError(f"{name} dimension must be at least {minimum}.")
+    return size
 
 
 class AbstractConvexCone(StrictModule):
@@ -81,9 +91,7 @@ class ZeroCone(AbstractConvexCone):
     """The singleton cone containing only the origin."""
 
     def __init__(self, dimension: int, /):
-        size = int(dimension)
-        if size < 0:
-            raise ValueError("ZeroCone dimension must be non-negative.")
+        size = _cone_dimension(dimension, "ZeroCone", 0)
         self.dimension = size
         self.cone_id = canonical_fingerprint({"kind": "zero-cone", "dimension": size})
 
@@ -106,9 +114,7 @@ class NonnegativeCone(AbstractConvexCone):
     """Elementwise nonnegative orthant."""
 
     def __init__(self, dimension: int, /):
-        size = int(dimension)
-        if size < 0:
-            raise ValueError("NonnegativeCone dimension must be non-negative.")
+        size = _cone_dimension(dimension, "NonnegativeCone", 0)
         self.dimension = size
         self.cone_id = canonical_fingerprint(
             {"kind": "nonnegative-cone", "dimension": size}
@@ -137,9 +143,7 @@ class SecondOrderCone(AbstractConvexCone):
     """Lorentz cone ``(t, x)`` satisfying ``||x||₂ <= t``."""
 
     def __init__(self, dimension: int, /):
-        size = int(dimension)
-        if size < 2:
-            raise ValueError("SecondOrderCone dimension must be at least two.")
+        size = _cone_dimension(dimension, "SecondOrderCone", 2)
         self.dimension = size
         self.cone_id = canonical_fingerprint(
             {"kind": "second-order-cone", "dimension": size}
@@ -178,9 +182,7 @@ class RotatedSecondOrderCone(AbstractConvexCone):
     _soc: SecondOrderCone
 
     def __init__(self, dimension: int, /):
-        size = int(dimension)
-        if size < 3:
-            raise ValueError("RotatedSecondOrderCone dimension must be at least three.")
+        size = _cone_dimension(dimension, "RotatedSecondOrderCone", 3)
         self.dimension = size
         self._soc = SecondOrderCone(size)
         self.cone_id = canonical_fingerprint(
@@ -237,11 +239,19 @@ class ProductCone(AbstractConvexCone):
         cones_ = tuple(cones)
         if any(not isinstance(cone, AbstractConvexCone) for cone in cones_):
             raise TypeError("ProductCone blocks must be AbstractConvexCone values.")
+        if any(
+            isinstance(cone.dimension, bool) or index(cone.dimension) < 0
+            for cone in cones_
+        ):
+            raise ValueError(
+                "ProductCone block dimensions must be non-negative integers."
+            )
         cursor = 0
         slices: list[slice] = []
         for cone in cones_:
-            slices.append(slice(cursor, cursor + cone.dimension))
-            cursor += cone.dimension
+            dimension = index(cone.dimension)
+            slices.append(slice(cursor, cursor + dimension))
+            cursor += dimension
         self.cones = cones_
         self.slices = tuple(slices)
         self.dimension = cursor

@@ -42,6 +42,7 @@ def _runtime(
         system,
         phx.discretization.FiniteVolumeBoundarySet(("x",), (pair,)),
         source=source,
+        source_id=None if source is None else "runtime-test-source",
     )
     solver = interface_solver
     if solver is None:

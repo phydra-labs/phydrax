@@ -732,17 +732,40 @@ def _phi_function_value(value: Array, order: int, /) -> Array:
     order_ = int(order)
     if order_ not in (1, 2, 3):
         raise ValueError("Phi-function order must be one, two, or three.")
-    threshold = jnp.sqrt(jnp.finfo(value.real.dtype).eps)
+    epsilon = jnp.finfo(value.real.dtype).eps
+    threshold = epsilon ** (1.0 / 3.0) if order_ == 3 else jnp.sqrt(epsilon)
     safe = jnp.where(jnp.abs(value) > threshold, value, 1)
     if order_ == 1:
-        series = 1 + value / 2 + value**2 / 6 + value**3 / 24 + value**4 / 120
+        series = (
+            1
+            + value / 2
+            + value**2 / 6
+            + value**3 / 24
+            + value**4 / 120
+            + value**5 / 720
+            + value**6 / 5040
+        )
         quotient = jnp.expm1(value) / safe
     elif order_ == 2:
-        series = 0.5 + value / 6 + value**2 / 24 + value**3 / 120 + value**4 / 720
+        series = (
+            0.5
+            + value / 6
+            + value**2 / 24
+            + value**3 / 120
+            + value**4 / 720
+            + value**5 / 5040
+            + value**6 / 40320
+        )
         quotient = (jnp.expm1(value) - value) / safe**2
     else:
         series = (
-            1.0 / 6.0 + value / 24 + value**2 / 120 + value**3 / 720 + value**4 / 5040
+            1.0 / 6.0
+            + value / 24
+            + value**2 / 120
+            + value**3 / 720
+            + value**4 / 5040
+            + value**5 / 40320
+            + value**6 / 362880
         )
         quotient = (jnp.expm1(value) - value - 0.5 * value**2) / safe**3
     return jnp.where(jnp.abs(value) > threshold, quotient, series)

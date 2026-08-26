@@ -84,17 +84,22 @@ def _classification_configuration(
         )
 
     if objective.kind == "focal" and objective.alpha is not None:
-        if kind in ("binary", "multilabel") and not isinstance(objective.alpha, float):
-            raise ValueError(f"{kind} focal alpha must be scalar.")
-        if kind == "multiclass":
-            if not isinstance(objective.alpha, tuple):
+        alpha = objective.alpha
+        if kind in ("binary", "multilabel"):
+            if not isinstance(alpha, float) or not 0.0 < alpha < 1.0:
+                raise ValueError(f"{kind} focal alpha must be scalar in (0, 1).")
+        elif kind == "multiclass":
+            if (
+                not isinstance(alpha, tuple)
+                or class_count is None
+                or len(alpha) != class_count
+                or any(value <= 0.0 for value in alpha)
+            ):
                 raise ValueError(
-                    "Multiclass focal alpha must contain one weight per class."
+                    "Multiclass focal alpha must contain one positive weight per class."
                 )
-            if class_count is None or len(objective.alpha) != class_count:
-                raise ValueError(
-                    "Multiclass focal alpha must contain one weight per class."
-                )
+        else:
+            raise ValueError("Ordinal focal objectives are unsupported.")
     return kind, class_count
 
 
@@ -208,6 +213,21 @@ class _GraphClassificationScore(StrictModule, BatchEvaluator):
             alpha=self.alpha,
             thresholds=self.thresholds,
         )
+        if mask is not None:
+            mask_data = jnp.asarray(mask.data)
+            observation_active = (
+                jnp.any(mask_data, axis=-1)
+                if self.classification_kind == "multilabel"
+                and mask_data.ndim == score.ndim + 1
+                else mask_data
+            )
+            score = jnp.where(observation_active, score, 0.0)
+            active_count = jnp.sum(observation_active)
+            score = jnp.where(
+                active_count > 0,
+                score * score.size / active_count,
+                jnp.zeros_like(score),
+            )
         if score.ndim != 1 or score.shape[0] != logits_data.shape[0]:
             raise ValueError(
                 "Graph classification must produce one scalar score per sampled entity."
@@ -452,7 +472,7 @@ def GraphTrajectoryClassificationTerm(
             domain,
             target_mask,
             component_kind=component_kind,
-            interpolation="nearest",
+            interpolation=interpolation,
             target_encoding="hard",
             require_boolean=True,
         )

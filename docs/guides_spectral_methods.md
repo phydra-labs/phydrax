@@ -169,8 +169,11 @@ The public state remains full complex. `HermitianSpectralCoordinates` provides a
 independent real chart for Newton, continuation, Lyapunov, and periodic-orbit
 analysis without changing DNS storage. Paired Fourier modes use norm-preserving
 real/imaginary coordinates; zero and Nyquist fixed points remain real.
-`TensorSpectralSymmetry` applies normalized Fourier translations, supported
-reflections, and an orthogonal component action directly in modal space.
+Coordinate construction rejects nonintegral component dimensions and preflights its
+explicit real-coordinate capacity. `TensorSpectralSymmetry` applies normalized
+Fourier translations, supported reflections, and an orthogonal component action
+directly in modal space. Translation/reflection composition follows the declared
+semidirect-product action, including reflected translations.
 
 Wall-bounded channel flow uses a Fourier x Chebyshev x Fourier tensor plan and a
 separate constrained Stokes preparation:
@@ -198,14 +201,21 @@ divergence, wall traces, gauge, and bulk velocity are returned as solve evidence
 `ChannelMeanConstraint("bulk_flux", target)` augments the zero horizontal mode with
 pressure-gradient Lagrange multipliers. The fixed-step SBDF2 path uses backward
 Euler initialization and rejects nonuniform time grids rather than applying
-constant-step history formulas to variable steps.
+constant-step history formulas to variable steps. The Stokes factor budget is checked
+before any factorization. Incompressibility also requires equal lower/upper wall-normal
+velocities. Callable periodic or channel forcing must provide a non-empty `forcing_id`;
+callable identity is never inferred from `repr` or a generic fallback.
 
 Long runs can use `BoundedEvolutionObservationPlan` to retain fixed-capacity
-observables while returning only the final evolution state. `SpectralStateArtifact`
-stores full-complex coefficients in the atomic checksum-validated array archive.
-Artifacts without a step size are seeds. Setting `restartable=True` requires a
-positive fixed step size and is only an exact checkpoint for a one-step method whose
-complete runtime state is represented by `(state, time, step, step_size)`.
+observables while returning only the final evolution state. Because the observable is
+a callable, `observer_id` is required. The result latches the first failed evolution or
+nonfinite-observable status even if later fixed-shape scan steps continue.
+`SpectralStateArtifact` stores full-complex coefficients in the atomic
+checksum-validated array archive. Reads revalidate shape, dtype, restart kind, and the
+content-derived artifact fingerprint. Artifacts without a step size are seeds.
+Setting `restartable=True` requires a positive fixed step size and is only an exact
+checkpoint for a one-step method whose complete runtime state is represented by
+`(state, time, step, step_size)`.
 
 
 ## Bounded Galerkin spaces

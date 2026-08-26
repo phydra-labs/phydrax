@@ -296,6 +296,7 @@ class DynamicalMapPhysicality(StrictModule):
     choi_matrix: Array
     cp_margin: Array
     trace_preservation_residual: Array
+    choi_hermiticity_residual: Array
     valid: Array
     geometry_precision: GeometryPrecisionPolicy
     hermitian_precision: HermitianPrecisionPolicy
@@ -340,8 +341,11 @@ class DynamicalMapPhysicality(StrictModule):
                 output = (matrix @ basis.reshape(-1)).reshape((size, size))
                 choi = choi.at[row, :, column, :].set(output)
         flat_choi = choi.reshape((size * size, size * size))
-        flat_choi = 0.5 * (flat_choi + jnp.conj(flat_choi.T))
-        spectrum = HermitianSpectrum(flat_choi, precision=hermitian_)
+        hermiticity_residual = geometry_.decision(
+            jnp.max(jnp.abs(flat_choi - jnp.conj(flat_choi.T)))
+        )
+        hermitian_choi = 0.5 * (flat_choi + jnp.conj(flat_choi.T))
+        spectrum = HermitianSpectrum(hermitian_choi, precision=hermitian_)
         partial_trace = geometry_.accumulation(jnp.trace(choi, axis1=1, axis2=3))
         cp_margin = geometry_.decision(spectrum.minimum_eigenvalue)
         trace_residual = geometry_.decision(
@@ -349,9 +353,12 @@ class DynamicalMapPhysicality(StrictModule):
         )
         self.choi_matrix = geometry_.output(flat_choi)
         self.cp_margin = cp_margin
+        self.choi_hermiticity_residual = hermiticity_residual
         self.trace_preservation_residual = trace_residual
         self.valid = (
             jnp.all(jnp.isfinite(matrix))
+            & jnp.isfinite(hermiticity_residual)
+            & (hermiticity_residual <= 1e-8)
             & spectrum.valid
             & (cp_margin >= -1e-8)
             & (trace_residual <= 1e-8)
@@ -406,6 +413,9 @@ def solve_memory_kernel(
     count = int(steps)
     if count <= 0 or float(step) <= 0.0 or not bool(jnp.isfinite(step)):
         raise ValueError("steps and step_size must be finite and positive.")
+    horizon = float(problem.kernel.memory_horizon)
+    if 0.0 < horizon < float(step):
+        raise ValueError("memory_horizon must be zero or at least one integration step.")
     states = [problem.initial_density]
     for current in range(count):
         time = step * current
@@ -415,11 +425,12 @@ def solve_memory_kernel(
             current - int(problem.kernel.memory_horizon / float(step)),
         )
         memory = integration_.accumulation(jnp.zeros_like(density))
-        for past in range(lower, current + 1):
-            lag = time - step * past
-            weight = 0.5 if past in (lower, current) and current > lower else 1.0
-            contribution = integration_.evaluation(problem.kernel(lag, states[past]))
-            memory = memory + weight * integration_.accumulation(contribution)
+        if current > lower:
+            for past in range(lower, current + 1):
+                lag = time - step * past
+                weight = 0.5 if past in (lower, current) else 1.0
+                contribution = integration_.evaluation(problem.kernel(lag, states[past]))
+                memory = memory + weight * integration_.accumulation(contribution)
         local = temporal_.stage(problem.local_generator(time, density))
         convolution = temporal_.stage(integration_.output(step * memory))
         derivative = temporal_.residual(local + convolution)
@@ -522,18 +533,13 @@ class MemoryKernelMapCertification(StrictModule):
         /,
     ):
         self.superoperators = jnp.asarray(superoperators)
-        self.choi_matrices = jnp.stack(
-            [value.choi_matrix for value in certifications]
-        )
-        self.cp_margins = jnp.stack(
-            [value.cp_margin for value in certifications]
-        )
+        self.choi_matrices = jnp.stack([value.choi_matrix for value in certifications])
+        self.cp_margins = jnp.stack([value.cp_margin for value in certifications])
         self.trace_preservation_residuals = jnp.stack(
             [value.trace_preservation_residual for value in certifications]
         )
-        self.valid = (
-            jnp.all(jnp.isfinite(self.superoperators))
-            & jnp.all(jnp.stack([value.valid for value in certifications]))
+        self.valid = jnp.all(jnp.isfinite(self.superoperators)) & jnp.all(
+            jnp.stack([value.valid for value in certifications])
         )
 
 

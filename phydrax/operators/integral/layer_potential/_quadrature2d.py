@@ -108,6 +108,32 @@ def classify_panel_interactions_2d(
     )
 
 
+def _panel_breakpoints(
+    plan: AdaptiveQuadraturePlan,
+    bounds: Array,
+    extra: tuple[float, ...] = (),
+    /,
+) -> tuple[float, ...]:
+    lower, upper = float(bounds[0]), float(bounds[1])
+    return tuple(
+        sorted({point for point in (*plan.breakpoints, *extra) if lower < point < upper})
+    )
+
+
+def _panel_density(
+    node_reference: Array,
+    node_density: Array,
+    reference: Array,
+    /,
+) -> Array:
+    differences = node_reference[:, None] - node_reference[None, :]
+    weights = jnp.reciprocal(jnp.prod(differences + jnp.eye(node_reference.size), axis=1))
+    basis = jax.vmap(
+        lambda location: barycentric_basis(location, node_reference, weights)
+    )(reference)
+    return basis @ node_density
+
+
 def _panel_source_data(
     potential,
     panel_id: int,
@@ -124,11 +150,13 @@ def _panel_source_data(
     frame = panelization.atlas.frame(chart_indices, reference_points)
     node_reference = panelization.references[start:stop, 0]
     node_density = potential.density[start:stop]
-    density = jnp.interp(reference, node_reference, node_density)
+    density = _panel_density(node_reference, node_density, reference)
     return frame.origin, frame.normal, frame.jacobian, density
 
 
-def _panel_integrand(potential, target: Array, panel_id: int, reference: Array, /) -> Array:
+def _panel_integrand(
+    potential, target: Array, panel_id: int, reference: Array, /
+) -> Array:
     sources, normals, jacobian, density = _panel_source_data(
         potential,
         panel_id,
@@ -145,6 +173,7 @@ def _panel_integrand(potential, target: Array, panel_id: int, reference: Array, 
             in_axes=(None, 0, 0),
         )(target, sources, normals)
     return kernels * density * jacobian
+
 
 def _negative_log_moment(lower: Array, upper: Array, target: Array, /) -> Array:
     left = target - lower
@@ -182,18 +211,18 @@ def evaluate_laplace_single_layer_self_panel_2d(
     stop = start + order
     node_reference = panelization.references[start:stop, 0]
     node_density = potential.density[start:stop]
-    g0 = jnp.interp(target_reference_, node_reference, node_density) * target_jacobian
-    breakpoints = tuple(
-        sorted(
-            set(
-                plan.breakpoints
-                + (
-                    (float(target_reference_),)
-                    if bounds[0] < target_reference_ < bounds[1]
-                    else ()
-                )
-            )
-        )
+    g0 = (
+        _panel_density(
+            node_reference,
+            node_density,
+            target_reference_.reshape((1,)),
+        )[0]
+        * target_jacobian
+    )
+    breakpoints = _panel_breakpoints(
+        plan,
+        bounds,
+        (float(target_reference_),),
     )
     self_plan = AdaptiveQuadraturePlan(
         plan.rule,
@@ -255,7 +284,6 @@ def evaluate_laplace_single_layer_self_panel_2d(
     )
 
 
-
 def evaluate_helmholtz_single_layer_self_panel_weights_2d(
     panelization: BoundaryPanelization2D,
     kernel,
@@ -284,22 +312,13 @@ def evaluate_helmholtz_single_layer_self_panel_weights_2d(
     node_reference = panelization.references[start:stop, 0]
     differences = node_reference[:, None] - node_reference[None, :]
     safe_differences = differences + jnp.eye(order, dtype=node_reference.dtype)
-    barycentric_weights = jnp.reciprocal(
-        jnp.prod(safe_differences, axis=1)
-    )
+    barycentric_weights = jnp.reciprocal(jnp.prod(safe_differences, axis=1))
     target_index = int(jnp.argmin(jnp.abs(node_reference - target_reference_)))
     basis_at_target = jax.nn.one_hot(target_index, order)
-    breakpoints = tuple(
-        sorted(
-            set(
-                plan.breakpoints
-                + (
-                    (float(target_reference_),)
-                    if bounds[0] < target_reference_ < bounds[1]
-                    else ()
-                )
-            )
-        )
+    breakpoints = _panel_breakpoints(
+        plan,
+        bounds,
+        (float(target_reference_),),
     )
     self_plan = AdaptiveQuadraturePlan(
         plan.rule,
@@ -309,7 +328,7 @@ def evaluate_helmholtz_single_layer_self_panel_weights_2d(
         max_evaluations=plan.max_evaluations,
         breakpoints=breakpoints,
         collect_partition=plan.collect_partition,
-        throw=False,
+        throw=plan.throw,
     )
 
     def basis(reference: Array) -> Array:
@@ -349,25 +368,24 @@ def evaluate_helmholtz_single_layer_self_panel_weights_2d(
             kernel_values - singular,
         )
         basis_values = basis(reference)
-        return (
-            regular[:, None] * basis_values * jacobian[:, None]
-            + jnp.where(
-                absolute_difference[:, None] == 0.0,
-                0.0,
-                singular[:, None]
-                * (
-                    basis_values * jacobian[:, None]
-                    - basis_at_target * target_jacobian
-                ),
-            )
+        return regular[:, None] * basis_values * jacobian[:, None] + jnp.where(
+            absolute_difference[:, None] == 0.0,
+            0.0,
+            singular[:, None]
+            * (basis_values * jacobian[:, None] - basis_at_target * target_jacobian),
         )
 
     estimate = adaptive_interval_callable(regularized, bounds, self_plan)
-    value = estimate.value + _negative_log_moment(
-        bounds[0],
-        bounds[1],
-        target_reference_,
-    ) * basis_at_target * target_jacobian
+    value = (
+        estimate.value
+        + _negative_log_moment(
+            bounds[0],
+            bounds[1],
+            target_reference_,
+        )
+        * basis_at_target
+        * target_jacobian
+    )
     return IntegrationEstimate(
         value,
         status=estimate.status,
@@ -414,8 +432,10 @@ def evaluate_helmholtz_single_layer_self_panel_block_2d(
     barycentric_weights = jnp.reciprocal(
         jnp.prod(differences + jnp.eye(panel_order), axis=1)
     )
-    breakpoints = tuple(
-        sorted(set(plan.breakpoints + tuple(float(value) for value in targets_reference)))
+    breakpoints = _panel_breakpoints(
+        plan,
+        bounds,
+        tuple(float(value) for value in targets_reference),
     )
     self_plan = AdaptiveQuadraturePlan(
         plan.rule,
@@ -425,7 +445,7 @@ def evaluate_helmholtz_single_layer_self_panel_block_2d(
         max_evaluations=plan.max_evaluations,
         breakpoints=breakpoints,
         collect_partition=plan.collect_partition,
-        throw=False,
+        throw=plan.throw,
     )
 
     def regularized(reference: Array) -> Array:
@@ -465,17 +485,16 @@ def evaluate_helmholtz_single_layer_self_panel_block_2d(
             )
         )(reference)
         basis_target = jnp.eye(panel_order, dtype=reference.dtype)
-        return (
-            regular[:, :, None] * basis_values[:, None, :] * jacobian[:, None, None]
-            + jnp.where(
-                absolute_difference[:, :, None] == 0.0,
-                0.0,
-                singular[:, :, None]
-                * (
-                    basis_values[:, None, :] * jacobian[:, None, None]
-                    - target_jacobian[None, :, None] * basis_target[None, :, :]
-                ),
-            )
+        return regular[:, :, None] * basis_values[:, None, :] * jacobian[
+            :, None, None
+        ] + jnp.where(
+            absolute_difference[:, :, None] == 0.0,
+            0.0,
+            singular[:, :, None]
+            * (
+                basis_values[:, None, :] * jacobian[:, None, None]
+                - target_jacobian[None, :, None] * basis_target[None, :, :]
+            ),
         )
 
     estimate = adaptive_interval_callable(regularized, bounds, self_plan)
@@ -526,9 +545,7 @@ def evaluate_double_layer_self_panel_weights_2d(
     stop = start + order
     node_reference = panelization.references[start:stop, 0]
     differences = node_reference[:, None] - node_reference[None, :]
-    barycentric_weights = jnp.reciprocal(
-        jnp.prod(differences + jnp.eye(order), axis=1)
-    )
+    barycentric_weights = jnp.reciprocal(jnp.prod(differences + jnp.eye(order), axis=1))
     left_span = target_reference_ - bounds[0]
     right_span = bounds[1] - target_reference_
     symmetric_span = jnp.minimum(left_span, right_span)
@@ -647,16 +664,13 @@ def _panel_direct(potential, target: Array, panel_id: int, /) -> Array:
         )(target, sources, normals)
     return jnp.sum(kernels * weights * density)
 
+
 def _panel_plan(plan: AdaptiveQuadraturePlan, panel_count: int) -> AdaptiveQuadraturePlan:
     absolute = (
-        None
-        if plan.absolute_tolerance is None
-        else plan.absolute_tolerance / panel_count
+        None if plan.absolute_tolerance is None else plan.absolute_tolerance / panel_count
     )
     relative = (
-        None
-        if plan.relative_tolerance is None
-        else plan.relative_tolerance / panel_count
+        None if plan.relative_tolerance is None else plan.relative_tolerance / panel_count
     )
     return AdaptiveQuadraturePlan(
         plan.rule,
@@ -668,7 +682,6 @@ def _panel_plan(plan: AdaptiveQuadraturePlan, panel_count: int) -> AdaptiveQuadr
         collect_partition=plan.collect_partition,
         throw=False,
     )
-
 
 
 def evaluate_laplace_adaptive_2d(

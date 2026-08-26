@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+from operator import index
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -13,7 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import AbstractAttribute, StrictModule
 from ...linalg import (
     AbstractLinearOperator,
@@ -68,6 +70,7 @@ FLOQUET_INVALID_ORBIT = 1
 FLOQUET_TANGENT_FAILED = 2
 FLOQUET_NONFINITE = 3
 FLOQUET_KRYLOV_BREAKDOWN = 4
+FLOQUET_NEUTRAL_MISSING = 5
 
 
 class AbstractPhaseCondition(StrictModule):
@@ -112,18 +115,26 @@ class OrthogonalityPhaseCondition(AbstractPhaseCondition):
             raise ValueError(
                 "Reference state and tangent must have the state layout shape."
             )
+        if (
+            state.dtype != tangent.dtype
+            or not jnp.issubdtype(state.dtype, jnp.inexact)
+            or jnp.iscomplexobj(state)
+        ):
+            raise TypeError(
+                "Reference state and tangent must share one real inexact dtype."
+            )
         if not bool(
             jnp.all(jnp.isfinite(state))
             & jnp.all(jnp.isfinite(tangent))
-            & (jnp.linalg.norm(tangent.reshape((-1,))) > 0.0)
+            & (GeometryPrecisionPolicy().norm(tangent.reshape((-1,))) > 0.0)
         ):
             raise ValueError("Reference state and nonzero tangent must be finite.")
         identifier = (
             "orthogonality-phase:"
             + canonical_fingerprint(
                 {
-                    "state": np.asarray(state).tolist(),
-                    "tangent": np.asarray(tangent).tolist(),
+                    "state": array_tree_fingerprint(state),
+                    "tangent": array_tree_fingerprint(tangent),
                     "layout": state_layout.layout_id,
                 }
             )
@@ -171,14 +182,21 @@ class ComponentPhaseCondition(AbstractPhaseCondition):
     ):
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be a StateLayout.")
-        index = int(component)
-        if index < 0 or index >= state_layout.size:
+        if isinstance(component, bool):
+            raise TypeError("component must be an integer.")
+        index_ = index(component)
+        if index_ < 0 or index_ >= state_layout.size:
             raise ValueError("component is out of range.")
         resolved_value = jnp.asarray(value)
-        if resolved_value.shape != () or not bool(jnp.isfinite(resolved_value)):
-            raise ValueError("value must be one finite scalar.")
+        if (
+            resolved_value.shape != ()
+            or jnp.iscomplexobj(resolved_value)
+            or not jnp.issubdtype(resolved_value.dtype, jnp.inexact)
+            or not bool(jnp.isfinite(resolved_value))
+        ):
+            raise ValueError("value must be one finite real inexact scalar.")
         identifier = (
-            f"component-phase:index={index}:value={float(resolved_value):.17g}:"
+            f"component-phase:index={index_}:value={float(resolved_value):.17g}:"
             f"layout={state_layout.layout_id}"
             if phase_id is None
             else str(phase_id)
@@ -187,7 +205,7 @@ class ComponentPhaseCondition(AbstractPhaseCondition):
             raise ValueError("phase_id must be non-empty.")
         self.value = resolved_value
         self.state_layout = state_layout
-        self.component = index
+        self.component = index_
         self.phase_id = identifier
 
     def evaluate(
@@ -226,7 +244,9 @@ class PeriodicOrbitProblem(StrictModule):
             raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
         if kind not in ("flow", "map"):
             raise ValueError("kind must be 'flow' or 'map'.")
-        segments = int(num_segments)
+        if isinstance(num_segments, bool):
+            raise TypeError("num_segments must be an integer.")
+        segments = index(num_segments)
         start = float(start_coordinate)
         if segments < 1:
             raise ValueError("num_segments must be positive.")
@@ -359,6 +379,10 @@ def periodic_nodes_from_state(
     state = jnp.asarray(initial_state)
     if state.shape != problem.state_layout.shape:
         raise ValueError("initial_state must have the problem state layout shape.")
+    if jnp.iscomplexobj(state) or not jnp.issubdtype(state.dtype, jnp.inexact):
+        raise TypeError("Periodic node initialization requires real inexact state.")
+    if not bool(jnp.all(jnp.isfinite(state))):
+        raise ValueError("initial_state must be finite.")
     if problem.kind == "flow":
         if period is None:
             raise ValueError("Flow node initialization requires a period.")
@@ -530,10 +554,20 @@ def solve_periodic_orbit(
         raise TypeError("problem must be a PeriodicOrbitProblem.")
     if linear_method not in ("dense", "matrix_free"):
         raise ValueError("linear_method must be 'dense' or 'matrix_free'.")
-    iterations_limit = int(max_iterations)
-    line_search_limit = int(max_line_search)
-    if iterations_limit < 1 or line_search_limit < 1:
-        raise ValueError("max_iterations and max_line_search must be positive.")
+    integer_values = (
+        max_iterations,
+        max_line_search,
+        max_dense_dimension,
+        krylov_max_iterations,
+    )
+    if any(isinstance(value, bool) for value in integer_values):
+        raise TypeError("Periodic solver capacities must be integers.")
+    iterations_limit = index(max_iterations)
+    line_search_limit = index(max_line_search)
+    dense_limit = index(max_dense_dimension)
+    krylov_limit = index(krylov_max_iterations)
+    if min(iterations_limit, line_search_limit, dense_limit, krylov_limit) < 1:
+        raise ValueError("Periodic solver capacities must be positive.")
     relative_tolerance = float(rtol)
     absolute_tolerance = float(atol)
     minimum_scale = float(min_step_scale)
@@ -552,6 +586,10 @@ def solve_periodic_orbit(
             "full-complex spectral evolution with HermitianCoordinateEvolution."
         )
     expected = (problem.num_segments,) + problem.state_layout.shape
+    if not jnp.issubdtype(nodes.dtype, jnp.inexact):
+        raise TypeError("Periodic orbit nodes must use an inexact dtype.")
+    if not bool(jnp.all(jnp.isfinite(nodes))):
+        raise ValueError("initial_nodes must be finite.")
     if nodes.shape == problem.state_layout.shape:
         nodes = periodic_nodes_from_state(
             problem,
@@ -576,10 +614,10 @@ def solve_periodic_orbit(
     adapter = PeriodicOrbitResidual(problem)
     values = adapter.pack(nodes, period)
     dimension = int(values.size)
-    if linear_method == "dense" and dimension > int(max_dense_dimension):
+    if linear_method == "dense" and dimension > dense_limit:
         raise ValueError(
             f"Dense periodic solve dimension {dimension} exceeds "
-            f"max_dense_dimension={int(max_dense_dimension)}."
+            f"max_dense_dimension={dense_limit}."
         )
     linear_policy = (
         LinearSolvePolicy(DenseLU())
@@ -589,7 +627,7 @@ def solve_periodic_orbit(
             tolerance=TolerancePolicy(
                 relative=krylov_tolerance,
                 absolute=0.0,
-                max_steps=krylov_max_iterations,
+                max_steps=krylov_limit,
             ),
         )
     )
@@ -606,8 +644,7 @@ def solve_periodic_orbit(
         relative_residual=relative_tolerance,
         maximum_steps=iterations_limit,
         maximum_evaluations=1 + iterations_limit * (line_search_limit + 2),
-        maximum_linear_iterations=iterations_limit
-        * max(int(krylov_max_iterations), dimension),
+        maximum_linear_iterations=iterations_limit * max(krylov_limit, dimension),
     )
     nonlinear_result = root(
         adapter.as_nonlinear_problem(values.dtype),
@@ -645,6 +682,11 @@ def solve_periodic_orbit(
     ).astype(jnp.int32)
     evolution_valid = _orbit_evolution_valid(final_values, problem, args)
     finite = jnp.all(jnp.isfinite(final_nodes)) & jnp.isfinite(final_period)
+    periodic_status = jnp.where(
+        (periodic_status == PERIODIC_SUCCESS) & ~evolution_valid,
+        PERIODIC_EVOLUTION_FAILED,
+        periodic_status,
+    )
     valid = nonlinear_result.successful & evolution_valid & finite
     diagnostics = nonlinear_result.diagnostics
     history = PeriodicOrbitHistory(
@@ -664,7 +706,7 @@ def solve_periodic_orbit(
         period=final_period,
         residual=jnp.asarray(nonlinear_result.residual),
         residual_norm=diagnostics.final_residual_norm,
-        converged=nonlinear_result.successful,
+        converged=valid,
         valid=valid,
         status=periodic_status,
         iterations=diagnostics.iterations,
@@ -774,18 +816,34 @@ def floquet_spectrum(
     if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("stability_tolerance must be finite and positive.")
     dimension = orbit.problem.state_layout.size
+    if isinstance(max_full_dimension, bool):
+        raise TypeError("max_full_dimension must be an integer.")
+    full_limit = index(max_full_dimension)
+    if full_limit < 1:
+        raise ValueError("max_full_dimension must be positive.")
+    if leading_k is not None and isinstance(leading_k, bool):
+        raise TypeError("leading_k must be an integer or None.")
+    requested_count = (
+        dimension
+        if method == "full"
+        else min(dimension, 1 if leading_k is None else index(leading_k))
+    )
+    if requested_count < 1:
+        raise ValueError("leading_k must be positive or None.")
+    if krylov_dimension is not None and isinstance(krylov_dimension, bool):
+        raise TypeError("krylov_dimension must be an integer or None.")
     monodromy = None
     eigen_result = None
     status = FLOQUET_SUCCESS
     if not bool(orbit.valid):
-        multipliers = jnp.full((dimension,), jnp.nan + 0.0j)
-        modes = jnp.full((dimension, dimension), jnp.nan + 0.0j)
+        multipliers = jnp.full((requested_count,), jnp.nan + 0.0j)
+        modes = jnp.full((dimension, requested_count), jnp.nan + 0.0j)
         status = FLOQUET_INVALID_ORBIT
     elif method == "full":
-        if dimension > int(max_full_dimension):
+        if dimension > full_limit:
             raise ValueError(
                 f"Full Floquet dimension {dimension} exceeds "
-                f"max_full_dimension={int(max_full_dimension)}."
+                f"max_full_dimension={full_limit}."
             )
         columns = []
         action_valid = True
@@ -810,13 +868,11 @@ def floquet_spectrum(
         elif not bool(eigen_result.successful):
             status = FLOQUET_NONFINITE
     else:
-        count = min(dimension, 1 if leading_k is None else int(leading_k))
-        if count < 1:
-            raise ValueError("leading_k must be positive or None.")
+        count = requested_count
         subspace = (
             min(dimension, max(count + 4, 2 * count))
             if krylov_dimension is None
-            else int(krylov_dimension)
+            else index(krylov_dimension)
         )
         if subspace < count or subspace > dimension:
             raise ValueError(
@@ -847,15 +903,26 @@ def floquet_spectrum(
     finite = jnp.all(jnp.isfinite(multipliers)) & jnp.all(jnp.isfinite(modes))
     if status == FLOQUET_SUCCESS and not bool(finite):
         status = FLOQUET_NONFINITE
+    complete_spectrum = method == "full" or requested_count == dimension
+    neutral_certified = False
+    if (
+        orbit.problem.kind == "flow"
+        and multipliers.size
+        and complete_spectrum
+        and status == FLOQUET_SUCCESS
+    ):
+        neutral_index = jnp.argmin(jnp.abs(multipliers - 1.0)).astype(jnp.int32)
+        neutral_distance = jnp.abs(multipliers[neutral_index] - 1.0)
+        neutral_certified = bool(neutral_distance <= tolerance)
+        if not neutral_certified:
+            status = FLOQUET_NEUTRAL_MISSING
+    else:
+        neutral_index = jnp.asarray(-1, dtype=jnp.int32)
     valid = jnp.asarray(status == FLOQUET_SUCCESS) & finite
     interval = orbit.period
     exponents = jnp.log(jnp.abs(multipliers)) / interval
-    if orbit.problem.kind == "flow" and multipliers.size:
-        neutral_index = jnp.argmin(jnp.abs(multipliers - 1.0)).astype(jnp.int32)
-    else:
-        neutral_index = jnp.asarray(-1, dtype=jnp.int32)
     included = jnp.ones(multipliers.shape, dtype=bool)
-    if orbit.problem.kind == "flow" and multipliers.size:
+    if neutral_certified:
         included = included.at[neutral_index].set(False)
     relevant = jnp.where(included, jnp.abs(multipliers), 0.0)
     spectral_radius = jnp.max(relevant, initial=0.0)
@@ -908,6 +975,7 @@ __all__ = [
     "FLOQUET_NONFINITE",
     "FLOQUET_SUCCESS",
     "FLOQUET_TANGENT_FAILED",
+    "FLOQUET_NEUTRAL_MISSING",
     "FloquetIndicators",
     "FloquetMethod",
     "FloquetResult",

@@ -213,7 +213,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
             )
         if not self.active:
             return array
-        return jax.lax.complex(array[0], array[1])
+        return jax.lax.complex(array[0], array[1]).astype(jnp.dtype(self.public_dtype))
 
     def pack_diffusion(
         self,
@@ -246,7 +246,7 @@ class _PreparedDiffraxStateAdapter(StrictModule, NonTrainableState):
             )
         real = jnp.take(array, 0, axis=axis)
         imag = jnp.take(array, 1, axis=axis)
-        return jax.lax.complex(real, imag)
+        return jax.lax.complex(real, imag).astype(jnp.dtype(self.public_dtype))
 
     def pack_args(self, args: Any, /) -> Any:
         return _pack_complex_tree(args) if self.active else args

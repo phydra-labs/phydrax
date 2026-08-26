@@ -8,7 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -80,8 +80,8 @@ class GeneralizedTauPlan(StrictModule, NonTrainableState):
             {
                 "kind": "generalized-tau-plan",
                 "operator": operator.operator_id,
-                "constraint_shape": list(constraints.shape),
-                "lift_shape": list(lift.shape),
+                "constraints": array_tree_fingerprint(constraints),
+                "lift": array_tree_fingerprint(lift),
                 "maximum_augmented_dimension": maximum,
             }
         )

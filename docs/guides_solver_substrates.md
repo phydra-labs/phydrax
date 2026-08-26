@@ -163,9 +163,12 @@ auxiliary state. Unsupported combinations fail during preparation.
 
 PEC/PMC traces, periodic quotient topology, unitary Bloch twists, passive impedance
 boundaries, conforming jumps, and norm-compatible mortars remain explicit prepared
-objects. Structured electromagnetic CPML owns convolutional memory separately from
-material state and observers. The runtime reports electric and magnetic constraints,
-source, boundary, material, and PML power, energy, and CFL evidence.
+objects. Structured electromagnetic CPML owns one convolutional memory per derivative
+axis, separately from material state and observers; both electric and magnetic forces
+consume those directional memories. The physical magnetic flux is projected through
+the prepared minimum-norm `phydrax.linalg` solve so the topological magnetic constraint
+remains exact under anisotropic damping. The runtime reports electric and magnetic
+constraints, source, boundary, material, and PML power, energy, and CFL evidence.
 
 Specialized materials, boundaries, observers, modal analysis, and adjoints live under
 `phydrax.solver.maxwell`; the solver root exposes only the four core Maxwell lifecycle

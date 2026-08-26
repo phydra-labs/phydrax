@@ -87,7 +87,10 @@ def solve_channel_sbdf2(
     selected = ChannelSBDF2Method() if method is None else method
     if not isinstance(selected, ChannelSBDF2Method):
         raise TypeError("method must be ChannelSBDF2Method or None.")
-    saved = jnp.asarray(times, dtype=float)
+    raw_saved = jnp.asarray(times)
+    if jnp.iscomplexobj(raw_saved):
+        raise TypeError("times must be real.")
+    saved = raw_saved.astype(jnp.result_type(raw_saved.dtype, jnp.float32))
     saved_host = np.asarray(saved)
     if (
         saved.ndim != 1
@@ -164,16 +167,32 @@ def solve_channel_sbdf2(
     initial_valid = jnp.all(jnp.isfinite(initial))
     diagnostics = ChannelFlowDiagnosticsHistory(
         stokes_residual=jnp.concatenate(
-            (jnp.asarray([jnp.nan]), diagnostic_values[0]), axis=0
+            (
+                jnp.asarray([jnp.nan], dtype=diagnostic_values[0].dtype),
+                diagnostic_values[0],
+            ),
+            axis=0,
         ),
         divergence_norm=jnp.concatenate(
-            (jnp.asarray([jnp.nan]), diagnostic_values[1]), axis=0
+            (
+                jnp.asarray([jnp.nan], dtype=diagnostic_values[1].dtype),
+                diagnostic_values[1],
+            ),
+            axis=0,
         ),
         wall_residual=jnp.concatenate(
-            (jnp.asarray([jnp.nan]), diagnostic_values[2]), axis=0
+            (
+                jnp.asarray([jnp.nan], dtype=diagnostic_values[2].dtype),
+                diagnostic_values[2],
+            ),
+            axis=0,
         ),
         pressure_gauge_residual=jnp.concatenate(
-            (jnp.asarray([jnp.nan]), diagnostic_values[3]), axis=0
+            (
+                jnp.asarray([jnp.nan], dtype=diagnostic_values[3].dtype),
+                diagnostic_values[3],
+            ),
+            axis=0,
         ),
         bulk_velocity=jnp.concatenate(
             (jnp.full((1, 2), jnp.nan, dtype=initial.dtype), diagnostic_values[4]),
@@ -193,7 +212,15 @@ def solve_channel_sbdf2(
         diagnostics=diagnostics,
         method=selected,
         dynamics=dynamics,
-        solver_id=f"solver:channel-sbdf2:{selected.method_id}",
+        solver_id=canonical_fingerprint(
+            {
+                "kind": "channel-sbdf2-solve-v1",
+                "method": selected.method_id,
+                "dynamics": dynamics.compilation_id,
+                "step_size": float(durations[0]),
+                "steps": int(saved.size) - 1,
+            }
+        ),
     )
 
 

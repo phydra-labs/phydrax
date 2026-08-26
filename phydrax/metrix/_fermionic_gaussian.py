@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import HermitianSpectrum
 
 
 class FermionicGaussianState(StrictModule):
@@ -26,12 +27,15 @@ class FermionicGaussianState(StrictModule):
         *,
         tolerance: float = 1e-9,
     ):
-        value = jnp.asarray(covariance, dtype=float)
+        raw = jnp.asarray(covariance)
+        if jnp.iscomplexobj(raw):
+            raise TypeError("Majorana covariance must be real-valued.")
+        value = raw.astype(jnp.result_type(raw, 0.0))
         if value.ndim != 2 or value.shape[0] != value.shape[1] or value.shape[0] % 2:
             raise ValueError("Majorana covariance must be an even square matrix.")
         antisymmetric = 0.5 * (value - value.T)
-        spectrum = jnp.linalg.eigvalsh(1j * antisymmetric)
-        mode_spectrum = jnp.sort(jnp.abs(spectrum))[::2]
+        spectrum = HermitianSpectrum(1j * antisymmetric)
+        mode_spectrum = jnp.sort(jnp.abs(spectrum.eigenvalues))[::2]
         margin = 1.0 - jnp.max(mode_spectrum)
         purity = jnp.max(jnp.abs(mode_spectrum - 1.0))
         residual = jnp.max(jnp.abs(value + value.T))

@@ -13,6 +13,28 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
+
+
+def _dense_solve(matrix: Array, right: Array, problem_id: str, /) -> Array:
+    return solve(
+        LinearSystem(
+            DenseLinearOperator(matrix),
+            problem_id=problem_id,
+        ),
+        right,
+        policy=LinearSolvePolicy(
+            DenseLU(),
+            failure=FailurePolicy("error"),
+        ),
+    ).value
 
 
 class RCIPPreconditioner2D(StrictModule, NonTrainableState):
@@ -50,34 +72,63 @@ class RCIPPreconditioner2D(StrictModule, NonTrainableState):
         restrict = tuple(jnp.asarray(matrix) for matrix in restrictions)
         prolong = tuple(jnp.asarray(matrix) for matrix in prolongations)
         if len(fine) != len(restrict) or len(fine) != len(prolong):
-            raise ValueError("RCIP levels require matching fine, restriction, and prolongation tuples.")
+            raise ValueError(
+                "RCIP levels require matching fine, restriction, and prolongation tuples."
+            )
         previous_size = int(coarse.shape[0])
-        for matrix, restriction, prolongation in zip(fine, restrict, prolong, strict=True):
+        for matrix, restriction, prolongation in zip(
+            fine, restrict, prolong, strict=True
+        ):
             if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
                 raise ValueError("Every RCIP fine matrix must be square.")
             fine_size = int(matrix.shape[0])
             if restriction.shape != (previous_size, fine_size):
                 raise ValueError("RCIP restriction shape does not match adjacent levels.")
             if prolongation.shape != (fine_size, previous_size):
-                raise ValueError("RCIP prolongation shape does not match adjacent levels.")
+                raise ValueError(
+                    "RCIP prolongation shape does not match adjacent levels."
+                )
+            identity = jnp.eye(
+                previous_size, dtype=jnp.result_type(restriction, prolongation)
+            )
+            if not bool(
+                jnp.allclose(
+                    restriction @ prolongation,
+                    identity,
+                    rtol=1e-8,
+                    atol=1e-10,
+                )
+            ):
+                raise ValueError(
+                    "RCIP restriction/prolongation must reproduce coarse data."
+                )
             previous_size = fine_size
         if not topology_id:
             raise ValueError("RCIP topology_id must be nonempty.")
-        current = jnp.linalg.inv(fine[-1]) if fine else jnp.linalg.inv(coarse)
+        base = fine[-1] if fine else coarse
+        current = _dense_solve(
+            base,
+            jnp.eye(base.shape[0], dtype=base.dtype),
+            f"rcip:{topology_id}:finest-inverse",
+        )
         compressed_reversed = [current]
         for level in range(len(fine) - 2, -1, -1):
             compressed = restrictions[level + 1] @ current @ prolongations[level + 1]
             identity = jnp.eye(compressed.shape[0], dtype=compressed.dtype)
             local_operator = fine[level]
-            current = compressed @ jnp.linalg.inv(
-                identity + (local_operator - identity) @ compressed
+            current = _dense_solve(
+                identity + compressed @ (local_operator - identity),
+                compressed,
+                f"rcip:{topology_id}:level-{level}-compression",
             )
             compressed_reversed.append(current)
         if fine:
             compressed = restrictions[0] @ current @ prolongations[0]
             identity = jnp.eye(compressed.shape[0], dtype=compressed.dtype)
-            current = compressed @ jnp.linalg.inv(
-                identity + (coarse - identity) @ compressed
+            current = _dense_solve(
+                identity + compressed @ (coarse - identity),
+                compressed,
+                f"rcip:{topology_id}:coarse-compression",
             )
             compressed_reversed.append(current)
         compressed = tuple(reversed(compressed_reversed))

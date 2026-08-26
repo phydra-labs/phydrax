@@ -55,9 +55,7 @@ def _state_array(
 def _scalar_output(value: ArrayLike, expected_shape: tuple[int, ...], name: str) -> Array:
     array = jnp.asarray(value)
     if array.shape != expected_shape:
-        raise ValueError(
-            f"{name} must return shape {expected_shape}; got {array.shape}."
-        )
+        raise ValueError(f"{name} must return shape {expected_shape}; got {array.shape}.")
     if not jnp.issubdtype(array.dtype, jnp.floating):
         raise TypeError(f"{name} must return real floating-point values.")
     return array
@@ -172,7 +170,11 @@ class ConvexEntropyPair(StrictModule, NonTrainableState):
 
     def admissible(self, state: ArrayLike, /) -> Array:
         value = self._state_unchecked(state, "Entropy state")
-        valid = jnp.asarray(self.admissible_function(value), dtype=bool)
+        valid = jnp.asarray(self.admissible_function(value))
+        if valid.dtype != jnp.bool_:
+            raise TypeError(
+                "Entropy admissibility predicates must return Boolean values."
+            )
         if valid.shape != value.shape[:-1]:
             raise ValueError(
                 "Entropy admissibility must return the state leading shape; "
@@ -409,9 +411,7 @@ class ConvexEntropyValidationReport(StrictModule):
         self.maximum_flux_symmetrizer_asymmetry = jnp.asarray(
             maximum_flux_symmetrizer_asymmetry
         )
-        self.maximum_symmetrizer_asymmetry = jnp.asarray(
-            maximum_symmetrizer_asymmetry
-        )
+        self.maximum_symmetrizer_asymmetry = jnp.asarray(maximum_symmetrizer_asymmetry)
         self.minimum_relative_entropy = jnp.asarray(minimum_relative_entropy)
         self.maximum_diagonal_relative_entropy = jnp.asarray(
             maximum_diagonal_relative_entropy
@@ -433,8 +433,6 @@ def _precision_policy(
 
 def _maximum_abs(value: Array, precision: GeometryPrecisionPolicy, /) -> Array:
     return precision.decision(jnp.max(jnp.abs(value), initial=0.0))
-
-
 
 
 def _axis_tuple(axes: Sequence[int] | None, dimension: int, /) -> tuple[int, ...]:
@@ -483,6 +481,7 @@ def validate_convex_entropy_pair(
     policy.validate_coordinates(original)
     state = policy.compute(original)
     if comparison_states is None:
+        comparison_original = original
         comparison = state
     else:
         comparison_original = _state_array(
@@ -554,9 +553,13 @@ def validate_convex_entropy_pair(
             axis=-1,
         )
     )
-    diagonal = entropy - entropy - jnp.sum(
-        variables * (state - state),
-        axis=-1,
+    diagonal = (
+        entropy
+        - entropy
+        - jnp.sum(
+            variables * (state - state),
+            axis=-1,
+        )
     )
     minimum_relative_entropy = policy.decision(jnp.min(relative_entropy))
     maximum_diagonal_relative_entropy = _maximum_abs(diagonal, policy)
@@ -652,7 +655,10 @@ def validate_convex_entropy_pair(
         axes=selected_axes,
         precision_evidence=policy.evidence_for(
             original,
-            children={"metric": metric_validation.precision_evidence},
+            children={
+                "comparison": policy.evidence_for(comparison_original),
+                "metric": metric_validation.precision_evidence,
+            },
         ),
     )
     if raise_on_error and not bool(jax.device_get(valid)):
@@ -673,7 +679,9 @@ def validate_convex_entropy_pair(
     return report
 
 
-def _euler_entropy(system: EulerSystem | CompressibleNavierStokesSystem, state: ArrayLike, /) -> Array:
+def _euler_entropy(
+    system: EulerSystem | CompressibleNavierStokesSystem, state: ArrayLike, /
+) -> Array:
     value = jnp.asarray(state)
     density = value[..., 0]
     pressure = system.pressure(value)

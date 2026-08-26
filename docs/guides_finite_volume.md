@@ -72,6 +72,12 @@ result = stepper.advance(
 `FiniteVolumePlan` accepts only interval-primary `PreparedTensorGrid` support. Runtime
 state has shape `cell_shape + (component_count,)`; component names and topological
 location remain static discretization metadata.
+Callable semantics are always explicit identity boundaries. A
+`ConservationProblemIR` with `source=...` also requires `source_id=...`;
+callable face interpolation requires `function_id`, and a
+`CharacteristicSystem` requires `system_id`. These IDs participate in prepared
+program fingerprints; callable `repr` or process-local identity is never used.
+
 
 ## Cell and face geometry
 

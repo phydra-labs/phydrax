@@ -23,6 +23,9 @@ from ..dynamics import (
 )
 
 
+HERMITIAN_COORDINATE_INVALID = -1
+
+
 class _HermitianContinuousVectorField(StrictModule):
     system: ContinuousSystem
     coordinates: HermitianSpectralCoordinates
@@ -121,19 +124,34 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
         target = jnp.asarray(target_coordinate)
         if source.shape != () or target.shape != ():
             raise ValueError("Evolution segment coordinates must be scalar.")
+        if jnp.iscomplexobj(source) or jnp.iscomplexobj(target):
+            raise TypeError("Evolution segment coordinates must be real.")
         result = self.evolution.advance(
             self.coordinates.from_real_coordinates(coordinates),
             source,
             target,
             args,
         )
-        final_coordinates = self.coordinates.to_real_coordinates(result.final_state)
+        final_state = self.coordinates.validate_state(result.final_state)
+        defect = self.coordinates.reality_defect(final_state)
+        representation_valid = (
+            jnp.all(jnp.isfinite(final_state))
+            & jnp.isfinite(defect)
+            & (defect <= self.coordinates.reality_tolerance)
+        )
+        final_coordinates = self.coordinates.to_real_coordinates(
+            self.coordinates.project(final_state)
+        )
         return EvolutionStep(
             source_coordinate=source,
             target_coordinate=target,
             final_state=final_coordinates,
-            valid=result.valid,
-            status=result.status,
+            valid=result.valid & representation_valid,
+            status=jnp.where(
+                representation_valid,
+                result.status,
+                HERMITIAN_COORDINATE_INVALID,
+            ),
             backend_status=result.backend_status,
             system_id=self.system.system_id,
             evolution_id=self.evolution_id,
@@ -158,6 +176,8 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
         target = jnp.asarray(target_coordinate)
         if source.shape != () or target.shape != ():
             raise ValueError("Evolution segment coordinates must be scalar.")
+        if jnp.iscomplexobj(source) or jnp.iscomplexobj(target):
+            raise TypeError("Evolution segment coordinates must be real.")
         result = self.evolution.tangent_action(
             self.coordinates.from_real_coordinates(coordinates),
             self.coordinates.from_real_coordinates(vector),
@@ -165,12 +185,28 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             target,
             args,
         )
+        primal_state = self.coordinates.validate_state(result.primal.final_state)
+        tangent_state = self.coordinates.validate_state(result.tangent)
+        primal_defect = self.coordinates.reality_defect(primal_state)
+        tangent_defect = self.coordinates.reality_defect(tangent_state)
+        representation_valid = (
+            jnp.all(jnp.isfinite(primal_state))
+            & jnp.all(jnp.isfinite(tangent_state))
+            & (primal_defect <= self.coordinates.reality_tolerance)
+            & (tangent_defect <= self.coordinates.reality_tolerance)
+        )
         primal = EvolutionStep(
             source_coordinate=source,
             target_coordinate=target,
-            final_state=self.coordinates.to_real_coordinates(result.primal.final_state),
-            valid=result.primal.valid,
-            status=result.primal.status,
+            final_state=self.coordinates.to_real_coordinates(
+                self.coordinates.project(primal_state)
+            ),
+            valid=result.primal.valid & representation_valid,
+            status=jnp.where(
+                representation_valid,
+                result.primal.status,
+                HERMITIAN_COORDINATE_INVALID,
+            ),
             backend_status=result.primal.backend_status,
             system_id=self.system.system_id,
             evolution_id=self.evolution_id,
@@ -179,14 +215,20 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             discretization_id=self.discretization_id,
             approximation_id=self.approximation_id,
         )
-        propagated = self.coordinates.to_real_coordinates(result.tangent)
+        propagated = self.coordinates.to_real_coordinates(
+            self.coordinates.project(tangent_state)
+        )
         return EvolutionTangentStep(
             primal=primal,
             tangent=propagated,
-            valid=result.valid,
-            status=result.status,
+            valid=result.valid & representation_valid,
+            status=jnp.where(
+                representation_valid,
+                result.status,
+                HERMITIAN_COORDINATE_INVALID,
+            ),
             tangent_method_id=self.tangent_method_id,
         )
 
 
-__all__ = ["HermitianCoordinateEvolution"]
+__all__ = ["HERMITIAN_COORDINATE_INVALID", "HermitianCoordinateEvolution"]

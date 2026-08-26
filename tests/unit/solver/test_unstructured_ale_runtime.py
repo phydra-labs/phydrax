@@ -76,6 +76,7 @@ def _prepared_runtime(
         system,
         boundaries,
         source=source,
+        source_id=None if source is None else "ale-runtime-test-source",
     )
     coupling = None
     if motion is not None:

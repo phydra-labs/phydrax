@@ -43,6 +43,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
     expansion_order: int = eqx.field(static=True)
     leaf_size: int = eqx.field(static=True)
     opening_angle: float = eqx.field(static=True)
+    source_panelization_id: str = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
 
     def __init__(
@@ -54,13 +55,16 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         leaf_size: int = 32,
         opening_angle: float = 0.5,
     ):
-        if not isinstance(potential, LaplaceLayerPotential2D) or potential.kind != "single":
+        if (
+            not isinstance(potential, LaplaceLayerPotential2D)
+            or potential.kind != "single"
+        ):
             raise TypeError("LaplaceTreecodeBackend2D requires a single Laplace layer.")
         order = int(expansion_order)
         leaf = int(leaf_size)
         angle = float(opening_angle)
-        if order < 1 or leaf < 1 or not math.isfinite(angle) or angle <= 0.0:
-            raise ValueError("Invalid Laplace treecode policy.")
+        if order < 1 or leaf < 1 or not math.isfinite(angle) or not 0.0 < angle < 1.0:
+            raise ValueError("Laplace treecode opening_angle must lie in (0, 1).")
         points = np.asarray(potential.panelization.points, dtype=float)
         centers: list[np.ndarray] = []
         radii: list[float] = []
@@ -100,13 +104,17 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         self.node_centers = jnp.asarray(np.asarray(centers), dtype=float)
         self.node_radii = jnp.asarray(np.asarray(radii), dtype=float)
         self.node_children = jnp.asarray(np.asarray(children), dtype=jnp.int32)
-        self.node_indices = tuple(jnp.asarray(indices, dtype=jnp.int32) for indices in index_sets)
+        self.node_indices = tuple(
+            jnp.asarray(indices, dtype=jnp.int32) for indices in index_sets
+        )
         self.expansion_order = order
         self.leaf_size = leaf
         self.opening_angle = angle
+        self.source_panelization_id = potential.panelization.panelization_id
         self.backend_id = canonical_fingerprint(
             {
                 "kind": "laplace-treecode-2d-v1",
+                "source_panelization_id": self.source_panelization_id,
                 "source_points": array_tree_fingerprint(self.source_points),
                 "expansion_order": order,
                 "leaf_size": leaf,
@@ -139,8 +147,14 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
         *,
         absolute_tolerance: float = 1e-6,
     ) -> LaplaceTreecodeEvaluation2D:
-        if not isinstance(potential, LaplaceLayerPotential2D) or potential.kind != "single":
-            raise TypeError("LaplaceTreecodeBackend2D requires a matching single layer.")
+        if (
+            not isinstance(potential, LaplaceLayerPotential2D)
+            or potential.kind != "single"
+            or potential.panelization.panelization_id != self.source_panelization_id
+        ):
+            raise TypeError(
+                "LaplaceTreecodeBackend2D requires its bound single-layer source geometry."
+            )
         values = jnp.asarray(targets, dtype=float)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Treecode targets must have shape (target_count, 2).")
@@ -149,6 +163,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
             raise ValueError("absolute_tolerance must be finite and nonnegative.")
         moments = self._moments(potential.density)
         source = self.source_points[:, 0] + 1j * self.source_points[:, 1]
+        absolute_charge = jnp.abs(self.source_weights * potential.density)
         outputs = []
         errors = []
         direct_count = [0]
@@ -169,9 +184,7 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
                         potential.density[indices]
                         * self.source_weights[indices]
                         * (
-                            -jnp.log(
-                                jnp.abs(target_complex - source[indices])
-                            )
+                            -jnp.log(jnp.abs(target_complex - source[indices]))
                             / (2.0 * jnp.pi)
                         )
                     )
@@ -180,15 +193,23 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
                     multipole_count[0] += 1
                     moment = moments[node]
                     high = -jnp.real(moment[0] * jnp.log(displacement)) / (2.0 * jnp.pi)
-                    low = high
                     for degree in range(1, self.expansion_order + 1):
-                        term = jnp.real(
+                        high = high + jnp.real(
                             moment[degree] / (degree * displacement**degree)
                         ) / (2.0 * jnp.pi)
-                        high = high + term
-                        if degree < self.expansion_order:
-                            low = low + term
-                    return high, jnp.abs(high - low)
+                    ratio = self.node_radii[node] / distance
+                    charge_mass = jnp.sum(absolute_charge[self.node_indices[node]])
+                    tail = (
+                        charge_mass
+                        * ratio ** (self.expansion_order + 1)
+                        / (
+                            2.0
+                            * jnp.pi
+                            * (self.expansion_order + 1)
+                            * jnp.maximum(1.0 - ratio, 1e-15)
+                        )
+                    )
+                    return high, tail
                 value = jnp.asarray(0.0)
                 error = jnp.asarray(0.0)
                 for child in children:
@@ -225,6 +246,9 @@ class LaplaceTreecodeBackend2D(StrictModule, NonTrainableState):
                     "kind": "laplace-treecode-evaluation-2d-v1",
                     "backend_id": self.backend_id,
                     "target_count": int(values.shape[0]),
+                    "potential": potential.representation_id,
+                    "targets": array_tree_fingerprint(values),
+                    "density": array_tree_fingerprint(potential.density),
                     "tolerance": tolerance,
                 }
             ),

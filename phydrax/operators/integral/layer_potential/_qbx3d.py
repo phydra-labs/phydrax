@@ -13,18 +13,16 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
-from ...._interpolation import barycentric_basis
 from ...._strict import StrictModule
 from ....geometry import GeometryCapability, SignReliability, ZeroSetAccuracy
 from ....integration import (
     adaptive_triangle_callable,
     AdaptiveTrianglePlan,
-    GaussLegendreRule,
     IntegrationStatus,
-    reference_rule_data,
-    ReferenceTriangleRule,
 )
 from ....operators.differential._jet import jet_terms
+from ._qbx2d import _bounded_expansion_tail
+from ._surface3d import interpolate_surface_panel_density
 
 
 class QBXEvaluation3D(StrictModule):
@@ -97,10 +95,14 @@ def evaluate_qbx_3d(
         raise ValueError("3D QBX order and radius_factor must be positive and finite.")
     panelization = potential.panelization
     geometry = panelization.geometry
-    if geometry is None or not geometry.has_capability(
-        GeometryCapability.SIGNED_DISTANCE
+    if (
+        geometry is None
+        or not geometry.has_capability(GeometryCapability.SIGNED_DISTANCE)
+        or not geometry.has_capability(GeometryCapability.BOUNDARY_NORMAL)
     ):
-        raise TypeError("3D QBX requires compiled signed-distance geometry.")
+        raise TypeError(
+            "3D QBX requires compiled signed-distance geometry and target normals."
+        )
     certificate = geometry.field_certificate
     if (
         certificate.zero_set_accuracy is not ZeroSetAccuracy.EXACT
@@ -116,27 +118,6 @@ def evaluate_qbx_3d(
             axis=1,
         )
     )
-    quadrature_order = panelization.quadrature_order
-    reference_data = reference_rule_data(
-        ReferenceTriangleRule(GaussLegendreRule(quadrature_order))
-    )
-    reference_grid = reference_data.points.reshape(
-        (quadrature_order, quadrature_order, 2)
-    )
-    first_nodes = reference_grid[:, 0, 0]
-    second_nodes = reference_grid[0, :, 1] / (1.0 - first_nodes[0])
-    first_weights = jnp.reciprocal(
-        jnp.prod(
-            first_nodes[:, None] - first_nodes[None, :] + jnp.eye(quadrature_order),
-            axis=1,
-        )
-    )
-    second_weights = jnp.reciprocal(
-        jnp.prod(
-            second_nodes[:, None] - second_nodes[None, :] + jnp.eye(quadrature_order),
-            axis=1,
-        )
-    )
     outputs = []
     coefficient_errors = []
     truncation_errors = []
@@ -144,13 +125,18 @@ def evaluate_qbx_3d(
     statuses = []
     evaluations = []
     associations = []
-    reference_vertices = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
     for target in values:
         distances = jnp.linalg.norm(target[None, :] - panelization.points, axis=-1)
         node_index = int(jnp.argmin(distances))
         panel_id = node_index // panelization.nodes_per_panel
         radius = factor * panel_measures[panel_id]
-        normal = panelization.normals[node_index]
+        candidate_normal = geometry.boundary_normal(target[None, :])[0]
+        candidate_norm = jnp.sqrt(jnp.sum(candidate_normal * candidate_normal))
+        normal = jnp.where(
+            jnp.all(jnp.isfinite(candidate_normal)) & (candidate_norm > 0.0),
+            candidate_normal / candidate_norm,
+            panelization.normals[node_index],
+        )
         centers = []
         if target_side in ("interior", "boundary"):
             centers.append(target - radius * normal)
@@ -175,6 +161,7 @@ def evaluate_qbx_3d(
                 center_errors.append(jnp.asarray(jnp.inf))
                 center_status.append(jnp.asarray(int(IntegrationStatus.INVALID_BOUNDS)))
                 center_evaluations.append(jnp.asarray(0, dtype=jnp.int32))
+                coefficient_errors.append(jnp.asarray(jnp.inf))
                 continue
             coefficients = None
             coefficient_error = jnp.asarray(0.0)
@@ -186,33 +173,13 @@ def evaluate_qbx_3d(
                 start = source_panel * panelization.nodes_per_panel
                 stop = start + panelization.nodes_per_panel
                 source_chart = panelization.chart_indices[start]
-                source_density = potential.density[start:stop].reshape(
-                    (quadrature_order, quadrature_order)
-                )
 
                 def density_at(reference: Array) -> Array:
-                    first_basis = jax.vmap(
-                        lambda value: barycentric_basis(
-                            value,
-                            first_nodes,
-                            first_weights,
-                        )
-                    )(reference[:, 0])
-                    second_coordinate = reference[:, 1] / jnp.maximum(
-                        1.0 - reference[:, 0], 1e-15
-                    )
-                    second_basis = jax.vmap(
-                        lambda value: barycentric_basis(
-                            value,
-                            second_nodes,
-                            second_weights,
-                        )
-                    )(second_coordinate)
-                    return jnp.einsum(
-                        "ni,nj,ij->n",
-                        first_basis,
-                        second_basis,
-                        source_density,
+                    return interpolate_surface_panel_density(
+                        panelization,
+                        potential.density,
+                        source_panel,
+                        reference,
                     )
 
                 def coefficient_integrand(reference: Array) -> Array:
@@ -232,7 +199,7 @@ def evaluate_qbx_3d(
                                 source,
                                 source_normal,
                                 direction,
-                                expansion_order,
+                                expansion_order + 1,
                             )
                             * jacobian
                             * density
@@ -247,7 +214,7 @@ def evaluate_qbx_3d(
 
                 estimate = adaptive_triangle_callable(
                     coefficient_integrand,
-                    reference_vertices[None, ...],
+                    panelization.panel_reference_vertices[source_panel][None, ...],
                     triangle_plan,
                 )
                 coefficients = (
@@ -255,16 +222,25 @@ def evaluate_qbx_3d(
                     if coefficients is None
                     else coefficients + estimate.value
                 )
-                if estimate.error_estimate is not None:
-                    coefficient_error = coefficient_error + estimate.error_estimate
+                coefficient_error = (
+                    jnp.asarray(jnp.inf)
+                    if estimate.error_estimate is None
+                    else coefficient_error + estimate.error_estimate
+                )
                 status = jnp.maximum(status, estimate.status)
                 evaluation_count = evaluation_count + estimate.num_evaluations
             if coefficients is None:
                 raise ValueError("3D QBX coefficient quadrature has no panels.")
             high = _expand(coefficients, target - center, expansion_order)
             low = _expand(coefficients, target - center, max(expansion_order - 1, 0))
+            extra = _expand(coefficients, target - center, expansion_order + 1)
             center_values.append(high)
-            center_errors.append(jnp.abs(high - low))
+            center_errors.append(
+                _bounded_expansion_tail(
+                    high - low,
+                    extra - high,
+                )
+            )
             center_status.append(status)
             center_evaluations.append(evaluation_count)
             coefficient_errors.append(coefficient_error)

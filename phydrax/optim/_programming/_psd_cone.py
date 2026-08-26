@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from operator import index
 from typing import Any
 
 import equinox as eqx
@@ -12,29 +13,49 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ...linalg import HermitianSpectrum
 from ._cones import AbstractConvexCone
 
 
 @jax.custom_jvp
 def _positive_semidefinite_part(matrix: Array, /) -> Array:
-    eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
+    working_dtype = jnp.result_type(matrix.dtype, jnp.float32)
+    working = matrix.astype(working_dtype)
+    symmetric = 0.5 * working + 0.5 * jnp.swapaxes(working, -1, -2)
+    spectrum = HermitianSpectrum(
+        symmetric,
+        tolerance=64.0 * jnp.finfo(working_dtype).eps,
+    )
+    eigenvalues = spectrum.eigenvalues
+    eigenvectors = spectrum.eigenvectors
     positive = jnp.maximum(eigenvalues, 0.0)
     projected = (eigenvectors * positive[..., None, :]) @ jnp.swapaxes(
         eigenvectors, -1, -2
     )
-    return 0.5 * (projected + jnp.swapaxes(projected, -1, -2))
+    projected = 0.5 * projected + 0.5 * jnp.swapaxes(projected, -1, -2)
+    return projected.astype(matrix.dtype)
 
 
 @_positive_semidefinite_part.defjvp
 def _positive_semidefinite_part_jvp(primals, tangents):
     (matrix,) = primals
     (tangent,) = tangents
-    eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
+    working_dtype = jnp.result_type(matrix.dtype, jnp.float32)
+    matrix = matrix.astype(working_dtype)
+    tangent = tangent.astype(working_dtype)
+    matrix = 0.5 * matrix + 0.5 * jnp.swapaxes(matrix, -1, -2)
+    tangent = 0.5 * tangent + 0.5 * jnp.swapaxes(tangent, -1, -2)
+    spectrum = HermitianSpectrum(
+        matrix,
+        tolerance=64.0 * jnp.finfo(working_dtype).eps,
+    )
+    eigenvalues = spectrum.eigenvalues
+    eigenvectors = spectrum.eigenvectors
     positive = jnp.maximum(eigenvalues, 0.0)
     projected = (eigenvectors * positive[..., None, :]) @ jnp.swapaxes(
         eigenvectors, -1, -2
     )
-    projected = 0.5 * (projected + jnp.swapaxes(projected, -1, -2))
+    projected = 0.5 * projected + 0.5 * jnp.swapaxes(projected, -1, -2)
     left = eigenvalues[..., :, None]
     right = eigenvalues[..., None, :]
     difference = left - right
@@ -56,8 +77,8 @@ def _positive_semidefinite_part_jvp(primals, tangents):
     derivative = (
         eigenvectors @ (loewner * transformed) @ jnp.swapaxes(eigenvectors, -1, -2)
     )
-    derivative = 0.5 * (derivative + jnp.swapaxes(derivative, -1, -2))
-    return projected, derivative
+    derivative = 0.5 * derivative + 0.5 * jnp.swapaxes(derivative, -1, -2)
+    return projected.astype(primals[0].dtype), derivative.astype(tangents[0].dtype)
 
 
 class PositiveSemidefiniteCone(AbstractConvexCone):
@@ -69,7 +90,9 @@ class PositiveSemidefiniteCone(AbstractConvexCone):
     _scales: tuple[float, ...] = eqx.field(static=True)
 
     def __init__(self, matrix_size: int, /):
-        size = int(matrix_size)
+        if isinstance(matrix_size, bool):
+            raise TypeError("PositiveSemidefiniteCone matrix_size must be an integer.")
+        size = index(matrix_size)
         if size < 1:
             raise ValueError("PositiveSemidefiniteCone matrix_size must be positive.")
         rows: list[int] = []
@@ -101,7 +124,8 @@ class PositiveSemidefiniteCone(AbstractConvexCone):
         rows = jnp.asarray(self._row_indices, dtype=jnp.int32)
         columns = jnp.asarray(self._column_indices, dtype=jnp.int32)
         scales = jnp.asarray(self._scales, dtype=matrix.dtype)
-        return matrix[..., rows, columns] * scales
+        symmetric = 0.5 * matrix + 0.5 * jnp.swapaxes(matrix, -1, -2)
+        return symmetric[..., rows, columns] * scales
 
     def pack(self, matrix: ArrayLike, /) -> Array:
         """Pack one real symmetric matrix with the Frobenius-isometric svec map."""
@@ -114,13 +138,17 @@ class PositiveSemidefiniteCone(AbstractConvexCone):
             )
         if not jnp.issubdtype(value.dtype, jnp.floating):
             raise TypeError("PSD matrices must be real floating-point arrays.")
+        finite = jnp.all(jnp.isfinite(value), axis=(-2, -1))
         scale = jnp.maximum(jnp.max(jnp.abs(value), axis=(-2, -1)), 1.0)
-        residual = jnp.max(jnp.abs(value - jnp.swapaxes(value, -1, -2)), axis=(-2, -1))
+        residual = jnp.max(
+            jnp.abs(value - jnp.swapaxes(value, -1, -2)),
+            axis=(-2, -1),
+        )
         tolerance = 64.0 * float(self.matrix_size) * jnp.finfo(value.dtype).eps * scale
         guarded = eqx.error_if(
             value,
-            jnp.any(residual > tolerance),
-            "PSD pack requires a symmetric matrix.",
+            jnp.any(~finite | (residual > tolerance)),
+            "PSD pack requires a finite symmetric matrix.",
         )
         return self._pack_unchecked(guarded)
 
@@ -131,20 +159,22 @@ class PositiveSemidefiniteCone(AbstractConvexCone):
         rows = jnp.asarray(self._row_indices, dtype=jnp.int32)
         columns = jnp.asarray(self._column_indices, dtype=jnp.int32)
         scales = jnp.asarray(self._scales, dtype=array.dtype)
-        upper = jnp.zeros(
+        matrix = jnp.zeros(
             array.shape[:-1] + (self.matrix_size, self.matrix_size),
             dtype=array.dtype,
         )
-        upper = upper.at[..., rows, columns].set(array / scales)
-        diagonal = jnp.diagonal(upper, axis1=-2, axis2=-1)
-        return (
-            upper
-            + jnp.swapaxes(upper, -1, -2)
-            - jnp.eye(self.matrix_size, dtype=array.dtype) * diagonal[..., None, :]
-        )
+        entries = array / scales
+        matrix = matrix.at[..., rows, columns].set(entries)
+        matrix = matrix.at[..., columns, rows].set(entries)
+        return matrix
 
     def project(self, value: Any, /) -> Array:
         array = self._validate(value)
+        array = eqx.error_if(
+            array,
+            jnp.any(~jnp.isfinite(array)),
+            "PSD projection requires finite coordinates.",
+        )
         return self._pack_unchecked(_positive_semidefinite_part(self.unpack(array)))
 
     def project_dual(self, value: Any, /) -> Array:
@@ -152,12 +182,21 @@ class PositiveSemidefiniteCone(AbstractConvexCone):
 
     def interior_margin(self, value: Any, /) -> Array:
         array = self._validate(value)
-        return jnp.min(jnp.linalg.eigvalsh(self.unpack(array)), axis=-1)
+        working = self.unpack(array).astype(jnp.result_type(array.dtype, jnp.float32))
+        spectrum = HermitianSpectrum(
+            working,
+            tolerance=64.0 * jnp.finfo(working.dtype).eps,
+        )
+        return spectrum.minimum_eigenvalue.astype(array.dtype)
 
     def dual_projection_smoothness_margin(self, value: Any, /) -> Array:
         array = self._validate(value)
-        eigenvalues = jnp.linalg.eigvalsh(self.unpack(array))
-        return jnp.min(jnp.abs(eigenvalues), axis=-1)
+        working = self.unpack(array).astype(jnp.result_type(array.dtype, jnp.float32))
+        spectrum = HermitianSpectrum(
+            working,
+            tolerance=64.0 * jnp.finfo(working.dtype).eps,
+        )
+        return jnp.min(jnp.abs(spectrum.eigenvalues), axis=-1).astype(array.dtype)
 
 
 __all__ = ["PositiveSemidefiniteCone"]

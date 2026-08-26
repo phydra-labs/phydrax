@@ -14,6 +14,18 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import CochainDiscretization
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FailurePolicy,
+    hermitian_inverse_sqrt,
+    hermitian_sqrt,
+    HermitianSpectrum,
+    LinearSolvePolicy,
+    LinearSystem,
+    prepare,
+    solve as solve_linear,
+)
 from ._maxwell import (
     _apply_hodge_metric,
     AbstractMaxwellConstitutivePlan,
@@ -106,36 +118,50 @@ def _metric_spectrum(
         raise ValueError(f"{name} Hodge metric must be square.")
     if np.any(~np.isfinite(host)) or np.any(~np.isfinite(weight)):
         raise ValueError(f"{name} matrix and Hodge metric must be finite.")
-    metric_matrix = np.diag(weight) if weight.ndim == 1 else weight
-    metric_eigenvalues, metric_eigenvectors = np.linalg.eigh(
-        0.5 * (metric_matrix + metric_matrix.conj().T)
+    metric_matrix = (
+        jnp.diag(jnp.asarray(weight)) if weight.ndim == 1 else jnp.asarray(weight)
     )
     metric_tolerance = np.finfo(metric_matrix.real.dtype).eps * max(
-        1.0, np.linalg.norm(metric_matrix)
+        1.0,
+        float(jnp.max(jnp.abs(metric_matrix))),
     )
-    if metric_eigenvalues[0] <= 64.0 * metric_tolerance:
+    metric_spectrum = HermitianSpectrum(
+        metric_matrix,
+        tolerance=64.0 * metric_tolerance,
+    )
+    if (
+        not bool(metric_spectrum.valid)
+        or float(metric_spectrum.minimum_eigenvalue) <= 64.0 * metric_tolerance
+    ):
         raise ValueError(f"{name} Hodge metric must be positive definite.")
-    weighted = metric_matrix @ host
-    tolerance = np.finfo(weighted.real.dtype).eps * max(1.0, np.linalg.norm(weighted))
-    if not np.allclose(weighted, weighted.conj().T, rtol=1e-10, atol=64.0 * tolerance):
+    weighted = metric_matrix @ jnp.asarray(host)
+    tolerance = np.finfo(weighted.real.dtype).eps * max(
+        1.0,
+        float(jnp.max(jnp.abs(weighted))),
+    )
+    weighted_residual = jnp.max(jnp.abs(weighted - jnp.conj(weighted.T)))
+    if not bool(weighted_residual <= 64.0 * tolerance):
         raise ValueError(f"{name} constitutive map is not metric-Hermitian.")
-    root = (
-        metric_eigenvectors
-        @ np.diag(np.sqrt(metric_eigenvalues))
-        @ metric_eigenvectors.conj().T
+    root_result = hermitian_sqrt(
+        metric_matrix,
+        tolerance=64.0 * metric_tolerance,
     )
-    inverse_root = (
-        metric_eigenvectors
-        @ np.diag(1.0 / np.sqrt(metric_eigenvalues))
-        @ metric_eigenvectors.conj().T
+    inverse_result = hermitian_inverse_sqrt(
+        metric_matrix,
+        tolerance=64.0 * metric_tolerance,
     )
-    symmetric = root @ host @ inverse_root
-    eigenvalues = np.linalg.eigvalsh(0.5 * (symmetric + symmetric.conj().T))
-    minimum = float(eigenvalues[0])
-    maximum = float(eigenvalues[-1])
-    if minimum <= 64.0 * tolerance:
+    if not bool(root_result.valid & inverse_result.valid):
+        raise ValueError(f"{name} Hodge metric square roots are invalid.")
+    symmetric = root_result.value @ jnp.asarray(host) @ inverse_result.value
+    constitutive_spectrum = HermitianSpectrum(
+        symmetric,
+        tolerance=64.0 * tolerance,
+    )
+    minimum = float(constitutive_spectrum.minimum_eigenvalue)
+    maximum = float(jnp.max(constitutive_spectrum.eigenvalues))
+    if not bool(constitutive_spectrum.valid) or minimum <= 64.0 * tolerance:
         raise ValueError(f"{name} constitutive map is not positive definite.")
-    return symmetric, minimum, maximum / minimum
+    return np.asarray(symmetric), minimum, maximum / minimum
 
 
 class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
@@ -143,6 +169,8 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
 
     electric_matrix: Array
     magnetic_matrix: Array
+    electric_solver: Any
+    magnetic_solver: Any
     evidence: MaxwellConstitutiveEvidence
     capabilities: MaxwellCapabilities
     prepared_id: str = eqx.field(static=True)
@@ -178,6 +206,24 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
         )
         self.electric_matrix = plan.electric_matrix
         self.magnetic_matrix = plan.magnetic_matrix
+        policy = LinearSolvePolicy(
+            DenseLU(),
+            failure=FailurePolicy("error"),
+        )
+        self.electric_solver = prepare(
+            LinearSystem(
+                DenseLinearOperator(self.electric_matrix),
+                problem_id=f"{plan.plan_id}:electric-constitutive",
+            ),
+            policy,
+        )
+        self.magnetic_solver = prepare(
+            LinearSystem(
+                DenseLinearOperator(self.magnetic_matrix),
+                problem_id=f"{plan.plan_id}:magnetic-constitutive",
+            ),
+            policy,
+        )
         self.evidence = MaxwellConstitutiveEvidence(
             electric_minimum_eigenvalue=jnp.asarray(electric_minimum),
             magnetic_minimum_eigenvalue=jnp.asarray(magnetic_minimum),
@@ -214,7 +260,7 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
 
     def electric_field(self, displacement: Array, state: Any, /) -> Array:
         self.validate_state(state)
-        return jnp.linalg.solve(self.electric_matrix, displacement)
+        return solve_linear(self.electric_solver, displacement).value
 
     def electric_displacement(self, electric: Array, state: Any, /) -> Array:
         self.validate_state(state)
@@ -222,7 +268,7 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
 
     def magnetic_field(self, flux: Array, state: Any, /) -> Array:
         self.validate_state(state)
-        return jnp.linalg.solve(self.magnetic_matrix, flux)
+        return solve_linear(self.magnetic_solver, flux).value
 
     def magnetic_flux(self, magnetic: Array, state: Any, /) -> Array:
         self.validate_state(state)
@@ -403,7 +449,7 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
             passive=True,
             reversible=lossless,
             structured_only=False,
-            frequency_domain=True,
+            frequency_domain=lossless,
         )
         self.prepared_id = canonical_fingerprint(
             {
@@ -635,7 +681,7 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
             dispersive=True,
             reversible=False,
             structured_only=False,
-            frequency_domain=True,
+            frequency_domain=False,
         )
         self.prepared_id = canonical_fingerprint(
             {

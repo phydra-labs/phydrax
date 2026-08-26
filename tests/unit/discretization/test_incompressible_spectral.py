@@ -88,6 +88,12 @@ def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm():
         translations=(0.125, 0.0),
         component_count=2,
     )
+    reflected = phx.discretization.TensorSpectralSymmetry(
+        space,
+        axis_signs=(-1, 1),
+        translations=(0.2, 0.1),
+        component_count=2,
+    )
     identity = first.compose(first.inverse())
 
     np.testing.assert_allclose(np.asarray(restored), np.asarray(state), atol=1e-12)
@@ -99,6 +105,16 @@ def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm():
     np.testing.assert_allclose(
         np.asarray(first.compose(second).apply(state)),
         np.asarray(first.apply(second.apply(state))),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        np.asarray(reflected.compose(first).apply(state)),
+        np.asarray(reflected.apply(first.apply(state))),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        np.asarray(reflected.compose(reflected.inverse()).apply(state)),
+        np.asarray(state),
         atol=1e-12,
     )
     np.testing.assert_allclose(

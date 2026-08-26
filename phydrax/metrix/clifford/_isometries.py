@@ -45,6 +45,8 @@ def _validated_matrix(
     expected = (algebra.dimension, algebra.dimension)
     if host.shape != expected:
         raise ValueError(f"Metric isometry must have shape {expected}; got {host.shape}.")
+    if np.iscomplexobj(host):
+        raise TypeError("Metric-isometry matrices must be real-valued.")
     if not np.issubdtype(host.dtype, np.floating):
         host = host.astype(float)
     if np.any(~np.isfinite(host)):

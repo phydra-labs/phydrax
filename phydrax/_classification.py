@@ -237,11 +237,14 @@ def binary_focal_risk_from_logits(
     if alpha is None:
         class_weight = jnp.ones_like(cross_entropy)
     else:
-        observation = jnp.asarray(target, dtype=cross_entropy.dtype)
+        raw_target = jnp.asarray(target)
+        target_valid = jnp.isfinite(raw_target) & ((raw_target == 0) | (raw_target == 1))
+        observation = jnp.where(target_valid, raw_target, 0).astype(cross_entropy.dtype)
         class_weight = alpha_value * observation + (1.0 - alpha_value) * (
             1.0 - observation
         )
-    return class_weight * factor * cross_entropy
+    result = class_weight * factor * cross_entropy
+    return jnp.where(jnp.isfinite(log_probability), result, jnp.inf)
 
 
 def categorical_focal_risk_from_logits(
@@ -284,6 +287,14 @@ def categorical_focal_risk_from_logits(
     return class_weight * factor * cross_entropy
 
 
+def _ordinal_threshold_array(thresholds: ArrayLike, /) -> Array:
+    cutpoints = _real_array("Ordinal thresholds", thresholds)
+    if cutpoints.ndim != 1 or int(cutpoints.shape[0]) < 2:
+        raise ValueError("Ordinal thresholds must be a vector with at least two entries.")
+    valid = jnp.all(jnp.isfinite(cutpoints)) & jnp.all(jnp.diff(cutpoints) > 0.0)
+    return jnp.where(valid, cutpoints, jnp.full_like(cutpoints, jnp.nan))
+
+
 def ordinal_class_probabilities_from_location(
     location: ArrayLike,
     thresholds: ArrayLike,
@@ -291,19 +302,20 @@ def ordinal_class_probabilities_from_location(
 ) -> Array:
     """Return ordered-logistic class probabilities from scalar latent locations."""
     eta = _real_array("Ordinal location", location)
-    cutpoints = _real_array("Ordinal thresholds", thresholds)
-    if cutpoints.ndim != 1 or int(cutpoints.shape[0]) < 2:
-        raise ValueError("Ordinal thresholds must be a vector with at least two entries.")
-    cumulative = jax.nn.sigmoid(cutpoints - eta[..., None])
-    middle = cumulative[..., 1:] - cumulative[..., :-1]
-    return jnp.concatenate(
-        (
-            cumulative[..., :1],
-            jnp.maximum(middle, 0.0),
-            1.0 - cumulative[..., -1:],
-        ),
-        axis=-1,
+    cutpoints = _ordinal_threshold_array(thresholds)
+    arguments = cutpoints - eta[..., None]
+    first = jax.nn.sigmoid(arguments[..., :1])
+    lower = arguments[..., :-1]
+    upper = arguments[..., 1:]
+    gap = upper - lower
+    middle_log = (
+        upper
+        + jnp.log(-jnp.expm1(-gap))
+        - jax.nn.softplus(upper)
+        - jax.nn.softplus(lower)
     )
+    last = jax.nn.sigmoid(-arguments[..., -1:])
+    return jnp.concatenate((first, jnp.exp(middle_log), last), axis=-1)
 
 
 def ordinal_log_prob_from_location(
@@ -314,9 +326,7 @@ def ordinal_log_prob_from_location(
 ) -> Array:
     """Return stable ordered-logistic hard-label log probabilities."""
     eta = _real_array("Ordinal location", location)
-    cutpoints = _real_array("Ordinal thresholds", thresholds)
-    if cutpoints.ndim != 1 or int(cutpoints.shape[0]) < 2:
-        raise ValueError("Ordinal thresholds must be a vector with at least two entries.")
+    cutpoints = _ordinal_threshold_array(thresholds)
     raw_target = jnp.asarray(target)
     if raw_target.shape != eta.shape:
         raise ValueError("Ordinal targets must match scalar location shape.")

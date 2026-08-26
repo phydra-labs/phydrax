@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..sparse import EdgeRelation
+from ..sparse import EdgeRelation, SparseLinearMap
 from ._cochain import CochainBoundaryKind, CochainDiscretization
 from ._tensor_support import PreparedTensorGrid
 from ._topology import CellComplexTopology, EntitySet, OrientedIncidence
@@ -28,6 +28,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
     orientations: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     orientation_shapes: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     orientation_offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    directional_signs: tuple[tuple[Array, ...], ...]
     bridge_id: str = eqx.field(static=True)
 
     def __init__(self, grid: PreparedTensorGrid, /):
@@ -128,10 +129,12 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             boundary_masks.append(jnp.asarray(np.concatenate(boundary_parts)))
             index_maps.append(index_map)
         incidences = []
+        directional_signs = []
         for degree in range(1, dimension + 1):
             source_indices = []
             target_indices = []
             signs = []
+            route_axes = []
             for orientation in orientation_values[degree]:
                 shape = shapes[degree][orientation_values[degree].index(orientation)]
                 for upper_index in np.ndindex(*shape):
@@ -164,6 +167,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                         )
                         target_indices.extend((target, target))
                         signs.extend((-orientation_sign, orientation_sign))
+                        route_axes.extend((axis, axis))
             relation = EdgeRelation(
                 np.asarray(source_indices, dtype=np.int32),
                 np.asarray(target_indices, dtype=np.int32),
@@ -177,6 +181,14 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                     entity_sets[degree],
                     relation,
                     np.asarray(signs),
+                )
+            )
+            route_axes_array = np.asarray(route_axes, dtype=np.int32)
+            signs_array = np.asarray(signs)
+            directional_signs.append(
+                tuple(
+                    jnp.asarray(np.where(route_axes_array == axis, signs_array, 0.0))
+                    for axis in range(dimension)
                 )
             )
         topology = CellComplexTopology(entity_sets, incidences)
@@ -203,6 +215,7 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         self.orientations = orientation_values
         self.orientation_shapes = tuple(shapes)
         self.orientation_offsets = tuple(offsets)
+        self.directional_signs = tuple(directional_signs)
         self.bridge_id = canonical_fingerprint(
             {
                 "kind": "structured-cochain-bridge",
@@ -258,6 +271,47 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             boundary_policy=boundary_policy,
         )
 
+    def directional_exterior_derivative(
+        self,
+        degree: int,
+        values: ArrayLike,
+        axis: int,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        degree_ = int(degree)
+        axis_ = int(axis)
+        if degree_ < 0 or degree_ >= self.dimension:
+            raise ValueError("Directional exterior derivative degree is invalid.")
+        if axis_ < 0 or axis_ >= self.dimension:
+            raise ValueError("Directional exterior derivative axis is invalid.")
+        _, value = self.cochain._values(degree_, values)
+        source = jnp.where(
+            self.cochain.active_mask(degree_, boundary_policy),
+            value,
+            0,
+        )
+        incidence = self.cochain.topology.incidences[degree_]
+        operator = SparseLinearMap(
+            incidence.relation,
+            self.directional_signs[degree_][axis_],
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "directional-exterior-derivative",
+                    "bridge": self.bridge_id,
+                    "degree": degree_,
+                    "axis": axis_,
+                }
+            ),
+        )
+        output = operator.mv(source)
+        return jnp.where(
+            self.cochain.active_mask(degree_ + 1, boundary_policy),
+            output,
+            0,
+        )
+
     def codifferential(
         self,
         degree: int,
@@ -270,6 +324,51 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             degree,
             values,
             boundary_policy=boundary_policy,
+        )
+
+    def directional_codifferential(
+        self,
+        degree: int,
+        values: ArrayLike,
+        axis: int,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        degree_ = int(degree)
+        axis_ = int(axis)
+        if degree_ <= 0 or degree_ > self.dimension:
+            raise ValueError("Directional codifferential degree is invalid.")
+        if axis_ < 0 or axis_ >= self.dimension:
+            raise ValueError("Directional codifferential axis is invalid.")
+        _, value = self.cochain._values(degree_, values)
+        source = jnp.where(
+            self.cochain.active_mask(degree_, boundary_policy),
+            value,
+            0,
+        )
+        weighted = self.cochain.apply_hodge(degree_, source)
+        incidence = self.cochain.topology.incidences[degree_ - 1]
+        operator = SparseLinearMap(
+            incidence.relation,
+            self.directional_signs[degree_ - 1][axis_],
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "directional-codifferential-boundary",
+                    "bridge": self.bridge_id,
+                    "degree": degree_,
+                    "axis": axis_,
+                }
+            ),
+        )
+        output = self.cochain.solve_hodge(
+            degree_ - 1,
+            operator.transpose_mv(weighted),
+        )
+        return jnp.where(
+            self.cochain.active_mask(degree_ - 1, boundary_policy),
+            output,
+            0,
         )
 
     def laplace_de_rham(

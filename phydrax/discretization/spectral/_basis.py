@@ -721,7 +721,10 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
             (2.0 * np.arange(count, dtype=float) + 1.0) / (upper_value - lower_value)
         )
         synthesis = standard * normalizers[None, :]
-        analysis = synthesis.T * weights[None, :]
+        analysis = _analysis_from_synthesis(
+            synthesis,
+            precision.coefficient_dtype,
+        )
         derivative_standard = np.asarray(
             standard_derivative_matrix(
                 "legendre",

@@ -290,8 +290,10 @@ with continuity and a declared phase condition. `PeriodicOrbitResidual` exposes 
 equations as a `NonlinearSystemProblem`; `solve_periodic_orbit` delegates Newton,
 globalization, linear solve evidence, and work accounting to `phydrax.nonlinear`.
 Floquet analysis routes dense or matrix-free monodromy operators through the shared
-general-eigen runtime. A neutral multiplier is identified and reported for autonomous
-flow orbits rather than silently removed from the returned spectrum.
+general-eigen runtime. For a complete autonomous-flow spectrum, the neutral multiplier
+is removed from stability classification only when its distance from one is within the
+declared tolerance; otherwise the result is invalid with
+`FLOQUET_NEUTRAL_MISSING`. Partial leading spectra do not fabricate a neutral mode.
 
 ::: phydrax.dynamics.analysis.AffineSection
 
@@ -357,11 +359,13 @@ cadence. RQA returns both recurrence and eligibility masks. The Theiler window e
 temporally close pairs before line statistics are computed.
 
 `recurrence_seed_candidates` turns a bounded unbatched trajectory into ordered,
-temporally separated shooting seeds; it does not perform Newton correction. Edge
-tracking evolves two opposite-outcome states over one fixed horizon and bisects their
-initial-condition bracket. The classifier remains problem-owned, while validity,
-overflow-free fixed iteration history, bracket width, and terminal status remain
-explicit.
+temporally separated shooting seeds; it preflights the quadratic pair-distance memory
+and rejects requests beyond the structural pair capacity. Edge tracking evolves two
+opposite-outcome states over one fixed horizon and bisects their initial-condition
+bracket. Since its classifier is callable, `EdgeTrackingProblem` requires an explicit
+`problem_id`. Relative-equilibrium and relative-orbit problems likewise require
+explicit IDs for their vector-field, generator, group-action, and phase callables.
+Validity, fixed iteration history, bracket width, and terminal status remain explicit.
 
 ::: phydrax.dynamics.analysis.finite_time_lyapunov_spectrum
 

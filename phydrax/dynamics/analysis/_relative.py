@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from operator import index
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace
 from ...nonlinear import NonlinearSystemProblem
@@ -49,17 +49,15 @@ class RelativeEquilibriumProblem(StrictModule):
             raise TypeError("Generators and phase conditions must be callable.")
         if not isinstance(state_space, ArraySpace) or len(state_space.shape) != 1:
             raise TypeError("state_space must be one rank-one ArraySpace.")
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "relative-equilibrium-problem-v1",
-                    "state_space": state_space.space_id,
-                    "generator_count": len(generators_),
-                }
+        if jnp.issubdtype(state_space.dtype, jnp.complexfloating):
+            raise TypeError(
+                "Relative equilibria require independent real state coordinates."
             )
-            if problem_id is None
-            else str(problem_id)
-        )
+        if problem_id is None:
+            raise ValueError(
+                "problem_id is required because residual callables have no stable identity."
+            )
+        identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         self.vector_field = vector_field
@@ -74,9 +72,17 @@ class RelativeEquilibriumProblem(StrictModule):
 
     def pack(self, state: ArrayLike, speeds: ArrayLike, /) -> Array:
         value = self.state_space.validate(state)
-        rates = jnp.asarray(speeds, dtype=value.dtype)
+        raw_rates = jnp.asarray(speeds)
+        if jnp.iscomplexobj(raw_rates):
+            raise TypeError("Relative equilibrium speeds must be real.")
+        rates = raw_rates.astype(value.dtype)
         if rates.shape != (len(self.generators),):
             raise ValueError("speeds must contain one scalar per symmetry generator.")
+        rates = eqx.error_if(
+            rates,
+            jnp.any(~jnp.isfinite(rates)),
+            "Relative equilibrium speeds must be finite.",
+        )
         return jnp.concatenate((value, rates))
 
     def unpack(self, values: ArrayLike, /) -> tuple[Array, Array]:
@@ -92,12 +98,13 @@ class RelativeEquilibriumProblem(StrictModule):
         rate = self.state_space.validate(self.vector_field(state, args))
         for speed, generator in zip(speeds, self.generators, strict=True):
             rate = rate - speed * self.state_space.validate(generator(state))
-        phases = jnp.stack(
-            tuple(
-                jnp.asarray(phase(state, args)).reshape(())
-                for phase in self.phase_conditions
-            )
-        ).astype(rate.dtype)
+        phase_values = tuple(
+            jnp.asarray(phase(state, args)) for phase in self.phase_conditions
+        )
+        if any(value.shape != () for value in phase_values):
+            raise ValueError("Relative equilibrium phase conditions must be scalar.")
+        phases = jnp.stack(phase_values).astype(rate.dtype)
+        phases = jnp.where(jnp.all(jnp.isfinite(phases)), phases, jnp.nan)
         return jnp.concatenate((rate, phases))
 
     def as_nonlinear_problem(self, /) -> NonlinearSystemProblem:
@@ -138,21 +145,16 @@ class RelativePeriodicOrbitProblem(StrictModule):
             raise TypeError("group_action and temporal_phase must be callable.")
         if not phases or not all(callable(value) for value in phases):
             raise ValueError("spatial_phases must contain one or more callables.")
-        segments = int(num_segments)
+        if isinstance(num_segments, bool):
+            raise TypeError("num_segments must be an integer.")
+        segments = index(num_segments)
         if segments < 1:
             raise ValueError("num_segments must be positive.")
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "relative-periodic-orbit-problem-v1",
-                    "evolution": evolution.evolution_id,
-                    "segments": segments,
-                    "group_dimension": len(phases),
-                }
+        if problem_id is None:
+            raise ValueError(
+                "problem_id is required because group/phase callables have no stable identity."
             )
-            if problem_id is None
-            else str(problem_id)
-        )
+        identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         self.evolution = evolution
@@ -187,14 +189,25 @@ class RelativePeriodicOrbitProblem(StrictModule):
             raise ValueError(f"nodes must have shape {expected}.")
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("Relative orbit nodes must use independent real coordinates.")
-        period_ = jnp.asarray(period, dtype=values.dtype)
-        shifts_ = jnp.asarray(shifts, dtype=values.dtype)
+        if not jnp.issubdtype(values.dtype, jnp.inexact):
+            raise TypeError("Relative orbit nodes must use an inexact dtype.")
+        raw_period = jnp.asarray(period)
+        raw_shifts = jnp.asarray(shifts)
+        if jnp.iscomplexobj(raw_period) or jnp.iscomplexobj(raw_shifts):
+            raise TypeError("Relative orbit period and shifts must be real.")
+        period_ = raw_period.astype(values.dtype)
+        shifts_ = raw_shifts.astype(values.dtype)
         if period_.shape != () or shifts_.shape != (self.group_dimension,):
             raise ValueError("period and shifts have incompatible shapes.")
         period_ = eqx.error_if(
             period_,
             ~(jnp.isfinite(period_) & (period_ > 0.0)),
             "Relative orbit period must be finite and positive.",
+        )
+        shifts_ = eqx.error_if(
+            shifts_,
+            jnp.any(~jnp.isfinite(shifts_)),
+            "Relative orbit shifts must be finite.",
         )
         return jnp.concatenate((values.reshape((-1,)), jnp.log(period_)[None], shifts_))
 
@@ -224,15 +237,25 @@ class RelativePeriodicOrbitProblem(StrictModule):
                 if segment + 1 == self.num_segments
                 else nodes[segment + 1]
             )
-            pieces.append((advanced.final_state - target_state).reshape((-1,)))
-        temporal = jnp.asarray(self.temporal_phase(nodes[0], period, args)).reshape((1,))
-        spatial = jnp.stack(
-            tuple(
-                jnp.asarray(phase(nodes[0], args)).reshape(())
-                for phase in self.spatial_phases
+            target_state = jnp.asarray(target_state)
+            if target_state.shape != self.evolution.state_layout.shape:
+                raise ValueError("Relative group action changed the state shape.")
+            defect = (advanced.final_state - target_state).reshape((-1,))
+            pieces.append(jnp.where(advanced.valid, defect, jnp.nan))
+        temporal = jnp.asarray(self.temporal_phase(nodes[0], period, args))
+        spatial_values = tuple(
+            jnp.asarray(phase(nodes[0], args)) for phase in self.spatial_phases
+        )
+        if temporal.shape != () or any(value.shape != () for value in spatial_values):
+            raise ValueError("Relative orbit phase conditions must be scalar.")
+        phases = jnp.concatenate(
+            (
+                temporal.reshape((1,)),
+                jnp.stack(spatial_values),
             )
         )
-        return jnp.concatenate(tuple(pieces) + (temporal, spatial))
+        phases = jnp.where(jnp.all(jnp.isfinite(phases)), phases, jnp.nan)
+        return jnp.concatenate(tuple(pieces) + (phases,))
 
     def as_nonlinear_problem(self, dtype: Any, /) -> NonlinearSystemProblem:
         space = ArraySpace((self.unknown_size,), dtype=dtype)

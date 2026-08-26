@@ -15,6 +15,7 @@ def test_relative_equilibrium_residual_is_continuation_ready():
         (generator,),
         (lambda state, args: state[0] - 1.0,),
         space,
+        problem_id="rotating-relative-equilibrium",
     )
     unknown = problem.pack(jnp.asarray([1.0, 0.0]), jnp.asarray([2.0]))
     residual = problem.as_nonlinear_problem().residual(unknown)
@@ -34,6 +35,7 @@ def test_edge_tracking_bisects_opposite_outcomes():
         lambda coordinate, state, args: state[0],
         0.0,
         1.0,
+        problem_id="identity-edge-classifier",
     )
     result = phx.dynamics.analysis.track_basin_edge(
         problem,

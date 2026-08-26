@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
+from operator import index
 
 import equinox as eqx
 import jax
@@ -32,6 +33,7 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
     coordinate_size: int = eqx.field(static=True)
+    maximum_coordinate_size: int = eqx.field(static=True)
     reality_tolerance: float = eqx.field(static=True)
     coordinate_id: str = eqx.field(static=True)
 
@@ -42,12 +44,20 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
         *,
         component_shape: Sequence[int] = (),
         reality_tolerance: float = 1e-10,
+        maximum_coordinate_size: int = 10_000_000,
     ):
         if not isinstance(discretization, TensorSpectralDiscretization):
             raise TypeError("discretization must be a TensorSpectralDiscretization.")
-        components = tuple(int(size) for size in component_shape)
+        if any(isinstance(size, bool) for size in component_shape):
+            raise TypeError("component_shape dimensions must be integers.")
+        components = tuple(index(size) for size in component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("component_shape dimensions must be positive.")
+        if isinstance(maximum_coordinate_size, bool):
+            raise TypeError("maximum_coordinate_size must be an integer.")
+        maximum = index(maximum_coordinate_size)
+        if maximum < 1:
+            raise ValueError("maximum_coordinate_size must be positive.")
         tolerance = float(reality_tolerance)
         if not np.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("reality_tolerance must be finite and nonnegative.")
@@ -67,6 +77,10 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
         modal_conjugates = np.ravel_multi_index(conjugate_multi, modal_shape)
         component_count = prod(components) if components else 1
         modal_size = prod(modal_shape)
+        if modal_size * component_count > maximum:
+            raise ValueError(
+                "Hermitian coordinate count exceeds maximum_coordinate_size."
+            )
         flat_indices = np.arange(modal_size * component_count, dtype=np.int64)
         modal_indices = flat_indices // component_count
         component_indices = flat_indices % component_count
@@ -86,6 +100,7 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
                 "state_shape": list(state_shape),
                 "coordinate_size": coordinate_size,
                 "reality_tolerance": tolerance,
+                "maximum_coordinate_size": maximum,
             }
         )
         self.discretization = discretization
@@ -101,6 +116,7 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
         self.state_shape = state_shape
         self.component_shape = components
         self.coordinate_size = coordinate_size
+        self.maximum_coordinate_size = maximum
         self.reality_tolerance = tolerance
         self.coordinate_id = identifier
 
@@ -129,7 +145,7 @@ class HermitianSpectralCoordinates(StrictModule, NonTrainableState):
         """Orthogonally project onto the Hermitian real-field subspace."""
         value = self.validate_state(state)
         flat = value.reshape((-1,))
-        projected = 0.5 * (flat + jnp.conj(flat[self.conjugate_indices]))
+        projected = 0.5 * flat + 0.5 * jnp.conj(flat[self.conjugate_indices])
         return projected.reshape(self.state_shape)
 
     def to_real_coordinates(self, state: ArrayLike, /) -> Array:

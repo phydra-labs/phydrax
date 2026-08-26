@@ -32,15 +32,27 @@ class NearestNeighborHamiltonian(StrictModule):
     ):
         dimensions = tuple(int(value) for value in physical_dimensions)
         values = tuple(jnp.asarray(term) for term in terms)
+        identifier = str(hamiltonian_id)
+        if not dimensions or any(value < 1 for value in dimensions):
+            raise ValueError("Hamiltonian physical dimensions must be positive.")
         if len(values) != len(dimensions) - 1:
             raise ValueError("One two-site term is required for every neighboring bond.")
         for index, term in enumerate(values):
             size = dimensions[index] * dimensions[index + 1]
             if term.shape != (size, size):
                 raise ValueError("Two-site Hamiltonian term has the wrong shape.")
+            if not bool(
+                jnp.all(jnp.isfinite(term))
+                & jnp.allclose(term, jnp.conj(term.T), rtol=1e-10, atol=1e-12)
+            ):
+                raise ValueError(
+                    "Two-site Hamiltonian terms must be finite and Hermitian."
+                )
+        if not identifier:
+            raise ValueError("hamiltonian_id must be non-empty.")
         self.terms = values
         self.physical_dimensions = dimensions
-        self.hamiltonian_id = str(hamiltonian_id)
+        self.hamiltonian_id = identifier
 
     def gate(self, bond: int, step: ArrayLike, /) -> Array:
         index = int(bond)
@@ -111,9 +123,16 @@ def tebd_step(
 ) -> tuple[MatrixProductState, TEBDEvidence]:
     if tuple(state.physical_dimensions) != hamiltonian.physical_dimensions:
         raise ValueError("MPS and Hamiltonian physical dimensions differ.")
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=state.tensors[0].real.dtype).reshape(())
     if order not in (1, 2):
         raise ValueError("TEBD order must be one or two.")
+    if int(maximum_bond_dimension) < 1:
+        raise ValueError("Maximum bond dimension must be positive.")
+    step = eqx.error_if(
+        step,
+        (~jnp.isfinite(step)) | (step < 0.0),
+        "TEBD step size must be finite and nonnegative.",
+    )
     records: list[TensorTruncationEvidence] = []
     current = state
     if order == 1:
@@ -166,7 +185,11 @@ def tebd_step(
     current, _ = canonicalize_mps(
         current, center=state.site_count // 2, normalize=normalize
     )
-    discarded = jnp.stack([record.discarded_weight for record in records])
+    discarded = (
+        jnp.stack([record.discarded_weight for record in records])
+        if records
+        else jnp.zeros((0,), dtype=step.dtype)
+    )
     return current, TEBDEvidence(
         discarded,
         jnp.abs(current.norm() - 1.0),

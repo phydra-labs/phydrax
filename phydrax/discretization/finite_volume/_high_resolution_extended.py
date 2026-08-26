@@ -15,6 +15,14 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    FailurePolicy,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve,
+)
 
 
 FilterADPolicy: TypeAlias = Literal["exact", "frozen", "smooth", "forbid"]
@@ -46,6 +54,7 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
     full_coefficients: Array
     candidate_offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     candidate_coefficients: tuple[Array, ...]
+    optimal_weights: Array
     cutoff: float = eqx.field(static=True)
     epsilon: float = eqx.field(static=True)
     qualification: TENOQualification
@@ -81,9 +90,34 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
         if not np.isfinite(epsilon_) or epsilon_ <= 0.0:
             raise ValueError("TENO epsilon must be positive.")
         full = _lagrange_coefficients(offsets, 0.5)
-        candidate_coefficients = tuple(
-            jnp.asarray(_lagrange_coefficients(value, 0.5)) for value in candidates
+        candidate_host = tuple(_lagrange_coefficients(value, 0.5) for value in candidates)
+        candidate_coefficients = tuple(jnp.asarray(value) for value in candidate_host)
+        candidate_matrix = np.zeros((len(offsets), len(candidates)))
+        for column, (candidate, coefficients) in enumerate(
+            zip(candidates, candidate_host, strict=True)
+        ):
+            for offset, coefficient in zip(candidate, coefficients, strict=True):
+                candidate_matrix[offsets.index(offset), column] = coefficient
+        optimal_weights = np.asarray(
+            solve(
+                LeastSquaresProblem(
+                    DenseLinearOperator(jnp.asarray(candidate_matrix)),
+                    problem_id=f"teno-{order}:optimal-weights",
+                ),
+                jnp.asarray(full),
+                policy=LinearSolvePolicy(
+                    DenseSVD(),
+                    failure=FailurePolicy("error"),
+                ),
+            ).value
         )
+        optimal_residual = float(
+            np.max(np.abs(candidate_matrix @ optimal_weights - full))
+        )
+        if optimal_residual > 1e-12:
+            raise RuntimeError(
+                "TENO candidate stencils do not reproduce the full stencil."
+            )
         constant_residual = abs(np.sum(full) - 1.0)
         polynomial_residual = 0.0
         for degree in range(order):
@@ -107,6 +141,7 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
         self.full_coefficients = jnp.asarray(full)
         self.candidate_offsets = candidates
         self.candidate_coefficients = candidate_coefficients
+        self.optimal_weights = jnp.asarray(optimal_weights)
         self.cutoff = cutoff_
         self.epsilon = epsilon_
         self.qualification = TENOQualification(
@@ -118,7 +153,12 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
             report_id,
         )
         self.plan_id = canonical_fingerprint(
-            {"kind": "high-order-teno", "qualification": report_id, "cutoff": cutoff_}
+            {
+                "kind": "high-order-teno",
+                "qualification": report_id,
+                "cutoff": cutoff_,
+                "optimal_weights": optimal_weights.tolist(),
+            }
         )
 
     @property
@@ -143,7 +183,9 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
         )
         full_window = values[full_indices]
         full_value = jnp.sum(
-            self.full_coefficients.reshape((1, -1) + (1,) * (values.ndim - 1))
+            self.full_coefficients.astype(values.dtype).reshape(
+                (1, -1) + (1,) * (values.ndim - 1)
+            )
             * full_window,
             axis=1,
         )
@@ -161,7 +203,10 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
             window = values[indices]
             candidate_values.append(
                 jnp.sum(
-                    coefficients.reshape((1, -1) + (1,) * (values.ndim - 1)) * window,
+                    coefficients.astype(values.dtype).reshape(
+                        (1, -1) + (1,) * (values.ndim - 1)
+                    )
+                    * window,
                     axis=1,
                 )
             )
@@ -172,7 +217,20 @@ class _HighOrderTENOPlan(StrictModule, NonTrainableState):
         normalized = gamma / jnp.sum(gamma, axis=1, keepdims=True)
         active = normalized >= self.cutoff
         all_active = jnp.all(active, axis=1)
-        weights = active / jnp.maximum(jnp.sum(active, axis=1, keepdims=True), 1)
+        linear = self.optimal_weights.astype(values.real.dtype).reshape(
+            (1, -1) + (1,) * (beta.ndim - 2)
+        )
+        selected = active.astype(values.real.dtype) * linear
+        denominator = jnp.sum(selected, axis=1, keepdims=True)
+        fallback = active.astype(values.real.dtype) / jnp.maximum(
+            jnp.sum(active, axis=1, keepdims=True),
+            1,
+        )
+        weights = jnp.where(
+            jnp.abs(denominator) > self.epsilon,
+            selected / jnp.where(denominator != 0.0, denominator, 1.0),
+            fallback,
+        )
         candidates = jnp.stack(tuple(candidate_values), axis=1)
         targeted = jnp.sum(weights * candidates, axis=1)
         return jnp.where(all_active, full_value, targeted)
@@ -217,7 +275,14 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def apply(self, values: ArrayLike, sensor: ArrayLike | None = None, /) -> Array:
+    def apply(
+        self,
+        values: ArrayLike,
+        sensor: ArrayLike | None = None,
+        /,
+        *,
+        measure: ArrayLike | None = None,
+    ) -> Array:
         value = jnp.asarray(values)
         if value.ndim < 1 or value.shape[0] < 3:
             raise ValueError("Explicit filter requires at least three values.")
@@ -225,12 +290,23 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
             left = jnp.roll(value, 1, axis=0)
             right = jnp.roll(value, -1, axis=0)
         else:
+            if measure is None:
+                raise ValueError(
+                    "Nonperiodic stabilization requires an explicit physical measure."
+                )
             left = jnp.concatenate((value[:1], value[:-1]), axis=0)
             right = jnp.concatenate((value[1:], value[-1:]), axis=0)
         curvature = value - 0.5 * (left + right)
         sensor_ = jnp.ones(value.shape[:1]) if sensor is None else jnp.asarray(sensor)
-        if sensor_.shape != value.shape[:1]:
-            raise ValueError("Filter sensor must have one value per leading site.")
+        if sensor_.shape != value.shape[:1] or jnp.iscomplexobj(sensor_):
+            raise ValueError(
+                "Filter sensor must be real with one value per leading site."
+            )
+        sensor_ = eqx.error_if(
+            sensor_,
+            jnp.any(~jnp.isfinite(sensor_)),
+            "Filter sensor must be finite.",
+        )
         if self.ad_policy == "forbid" and isinstance(value, jax.core.Tracer):
             raise ValueError("Filter AD policy forbids differentiation.")
         if self.ad_policy == "frozen":
@@ -243,7 +319,22 @@ class ExplicitStabilizationPlan(StrictModule, NonTrainableState):
             * curvature
         )
         filtered = value - update
-        correction = jnp.mean(value - filtered, axis=0, keepdims=True)
+        measure_ = (
+            jnp.ones(value.shape[:1], dtype=value.real.dtype)
+            if measure is None
+            else jnp.asarray(measure, dtype=value.real.dtype)
+        )
+        if measure_.shape != value.shape[:1]:
+            raise ValueError("Filter measure must have one value per leading site.")
+        measure_ = eqx.error_if(
+            measure_,
+            jnp.any(~jnp.isfinite(measure_) | (measure_ <= 0.0)),
+            "Filter measure must be finite and positive.",
+        )
+        weight = measure_.reshape(measure_.shape + (1,) * (value.ndim - 1))
+        correction = jnp.sum(
+            weight * (value - filtered), axis=0, keepdims=True
+        ) / jnp.sum(measure_)
         return filtered + correction
 
 

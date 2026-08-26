@@ -43,9 +43,7 @@ class ApproximationAxis(StrictModule):
             raise ValueError("Approximation-axis units must be non-empty.")
         if value_.shape != () or not bool(jnp.isfinite(value_)):
             raise ValueError("Approximation-axis value must be one finite scalar.")
-        if parent is not None and (
-            parent.shape != () or not bool(jnp.isfinite(parent))
-        ):
+        if parent is not None and (parent.shape != () or not bool(jnp.isfinite(parent))):
             raise ValueError(
                 "Approximation-axis parent value must be one finite scalar or None."
             )
@@ -150,12 +148,9 @@ class OpenSystemApproximationEvidence(StrictModule):
         if any(not isinstance(axis, ApproximationAxis) for axis in axes_):
             raise TypeError("axes must contain ApproximationAxis values.")
         if any(
-            not isinstance(quantity, ApproximationQuantity)
-            for quantity in quantities_
+            not isinstance(quantity, ApproximationQuantity) for quantity in quantities_
         ):
-            raise TypeError(
-                "quantities must contain ApproximationQuantity values."
-            )
+            raise TypeError("quantities must contain ApproximationQuantity values.")
         axis_names = tuple(axis.name for axis in axes_)
         quantity_names = tuple(quantity.name for quantity in quantities_)
         if len(set(axis_names)) != len(axis_names):
@@ -171,9 +166,9 @@ class OpenSystemApproximationEvidence(StrictModule):
                 "precision_evidence must be PrecisionEvidenceEnvelope or None."
             )
         policy_ids = tuple(str(identifier) for identifier in precision_policy_ids)
-        if any(not policy_id for policy_id in policy_ids) or len(
-            set(policy_ids)
-        ) != len(policy_ids):
+        if any(not policy_id for policy_id in policy_ids) or len(set(policy_ids)) != len(
+            policy_ids
+        ):
             raise ValueError("Precision policy IDs must be unique and non-empty.")
         self.representation_id = identifier
         self.axes = axes_
@@ -238,10 +233,9 @@ class OpenSystemPhysicalityEvidence(StrictModule):
             "representation-closure",
         }
         properties = tuple(str(value) for value in certified_properties)
-        if (
-            any(value not in allowed for value in properties)
-            or len(set(properties)) != len(properties)
-        ):
+        if any(value not in allowed for value in properties) or len(
+            set(properties)
+        ) != len(properties):
             raise ValueError("Unknown or duplicate physicality property.")
         metrics = {
             "trace": jnp.asarray(trace_residual),
@@ -274,12 +268,8 @@ class OpenSystemPhysicalityEvidence(StrictModule):
                 raise ValueError(
                     f"Certified physicality metric {name!r} must be finite and scalar."
                 )
-            if name not in ("positivity", "complete-positivity") and bool(
-                metric < 0.0
-            ):
-                raise ValueError(
-                    f"Physicality residual {name!r} must be non-negative."
-                )
+            if name not in ("positivity", "complete-positivity") and bool(metric < 0.0):
+                raise ValueError(f"Physicality residual {name!r} must be non-negative.")
         checks = []
         for name in properties:
             metric = metrics[name]
@@ -419,6 +409,13 @@ class OpenSystemPromotionPolicy(StrictModule):
         self.policy_id = identifier
 
 
+def _boolean_gate(value: ArrayLike, name: str, /) -> Array:
+    array = jnp.asarray(value)
+    if array.shape != () or array.dtype != jnp.bool_:
+        raise TypeError(f"{name} must be one scalar Boolean.")
+    return array
+
+
 class OpenSystemPromotionDecision(StrictModule):
     promoted: Array
     missing_axes: tuple[str, ...] = eqx.field(static=True)
@@ -444,14 +441,18 @@ class OpenSystemPromotionDecision(StrictModule):
         *,
         policy_id: str,
     ):
-        self.promoted = jnp.asarray(promoted, dtype=bool)
+        self.promoted = _boolean_gate(promoted, "promoted")
         self.missing_axes = tuple(missing_axes)
         self.missing_quantities = tuple(missing_quantities)
         self.missing_physicality = tuple(missing_physicality)
-        self.physicality_satisfied = jnp.asarray(physicality_satisfied, dtype=bool)
-        self.archive_verified = jnp.asarray(archive_verified, dtype=bool)
-        self.capacity_available = jnp.asarray(capacity_available, dtype=bool)
-        self.precision_satisfied = jnp.asarray(precision_satisfied, dtype=bool)
+        self.physicality_satisfied = _boolean_gate(
+            physicality_satisfied, "physicality_satisfied"
+        )
+        self.archive_verified = _boolean_gate(archive_verified, "archive_verified")
+        self.capacity_available = _boolean_gate(capacity_available, "capacity_available")
+        self.precision_satisfied = _boolean_gate(
+            precision_satisfied, "precision_satisfied"
+        )
         self.policy_id = str(policy_id)
 
 
@@ -484,11 +485,9 @@ def evaluate_open_system_promotion(
         if policy.require_precision
         else jnp.asarray(True)
     )
-    execution = jnp.asarray(execution_success, dtype=bool)
-    exhausted = jnp.asarray(capacity_exhausted, dtype=bool)
-    archived = jnp.asarray(archive_verified, dtype=bool)
-    if execution.shape != () or exhausted.shape != () or archived.shape != ():
-        raise ValueError("Promotion execution, capacity, and archive gates are scalar.")
+    execution = _boolean_gate(execution_success, "execution_success")
+    exhausted = _boolean_gate(capacity_exhausted, "capacity_exhausted")
+    archived = _boolean_gate(archive_verified, "archive_verified")
     capacity_available = ~exhausted
     promoted = (
         execution

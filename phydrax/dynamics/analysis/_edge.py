@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from operator import index
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -13,7 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._geometry_precision import GeometryPrecisionPolicy
 from ..._strict import StrictModule
 from .._evolution import AbstractEvolution
 from .._trajectory import TrajectoryData
@@ -50,22 +51,45 @@ def recurrence_seed_candidates(
     *,
     minimum_separation: int = 1,
     metric: RecurrenceSeedMetric = "euclidean",
+    maximum_pair_bytes: int = 512 * 1024**2,
 ) -> RecurrenceSeedCandidates:
     """Select the nearest valid, temporally separated pairs from one trajectory."""
     if not isinstance(trajectory, TrajectoryData):
         raise TypeError("trajectory must be TrajectoryData.")
     if trajectory.case_shape:
         raise ValueError("Recurrence seed extraction initially requires one trajectory.")
-    selected_count = int(count)
-    separation = int(minimum_separation)
+    if any(isinstance(value, bool) for value in (count, minimum_separation)):
+        raise TypeError("count and minimum_separation must be integers.")
+    selected_count = index(count)
+    separation = index(minimum_separation)
     if selected_count < 1 or separation < 1:
         raise ValueError("count and minimum_separation must be positive.")
+    if isinstance(maximum_pair_bytes, bool):
+        raise TypeError("maximum_pair_bytes must be an integer.")
+    maximum_bytes = index(maximum_pair_bytes)
+    if maximum_bytes < 1:
+        raise ValueError("maximum_pair_bytes must be positive.")
     if metric not in ("euclidean", "supremum"):
         raise ValueError("metric must be 'euclidean' or 'supremum'.")
     states = trajectory.states.reshape((trajectory.capacity, -1))
+    available_pairs = max(trajectory.capacity - separation, 0)
+    available_pairs = available_pairs * (available_pairs + 1) // 2
+    if selected_count > available_pairs:
+        raise ValueError("count exceeds the temporally separated pair capacity.")
+    flattened_size = int(states.shape[-1])
+    pair_count = trajectory.capacity**2
+    real_itemsize = int(jnp.empty((), dtype=states.dtype).real.dtype.itemsize)
+    required_bytes = pair_count * (
+        flattened_size * int(states.dtype.itemsize) + 4 * real_itemsize + 16
+    )
+    if required_bytes > maximum_bytes:
+        raise ValueError(
+            f"Recurrence distances require {required_bytes} bytes; "
+            f"maximum_pair_bytes={maximum_bytes}."
+        )
     differences = states[:, None, :] - states[None, :, :]
     distances = (
-        jnp.linalg.norm(differences, axis=-1)
+        GeometryPrecisionPolicy().norm(differences, axis=-1)
         if metric == "euclidean"
         else jnp.max(jnp.abs(differences), axis=-1)
     )
@@ -121,26 +145,23 @@ class EdgeTrackingProblem(StrictModule):
             raise TypeError("evolution must be an AbstractEvolution.")
         if not callable(classifier):
             raise TypeError("classifier must be callable.")
-        source = jnp.asarray(source_coordinate, dtype=float)
-        target = jnp.asarray(target_coordinate, dtype=float)
+        raw_source = jnp.asarray(source_coordinate)
+        raw_target = jnp.asarray(target_coordinate)
+        if jnp.iscomplexobj(raw_source) or jnp.iscomplexobj(raw_target):
+            raise TypeError("Edge-tracking coordinates must be real.")
+        source = raw_source.astype(float)
+        target = raw_target.astype(float)
         if (
             source.shape != ()
             or target.shape != ()
             or not bool(jnp.isfinite(source) & jnp.isfinite(target) & (target > source))
         ):
             raise ValueError("Edge-tracking coordinates must be finite and increasing.")
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "edge-tracking-problem-v1",
-                    "evolution": evolution.evolution_id,
-                    "source": float(source),
-                    "target": float(target),
-                }
+        if problem_id is None:
+            raise ValueError(
+                "problem_id is required because classifier callables have no stable identity."
             )
-            if problem_id is None
-            else str(problem_id)
-        )
+        identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         self.evolution = evolution
@@ -178,7 +199,9 @@ def track_basin_edge(
     """Bisect two opposite-outcome initial states over a fixed evolution horizon."""
     if not isinstance(problem, EdgeTrackingProblem):
         raise TypeError("problem must be an EdgeTrackingProblem.")
-    steps = int(iterations)
+    if isinstance(iterations, bool):
+        raise TypeError("iterations must be an integer.")
+    steps = index(iterations)
     tolerance = float(parameter_tolerance)
     if steps < 1 or not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("iterations and parameter_tolerance must be positive.")
@@ -187,6 +210,9 @@ def track_basin_edge(
     expected = problem.evolution.state_layout.shape
     if lower.shape != expected or upper.shape != expected:
         raise ValueError(f"Edge bracket states must both have shape {expected}.")
+    if lower.dtype != upper.dtype or not jnp.issubdtype(lower.dtype, jnp.inexact):
+        raise TypeError("Edge bracket states must share one inexact dtype.")
+    initial_state_finite = jnp.all(jnp.isfinite(lower)) & jnp.all(jnp.isfinite(upper))
 
     def classify(state):
         evolved = problem.evolution.advance(
@@ -217,7 +243,8 @@ def track_basin_edge(
         (lower_value, upper_value),
     )
     bracketed = (lower_value <= 0.0) & (upper_value >= 0.0)
-    initial_valid = lower_valid & upper_valid & bracketed
+    initial_evolution_valid = lower_valid & upper_valid
+    initial_valid = initial_state_finite & initial_evolution_valid & bracketed
     classifier_history = jnp.full((steps,), jnp.nan, dtype=lower_value.dtype)
     width_history = jnp.full((steps,), jnp.nan, dtype=lower_value.dtype)
 
@@ -231,8 +258,8 @@ def track_basin_edge(
             values,
             widths,
         ) = carry
-        midpoint = 0.5 * (lower_current + upper_current)
-        middle_parameter = 0.5 * (lower_parameter + upper_parameter)
+        midpoint = 0.5 * lower_current + 0.5 * upper_current
+        middle_parameter = 0.5 * lower_parameter + 0.5 * upper_parameter
         middle_value, middle_valid = classify(midpoint)
         choose_lower = middle_value <= 0.0
         next_lower = jnp.where(choose_lower, midpoint, lower_current)
@@ -270,22 +297,26 @@ def track_basin_edge(
     valid = final[4] & finite
     converged = valid & ((final[3] - final[2]) <= tolerance)
     status = jnp.where(
-        ~finite,
+        ~finite | ~initial_state_finite,
         EDGE_NONFINITE,
         jnp.where(
-            ~initial_valid,
-            EDGE_INVALID_BRACKET,
+            ~initial_evolution_valid,
+            EDGE_EVOLUTION_FAILED,
             jnp.where(
-                ~valid,
-                EDGE_EVOLUTION_FAILED,
-                jnp.where(converged, EDGE_SUCCESS, EDGE_MAXIMUM_ITERATIONS),
+                ~bracketed,
+                EDGE_INVALID_BRACKET,
+                jnp.where(
+                    ~valid,
+                    EDGE_EVOLUTION_FAILED,
+                    jnp.where(converged, EDGE_SUCCESS, EDGE_MAXIMUM_ITERATIONS),
+                ),
             ),
         ),
     ).astype(jnp.int32)
     return EdgeTrackingResult(
         lower_state=final[0],
         upper_state=final[1],
-        edge_state=0.5 * (final[0] + final[1]),
+        edge_state=0.5 * final[0] + 0.5 * final[1],
         lower_parameter=final[2],
         upper_parameter=final[3],
         classifier_values=final[5],

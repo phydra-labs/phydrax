@@ -91,6 +91,11 @@ def apply_local_kraus_channel(
     *,
     maximum_purification_dimension: int,
 ) -> tuple[LocallyPurifiedDensity, PurificationTruncationEvidence]:
+    if int(maximum_purification_dimension) < 1:
+        raise ValueError("maximum_purification_dimension must be positive.")
+    from ..tensor_network._canonical import canonicalize_lpdo
+
+    state, _ = canonicalize_lpdo(state, center=channel.site)
     if not 0 <= channel.site < state.site_count:
         raise ValueError("Kraus-channel site is outside the purification.")
     tensor = state.tensors[channel.site]
@@ -111,7 +116,7 @@ def apply_local_kraus_channel(
     compressed = jnp.transpose(compressed, (0, 1, 3, 2))
     tensors = list(state.tensors)
     tensors[channel.site] = compressed
-    result = LocallyPurifiedDensity(tuple(tensors))
+    result = LocallyPurifiedDensity(tuple(tensors), precision=state.precision)
     evidence = PurificationTruncationEvidence(
         channel.site,
         available,
@@ -180,14 +185,19 @@ def solve_purified_lindblad(
     state = problem.initial_state
     traces = [state.raw_trace()]
     discarded = []
-    for _ in range(int(steps)):
+    count = int(steps)
+    if count < 0 or int(maximum_purification_dimension) < 1:
+        raise ValueError("steps must be nonnegative and purification capacity positive.")
+    for _ in range(count):
         for channel in problem.channels:
             state, evidence = apply_local_kraus_channel(
                 state,
                 channel,
                 maximum_purification_dimension=maximum_purification_dimension,
             )
-            discarded.append(evidence.discarded_weight)
+            discarded.append(
+                jnp.where(evidence.valid, evidence.discarded_weight, jnp.nan)
+            )
         traces.append(state.raw_trace())
     return PurifiedLindbladResult(
         state,

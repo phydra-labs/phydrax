@@ -21,9 +21,15 @@ def drude_lorentz_matsubara(
     energy = float(reorganization_energy)
     cutoff = float(cutoff_frequency)
     thermal = float(temperature)
+    if not all(jnp.isfinite(value) for value in (energy, cutoff, thermal)):
+        raise ValueError("Drude–Lorentz decomposition parameters must be finite.")
     count = int(term_count)
     if energy < 0.0 or cutoff <= 0.0 or thermal <= 0.0 or count < 1:
         raise ValueError("Drude–Lorentz decomposition parameters are invalid.")
+    resonance = cutoff / (2.0 * float(jnp.pi) * thermal)
+    nearest = round(resonance)
+    if nearest >= 1 and abs(resonance - nearest) <= 1e-12 * max(1.0, resonance):
+        raise ValueError("Drude coefficient is singular at a Matsubara resonance.")
     for index in range(1, count):
         frequency = 2.0 * jnp.pi * index * thermal
         if abs(float(frequency**2 - cutoff**2)) <= 1e-12 * max(1.0, cutoff**2):
@@ -183,26 +189,15 @@ def drude_lorentz_pade(
     thermal = float(temperature)
     count = int(order)
     grid_size = int(reference_grid_size)
-    if (
-        energy < 0.0
-        or cutoff <= 0.0
-        or thermal <= 0.0
-        or count < 1
-        or grid_size < 2
-    ):
+    if energy < 0.0 or cutoff <= 0.0 or thermal <= 0.0 or count < 1 or grid_size < 2:
         raise ValueError("Drude–Lorentz Padé parameters are invalid.")
     epsilon, kappa = _pade_bose_poles_residues(count)
     frequencies = epsilon * thermal
     if jnp.any(
-        jnp.abs(frequencies**2 - cutoff**2)
-        <= 1e-12 * jnp.maximum(1.0, cutoff**2)
+        jnp.abs(frequencies**2 - cutoff**2) <= 1e-12 * jnp.maximum(1.0, cutoff**2)
     ):
         raise ValueError("A Padé pole collides with the Drude cutoff frequency.")
-    coefficients = [
-        energy
-        * cutoff
-        * (1.0 / jnp.tan(cutoff / (2.0 * thermal)) - 1j)
-    ]
+    coefficients = [energy * cutoff * (1.0 / jnp.tan(cutoff / (2.0 * thermal)) - 1j)]
     coefficients.extend(
         [
             (

@@ -97,19 +97,22 @@ class TargetSchema(StrictModule, NonTrainableState):
         if any(not name for name in names_) or len(set(names_)) != len(names_):
             raise ValueError("Target names must be non-empty and unique.")
         labels_ = tuple(class_labels)
+        classification_kinds = {"binary", "multiclass", "ordinal"}
+        if labels_ and kind not in classification_kinds:
+            raise ValueError(f"{kind} target schemas cannot declare class_labels.")
+        if labels_ and (
+            not all(isinstance(label, Hashable) for label in labels_)
+            or len(set(labels_)) != len(labels_)
+        ):
+            raise ValueError("Class labels must be hashable and unique.")
         if kind == "binary" and labels_ and len(labels_) != 2:
             raise ValueError("Binary target schemas require exactly two class labels.")
         if kind == "multiclass" and labels_ and len(labels_) < 2:
             raise ValueError("Multiclass target schemas require at least two labels.")
         if kind == "multilabel" and not names_:
             raise ValueError("Multilabel target schemas require named label coordinates.")
-        if kind == "ordinal":
-            if len(labels_) < 3:
-                raise ValueError("Ordinal target schemas require at least three labels.")
-            if not all(isinstance(label, Hashable) for label in labels_) or len(
-                set(labels_)
-            ) != len(labels_):
-                raise ValueError("Ordinal class labels must be hashable and unique.")
+        if kind == "ordinal" and len(labels_) < 3:
+            raise ValueError("Ordinal target schemas require at least three labels.")
         self.kind = kind
         self.names = names_
         self.class_labels = labels_
