@@ -10,7 +10,6 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ._cochain import CochainBoundaryKind, CochainBoundaryPolicy, CochainComplexIR
-from ._cochain_ops import cochain_codifferential, cochain_exterior_derivative
 
 
 class CochainField(StrictModule):
@@ -60,11 +59,15 @@ class CochainField(StrictModule):
     def exterior_derivative(self, /, *, field_id: str | None = None) -> CochainField:
         if self.degree >= self.complex.max_degree:
             raise ValueError("Exterior derivative of a top-degree cochain is zero.")
-        values = cochain_exterior_derivative(
-            self.complex.graph,
-            self.values,
+        active = self.complex.discretization.exterior_derivative(
             self.degree,
+            self.active_values,
             boundary_policy=self.boundary_policy,
+        )
+        values = (
+            jnp.zeros_like(self.values)
+            .at[self.complex.cell_entities(self.degree + 1)]
+            .set(active)
         )
         return CochainField(
             self.complex,
@@ -77,11 +80,15 @@ class CochainField(StrictModule):
     def codifferential(self, /, *, field_id: str | None = None) -> CochainField:
         if self.degree <= 0:
             raise ValueError("Codifferential requires positive cochain degree.")
-        values = cochain_codifferential(
-            self.complex.graph,
-            self.values,
+        active = self.complex.discretization.codifferential(
             self.degree,
+            self.active_values,
             boundary_policy=self.boundary_policy,
+        )
+        values = (
+            jnp.zeros_like(self.values)
+            .at[self.complex.cell_entities(self.degree - 1)]
+            .set(active)
         )
         return CochainField(
             self.complex,

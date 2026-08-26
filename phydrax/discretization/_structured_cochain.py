@@ -15,7 +15,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
-from ._cochain import CochainDiscretization
+from ._cochain import CochainBoundaryKind, CochainDiscretization
 from ._tensor_support import PreparedTensorGrid
 from ._topology import CellComplexTopology, EntitySet, OrientedIncidence
 
@@ -143,7 +143,14 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
                         lower_index = list(upper_index)
                         lower_index[axis] = upper_index[axis]
                         upper_boundary_index = list(upper_index)
-                        upper_boundary_index[axis] = upper_index[axis] + 1
+                        lower_shape = shapes[degree - 1][
+                            orientation_values[degree - 1].index(lower_orientation)
+                        ]
+                        upper_boundary_index[axis] = (
+                            (upper_index[axis] + 1) % lower_shape[axis]
+                            if grid.structured_axes[axis].periodic
+                            else upper_index[axis] + 1
+                        )
                         orientation_sign = -1.0 if position % 2 else 1.0
                         source_indices.extend(
                             (
@@ -237,47 +244,47 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             output.append(value[offset : offset + count].reshape(shape))
         return tuple(output)
 
-    def exterior_derivative(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        if degree_ < 0 or degree_ >= self.dimension:
-            raise ValueError("Exterior derivative degree must be below dimension.")
-        value = jnp.asarray(values)
-        if value.shape != (self.cochain.cell_counts[degree_],):
-            raise ValueError("Exterior derivative input has wrong cochain size.")
-        return self.cochain.topology.incidences[degree_].exterior_derivative().mv(value)
-
-    def codifferential(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        if degree_ <= 0 or degree_ > self.dimension:
-            raise ValueError(
-                "Codifferential degree must lie above zero and within dimension."
-            )
-        value = jnp.asarray(values)
-        if value.shape != (self.cochain.cell_counts[degree_],):
-            raise ValueError("Codifferential input has wrong cochain size.")
-        weighted = self.cochain.hodge_stars[degree_] * value
-        transposed = (
-            self.cochain.topology.incidences[degree_ - 1]
-            .exterior_derivative()
-            .transpose_mv(weighted)
+    def exterior_derivative(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        return self.cochain.exterior_derivative(
+            degree,
+            values,
+            boundary_policy=boundary_policy,
         )
-        return transposed / self.cochain.hodge_stars[degree_ - 1]
 
-    def laplace_de_rham(self, degree: int, values: ArrayLike, /) -> Array:
-        degree_ = int(degree)
-        value = jnp.asarray(values)
-        result = jnp.zeros_like(value)
-        if degree_ < self.dimension:
-            result = result + self.codifferential(
-                degree_ + 1,
-                self.exterior_derivative(degree_, value),
-            )
-        if degree_ > 0:
-            result = result + self.exterior_derivative(
-                degree_ - 1,
-                self.codifferential(degree_, value),
-            )
-        return result
+    def codifferential(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        return self.cochain.codifferential(
+            degree,
+            values,
+            boundary_policy=boundary_policy,
+        )
+
+    def laplace_de_rham(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        return self.cochain.laplace_de_rham(
+            degree,
+            values,
+            boundary_policy=boundary_policy,
+        )
 
 
 __all__ = ["StructuredCochainBridge"]

@@ -152,6 +152,39 @@ flux jumps without inventing topology.
 Singular direct and multigrid solves distinguish compatibility (`error` or
 `project_rhs`) from gauge (`zero_mean` or Euclidean `minimum_norm`).
 
+## Compatible electromagnetics
+
+`CompatibleMaxwellPlan` evolves electric displacement `D`, magnetic flux `B`, and
+charge on one exact cochain complex. Prepared constitutive maps derive `E` and `H`;
+the primary state therefore remains valid for diagonal, anisotropic, conductive,
+dispersive, nonlinear, gyrotropic, and active materials. Every prepared material
+declares loss, passivity/activity, reversibility, frequency-domain support, and
+auxiliary state. Unsupported combinations fail during preparation.
+
+PEC/PMC traces, periodic quotient topology, unitary Bloch twists, passive impedance
+boundaries, conforming jumps, and norm-compatible mortars remain explicit prepared
+objects. Structured electromagnetic CPML owns convolutional memory separately from
+material state and observers. The runtime reports electric and magnetic constraints,
+source, boundary, material, and PML power, energy, and CFL evidence.
+
+Specialized materials, boundaries, observers, modal analysis, and adjoints live under
+`phydrax.solver.maxwell`; the solver root exposes only the four core Maxwell lifecycle
+types. Observers stream native/weighted probes, synchronized energy, Poynting flux,
+and DFT state without retaining full histories. Frequency and transverse mode solves
+use the certified generalized self-adjoint eigen engine; isolated-cluster sensitivities
+use basis-invariant spectral-projector derivatives. Checkpointed PyTree, two-run
+DFT-field, frequency-domain, and reversible adjoints have distinct eligibility
+contracts; reversible execution rejects PML, dispersion, conductivity, active media,
+and other noninvertible state.
+
+The same degree-safe calculus applies full tetrahedral Whitney Hodge matrices and their
+inverse actions directly in codifferentials, energy pairings, frequency solves, and
+unstructured time evolution; diagonal metadata is not substituted for those operators.
+`PointCloudPlan` is separate: it prepares a fixed-capacity,
+rank/condition-certified nodal polynomial calculus over `PointTopology`. Its
+`DissipativePointDiffusion` supplies a negative-semidefinite factorization; no generic
+conservation claim is inferred from local polynomial reproduction.
+
 ## Staggered acoustics
 
 `StaggeredAcousticPlan` stores pressure on cells and each velocity component on its

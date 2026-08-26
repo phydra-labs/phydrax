@@ -29,9 +29,9 @@ def reconstruction_ghost_width(reconstruction: Any, /) -> int:
     if isinstance(reconstruction, AbstractFaceReconstructionPlan):
         return reconstruction.ghost_width
     if isinstance(reconstruction, CharacteristicReconstructionPlan):
-        return 3
+        return reconstruction.reconstruction.radius
     if isinstance(reconstruction, HighResolutionReconstructionPlan):
-        return 3
+        return reconstruction.radius
     if isinstance(reconstruction, NonuniformWENOReconstructionPlan):
         return 3
     if isinstance(reconstruction, WENOReconstructionPlan):

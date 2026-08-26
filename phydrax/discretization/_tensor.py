@@ -249,6 +249,11 @@ class AbstractStrongFormDiscretization(AbstractPreparedDiscretization):
         return int(prod(self.state_shape))
 
     @property
+    def spatial_dimension(self) -> int:
+        """Physical derivative dimension, independent of state storage rank."""
+        return len(self.state_shape)
+
+    @property
     @abc.abstractmethod
     def quadrature_weights(self) -> Array:
         raise NotImplementedError
@@ -303,7 +308,7 @@ class AbstractStrongFormDiscretization(AbstractPreparedDiscretization):
         *,
         axes: Sequence[int] | None = None,
     ) -> Array:
-        selected = _normalize_spatial_axes(axes, len(self.state_shape))
+        selected = _normalize_spatial_axes(axes, self.spatial_dimension)
         value = jnp.asarray(state)
         if (
             len(selected) != 3

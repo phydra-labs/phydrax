@@ -18,98 +18,6 @@ from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
 
 
-class CompatibleMaxwellState(StrictModule):
-    electric: Array
-    magnetic: Array
-
-
-class CompatibleMaxwellDynamics(StrictModule, NonTrainableState):
-    """Lossless Maxwell evolution on degree-one electric and degree-two magnetic cochains."""
-
-    bridge: StructuredCochainBridge
-    permittivity: float = eqx.field(static=True)
-    permeability: float = eqx.field(static=True)
-    dynamics_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        bridge: StructuredCochainBridge,
-        /,
-        *,
-        permittivity: float = 1.0,
-        permeability: float = 1.0,
-    ):
-        epsilon = float(permittivity)
-        mu = float(permeability)
-        if not isinstance(bridge, StructuredCochainBridge) or bridge.dimension != 3:
-            raise ValueError(
-                "Compatible Maxwell dynamics requires a three-dimensional bridge."
-            )
-        if not np.isfinite(epsilon) or not np.isfinite(mu) or epsilon <= 0.0 or mu <= 0.0:
-            raise ValueError("Maxwell material coefficients must be finite and positive.")
-        self.bridge = bridge
-        self.permittivity = epsilon
-        self.permeability = mu
-        self.dynamics_id = canonical_fingerprint(
-            {
-                "kind": "compatible-maxwell-dynamics",
-                "bridge": bridge.bridge_id,
-                "permittivity": epsilon,
-                "permeability": mu,
-            }
-        )
-
-    def pack(self, electric: ArrayLike, magnetic: ArrayLike, /) -> CompatibleMaxwellState:
-        electric_ = jnp.asarray(electric)
-        magnetic_ = jnp.asarray(magnetic)
-        if electric_.shape != (
-            self.bridge.cochain.cell_counts[1],
-        ) or magnetic_.shape != (self.bridge.cochain.cell_counts[2],):
-            raise ValueError("Maxwell cochain sizes must match degrees one and two.")
-        return CompatibleMaxwellState(electric=electric_, magnetic=magnetic_)
-
-    def drift(self, state: CompatibleMaxwellState, /) -> CompatibleMaxwellState:
-        if not isinstance(state, CompatibleMaxwellState):
-            raise TypeError("state must be CompatibleMaxwellState.")
-        electric_rate = self.bridge.codifferential(2, state.magnetic) / (
-            self.permittivity * self.permeability
-        )
-        magnetic_rate = -self.bridge.exterior_derivative(1, state.electric)
-        return self.pack(electric_rate, magnetic_rate)
-
-    def leapfrog_step(
-        self,
-        state: CompatibleMaxwellState,
-        step_size: ArrayLike,
-        /,
-    ) -> CompatibleMaxwellState:
-        dt = jnp.asarray(step_size)
-        magnetic_half = state.magnetic - 0.5 * dt * self.bridge.exterior_derivative(
-            1, state.electric
-        )
-        electric_new = state.electric + dt * self.bridge.codifferential(
-            2, magnetic_half
-        ) / (self.permittivity * self.permeability)
-        magnetic_new = magnetic_half - 0.5 * dt * self.bridge.exterior_derivative(
-            1, electric_new
-        )
-        return self.pack(electric_new, magnetic_new)
-
-    def energy(self, state: CompatibleMaxwellState, /) -> Array:
-        electric_star = self.bridge.cochain.hodge_stars[1]
-        magnetic_star = self.bridge.cochain.hodge_stars[2]
-        return 0.5 * (
-            self.permittivity
-            * jnp.real(jnp.vdot(state.electric, electric_star * state.electric))
-            + 1.0
-            / self.permeability
-            * jnp.real(jnp.vdot(state.magnetic, magnetic_star * state.magnetic))
-        )
-
-    def magnetic_constraint(self, state: CompatibleMaxwellState, /) -> Array:
-        return self.bridge.exterior_derivative(2, state.magnetic)
-
-
 class CompatibleElasticityState(StrictModule):
     displacement: Array
     velocity: Array
@@ -512,8 +420,6 @@ __all__ = [
     "CompatibleIdealMHDInductionDynamics",
     "CompatibleIdealMHDState",
     "CompatibleIncompressibleProjection",
-    "CompatibleMaxwellDynamics",
-    "CompatibleMaxwellState",
     "CompatiblePoroelasticDynamics",
     "CompatiblePoroelasticState",
     "CompatibleThermoelasticDynamics",

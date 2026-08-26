@@ -295,7 +295,91 @@ assumptions and rejects operators prepared under a different policy.
 
 ---
 
-::: phydrax.solver.CompatibleMaxwellDynamics
+::: phydrax.solver.CompatibleMaxwellPlan
+
+---
+
+::: phydrax.solver.PreparedCompatibleMaxwell
+
+---
+
+::: phydrax.solver.CompatibleMaxwellState
+
+---
+
+::: phydrax.solver.CompatibleMaxwellDiagnostics
+
+### Maxwell materials, boundaries, observers, and adjoints
+
+::: phydrax.solver.maxwell.DiagonalMaxwellConstitutivePlan
+
+---
+
+::: phydrax.solver.maxwell.MatrixMaxwellConstitutivePlan
+
+---
+
+::: phydrax.solver.maxwell.ConductiveMaxwellConstitutivePlan
+
+---
+
+::: phydrax.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan
+
+---
+
+::: phydrax.solver.maxwell.KerrPockelsMaxwellConstitutivePlan
+
+---
+
+::: phydrax.solver.maxwell.MaxwellBoundaryPlan
+
+---
+
+::: phydrax.solver.maxwell.BlochCochainCalculus
+
+---
+
+::: phydrax.solver.maxwell.MaxwellCPMLPlan
+
+---
+
+::: phydrax.solver.maxwell.FieldProbePlan
+
+---
+
+::: phydrax.solver.maxwell.DFTObserverPlan
+
+---
+
+::: phydrax.solver.maxwell.FrequencyMaxwellOperator
+
+---
+
+::: phydrax.solver.maxwell.PyTreeCheckpointedAdjointPlan
+
+---
+
+::: phydrax.solver.maxwell.MaxwellReversibleAdjointPlan
+
+---
+
+::: phydrax.solver.maxwell.UnstructuredMaxwellPlan
+
+### Point-cloud strong-form calculus
+
+::: phydrax.discretization.PointCloudPlan
+
+---
+
+::: phydrax.discretization.PreparedPointCloudDiscretization
+
+---
+
+::: phydrax.discretization.DissipativePointDiffusion
+
+---
+
+::: phydrax.discretization.solve_point_cloud_poisson
 
 ---
 

@@ -111,6 +111,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
 
     topology: CellComplexTopology
     hodge_stars: tuple[Array, ...]
+    hodge_matrices: tuple[Array | None, ...]
     primal_measures: tuple[Array, ...]
     dual_measures: tuple[Array, ...]
     boundary_masks: tuple[Array, ...]
@@ -131,6 +132,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         hodge_stars: Sequence[ArrayLike],
         /,
         *,
+        hodge_matrices: Sequence[ArrayLike | None] | None = None,
         primal_measures: Sequence[ArrayLike] | None = None,
         dual_measures: Sequence[ArrayLike] | None = None,
         boundary_masks: Sequence[ArrayLike] | None = None,
@@ -143,6 +145,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
             raise TypeError("topology must be a CellComplexTopology.")
         counts = tuple(entity_set.count for entity_set in topology.entity_sets)
         stars = self._degree_arrays("hodge_stars", hodge_stars, counts, positive=True)
+        matrices = self._hodge_matrix_arrays(hodge_matrices, counts)
         primal = self._degree_arrays(
             "primal_measures",
             tuple(np.ones((count,)) for count in counts)
@@ -283,6 +286,10 @@ class CochainDiscretization(AbstractPreparedDiscretization):
                 "plan": plan_identifier,
                 "topology": topology.topology_id,
                 "hodge": [array_tree_fingerprint(value) for value in stars],
+                "hodge_matrices": [
+                    None if value is None else array_tree_fingerprint(value)
+                    for value in matrices
+                ],
                 "primal": [array_tree_fingerprint(value) for value in primal],
                 "dual": [array_tree_fingerprint(value) for value in dual],
                 "boundary": [array_tree_fingerprint(value) for value in boundaries],
@@ -291,6 +298,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         )
         self.topology = topology
         self.hodge_stars = stars
+        self.hodge_matrices = matrices
         self.primal_measures = primal
         self.dual_measures = dual
         self.boundary_masks = boundaries
@@ -329,6 +337,45 @@ class CochainDiscretization(AbstractPreparedDiscretization):
                 raise ValueError(f"{name}[{degree}] must be strictly positive.")
             arrays.append(jnp.asarray(array))
         return tuple(arrays)
+
+    @staticmethod
+    def _hodge_matrix_arrays(
+        values: Sequence[ArrayLike | None] | None,
+        counts: tuple[int, ...],
+        /,
+    ) -> tuple[Array | None, ...]:
+        resolved = (None,) * len(counts) if values is None else tuple(values)
+        if len(resolved) != len(counts):
+            raise ValueError("hodge_matrices must provide one entry per cochain degree.")
+        matrices: list[Array | None] = []
+        for degree, (value, count) in enumerate(zip(resolved, counts, strict=True)):
+            if value is None:
+                matrices.append(None)
+                continue
+            matrix = np.asarray(value)
+            if matrix.shape != (count, count):
+                raise ValueError(
+                    f"hodge_matrices[{degree}] must have shape ({count}, {count})."
+                )
+            if np.any(~np.isfinite(matrix)):
+                raise ValueError(f"hodge_matrices[{degree}] must be finite.")
+            tolerance = (
+                64.0
+                * np.finfo(matrix.real.dtype).eps
+                * max(1.0, float(np.linalg.norm(matrix)))
+            )
+            if not np.allclose(
+                matrix,
+                matrix.conj().T,
+                rtol=1e-10,
+                atol=tolerance,
+            ):
+                raise ValueError(f"hodge_matrices[{degree}] must be Hermitian.")
+            eigenvalues = np.linalg.eigvalsh(0.5 * (matrix + matrix.conj().T))
+            if float(eigenvalues[0]) <= tolerance:
+                raise ValueError(f"hodge_matrices[{degree}] must be positive definite.")
+            matrices.append(jnp.asarray(matrix))
+        return tuple(matrices)
 
     @staticmethod
     def _coordinates(
@@ -386,6 +433,111 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         if boundary_policy == "relative":
             return ~self.boundary_masks[value]
         raise ValueError("boundary_policy must be 'absolute' or 'relative'.")
+
+    def _values(self, degree: int, values: ArrayLike, /) -> tuple[int, Array]:
+        degree_ = int(degree)
+        if degree_ < 0 or degree_ > self.max_degree:
+            raise ValueError(f"degree must lie in [0, {self.max_degree}].")
+        value = jnp.asarray(values)
+        expected = self.cell_counts[degree_]
+        if value.shape != (expected,):
+            raise ValueError(f"Degree-{degree_} cochain must have shape ({expected},).")
+        return degree_, value
+
+    def exterior_derivative(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        """Apply the metric-independent incidence derivative."""
+        degree_, value = self._values(degree, values)
+        if degree_ >= self.max_degree:
+            raise ValueError("Exterior derivative degree must be below max_degree.")
+        source = jnp.where(self.active_mask(degree_, boundary_policy), value, 0)
+        output = self.topology.incidences[degree_].exterior_derivative().mv(source)
+        return jnp.where(self.active_mask(degree_ + 1, boundary_policy), output, 0)
+
+    def hodge_metric(self, degree: int, /) -> Array:
+        """Return the full Hodge matrix when present, otherwise its diagonal."""
+        degree_ = int(degree)
+        if degree_ < 0 or degree_ > self.max_degree:
+            raise ValueError(f"degree must lie in [0, {self.max_degree}].")
+        matrix = self.hodge_matrices[degree_]
+        return self.hodge_stars[degree_] if matrix is None else matrix
+
+    def apply_hodge(self, degree: int, values: ArrayLike, /) -> Array:
+        """Apply the degree Hodge operator without materializing a diagonal."""
+        degree_, value = self._values(degree, values)
+        matrix = self.hodge_matrices[degree_]
+        return self.hodge_stars[degree_] * value if matrix is None else matrix @ value
+
+    def solve_hodge(self, degree: int, values: ArrayLike, /) -> Array:
+        """Apply the inverse degree Hodge operator."""
+        degree_, value = self._values(degree, values)
+        matrix = self.hodge_matrices[degree_]
+        return (
+            value / self.hodge_stars[degree_]
+            if matrix is None
+            else jnp.linalg.solve(matrix, value)
+        )
+
+    def codifferential(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        """Apply the Hodge adjoint of the preceding exterior derivative."""
+        degree_, value = self._values(degree, values)
+        if degree_ <= 0:
+            raise ValueError("Codifferential degree must be positive.")
+        source = jnp.where(self.active_mask(degree_, boundary_policy), value, 0)
+        weighted = self.apply_hodge(degree_, source)
+        transposed = (
+            self.topology.incidences[degree_ - 1]
+            .exterior_derivative()
+            .transpose_mv(weighted)
+        )
+        output = self.solve_hodge(degree_ - 1, transposed)
+        return jnp.where(self.active_mask(degree_ - 1, boundary_policy), output, 0)
+
+    def laplace_de_rham(
+        self,
+        degree: int,
+        values: ArrayLike,
+        /,
+        *,
+        boundary_policy: CochainBoundaryKind = "absolute",
+    ) -> Array:
+        """Apply ``δd + dδ`` on one cochain degree."""
+        degree_, value = self._values(degree, values)
+        result = jnp.zeros_like(value)
+        if degree_ < self.max_degree:
+            result = result + self.codifferential(
+                degree_ + 1,
+                self.exterior_derivative(
+                    degree_,
+                    value,
+                    boundary_policy=boundary_policy,
+                ),
+                boundary_policy=boundary_policy,
+            )
+        if degree_ > 0:
+            result = result + self.exterior_derivative(
+                degree_ - 1,
+                self.codifferential(
+                    degree_,
+                    value,
+                    boundary_policy=boundary_policy,
+                ),
+                boundary_policy=boundary_policy,
+            )
+        return result
 
 
 __all__ = [
