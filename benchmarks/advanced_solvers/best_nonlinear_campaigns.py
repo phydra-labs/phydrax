@@ -171,6 +171,106 @@ def _unavailable(
         source_revision=None if spec is None else spec.source_revision,
     )
 
+_QUASILINEAR_ROOT_SIZE = 512
+_QUASILINEAR_ROOT_STEP = 0.05
+_QUASILINEAR_ROOT_SPACING = 1.0 / _QUASILINEAR_ROOT_SIZE
+
+
+def _periodic_gradient(value):
+    return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (
+        2.0 * _QUASILINEAR_ROOT_SPACING
+    )
+
+
+def _periodic_divergence(value):
+    return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (
+        2.0 * _QUASILINEAR_ROOT_SPACING
+    )
+
+
+def _quasilinear_diffusivity(value):
+    return 0.02 + 0.8 * value * value
+
+
+def _quasilinear_diffusion(value, coefficient):
+    return _periodic_divergence(coefficient * _periodic_gradient(value))
+
+
+def _quasilinear_residual(value, previous):
+    return (
+        value
+        - previous
+        - _QUASILINEAR_ROOT_STEP
+        * _quasilinear_diffusion(value, _quasilinear_diffusivity(value))
+    )
+
+
+def _lagged_root_method(case_id, initial):
+    space = phx.linalg.ArraySpace(initial.shape, dtype=initial.dtype)
+    if case_id == "diagonal-polynomial":
+        policy = phx.linalg.LinearSolvePolicy(
+            phx.linalg.GMRES(restart=8),
+            tolerance=phx.linalg.TolerancePolicy(
+                relative=1e-10,
+                absolute=1e-12,
+                max_steps=64,
+            ),
+        )
+
+        def operator(state, args):
+            del args
+            return phx.linalg.FunctionLinearOperator(
+                lambda direction: state * direction,
+                source=space,
+                target=space,
+                operator_id="benchmark-lagged-diagonal-polynomial",
+            )
+
+        damping = 0.5
+    elif case_id == "quasilinear-diffusion":
+        policy = phx.linalg.LinearSolvePolicy(
+            phx.linalg.MINRES(),
+            tolerance=phx.linalg.TolerancePolicy(
+                relative=1e-10,
+                absolute=1e-12,
+                max_steps=512,
+            ),
+        )
+
+        def operator(state, args):
+            del args
+            coefficient = _quasilinear_diffusivity(state)
+            return phx.linalg.FunctionLinearOperator(
+                lambda direction: (
+                    direction
+                    - _QUASILINEAR_ROOT_STEP
+                    * _quasilinear_diffusion(direction, coefficient)
+                ),
+                source=space,
+                target=space,
+                properties=phx.linalg.OperatorProperties(
+                    self_adjoint=True,
+                    positive_definite=True,
+                    evidence={
+                        "self_adjoint": "construction",
+                        "positive_definite": "construction",
+                    },
+                ),
+                operator_id="benchmark-lagged-quasilinear-diffusion",
+            )
+
+        damping = 1.0
+    else:
+        return None
+    return phx.nonlinear.NonlinearRichardson(
+        phx.nonlinear.LaggedLinearSolveUpdate(
+            operator,
+            linear_policy=policy,
+            damping=damping,
+            update_id=f"benchmark-lagged-{case_id}",
+        )
+    )
+
 
 def _root_cases():
     return {
@@ -199,15 +299,60 @@ def _root_cases():
             jnp.full((8,), 0.5),
             jnp.linspace(-1.0, 1.0, 8),
         ),
+        "quasilinear-diffusion": (
+            _quasilinear_residual,
+            (
+                0.45
+                + 0.35
+                * jnp.sin(
+                    2.0
+                    * jnp.pi
+                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
+                    / _QUASILINEAR_ROOT_SIZE
+                )
+                + 0.12
+                * jnp.sin(
+                    6.0
+                    * jnp.pi
+                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
+                    / _QUASILINEAR_ROOT_SIZE
+                )
+            ),
+            (
+                0.45
+                + 0.35
+                * jnp.sin(
+                    2.0
+                    * jnp.pi
+                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
+                    / _QUASILINEAR_ROOT_SIZE
+                )
+                + 0.12
+                * jnp.sin(
+                    6.0
+                    * jnp.pi
+                    * jnp.arange(_QUASILINEAR_ROOT_SIZE)
+                    / _QUASILINEAR_ROOT_SIZE
+                )
+            ),
+        ),
     }
 
 
 def _run_root(case_id, implementation):
     function, initial, args = _root_cases()[case_id]
-    problem = phx.nonlinear.NonlinearSystemProblem(function, problem_id=case_id)
+    space = phx.linalg.ArraySpace(initial.shape, dtype=initial.dtype)
+    problem = phx.nonlinear.NonlinearSystemProblem(
+        function,
+        state_space=space,
+        residual_space=space,
+        problem_id=case_id,
+    )
     termination = phx.nonlinear.NonlinearTermination(
         absolute_residual=1e-8,
         relative_residual=0.0,
+        absolute_step=0.0,
+        relative_step=0.0,
         maximum_steps=200,
         maximum_evaluations=4000,
         maximum_linear_iterations=20000,
@@ -285,6 +430,17 @@ def _run_root(case_id, implementation):
         "phydrax-broyden": phx.nonlinear.Broyden("good"),
         "phydrax-dfsane": phx.nonlinear.DFSANE(),
     }
+    lagged_method = _lagged_root_method(case_id, initial)
+    if implementation == "phydrax-lagged" and lagged_method is None:
+        return _unavailable(
+            "root",
+            case_id,
+            implementation,
+            reason="unsupported-mathematics",
+            detail="The case has no declared lagged linear model.",
+        )
+    if lagged_method is not None:
+        methods["phydrax-lagged"] = lagged_method
     if implementation not in methods:
         return None
     start = time.perf_counter()
@@ -1452,6 +1608,7 @@ def run_campaign(
                 "phydrax-robust",
                 "phydrax-broyden",
                 "phydrax-dfsane",
+                "phydrax-lagged",
                 "optimistix-newton",
                 "scipy-root",
                 "nonlinearsolve-jl",

@@ -11,6 +11,8 @@ import pytest
 
 from benchmarks.advanced_solvers.best_nonlinear_campaigns import (
     _global_cases,
+    _root_cases,
+    _run_root,
     CampaignObservation,
     main,
     performance_profile,
@@ -239,3 +241,26 @@ def test_global_rastrigin_uses_dimension_scaled_known_zero_target():
     rastrigin = _global_cases()["rastrigin"]
     assert float(rastrigin(jnp.zeros(4))) == 0.0
     assert float(rastrigin(jnp.ones(4))) > 0.0
+
+
+def test_lagged_root_campaign_uses_declared_quasilinear_models():
+    function, initial, previous = _root_cases()["quasilinear-diffusion"]
+    assert jnp.linalg.norm(function(initial, previous)) > 0.0
+
+    observation = _run_root("quasilinear-diffusion", "phydrax-lagged")
+
+    assert observation.available
+    assert observation.backend_claimed_success
+    assert observation.certified
+    assert observation.certificate <= 1e-8
+    assert observation.work_counts["residual_evaluations"] > 0
+    assert observation.work_counts["jvp_evaluations"] > 0
+    assert observation.work_counts["linear_iterations"] > 0
+
+
+def test_lagged_root_campaign_retains_unsupported_case_rows():
+    observation = _run_root("trigonometric", "phydrax-lagged")
+
+    assert not observation.available
+    assert observation.availability_reason == "unsupported-mathematics"
+    assert observation.certified is None

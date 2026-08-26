@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added independently selectable tangent and adjoint linear policies for exact
+  implicit root derivatives, plus prepared lagged-linear nonlinear updates that
+  refresh structure-preserving operators, retain complete failure evidence, and
+  certify every accepted root against the original physical residual.
 - Added coefficient-resident global Fourier, sine, cosine, Chebyshev, Legendre,
   constrained, and mixed tensor spectral spaces; explicit padding/filter dealiasing;
   modal PDE and periodic conservation lowering; entropy diagnostics;

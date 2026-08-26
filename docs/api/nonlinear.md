@@ -151,6 +151,26 @@ preconditioner and prepares local dense Jacobian inverses for reuse within each
 outer approximate-Jacobian action. Its nested local work is explicitly marked
 as incompletely countable.
 
+## Lagged linear updates
+
+`LaggedLinearSolveUpdate` refreshes a declared linear operator `B(state)` and
+solves `B(state) direction = -residual(state)`. This defines the local affine
+model `residual(state) + B(state) direction` without probing the nonlinear
+residual at zero. The operator must preserve its source, target, identity, and
+symbolic structure across numeric refreshes; all linear work routes through
+`phydrax.linalg`.
+
+The update only returns a finite, physically valid proposal. Compose it with
+`NonlinearRichardson` for physical-residual Armijo globalization or with another
+typed update graph. Root success is always certified against the original
+`NonlinearSystemProblem`, never against the lagged model. A lagged operator is
+therefore an approximate primal model or preconditioner, not a replacement for
+the exact Jacobian in an implicit derivative.
+
+Stationary `PicardUpdate` applies one fixed preconditioned residual correction.
+`LaggedLinearSolveUpdate` is distinct: its operator is rebuilt from the current
+state while its prepared symbolic linear plan is retained.
+
 ## Fixed points and nonlinear acceleration
 
 `FixedPointProblem` represents `state = mapping(state, args)`. `PicardIteration`
@@ -298,12 +318,15 @@ differentiable downstream observables without discarding failure information.
 raises when the native solve is unsuccessful. It does not hide or repair failure; use
 `implicit_root_result` when status-valued control flow or diagnostics are required.
 
-Both entry points differentiate the mathematical root map through a fresh linearized
-solve, not through nonlinear iteration history. They accept either an ordinary
-problem/state/method contract or a `PreparedNonlinearSolve`, so a caller can retain one
-symbolic linear template while refreshing runtime parameters. Singular or
-incompatible derivative systems fail according to the supplied linear policy instead
-of returning an unverified gradient.
+Both entry points differentiate the mathematical root map through a fresh
+linearized solve, not through nonlinear iteration history. They accept either
+an ordinary problem/state/method contract or a `PreparedNonlinearSolve`, so a
+caller can retain one symbolic linear template while refreshing runtime
+parameters. `ImplicitRootDerivativePolicy` may select different tangent and
+adjoint `LinearSolvePolicy` values; the adjoint defaults to the tangent policy,
+and Newton methods supply their primal linear policy when no tangent policy is
+declared. Singular or incompatible derivative systems fail through certified
+derivative solves instead of returning an unverified gradient.
 
 ## Causal nonlinear recurrence
 
@@ -418,6 +441,10 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 
 ---
 
+::: phydrax.nonlinear.LaggedLinearSolveUpdate
+
+---
+
 ::: phydrax.nonlinear.NewtonStepUpdate
 
 ---
@@ -503,6 +530,11 @@ Differentiating a failed solve raises instead of returning an approximate gradie
 ::: phydrax.nonlinear.NonlinearTransformationEvidence
 
 ---
+
+::: phydrax.nonlinear.ImplicitRootDerivativePolicy
+
+---
+
 ::: phydrax.nonlinear.implicit_root_result
 
 ---

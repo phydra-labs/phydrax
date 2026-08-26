@@ -75,7 +75,12 @@ from ._graduation import (
     SolverRegressionResult,
 )
 from ._higher_order import VectorHalley
-from ._implicit import implicit_root, implicit_root_result
+from ._implicit import (
+    implicit_root,
+    implicit_root_result,
+    ImplicitRootDerivativePolicy,
+)
+from ._lagged import LaggedLinearSolveUpdate
 from ._linearization import (
     JacobianMode,
     JacobianPolicy,
@@ -255,6 +260,8 @@ __all__ = [
     "JacobianRefreshStrategy",
     "JacobianMode",
     "JacobianPolicy",
+    "ImplicitRootDerivativePolicy",
+    "LaggedLinearSolveUpdate",
     "LeftPreconditionedSystem",
     "GlobalizationResult",
     "GlobalizationStatus",
