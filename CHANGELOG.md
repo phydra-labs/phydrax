@@ -24,6 +24,11 @@
   resource-bounded sparse/dense products, shared real-coordinate maps, algebra-valued
   spaces and operators, Diffrax algebra state policies, and unit complex/quaternion
   state geometries.
+- Added canonical-complex holomorphic construction dependencies, spectrally
+  initialized low-rank complex-affine layers, per-layer factorized
+  `HolomorphicMLP` plans, certified independent branch bundles, same-coordinate
+  holomorphic product potentials with exact Taylor-convolution jets, multiplicative
+  gauge diagnostics, and a deterministic separability benchmark.
 - Expanded compatible electromagnetics around conservative electric-displacement and
   magnetic-flux cochains: canonical structured/unstructured calculus, diagonal and
   metric-Hermitian constitutive maps, conductivity, Lorentz/Drude ADEs, Kerr/Pockels,

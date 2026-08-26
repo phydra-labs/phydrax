@@ -24,6 +24,10 @@ from ._fourier_embeddings import (
 from ._fourier_sampling import FourierEvaluationMethod, sample_fourier_grid
 from ._linear import Linear
 from ._linear_recurrent_unit import LinearRecurrentUnit
+from ._low_rank_complex_linear import (
+    LowRankComplexLinear,
+    LowRankComplexLinearInitializationReport,
+)
 from ._manifold_warp import (
     ManifoldMultiheadWarp,
     ManifoldWarpDiagnostics,
@@ -93,6 +97,8 @@ __all__ = [
     "Dropout",
     "ComplexLinear",
     "Linear",
+    "LowRankComplexLinear",
+    "LowRankComplexLinearInitializationReport",
     "LinearRecurrentUnit",
     "MultiheadWarp",
     "ProbabilisticMultiheadWarp",
