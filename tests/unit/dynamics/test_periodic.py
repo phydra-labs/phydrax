@@ -40,6 +40,8 @@ def test_map_periodic_orbit_dense_matrix_free_and_floquet_modes():
 
     assert bool(dense.valid)
     assert bool(matrix_free.valid)
+    assert bool(dense.nonlinear_result.successful)
+    assert bool(matrix_free.nonlinear_result.successful)
     np.testing.assert_allclose(np.asarray(dense.initial_state), 0.0, atol=1e-12)
     np.testing.assert_allclose(np.asarray(matrix_free.initial_state), 0.0, atol=1e-10)
     np.testing.assert_allclose(
@@ -52,6 +54,8 @@ def test_map_periodic_orbit_dense_matrix_free_and_floquet_modes():
     )
     assert full.stability == "unstable"
     assert leading.stability == "unstable"
+    assert bool(full.eigen_result.successful)
+    assert bool(leading.eigen_result.successful)
 
 
 def test_flow_multiple_shooting_and_floquet_neutral_mode():

@@ -9,6 +9,12 @@
   conjugacy-preserving modal spatial noise; internal-linalg Galerkin, boundary-lift,
   and generalized tau formulations; and diagonal ETDRK2/4 integration with shared
   stable phi-three matrix actions.
+- Added dealiased periodic incompressible Fourier dynamics, Hermitian real analysis
+  coordinates, tensor spectral symmetry actions, primitive Fourier--Chebyshev--Fourier
+  channel Stokes solves with pressure-gradient or bulk-flux control, fixed-step
+  channel SBDF2 integration, shared-runtime periodic/Floquet analysis, relative
+  invariant residuals, bounded evolution observation, portable spectral state
+  artifacts, recurrence seeding, and finite-horizon edge tracking.
 - Added explicit real/imaginary Diffrax state packing for complex ODE, split, CDE,
   and stochastic paths. Public states remain complex; temporal evidence records the
   doubled real backend shape, dtype, tolerance geometry, and policy, while native and

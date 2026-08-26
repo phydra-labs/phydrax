@@ -5,6 +5,7 @@
 """Serializable, validated equation representations for physics-aware models."""
 
 from . import trefftz
+from ._channel_flow import compile_channel_flow, CompiledChannelFlowDynamics
 from ._compile import (
     compile_pde_expression,
     compile_pde_problem,
@@ -73,6 +74,11 @@ from ._hyperbolic_systems import (
     MultispeciesEulerSystem,
     ScalarConservationSystem,
     ShallowWaterSystem,
+)
+from ._incompressible import (
+    compile_periodic_incompressible_flow,
+    CompiledIncompressibleSpectralDynamics,
+    IncompressibleFlowProblem,
 )
 from ._ir import (
     as_expression,
@@ -210,6 +216,7 @@ __all__ = [
     "analyze_randomized_compilation",
     "audit_trial_space",
     "BiharmonicPotential2D",
+    "CompiledChannelFlowDynamics",
     "BoundaryLift",
     "CompiledPDECondition",
     "BoundaryTarget",
@@ -217,6 +224,7 @@ __all__ = [
     "CompiledPDEProblem",
     "CompiledDiscreteDynamics",
     "CompiledDiscreteResidual",
+    "CompiledIncompressibleSpectralDynamics",
     "CompiledSpectralDynamics",
     "CompiledFiniteDifferenceDynamics",
     "CompiledStencilDynamics",
@@ -250,6 +258,7 @@ __all__ = [
     "HolomorphicPolynomialPotential",
     "HolomorphicPotentialProvider",
     "IdealGasMaterial",
+    "IncompressibleFlowProblem",
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
@@ -281,6 +290,8 @@ __all__ = [
     "LinearTrefftzField",
     "LinearMonogenicField",
     "MonogenicPolynomialBasis",
+    "compile_periodic_incompressible_flow",
+    "compile_channel_flow",
     "PlaneElasticityPotential2D",
     "PlaneIsotropicMaterial",
     "IntegralCompiler",
