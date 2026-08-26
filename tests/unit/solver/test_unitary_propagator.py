@@ -25,6 +25,10 @@ def test_constant_hamiltonian_unitary_propagation_and_density_action():
     assert bool(jnp.all(solution.valid))
     assert jnp.allclose(solution.propagators[-1], expected, atol=2e-5)
     assert solution.maximum_unitarity_residual < 1e-8
+    evidence = solution.differential_solution.temporal_evidence
+    assert evidence is not None
+    assert evidence.state_packing is not None
+    assert evidence.state_packing.strategy == "native"
 
     state = jnp.asarray([1.0 + 0.0j, 0.0j])
     density = jnp.outer(state, jnp.conj(state))

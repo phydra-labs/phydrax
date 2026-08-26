@@ -1,3 +1,5 @@
+import warnings
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -311,3 +313,42 @@ def test_rough_second_level_control_is_rejected_with_rde_direction():
             rough_path,
             save_times=jnp.asarray([1.0]),
         )
+
+
+def test_complex_cde_uses_real_imaginary_diffrax_packing():
+    path = _declared_path(
+        lambda time, side: jnp.asarray([time]),
+        lambda time, side: jnp.asarray([1.0]),
+        dimension=1,
+        path_id="complex-identity-control",
+    )
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: 1j * state[..., None],
+        jnp.asarray([1.0 + 0.0j]),
+        driver_dimension=1,
+    )
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "error",
+            message="Complex dtype support in Diffrax.*",
+        )
+        solution = phx.solver.solve_diffrax_cde(
+            problem,
+            path,
+            save_times=jnp.asarray([0.5, 1.0]),
+            rtol=1e-9,
+            atol=1e-11,
+        )
+
+    evidence = solution.differential_solution.temporal_evidence
+    assert evidence is not None
+    assert evidence.state_packing is not None
+    assert evidence.state_packing.strategy == "real_imag"
+    assert solution.states.dtype == jnp.complex128
+    assert jnp.allclose(
+        solution.states[:, 0],
+        jnp.exp(1j * jnp.asarray([0.5, 1.0])),
+        rtol=2e-7,
+        atol=2e-9,
+    )

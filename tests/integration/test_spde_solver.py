@@ -183,6 +183,9 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
     assert jnp.all(jnp.isfinite(first.states))
     assert jnp.array_equal(first.states, replay.states)
     assert jnp.max(jnp.abs(jnp.imag(physical_states))) < 1e-10
+    assert first.temporal_evidence is not None
+    assert first.temporal_evidence.state_packing is not None
+    assert first.temporal_evidence.state_packing.strategy == "real_imag"
 
 
 def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():

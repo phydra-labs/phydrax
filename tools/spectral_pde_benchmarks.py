@@ -31,6 +31,13 @@ class SpectralPDEBenchmarkRecord:
     maximum_drift_error: float
     parameter_gradient_error: float
     alias_defect: float
+    state_packing_evidence_id: str
+    packed_backend_shape: tuple[int, ...]
+    packed_public_bytes: int
+    packed_backend_bytes: int
+    packed_diffrax_wall_ms: float
+    explicit_real_wall_ms: float
+    packed_pathwise_defect: float
     finite: bool
 
     @property
@@ -40,6 +47,8 @@ class SpectralPDEBenchmarkRecord:
             and self.maximum_drift_error <= 1e-9
             and self.parameter_gradient_error <= 1e-8
             and self.alias_defect <= 1e-9
+            and self.packed_pathwise_defect <= 1e-8
+            and self.packed_public_bytes == self.packed_backend_bytes
         )
 
 
@@ -149,11 +158,69 @@ def run_spectral_pde_benchmark(
     gradient_error = jnp.abs(actual_gradient - expected_gradient)
     report = dealiasing.report
     itemsize = jnp.dtype(space.plan.precision.coefficient_dtype).itemsize
+    real_rate = -0.2
+    imaginary_rate = 0.5
+    conjugate_rate = 0.1
+    complex_problem = phx.solver.DifferentialProblem(
+        lambda time, value, args: (
+            (real_rate + 1j * imaginary_rate) * value + conjugate_rate * jnp.conj(value)
+        ),
+        state,
+        t0=0.0,
+        t1=0.05,
+    )
+
+    def real_drift(time, value, args):
+        del time, args
+        real, imag = value
+        return jnp.stack(
+            (
+                (real_rate + conjugate_rate) * real - imaginary_rate * imag,
+                imaginary_rate * real + (real_rate - conjugate_rate) * imag,
+            )
+        )
+
+    real_problem = phx.solver.DifferentialProblem(
+        real_drift,
+        jnp.stack((jnp.real(state), jnp.imag(state))),
+        t0=0.0,
+        t1=0.05,
+    )
+    packed_started = time.perf_counter()
+    packed_solution = phx.solver.solve_diffrax(
+        complex_problem,
+        save_times=jnp.asarray([0.05]),
+        rtol=1e-8,
+        atol=1e-10,
+    )
+    jax.block_until_ready(packed_solution.states)
+    packed_wall = 1e3 * (time.perf_counter() - packed_started)
+    real_started = time.perf_counter()
+    real_solution = phx.solver.solve_diffrax(
+        real_problem,
+        save_times=jnp.asarray([0.05]),
+        rtol=1e-8,
+        atol=1e-10,
+    )
+    jax.block_until_ready(real_solution.states)
+    real_wall = 1e3 * (time.perf_counter() - real_started)
+    expected_packed = jax.lax.complex(
+        real_solution.states[:, 0],
+        real_solution.states[:, 1],
+    )
+    packed_defect = jnp.max(jnp.abs(packed_solution.states - expected_packed))
+    packing = packed_solution.temporal_evidence.state_packing
+    if packing is None:
+        raise RuntimeError("Complex Diffrax benchmark did not prepare state packing.")
+    backend_itemsize = jnp.dtype(packing.backend_dtype).itemsize
+    public_bytes = state.size * state.dtype.itemsize
+    backend_bytes = 2 * state.size * backend_itemsize
     finite = bool(
         jnp.all(jnp.isfinite(actual))
         & jnp.isfinite(maximum_error)
         & jnp.isfinite(gradient_error)
         & jnp.isfinite(alias_defect)
+        & jnp.isfinite(packed_defect)
     )
     return SpectralPDEBenchmarkRecord(
         mode_count=count,
@@ -170,6 +237,13 @@ def run_spectral_pde_benchmark(
         maximum_drift_error=float(maximum_error),
         parameter_gradient_error=float(gradient_error),
         alias_defect=float(alias_defect),
+        state_packing_evidence_id=packing.evidence_id,
+        packed_backend_shape=packing.backend_shape,
+        packed_public_bytes=int(public_bytes),
+        packed_backend_bytes=int(backend_bytes),
+        packed_diffrax_wall_ms=float(packed_wall),
+        explicit_real_wall_ms=float(real_wall),
+        packed_pathwise_defect=float(packed_defect),
         finite=finite,
     )
 

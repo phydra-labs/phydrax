@@ -17,6 +17,12 @@ from jaxtyping import Array, ArrayLike
 from ..stochastic import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._differential_ir import lower_deterministic_problem
+from ._diffrax_state_packing import (
+    _prepare_diffrax_state_adapter,
+    _PreparedDiffraxStateAdapter,
+    _validate_real_backend_tree,
+    DiffraxComplexStatePolicy,
+)
 from ._geometric import (
     AbstractGeometricSolver,
     CommutatorFreeSolver,
@@ -62,6 +68,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
 
     interpolation: dfx.DenseInterpolation
     precision: TemporalPrecisionPolicy
+    state_adapter: _PreparedDiffraxStateAdapter
     sample_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
@@ -69,6 +76,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
         interpolation: dfx.DenseInterpolation,
         sample_shape: tuple[int, ...],
         precision: TemporalPrecisionPolicy,
+        state_adapter: _PreparedDiffraxStateAdapter,
         /,
     ):
         samples = tuple(int(size) for size in sample_shape)
@@ -85,6 +93,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
             is_leaf=eqx.is_array,
         )
         self.precision = precision
+        self.state_adapter = state_adapter
         self.sample_shape = samples
 
     @eqx.filter_jit
@@ -125,6 +134,7 @@ class _VectorizedDenseInterpolation(eqx.Module):
                 lambda time: interpolation.evaluate(time, left=left)
             )(flat_times)
         )(self.interpolation)
+        values = self.state_adapter.unpack_values(values, 2)
         return self.precision.output(
             values.reshape(self.sample_shape + query.shape + values.shape[2:])
         )
@@ -159,19 +169,29 @@ def _realized_wiener_path(
     return brownian, jnp.asarray(path_sign, dtype=dtype)
 
 
-def _vector_field(function):
+def _vector_field(function, state_adapter: _PreparedDiffraxStateAdapter, /):
     def evaluate(t, state, args):
-        return jnp.asarray(function(t, state, args))
+        public_state = state_adapter.unpack_state(state)
+        public_args = state_adapter.unpack_args(args)
+        value = function(t, public_state, public_args)
+        return state_adapter.pack_state(value, owner="Vector field")
 
     return evaluate
 
 
-def _combined_diffusion(problem: DifferentialProblem, path_sign: Array, /):
+def _combined_diffusion(
+    problem: DifferentialProblem,
+    path_sign: Array,
+    state_adapter: _PreparedDiffraxStateAdapter,
+    /,
+):
     def evaluate(time, state, args):
-        state_shape = tuple(jnp.shape(state))
+        public_state = state_adapter.unpack_state(state)
+        public_args = state_adapter.unpack_args(args)
+        state_shape = tuple(jnp.shape(public_state))
         columns = []
         for term in problem.wiener_terms:
-            value = jnp.asarray(term.coefficient(time, state, args))
+            value = jnp.asarray(term.coefficient(time, public_state, public_args))
             expected_shape = state_shape + term.noise_shape
             if tuple(value.shape) != expected_shape:
                 raise ValueError(
@@ -179,7 +199,8 @@ def _combined_diffusion(problem: DifferentialProblem, path_sign: Array, /):
                     f"{expected_shape}; got {value.shape}."
                 )
             columns.append(value.reshape(state_shape + (term.noise_size,)))
-        return path_sign * jnp.concatenate(columns, axis=-1)
+        combined = path_sign * jnp.concatenate(columns, axis=-1)
+        return state_adapter.pack_diffusion(combined, problem.noise_shape)
 
     return evaluate
 
@@ -515,6 +536,7 @@ def _solve_evidence(
     adjoint: Any,
     event: Any | None,
     precision: TemporalPrecisionPolicy,
+    state_adapter: _PreparedDiffraxStateAdapter,
     /,
     *,
     rtol: float,
@@ -531,6 +553,9 @@ def _solve_evidence(
     controller_id = configuration_id(controller, prefix="controller")
     adjoint_id = configuration_id(adjoint, prefix="adjoint")
     event_id = None if event is None else configuration_id(event, prefix="event")
+    adapter_configuration = (
+        () if state_adapter.evidence is None else (state_adapter.evidence.evidence_id,)
+    )
     resolved_configuration_id = (
         explicit_configuration_id
         if explicit_configuration_id is not None
@@ -546,7 +571,8 @@ def _solve_evidence(
                 bool(dense),
                 max_steps,
                 precision.policy_id,
-            ),
+            )
+            + adapter_configuration,
             prefix="temporal-configuration",
         )
     )
@@ -565,6 +591,7 @@ def _solve_evidence(
             problem.initial_state,
             problem.t0,
         ),
+        state_packing=state_adapter.evidence,
     )
 
 
@@ -577,6 +604,7 @@ def _native_solution(
     path_sign: Array | None,
     solver: Any,
     precision: TemporalPrecisionPolicy,
+    state_adapter: _PreparedDiffraxStateAdapter,
     stepsize_controller: Any,
     adjoint: Any,
     dt0: ArrayLike | None,
@@ -591,8 +619,8 @@ def _native_solution(
         lowered = lower_deterministic_problem(problem)
         assert lowered.implicit_rhs is not None
         terms = dfx.MultiTerm(
-            dfx.ODETerm(_vector_field(lowered.explicit_rhs)),
-            dfx.ODETerm(_vector_field(lowered.implicit_rhs)),
+            dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter)),
+            dfx.ODETerm(_vector_field(lowered.implicit_rhs, state_adapter)),
         )
         start = problem.t0
         end = problem.t1
@@ -623,9 +651,9 @@ def _native_solution(
             real_dtype,
         )
         terms = dfx.MultiTerm(
-            dfx.ODETerm(_vector_field(problem.drift)),
+            dfx.ODETerm(_vector_field(problem.drift, state_adapter)),
             dfx.ControlTerm(
-                _combined_diffusion(problem, signed_path),
+                _combined_diffusion(problem, signed_path, state_adapter),
                 brownian,
             ),
         )
@@ -636,7 +664,7 @@ def _native_solution(
         end = problem.t1
         resolved_dt0 = dt0
         lowered = lower_deterministic_problem(problem)
-        terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs))
+        terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter))
     time_dtype = jnp.asarray(problem.initial_state).real.dtype
     start = precision.coefficient(jnp.asarray(start, dtype=time_dtype))
     end = precision.coefficient(jnp.asarray(end, dtype=time_dtype))
@@ -646,18 +674,26 @@ def _native_solution(
         if resolved_dt0 is None
         else precision.coefficient(jnp.asarray(resolved_dt0, dtype=time_dtype))
     )
+    backend_state = state_adapter.pack_state(
+        problem.initial_state,
+        owner="Initial state",
+    )
+    backend_args = state_adapter.pack_args(problem.args)
+    backend_event = state_adapter.wrap_event(event)
+    if state_adapter.active:
+        _validate_real_backend_tree((terms, backend_state, backend_args))
     return dfx.diffeqsolve(
         terms,
         solver,
         t0=start,
         t1=end,
         dt0=resolved_dt0,
-        y0=problem.initial_state,
-        args=problem.args,
+        y0=backend_state,
+        args=backend_args,
         saveat=dfx.SaveAt(ts=save_times, dense=dense),
         stepsize_controller=stepsize_controller,
         adjoint=adjoint,
-        event=event,
+        event=backend_event,
         max_steps=max_steps,
         throw=bool(throw),
     )
@@ -675,12 +711,18 @@ def _dense_interpolation(
     native: Any,
     sample_shape: tuple[int, ...],
     precision: TemporalPrecisionPolicy,
+    state_adapter: _PreparedDiffraxStateAdapter,
     /,
 ) -> Any:
     interpolation = native.interpolation
     if interpolation is None:
         raise RuntimeError("Diffrax did not return the requested dense interpolation.")
-    return _VectorizedDenseInterpolation(interpolation, sample_shape, precision)
+    return _VectorizedDenseInterpolation(
+        interpolation,
+        sample_shape,
+        precision,
+        state_adapter,
+    )
 
 
 def _reshape_native_sample_shape(native: Any, sample_shape: tuple[int, ...], /) -> Any:
@@ -717,6 +759,7 @@ def solve_diffrax(
     throw: bool = False,
     solver_configuration_id: str | None = None,
     precision: TemporalPrecisionPolicy | None = None,
+    complex_state_policy: DiffraxComplexStatePolicy | None = None,
 ) -> DifferentialSolution:
     """Solve one explicit, additive-split, or stochastic differential problem."""
     if not isinstance(problem, (DifferentialProblem, SplitDifferentialProblem)):
@@ -746,6 +789,15 @@ def solve_diffrax(
         internal_precision=isinstance(selected_solver, (SSPRK33, SSPRK54)),
     )
     _validated_state_geometry_solver(problem, selected_solver)
+    state_adapter = _prepare_diffrax_state_adapter(
+        problem.initial_state,
+        complex_state_policy,
+        problem.state_geometry,
+    )
+    if state_adapter.active and isinstance(selected_solver, AbstractGeometricSolver):
+        raise ValueError(
+            "Real/imaginary packing does not support geometric Diffrax solvers."
+        )
     if isinstance(selected_solver, AbstractGeometricSolver) and dt0 is None:
         raise ValueError("Geometric solvers require an explicit fixed dt0.")
     if realization is not None:
@@ -767,6 +819,7 @@ def solve_diffrax(
         selected_adjoint,
         event,
         precision,
+        state_adapter,
         rtol=rtol,
         atol=atol,
         dt0=dt0,
@@ -782,6 +835,7 @@ def solve_diffrax(
         path_sign=None if realization is None else realization.path_signs,
         solver=selected_solver,
         precision=precision,
+        state_adapter=state_adapter,
         stepsize_controller=controller,
         adjoint=selected_adjoint,
         dt0=dt0,
@@ -791,13 +845,15 @@ def solve_diffrax(
         throw=throw,
     )
     native_times = jnp.asarray(native.ts)
-    native_states = precision.output(native.ys)
+    native_states = precision.output(state_adapter.unpack_values(native.ys, 1))
     solver_id, resolved_method = _solver_provenance(selected_solver)
     return DifferentialSolution(
         times=native_times,
         states=native_states,
         valid=_valid_values(native_times, native_states, sample_ndim=0),
-        interpolation=_dense_interpolation(native, (), precision) if dense else None,
+        interpolation=(
+            _dense_interpolation(native, (), precision, state_adapter) if dense else None
+        ),
         backend_result=native.result,
         stats=native.stats,
         event_mask=native.event_mask,
@@ -834,6 +890,7 @@ def solve_diffrax_ensemble(
     throw: bool = False,
     solver_configuration_id: str | None = None,
     precision: TemporalPrecisionPolicy | None = None,
+    complex_state_policy: DiffraxComplexStatePolicy | None = None,
 ) -> DifferentialSolution:
     """Solve the coupled SDE batch encoded by one Wiener realization."""
     if not isinstance(problem, DifferentialProblem):
@@ -856,6 +913,15 @@ def solve_diffrax_ensemble(
         internal_precision=isinstance(selected_solver, (SSPRK33, SSPRK54)),
     )
     _validated_state_geometry_solver(problem, selected_solver)
+    state_adapter = _prepare_diffrax_state_adapter(
+        problem.initial_state,
+        complex_state_policy,
+        problem.state_geometry,
+    )
+    if state_adapter.active and isinstance(selected_solver, AbstractGeometricSolver):
+        raise ValueError(
+            "Real/imaginary packing does not support geometric Diffrax solvers."
+        )
     _validated_stochastic_solver(problem, selected_solver, realization)
     _validated_method_form(problem, selected_solver)
     controller = _resolved_controller(
@@ -874,6 +940,7 @@ def solve_diffrax_ensemble(
         selected_adjoint,
         event,
         precision,
+        state_adapter,
         rtol=rtol,
         atol=atol,
         dt0=dt0,
@@ -895,6 +962,7 @@ def solve_diffrax_ensemble(
             path_sign=sign,
             solver=selected_solver,
             precision=precision,
+            state_adapter=state_adapter,
             stepsize_controller=controller,
             adjoint=selected_adjoint,
             dt0=dt0,
@@ -909,7 +977,12 @@ def solve_diffrax_ensemble(
         realization.sample_shape,
     )
     native_times = jnp.asarray(native.ts)
-    native_states = precision.output(native.ys)
+    native_states = precision.output(
+        state_adapter.unpack_values(
+            native.ys,
+            len(realization.sample_shape) + 1,
+        )
+    )
     solver_id, resolved_method = _solver_provenance(selected_solver)
     return DifferentialSolution(
         times=native_times,
@@ -921,7 +994,12 @@ def solve_diffrax_ensemble(
         ),
         sample_shape=realization.sample_shape,
         interpolation=(
-            _dense_interpolation(native, realization.sample_shape, precision)
+            _dense_interpolation(
+                native,
+                realization.sample_shape,
+                precision,
+                state_adapter,
+            )
             if dense
             else None
         ),

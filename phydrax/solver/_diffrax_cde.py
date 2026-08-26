@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from ..stochastic import AbstractRoughControl
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._diffrax_backend import solve_diffrax
+from ._diffrax_state_packing import DiffraxComplexStatePolicy
 from ._driving_path import (
     AbstractDifferentiableDrivingPath,
     CallableDrivingPath,
@@ -252,6 +253,7 @@ def solve_diffrax_cde(
     dense: bool = False,
     max_steps: int | None = 4096,
     throw: bool = False,
+    complex_state_policy: DiffraxComplexStatePolicy | None = None,
 ) -> ControlledDifferentialSolution:
     """Solve a smooth controlled differential equation through ``solve_diffrax``.
 
@@ -305,6 +307,7 @@ def solve_diffrax_cde(
         dense=dense,
         max_steps=max_steps,
         throw=throw,
+        complex_state_policy=complex_state_policy,
     )
     return ControlledDifferentialSolution(
         solution,

@@ -14,6 +14,7 @@ from .._fingerprint import canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._diffrax_state_packing import ComplexStatePackingEvidence
 
 
 TemporalEquationForm: TypeAlias = Literal[
@@ -175,6 +176,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
     dense: bool = eqx.field(static=True)
     maximum_steps: int | None = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope | None
+    state_packing: ComplexStatePackingEvidence | None
 
     def __init__(
         self,
@@ -191,6 +193,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         dense: bool,
         maximum_steps: int | None,
         precision_evidence: PrecisionEvidenceEnvelope | None = None,
+        state_packing: ComplexStatePackingEvidence | None = None,
     ):
         if not isinstance(capabilities, TemporalMethodCapabilities):
             raise TypeError("capabilities must be TemporalMethodCapabilities.")
@@ -215,6 +218,11 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
             raise TypeError(
                 "precision_evidence must be PrecisionEvidenceEnvelope or None."
             )
+        if state_packing is not None and not isinstance(
+            state_packing,
+            ComplexStatePackingEvidence,
+        ):
+            raise TypeError("state_packing must be ComplexStatePackingEvidence or None.")
         self.capabilities = capabilities
         self.equation_form = equation_form
         self.backend_id, self.configuration_id, self.controller_id, self.adjoint_id = (
@@ -225,6 +233,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
         self.dense = bool(dense)
         self.maximum_steps = limit
         self.precision_evidence = precision_evidence
+        self.state_packing = state_packing
 
 
 def qualified_type_name(value: Any, /) -> str:

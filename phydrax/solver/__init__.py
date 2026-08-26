@@ -211,6 +211,11 @@ from ._differential_algebraic import (
 from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._diffrax_cde import ControlledDifferentialSolution, solve_diffrax_cde
 from ._diffrax_delay_backend import solve_diffrax_delay
+from ._diffrax_state_packing import (
+    ComplexStatePackingEvidence,
+    DiffraxComplexStatePolicy,
+    DiffraxComplexStateStrategy,
+)
 from ._driving_path import (
     AbstractDifferentiableDrivingPath,
     CallableDrivingPath,
@@ -1049,6 +1054,9 @@ __all__ = [
     "TemporalEquationForm",
     "TemporalMethodCapabilities",
     "TemporalMethodClass",
+    "ComplexStatePackingEvidence",
+    "DiffraxComplexStatePolicy",
+    "DiffraxComplexStateStrategy",
     "TemporalSolveEvidence",
     "TemporalPrecisionPolicy",
     "ThetaMethod",
