@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "compact_count": 64,
+  "compact_first_error": 2.681952437910695e-09,
+  "compact_second_error": 1.0761681323856465e-08,
+  "compact_storage_bytes": 7272,
+  "compact_dense_entries": 0,
+  "sbp_count": 32,
+  "sbp_conservation_defect": 1.1657341758564144e-15,
+  "sbp_entropy_defect": 8.734332701543224e-16,
+  "sbp_pair_count": 96,
+  "mac_count": 32,
+  "mac_transform_divergence": 1.3235800202421293e-13,
+  "mac_iterative_divergence": 4.49595569885312e-13,
+  "mac_route_difference": 5.689893001203927e-15,
+  "finite": true,
+  "passed": true
+}

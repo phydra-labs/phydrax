@@ -4,11 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -16,11 +12,11 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import ArraySpace, DiagonalPairing
 from ._structured import FiniteVolumeDiscretization
 
 
 FaceVelocity = tuple[Array, ...]
-MomentumPredictor = Callable[[Array, FaceVelocity, Any], FaceVelocity]
 
 
 def _difference(integrated: Array, axis: int, periodic: bool, /) -> Array:
@@ -33,90 +29,180 @@ def _difference(integrated: Array, axis: int, periodic: bool, /) -> Array:
     return integrated[tuple(upper)] - integrated[tuple(lower)]
 
 
-class PressureProjectionResult(StrictModule):
-    pressure: Array
-    velocity: FaceVelocity
-    divergence_before: Array
-    divergence_after: Array
-    pressure_residual: Array
-    compatible_rhs: Array
-    converged: Array
+class MACOperatorReport(StrictModule, NonTrainableState):
+    """Weighted adjoint, nullspace, and direct-transform eligibility evidence."""
+
+    weighted_adjoint_residual: Array
+    constant_laplacian_residual: Array
+    transform_eligible: bool = eqx.field(static=True)
+    passed: Array
+    report_id: str = eqx.field(static=True)
 
 
-class MACPressureProjectionPlan(StrictModule, NonTrainableState):
-    """Compatible face-velocity/cell-pressure projection on a tensor grid."""
+class MACOperatorPlan(StrictModule, NonTrainableState):
+    """Prepare geometry-only MAC divergence, gradient, gauge, and pressure actions."""
 
     discretization: FiniteVolumeDiscretization
-    density: float = eqx.field(static=True)
-    tolerance: float = eqx.field(static=True)
-    maximum_iterations: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(
-        self,
-        discretization: FiniteVolumeDiscretization,
-        /,
-        *,
-        density: float = 1.0,
-        tolerance: float = 1e-8,
-        maximum_iterations: int = 500,
-    ):
+    def __init__(self, discretization: FiniteVolumeDiscretization, /):
         if not isinstance(discretization, FiniteVolumeDiscretization):
-            raise TypeError("Pressure projection requires finite-volume geometry.")
-        density_ = float(density)
-        tolerance_ = float(tolerance)
-        iterations = int(maximum_iterations)
-        if (
-            not np.isfinite(density_)
-            or density_ <= 0.0
-            or not np.isfinite(tolerance_)
-            or tolerance_ <= 0.0
-            or iterations <= 0
-        ):
-            raise ValueError("Projection density, tolerance, and iterations are invalid.")
+            raise TypeError("discretization must be a FiniteVolumeDiscretization.")
         self.discretization = discretization
-        self.density = density_
-        self.tolerance = tolerance_
-        self.maximum_iterations = iterations
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "mac-pressure-projection",
+                "kind": "mac-operator-plan-v1",
                 "discretization": discretization.prepared_id,
-                "density": density_,
-                "tolerance": tolerance_,
-                "maximum_iterations": iterations,
             }
         )
 
-    def _validate_velocity(self, velocity: FaceVelocity, /) -> FaceVelocity:
+    def prepare(self, /) -> PreparedMACOperators:
+        return PreparedMACOperators(self)
+
+
+class PreparedMACOperators(StrictModule, NonTrainableState):
+    """Compatible cell-pressure and normal-face-velocity tensor operators."""
+
+    discretization: FiniteVolumeDiscretization
+    pressure_space: ArraySpace
+    face_dual_measures: FaceVelocity
+    report: MACOperatorReport
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: MACOperatorPlan, /):
+        if not isinstance(plan, MACOperatorPlan):
+            raise TypeError("plan must be a MACOperatorPlan.")
+        discretization = plan.discretization
+        volumes = discretization.cell_volumes
+        pressure_space = ArraySpace(
+            discretization.cell_shape,
+            dtype=volumes.dtype,
+            pairing=DiagonalPairing(volumes),
+        )
+        dual_measures = []
+        transform_eligible = True
+        for axis, structured_axis in enumerate(discretization.grid.structured_axes):
+            centers = structured_axis.interval_centers
+            widths = np.asarray(structured_axis.interval_widths, dtype=float)
+            transform_eligible = transform_eligible and bool(
+                np.allclose(widths, widths[0], rtol=1e-10, atol=1e-12)
+            )
+            if structured_axis.periodic:
+                period = structured_axis.bounds[1] - structured_axis.bounds[0]
+                previous = jnp.roll(centers, 1).at[0].add(-period)
+                distance = centers - previous
+            elif centers.size == 1:
+                distance = jnp.asarray((0.5 * widths[0], 0.5 * widths[0]))
+            else:
+                interior = centers[1:] - centers[:-1]
+                distance = jnp.concatenate(
+                    (0.5 * widths[:1], interior, 0.5 * widths[-1:])
+                )
+            reshape = [1] * len(discretization.cell_shape)
+            reshape[axis] = int(distance.size)
+            dual_measures.append(
+                discretization.face_measures[axis]
+                * distance.reshape(reshape)
+            )
+        identifier = canonical_fingerprint(
+            {
+                "kind": "prepared-mac-operators-v1",
+                "plan": plan.plan_id,
+                "pressure_space": pressure_space.space_id,
+                "transform_eligible": transform_eligible,
+            }
+        )
+        self.discretization = discretization
+        self.pressure_space = pressure_space
+        self.face_dual_measures = tuple(dual_measures)
+        self.prepared_id = identifier
+
+        pressure = jnp.arange(
+            int(np.prod(discretization.cell_shape)), dtype=volumes.dtype
+        ).reshape(discretization.cell_shape)
+        velocity = []
+        for axis, layout in enumerate(discretization.face_layouts):
+            component = jnp.sin(
+                jnp.arange(int(np.prod(layout.shape)), dtype=volumes.dtype)
+            ).reshape(layout.shape)
+            if not discretization.grid.structured_axes[axis].periodic:
+                lower = [slice(None)] * component.ndim
+                upper = [slice(None)] * component.ndim
+                lower[axis] = 0
+                upper[axis] = component.shape[axis] - 1
+                component = component.at[tuple(lower)].set(0.0)
+                component = component.at[tuple(upper)].set(0.0)
+            velocity.append(component)
+        divergence = self.divergence(tuple(velocity))
+        gradient = self.gradient(pressure)
+        left_pairing = jnp.sum(volumes * pressure * divergence)
+        right_pairing = sum(
+            jnp.sum(measure * component * derivative)
+            for measure, component, derivative in zip(
+                self.face_dual_measures, velocity, gradient, strict=True
+            )
+        )
+        adjoint_residual = jnp.abs(left_pairing + right_pairing)
+        constant_residual = jnp.max(
+            jnp.abs(self.positive_laplacian(jnp.ones(discretization.cell_shape)))
+        )
+        passed = (adjoint_residual <= 5e-10) & (constant_residual <= 5e-12)
+        self.report = MACOperatorReport(
+            weighted_adjoint_residual=adjoint_residual,
+            constant_laplacian_residual=constant_residual,
+            transform_eligible=transform_eligible,
+            passed=passed,
+            report_id=canonical_fingerprint(
+                {
+                    "kind": "mac-operator-report-v1",
+                    "operators": identifier,
+                    "transform_eligible": transform_eligible,
+                }
+            ),
+        )
+        if not bool(passed):
+            raise RuntimeError("Prepared MAC operators failed compatibility evidence.")
+
+    def validate_pressure(self, pressure: ArrayLike, /) -> Array:
+        return self.pressure_space.validate(jnp.asarray(pressure))
+
+    def validate_velocity(self, velocity: FaceVelocity, /) -> FaceVelocity:
         values = tuple(jnp.asarray(component) for component in velocity)
         if len(values) != len(self.discretization.cell_shape):
             raise ValueError("MAC velocity requires one normal component per axis.")
         for axis, component in enumerate(values):
             if component.shape != self.discretization.face_layouts[axis].shape:
                 raise ValueError("MAC velocity component must match its face layout.")
+            if component.dtype != self.pressure_space.dtype:
+                raise TypeError("MAC velocity and pressure coordinates must share dtype.")
         return values
 
+    def gauge_project(self, pressure: ArrayLike, /) -> Array:
+        value = self.validate_pressure(pressure)
+        volume = self.discretization.cell_volumes.astype(value.dtype)
+        return value - jnp.sum(volume * value) / jnp.sum(volume)
+
+    def compatibility_project(self, right_hand_side: ArrayLike, /) -> Array:
+        value = self.validate_pressure(right_hand_side)
+        volume = self.discretization.cell_volumes.astype(value.dtype)
+        return value - jnp.sum(volume * value) / jnp.sum(volume)
+
     def divergence(self, velocity: FaceVelocity, /) -> Array:
-        values = self._validate_velocity(velocity)
-        divergence = jnp.zeros(self.discretization.cell_shape)
+        values = self.validate_velocity(velocity)
+        divergence = jnp.zeros(
+            self.discretization.cell_shape, dtype=self.pressure_space.dtype
+        )
         for axis, component in enumerate(values):
             integrated = component * self.discretization.face_measures[axis]
-            divergence = (
-                divergence
-                + _difference(
-                    integrated,
-                    axis,
-                    self.discretization.grid.structured_axes[axis].periodic,
-                )
-                / self.discretization.cell_volumes
-            )
+            divergence = divergence + _difference(
+                integrated,
+                axis,
+                self.discretization.grid.structured_axes[axis].periodic,
+            ) / self.discretization.cell_volumes
         return divergence
 
     def gradient(self, pressure: ArrayLike, /) -> FaceVelocity:
-        value = jnp.asarray(pressure)
-        if value.shape != self.discretization.cell_shape:
-            raise ValueError("Pressure must match the finite-volume cell shape.")
+        value = self.validate_pressure(pressure)
         output = []
         for axis, structured_axis in enumerate(self.discretization.grid.structured_axes):
             moved = jnp.moveaxis(value, axis, 0)
@@ -129,165 +215,84 @@ class MACPressureProjectionPlan(StrictModule, NonTrainableState):
                 gradient = (moved - previous) / distance.reshape(
                     (distance.size,) + (1,) * (moved.ndim - 1)
                 )
+            elif moved.shape[0] == 1:
+                gradient = jnp.zeros((2,) + moved.shape[1:], dtype=moved.dtype)
             else:
-                if moved.shape[0] == 1:
-                    gradient = jnp.zeros((2,) + moved.shape[1:], dtype=moved.dtype)
-                else:
-                    interior = (moved[1:] - moved[:-1]) / (
-                        centers[1:] - centers[:-1]
-                    ).reshape((-1,) + (1,) * (moved.ndim - 1))
-                    gradient = jnp.concatenate(
-                        (jnp.zeros_like(moved[:1]), interior, jnp.zeros_like(moved[:1])),
-                        axis=0,
-                    )
+                interior = (moved[1:] - moved[:-1]) / (
+                    centers[1:] - centers[:-1]
+                ).reshape((-1,) + (1,) * (moved.ndim - 1))
+                gradient = jnp.concatenate(
+                    (jnp.zeros_like(moved[:1]), interior, jnp.zeros_like(moved[:1])),
+                    axis=0,
+                )
             output.append(jnp.moveaxis(gradient, 0, axis))
+        return tuple(output)
+
+    def interpolate_inverse_momentum(
+        self, inverse_momentum_diagonal: ArrayLike, /
+    ) -> FaceVelocity:
+        inverse = self.validate_pressure(inverse_momentum_diagonal)
+        inverse = eqx.error_if(
+            inverse,
+            jnp.any(~jnp.isfinite(inverse) | (inverse <= 0.0)),
+            "Inverse momentum diagonal must be positive and finite.",
+        )
+        output = []
+        for axis, structured_axis in enumerate(self.discretization.grid.structured_axes):
+            moved = jnp.moveaxis(inverse, axis, 0)
+            if structured_axis.periodic:
+                face = 0.5 * (moved + jnp.roll(moved, 1, axis=0))
+            else:
+                interior = 0.5 * (moved[1:] + moved[:-1])
+                face = jnp.concatenate((moved[:1], interior, moved[-1:]), axis=0)
+            output.append(jnp.moveaxis(face, 0, axis))
         return tuple(output)
 
     def laplacian(self, pressure: ArrayLike, /) -> Array:
         return self.divergence(self.gradient(pressure))
 
-    def project(
+    def weighted_laplacian(
         self,
-        velocity: FaceVelocity,
-        step_size: ArrayLike,
+        pressure: ArrayLike,
+        face_inverse_momentum: FaceVelocity,
         /,
-        *,
-        initial_pressure: ArrayLike | None = None,
-    ) -> PressureProjectionResult:
-        values = self._validate_velocity(velocity)
-        dt = jnp.asarray(step_size).reshape(())
-        divergence_before = self.divergence(values)
-        volume = self.discretization.cell_volumes
-        mean = jnp.sum(volume * divergence_before) / jnp.sum(volume)
-        compatible_divergence = divergence_before - mean
-        rhs = -(self.density / dt) * compatible_divergence
-        initial = (
-            jnp.zeros(self.discretization.cell_shape, dtype=divergence_before.dtype)
-            if initial_pressure is None
-            else jnp.asarray(initial_pressure)
-        )
-        if initial.shape != self.discretization.cell_shape:
-            raise ValueError("Initial pressure must match the cell shape.")
-
-        def positive_laplacian(pressure: Array) -> Array:
-            return -self.laplacian(pressure)
-
-        rhs_norm = jnp.sqrt(jnp.sum(volume * rhs**2))
-
-        def solve_pressure(_):
-            return jax.scipy.sparse.linalg.cg(
-                positive_laplacian,
-                rhs,
-                x0=initial,
-                tol=self.tolerance,
-                maxiter=self.maximum_iterations,
-            )[0]
-
-        pressure = jax.lax.cond(
-            rhs_norm > self.tolerance,
-            solve_pressure,
-            lambda _: jnp.zeros_like(initial),
-            operand=None,
-        )
-        pressure = pressure - jnp.sum(volume * pressure) / jnp.sum(volume)
-        pressure_gradient = self.gradient(pressure)
-        corrected = tuple(
-            component - (dt / self.density) * gradient
-            for component, gradient in zip(values, pressure_gradient, strict=True)
-        )
-        divergence_after = self.divergence(corrected)
-        residual = positive_laplacian(pressure) - rhs
-        residual_norm = jnp.sqrt(jnp.sum(volume * residual**2))
-        converged = residual_norm <= self.tolerance * jnp.maximum(rhs_norm, 1.0)
-        return PressureProjectionResult(
-            pressure=pressure,
-            velocity=corrected,
-            divergence_before=divergence_before,
-            divergence_after=divergence_after,
-            pressure_residual=residual,
-            compatible_rhs=rhs,
-            converged=converged,
+    ) -> Array:
+        coefficient = self.validate_velocity(face_inverse_momentum)
+        gradient = self.gradient(pressure)
+        return self.divergence(
+            tuple(
+                value * derivative
+                for value, derivative in zip(coefficient, gradient, strict=True)
+            )
         )
 
+    def positive_laplacian(self, pressure: ArrayLike, /) -> Array:
+        return -self.laplacian(pressure)
 
-class PressureCorrectionResult(StrictModule):
-    velocity: FaceVelocity
-    pressure: Array
-    divergence_history: Array
-    converged: Array
-
-
-class FunctionalPressureCorrectionPlan(StrictModule, NonTrainableState):
-    """Fixed-count predictor/projection correction loop."""
-
-    projection: MACPressureProjectionPlan
-    correctors: int = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(self, projection: MACPressureProjectionPlan, correctors: int = 2, /):
-        if not isinstance(projection, MACPressureProjectionPlan):
-            raise TypeError("projection must be a MACPressureProjectionPlan.")
-        correctors_ = int(correctors)
-        if correctors_ <= 0:
-            raise ValueError("correctors must be positive.")
-        self.projection = projection
-        self.correctors = correctors_
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "functional-pressure-correction",
-                "projection": projection.plan_id,
-                "correctors": correctors_,
-            }
-        )
-
-    def advance(
+    def positive_gauged_weighted_laplacian(
         self,
-        time: Array,
-        velocity: FaceVelocity,
-        step_size: ArrayLike,
-        predictor: MomentumPredictor,
-        args: Any = None,
+        pressure: ArrayLike,
+        face_inverse_momentum: FaceVelocity,
         /,
-    ) -> PressureCorrectionResult:
-        if not callable(predictor):
-            raise TypeError("predictor must be callable.")
-        predicted = predictor(time, velocity, args)
-        initial_pressure = jnp.zeros(self.projection.discretization.cell_shape)
-        initial_history = jnp.zeros((self.correctors,))
+    ) -> Array:
+        value = self.validate_pressure(pressure)
+        volume = self.discretization.cell_volumes.astype(value.dtype)
+        mean = jnp.sum(volume * value) / jnp.sum(volume)
+        projected = value - mean
+        return -self.weighted_laplacian(projected, face_inverse_momentum) + mean
 
-        def body(index, carry):
-            current_velocity, pressure, history, converged = carry
-            result = self.projection.project(
-                current_velocity,
-                step_size,
-                initial_pressure=pressure,
-            )
-            norm = jnp.sqrt(
-                jnp.sum(
-                    self.projection.discretization.cell_volumes
-                    * result.divergence_after**2
-                )
-            )
-            history = history.at[index].set(norm)
-            return result.velocity, result.pressure, history, converged & result.converged
-
-        corrected, pressure, history, converged = jax.lax.fori_loop(
-            0,
-            self.correctors,
-            body,
-            (predicted, initial_pressure, initial_history, jnp.asarray(True)),
+    def positive_gauged_laplacian(self, pressure: ArrayLike, /) -> Array:
+        value = self.validate_pressure(pressure)
+        unit = tuple(
+            jnp.ones(layout.shape, dtype=value.dtype)
+            for layout in self.discretization.face_layouts
         )
-        return PressureCorrectionResult(
-            velocity=corrected,
-            pressure=pressure,
-            divergence_history=history,
-            converged=converged,
-        )
+        return self.positive_gauged_weighted_laplacian(value, unit)
 
 
 __all__ = [
-    "FunctionalPressureCorrectionPlan",
-    "MACPressureProjectionPlan",
-    "PressureCorrectionResult",
-    "PressureProjectionResult",
+    "FaceVelocity",
+    "MACOperatorPlan",
+    "MACOperatorReport",
+    "PreparedMACOperators",
 ]

@@ -78,12 +78,14 @@ native JAX and produces ordinary sparse coordinate operators. See
 geometry, DOF layouts, measures, prepared operators, transfers, and complete
 approximation bundles. Tensor support is independent of finite-difference,
 spectral, or collocation calculus. Global spectral spaces separate mathematical modes,
-physical grids, modal DOFs, dealiasing, constrained/Galerkin/tau formulations, and
-temporal integration. Local stencil programs, modal transforms/operator spectra,
-WENO fluxes, SBP/compact/curvilinear methods, fixed-capacity AMR, and distributed
-halo plans compose without treating quadrature sites, mesh entities, and field DOFs
-as interchangeable. PINNs participate through trial/residual records rather than a
-fabricated mesh. See [Guide → Discretization](guides_discretization.md),
+physical grids, modal DOFs, dealiasing, constrained/Galerkin/tau formulations,
+periodic Leray projection, channel Stokes constraints, and temporal integration.
+Local stencil programs, structured compact line solves, periodic/bounded SBP
+calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
+WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose
+without treating quadrature sites, mesh entities, and field DOFs as interchangeable.
+PINNs participate through trial/residual records rather than a fabricated mesh. See
+[Guide → Discretization](guides_discretization.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 

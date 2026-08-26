@@ -54,42 +54,8 @@ def test_compressible_viscous_flux_vanishes_for_constant_primitive_state():
     np.testing.assert_allclose(residual, 0.0, atol=1e-13)
 
 
-def test_mac_projection_enforces_discrete_divergence_and_pressure_gauge():
-    grid = _grid(32, periodic=True)
-    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
-    projection = phx.discretization.MACPressureProjectionPlan(
-        discretization, tolerance=1e-11
-    )
-    faces = jnp.arange(32)
-    velocity = (jnp.sin(2.0 * jnp.pi * faces / 32.0),)
-    result = projection.project(velocity, 0.1)
-
-    assert jnp.linalg.norm(result.divergence_after) < 1e-9
-    assert jnp.linalg.norm(result.divergence_after) < 1e-8 * jnp.linalg.norm(
-        result.divergence_before
-    )
-    np.testing.assert_allclose(
-        jnp.sum(discretization.cell_volumes * result.pressure), 0.0, atol=2e-12
-    )
-    assert result.converged
 
 
-def test_functional_pressure_correction_returns_fixed_history_and_finite_state():
-    grid = _grid(16, periodic=True)
-    discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
-    projection = phx.discretization.MACPressureProjectionPlan(discretization)
-    correction = phx.discretization.FunctionalPressureCorrectionPlan(projection, 3)
-    velocity = (jnp.sin(2.0 * jnp.pi * jnp.arange(16) / 16.0),)
-    result = correction.advance(
-        0.0,
-        velocity,
-        0.1,
-        lambda time, current, args: current,
-    )
-
-    assert result.divergence_history.shape == (3,)
-    assert jnp.all(jnp.isfinite(result.velocity[0]))
-    assert result.divergence_history[-1] <= result.divergence_history[0] + 1e-12
 
 
 def test_compiled_finite_volume_linearization_matches_direct_jvp():

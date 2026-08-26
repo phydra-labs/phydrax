@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -17,11 +19,14 @@ import phydrax as phx
 
 @dataclass(frozen=True)
 class IncompressibleSpectralBenchmarkRecord:
+    schema_version: int
     periodic_mode_count: int
     channel_shape: tuple[int, int, int]
     periodic_first_jit_ms: float
     periodic_steady_ms: float
     periodic_divergence_norm: float
+    periodic_nonlinear_energy_rate: float
+    periodic_energy_balance_defect: float
     periodic_finite: bool
     channel_prepare_ms: float
     channel_solve_ms: float
@@ -38,6 +43,8 @@ class IncompressibleSpectralBenchmarkRecord:
             self.finite
             and self.periodic_finite
             and self.periodic_divergence_norm <= 1e-9
+            and abs(self.periodic_nonlinear_energy_rate) <= 1e-9
+            and abs(self.periodic_energy_balance_defect) <= 1e-9
             and self.couette_maximum_error <= 1e-9
             and self.fixed_flux_error <= 1e-9
             and self.channel_divergence_norm <= 1e-9
@@ -106,6 +113,7 @@ def run_incompressible_spectral_benchmark(
         repeat_count,
     )
     periodic_divergence = periodic.projector.divergence_norm(periodic_rate)
+    periodic_diagnostics = periodic.diagnostics(0.0, periodic_state)
 
     channel_space = phx.discretization.TensorSpectralPlan(
         (
@@ -149,7 +157,11 @@ def run_incompressible_spectral_benchmark(
     flux_error = jnp.max(
         jnp.abs(flux_result.diagnostics.bulk_velocity - jnp.asarray([0.4, 0.0]))
     )
-    channel = phx.equations.compile_channel_flow(prescribed_plan, method)
+    channel = phx.equations.compile_channel_flow(
+        phx.equations.IncompressibleFlowProblem(3, 0.1),
+        prescribed_plan,
+        method,
+    )
     sbdf = phx.solver.solve_channel_sbdf2(
         channel,
         channel.project_state(couette),
@@ -168,12 +180,19 @@ def run_incompressible_spectral_benchmark(
         & sbdf.successful
     )
     return IncompressibleSpectralBenchmarkRecord(
+        schema_version=1,
         periodic_mode_count=count,
         channel_shape=(nx, ny, nz),
         periodic_first_jit_ms=float(first_jit),
         periodic_steady_ms=float(steady),
         periodic_divergence_norm=float(periodic_divergence),
         periodic_finite=bool(jnp.all(jnp.isfinite(periodic_rate))),
+        periodic_nonlinear_energy_rate=float(
+            periodic_diagnostics.nonlinear_energy_rate
+        ),
+        periodic_energy_balance_defect=float(
+            periodic_diagnostics.energy_balance_defect
+        ),
         channel_prepare_ms=float(channel_prepare),
         channel_solve_ms=float(channel_solve),
         channel_factor_bytes=factor_bytes,
@@ -193,6 +212,7 @@ def main() -> None:
     parser.add_argument("--channel-shape", type=int, nargs=3, default=(8, 16, 8))
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     periodic_count = 8 if arguments.smoke else arguments.periodic_mode_count
     channel = (4, 8, 4) if arguments.smoke else tuple(arguments.channel_shape)
@@ -202,7 +222,13 @@ def main() -> None:
         channel,
         repeats=repeats,
     )
-    print(json.dumps({**asdict(record), "passed": record.passed}, indent=2))
+    payload = json.dumps({**asdict(record), "passed": record.passed}, indent=2)
+    if arguments.output is not None:
+        target = arguments.output
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        temporary.write_text(payload + "\n")
+        os.replace(temporary, target)
+    print(payload)
     if not record.passed:
         raise SystemExit(1)
 

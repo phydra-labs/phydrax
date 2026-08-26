@@ -125,6 +125,23 @@
 
 ::: phydrax.equations.CompiledFiniteDifferenceDynamics
 
+## Compact implicit line calculus
+
+::: phydrax.discretization.CompactDerivativePlan
+
+---
+
+::: phydrax.discretization.CompactInterpolationPlan
+
+---
+
+::: phydrax.discretization.PreparedCompactOperator
+
+---
+
+::: phydrax.discretization.CompactOperatorReport
+
+
 ## Conservative face operators
 
 Cell-to-face conservative diffusion and advection now belong to the
@@ -154,6 +171,31 @@ reuses those prepared flux operators where the requested expression is conservat
 ---
 
 ::: phydrax.discretization.SATInterfacePlan
+
+## Periodic SBP flux differencing
+
+::: phydrax.discretization.TensorSBPPlan
+
+---
+
+::: phydrax.discretization.TensorSBPDiscretization
+
+---
+
+::: phydrax.discretization.SBPFluxDifferencingMethodPlan
+
+---
+
+::: phydrax.discretization.PreparedSBPConservationDynamics
+
+---
+
+::: phydrax.discretization.SBPFluxDifferencingDiagnostics
+
+---
+
+::: phydrax.discretization.SBPFluxDifferencingReport
+
 
 ---
 

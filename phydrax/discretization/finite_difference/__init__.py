@@ -39,7 +39,13 @@ from ._certification import (
     FDStabilityReport,
 )
 from ._coefficients import fornberg_weights, StencilCoefficientPlan
-from ._compact import CompactFirstDerivative
+from ._compact import (
+    CompactDerivativePlan,
+    CompactInterpolationPlan,
+    CompactOperatorKind,
+    CompactOperatorReport,
+    PreparedCompactOperator,
+)
 from ._diagonalization import (
     diagonalize_fd_laplacian,
     FDBoundaryKind,
@@ -61,6 +67,14 @@ from ._execution import (
     PreparedStencilExecutionOperator,
     StencilExecutionPlan,
     StencilExecutionReport,
+)
+from ._flux_differencing import (
+    PreparedSBPConservationDynamics,
+    SBPFluxDifferencingDiagnostics,
+    SBPFluxDifferencingMethodPlan,
+    SBPFluxDifferencingReport,
+    TensorSBPDiscretization,
+    TensorSBPPlan,
 )
 from ._kernel import (
     OrderedPatchKernelPlan,
@@ -152,7 +166,17 @@ __all__ = [
     "GhostConditionKind",
     "NodalBoundaryRuntime",
     "BoundaryRealizationPlan",
-    "CompactFirstDerivative",
+    "CompactDerivativePlan",
+    "CompactInterpolationPlan",
+    "CompactOperatorKind",
+    "CompactOperatorReport",
+    "PreparedCompactOperator",
+    "PreparedSBPConservationDynamics",
+    "SBPFluxDifferencingDiagnostics",
+    "SBPFluxDifferencingMethodPlan",
+    "SBPFluxDifferencingReport",
+    "TensorSBPDiscretization",
+    "TensorSBPPlan",
     "ClosureStencilKernel",
     "FDActionAdjointPlan",
     "FDAdjointIdentityReport",

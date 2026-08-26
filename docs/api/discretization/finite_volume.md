@@ -217,11 +217,15 @@
 
 ---
 
-::: phydrax.discretization.MACPressureProjectionPlan
+::: phydrax.discretization.MACOperatorPlan
 
 ---
 
-::: phydrax.discretization.FunctionalPressureCorrectionPlan
+::: phydrax.discretization.PreparedMACOperators
+
+---
+
+::: phydrax.discretization.MACOperatorReport
 
 ## Multiblock and AMR
 

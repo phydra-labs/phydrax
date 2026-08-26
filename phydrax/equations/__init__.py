@@ -5,7 +5,11 @@
 """Serializable, validated equation representations for physics-aware models."""
 
 from . import trefftz
-from ._channel_flow import compile_channel_flow, CompiledChannelFlowDynamics
+from ._channel_flow import (
+    ChannelVelocityDiagnostics,
+    compile_channel_flow,
+    CompiledChannelFlowDynamics,
+)
 from ._compile import (
     compile_pde_expression,
     compile_pde_problem,
@@ -267,6 +271,7 @@ __all__ = [
     "HolomorphicPotentialProvider",
     "IdealGasMaterial",
     "IncompressibleFlowProblem",
+    "ChannelVelocityDiagnostics",
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
