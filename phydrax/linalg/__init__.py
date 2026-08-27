@@ -56,6 +56,7 @@ from ._certificates import (
     KernelCertificate,
     SpectralInterval,
 )
+from ._constraints import ConstraintMap
 from ._costs import (
     LinearCostEstimate,
     OperatorActionCostEstimate,
@@ -512,6 +513,7 @@ from .krylov import (
 
 
 __all__ = [
+    "ConstraintMap",
     "HermitianFunctionResult",
     "HermitianSpectrum",
     "HermitianPrecisionPolicy",

@@ -17,13 +17,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, DiagonalPairing
 from .._cell_complex import (
-    polygonal_cell_complex,
     polygonal_connectivity,
     PolygonalConnectivity,
-    tetrahedral_cell_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
+from .._cell_mesh import CellBlock, CellMesh
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -575,6 +574,8 @@ class UnstructuredFiniteVolumeQualityReport(StrictModule):
 class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
     """Fixed-topology triangular, quadrilateral, mixed, or tetrahedral FV plan."""
 
+    mesh: CellMesh
+
     vertices: Array
     triangles: Array
     quadrilaterals: Array
@@ -694,6 +695,44 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
             "vertex_global_ids", vertex_global_ids, points.shape[0]
         )
         cell_ids = _stable_global_ids("cell_global_ids", cell_global_ids, cell_count)
+        blocks = []
+        offset = 0
+        if triangle_cells.shape[0]:
+            count = triangle_cells.shape[0]
+            blocks.append(
+                CellBlock(
+                    "triangles",
+                    "triangle",
+                    triangle_cells,
+                    global_ids=cell_ids[offset : offset + count],
+                )
+            )
+            offset += count
+        if quadrilateral_cells.shape[0]:
+            count = quadrilateral_cells.shape[0]
+            blocks.append(
+                CellBlock(
+                    "quadrilaterals",
+                    "quadrilateral",
+                    quadrilateral_cells,
+                    global_ids=cell_ids[offset : offset + count],
+                )
+            )
+            offset += count
+        if tetrahedral_cells.shape[0]:
+            blocks.append(
+                CellBlock(
+                    "tetrahedra",
+                    "tetrahedron",
+                    tetrahedral_cells,
+                    global_ids=cell_ids,
+                )
+            )
+        mesh = CellMesh(
+            points,
+            blocks,
+            vertex_global_ids=vertex_ids,
+        )
         topology_id = canonical_fingerprint(
             {
                 "kind": "unstructured-finite-volume-topology",
@@ -729,6 +768,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
         global_id_dtype = (
             jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
         )
+        self.mesh = mesh
         self.vertices = jnp.asarray(points)
         self.triangles = jnp.asarray(triangle_cells)
         self.quadrilaterals = jnp.asarray(quadrilateral_cells)
@@ -761,6 +801,7 @@ class UnstructuredFiniteVolumePlan(AbstractDiscretizationPlan):
 
 
 class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
+    mesh: CellMesh
     vertices: Array
     triangles: Array
     quadrilaterals: Array
@@ -809,24 +850,14 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     ):
         if not isinstance(plan, UnstructuredFiniteVolumePlan):
             raise TypeError("plan must be UnstructuredFiniteVolumePlan.")
-        points = np.asarray(plan.vertices)
+        mesh = plan.mesh
+        points = np.asarray(mesh.coordinates)
+        connectivity = mesh.connectivity
+        topology = mesh.topology
+        cell_count = connectivity.cell_count
         if plan.cell_dimension == 2:
-            connectivity: Connectivity = polygonal_connectivity(
-                plan.triangles,
-                plan.quadrilaterals,
-                points.shape[0],
-            )
-            topology = polygonal_cell_complex(
-                plan.triangles,
-                plan.quadrilaterals,
-                points.shape[0],
-            )
-            cell_count = connectivity.cell_count
             face_count = int(connectivity.edges.shape[0])
         else:
-            connectivity = tetrahedral_connectivity(plan.tetrahedra, points.shape[0])
-            topology = tetrahedral_cell_complex(plan.tetrahedra, points.shape[0])
-            cell_count = connectivity.cell_count
             face_count = int(connectivity.faces.shape[0])
         owner, neighbour, owner_sign = _owner_neighbour(connectivity, cell_count)
         (
@@ -860,9 +891,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         )
         cell_quadrature_weights = eqx.error_if(
             cell_quadrature_weights,
-            jnp.any(
-                jnp.abs(quadrature_mass - cell_volumes) > quadrature_tolerance
-            ),
+            jnp.any(jnp.abs(quadrature_mass - cell_volumes) > quadrature_tolerance),
             "Unstructured cell quadrature must reproduce every cell measure.",
         )
         boundary_patch_ids = np.full((face_count,), -1, dtype=np.int32)
@@ -984,6 +1013,7 @@ class UnstructuredFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
+        self.mesh = mesh
         self.vertices = plan.vertices
         self.triangles = plan.triangles
         self.quadrilaterals = plan.quadrilaterals

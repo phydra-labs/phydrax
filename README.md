@@ -37,7 +37,7 @@ Most workflows are composing a few primitives:
   to one JAX kernel/state contract with explicit capabilities, field certificates,
   boundary atlases, topology identities, and design parameters.
 - **Discretization and solver substrates**: tensor supports, local finite
-  differences, modal transforms/spectra, cochains, P1 finite elements, finite
+  differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, WENO fluxes, fixed-capacity AMR, field spaces, measures, transfers,
   temporal/stochastic composition, and auditable plan/preparation identities.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.

@@ -66,11 +66,12 @@ def _tensor_case(size, repeats):
 def _fem_case(width, repeats):
     vertices, faces = _triangular_grid(width)
     started = time.perf_counter()
-    discretization = phx.discretization.P1FiniteElementPlan(
-        vertices,
-        faces,
-        field_name="u",
-    ).prepare()
+    mesh = phx.discretization.CellMesh.from_triangles(vertices, faces)
+    field = phx.discretization.FiniteElementFieldSpec(
+        "u",
+        phx.discretization.lagrange_element("triangle", 1),
+    )
+    discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
     preparation = time.perf_counter() - started
     state = jnp.sin(jnp.pi * vertices[:, 0]) * jnp.sin(jnp.pi * vertices[:, 1])
     action = eqx.filter_jit(discretization.stiffness.mv)
@@ -144,7 +145,7 @@ def main():
         raise ValueError("Benchmark sizes and repeats are below their valid minimum.")
     report = {
         "tensor": _tensor_case(arguments.tensor_size, arguments.repeats),
-        "p1_finite_element": _fem_case(arguments.mesh_width, arguments.repeats),
+        "finite_element": _fem_case(arguments.mesh_width, arguments.repeats),
         "structured_finite_volume": _finite_volume_case(
             arguments.mesh_width,
             arguments.repeats,

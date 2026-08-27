@@ -13,7 +13,7 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._strict import StrictModule
-from ...discretization import DiscreteSupport
+from ...discretization import CellMesh, DiscreteSupport
 from .._atlas import BoundaryAtlas, BoundaryMap
 from .._cubature import AbstractCubatureMap, CubatureAtlas
 from ._topology import TriangleTopology
@@ -116,6 +116,15 @@ class TriangleMesh(StrictModule):
             self.topology.cell_complex_topology(),
             3,
             self.source_id,
+        )
+
+    def as_cell_mesh(self, /) -> CellMesh:
+        """Return the shared computational realization of this surface mesh."""
+        return CellMesh.from_triangles(
+            self.vertices,
+            self.faces,
+            vertex_global_ids=jnp.arange(self.vertices.shape[0], dtype=jnp.int64),
+            cell_global_ids=jnp.arange(self.faces.shape[0], dtype=jnp.int64),
         )
 
     @property
