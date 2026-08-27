@@ -260,6 +260,11 @@ from ._fermionic_gaussian import (
     open_kitaev_chain,
     solve_fermionic_gaussian,
 )
+from ._finite_element_checkpoint import (
+    FiniteElementCheckpoint,
+    read_finite_element_checkpoint,
+    write_finite_element_checkpoint,
+)
 from ._finite_volume import (
     DirectionalSplitFiniteVolumePlan,
     FiniteVolumeStepResult,
@@ -1194,6 +1199,9 @@ __all__ = [
     "PrecisionDType",
     "load_finite_volume_case",
     "PreparedFiniteVolumeCase",
+    "FiniteElementCheckpoint",
+    "read_finite_element_checkpoint",
+    "write_finite_element_checkpoint",
     "FiniteVolumeCheckpoint",
     "FiniteVolumeCheckpointPlan",
     "read_finite_volume_checkpoint",

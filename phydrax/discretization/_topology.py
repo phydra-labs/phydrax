@@ -153,6 +153,131 @@ class EntitySet(StrictModule, NonTrainableState):
         raise KeyError(f"Unknown entity subset {name!r} on {self.name!r}.")
 
 
+class EntitySelection(StrictModule, NonTrainableState):
+    """Canonical composable selection over one exact entity set."""
+
+    entity_set_id: str = eqx.field(static=True)
+    mask: Array
+    active_mask: Array
+    selection_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        entities: EntitySet | str,
+        mask: ArrayLike,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
+        selection_id: str | None = None,
+    ):
+        if isinstance(entities, EntitySet):
+            entity_set_id = entities.entity_set_id
+            active = np.asarray(entities.active_mask, dtype=bool)
+        else:
+            entity_set_id = nonempty_identifier("entity_set_id", entities)
+            if active_mask is None:
+                raise ValueError(
+                    "active_mask is required when constructing from an entity-set ID."
+                )
+            active = np.asarray(active_mask, dtype=bool)
+        mask_ = np.asarray(mask, dtype=bool)
+        if active.ndim != 1 or mask_.shape != active.shape:
+            raise ValueError(
+                "Entity selection and active masks must share one rank-1 shape."
+            )
+        if np.any(mask_ & ~active):
+            raise ValueError("Entity selections cannot include inactive entities.")
+        self.entity_set_id = entity_set_id
+        self.mask = jnp.asarray(mask_)
+        self.active_mask = jnp.asarray(active)
+        self.selection_id = resolved_identifier(
+            "selection_id",
+            selection_id,
+            {
+                "kind": "entity-selection",
+                "entity_set": entity_set_id,
+                "mask": _array_digest(mask_),
+            },
+        )
+
+    @classmethod
+    def from_subset(
+        cls,
+        entities: EntitySet,
+        subset_name: str,
+        /,
+    ) -> EntitySelection:
+        return cls(entities, entities.subset(subset_name).mask)
+
+    def _binary(
+        self,
+        other: EntitySelection,
+        operation: str,
+        /,
+    ) -> EntitySelection:
+        if not isinstance(other, EntitySelection):
+            raise TypeError("Selection operands must be EntitySelection values.")
+        if self.entity_set_id != other.entity_set_id:
+            raise ValueError("Entity selections must share one entity set.")
+        if operation == "union":
+            mask = self.mask | other.mask
+        elif operation == "intersection":
+            mask = self.mask & other.mask
+        elif operation == "difference":
+            mask = self.mask & ~other.mask
+        else:
+            raise ValueError("Unknown entity selection operation.")
+        return _selection_from_masks(
+            self.entity_set_id,
+            mask,
+            self.active_mask,
+            operation,
+            (self.selection_id, other.selection_id),
+        )
+
+    def union(self, other: EntitySelection, /) -> EntitySelection:
+        return self._binary(other, "union")
+
+    def intersection(self, other: EntitySelection, /) -> EntitySelection:
+        return self._binary(other, "intersection")
+
+    def difference(self, other: EntitySelection, /) -> EntitySelection:
+        return self._binary(other, "difference")
+
+    def complement(self, /) -> EntitySelection:
+        return _selection_from_masks(
+            self.entity_set_id,
+            self.active_mask & ~self.mask,
+            self.active_mask,
+            "complement",
+            (self.selection_id,),
+        )
+
+
+def _selection_from_masks(
+    entity_set_id: str,
+    mask: ArrayLike,
+    active_mask: ArrayLike,
+    operation: str,
+    operands: tuple[str, ...],
+    /,
+) -> EntitySelection:
+    return EntitySelection(
+        entity_set_id,
+        mask,
+        active_mask=active_mask,
+        selection_id=canonical_fingerprint(
+            {
+                "kind": "composed-entity-selection",
+                "entity_set": entity_set_id,
+                "operation": operation,
+                "operands": list(operands),
+                "mask": _array_digest(mask),
+            }
+        ),
+    )
+
+
 class OrientedIncidence(StrictModule, NonTrainableState):
     """Sparse signed boundary incidence from lower to upper entities."""
 
@@ -202,6 +327,21 @@ class OrientedIncidence(StrictModule, NonTrainableState):
         pairs = np.stack((source, target), axis=1) if source.size else np.empty((0, 2))
         if pairs.shape[0] and np.unique(pairs, axis=0).shape[0] != pairs.shape[0]:
             raise ValueError("Active incidence pairs must be unique.")
+        lower_ids = np.asarray(lower.entity_ids, dtype=np.int64)[source]
+        upper_ids = np.asarray(upper.entity_ids, dtype=np.int64)[target]
+        canonical_incidence = np.stack(
+            (lower_ids, upper_ids, active_coefficients.astype(np.int64)),
+            axis=1,
+        )
+        if canonical_incidence.shape[0]:
+            order = np.lexsort(
+                (
+                    canonical_incidence[:, 2],
+                    canonical_incidence[:, 1],
+                    canonical_incidence[:, 0],
+                )
+            )
+            canonical_incidence = canonical_incidence[order]
         self.degree = degree_
         self.lower_entity_set_id = lower.entity_set_id
         self.upper_entity_set_id = upper.entity_set_id
@@ -215,10 +355,7 @@ class OrientedIncidence(StrictModule, NonTrainableState):
                 "degree": degree_,
                 "lower": lower.entity_set_id,
                 "upper": upper.entity_set_id,
-                "source": _array_digest(relation.source_indices),
-                "target": _array_digest(relation.target_indices),
-                "valid": _array_digest(relation.valid),
-                "signs": _array_digest(coefficients),
+                "canonical_incidence": _array_digest(canonical_incidence),
             },
         )
 

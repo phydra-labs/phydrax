@@ -125,6 +125,12 @@ from ._linearizations import (
     PreparedLinearization,
     RematerializationPolicy,
 )
+from ._local_blocks import (
+    LocalBlockFactorization,
+    LocalBlockFactorizationKind,
+    prepare_local_block_factorization,
+    solve_local_blocks,
+)
 from ._low_rank_boundary import LowRankBoundaryCorrectionPlan
 from ._low_rank_updates import (
     BaseNonsingularity,
@@ -513,6 +519,10 @@ from .krylov import (
 
 
 __all__ = [
+    "LocalBlockFactorization",
+    "LocalBlockFactorizationKind",
+    "prepare_local_block_factorization",
+    "solve_local_blocks",
     "ConstraintMap",
     "HermitianFunctionResult",
     "HermitianSpectrum",

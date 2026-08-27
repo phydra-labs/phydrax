@@ -181,6 +181,12 @@ class CellMesh(StrictModule, NonTrainableState):
         if np.unique(all_cell_ids).size != all_cell_ids.size:
             raise ValueError("Cell global IDs must be unique across mesh blocks.")
 
+        cell_global_ids = np.concatenate(
+            tuple(
+                np.asarray(block.global_ids, dtype=np.int64)
+                for block in normalized_blocks
+            )
+        )
         if topological_dimension == 2:
             if any(
                 block.cell_kind not in ("triangle", "quadrilateral")
@@ -215,6 +221,8 @@ class CellMesh(StrictModule, NonTrainableState):
                 triangle_cells,
                 quadrilateral_cells,
                 points.shape[0],
+                vertex_global_ids=global_ids,
+                cell_global_ids=cell_global_ids,
             )
         else:
             if (
@@ -226,14 +234,33 @@ class CellMesh(StrictModule, NonTrainableState):
                 )
             tetrahedra = np.asarray(normalized_blocks[0].vertices, dtype=np.int32)
             connectivity = tetrahedral_connectivity(tetrahedra, points.shape[0])
-            topology = tetrahedral_cell_complex(tetrahedra, points.shape[0])
+            topology = tetrahedral_cell_complex(
+                tetrahedra,
+                points.shape[0],
+                vertex_global_ids=global_ids,
+                cell_global_ids=cell_global_ids,
+            )
+
+        canonical_blocks = []
+        for block in normalized_blocks:
+            block_ids = np.asarray(block.global_ids, dtype=np.int64)
+            order = np.argsort(block_ids, kind="stable")
+            global_vertices = global_ids[np.asarray(block.vertices, dtype=np.int32)]
+            canonical_blocks.append(
+                {
+                    "name": block.name,
+                    "cell_kind": block.cell_kind,
+                    "global_ids": array_tree_fingerprint(block_ids[order]),
+                    "global_vertices": array_tree_fingerprint(global_vertices[order]),
+                }
+            )
 
         topology_id = canonical_fingerprint(
             {
                 "kind": "cell-mesh-topology",
                 "topological_dimension": topological_dimension,
                 "vertex_global_ids": array_tree_fingerprint(global_ids),
-                "blocks": [block.block_id for block in normalized_blocks],
+                "blocks": canonical_blocks,
                 "cell_complex": topology.topology_id,
             }
         )
