@@ -73,6 +73,24 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
         branches=1,
     )
     bundle = phx.equations.HolomorphicBranchBundle((first, second))
+    constraint_plan = phx.equations.HolomorphicPolynomialConstraintPlan(
+        3,
+        (
+            phx.equations.HolomorphicPointConstraint.dirichlet(-1.0, 0.0),
+            phx.equations.HolomorphicPointConstraint.dirichlet(1.0, 0.0),
+        ),
+    )
+    started = time.perf_counter()
+    prepared_constraints = constraint_plan.prepare()
+    constraint_preparation_seconds = time.perf_counter() - started
+    constrained = phx.equations.ConstrainedHolomorphicPolynomialPotential(
+        prepared_constraints,
+        initial_free_coordinates=jnp.linspace(
+            -0.2,
+            0.3,
+            prepared_constraints.evidence.nullity,
+        ),
+    )
 
     timings = {}
     outputs = {}
@@ -81,6 +99,7 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
         ("factorized_hmlp", factorized),
         ("product_potential", product),
         ("branch_bundle", bundle),
+        ("constrained_polynomial", constrained),
     ):
         evaluate = jax.jit(model)
         started = time.perf_counter()
@@ -118,17 +137,26 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
         "factorized_hmlp": float(_cauchy_riemann_residual(factorized, point)),
         "product_potential": float(_cauchy_riemann_residual(product, point)),
         "branch_bundle": float(_cauchy_riemann_residual(bundle, point)),
+        "constrained_polynomial": float(_cauchy_riemann_residual(constrained, point)),
     }
     parameters = {
         "dense_hmlp": _parameter_count(dense),
         "factorized_hmlp": _parameter_count(factorized),
         "product_potential": _parameter_count(product),
         "branch_bundle": _parameter_count(bundle),
+        "constrained_polynomial": _parameter_count(constrained),
     }
+    constraint_residual = float(jnp.linalg.norm(constrained.constraint_residual()))
+    constrained_harmonic = phx.equations.HarmonicPotential2D(constrained)
+    constrained_laplace_residual = float(
+        jnp.abs(jnp.trace(jax.hessian(constrained_harmonic)(point)))
+    )
     passed = bool(
         all(value < 1e-10 for value in cr_residuals.values())
         and float(jet_error) < 1e-10
         and float(laplace_residual) < 1e-10
+        and constrained_laplace_residual < 1e-10
+        and constraint_residual <= float(prepared_constraints.evidence.lift_tolerance)
         and all(jnp.all(jnp.isfinite(value)) for value in outputs.values())
     )
     payload = {
@@ -139,6 +167,14 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
         "product_jet_error": float(jet_error),
         "laplace_residual": float(laplace_residual),
         "factor_gauge_imbalance": float(product.gauge_report(z).imbalance_ratio),
+        "constraint_evidence": {
+            "rank": prepared_constraints.evidence.rank,
+            "nullity": prepared_constraints.evidence.nullity,
+            "residual": constraint_residual,
+            "tolerance": float(prepared_constraints.evidence.lift_tolerance),
+            "preparation_seconds": constraint_preparation_seconds,
+        },
+        "constrained_laplace_residual": constrained_laplace_residual,
         "timings": timings,
     }
     payload["benchmark_id"] = canonical_fingerprint(payload)
