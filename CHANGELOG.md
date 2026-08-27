@@ -3,10 +3,19 @@
 ## Unreleased
 
 ### Added
-- Added representation-preserving point value, supplied-normal derivative, and
-  Robin constraints for scalar holomorphic polynomial potentials. Native SVD
-  preparation now exposes rank, nullity, minimum-norm lift, canonical nullspace,
-  and residual evidence; only free real Cartesian nullspace coordinates train.
+- Generalized representation-preserving holomorphic constraints around reusable
+  real-coordinate frames, target-independent functional operators, batched
+  minimum-norm lifts, coupled outputs, and target-specific affine maps. Added
+  exact nonlinear cardinal projection plus named Goursat and plane-elasticity
+  boundary functionals with explicit gauge and nullspace evidence.
+- Added query-holomorphic DeepONet trunks with fixed or source-dependent hard
+  targets, analytic conditional jets, and real harmonic operator adapters.
+- Added exact finite Fourier circle traces, explicit contour/period functionals,
+  fixed-pole meromorphic frames with domain-clearance evidence, and reduced
+  variable-projection fitting for trainable pole locations.
+- Added several-complex-variable multi-indices, analytic multijets for
+  polynomial frames, holomorphic MLPs, and product potentials, pluriharmonic
+  real-field wrappers, and metric-invariant holomorphic Kähler gauges.
 - Added shared twofold compensated conservation accounting across structured,
   triangle, unstructured, spectral, and SBP conservation diagnostics, plus
   finite-volume ledgers, remap, overset/sliding, multiblock, small-cell, and

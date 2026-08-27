@@ -18,6 +18,11 @@ from ..._holomorphic import (
     HolomorphicJet,
     HolomorphicMapCertificate,
 )
+from ..._holomorphic_linear import (
+    HolomorphicMultiIndexSet,
+    HolomorphicMultiJet,
+)
+from ..._holomorphic_taylor import multijet_from_normalized, taylor_exp
 from .._base import _AbstractBaseModel
 from .._keys import EvalKey
 from ..layers._complex_linear import ComplexLinear
@@ -165,23 +170,72 @@ class HolomorphicMLP(_AbstractBaseModel):
             value = jnp.exp(layer(value))
         return self.layers[-1](value)
 
+    def _linear_taylor(
+        self,
+        layer: ComplexLinear | LowRankComplexLinear,
+        coefficients: Array,
+        index_set: HolomorphicMultiIndexSet,
+        /,
+    ) -> Array:
+        mapped = jax.vmap(layer)(coefficients)
+        bias = layer.bias
+        if bias is None:
+            return mapped
+        active = jnp.asarray(
+            [sum(multi_index) > 0 for multi_index in index_set.indices],
+            dtype=mapped.real.dtype,
+        )
+        return mapped - active[:, None] * bias
+
+    def multi_jet(
+        self,
+        coordinates: Array,
+        index_set: HolomorphicMultiIndexSet,
+        /,
+    ) -> HolomorphicMultiJet:
+        if not isinstance(index_set, HolomorphicMultiIndexSet):
+            raise TypeError("index_set must be HolomorphicMultiIndexSet.")
+        if index_set.complex_dimension != self.in_size:
+            raise ValueError("HolomorphicMLP and multijet dimensions differ.")
+        if not index_set.downward_closed:
+            raise ValueError("HolomorphicMLP multijets require downward-closed indices.")
+        if index_set.maximum_total_order > self._certificate.maximum_derivative_order:
+            raise ValueError("Requested holomorphic multijet order is unavailable.")
+        values = self._input_vector(coordinates)
+        zero = (0,) * self.in_size
+        coefficients = []
+        for multi_index in index_set.indices:
+            if multi_index == zero:
+                coefficients.append(values)
+                continue
+            if sum(multi_index) == 1:
+                axis = multi_index.index(1)
+                coefficients.append(self.normalization.matrix[:, axis])
+                continue
+            coefficients.append(jnp.zeros_like(values))
+        taylor = jnp.stack(tuple(coefficients))
+        for layer in self.layers[:-1]:
+            taylor = taylor_exp(
+                self._linear_taylor(layer, taylor, index_set),
+                index_set,
+            )
+        taylor = self._linear_taylor(self.layers[-1], taylor, index_set)
+        return multijet_from_normalized(taylor, index_set)
+
     def jet(self, coordinate: Array, order: int, /) -> HolomorphicJet:
         order_ = int(order)
         if self.in_size != 1:
             raise ValueError("Scalar holomorphic jets require in_size=1.")
         if order_ < 0 or order_ > self._certificate.maximum_derivative_order:
             raise ValueError("Requested holomorphic jet order is unavailable.")
-        scalar = jnp.asarray(coordinate).reshape(())
-
-        def evaluate(value):
-            return self(value)
-
-        derivatives = []
-        derivative = evaluate
-        for _ in range(order_):
-            derivative = jax.jacfwd(derivative, holomorphic=True)
-            derivatives.append(derivative(scalar))
-        return HolomorphicJet(evaluate(scalar), derivatives)
+        multijet = self.multi_jet(
+            jnp.asarray(coordinate).reshape(()),
+            HolomorphicMultiIndexSet.total_degree(1, order_),
+        )
+        return HolomorphicJet(
+            multijet.value,
+            tuple(multijet.derivative((current,)) for current in range(1, order_ + 1)),
+        )
 
     def holomorphic_certificate(self) -> HolomorphicMapCertificate:
         return self._certificate

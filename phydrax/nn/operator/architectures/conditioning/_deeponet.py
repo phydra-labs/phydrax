@@ -55,7 +55,7 @@ def _sample_coordinates(
     return samples.coordinates_array(case_shape=case_shape)
 
 
-class _AbstractBranchEncoder(StrictModule):
+class AbstractBranchEncoder(StrictModule):
     latent_size: AbstractAttribute[int]
 
     @abstractmethod
@@ -70,7 +70,7 @@ class _AbstractBranchEncoder(StrictModule):
         raise NotImplementedError
 
 
-class FixedBranchEncoder(_AbstractBranchEncoder):
+class FixedBranchEncoder(AbstractBranchEncoder):
     """Compatibility encoder that flattens a fixed source discretization."""
 
     model: AbstractArrayModel
@@ -104,7 +104,7 @@ class FixedBranchEncoder(_AbstractBranchEncoder):
         return jnp.asarray(encoded).reshape(case_shape + (self.latent_size,))
 
 
-class IntegralBranchEncoder(_AbstractBranchEncoder):
+class IntegralBranchEncoder(AbstractBranchEncoder):
     """Permutation-invariant, quadrature-aware variable-sensor branch encoder."""
 
     feature_model: AbstractArrayModel
@@ -200,7 +200,7 @@ class IntegralBranchEncoder(_AbstractBranchEncoder):
         return jnp.asarray(mixed).reshape(case_shape + (self.latent_size,))
 
 
-class _AbstractBasisTrunk(StrictModule):
+class AbstractBasisTrunk(StrictModule):
     """Coordinate basis evaluator consumed by the shared DeepONet decoder."""
 
     latent_size: AbstractAttribute[int]
@@ -234,7 +234,7 @@ class _AbstractBasisTrunk(StrictModule):
         raise NotImplementedError
 
 
-class PODBasis(_AbstractBasisTrunk, NonTrainableState):
+class PODBasis(AbstractBasisTrunk, NonTrainableState):
     """Fixed affine reduced output decoder for POD-DeepONet.
 
     ``offset`` is the fitted spatial mean, not the output-channel bias.  Query
@@ -455,7 +455,7 @@ def _deeponet_contract(model):
             contract.capabilities,
             requires_fixed_query=(
                 model.trunk.requires_fixed_query
-                if isinstance(model.trunk, _AbstractBasisTrunk)
+                if isinstance(model.trunk, AbstractBasisTrunk)
                 else False
             ),
         ),
@@ -474,10 +474,10 @@ class DeepONet(AbstractOperatorModel):
     _operator_contract_builder = staticmethod(_deeponet_contract)
 
     branch: AbstractArrayModel | None
-    branches: frozendict[str, _AbstractBranchEncoder]
+    branches: frozendict[str, AbstractBranchEncoder]
     branch_mixer: AbstractArrayModel | None
     fusion: BranchFusion
-    trunk: AbstractArrayModel | _AbstractBasisTrunk
+    trunk: AbstractArrayModel | AbstractBasisTrunk
     latent_size: int
     coord_dim: int
     out_size: int | Literal["scalar"]
@@ -491,9 +491,9 @@ class DeepONet(AbstractOperatorModel):
         self,
         *,
         branch: AbstractArrayModel
-        | _AbstractBranchEncoder
-        | Mapping[str, AbstractArrayModel | _AbstractBranchEncoder],
-        trunk: AbstractArrayModel | _AbstractBasisTrunk,
+        | AbstractBranchEncoder
+        | Mapping[str, AbstractArrayModel | AbstractBranchEncoder],
+        trunk: AbstractArrayModel | AbstractBasisTrunk,
         coord_dim: int,
         latent_size: int,
         out_size: int | Literal["scalar"] = "scalar",
@@ -534,9 +534,9 @@ class DeepONet(AbstractOperatorModel):
             self.branch = branch if isinstance(branch, AbstractArrayModel) else None
         if not branch_items:
             raise ValueError("DeepONet requires at least one branch encoder.")
-        encoders: dict[str, _AbstractBranchEncoder] = {}
+        encoders: dict[str, AbstractBranchEncoder] = {}
         for name, encoder in branch_items:
-            if isinstance(encoder, _AbstractBranchEncoder):
+            if isinstance(encoder, AbstractBranchEncoder):
                 if encoder.latent_size != self.latent_size:
                     raise ValueError(
                         f"Branch {name!r} latent size does not match DeepONet."
@@ -559,7 +559,7 @@ class DeepONet(AbstractOperatorModel):
         elif branch_mixer is not None:
             raise ValueError("branch_mixer is only used by concat fusion.")
 
-        if isinstance(trunk, _AbstractBasisTrunk):
+        if isinstance(trunk, AbstractBasisTrunk):
             if trunk.latent_size != self.latent_size or trunk.out_size != self.out_size:
                 raise ValueError("Basis trunk sizes must match the DeepONet sizes.")
         else:
@@ -587,7 +587,7 @@ class DeepONet(AbstractOperatorModel):
             return next(iter(batch.inputs.values()))
         raise KeyError(f"DeepONet branch {name!r} has no matching OperatorBatch input.")
 
-    def _encode(
+    def encode_sources(
         self,
         batch: OperatorBatch,
         /,
@@ -632,7 +632,7 @@ class DeepONet(AbstractOperatorModel):
         key: EvalKey,
     ) -> Array:
         trunk = self.trunk
-        if isinstance(trunk, _AbstractBasisTrunk):
+        if isinstance(trunk, AbstractBasisTrunk):
             return trunk.evaluate(query, case_shape=case_shape, key=key)
         coordinates = _query_coordinates(query, self.coord_dim, case_shape)
         flat = coordinates.reshape((-1, self.coord_dim))
@@ -656,7 +656,7 @@ class DeepONet(AbstractOperatorModel):
         key: EvalKey = None,
     ) -> Array:
         branch_key, trunk_key = split_eval_key(key, 2)
-        coefficients = self._encode(batch, key=branch_key)
+        coefficients = self.encode_sources(batch, key=branch_key)
         basis = self._trunk_basis(
             batch.require_single_query(),
             batch.case_shape,
@@ -672,7 +672,7 @@ class DeepONet(AbstractOperatorModel):
             axis=-1,
         )
         trunk = self.trunk
-        if isinstance(trunk, _AbstractBasisTrunk):
+        if isinstance(trunk, AbstractBasisTrunk):
             output = output + trunk.evaluate_offset(
                 batch.require_single_query(),
                 case_shape=batch.case_shape,
@@ -744,6 +744,8 @@ class DeepONet(AbstractOperatorModel):
 
 
 __all__ = [
+    "AbstractBasisTrunk",
+    "AbstractBranchEncoder",
     "BranchFusion",
     "DeepONet",
     "FixedBranchEncoder",

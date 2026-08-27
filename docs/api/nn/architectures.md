@@ -1120,6 +1120,30 @@ the same substrate.
             - __init__
             - evaluate
 
+#### Query-holomorphic branch–trunk operators
+
+`HolomorphicBasisTrunk` evaluates a certified continuous holomorphic frame rather
+than an unconstrained learned coordinate MLP. Fixed-target mode decodes only
+nullspace coordinates and supplies the prepared affine lift. Variable-target mode
+decodes deterministic source targets followed by learned nullspace coordinates.
+`ConditionalHolomorphicDeepONet` certifies analyticity in the query coordinate only;
+source encoders remain unrestricted.
+
+::: phydrax.nn.operator.architectures.HolomorphicBasisTrunk
+
+---
+
+::: phydrax.nn.operator.architectures.TargetAugmentedBranchEncoder
+
+---
+
+::: phydrax.nn.operator.architectures.ConditionalHolomorphicDeepONet
+
+---
+
+::: phydrax.nn.operator.architectures.ConditionalHarmonicOperator2D
+
+
 #### Learned function frames and projected branches
 
 `LearnedFunctionFrame` represents a scalar- or channel-valued function with

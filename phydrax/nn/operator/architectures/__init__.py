@@ -21,6 +21,8 @@ from .attention._poseidon import Poseidon
 from .attention._transolver import Transolver
 from .attention._upt import ABUPT, LatentTokenBlock, LatentTokenProcessor, UPT
 from .conditioning._deeponet import (
+    AbstractBasisTrunk,
+    AbstractBranchEncoder,
     DeepONet,
     FixedBranchEncoder,
     IntegralBranchEncoder,
@@ -44,6 +46,14 @@ from .conditioning._function_frame import (
     FunctionProjectionReport,
     LearnedFunctionFrame,
     ProjectionBranchEncoder,
+)
+from .conditioning._holomorphic_deeponet import (
+    ConditionalHarmonicOperator2D,
+    ConditionalHolomorphicDeepONet,
+    ConditionalHolomorphicMapCertificate,
+    HolomorphicBasisTrunk,
+    HolomorphicTrunkMode,
+    TargetAugmentedBranchEncoder,
 )
 from .conditioning._nonlinear_decoder import (
     CoordinateConditionedOperator,
@@ -181,6 +191,8 @@ __all__ = [
     "TopologicalRouteConfig",
     "CoDABlock",
     "CoDANO",
+    "AbstractBasisTrunk",
+    "AbstractBranchEncoder",
     "CoDAOperatorState",
     "DeepONet",
     "FixedBranchEncoder",
@@ -198,6 +210,12 @@ __all__ = [
     "FunctionProjectionRankPolicy",
     "FunctionProjectionReport",
     "LearnedFunctionFrame",
+    "ConditionalHarmonicOperator2D",
+    "ConditionalHolomorphicDeepONet",
+    "ConditionalHolomorphicMapCertificate",
+    "HolomorphicBasisTrunk",
+    "HolomorphicTrunkMode",
+    "TargetAugmentedBranchEncoder",
     "ProjectionBranchEncoder",
     "DPOT",
     "DiagonalStateSpaceMixer",

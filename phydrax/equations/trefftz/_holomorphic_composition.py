@@ -18,6 +18,16 @@ from ..._holomorphic import (
     HolomorphicMapCertificate,
     HolomorphicPotentialProvider,
 )
+from ..._holomorphic_linear import (
+    HolomorphicMultiIndexSet,
+    HolomorphicMultiJet,
+    MultivariableHolomorphicPotentialProvider,
+)
+from ..._holomorphic_taylor import (
+    multijet_from_normalized,
+    normalized_coefficients,
+    taylor_multiply,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -265,11 +275,11 @@ class HolomorphicProductPotential(StrictModule):
         if rank <= 0 or branches_ <= 0:
             raise ValueError("Product potential rank and branches must be positive.")
         expected_output = rank * branches_
+        input_sizes = {certificate.complex_input_size for certificate in certificates}
+        if len(input_sizes) != 1:
+            raise ValueError("Every product factor must use the same complex input size.")
+        input_size = next(iter(input_sizes))
         for certificate in certificates:
-            if certificate.complex_input_size != 1:
-                raise ValueError(
-                    "Initial HolomorphicProductPotential support requires one complex input."
-                )
             if certificate.complex_output_size != expected_output:
                 raise ValueError(
                     "Every product factor must output latent_rank * branches values."
@@ -279,7 +289,11 @@ class HolomorphicProductPotential(StrictModule):
             factor_count=len(resolved),
             latent_rank=rank,
             branch_count=branches_,
-            coordinate_mode="same-scalar-coordinate",
+            coordinate_mode=(
+                "same-scalar-coordinate"
+                if input_size == 1
+                else "same-complex-vector-coordinate"
+            ),
             child_certificate_ids=tuple(
                 certificate.certificate_id for certificate in certificates
             ),
@@ -296,7 +310,7 @@ class HolomorphicProductPotential(StrictModule):
         self.branches = branches_
         self.factorization = factorization
         self._certificate = HolomorphicMapCertificate(
-            complex_input_size=1,
+            complex_input_size=input_size,
             complex_output_size=branches_,
             construction="same-coordinate-holomorphic-product-potential",
             normalization_id=_aggregate_normalization_id(
@@ -365,6 +379,38 @@ class HolomorphicProductPotential(StrictModule):
             for current, coefficient in enumerate(coefficients)
         )
         return HolomorphicJet(values[0], values[1:])
+
+    def multi_jet(
+        self,
+        coordinates: Array,
+        index_set: HolomorphicMultiIndexSet,
+        /,
+    ) -> HolomorphicMultiJet:
+        if not isinstance(index_set, HolomorphicMultiIndexSet):
+            raise TypeError("index_set must be HolomorphicMultiIndexSet.")
+        if index_set.complex_dimension != self._certificate.complex_input_size:
+            raise ValueError("Product potential and multijet dimensions differ.")
+        if index_set.maximum_total_order > self._certificate.maximum_derivative_order:
+            raise ValueError("Requested product-potential multijet is unavailable.")
+        factor_coefficients = []
+        for factor in self.factors:
+            if not isinstance(factor, MultivariableHolomorphicPotentialProvider):
+                raise TypeError(
+                    "Every multivariable product factor must provide multijets."
+                )
+            coefficients = normalized_coefficients(
+                factor.multi_jet(coordinates, index_set)
+            )
+            factor_coefficients.append(
+                coefficients.reshape((index_set.count, self.latent_rank, self.branches))
+            )
+        product = jnp.zeros_like(factor_coefficients[0])
+        zero_position = index_set.indices.index((0,) * index_set.complex_dimension)
+        product = product.at[zero_position].set(jnp.ones_like(product[zero_position]))
+        for coefficients in factor_coefficients:
+            product = taylor_multiply(product, coefficients, index_set)
+        summed = jnp.sum(product, axis=1)
+        return multijet_from_normalized(summed, index_set)
 
     def gauge_report(self, coordinate: Array, /) -> HolomorphicFactorGaugeReport:
         norms = jnp.asarray(

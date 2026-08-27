@@ -1,194 +1,172 @@
 # Holomorphic potential fields
 
-Phydrax represents selected two-dimensional PDE solutions through complex holomorphic
-potentials. The complex model is certified separately from the physical transformation:
-a holomorphic-map certificate proves the Cauchy–Riemann structure, while the wrapper
-issues the Laplace, biharmonic, or plane-elasticity trial-space certificate.
+Phydrax separates complex analyticity evidence from physical PDE evidence. A
+holomorphic-map certificate records the operations that preserve analyticity; harmonic,
+biharmonic, elasticity, pluriharmonic, trace, and domain-local wrappers state their
+additional assumptions independently.
 
-## Linear polynomial potentials
+## Pointwise providers
 
-`HolomorphicPolynomialPotential` is the deterministic baseline. It stores real and
-imaginary coefficient leaves, evaluates branches with Horner recurrences, and computes
-physical-coordinate derivatives analytically.
+`HolomorphicPolynomialPotential` is the deterministic scalar-input baseline.
+`HolomorphicMLP` uses complex-affine layers and the entire complex exponential while
+storing every trainable leaf in real Cartesian form. Dense and explicitly low-rank
+complex layers share the same certificate semantics.
 
-```python
-import equinox as eqx
-import jax.numpy as jnp
-import phydrax as phx
+Scalar `jet` remains available for one complex input. `multi_jet` accepts a canonical
+`HolomorphicMultiIndexSet` for several complex inputs. Public multijets contain raw
+partial derivatives; the implementation propagates normalized multivariate Taylor
+coefficients through affine maps, exponentials, and product convolutions.
 
-potential = phx.equations.HolomorphicPolynomialPotential(1, 2)
-potential = eqx.tree_at(
-    lambda value: value.coefficient_real,
-    potential,
-    jnp.asarray([[0.0, 0.0, 1.0]]),
-)
-harmonic_model = phx.equations.HarmonicPotential2D(potential)
+## Linear holomorphic frames
+
+`HolomorphicPolynomialFrame` separates a fixed holomorphic basis from its real
+coefficients. Its basis matrix has shape `(complex_outputs, real_coefficients)` and
+represents
+
+```text
+F(z) = B(z) q,   q real.
 ```
 
-The resulting field is `Re(z²)`. `Domain.Model` attaches an algebraic Laplace
-certificate, so boundary conditions compose through ordinary residual penalties while
-generic hard enforcement is rejected.
+The frame supports multiple complex outputs and multivariate monomial index sets.
+`HolomorphicJetFunctionalTerm` represents one real part of a weighted output derivative,
+and `HolomorphicPointFunctional` combines explicit terms at one complex point. Real and
+imaginary values, supplied-normal derivatives, Robin data, coupled outputs, and
+several-variable first derivatives all use this one data-bearing contract.
 
-## Exact finite coefficient constraints
+## Reusable coefficient constraints
 
-`HolomorphicPolynomialConstraintPlan` restricts one scalar polynomial potential in
-real Cartesian coefficient space. Point constraints may select the real or imaginary
-part of the potential, its derivative along a supplied normal, or a Robin combination.
-Preparation uses the native dense SVD lifecycle to compute a minimum-norm lift and a
-canonical nullspace basis.
+Constraint geometry and targets are independent:
 
 ```python
-constraints = (
-    phx.equations.HolomorphicPointConstraint.dirichlet(-1.0, 0.0),
-    phx.equations.HolomorphicPointConstraint.dirichlet(1.0, 0.0),
+frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
+functionals = (
+    phx.equations.HolomorphicPointFunctional.value(-1.0),
+    phx.equations.HolomorphicPointFunctional.value(1.0),
 )
-prepared = phx.equations.HolomorphicPolynomialConstraintPlan(
-    3,
-    constraints,
+operator = phx.equations.HolomorphicConstraintOperatorPlan(
+    frame,
+    functionals,
 ).prepare()
-potential = phx.equations.ConstrainedHolomorphicPolynomialPotential(prepared)
+coefficient_map = operator.affine_map(jnp.asarray([0.0, 0.0]))
+potential = phx.equations.ConstrainedHolomorphicPotential(coefficient_map)
 ```
 
-Writing the real Cartesian polynomial coefficients as `q`, preparation constructs
-`q = q₀ + Nη` with `Aq₀ = b` and `AN = 0`. Only `η` is trainable. The affine map
-therefore preserves the holomorphic polynomial construction for every optimization
-step instead of multiplying it by a nonholomorphic trial function.
-
-`HolomorphicConstraintEvidence` records numerical rank, nullity, singular values,
-lift residual, nullspace residual, and their scale-aware tolerances. Inconsistent
-constraints and functionals that vanish identically on the selected polynomial basis
-fail during preparation.
-
-This contract is exact for the finite prepared functionals only. Point constraints do
-not certify a continuous boundary condition between the supplied points. Homogeneous
-constraints retain finite-subspace and linear-parameter evidence; nonzero targets form
-an affine finite-parametric family and are not presented to the linear trial-space
-solver as a linear subspace.
-
-
-## Holomorphic MLP
-
-`phx.nn.models.HolomorphicMLP` uses dense or explicitly low-rank complex-affine
-layers and the entire complex exponential. Every trainable leaf is real Cartesian
-state; complex values are assembled only during evaluation. Split activations,
-clipping, modulus operations, conjugation, dropout, and batch normalization are not
-part of this contract.
-
-```python
-model = phx.nn.models.HolomorphicMLP(
-    in_size=1,
-    out_size=2,
-    hidden_sizes=(16, 16),
-)
-```
-
-The model accepts complex coordinates directly. Physical wrappers convert real `(x,y)`
-coordinates to `z=x+iy` and request the required holomorphic jet.
-
-Low-rank affine plans are declared per layer:
-
-```python
-factorized = phx.nn.models.HolomorphicMLP(
-    in_size=1,
-    out_size=2,
-    hidden_sizes=(16, 16),
-    linear_ranks=(1, 4, 2),
-)
-```
-
-`LowRankComplexLinear` realizes one complex-affine map as two complex-linear
-contractions without materializing the dense effective weight. Construction begins
-from the existing dense initializer and records retained spectral energy and
-truncation residual. This changes parameterization, not holomorphicity.
-
-## Certified branch and product compositions
-
-`HolomorphicBranchBundle` concatenates independent certified providers. It is useful
-when the Goursat or elasticity branches need different architectures, normalizations,
-or singular structure:
-
-```python
-potentials = phx.equations.HolomorphicBranchBundle((phi, psi))
-```
-
-The bundle concatenates child jets order by order. It remains a linear finite
-subspace only when every child has that property.
-
-`HolomorphicProductPotential` represents a finite sum of products evaluated at the
-same scalar complex coordinate:
+Preparation factorizes the real functional matrix once and stores its right inverse and
+canonical right nullspace. Different target vectors reuse that factorization. For
+constraint matrix `A`, target `b`, minimum-norm lift `q0`, nullspace `N`, and trainable
+free coordinates `eta`, evaluation uses
 
 ```text
-F_b(z) = Σ_r Π_j f_{j,r,b}(z).
+A q0 = b,   A N = 0,   q = q0 + N eta.
 ```
 
-Every factor outputs `latent_rank * branches` values. Product jets are assembled by
-convolving the factors' normalized Taylor coefficients, so higher derivatives use
-the exact generalized Leibniz rule rather than nested differentiation.
+Homogeneous targets retain finite-subspace and linear-parameter evidence. Nonzero
+targets form an affine finite-parametric family. Exactness applies to the prepared
+finite functionals, not to unsampled boundary points.
 
-```python
-potential = phx.equations.HolomorphicProductPotential(
-    (factor_a, factor_b),
-    latent_rank=4,
-    branches=2,
-)
-```
+## Nonlinear cardinal projection
 
-Multiplying two trainable factor spaces is nonlinear in the combined parameters even
-when each factor is individually linear. The certificate therefore reports a finite
-parametric family. `gauge_report` exposes the multiplicative factor-scale imbalance;
-the implementation does not silently renormalize factors or optimizer state.
+`HolomorphicConstraintProjector` corrects any compatible certified nonlinear provider
+with a fixed holomorphic cardinal lift. It requires full row rank so the lift can
+represent arbitrary functional residuals. The correction is additive and holomorphic;
+no trainable parameter projection or optimizer-state rotation occurs. A
+`HolomorphicProjectionState` computes child functional values once and reuses the
+correction across a query batch.
 
-The current generic `Separable` and `LatentContractionModel` wrappers remain
-uncertified. They accept arbitrary factors and activations and may project complex
-outputs to real values.
+## Coupled physical functionals
 
-## What separability does not mean
+Named Goursat and plane-elasticity compilers construct real rows on multi-output
+holomorphic frames:
 
-Arbitrary real-coordinate products such as `a(x)b(y)` are not generally
-holomorphic in `z=x+iy`. Cauchy--Riemann compatibility ties such factors to a narrow
-exponential-type family. Split `x`/`y` MLPs therefore cannot mint a holomorphic-map
-certificate.
+- biharmonic value, supplied-normal derivative, and Robin functionals;
+- plane stress components;
+- traction components on a supplied normal;
+- plane displacement components with an explicit `PlaneIsotropicMaterial` identity.
 
-Parameter/query separation is safe when coefficients are independent of `z`:
+Pure-traction and potential gauges remain visible through rank and nullity. They are not
+silently regularized away.
 
-```text
-φ(z; μ) = Σ_r c_r(μ) h_r(z).
-```
+## Conditional holomorphic operators
 
-A conditional operator based on this form remains a separate follow-up because its
-source-schema and query-holomorphic evidence differ from a pointwise potential
-provider.
+`HolomorphicBasisTrunk` adapts a continuous frame to the shared DeepONet decoder.
+Supported modes are:
 
-`HolomorphicMapCertificate` records parameter coverage and linearity independently.
-Physical wrappers inherit both values without widening the claim. Polynomial potentials
-declare a `finite-subspace` with linear coefficients; `HolomorphicMLP` declares a
-`finite-parametric-family` with nonlinear parameter dependence.
+- full unconstrained coefficients;
+- a fixed target lift plus learned nullspace coordinates;
+- source targets concatenated with learned nullspace coordinates.
 
-## Physical representations
+`ConditionalHolomorphicDeepONet` certifies holomorphy only in query coordinates. Source
+encoders may be arbitrary. Constrained decoders reject a free output bias because that
+bias can leave the prepared affine set. `TargetAugmentedBranchEncoder` extracts declared
+real target entries deterministically and concatenates them with learned free
+coordinates.
 
-- `HarmonicPotential2D`: one potential branch and real scalar output.
-- `BiharmonicPotential2D`: two Goursat branches and real scalar output.
-- `PlaneElasticityPotential2D`: Kolosov–Muskhelishvili stress or mixed
-  stress/displacement output.
-- `PlaneIsotropicMaterial`: explicit plane-strain or plane-stress hypothesis.
+## Continuous trace evidence
 
-Plane elasticity assumes a homogeneous isotropic material and zero body force. The
-simply connected assumption concerns completeness of the potential representation, not
-pointwise equilibrium of a represented state.
+`HolomorphicTraceCertificate` distinguishes four claims:
+
+- finite-functional exact;
+- continuous finite-subspace exact;
+- continuous validated bound;
+- sampled audit.
+
+`DiskHolomorphicTracePlan` maps a finite real Fourier trace on a circle exactly to a
+Taylor polynomial. Its continuous claim follows from coefficient identity, not dense
+collocation. `HolomorphicContourFunctional` and `holomorphic_period_functional` bind
+explicit nodes and complex quadrature weights; quadrature evidence remains distinct
+from an exact analytic contour identity.
+
+## Meromorphic frames and topology
+
+`MeromorphicLinearFrame` combines a regular polynomial part with fixed principal parts.
+It issues meromorphic rather than global holomorphic evidence. `PoleClearanceReport`
+checks pole separation from a closed disk and from other poles;
+`DomainHolomorphicCertificate` binds a valid clearance report to the meromorphic
+construction.
+
+`MeromorphicVariableProjectionPlan` treats pole locations as nonlinear real Cartesian
+variables and residues/regular coefficients as one linear block through the existing
+variable-projection solver. `fit` executes the reduced solve directly.
+`continuation_problem` exposes reduced-objective stationarity as a
+`ParameterContinuationProblem` along a linear observation path, so the existing
+continuation, tangent, and bifurcation substrates can track pole branches without a
+second nonlinear runtime.
+
+Several-variable meromorphic functions are not modeled by vector-valued isolated
+poles; their divisor geometry remains a separate capability.
+
+On multiply connected domains, Laurent frames may omit logarithmic harmonic modes and
+single-valued conjugates may require period conditions. Frame and trace documentation
+must state those completeness boundaries explicitly.
 
 ## Several complex variables
 
-The neural architecture permits complex vector inputs, but real parts of holomorphic
-maps on `C^m`, `m>1`, are pluriharmonic rather than a complete harmonic family. Phydrax
-does not present this as a general nD Laplace solver. Use the nD harmonic polynomial
-basis for general scalar harmonic fields.
+`HolomorphicMultiIndexSet` gives deterministic total-degree or explicit derivative
+ordering. `HolomorphicPolynomialFrame` accepts several complex coordinates and a full
+invertible complex affine normalization. Point normals use real coordinate order
+`(x0, ..., xm-1, y0, ..., ym-1)`.
 
-## Optimizers and gauges
+The real part of a holomorphic scalar map on several complex variables is
+pluriharmonic. It is harmonic in the paired real coordinates but is not a complete
+harmonic family when the complex dimension exceeds one. `PluriharmonicPotential`
+exposes analytic real gradients, Hessians, and Laplacians while retaining that narrower
+claim.
 
-Complex trainable arrays are intentionally absent, so standard real Optax semantics
-remain valid. `solve_linear_trial_space` separately checks certificate linearity:
-linear polynomial physical fields are eligible; nonlinear HMLP fields are rejected.
+## Kähler gauges
 
-Potential representations may have gauge/null modes. The direct solver reports rank and
-nullity rather than hiding them. Pure-traction elasticity additionally requires the
-usual force, moment, and rigid-motion treatment at the problem level.
+`KahlerHolomorphicGauge` adds the real part of a compatible holomorphic provider to a
+`KahlerPotentialGeometry`. The mixed complex Hessian is unchanged by construction, so
+the Kähler metric is invariant. `KahlerGaugeInvarianceReport` is a numerical validation
+of that construction, not the source of the proof.
+
+## Evidence boundaries
+
+The following remain intentionally uncertified:
+
+- arbitrary real-coordinate separable products;
+- arbitrary Python boundary callables as continuous evidence;
+- continuous exactness inferred from collocation density;
+- generic finite-algebra holomorphic networks;
+- native-complex optimizer conventions;
+- automatic transport of diagonal adaptive optimizer state through moving nullspace
+  bases.

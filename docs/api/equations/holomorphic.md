@@ -1,7 +1,7 @@
 # Holomorphic potential fields
 
 See [Holomorphic potential fields](../../guides_holomorphic_potentials.md) for scientific
-assumptions and workflows.
+assumptions, evidence boundaries, and workflows.
 
 ::: phydrax.equations.ComplexAffineNormalization
 
@@ -12,10 +12,6 @@ assumptions and workflows.
 ---
 
 ::: phydrax.nn.layers.LowRankComplexLinear
-
----
-
-::: phydrax.nn.layers.LowRankComplexLinearInitializationReport
 
 ---
 
@@ -31,30 +27,51 @@ assumptions and workflows.
 
 ---
 
+::: phydrax.equations.HolomorphicMultiIndexSet
+
+---
+
+::: phydrax.equations.HolomorphicMultiJet
+
+---
+
 ::: phydrax.equations.HolomorphicPolynomialPotential
 
 ---
 
-::: phydrax.equations.HolomorphicPointConstraint
+::: phydrax.equations.HolomorphicPolynomialFrame
 
 ---
 
-::: phydrax.equations.HolomorphicPolynomialConstraintPlan
+::: phydrax.equations.HolomorphicJetFunctionalTerm
 
 ---
 
-::: phydrax.equations.PreparedHolomorphicPolynomialConstraints
+::: phydrax.equations.HolomorphicPointFunctional
 
 ---
 
-::: phydrax.equations.HolomorphicConstraintEvidence
+::: phydrax.equations.HolomorphicConstraintOperatorPlan
 
 ---
 
-::: phydrax.equations.ConstrainedHolomorphicPolynomialPotential
+::: phydrax.equations.PreparedHolomorphicConstraintOperator
 
 ---
 
+::: phydrax.equations.HolomorphicAffineCoefficientMap
+
+---
+
+::: phydrax.equations.ConstrainedHolomorphicPotential
+
+---
+
+::: phydrax.equations.HolomorphicConstraintProjector
+
+---
+
+::: phydrax.equations.ProjectedHolomorphicPotential
 
 ---
 
@@ -66,11 +83,35 @@ assumptions and workflows.
 
 ---
 
-::: phydrax.equations.HolomorphicFactorizationEvidence
+::: phydrax.equations.HolomorphicTraceCertificate
 
 ---
 
-::: phydrax.equations.HolomorphicFactorGaugeReport
+::: phydrax.equations.DiskHolomorphicTracePlan
+
+---
+
+::: phydrax.equations.HolomorphicContourFunctional
+
+---
+
+::: phydrax.equations.PoleSet
+
+---
+
+::: phydrax.equations.MeromorphicLinearFrame
+
+---
+
+::: phydrax.equations.ConstrainedMeromorphicPotential
+
+---
+
+::: phydrax.equations.PoleClearanceReport
+
+---
+
+::: phydrax.equations.MeromorphicVariableProjectionPlan
 
 ---
 
@@ -87,3 +128,7 @@ assumptions and workflows.
 ---
 
 ::: phydrax.equations.PlaneElasticityPotential2D
+
+---
+
+::: phydrax.equations.PluriharmonicPotential

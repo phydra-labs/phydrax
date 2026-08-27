@@ -123,6 +123,10 @@ from ._forms import (
 )
 from ._geodesic_problem import integrate_metric_geodesic, MetricGeodesicResult
 from ._hessian_geometry import HessianGeometry, validate_hessian_geometry
+from ._holomorphic_gauge import (
+    KahlerGaugeInvarianceReport,
+    KahlerHolomorphicGauge,
+)
 from ._information_operator import (
     InformationMetricOperator,
     pulled_back_information_operator,
@@ -370,6 +374,8 @@ __all__ = [
     "LorentzianMetric",
     "KahlerStructure",
     "KahlerValidationReport",
+    "KahlerGaugeInvarianceReport",
+    "KahlerHolomorphicGauge",
     "G2DerivationInvarianceReport",
     "LocalG2Structure",
     "LocalG2ValidationReport",

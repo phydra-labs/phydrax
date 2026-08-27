@@ -26,8 +26,8 @@ from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 
 from ._deeponet import (
-    _AbstractBasisTrunk,
-    _AbstractBranchEncoder,
+    AbstractBasisTrunk,
+    AbstractBranchEncoder,
     DeepONet,
 )
 
@@ -300,7 +300,7 @@ def _case_sum(value: Array, axes: tuple[int, ...]) -> Array:
     return jnp.sum(value, axis=axes)
 
 
-class LearnedFunctionFrame(_AbstractBasisTrunk):
+class LearnedFunctionFrame(AbstractBasisTrunk):
     """Trainable coordinate-evaluated finite frame with weighted projection."""
 
     basis_model: AbstractArrayModel
@@ -649,7 +649,7 @@ class LearnedFunctionFrame(_AbstractBasisTrunk):
         )
 
 
-class ProjectionBranchEncoder(_AbstractBranchEncoder):
+class ProjectionBranchEncoder(AbstractBranchEncoder):
     """DeepONet branch that projects one sampled function into frame coordinates."""
 
     frame: LearnedFunctionFrame

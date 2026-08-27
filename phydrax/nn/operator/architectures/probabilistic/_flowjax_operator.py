@@ -28,7 +28,7 @@ from phydrax._trainable import NonTrainableState
 from phydrax._uncertainty import UncertaintySource, validate_uncertainty_source
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn.operator.architectures.conditioning._deeponet import (
-    _AbstractBranchEncoder,
+    AbstractBranchEncoder,
 )
 from phydrax.nn.operator.capabilities import ConfiguredOperatorContract
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch, OperatorOutputSpec
@@ -51,18 +51,18 @@ class _FixedReferenceQuery(StrictModule, NonTrainableState):
 class OperatorBatchConditioner(StrictModule):
     """Concatenate named branch encodings into one condition vector per case."""
 
-    encoders: frozendict[str, _AbstractBranchEncoder]
+    encoders: frozendict[str, AbstractBranchEncoder]
     condition_size: int
 
-    def __init__(self, encoders: Mapping[str, _AbstractBranchEncoder], /):
-        resolved: dict[str, _AbstractBranchEncoder] = {}
+    def __init__(self, encoders: Mapping[str, AbstractBranchEncoder], /):
+        resolved: dict[str, AbstractBranchEncoder] = {}
         for name, encoder in encoders.items():
             resolved_name = str(name)
             if not resolved_name:
                 raise ValueError(
                     "OperatorBatchConditioner input names must be non-empty."
                 )
-            if not isinstance(encoder, _AbstractBranchEncoder):
+            if not isinstance(encoder, AbstractBranchEncoder):
                 raise TypeError(
                     f"Conditioner input {resolved_name!r} must use a branch encoder."
                 )

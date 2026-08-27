@@ -1940,7 +1940,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         latent_size=4,
         source_key="forcing",
     )
-    coefficients = deeponet._encode(deeponet_batch, key=None)
+    coefficients = deeponet.encode_sources(deeponet_batch, key=None)
     basis = deeponet._trunk_basis(
         deeponet_batch.require_single_query(),
         deeponet_batch.case_shape,

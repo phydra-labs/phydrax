@@ -19,7 +19,7 @@ from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.operator.architectures.conditioning._deeponet import (
-    _AbstractBranchEncoder,
+    AbstractBranchEncoder,
     BranchFusion,
     FixedBranchEncoder,
 )
@@ -152,7 +152,7 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
 
     operator_architecture = "CoordinateConditionedOperator"
 
-    branches: frozendict[str, _AbstractBranchEncoder]
+    branches: frozendict[str, AbstractBranchEncoder]
     decoder: Any
     branch_mixer: Any | None
     fusion: BranchFusion
@@ -200,9 +200,9 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
             branch_items = ((source_key or "input", branch),)
         if not branch_items:
             raise ValueError("CoordinateConditionedOperator requires a branch encoder.")
-        encoders: dict[str, _AbstractBranchEncoder] = {}
+        encoders: dict[str, AbstractBranchEncoder] = {}
         for name, encoder in branch_items:
-            if isinstance(encoder, _AbstractBranchEncoder):
+            if isinstance(encoder, AbstractBranchEncoder):
                 resolved = encoder
             else:
                 resolved = FixedBranchEncoder(encoder, self.latent_size)

@@ -73,18 +73,20 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
         branches=1,
     )
     bundle = phx.equations.HolomorphicBranchBundle((first, second))
-    constraint_plan = phx.equations.HolomorphicPolynomialConstraintPlan(
-        3,
+    constraint_frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
+    constraint_plan = phx.equations.HolomorphicConstraintOperatorPlan(
+        constraint_frame,
         (
-            phx.equations.HolomorphicPointConstraint.dirichlet(-1.0, 0.0),
-            phx.equations.HolomorphicPointConstraint.dirichlet(1.0, 0.0),
+            phx.equations.HolomorphicPointFunctional.value(-1.0),
+            phx.equations.HolomorphicPointFunctional.value(1.0),
         ),
     )
     started = time.perf_counter()
     prepared_constraints = constraint_plan.prepare()
     constraint_preparation_seconds = time.perf_counter() - started
-    constrained = phx.equations.ConstrainedHolomorphicPolynomialPotential(
-        prepared_constraints,
+    coefficient_map = prepared_constraints.affine_map(jnp.zeros((2,)))
+    constrained = phx.equations.ConstrainedHolomorphicPotential(
+        coefficient_map,
         initial_free_coordinates=jnp.linspace(
             -0.2,
             0.3,
@@ -156,7 +158,7 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
         and float(jet_error) < 1e-10
         and float(laplace_residual) < 1e-10
         and constrained_laplace_residual < 1e-10
-        and constraint_residual <= float(prepared_constraints.evidence.lift_tolerance)
+        and constraint_residual <= float(coefficient_map.evidence.tolerance)
         and all(jnp.all(jnp.isfinite(value)) for value in outputs.values())
     )
     payload = {
@@ -171,7 +173,7 @@ def run_holomorphic_separability_benchmarks() -> dict[str, Any]:
             "rank": prepared_constraints.evidence.rank,
             "nullity": prepared_constraints.evidence.nullity,
             "residual": constraint_residual,
-            "tolerance": float(prepared_constraints.evidence.lift_tolerance),
+            "tolerance": float(coefficient_map.evidence.tolerance),
             "preparation_seconds": constraint_preparation_seconds,
         },
         "constrained_laplace_residual": constrained_laplace_residual,
