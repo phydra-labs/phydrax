@@ -181,7 +181,7 @@ class ComplexInterchangeState(StrictModule, NonTrainableState):
             raise ValueError(
                 "Complex interchange provider and architecture IDs are required."
             )
-        entries_ = tuple(sorted(tuple(entries), key=lambda entry: entry.name))
+        entries_ = tuple(sorted(entries, key=lambda entry: entry.name))
         if not entries_ or not all(
             isinstance(entry, ComplexInterchangeEntry) for entry in entries_
         ):
@@ -211,7 +211,7 @@ class ComplexInterchangeState(StrictModule, NonTrainableState):
     def metadata(self) -> dict[str, Any]:
         value = json.loads(self.metadata_json)
         if not isinstance(value, dict):
-            raise RuntimeError("Complex interchange metadata is not an object.")
+            raise TypeError("Complex interchange metadata is not an object.")
         return value
 
     def entry(self, name: str, /) -> ComplexInterchangeEntry:
@@ -940,7 +940,7 @@ def import_complex_parameters(
             policy_,
         )
         locations = real + 1j * imaginary
-        if len(set(complex(item) for item in np.asarray(locations))) != locations.size:
+        if len({complex(item) for item in np.asarray(locations)}) != locations.size:
             raise ValueError("Imported pole locations must remain distinct.")
         return eqx.tree_at(
             lambda poles: (poles.location_real, poles.location_imag),
