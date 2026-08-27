@@ -143,6 +143,15 @@ independently against its own kernel, Gaussian-process, posterior, search-eviden
 and state-space contracts. No Hyperoptax source code is copied or redistributed,
 and randomized Kriging Believer is not implemented.
 
+Accurate conservation accounting
+The cancellation-aware conservation reductions are independent implementations of
+the error-free TwoSum and Sum2 algorithms described by Takeshi Ogita, Siegfried M.
+Rump, and Shin'ichi Oishi, “Accurate Sum and Dot Product,” SIAM Journal on Scientific
+Computing 26(6), 1955–1988 (2005), DOI 10.1137/030601818.
+
+The design study inspected sigma-py/accupy, licensed under GPL-3.0. Phydrax does not
+copy, translate, bundle, link, import, or depend on accupy source or executables.
+
 Compatible electromagnetics and point-cloud calculus
 The compatible Maxwell, CPML, Whitney-form, adjoint, targeted-reconstruction, and
 point-cloud implementations are native Phydrax implementations derived from public

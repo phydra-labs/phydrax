@@ -12,6 +12,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_complex import PolygonalConnectivity
@@ -488,8 +489,9 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         redistributed = jnp.where(
             active, redistributed, jnp.zeros((), dtype=redistributed.dtype)
         )
-        conservation_defect = jnp.sum(redistributed, axis=0) - jnp.sum(
-            active_rate, axis=0
+        conservation_defect = compensated_sum_chunks(
+            (redistributed, -active_rate),
+            output_ndim=rate.ndim - 1,
         )
         real_dtype = jnp.real(rate).dtype
         roundoff_steps = max(1, cell_count + source_count * maximum_recipients)
@@ -512,9 +514,6 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             jnp.any(conservation_failed),
             "Small-cell redistribution exceeds the content-rate dtype conservation "
             "tolerance.",
-        )
-        conservation_defect = jnp.sum(redistributed, axis=0) - jnp.sum(
-            active_rate, axis=0
         )
         return ConservativeSmallCellRedistributionResult(
             redistributed_rate=redistributed,

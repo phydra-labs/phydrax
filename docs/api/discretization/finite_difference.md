@@ -174,6 +174,11 @@ reuses those prepared flux operators where the requested expression is conservat
 
 ## Periodic SBP flux differencing
 
+Periodic SBP conservation diagnostics use a twofold compensated reduction for the
+quadrature-weighted residual in the prepared grid dtype. The antisymmetric pairwise
+flux construction, entropy rates, and evolution residual are unchanged.
+
+
 ::: phydrax.discretization.TensorSBPPlan
 
 ---

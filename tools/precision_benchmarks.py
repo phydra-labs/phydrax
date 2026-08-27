@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import platform
 import time
 from collections.abc import Callable
@@ -475,21 +476,31 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
             axis=-1,
         ).astype(dtype)
         state = precision.storage(system.primitive_to_conserved(primitive))
-        initial = phx.solver.FiniteVolumeRuntimeState(
+        initial = runtime.initialize_state(
             state,
             precision.decision(0.0),
             precision.decision(1e-4),
         )
         execute = eqx.filter_jit(
             lambda runtime=runtime, initial=initial: (
-                runtime.advance(initial).runtime_state.conservative_state
+                runtime.advance(initial).runtime_state.cell_average()
             )
         )
         value, seconds = _timed(execute, repeats)
         advanced = runtime.advance(initial)
-        _, diagnostics = compiled.dynamics.residual_with_diagnostics(
+        residual, diagnostics = compiled.dynamics.residual_with_diagnostics(
             precision.decision(0.0),
             state,
+        )
+        balance_terms = jax.device_get(
+            precision.reduction(discretization.cell_volumes[..., None] * residual)
+        ).reshape((-1, discretization.component_count))
+        reference = tuple(
+            math.fsum(balance_terms[:, index].tolist())
+            for index in range(discretization.component_count)
+        )
+        reported = tuple(
+            float(item) for item in jax.device_get(diagnostics.conservation_defect)
         )
         results[name] = {
             "seconds": seconds,
@@ -497,6 +508,10 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
             "state_dtype": value.dtype.name,
             "conservation_defect": float(
                 jnp.max(jnp.abs(diagnostics.conservation_defect))
+            ),
+            "conservation_reference_error": max(
+                abs(actual - expected)
+                for actual, expected in zip(reported, reference, strict=True)
             ),
             "precision_evidence_id": advanced.precision_evidence.evidence_id,
         }

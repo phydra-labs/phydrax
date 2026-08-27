@@ -254,7 +254,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
                 }
             ),
         )
-        weights = grid.quadrature_weights
+        weights = grid.quadrature_weights.astype(plan.precision.physical_dtype)
         physical_layout = TensorDofLayout(
             plan.axis_names,
             physical_shape,

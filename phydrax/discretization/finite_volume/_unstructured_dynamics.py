@@ -15,6 +15,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -1764,23 +1765,25 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
         integrated = self.precision.reduction(flux) * self.precision.reduction(
             self.discretization.face_measures[:, None]
         )
-        boundary_flux = jnp.sum(jnp.where(boundary[:, None], integrated, 0.0), axis=0)
-        source_integral = jnp.sum(
-            self.precision.reduction(self.discretization.cell_volumes[:, None] * source),
-            axis=0,
+        boundary_terms = jnp.where(boundary[:, None], integrated, 0.0)
+        source_terms = self.precision.reduction(
+            self.discretization.cell_volumes[:, None] * source
         )
-        change = jnp.sum(
-            self.precision.reduction(
-                self.discretization.cell_volumes[:, None] * residual
-            ),
-            axis=0,
+        change_terms = self.precision.reduction(
+            self.discretization.cell_volumes[:, None] * residual
+        )
+        boundary_flux = compensated_sum(boundary_terms, axis=0)
+        source_integral = compensated_sum(source_terms, axis=0)
+        defect = compensated_sum_chunks(
+            (change_terms, -source_terms, boundary_terms),
+            output_ndim=1,
         )
         return self.precision.storage(residual), UnstructuredFiniteVolumeDiagnostics(
             normal_flux=flux,
             signal_speed=speed,
             boundary_outward_flux=boundary_flux,
             source_integral=source_integral,
-            conservation_defect=change - source_integral + boundary_flux,
+            conservation_defect=defect,
             maximum_rate=jnp.max(self._cell_rate(speed)),
             precision_evidence=self.precision.evidence(),
         )

@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -790,6 +791,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
     ) -> tuple[Array, FiniteVolumeResidualDiagnostics]:
         value = jnp.asarray(state)
         self.precision.validate_state(value)
+        boundary_chunks: tuple[Array, ...] = ()
         source = self._source_value(time, value, args)
         if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan):
             fluxes, speeds = self.face_fluxes(time, value, args)
@@ -806,10 +808,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                         args,
                     )
                 )
-            boundary_flux = jnp.zeros(
-                (self.discretization.component_count,),
-                dtype=jnp.dtype(self.precision.reduction_dtype),
-            )
+            boundary_chunks_list: list[Array] = []
             for axis, flux in enumerate(fluxes):
                 if self.discretization.grid.structured_axes[axis].periodic:
                     continue
@@ -827,15 +826,19 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                         axis=axis,
                     )
                 )
-                reduction_axes = tuple(range(lower.ndim - 1))
-                boundary_flux = self.precision.reduction(
-                    boundary_flux
-                    + jnp.sum(
-                        upper * upper_measure[..., None]
-                        - lower * lower_measure[..., None],
-                        axis=reduction_axes,
-                    )
+                boundary_chunks_list.append(
+                    upper * upper_measure[..., None]
+                    - lower * lower_measure[..., None]
                 )
+            boundary_chunks = tuple(boundary_chunks_list)
+            boundary_flux = (
+                compensated_sum_chunks(boundary_chunks, output_ndim=1)
+                if boundary_chunks
+                else jnp.zeros(
+                    (self.discretization.component_count,),
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
+                )
+            )
         else:
             residual, speeds = self._wave_residual(time, value, args)
             residual = self.precision.reduction(residual) + self.precision.reduction(
@@ -849,15 +852,26 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                 dtype=jnp.dtype(self.precision.reduction_dtype),
             )
         spatial_axes = tuple(range(len(self.discretization.cell_shape)))
-        source_integral = jnp.sum(
-            self.precision.reduction(self.effective_volumes[..., None] * source),
-            axis=spatial_axes,
+        source_terms = self.precision.reduction(
+            self.effective_volumes[..., None] * source
         )
-        change_integral = jnp.sum(
-            self.precision.reduction(self.effective_volumes[..., None] * residual),
-            axis=spatial_axes,
+        change_terms = self.precision.reduction(
+            self.effective_volumes[..., None] * residual
         )
-        defect = change_integral - source_integral + boundary_flux
+        if self.source is None:
+            source_integral = jnp.zeros(
+                (self.discretization.component_count,),
+                dtype=change_terms.dtype,
+            )
+            balance_chunks = (change_terms,) + boundary_chunks
+        else:
+            source_integral = compensated_sum(source_terms, axis=spatial_axes)
+            balance_chunks = (change_terms, -source_terms) + boundary_chunks
+        defect = (
+            compensated_sum_chunks(balance_chunks, output_ndim=1)
+            if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan)
+            else boundary_flux
+        )
         rate = self._rate_from_speeds(speeds)
         entropy = None
         if self.entropy_pair is not None:

@@ -134,6 +134,12 @@ compiled = phx.equations.compile_conservation_problem(
 )
 ```
 
+Physical-state, residual, and source integrals are first cast through the prepared
+spectral `reduction_dtype` and then accumulated with a twofold compensated sum. The
+conservation defect reduces residual and negative source contributions together
+rather than subtracting two rounded integrals. This improves roundoff evidence without
+changing the modal residual or claiming exact arithmetic.
+
 The equation-owned `ConvexEntropyPair` supplies entropy, entropy variables, flux,
 and admissibility. Spectral diagnostics report total entropy and its semidiscrete
 rate. They do not claim entropy stability; a proven entropy-stable split form is a

@@ -12,6 +12,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._strict import StrictModule
 
 
@@ -862,21 +863,29 @@ class FiniteVolumeAcceptedFluxIntegralLedger(StrictModule):
 
     def conservation_sums(self) -> tuple[Array, Array, Array]:
         """Return source, boundary-outward, and net-cell accepted content sums."""
-        source_sum = jnp.sum(self.source_integral, axis=0)
-        boundary_sum = jnp.zeros(self.component_shape, dtype=self.source_integral.dtype)
+        source_sum = compensated_sum(self.source_integral, axis=0)
+        boundary_chunks_list: list[Array] = []
         for block in self.blocks:
             boundary = (block.neighbour_cells < 0).reshape(
                 block.neighbour_cells.shape + (1,) * (block.flux_integral.ndim - 1)
             )
-            boundary_sum = boundary_sum + jnp.sum(
+            boundary_chunks_list.append(
                 jnp.where(
                     boundary,
                     block.flux_integral,
                     jnp.zeros((), dtype=block.flux_integral.dtype),
-                ),
-                axis=0,
+                )
             )
-        net_cell_sum = jnp.sum(self.scatter_content_integral(), axis=0)
+        boundary_chunks = tuple(boundary_chunks_list)
+        boundary_sum = (
+            compensated_sum_chunks(
+                boundary_chunks,
+                output_ndim=len(self.component_shape),
+            )
+            if boundary_chunks
+            else jnp.zeros(self.component_shape, dtype=self.source_integral.dtype)
+        )
+        net_cell_sum = compensated_sum(self.scatter_content_integral(), axis=0)
         return source_sum, boundary_sum, net_cell_sum
 
 

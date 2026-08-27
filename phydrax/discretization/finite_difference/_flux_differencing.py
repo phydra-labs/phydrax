@@ -15,6 +15,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._core import (
@@ -438,7 +439,7 @@ class PreparedSBPConservationDynamics(StrictModule):
         convective_rate = jnp.sum(weights * convective_density)
         source_rate = jnp.sum(weights * source_density)
         total_entropy = jnp.sum(weights * self.entropy_pair.entropy(value))
-        conservation_rate = jnp.sum(
+        conservation_rate = compensated_sum(
             weights[..., None] * residual,
             axis=tuple(range(len(self.discretization.grid.shape))),
         )

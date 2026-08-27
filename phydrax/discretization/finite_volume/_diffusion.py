@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._numerics._compensated import compensated_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -418,7 +419,15 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         constant = jnp.ones(plan.grid.shape, dtype=self.source.dtype)
         constant_residual = float(np.asarray(jnp.max(jnp.abs(self.mv(constant)))))
         global_balance = float(
-            np.asarray(jnp.abs(jnp.sum(plan.grid.quadrature_weights * self.mv(constant))))
+            np.asarray(
+                jnp.abs(
+                    compensated_sum(
+                        self.precision.reduction(
+                            plan.grid.quadrature_weights * self.mv(constant)
+                        )
+                    )
+                )
+            )
         )
         self.conservation_report = FDConservationReport(
             constant_state_residual=constant_residual,

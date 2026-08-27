@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added shared twofold compensated conservation accounting across structured,
+  triangle, unstructured, spectral, and SBP conservation diagnostics, plus
+  finite-volume ledgers, remap, overset/sliding, multiblock, small-cell, and
+  diffusion certificates. Spectral diagnostics now honor their declared reduction
+  dtype before accumulation.
 - Reworked generic continuation around exact terminal coordinates, complete
   `phydrax.nonlinear` correctors, prepared Newton/trust-region reuse, explicit
   state/residual geometry, canonical real-coordinate maps for complex, algebra, and
