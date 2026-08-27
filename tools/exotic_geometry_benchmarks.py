@@ -52,6 +52,34 @@ def run_benchmarks(*, dimension=2, repeats=10):
     )
     point = jnp.linspace(0.1, 0.4, 2 * dimension)
     projective = phx.geometry.complex.ComplexProjectiveAtlas(dimension)
+    g2_chart = phx.metrix.CoordinateChart(
+        "g2-benchmark",
+        tuple(f"z{index}" for index in range(7)),
+    )
+    g2_bridge = phx.metrix.OctonionG2Bridge(
+        phx.metrix.algebra.OctonionAlgebraSpec(),
+        g2_chart,
+    )
+    g2_point = jnp.linspace(-0.3, 0.4, 7)
+    g2_right = jnp.cos(jnp.arange(7, dtype=float))
+
+    def g2_validation(value):
+        report = phx.metrix.validate_local_g2_structure(
+            g2_bridge.local_structure(),
+            value,
+            require_ricci_flat=True,
+            raise_on_error=False,
+        )
+        return jnp.stack(
+            (
+                report.maximum_metric_compatibility_residual,
+                report.maximum_volume_normalization_residual,
+                report.maximum_closure_residual,
+                report.maximum_coclosure_residual,
+                report.maximum_ricci_residual,
+            )
+        )
+
     records = {
         "weighted_laplacian": _benchmark(
             lambda value: measure.laplacian(lambda q: jnp.dot(q, q), value),
@@ -73,6 +101,16 @@ def run_benchmarks(*, dimension=2, repeats=10):
             point,
             repeats=repeats,
         ),
+        "g2_cross_product": _benchmark(
+            lambda value: g2_bridge.cross(value, g2_right),
+            g2_point,
+            repeats=repeats,
+        ),
+        "g2_validation": _benchmark(
+            g2_validation,
+            g2_point,
+            repeats=repeats,
+        ),
     }
     return {
         "backend": jax.default_backend(),
@@ -80,6 +118,13 @@ def run_benchmarks(*, dimension=2, repeats=10):
         "dimension": dimension,
         "repeats": repeats,
         "records": records,
+        "g2_valid": bool(
+            phx.metrix.validate_local_g2_structure(
+                g2_bridge.local_structure(),
+                g2_point,
+                require_ricci_flat=True,
+            ).valid
+        ),
     }
 
 

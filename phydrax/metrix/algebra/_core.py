@@ -165,6 +165,31 @@ class AbstractFiniteRealAlgebraSpec(StrictModule, NonTrainableState):
     ) -> tuple[Fraction, ...]:
         return self.structure.multiply(left, right)
 
+    def commutator_exact(
+        self,
+        left: Sequence[Fraction],
+        right: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction, ...]:
+        return self.structure.commutator(left, right)
+
+    def jordan_product_exact(
+        self,
+        left: Sequence[Fraction],
+        right: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction, ...]:
+        return self.structure.jordan_product(left, right)
+
+    def associator_exact(
+        self,
+        left: Sequence[Fraction],
+        middle: Sequence[Fraction],
+        right: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction, ...]:
+        return self.structure.associator(left, middle, right)
+
     def prepare_product(self, **kwargs):
         from ._product import AlgebraProductPlan
 

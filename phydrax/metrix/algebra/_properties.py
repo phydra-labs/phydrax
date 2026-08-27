@@ -121,19 +121,8 @@ def _add(left, right):
     return tuple(a + b for a, b in zip(left, right, strict=True))
 
 
-def _subtract(left, right):
-    return tuple(a - b for a, b in zip(left, right, strict=True))
-
-
 def _zero(value) -> bool:
     return all(entry == _ZERO for entry in value)
-
-
-def _associator(table, left, middle, right):
-    return _subtract(
-        table.multiply(table.multiply(left, middle), right),
-        table.multiply(left, table.multiply(middle, right)),
-    )
 
 
 def _claim_from_witness(name, witness, work):
@@ -201,14 +190,14 @@ def audit_algebra_properties(
     for left in range(dimension):
         for middle in range(dimension):
             for right in range(dimension):
-                associator = _associator(
-                    table, vectors[left], vectors[middle], vectors[right]
+                associator = table.associator(
+                    vectors[left], vectors[middle], vectors[right]
                 )
                 if associative_witness is None and not _zero(associator):
                     associative_witness = (labels[left], labels[middle], labels[right])
                 if left_alternative_witness is None:
-                    swapped = _associator(
-                        table, vectors[middle], vectors[left], vectors[right]
+                    swapped = table.associator(
+                        vectors[middle], vectors[left], vectors[right]
                     )
                     if not _zero(_add(associator, swapped)):
                         left_alternative_witness = (
@@ -217,8 +206,8 @@ def audit_algebra_properties(
                             labels[right],
                         )
                 if right_alternative_witness is None:
-                    swapped = _associator(
-                        table, vectors[left], vectors[right], vectors[middle]
+                    swapped = table.associator(
+                        vectors[left], vectors[right], vectors[middle]
                     )
                     if not _zero(_add(associator, swapped)):
                         right_alternative_witness = (
@@ -227,8 +216,8 @@ def audit_algebra_properties(
                             labels[right],
                         )
                 if flexible_witness is None:
-                    reversed_outer = _associator(
-                        table, vectors[right], vectors[middle], vectors[left]
+                    reversed_outer = table.associator(
+                        vectors[right], vectors[middle], vectors[left]
                     )
                     if not _zero(_add(associator, reversed_outer)):
                         flexible_witness = (labels[left], labels[middle], labels[right])

@@ -26,6 +26,30 @@
 
 ::: phydrax.linalg.AlgebraCoefficientPairing
 
+
+::: phydrax.linalg.algebra_regular_action_operator
+
+---
+
+::: phydrax.linalg.AlgebraDerivationPolicy
+
+---
+
+::: phydrax.linalg.AlgebraDerivationPlan
+
+---
+
+::: phydrax.linalg.PreparedAlgebraDerivations
+
+---
+
+::: phydrax.linalg.plan_algebra_derivations
+
+---
+
+::: phydrax.linalg.prepare_algebra_derivations
+
+---
 ---
 
 ::: phydrax.linalg.lift_real_operator_to_algebra

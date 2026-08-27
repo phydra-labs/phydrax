@@ -12,10 +12,19 @@ from ._adaptive_spectral import (
     AdaptiveStochasticEstimate,
     AdaptiveStochasticPolicy,
 )
+from ._algebra_actions import algebra_regular_action_operator, AlgebraActionSide
 from ._algebra_coordinates import (
     AlgebraCoordinatePlan,
     AlgebraCoordinateStorage,
     PreparedAlgebraCoordinates,
+)
+from ._algebra_derivations import (
+    AlgebraDerivationPlan,
+    AlgebraDerivationPolicy,
+    AlgebraDerivationStatus,
+    plan_algebra_derivations,
+    prepare_algebra_derivations,
+    PreparedAlgebraDerivations,
 )
 from ._algebra_operators import (
     apply_real_map_componentwise,
@@ -522,10 +531,18 @@ __all__ = [
     "AbstractPreconditionerBuilder",
     "AbstractVectorSpace",
     "AbstractRealCoordinateMap",
+    "AlgebraActionSide",
+    "AlgebraDerivationPlan",
+    "AlgebraDerivationPolicy",
+    "AlgebraDerivationStatus",
     "AlgebraArraySpace",
     "AlgebraCoefficientPairing",
     "AlgebraCoordinatePlan",
     "AlgebraCoordinateStorage",
+    "algebra_regular_action_operator",
+    "plan_algebra_derivations",
+    "prepare_algebra_derivations",
+    "PreparedAlgebraDerivations",
     "AdditiveSubspaceCorrectionBuilder",
     "AdditiveSubspaceCorrectionPreconditioner",
     "AdjointLinearOperator",

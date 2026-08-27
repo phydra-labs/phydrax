@@ -3,8 +3,9 @@
 `phydrax.metrix` is Phydrax's differentiable geometry layer. It represents charts,
 atlases, differentiable maps and immersions, tensors and forms, positive and signed
 metrics, affine and bundle connections, curvature, metric measures, Lie groups,
-symplectic and Poisson structures, horizontal cometrics, complex/Kähler structures,
-and real or complex array manifolds as ordinary JAX programs.
+symplectic and Poisson structures, horizontal cometrics, finite real algebras,
+complex/Kähler and G2 structures, and real or complex array manifolds as ordinary
+JAX programs.
 
 Metrix is intentionally below the domain and solver layers:
 
@@ -96,6 +97,8 @@ point coordinates or replace domain admissibility rules.
 - [General affine connections](affine_connections.md)
 - [Curvature](curvature.md)
 - [Differential forms](forms.md)
+- [Finite real algebras](algebra.md)
+- [Special holonomy and G2 geometry](special_holonomy.md)
 - [Embedded geometry](embedded.md)
 - [Array manifolds](manifolds.md)
 - [Intrinsic endpoint geometry](intrinsic_geometry.md)
@@ -136,6 +139,13 @@ Run representative metric-jet, form, Poisson, Lorentzian, and horizontal kernels
 
 ```bash
 python -m tools.geometric_benchmarks --smoke
+```
+
+Octonion-derived G2 cross products and local compatibility/torsion diagnostics are
+included in:
+
+```bash
+python -m tools.exotic_geometry_benchmarks --smoke
 ```
 
 The report separates compilation-plus-first-call time from steady execution time and

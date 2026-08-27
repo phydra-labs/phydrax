@@ -47,6 +47,10 @@
   resource-bounded sparse/dense products, shared real-coordinate maps, algebra-valued
   spaces and operators, Diffrax algebra state policies, and unit complex/quaternion
   state geometries.
+- Added exact and numerical commutator, Jordan-product, and associator operations;
+  explicit left/right regular-action operators; resource-bounded algebra derivation
+  spaces; and an octonion-derived G2 bridge with local metric, torsion, Ricci, and
+  infinitesimal invariance diagnostics.
 - Added canonical-complex holomorphic construction dependencies, spectrally
   initialized low-rank complex-affine layers, per-layer factorized
   `HolomorphicMLP` plans, certified independent branch bundles, same-coordinate

@@ -5,6 +5,11 @@
 """Exact finite-dimensional real algebras and prepared coordinate products."""
 
 from ._core import AbstractFiniteRealAlgebraSpec, FiniteRealAlgebraSpec
+from ._derivations import (
+    AlgebraDerivationConstraint,
+    AlgebraSymmetryBudget,
+    AlgebraSymmetryResourceEvidence,
+)
 from ._families import (
     CayleyDicksonAlgebraSpec,
     ComplexAlgebraSpec,
@@ -42,6 +47,7 @@ __all__ = [
     "FiniteRealAlgebraProvider",
     "AlgebraClaimSource",
     "AlgebraClaimStatus",
+    "AlgebraDerivationConstraint",
     "AlgebraElementLayout",
     "AlgebraProductBackend",
     "AlgebraProductEvidence",
@@ -51,6 +57,8 @@ __all__ = [
     "AlgebraRationalVector",
     "AlgebraResourceBudget",
     "AlgebraResourceEvidence",
+    "AlgebraSymmetryBudget",
+    "AlgebraSymmetryResourceEvidence",
     "AlgebraStructureTable",
     "CayleyDicksonAlgebraSpec",
     "ComplexAlgebraSpec",

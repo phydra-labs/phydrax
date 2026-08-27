@@ -191,6 +191,49 @@ class AlgebraStructureTable(StrictModule, NonTrainableState):
             )
         return tuple(output)
 
+    def commutator(
+        self,
+        left: Sequence[Fraction],
+        right: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction, ...]:
+        """Return the exact commutator ``left * right - right * left``."""
+        left_right = self.multiply(left, right)
+        right_left = self.multiply(right, left)
+        return tuple(
+            forward - reverse
+            for forward, reverse in zip(left_right, right_left, strict=True)
+        )
+
+    def jordan_product(
+        self,
+        left: Sequence[Fraction],
+        right: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction, ...]:
+        """Return the exact symmetrized product."""
+        left_right = self.multiply(left, right)
+        right_left = self.multiply(right, left)
+        return tuple(
+            (forward + reverse) / 2
+            for forward, reverse in zip(left_right, right_left, strict=True)
+        )
+
+    def associator(
+        self,
+        left: Sequence[Fraction],
+        middle: Sequence[Fraction],
+        right: Sequence[Fraction],
+        /,
+    ) -> tuple[Fraction, ...]:
+        """Return the exact bracket defect ``(left * middle) * right - left * (middle * right)``."""
+        left_bracket = self.multiply(self.multiply(left, middle), right)
+        right_bracket = self.multiply(left, self.multiply(middle, right))
+        return tuple(
+            first - second
+            for first, second in zip(left_bracket, right_bracket, strict=True)
+        )
+
 
 __all__ = [
     "AlgebraRationalMap",
