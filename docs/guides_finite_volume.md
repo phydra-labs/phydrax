@@ -214,6 +214,18 @@ viscous flux plan because viscous entropy production is not yet represented sepa
 For bounded domains, the convective rate includes boundary transport; it is not a
 closed entropy-production certificate.
 
+## Conservation accounting
+
+Structured, triangle, and unstructured `residual_with_diagnostics()` paths reduce
+cell-rate, source, and outward-boundary contributions with a twofold compensated
+sum in the prepared reduction dtype. The conservation defect is one signed
+accumulation of the final rounded contributions, not a subtraction of independently
+rounded totals. Tiny nonzero defects remain dtype-scale evidence; they are not a
+discretization-error or cross-device reproducibility guarantee.
+
+Conservative multiblock interfaces, accepted flux ledgers, remap, overset/sliding
+coupling, and small-cell redistribution use the same accounting convention.
+
 ## Time execution
 
 Spatial dynamics do not own a stepper.
@@ -270,6 +282,10 @@ Moving meshes are not supported.
 `ConservativeMultiblockInterfacePlan` computes one conforming or nested 2:1 interface
 flux, orients the opposing trace, evaluates on the fine mortar, sums fine integrated
 fluxes to coarse faces, and reports the global conservation defect.
+
+The reported interface defect uses the compensated accounting reduction described
+above; AMR synchronization values selected to be elementwise identical remain zero
+by construction.
 
 `ConservativeAMRSubcyclingPlan` accumulates time-integrated coarse and fine interface
 fluxes. `FluxRegister` records orientation, refinement ratio, accumulation time, and the

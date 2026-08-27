@@ -1,3 +1,5 @@
+import math
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -129,6 +131,11 @@ def test_sbp_entropy_diagnostics_and_linearization_are_finite():
         )
     )
     residual, diagnostics = compiled.residual_with_diagnostics(0.0, state)
+    balance_terms = np.asarray(discretization.quadrature_weights[..., None] * residual)
+    expected_rate = np.asarray(
+        [math.fsum(balance_terms[:, index].tolist()) for index in range(balance_terms.shape[1])]
+    )
+    np.testing.assert_array_equal(diagnostics.conservation_rate, expected_rate)
     _, pushforward, pullback = compiled.linearize(0.0, state)
     tangent = jnp.ones_like(state) * 1e-3
 

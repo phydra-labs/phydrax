@@ -10,6 +10,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
@@ -403,21 +404,22 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             raise ValueError("source_cell_averages must begin with source cell count.")
         if target.ndim == 0 or target.shape[0] != self.target_volumes.size:
             raise ValueError("target_cell_averages must begin with target cell count.")
-        source_integral = jnp.sum(
+        source_terms = (
             self.source_volumes.astype(source.dtype).reshape(
                 (-1,) + (1,) * (source.ndim - 1)
             )
-            * source,
-            axis=0,
+            * source
         )
-        target_integral = jnp.sum(
+        target_terms = (
             self.target_volumes.astype(target.dtype).reshape(
                 (-1,) + (1,) * (target.ndim - 1)
             )
-            * target,
-            axis=0,
+            * target
         )
-        return target_integral - source_integral
+        return compensated_sum_chunks(
+            (target_terms, -source_terms),
+            output_ndim=source.ndim - 1,
+        )
 
     def conservation_defect_content(
         self, source_content: ArrayLike, target_content: ArrayLike, /
@@ -428,7 +430,10 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             raise ValueError("source_content must begin with source cell count.")
         if target.ndim == 0 or target.shape[0] != self.target_volumes.size:
             raise ValueError("target_content must begin with target cell count.")
-        return jnp.sum(target, axis=0) - jnp.sum(source, axis=0)
+        return compensated_sum_chunks(
+            (target, -source),
+            output_ndim=source.ndim - 1,
+        )
 
 
 __all__ = ["UnstructuredConservativeRemapPlan", "UnstructuredRemapReport"]

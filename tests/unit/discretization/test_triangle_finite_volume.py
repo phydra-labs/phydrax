@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import math
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -479,6 +481,18 @@ def test_triangle_muscl_reports_distorted_mesh_residual_order_and_conservation()
         residual, diagnostics = compiled.residual_with_diagnostics(
             jnp.asarray(0.0), state
         )
+        flux, _ = compiled.face_fluxes(jnp.asarray(0.0), state)
+        balance_terms = np.asarray(discretization.cell_volumes[:, None] * residual)
+        integrated = np.asarray(flux * discretization.face_measures[:, None])
+        boundary_terms = np.where(
+            np.asarray(discretization.neighbour_cells < 0)[:, None],
+            integrated,
+            0.0,
+        )
+        expected_defect = math.fsum(
+            balance_terms[:, 0].tolist() + boundary_terms[:, 0].tolist()
+        )
+        assert float(diagnostics.conservation_defect[0]) == expected_defect
         boundary_edges = np.asarray(discretization.connectivity.boundary_edges)
         cell_edges = np.asarray(discretization.connectivity.cell_edges)
         interior_cells = ~np.any(boundary_edges[cell_edges], axis=1)

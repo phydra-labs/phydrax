@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import math
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -298,6 +300,29 @@ def test_vector_rates_are_componentwise_conservative_under_jit_and_grad():
         rate
     )
     np.testing.assert_allclose(gradient, jnp.ones_like(rate), atol=2.0e-15)
+
+
+@pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
+def test_scale_separated_defect_matches_accurate_signed_sum(dtype):
+    plan = _four_recipient_plan()
+    rates = np.random.default_rng(20260826).normal(size=(9, 3))
+    rates *= np.asarray((1.0, 1.0e8, 1.0e16))
+    rate = jnp.asarray(rates, dtype=dtype)
+
+    result = eqx.filter_jit(plan.redistribute_rate)(rate)
+    combined = np.concatenate(
+        (np.asarray(result.redistributed_rate), -np.asarray(rate)),
+        axis=0,
+    )
+    expected = np.asarray(
+        [
+            math.fsum(combined[:, index].tolist())
+            for index in range(combined.shape[1])
+        ],
+        dtype=np.dtype(dtype),
+    )
+
+    np.testing.assert_array_equal(result.conservation_defect, expected)
 
 
 def test_float32_extreme_weights_renormalize_under_jit_and_conserve_gradient():

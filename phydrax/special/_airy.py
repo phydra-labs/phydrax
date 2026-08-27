@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from jax import Array
 from jax.typing import ArrayLike
 
+from .._numerics._compensated import two_sum as _two_sum
 from ._dtype import promote_real
 
 
@@ -312,13 +313,6 @@ def _split(value: Array) -> tuple[Array, Array]:
         jnp.where(can_split, high, value),
         jnp.where(can_split, low, jnp.zeros_like(value)),
     )
-
-
-def _two_sum(left: Array, right: Array) -> tuple[Array, Array]:
-    total = left + right
-    right_virtual = total - left
-    error = (left - (total - right_virtual)) + (right - right_virtual)
-    return total, error
 
 
 def _two_product(left: Array, right: Array) -> tuple[Array, Array]:

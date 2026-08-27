@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
+from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..multiblock import InterfaceOrientation
@@ -194,8 +195,9 @@ class ConservativeMultiblockInterfacePlan(StrictModule, NonTrainableState):
         left_integrated = _sum_to_shape(common, left_shape)
         right_oriented = -_sum_to_shape(common, right_shape)
         right_integrated = self.orientation.inverse(right_oriented, trailing_axes=1)
-        defect = jnp.sum(left_integrated, axis=tuple(range(len(left_shape)))) + jnp.sum(
-            right_integrated, axis=tuple(range(len(right_shape)))
+        defect = compensated_sum_chunks(
+            (left_integrated, right_integrated),
+            output_ndim=1,
         )
         return ConservativeMultiblockFluxResult(
             common_integrated_flux=common,

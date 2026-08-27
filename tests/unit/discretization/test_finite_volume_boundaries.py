@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import math
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -137,6 +139,20 @@ def test_prescribed_outward_flux_controls_global_balance():
     residual, diagnostics = compiled.residual_with_diagnostics(
         0.0, jnp.ones(discretization.state_shape)
     )
+    balance_terms = np.asarray(discretization.cell_volumes[..., None] * residual)
+    expected_defect = np.asarray(
+        [
+            math.fsum(
+                balance_terms[:, index].tolist()
+                + [
+                    float(diagnostics.boundary_outward_flux[index]),
+                    -float(diagnostics.source_integral[index]),
+                ]
+            )
+            for index in range(balance_terms.shape[1])
+        ]
+    )
+    np.testing.assert_array_equal(diagnostics.conservation_defect, expected_defect)
 
     np.testing.assert_allclose(
         jnp.sum(discretization.cell_volumes[..., None] * residual, axis=0),

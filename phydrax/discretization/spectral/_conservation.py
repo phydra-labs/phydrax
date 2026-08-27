@@ -13,6 +13,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -256,15 +257,18 @@ class PreparedSpectralConservationDynamics(StrictModule):
         physical_state = self.discretization.reconstruct(coefficients)
         physical_residual = self.discretization.reconstruct(residual)
         physical_source = self.discretization.reconstruct(source)
-        weights = self.discretization.quadrature_weights[..., None]
-        total_integral = jnp.sum(
-            weights * physical_state, axis=tuple(range(len(self.discretization.axes)))
-        )
-        residual_integral = jnp.sum(
-            weights * physical_residual, axis=tuple(range(len(self.discretization.axes)))
-        )
-        source_integral = jnp.sum(
-            weights * physical_source, axis=tuple(range(len(self.discretization.axes)))
+        precision = self.discretization.plan.precision
+        spatial_axes = tuple(range(len(self.discretization.axes)))
+        weights = precision.reduction(self.discretization.quadrature_weights[..., None])
+        total_terms = precision.reduction(weights * physical_state)
+        residual_terms = precision.reduction(weights * physical_residual)
+        source_terms = precision.reduction(weights * physical_source)
+        total_integral = compensated_sum(total_terms, axis=spatial_axes)
+        residual_integral = compensated_sum(residual_terms, axis=spatial_axes)
+        source_integral = compensated_sum(source_terms, axis=spatial_axes)
+        conservation_defect = compensated_sum_chunks(
+            (residual_terms, -source_terms),
+            output_ndim=1,
         )
         entropy = None
         if self.entropy_pair is not None:
@@ -297,7 +301,7 @@ class PreparedSpectralConservationDynamics(StrictModule):
             total_integral=total_integral,
             semidiscrete_integral_rate=residual_integral,
             source_integral=source_integral,
-            conservation_defect=residual_integral - source_integral,
+            conservation_defect=conservation_defect,
             entropy=entropy,
             precision_evidence=self.discretization.precision_evidence,
             method_id=self.method.plan.method_id,

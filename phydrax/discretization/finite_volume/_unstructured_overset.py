@@ -12,6 +12,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._numerics._compensated import compensated_sum_chunks
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
@@ -852,19 +853,17 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 "Overset receptor values must contain either all cells or routed cells."
             )
         trailing = (1,) * (donor.ndim - 1)
-        donor_integral = jnp.sum(
+        donor_terms = (
             donor[self.donor_indices]
-            * self.overlap_measures.astype(donor.dtype).reshape((-1,) + trailing),
-            axis=0,
+            * self.overlap_measures.astype(donor.dtype).reshape((-1,) + trailing)
         )
-        receptor_integral = jnp.sum(
-            receptor
-            * self.receptor_volumes.astype(receptor.dtype).reshape(
-                (-1,) + (1,) * (receptor.ndim - 1)
-            ),
-            axis=0,
+        receptor_terms = receptor * self.receptor_volumes.astype(
+            receptor.dtype
+        ).reshape((-1,) + (1,) * (receptor.ndim - 1))
+        return compensated_sum_chunks(
+            (receptor_terms, -donor_terms),
+            output_ndim=donor.ndim - 1,
         )
-        return receptor_integral - donor_integral
 
 
 class PeriodicSlidingCoupling(StrictModule, NonTrainableState):
@@ -938,14 +937,13 @@ class PeriodicSlidingCoupling(StrictModule, NonTrainableState):
     ) -> Array:
         left = jnp.asarray(left_flux_density)
         right = jnp.asarray(right_integrated_flux)
-        left_integrated = jnp.sum(
-            left
-            * self.left_measures.astype(left.dtype).reshape(
-                (-1,) + (1,) * (left.ndim - 1)
-            ),
-            axis=0,
+        left_terms = left * self.left_measures.astype(left.dtype).reshape(
+            (-1,) + (1,) * (left.ndim - 1)
         )
-        return left_integrated + jnp.sum(right, axis=0)
+        return compensated_sum_chunks(
+            (left_terms, right),
+            output_ndim=left.ndim - 1,
+        )
 
 
 class PeriodicSlidingRefreshArtifact(StrictModule, NonTrainableState):

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import math
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -910,6 +912,18 @@ def test_unstructured_weno_flux_quadrature_recovers_affine_advection_residual():
 
     state = _cell_averages(discretization, affine)[:, None]
     residual, diagnostics = compiled.residual_with_diagnostics(jnp.asarray(0.0), state)
+    flux, _ = compiled.face_fluxes(jnp.asarray(0.0), state)
+    balance_terms = np.asarray(discretization.cell_volumes[:, None] * residual)
+    integrated = np.asarray(flux * discretization.face_measures[:, None])
+    boundary_terms = np.where(
+        np.asarray(discretization.neighbour_cells < 0)[:, None],
+        integrated,
+        0.0,
+    )
+    expected_defect = math.fsum(
+        balance_terms[:, 0].tolist() + boundary_terms[:, 0].tolist()
+    )
+    assert float(diagnostics.conservation_defect[0]) == expected_defect
     expected = -(0.6 * 0.25 + (-0.25) * (-0.15))
     np.testing.assert_allclose(residual, expected, rtol=2e-9, atol=2e-9)
     np.testing.assert_allclose(

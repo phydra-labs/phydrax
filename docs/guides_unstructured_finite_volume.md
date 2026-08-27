@@ -116,6 +116,12 @@ do not advance.
 The finite-volume precision policy remains authoritative for state, flux, reduction,
 and output dtypes. Nonlinear precision is derived from it unless supplied explicitly.
 
+Global conservation diagnostics and conservative transfer helpers use a twofold
+compensated reduction after the finite-volume precision policy has cast contributions
+to `reduction_dtype`. Remap, overset/sliding, accepted-ledger, multiblock, and
+small-cell defects accumulate signed final contributions together so separately
+rounded totals cannot create a false exact zero.
+
 ## Collocated incompressible pressure correction
 
 `PreparedUnstructuredCollocatedOperators` supplies:
