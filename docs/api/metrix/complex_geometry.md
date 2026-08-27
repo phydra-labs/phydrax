@@ -69,6 +69,10 @@ a parallel form representation.
 
 ::: phydrax.metrix.KahlerPotentialGeometry
 
+::: phydrax.metrix.KahlerHolomorphicGauge
+
+::: phydrax.metrix.KahlerGaugeInvarianceReport
+
 ## Atlas and local SU(n) diagnostics
 
 ::: phydrax.metrix.CoordinateAtlas
