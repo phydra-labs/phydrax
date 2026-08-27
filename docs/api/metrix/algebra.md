@@ -38,6 +38,18 @@
 
 ::: phydrax.metrix.algebra.AlgebraProductPlan
 
+
+::: phydrax.metrix.algebra.AlgebraDerivationConstraint
+
+---
+
+::: phydrax.metrix.algebra.AlgebraSymmetryBudget
+
+---
+
+::: phydrax.metrix.algebra.AlgebraSymmetryResourceEvidence
+
+---
 ---
 
 ::: phydrax.metrix.algebra.AlgebraPropertyEvidence

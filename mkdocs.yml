@@ -226,6 +226,7 @@ nav:
             - Intrinsic endpoint geometry: "api/metrix/intrinsic_geometry.md"
             - Hessian and information geometry: "api/metrix/information_geometry.md"
             - Complex and Kähler geometry: "api/metrix/complex_geometry.md"
+            - Special holonomy and G2 geometry: "api/metrix/special_holonomy.md"
             - Global projective and Ricci-flat geometry: "api/metrix/global_complex.md"
             - Calabi-Yau campaigns: "api/metrix/calabi_yau_campaigns.md"
             - Bures and quantum density geometry: "api/metrix/quantum_density.md"

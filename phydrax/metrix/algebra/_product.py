@@ -204,9 +204,9 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
             )
         else:
             output = jnp.zeros(leading + (dimension,), dtype=dtype)
-            coefficients = self.coefficient_numerators.astype(
-                dtype
-            ) / self.coefficient_denominators.astype(dtype)
+            coefficients = self.coefficient_numerators.astype(dtype)
+            if self.fractional_coefficients:
+                coefficients = coefficients / self.coefficient_denominators.astype(dtype)
             terms = (
                 left_[..., self.left_indices]
                 * right_[..., self.right_indices]
@@ -217,6 +217,32 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         if target_axis < 0:
             target_axis += output.ndim
         return jnp.moveaxis(output, -1, target_axis)
+
+    def commutator(self, left: ArrayLike, right: ArrayLike, /) -> Array:
+        """Return ``left * right - right * left`` under this product plan."""
+        return self(left, right) - self(right, left)
+
+    def jordan_product(self, left: ArrayLike, right: ArrayLike, /) -> Array:
+        """Return the symmetrized product without integer truncation."""
+        left_right = self(left, right)
+        right_left = self(right, left)
+        dtype = jnp.result_type(left_right, right_left, 0.5)
+        return (left_right.astype(dtype) + right_left.astype(dtype)) * jnp.asarray(
+            0.5, dtype=dtype
+        )
+
+    def associator(
+        self,
+        left: ArrayLike,
+        middle: ArrayLike,
+        right: ArrayLike,
+        /,
+    ) -> Array:
+        """Return the explicit bracket defect ``(left * middle) * right - left * (middle * right)``."""
+        return self(self(left, middle), right) - self(
+            left,
+            self(middle, right),
+        )
 
     def lower(self, leading_shape: Sequence[int], dtype: Any, /):
         from ...discretization._lowered_operator import (

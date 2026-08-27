@@ -244,8 +244,14 @@ from ._signed_validation import (
     validate_semi_riemannian_metric,
 )
 from ._special_holonomy import (
+    G2DerivationInvarianceReport,
+    LocalG2Structure,
+    LocalG2ValidationReport,
     LocalSUNStructure,
     LocalSUNValidationReport,
+    OctonionG2Bridge,
+    validate_g2_derivations,
+    validate_local_g2_structure,
     validate_local_su_structure,
 )
 from ._state_geometry import (
@@ -364,8 +370,12 @@ __all__ = [
     "LorentzianMetric",
     "KahlerStructure",
     "KahlerValidationReport",
+    "G2DerivationInvarianceReport",
+    "LocalG2Structure",
+    "LocalG2ValidationReport",
     "LocalSUNStructure",
     "LocalSUNValidationReport",
+    "OctonionG2Bridge",
     "ManifoldValidationReport",
     "MetricGeodesicResult",
     "MetricJet",
@@ -479,6 +489,8 @@ __all__ = [
     "validate_coordinate_atlas",
     "validate_hermitian_structure",
     "validate_kahler_structure",
+    "validate_g2_derivations",
+    "validate_local_g2_structure",
     "validate_local_su_structure",
     "validate_hessian_geometry",
     "validate_legendre_geometry",

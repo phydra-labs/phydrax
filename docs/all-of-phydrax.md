@@ -398,13 +398,17 @@ are rejected rather than clipped or repaired.
 
 `phydrax.metrix` supplies charts and differentiable maps; tensors and compressed
 differential forms; positive and signed metrics; affine connections and curvature;
-Lie groups; symplectic, Poisson, and horizontal structures; metric-aware stochastic
-kernels; and immutable, measure-orthonormal Laplacian spectra. Graph and cochain
-constructors bind those spectra to explicit topology, metric, boundary, and entity
-provenance. Positive norms, Lorentzian wave operators, Poisson brackets, and
-sub-Laplacians remain distinct named operations rather than overloads with hidden
-defaults. Bounds, seams, sampling, and admissibility remain domain concerns. See
-[API → Metrix](api/metrix/index.md).
+finite real algebras; Lie groups; symplectic, Poisson, horizontal, complex, and G2
+structures; metric-aware stochastic kernels; and immutable, measure-orthonormal
+Laplacian spectra. Exact rational multiplication tables keep commutators, Jordan
+products, associators, and left/right regular actions explicit. The canonical octonion
+bridge derives the seven-dimensional cross product and G2 three-form from that same
+table, while derivation preparation exposes numerical infinitesimal-symmetry evidence.
+Graph and cochain constructors bind spectra to explicit topology, metric, boundary,
+and entity provenance. Positive norms, Lorentzian wave operators, Poisson brackets,
+sub-Laplacians, and nonassociative bracket trees remain distinct named operations
+rather than overloads with hidden defaults. Bounds, seams, sampling, and admissibility
+remain domain concerns. See [API → Metrix](api/metrix/index.md).
 
 For trainable arrays on spheres, hyperbolic spaces, probability simplices, matrix
 manifolds, SO(n), or SPD(n), `ParameterGeometry` binds exact PyTree leaf paths to

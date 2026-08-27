@@ -45,6 +45,23 @@ audits establish finite polynomial identities such as associativity, alternativi
 flexibility, and conjugation anti-automorphism. Division and norm claims require family
 construction evidence or an explicit witness; finite samples do not mint proofs.
 
+## Derived nonassociative operations
+
+Exact specifications and prepared products expose the same commutator, symmetrized
+Jordan product, and associator. The associator retains both bracket trees:
+
+```python
+octonion = phx.metrix.algebra.OctonionAlgebraSpec()
+product = octonion.prepare_product(backend="sparse")
+associator = product.associator(left, middle, right)
+```
+
+`product.associator(left, middle, right)` evaluates
+`product(product(left, middle), right) - product(left, product(middle, right))`.
+No compiler path flattens that expression. `commutator` and `jordan_product` are
+defined for every algebra; calculating them does not assert commutativity or the
+Jordan identity.
+
 ## Family boundaries
 
 - complex values are commutative associative division-algebra values;
@@ -75,6 +92,18 @@ complex action without duplicating real/imaginary logic. Generic quaternion or
 octonion matrices require explicit real-, left-, right-, or bimodule semantics; no
 ambiguous algebra-valued matrix multiplication is inferred.
 
+`algebra_regular_action_operator` binds multiplication by one fixed algebra value as
+a Phydrax-native real-linear operator. The required `side="left"` or `side="right"`
+is part of the operator identity. Composing two left actions remains ordinary operator
+composition and is not collapsed to multiplication by one element.
+
+Derivation constraints encode the exact Leibniz equations from the rational structure
+table. `plan_algebra_derivations` and `prepare_algebra_derivations` then compute a
+resource-bounded numerical nullspace with explicit rank-gap and residual evidence.
+The canonical quaternion and octonion derivation spaces have dimensions three and
+fourteen, respectively. This is numerical subspace evidence, not an exact nullspace
+proof.
+
 ## Differential solvers
 
 `DiffraxAlgebraStatePolicy` binds prepared algebra coordinates to ordinary Diffrax
@@ -94,6 +123,21 @@ Nontrivial geometry remains family-specific. Unit complex and unit quaternion
 geometries are provided over real coordinates. Unit octonions are not assigned a Lie
 group geometry: their multiplication is nonassociative and their unit sphere is a
 Moufang loop.
+
+## Octonions and local G2 geometry
+
+`OctonionG2Bridge` derives the seven-dimensional cross product and canonical
+associative three-form directly from the configured octonion multiplication table.
+It therefore cannot drift to a second Fano-plane sign convention. `LocalG2Structure`
+couples a degree-three form to an explicit seven-dimensional Riemannian metric.
+`validate_local_g2_structure` reports metric compatibility, volume normalization,
+closure, coclosure, torsion freedom, and Ricci-flatness separately.
+
+Prepared octonion derivations can be checked with `validate_g2_derivations`; the
+fourteen-dimensional derivation space infinitesimally preserves the G2 three-form.
+This does not make unit octonions a Lie group. Unit-norm octonion states use the
+ordinary `SphereManifold(8)` geometry, while multiplication-aware Moufang-loop
+integrators remain outside this contract.
 
 ## Clifford relationship
 
