@@ -13,37 +13,45 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._strict import AbstractAttribute, StrictModule
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
     tree_allfinite as _tree_allfinite,
-    tree_inner as _tree_inner,
-    tree_negative as _tree_negative,
-    tree_norm as _tree_norm,
-    tree_scale as _tree_scale,
+    validate_inexact_tree as _validate_inexact_tree,
     validate_real_inexact_tree as _validate_real_inexact_tree,
 )
 from ..linalg import (
+    AbstractVectorSpace,
+    ArraySpace,
+    BlockSpace,
     DenseLinearOperator,
     eigen,
     FunctionLinearOperator,
     GMRES,
-    JacobianLinearOperator,
     LinearSolvePolicy,
     LinearSolveStatus,
     LinearSystem,
     OperatorProperties,
-    plan as plan_linear,
-    prepare as prepare_linear,
-    prepare_linearization,
-    PyTreeSpace,
-    refresh as refresh_linear,
     solve as solve_linear,
     TolerancePolicy,
 )
+from ..nonlinear import (
+    AbstractNonlinearMethod,
+    ImplicitRootDerivativePolicy,
+    NewtonKrylov,
+    NewtonTrustRegion,
+    NonlinearProvenance,
+    NonlinearResult,
+    NonlinearSystemProblem,
+    NonlinearTermination,
+    prepare_nonlinear,
+    PreparedNonlinearSolve,
+    refresh_nonlinear,
+)
+from ..nonlinear._prepared import _solve_prepared_nonlinear_stateful
+from ._geometry import ContinuationGeometry, ContinuationRepresentationPolicy
 
 
 ContinuationEventKind = Literal[
@@ -51,6 +59,11 @@ ContinuationEventKind = Literal[
     "hopf-candidate",
     "corrector-retry",
     "corrector-failure",
+    "target-corrector-retry",
+    "coordinate-target",
+    "predictor-fallback",
+    "tangent-retry",
+    "curvature-retry",
     "tangent-fallback",
     "coordinate-bound",
     "stability-real-crossing",
@@ -71,6 +84,9 @@ class ContinuationStatus(IntEnum):
     TANGENT_FAILED = 4
     COORDINATE_BOUND_REACHED = 5
     NONFINITE = 6
+    TARGET_NOT_REACHED = 7
+    TARGET_CORRECTOR_FAILED = 8
+    CURVATURE_LIMIT_REACHED = 9
 
 
 def _real_scalar(value: Any, /, *, name: str) -> Array:
@@ -113,6 +129,53 @@ class ContinuationCurveProblem(StrictModule):
     ) -> PyTree[Array]:
         """Evaluate the physical parameters on the declared curve."""
         raise NotImplementedError
+
+    @abc.abstractmethod
+    def declared_spaces(
+        self,
+        /,
+    ) -> tuple[AbstractVectorSpace | None, AbstractVectorSpace | None]:
+        """Return optional public state and residual spaces."""
+        return None, None
+
+    @abc.abstractmethod
+    def representation_policy(self, /) -> ContinuationRepresentationPolicy:
+        """Return the public-to-real execution representation."""
+        return ContinuationRepresentationPolicy()
+
+    @abc.abstractmethod
+    def state_jacobian_action(
+        self,
+        state: PyTree[Any],
+        coordinate: Any,
+        tangent: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        """Apply the state Jacobian to one public-state tangent."""
+        state_ = _validate_inexact_tree(state, name="continuation state")
+        tangent_ = _validate_inexact_tree(tangent, name="continuation state tangent")
+        return jax.jvp(
+            lambda value: self.residual(value, coordinate, args),
+            (state_,),
+            (tangent_,),
+        )[1]
+
+    @abc.abstractmethod
+    def coordinate_derivative(
+        self,
+        state: PyTree[Any],
+        coordinate: Any,
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        """Differentiate the public residual along increasing curve coordinate."""
+        coordinate_ = _real_scalar(coordinate, name="continuation coordinate")
+        return jax.jvp(
+            lambda value: self.residual(state, value, args),
+            (coordinate_,),
+            (jnp.ones_like(coordinate_),),
+        )[1]
 
     def parameters_jvp(
         self,
@@ -180,38 +243,31 @@ def _validate_curve_residual(
     state: PyTree[Any],
     residual: PyTree[Any],
     /,
+    *,
+    state_space: AbstractVectorSpace | None = None,
+    residual_space: AbstractVectorSpace | None = None,
 ) -> PyTree[Array]:
-    state_ = _validate_real_inexact_tree(state, name="continuation state")
-    residual_ = _validate_real_inexact_tree(
-        residual,
-        name="continuation residual",
-    )
-    if jax.tree.structure(residual_) != jax.tree.structure(state_):
-        raise ValueError(
-            "Continuation residual and state must have the same PyTree structure."
+    if state_space is None:
+        _validate_inexact_tree(state, name="continuation state")
+    else:
+        state_space.validate(state)
+    if residual_space is None:
+        return _validate_inexact_tree(
+            residual,
+            name="continuation residual",
         )
-    if any(
-        value.shape != template.shape
-        for value, template in zip(
-            jax.tree.leaves(residual_),
-            jax.tree.leaves(state_),
-            strict=True,
-        )
-    ):
-        raise ValueError(
-            "Continuation residual and state leaves must have matching shapes."
-        )
-    return jax.tree.map(
-        lambda value, template: jnp.asarray(value, dtype=template.dtype),
-        residual_,
-        state_,
-    )
+    return residual_space.validate(residual)
 
 
 class ParameterContinuationProblem(ContinuationCurveProblem):
     """Scalar physical-parameter continuation with ``gamma(s) = s``."""
 
     residual_function: Callable[[PyTree[Any], Array, Any], PyTree[Any]]
+    state_jacobian_function: Callable[..., PyTree[Any]] | None
+    coordinate_derivative_function: Callable[..., PyTree[Any]] | None
+    state_space: AbstractVectorSpace | None
+    residual_space: AbstractVectorSpace | None
+    representation: ContinuationRepresentationPolicy
     coordinate_lower: float = eqx.field(static=True)
     coordinate_upper: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -223,19 +279,59 @@ class ParameterContinuationProblem(ContinuationCurveProblem):
         *,
         parameter_lower: float = -jnp.inf,
         parameter_upper: float = jnp.inf,
+        state_space: AbstractVectorSpace | None = None,
+        residual_space: AbstractVectorSpace | None = None,
+        representation: ContinuationRepresentationPolicy | None = None,
+        state_jacobian_action: Callable[..., PyTree[Any]] | None = None,
+        coordinate_derivative: Callable[..., PyTree[Any]] | None = None,
         problem_id: str = "parameter-continuation",
     ):
         if not callable(residual):
             raise TypeError("residual must be callable.")
+        for value, name in (
+            (state_space, "state_space"),
+            (residual_space, "residual_space"),
+        ):
+            if value is not None and not isinstance(value, AbstractVectorSpace):
+                raise TypeError(f"{name} must be an AbstractVectorSpace or None.")
+        for value, name in (
+            (state_jacobian_action, "state_jacobian_action"),
+            (coordinate_derivative, "coordinate_derivative"),
+        ):
+            if value is not None and not callable(value):
+                raise TypeError(f"{name} must be callable or None.")
+        representation_ = (
+            ContinuationRepresentationPolicy()
+            if representation is None
+            else representation
+        )
+        if not isinstance(representation_, ContinuationRepresentationPolicy):
+            raise TypeError(
+                "representation must be ContinuationRepresentationPolicy or None."
+            )
         lower, upper, identifier = _problem_identity(
             coordinate_lower=parameter_lower,
             coordinate_upper=parameter_upper,
             problem_id=problem_id,
         )
         self.residual_function = residual
+        self.state_jacobian_function = state_jacobian_action
+        self.coordinate_derivative_function = coordinate_derivative
+        self.state_space = state_space
+        self.residual_space = residual_space
+        self.representation = representation_
         self.coordinate_lower = lower
         self.coordinate_upper = upper
         self.problem_id = identifier
+
+    def declared_spaces(
+        self,
+        /,
+    ) -> tuple[AbstractVectorSpace | None, AbstractVectorSpace | None]:
+        return self.state_space, self.residual_space
+
+    def representation_policy(self, /) -> ContinuationRepresentationPolicy:
+        return self.representation
 
     def residual(
         self,
@@ -244,11 +340,55 @@ class ParameterContinuationProblem(ContinuationCurveProblem):
         args: Any = None,
         /,
     ) -> PyTree[Array]:
-        state_ = _validate_real_inexact_tree(state, name="continuation state")
+        state_ = (
+            _validate_inexact_tree(state, name="continuation state")
+            if self.state_space is None
+            else self.state_space.validate(state)
+        )
         coordinate_ = _real_scalar(coordinate, name="continuation coordinate")
         return _validate_curve_residual(
             state_,
             self.residual_function(state_, coordinate_, args),
+            state_space=self.state_space,
+            residual_space=self.residual_space,
+        )
+
+    def state_jacobian_action(
+        self,
+        state: PyTree[Any],
+        coordinate: Any,
+        tangent: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        if self.state_jacobian_function is None:
+            return super().state_jacobian_action(
+                state,
+                coordinate,
+                tangent,
+                args,
+            )
+        return _validate_curve_residual(
+            state,
+            self.state_jacobian_function(state, coordinate, tangent, args),
+            state_space=self.state_space,
+            residual_space=self.residual_space,
+        )
+
+    def coordinate_derivative(
+        self,
+        state: PyTree[Any],
+        coordinate: Any,
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        if self.coordinate_derivative_function is None:
+            return super().coordinate_derivative(state, coordinate, args)
+        return _validate_curve_residual(
+            state,
+            self.coordinate_derivative_function(state, coordinate, args),
+            state_space=self.state_space,
+            residual_space=self.residual_space,
         )
 
     def parameters(
@@ -271,7 +411,12 @@ class ParameterPathContinuationProblem(ContinuationCurveProblem):
 
     residual_function: Callable[[PyTree[Any], PyTree[Any], Any], PyTree[Any]]
     path_function: Callable[[Array, Any], PyTree[Any]]
+    state_jacobian_function: Callable[..., PyTree[Any]] | None
+    coordinate_derivative_function: Callable[..., PyTree[Any]] | None
     parameter_template: PyTree[Array]
+    state_space: AbstractVectorSpace | None
+    residual_space: AbstractVectorSpace | None
+    representation: ContinuationRepresentationPolicy
     coordinate_lower: float = eqx.field(static=True)
     coordinate_upper: float = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -285,12 +430,38 @@ class ParameterPathContinuationProblem(ContinuationCurveProblem):
         *,
         coordinate_lower: float = -jnp.inf,
         coordinate_upper: float = jnp.inf,
+        state_space: AbstractVectorSpace | None = None,
+        residual_space: AbstractVectorSpace | None = None,
+        representation: ContinuationRepresentationPolicy | None = None,
+        state_jacobian_action: Callable[..., PyTree[Any]] | None = None,
+        coordinate_derivative: Callable[..., PyTree[Any]] | None = None,
         problem_id: str = "parameter-path-continuation",
     ):
         if not callable(residual):
             raise TypeError("residual must be callable.")
         if not callable(path):
             raise TypeError("path must be callable.")
+        for value, name in (
+            (state_space, "state_space"),
+            (residual_space, "residual_space"),
+        ):
+            if value is not None and not isinstance(value, AbstractVectorSpace):
+                raise TypeError(f"{name} must be an AbstractVectorSpace or None.")
+        for value, name in (
+            (state_jacobian_action, "state_jacobian_action"),
+            (coordinate_derivative, "coordinate_derivative"),
+        ):
+            if value is not None and not callable(value):
+                raise TypeError(f"{name} must be callable or None.")
+        representation_ = (
+            ContinuationRepresentationPolicy()
+            if representation is None
+            else representation
+        )
+        if not isinstance(representation_, ContinuationRepresentationPolicy):
+            raise TypeError(
+                "representation must be ContinuationRepresentationPolicy or None."
+            )
         template = _validate_real_inexact_tree(
             parameter_template,
             name="physical parameter template",
@@ -306,10 +477,24 @@ class ParameterPathContinuationProblem(ContinuationCurveProblem):
         )
         self.residual_function = residual
         self.path_function = path
+        self.state_jacobian_function = state_jacobian_action
+        self.coordinate_derivative_function = coordinate_derivative
         self.parameter_template = template
+        self.state_space = state_space
+        self.residual_space = residual_space
+        self.representation = representation_
         self.coordinate_lower = lower
         self.coordinate_upper = upper
         self.problem_id = identifier
+
+    def declared_spaces(
+        self,
+        /,
+    ) -> tuple[AbstractVectorSpace | None, AbstractVectorSpace | None]:
+        return self.state_space, self.residual_space
+
+    def representation_policy(self, /) -> ContinuationRepresentationPolicy:
+        return self.representation
 
     def parameters(
         self,
@@ -360,11 +545,55 @@ class ParameterPathContinuationProblem(ContinuationCurveProblem):
         args: Any = None,
         /,
     ) -> PyTree[Array]:
-        state_ = _validate_real_inexact_tree(state, name="continuation state")
+        state_ = (
+            _validate_inexact_tree(state, name="continuation state")
+            if self.state_space is None
+            else self.state_space.validate(state)
+        )
         parameters = self.parameters(coordinate, args)
         return _validate_curve_residual(
             state_,
             self.residual_function(state_, parameters, args),
+            state_space=self.state_space,
+            residual_space=self.residual_space,
+        )
+
+    def state_jacobian_action(
+        self,
+        state: PyTree[Any],
+        coordinate: Any,
+        tangent: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        if self.state_jacobian_function is None:
+            return super().state_jacobian_action(
+                state,
+                coordinate,
+                tangent,
+                args,
+            )
+        return _validate_curve_residual(
+            state,
+            self.state_jacobian_function(state, coordinate, tangent, args),
+            state_space=self.state_space,
+            residual_space=self.residual_space,
+        )
+
+    def coordinate_derivative(
+        self,
+        state: PyTree[Any],
+        coordinate: Any,
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        if self.coordinate_derivative_function is None:
+            return super().coordinate_derivative(state, coordinate, args)
+        return _validate_curve_residual(
+            state,
+            self.coordinate_derivative_function(state, coordinate, args),
+            state_space=self.state_space,
+            residual_space=self.residual_space,
         )
 
 
@@ -374,6 +603,7 @@ class StabilityAnalysisStatus(IntEnum):
     SUCCESS = 0
     SOURCE_FAILURE = 1
     NONFINITE = 2
+    CAPABILITY_REJECTED = 3
 
 
 class StabilityEvidence(StrictModule):
@@ -474,8 +704,62 @@ class AbstractStabilityAnalyzer(StrictModule):
         coordinate: Any,
         args: Any = None,
         /,
+        *,
+        geometry: ContinuationGeometry | None = None,
     ) -> StabilityEvidence:
         raise NotImplementedError
+
+
+def _resolve_stability_geometry(
+    problem: ContinuationCurveProblem,
+    state: PyTree[Any],
+    coordinate: Any,
+    args: Any,
+    geometry: ContinuationGeometry | None,
+    /,
+) -> ContinuationGeometry:
+    if geometry is not None:
+        if not isinstance(geometry, ContinuationGeometry):
+            raise TypeError("geometry must be a ContinuationGeometry or None.")
+        return geometry
+    residual = problem.residual(state, coordinate, args)
+    state_space, residual_space = problem.declared_spaces()
+    return ContinuationGeometry.resolve(
+        state,
+        residual,
+        state_space=state_space,
+        residual_space=residual_space,
+        representation=problem.representation_policy(),
+    )
+
+
+def _capability_stability_evidence(
+    analyzer: AbstractStabilityAnalyzer,
+    /,
+    *,
+    full_spectrum: bool,
+) -> StabilityEvidence:
+    value = jnp.asarray([jnp.nan + 0.0j])
+    return StabilityEvidence(
+        eigenvalues=value,
+        mode_mask=jnp.asarray([False]),
+        leading_eigenvalue=value[0],
+        leading_real_part=jnp.nan,
+        leading_complex_eigenvalue=value[0],
+        leading_complex_real_part=jnp.nan,
+        unstable_count=0,
+        marginal_count=0,
+        near_zero_count=0,
+        conjugate_pair_count=0,
+        unpaired_complex_count=0,
+        stability=eigen.SpectralStabilityStatus.UNKNOWN,
+        status=StabilityAnalysisStatus.CAPABILITY_REJECTED,
+        source_status=-1,
+        analyzer_id=analyzer.analyzer_id,
+        full_spectrum=full_spectrum,
+        zero_tolerance=analyzer.zero_tolerance,
+        pair_tolerance=analyzer.pair_tolerance,
+    )
 
 
 class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
@@ -522,11 +806,24 @@ class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
         coordinate: Any,
         args: Any = None,
         /,
+        *,
+        geometry: ContinuationGeometry | None = None,
     ) -> StabilityEvidence:
         if not isinstance(problem, ContinuationCurveProblem):
             raise TypeError("problem must be a ContinuationCurveProblem.")
-        state_ = _validate_real_inexact_tree(state, name="stability state")
-        flat_state, unravel = ravel_pytree(state_)
+        geometry_ = _resolve_stability_geometry(
+            problem,
+            state,
+            coordinate,
+            args,
+            geometry,
+        )
+        if not geometry_.execution_state_space.compatible(
+            geometry_.execution_residual_space
+        ):
+            return _capability_stability_evidence(self, full_spectrum=True)
+        state_ = geometry_.state_to_execution(state)
+        flat_state = geometry_.execution_state_space.flatten(state_)
         if flat_state.size > self.maximum_dimension:
             raise ValueError(
                 "Dense stability analysis exceeds maximum_dimension; "
@@ -534,13 +831,16 @@ class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
             )
 
         def flat_residual(flat_parameters):
-            residual = problem.residual(unravel(flat_parameters), coordinate, args)
-            flat_value, _ = ravel_pytree(residual)
-            return flat_value
+            residual = _execution_residual(
+                problem,
+                geometry_,
+                geometry_.execution_state_space.unflatten(flat_parameters),
+                coordinate,
+                args,
+            )
+            return geometry_.execution_residual_space.flatten(residual)
 
         jacobian = jax.jacrev(flat_residual)(flat_state)
-        if jacobian.shape != (flat_state.size, flat_state.size):
-            raise ValueError("Dense stability analysis requires a square state Jacobian.")
         operator = DenseLinearOperator(
             jacobian,
             operator_id=f"{problem.problem_id}/stability-jacobian",
@@ -614,25 +914,43 @@ class SelfAdjointKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         coordinate: Any,
         args: Any = None,
         /,
+        *,
+        geometry: ContinuationGeometry | None = None,
     ) -> StabilityEvidence:
         if not isinstance(problem, ContinuationCurveProblem):
             raise TypeError("problem must be a ContinuationCurveProblem.")
-        state_ = _validate_real_inexact_tree(state, name="stability state")
-        space = PyTreeSpace(state_)
+        geometry_ = _resolve_stability_geometry(
+            problem,
+            state,
+            coordinate,
+            args,
+            geometry,
+        )
+        if not geometry_.execution_state_space.compatible(
+            geometry_.execution_residual_space
+        ):
+            return _capability_stability_evidence(self, full_spectrum=False)
+        state_ = geometry_.state_to_execution(state)
         residual, linearized = jax.linearize(
-            lambda candidate: problem.residual(candidate, coordinate, args),
+            lambda candidate: _execution_residual(
+                problem,
+                geometry_,
+                candidate,
+                coordinate,
+                args,
+            ),
             state_,
         )
-        space.validate(residual)
-        if self.policy.count > space.size:
+        geometry_.execution_residual_space.validate(residual)
+        if self.policy.count > geometry_.execution_state_space.size:
             raise ValueError("Requested stability mode_count exceeds state dimension.")
         operator = FunctionLinearOperator(
             linearized,
-            source=space,
-            target=space,
+            source=geometry_.execution_state_space,
+            target=geometry_.execution_residual_space,
             properties=OperatorProperties(
                 self_adjoint=True,
-                evidence={"self_adjoint": "construction"},
+                evidence={"self_adjoint": "user-declared-stability-policy"},
             ),
             operator_id=f"{problem.problem_id}/self-adjoint-stability-jacobian",
         )
@@ -722,20 +1040,38 @@ class GeneralKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
         coordinate: Any,
         args: Any = None,
         /,
+        *,
+        geometry: ContinuationGeometry | None = None,
     ) -> StabilityEvidence:
         if not isinstance(problem, ContinuationCurveProblem):
             raise TypeError("problem must be a ContinuationCurveProblem.")
-        state_ = _validate_real_inexact_tree(state, name="stability state")
-        space = PyTreeSpace(state_)
+        geometry_ = _resolve_stability_geometry(
+            problem,
+            state,
+            coordinate,
+            args,
+            geometry,
+        )
+        if not geometry_.execution_state_space.compatible(
+            geometry_.execution_residual_space
+        ):
+            return _capability_stability_evidence(self, full_spectrum=False)
+        state_ = geometry_.state_to_execution(state)
         residual, linearized = jax.linearize(
-            lambda candidate: problem.residual(candidate, coordinate, args),
+            lambda candidate: _execution_residual(
+                problem,
+                geometry_,
+                candidate,
+                coordinate,
+                args,
+            ),
             state_,
         )
-        space.validate(residual)
+        geometry_.execution_residual_space.validate(residual)
         operator = FunctionLinearOperator(
             linearized,
-            source=space,
-            target=space,
+            source=geometry_.execution_state_space,
+            target=geometry_.execution_residual_space,
             operator_id=f"{problem.problem_id}/general-stability-jacobian",
         )
         spectral_problem = eigen.GeneralEigenproblem(
@@ -867,6 +1203,8 @@ class BranchPoint(StrictModule):
     coordinate: Array
     parameters: PyTree[Array]
     tangent_state: PyTree[Array]
+    tangent_residual_norm: Array
+    tangent_alignment: Array
     tangent_coordinate: Array
     tangent_parameters: PyTree[Array]
     residual_norm: Array
@@ -892,6 +1230,8 @@ class BranchPoint(StrictModule):
         tangent_parameters: PyTree[Any],
         residual_norm: Any,
         step_size: Any,
+        tangent_residual_norm: Any = jnp.nan,
+        tangent_alignment: Any = jnp.nan,
         corrector_iterations: Any,
         corrector_retries: Any,
         status: Any,
@@ -901,8 +1241,8 @@ class BranchPoint(StrictModule):
         stability: StabilityEvidence | None = None,
         tangent_status: Any = LinearSolveStatus.SUCCESS,
     ):
-        state_ = _validate_real_inexact_tree(state, name="continuation state")
-        tangent_ = _validate_real_inexact_tree(
+        state_ = _validate_inexact_tree(state, name="continuation state")
+        tangent_ = _validate_inexact_tree(
             tangent_state,
             name="state tangent",
         )
@@ -953,6 +1293,8 @@ class BranchPoint(StrictModule):
             tangent_coordinate,
             name="branch coordinate tangent",
         )
+        self.tangent_residual_norm = jnp.asarray(tangent_residual_norm)
+        self.tangent_alignment = jnp.asarray(tangent_alignment)
         self.tangent_parameters = tangent_parameters_
         self.residual_norm = jnp.asarray(residual_norm)
         self.step_size = jnp.asarray(step_size)
@@ -1050,6 +1392,11 @@ class ContinuationEvent(StrictModule):
             "hopf-candidate",
             "corrector-retry",
             "corrector-failure",
+            "target-corrector-retry",
+            "coordinate-target",
+            "predictor-fallback",
+            "tangent-retry",
+            "curvature-retry",
             "tangent-fallback",
             "coordinate-bound",
             "stability-real-crossing",
@@ -1074,6 +1421,7 @@ class ContinuationBranch(StrictModule):
     events: tuple[ContinuationEvent, ...]
     brackets: tuple[EventBracket, ...]
     status: Array
+    geometry: ContinuationGeometry
     branch_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     method: str = eqx.field(static=True)
@@ -1087,6 +1435,7 @@ class ContinuationBranch(StrictModule):
         /,
         *,
         brackets: Sequence[EventBracket] = (),
+        geometry: ContinuationGeometry,
         branch_id: str,
         problem_id: str,
         method: str,
@@ -1095,8 +1444,13 @@ class ContinuationBranch(StrictModule):
         points_ = tuple(points)
         events_ = tuple(events)
         brackets_ = tuple(brackets)
+        if not isinstance(geometry, ContinuationGeometry):
+            raise TypeError("geometry must be a ContinuationGeometry.")
         if not points_ or any(not isinstance(point, BranchPoint) for point in points_):
             raise ValueError("A continuation branch requires BranchPoint values.")
+        for point in points_:
+            geometry.public_state_space.validate(point.state)
+            geometry.public_state_space.validate(point.tangent_state)
         point_ids = tuple(point.point_id for point in points_)
         if len(set(point_ids)) != len(point_ids):
             raise ValueError("Continuation branch point IDs must be unique.")
@@ -1130,6 +1484,7 @@ class ContinuationBranch(StrictModule):
         self.points = points_
         self.events = events_
         self.brackets = brackets_
+        self.geometry = geometry
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.branch_id, self.problem_id, self.method = identifiers
         self.termination_reason = str(termination_reason)
@@ -1189,9 +1544,9 @@ class BranchSeed(StrictModule):
         branch_id: str,
         source_point_id: str,
     ):
-        self.state = _validate_real_inexact_tree(state, name="branch seed state")
+        self.state = _validate_inexact_tree(state, name="branch seed state")
         self.coordinate = _real_scalar(coordinate, name="branch seed coordinate")
-        self.tangent_state = _validate_real_inexact_tree(
+        self.tangent_state = _validate_inexact_tree(
             tangent_state,
             name="branch seed tangent",
         )
@@ -1313,16 +1668,17 @@ class CallableBranchMonitor(AbstractBranchMonitor):
 class AbstractContinuationMethod(StrictModule):
     """Immutable continuation method and adaptive corrector policy."""
 
-    linear_policy: AbstractAttribute[LinearSolvePolicy]
+    corrector: AbstractAttribute[AbstractNonlinearMethod]
+    termination: AbstractAttribute[NonlinearTermination]
+    derivative_policy: AbstractAttribute[ImplicitRootDerivativePolicy]
     initial_step: AbstractAttribute[float]
     minimum_step: AbstractAttribute[float]
     maximum_step: AbstractAttribute[float]
     growth: AbstractAttribute[float]
     contraction: AbstractAttribute[float]
+    coordinate_scale: AbstractAttribute[float]
     target_corrector_steps: AbstractAttribute[int]
-    maximum_corrector_steps: AbstractAttribute[int]
     maximum_retries: AbstractAttribute[int]
-    residual_tolerance: AbstractAttribute[float]
     direction: AbstractAttribute[int]
 
     @property
@@ -1332,7 +1688,7 @@ class AbstractContinuationMethod(StrictModule):
 
     @property
     def corrector_id(self) -> str:
-        return f"newton/{self.linear_policy.method.name}"
+        return self.corrector.method_id
 
 
 def _validated_controls(
@@ -1342,10 +1698,9 @@ def _validated_controls(
     maximum_step: float,
     growth: float,
     contraction: float,
+    coordinate_scale: float,
     target_corrector_steps: int,
-    maximum_corrector_steps: int,
     maximum_retries: int,
-    residual_tolerance: float,
     direction: int,
 ):
     scalar_values = tuple(
@@ -1356,101 +1711,148 @@ def _validated_controls(
             maximum_step,
             growth,
             contraction,
-            residual_tolerance,
         )
     )
     if any(not isfinite(value) or value <= 0.0 for value in scalar_values):
-        raise ValueError("Continuation step and tolerance values must be positive.")
+        raise ValueError("Continuation step controls must be finite and positive.")
     if not scalar_values[1] <= scalar_values[0] <= scalar_values[2]:
         raise ValueError("Step sizes must satisfy minimum <= initial <= maximum.")
     if scalar_values[3] <= 1.0 or scalar_values[4] >= 1.0:
         raise ValueError("growth must exceed one and contraction must be below one.")
+    scale = float(coordinate_scale)
+    if not isfinite(scale) or scale <= 0.0:
+        raise ValueError("coordinate_scale must be finite and positive.")
     target = int(target_corrector_steps)
-    corrector_steps = int(maximum_corrector_steps)
     retries = int(maximum_retries)
     direction_ = int(direction)
-    if target < 1 or corrector_steps < 1 or retries < 0:
-        raise ValueError("Corrector limits must be positive and retries non-negative.")
+    if target < 1 or retries < 0:
+        raise ValueError("Corrector target must be positive and retries non-negative.")
     if direction_ not in (-1, 1):
         raise ValueError("direction must be -1 or 1.")
-    return scalar_values, target, corrector_steps, retries, direction_
+    return scalar_values, scale, target, retries, direction_
 
 
-def _default_corrector_policy() -> LinearSolvePolicy:
-    return LinearSolvePolicy(
-        GMRES(),
-        tolerance=TolerancePolicy(relative=1e-8, absolute=1e-11),
+def _default_corrector() -> NewtonKrylov:
+    return NewtonKrylov(
+        linear_policy=LinearSolvePolicy(
+            GMRES(),
+            tolerance=TolerancePolicy(relative=1e-8, absolute=1e-11),
+        )
     )
 
 
-def _validated_corrector_policy(
-    linear_policy: LinearSolvePolicy | None,
+def _default_corrector_termination() -> NonlinearTermination:
+    return NonlinearTermination(
+        absolute_residual=1e-8,
+        relative_residual=0.0,
+        absolute_step=0.0,
+        relative_step=0.0,
+        maximum_steps=30,
+    )
+
+
+def _validated_corrector(
+    corrector: AbstractNonlinearMethod | None,
+    termination: NonlinearTermination | None,
+    derivative_policy: ImplicitRootDerivativePolicy | None,
     /,
-) -> LinearSolvePolicy:
-    policy = _default_corrector_policy() if linear_policy is None else linear_policy
-    if not isinstance(policy, LinearSolvePolicy):
-        raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
-    if policy.failure.mode != "status":
-        raise ValueError("Continuation correctors require failure mode 'status'.")
-    return policy
+) -> tuple[
+    AbstractNonlinearMethod,
+    NonlinearTermination,
+    ImplicitRootDerivativePolicy,
+]:
+    corrector_ = _default_corrector() if corrector is None else corrector
+    termination_ = (
+        _default_corrector_termination() if termination is None else termination
+    )
+    derivative_ = (
+        ImplicitRootDerivativePolicy() if derivative_policy is None else derivative_policy
+    )
+    if not isinstance(corrector_, AbstractNonlinearMethod):
+        raise TypeError("corrector must be an AbstractNonlinearMethod or None.")
+    if not isinstance(termination_, NonlinearTermination):
+        raise TypeError("termination must be a NonlinearTermination or None.")
+    if not isinstance(derivative_, ImplicitRootDerivativePolicy):
+        raise TypeError("derivative_policy must be ImplicitRootDerivativePolicy or None.")
+    return corrector_, termination_, derivative_
 
 
 class NaturalParameterContinuation(AbstractContinuationMethod):
     """Natural continuation with the scalar parameter as branch coordinate."""
 
-    linear_policy: LinearSolvePolicy
+    corrector: AbstractNonlinearMethod
+    termination: NonlinearTermination
+    derivative_policy: ImplicitRootDerivativePolicy
     initial_step: float = eqx.field(static=True)
     minimum_step: float = eqx.field(static=True)
     maximum_step: float = eqx.field(static=True)
     growth: float = eqx.field(static=True)
     contraction: float = eqx.field(static=True)
+    coordinate_scale: float = eqx.field(static=True)
     target_corrector_steps: int = eqx.field(static=True)
-    maximum_corrector_steps: int = eqx.field(static=True)
     maximum_retries: int = eqx.field(static=True)
-    residual_tolerance: float = eqx.field(static=True)
     direction: int = eqx.field(static=True)
+    predictor: Literal["constant", "tangent"] = eqx.field(static=True)
+    predictor_failure: Literal["terminate", "constant"] = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        linear_policy: LinearSolvePolicy | None = None,
+        corrector: AbstractNonlinearMethod | None = None,
+        termination: NonlinearTermination | None = None,
+        derivative_policy: ImplicitRootDerivativePolicy | None = None,
         initial_step: float = 0.1,
         minimum_step: float = 1e-5,
         maximum_step: float = 1.0,
         growth: float = 1.5,
         contraction: float = 0.5,
+        coordinate_scale: float = 1.0,
         target_corrector_steps: int = 4,
-        maximum_corrector_steps: int = 30,
         maximum_retries: int = 8,
-        residual_tolerance: float = 1e-8,
         direction: int = 1,
+        predictor: Literal["constant", "tangent"] = "constant",
+        predictor_failure: Literal["terminate", "constant"] = "terminate",
     ):
-        policy = _validated_corrector_policy(linear_policy)
-        scalar_values, target, steps, retries, direction_ = _validated_controls(
+        corrector_, termination_, derivative_ = _validated_corrector(
+            corrector,
+            termination,
+            derivative_policy,
+        )
+        scalar_values, scale, target, retries, direction_ = _validated_controls(
             initial_step=initial_step,
             minimum_step=minimum_step,
             maximum_step=maximum_step,
             growth=growth,
             contraction=contraction,
+            coordinate_scale=coordinate_scale,
             target_corrector_steps=target_corrector_steps,
-            maximum_corrector_steps=maximum_corrector_steps,
             maximum_retries=maximum_retries,
-            residual_tolerance=residual_tolerance,
             direction=direction,
         )
-        self.linear_policy = policy
+        if target > termination_.maximum_steps:
+            raise ValueError(
+                "target_corrector_steps cannot exceed termination.maximum_steps."
+            )
+        if predictor not in ("constant", "tangent"):
+            raise ValueError("predictor must be 'constant' or 'tangent'.")
+        if predictor_failure not in ("terminate", "constant"):
+            raise ValueError("predictor_failure must be 'terminate' or 'constant'.")
+        self.corrector = corrector_
+        self.termination = termination_
+        self.derivative_policy = derivative_
         (
             self.initial_step,
             self.minimum_step,
             self.maximum_step,
             self.growth,
             self.contraction,
-            self.residual_tolerance,
         ) = scalar_values
+        self.coordinate_scale = scale
         self.target_corrector_steps = target
-        self.maximum_corrector_steps = steps
         self.maximum_retries = retries
         self.direction = direction_
+        self.predictor = predictor
+        self.predictor_failure = predictor_failure
 
     @property
     def method_id(self) -> str:
@@ -1460,319 +1862,513 @@ class NaturalParameterContinuation(AbstractContinuationMethod):
 class PseudoArclengthContinuation(AbstractContinuationMethod):
     """Adaptive pseudo-arclength predictor/corrector with oriented tangents."""
 
-    linear_policy: LinearSolvePolicy
-    tangent_policy: LinearSolvePolicy
+    corrector: AbstractNonlinearMethod
+    termination: NonlinearTermination
+    derivative_policy: ImplicitRootDerivativePolicy
     initial_step: float = eqx.field(static=True)
     minimum_step: float = eqx.field(static=True)
     maximum_step: float = eqx.field(static=True)
     growth: float = eqx.field(static=True)
     contraction: float = eqx.field(static=True)
+    coordinate_scale: float = eqx.field(static=True)
     target_corrector_steps: int = eqx.field(static=True)
-    maximum_corrector_steps: int = eqx.field(static=True)
     maximum_retries: int = eqx.field(static=True)
-    residual_tolerance: float = eqx.field(static=True)
     direction: int = eqx.field(static=True)
+    tangent_update: Literal["secant", "bordered"] = eqx.field(static=True)
+    minimum_tangent_alignment: float | None = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        linear_policy: LinearSolvePolicy | None = None,
-        tangent_policy: LinearSolvePolicy | None = None,
+        corrector: AbstractNonlinearMethod | None = None,
+        termination: NonlinearTermination | None = None,
+        derivative_policy: ImplicitRootDerivativePolicy | None = None,
         initial_step: float = 0.1,
         minimum_step: float = 1e-5,
         maximum_step: float = 1.0,
         growth: float = 1.5,
         contraction: float = 0.5,
+        coordinate_scale: float = 1.0,
         target_corrector_steps: int = 4,
-        maximum_corrector_steps: int = 30,
         maximum_retries: int = 8,
-        residual_tolerance: float = 1e-8,
         direction: int = 1,
+        tangent_update: Literal["secant", "bordered"] = "secant",
+        minimum_tangent_alignment: float | None = None,
     ):
-        policy = _validated_corrector_policy(linear_policy)
-        tangent_policy_ = (
-            LinearSolvePolicy(
-                GMRES(),
-                tolerance=TolerancePolicy(relative=1e-7, absolute=1e-10),
-            )
-            if tangent_policy is None
-            else tangent_policy
+        corrector_, termination_, derivative_ = _validated_corrector(
+            corrector,
+            termination,
+            derivative_policy,
         )
-        if not isinstance(tangent_policy_, LinearSolvePolicy):
-            raise TypeError("tangent_policy must be a LinearSolvePolicy or None.")
-        if tangent_policy_.failure.mode != "status":
-            raise ValueError("Tangent solves require failure mode 'status'.")
-        scalar_values, target, steps, retries, direction_ = _validated_controls(
+        scalar_values, scale, target, retries, direction_ = _validated_controls(
             initial_step=initial_step,
             minimum_step=minimum_step,
             maximum_step=maximum_step,
             growth=growth,
             contraction=contraction,
+            coordinate_scale=coordinate_scale,
             target_corrector_steps=target_corrector_steps,
-            maximum_corrector_steps=maximum_corrector_steps,
             maximum_retries=maximum_retries,
-            residual_tolerance=residual_tolerance,
             direction=direction,
         )
-        self.linear_policy = policy
-        self.tangent_policy = tangent_policy_
+        if target > termination_.maximum_steps:
+            raise ValueError(
+                "target_corrector_steps cannot exceed termination.maximum_steps."
+            )
+        if tangent_update not in ("secant", "bordered"):
+            raise ValueError("tangent_update must be 'secant' or 'bordered'.")
+        alignment = (
+            None
+            if minimum_tangent_alignment is None
+            else float(minimum_tangent_alignment)
+        )
+        if alignment is not None and (
+            not isfinite(alignment) or not 0.0 <= alignment <= 1.0
+        ):
+            raise ValueError("minimum_tangent_alignment must lie in [0, 1] or be None.")
+        self.corrector = corrector_
+        self.termination = termination_
+        self.derivative_policy = derivative_
         (
             self.initial_step,
             self.minimum_step,
             self.maximum_step,
             self.growth,
             self.contraction,
-            self.residual_tolerance,
         ) = scalar_values
+        self.coordinate_scale = scale
         self.target_corrector_steps = target
-        self.maximum_corrector_steps = steps
         self.maximum_retries = retries
         self.direction = direction_
+        self.tangent_update = tangent_update
+        self.minimum_tangent_alignment = alignment
 
     @property
     def method_id(self) -> str:
         return "pseudo-arclength"
 
 
-class _ContinuationCorrection(StrictModule):
-    state: PyTree[Array]
-    residual: PyTree[Array]
-    status: Array
-    iterations: Array
-    linear_preparations: Array
-    linear_numeric_refreshes: Array
-    linear_solves: Array
-
-    def __init__(
-        self,
-        *,
-        state: PyTree[Any],
-        residual: PyTree[Any],
-        status: Any,
-        iterations: Any,
-        linear_preparations: Any,
-        linear_numeric_refreshes: Any,
-        linear_solves: Any,
-    ):
-        self.state = state
-        self.residual = residual
-        self.status = jnp.asarray(status, dtype=jnp.int32)
-        self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
-        self.linear_preparations = jnp.asarray(
-            linear_preparations,
-            dtype=jnp.int32,
-        )
-        self.linear_numeric_refreshes = jnp.asarray(
-            linear_numeric_refreshes,
-            dtype=jnp.int32,
-        )
-        self.linear_solves = jnp.asarray(linear_solves, dtype=jnp.int32)
-
-    @property
-    def successful(self) -> Array:
-        return self.status == int(LinearSolveStatus.SUCCESS)
+def _supports_prepared_corrector(method: AbstractNonlinearMethod, /) -> bool:
+    return isinstance(method, (NewtonKrylov, NewtonTrustRegion))
 
 
-def _newton_correct(
+def _run_nonlinear_corrector(
     residual_function: Callable[[PyTree[Any]], PyTree[Array]],
     initial_state: PyTree[Any],
-    method: AbstractContinuationMethod,
-    prepared_linear: Any,
+    corrector: AbstractNonlinearMethod,
+    termination: NonlinearTermination,
+    prepared_corrector: PreparedNonlinearSolve | None,
     /,
     *,
     identity: str,
-) -> tuple[_ContinuationCorrection, Any]:
-    state = initial_state
-    preparations = 0
-    refreshes = 0
-    linear_solves = 0
-    status = jnp.asarray(
-        LinearSolveStatus.MAXIMUM_STEPS_REACHED,
-        dtype=jnp.int32,
+) -> tuple[NonlinearResult, PreparedNonlinearSolve | None]:
+    nonlinear_problem = NonlinearSystemProblem(
+        lambda state, _: residual_function(state),
+        problem_id=identity,
     )
-    residual = residual_function(state)
-    for iteration in range(method.maximum_corrector_steps + 1):
-        space = PyTreeSpace(state, space_id=f"{identity}/space")
-        linearization = prepare_linearization(
-            residual_function,
-            state,
-            source=space,
-            target=space,
-            linearization_id=f"{identity}/linearization",
-        )
-        residual = linearization.primal
-        residual_norm = _tree_norm(residual)
-        finite = (
-            _tree_allfinite(state)
-            & _tree_allfinite(residual)
-            & jnp.isfinite(residual_norm)
-        )
-        if not bool(finite):
-            status = jnp.asarray(
-                LinearSolveStatus.NONFINITE_OUTPUT,
-                dtype=jnp.int32,
+    if _supports_prepared_corrector(corrector):
+        if prepared_corrector is None:
+            prepared = prepare_nonlinear(
+                nonlinear_problem,
+                initial_state,
+                method=corrector,
+                termination=termination,
             )
-            return (
-                _ContinuationCorrection(
-                    state=state,
-                    residual=residual,
-                    status=status,
-                    iterations=iteration,
-                    linear_preparations=preparations,
-                    linear_numeric_refreshes=refreshes,
-                    linear_solves=linear_solves,
-                ),
-                prepared_linear,
-            )
-        if float(residual_norm) <= method.residual_tolerance:
-            return (
-                _ContinuationCorrection(
-                    state=state,
-                    residual=residual,
-                    status=LinearSolveStatus.SUCCESS,
-                    iterations=iteration,
-                    linear_preparations=preparations,
-                    linear_numeric_refreshes=refreshes,
-                    linear_solves=linear_solves,
-                ),
-                prepared_linear,
-            )
-        if iteration == method.maximum_corrector_steps:
-            break
-        operator = JacobianLinearOperator(
-            linearization,
-            operator_id=f"{identity}/jacobian",
-        )
-        linear_problem = LinearSystem(
-            operator,
-            problem_id=f"{identity}/linear-system",
-        )
-        if prepared_linear is None:
-            linear_plan = plan_linear(linear_problem, method.linear_policy)
-            prepared_linear = prepare_linear(linear_problem, linear_plan)
-            preparations += 1
         else:
-            prepared_linear = refresh_linear(prepared_linear, linear_problem)
-            refreshes += 1
-        correction = solve_linear(prepared_linear, _tree_negative(residual))
-        linear_solves += 1
-        status = correction.status
-        if not bool(correction.successful):
-            return (
-                _ContinuationCorrection(
-                    state=state,
-                    residual=residual,
-                    status=status,
-                    iterations=iteration + 1,
-                    linear_preparations=preparations,
-                    linear_numeric_refreshes=refreshes,
-                    linear_solves=linear_solves,
-                ),
-                prepared_linear,
+            prepared = refresh_nonlinear(
+                prepared_corrector,
+                nonlinear_problem,
+                initial_state,
             )
-        state = _tree_add_scaled(state, correction.value, 1.0)
-    status = jnp.asarray(
-        LinearSolveStatus.MAXIMUM_STEPS_REACHED,
-        dtype=jnp.int32,
+        return _solve_prepared_nonlinear_stateful(
+            prepared,
+            termination=termination,
+        )
+    result = corrector.solve(
+        nonlinear_problem,
+        initial_state,
+        termination=termination,
     )
+    return result, None
+
+
+def _run_corrector(
+    residual_function: Callable[[PyTree[Any]], PyTree[Array]],
+    initial_state: PyTree[Any],
+    method: AbstractContinuationMethod,
+    prepared_corrector: PreparedNonlinearSolve | None,
+    /,
+    *,
+    identity: str,
+) -> tuple[NonlinearResult, PreparedNonlinearSolve | None]:
+    return _run_nonlinear_corrector(
+        residual_function,
+        initial_state,
+        method.corrector,
+        method.termination,
+        prepared_corrector,
+        identity=identity,
+    )
+
+
+def _corrector_success(
+    result: NonlinearResult,
+    residual_norm: Any,
+    method: AbstractContinuationMethod,
+    /,
+) -> bool:
+    threshold = method.termination.residual_threshold(
+        result.diagnostics.initial_residual_norm
+    )
+    return bool(
+        result.successful
+        & jnp.isfinite(residual_norm)
+        & (jnp.asarray(residual_norm) <= threshold)
+    )
+
+
+def _corrector_work(
+    result: NonlinearResult,
+    /,
+) -> tuple[int, int, int, int, int, int, int, int, int]:
+    diagnostics = result.diagnostics
     return (
-        _ContinuationCorrection(
-            state=state,
-            residual=residual,
-            status=status,
-            iterations=method.maximum_corrector_steps,
-            linear_preparations=preparations,
-            linear_numeric_refreshes=refreshes,
-            linear_solves=linear_solves,
-        ),
-        prepared_linear,
+        int(diagnostics.iterations),
+        int(diagnostics.residual_evaluations),
+        int(diagnostics.jvp_evaluations),
+        int(diagnostics.vjp_evaluations),
+        int(diagnostics.jacobian_preparations),
+        int(diagnostics.linear_solves),
+        int(diagnostics.linear_iterations),
+        int(diagnostics.setup_refreshes),
+        int(diagnostics.numeric_refreshes),
     )
+
+
+def _execution_residual(
+    problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
+    state: PyTree[Any],
+    coordinate: Any,
+    args: Any,
+    /,
+) -> PyTree[Array]:
+    public_state = geometry.state_from_execution(state)
+    public_residual = problem.residual(public_state, coordinate, args)
+    return geometry.residual_to_execution(public_residual)
 
 
 def _correct_state(
     problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
     state: PyTree[Any],
     coordinate: Array,
     method: AbstractContinuationMethod,
-    prepared_linear: Any,
+    prepared_corrector: PreparedNonlinearSolve | None,
     args: Any,
     /,
 ):
-    return _newton_correct(
-        lambda candidate: problem.residual(candidate, coordinate, args),
+    return _run_corrector(
+        lambda candidate: _execution_residual(
+            problem,
+            geometry,
+            candidate,
+            coordinate,
+            args,
+        ),
         state,
         method,
-        prepared_linear,
+        prepared_corrector,
         identity=f"{problem.problem_id}/fixed-coordinate-corrector",
+    )
+
+
+def _state_derivative_operator(
+    problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
+    state: PyTree[Any],
+    coordinate: Array,
+    args: Any,
+    /,
+) -> tuple[FunctionLinearOperator, PyTree[Array]]:
+    public_state = geometry.state_from_execution(state)
+
+    def state_action(tangent):
+        public_tangent = geometry.state_tangent_from_execution(state, tangent)
+        public_action = problem.state_jacobian_action(
+            public_state,
+            coordinate,
+            public_tangent,
+            args,
+        )
+        return geometry.residual_to_execution(public_action)
+
+    public_coordinate_action = problem.coordinate_derivative(
+        public_state,
+        coordinate,
+        args,
+    )
+    coordinate_action = geometry.residual_to_execution(public_coordinate_action)
+    return (
+        FunctionLinearOperator(
+            state_action,
+            source=geometry.execution_state_space,
+            target=geometry.execution_residual_space,
+            operator_id=f"{problem.problem_id}/continuation-state-jacobian",
+            closure_convert=False,
+        ),
+        coordinate_action,
+    )
+
+
+def _state_parameter_tangent(
+    problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
+    state: PyTree[Any],
+    coordinate: Array,
+    method: AbstractContinuationMethod,
+    args: Any,
+    /,
+) -> tuple[PyTree[Array], Array, Array, bool]:
+    state_jacobian, coordinate_action = _state_derivative_operator(
+        problem,
+        geometry,
+        state,
+        coordinate,
+        args,
+    )
+    coordinate_space = ArraySpace(
+        (geometry.execution_state_space.size,),
+        dtype=geometry.coordinate_dtype,
+        space_id=f"{problem.problem_id}/state-tangent-coordinates",
+    )
+    coordinate_operator = FunctionLinearOperator(
+        lambda value: geometry.execution_residual_space.flatten(
+            state_jacobian(geometry.execution_state_space.unflatten(value))
+        ),
+        source=coordinate_space,
+        target=coordinate_space,
+        operator_id=f"{problem.problem_id}/state-tangent-coordinate-operator",
+        closure_convert=False,
+    )
+    tangent_policy, _ = method.derivative_policy.resolve(method.corrector)
+    linear_result = solve_linear(
+        LinearSystem(coordinate_operator),
+        -geometry.execution_residual_space.flatten(coordinate_action),
+        policy=tangent_policy,
+    )
+    tangent = geometry.execution_state_space.unflatten(linear_result.value)
+    residual = jax.tree.map(
+        lambda state_value, coordinate_value: state_value + coordinate_value,
+        state_jacobian(tangent),
+        coordinate_action,
+    )
+    residual_norm = geometry.residual_norm(residual)
+    usable = bool(
+        linear_result.successful & _tree_allfinite(tangent) & jnp.isfinite(residual_norm)
+    )
+    return tangent, linear_result.status, residual_norm, usable
+
+
+def _tangent_residual_norm(
+    problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
+    state: PyTree[Any],
+    coordinate: Array,
+    state_tangent: PyTree[Any],
+    coordinate_tangent: Array,
+    args: Any,
+    /,
+) -> Array:
+    state_jacobian, coordinate_action = _state_derivative_operator(
+        problem,
+        geometry,
+        state,
+        coordinate,
+        args,
+    )
+    residual = jax.tree.map(
+        lambda state_value, coordinate_value: (
+            state_value + coordinate_tangent * coordinate_value
+        ),
+        state_jacobian(state_tangent),
+        coordinate_action,
+    )
+    return geometry.residual_norm(residual)
+
+
+def _bordered_tangent(
+    problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
+    state: PyTree[Any],
+    coordinate: Array,
+    previous_state_tangent: PyTree[Any],
+    previous_coordinate_tangent: Array,
+    method: PseudoArclengthContinuation,
+    args: Any,
+    /,
+) -> tuple[PyTree[Array], Array, Array, bool, Array, Array]:
+    state_jacobian, coordinate_action = _state_derivative_operator(
+        problem,
+        geometry,
+        state,
+        coordinate,
+        args,
+    )
+    scalar_space = ArraySpace((), dtype=geometry.coordinate_dtype)
+    source = BlockSpace(
+        (geometry.execution_state_space, scalar_space),
+        names=("state", "coordinate"),
+    )
+    target = BlockSpace(
+        (geometry.execution_residual_space, scalar_space),
+        names=("residual", "normalization"),
+    )
+
+    def tangent_action(tangent):
+        state_value, coordinate_value = tangent
+        equation = jax.tree.map(
+            lambda state_action, coordinate_action_: (
+                state_action + coordinate_value * coordinate_action_
+            ),
+            state_jacobian(state_value),
+            coordinate_action,
+        )
+        normalization = geometry.augmented_inner(
+            previous_state_tangent,
+            previous_coordinate_tangent,
+            state_value,
+            coordinate_value,
+        )
+        return equation, normalization
+
+    operator = FunctionLinearOperator(
+        tangent_action,
+        source=source,
+        target=target,
+        operator_id=f"{problem.problem_id}/bordered-tangent",
+        closure_convert=False,
+    )
+    coordinate_space = ArraySpace(
+        (source.size,),
+        dtype=geometry.coordinate_dtype,
+        space_id=f"{problem.problem_id}/bordered-tangent-coordinates",
+    )
+    coordinate_operator = FunctionLinearOperator(
+        lambda value: target.flatten(operator(source.unflatten(value))),
+        source=coordinate_space,
+        target=coordinate_space,
+        operator_id=f"{problem.problem_id}/bordered-tangent-coordinate-operator",
+        closure_convert=False,
+    )
+    right_hand_side = target.flatten(
+        (
+            geometry.execution_residual_space.zeros(),
+            jnp.ones((), dtype=geometry.coordinate_dtype),
+        )
+    )
+    tangent_policy, _ = method.derivative_policy.resolve(method.corrector)
+    linear_result = solve_linear(
+        LinearSystem(coordinate_operator),
+        right_hand_side,
+        policy=tangent_policy,
+    )
+    state_tangent, coordinate_tangent = source.unflatten(linear_result.value)
+    norm = geometry.augmented_norm(state_tangent, coordinate_tangent)
+    state_tangent = jax.tree.map(lambda value: value / norm, state_tangent)
+    coordinate_tangent = coordinate_tangent / norm
+    alignment = geometry.augmented_inner(
+        previous_state_tangent,
+        previous_coordinate_tangent,
+        state_tangent,
+        coordinate_tangent,
+    )
+    residual_norm = _tangent_residual_norm(
+        problem,
+        geometry,
+        state,
+        coordinate,
+        state_tangent,
+        coordinate_tangent,
+        args,
+    )
+    usable = bool(
+        linear_result.successful
+        & _tree_allfinite(state_tangent)
+        & jnp.isfinite(coordinate_tangent)
+        & jnp.isfinite(residual_norm)
+        & jnp.isfinite(alignment)
+    )
+    return (
+        state_tangent,
+        coordinate_tangent,
+        linear_result.status,
+        usable,
+        residual_norm,
+        alignment,
     )
 
 
 def _correct_initial_point(
     problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
     state: PyTree[Any],
     coordinate: Array,
     method: AbstractContinuationMethod,
-    prepared_linear: Any,
+    prepared_corrector: PreparedNonlinearSolve | None,
     args: Any,
     /,
 ):
     return _correct_state(
         problem,
+        geometry,
         state,
         coordinate,
         method,
-        prepared_linear,
+        prepared_corrector,
         args,
     )
 
 
 def _initial_tangent(
     problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
     state: PyTree[Any],
     coordinate: Array,
     method: PseudoArclengthContinuation,
     args: Any,
     /,
 ):
-    def residual_function(current_state):
-        return problem.residual(
-            current_state,
-            coordinate,
-            args,
-        )
-
-    residual, state_linearization = jax.linearize(residual_function, state)
-    coordinate_tangent = jnp.asarray(float(method.direction), dtype=coordinate.dtype)
-    coordinate_action = jax.jvp(
-        lambda value: problem.residual(state, value, args),
-        (coordinate,),
-        (coordinate_tangent,),
-    )[1]
-    state_jacobian = FunctionLinearOperator(
-        state_linearization,
-        source=PyTreeSpace(state),
-        target=PyTreeSpace(residual),
-        operator_id="continuation-state-jacobian",
-        closure_convert=False,
-    )
-    linear_result = solve_linear(
-        LinearSystem(state_jacobian),
-        _tree_negative(coordinate_action),
-        policy=method.tangent_policy,
-    )
-    usable = int(linear_result.status) in (
-        int(LinearSolveStatus.SUCCESS),
-        int(LinearSolveStatus.MAXIMUM_STEPS_REACHED),
-        int(LinearSolveStatus.STAGNATION),
-        int(LinearSolveStatus.CONDITION_LIMIT_REACHED),
-    )
-    state_tangent = linear_result.value if usable else jax.tree.map(jnp.zeros_like, state)
-    norm = jnp.sqrt(_tree_inner(state_tangent, state_tangent) + coordinate_tangent**2)
-    return (
-        _tree_scale(1.0 / norm, state_tangent),
-        coordinate_tangent / norm,
-        linear_result.status,
+    (
+        state_parameter_tangent,
+        tangent_status,
+        tangent_residual_norm,
         usable,
+    ) = _state_parameter_tangent(
+        problem,
+        geometry,
+        state,
+        coordinate,
+        method,
+        args,
+    )
+    direction = jnp.asarray(float(method.direction), dtype=coordinate.dtype)
+    state_tangent = jax.tree.map(
+        lambda value: direction * value,
+        state_parameter_tangent,
+    )
+    if not usable:
+        state_tangent = jax.tree.map(jnp.zeros_like, state)
+    norm = geometry.augmented_norm(state_tangent, direction)
+    state_tangent = jax.tree.map(lambda value: value / norm, state_tangent)
+    coordinate_tangent = direction / norm
+    return (
+        state_tangent,
+        coordinate_tangent,
+        tangent_status,
+        usable,
+        tangent_residual_norm,
+        jnp.asarray(1.0, dtype=coordinate.dtype),
     )
 
 
@@ -1783,6 +2379,7 @@ def _normalized_secant(
     coordinate: Array,
     old_state_tangent: PyTree[Any],
     old_coordinate_tangent: Array,
+    geometry: ContinuationGeometry,
     /,
 ):
     state_difference = jax.tree.map(
@@ -1791,17 +2388,19 @@ def _normalized_secant(
         previous_state,
     )
     coordinate_difference = coordinate - previous_coordinate
-    norm = jnp.sqrt(
-        _tree_inner(state_difference, state_difference) + coordinate_difference**2
-    )
-    state_tangent = _tree_scale(1.0 / norm, state_difference)
+    norm = geometry.augmented_norm(state_difference, coordinate_difference)
+    state_tangent = jax.tree.map(lambda value: value / norm, state_difference)
     coordinate_tangent = coordinate_difference / norm
-    orientation = (
-        _tree_inner(state_tangent, old_state_tangent)
-        + coordinate_tangent * old_coordinate_tangent
+    orientation = geometry.augmented_inner(
+        state_tangent,
+        coordinate_tangent,
+        old_state_tangent,
+        old_coordinate_tangent,
     )
     sign = jnp.where(orientation < 0.0, -1.0, 1.0)
-    return _tree_scale(sign, state_tangent), sign * coordinate_tangent
+    return jax.tree.map(lambda value: sign * value, state_tangent), (
+        sign * coordinate_tangent
+    )
 
 
 def _sign_crossed(left: Any, right: Any, /) -> bool:
@@ -1812,6 +2411,39 @@ def _sign_crossed(left: Any, right: Any, /) -> bool:
         and isfinite(right_)
         and ((left_ < 0.0 <= right_) or (left_ > 0.0 >= right_))
     )
+
+
+def _coordinate_target_crossed(
+    left: Any,
+    right: Any,
+    target: float,
+    /,
+) -> bool:
+    left_difference = float(left) - target
+    right_difference = float(right) - target
+    return (
+        isfinite(left_difference)
+        and isfinite(right_difference)
+        and left_difference != 0.0
+        and left_difference * right_difference <= 0.0
+    )
+
+
+def _branch_step_size(
+    previous_state: PyTree[Any],
+    previous_coordinate: Any,
+    state: PyTree[Any],
+    coordinate: Any,
+    geometry: ContinuationGeometry,
+    /,
+) -> Array:
+    state_difference = jax.tree.map(
+        lambda current, previous: current - previous,
+        state,
+        previous_state,
+    )
+    coordinate_difference = jnp.asarray(coordinate) - jnp.asarray(previous_coordinate)
+    return geometry.augmented_norm(state_difference, coordinate_difference)
 
 
 def _record_stability_events(
@@ -1909,12 +2541,19 @@ class ContinuationDiagnostics(StrictModule):
     accepted_steps: Array
     rejected_steps: Array
     corrector_iterations: Array
+    corrector_residual_evaluations: Array
+    corrector_jvp_evaluations: Array
+    corrector_vjp_evaluations: Array
+    corrector_jacobian_preparations: Array
+    corrector_linear_solves: Array
+    corrector_linear_iterations: Array
+    corrector_setup_refreshes: Array
+    corrector_numeric_refreshes: Array
     tangent_failures: Array
     spectral_evaluations: Array
     monitor_events: Array
-    corrector_linear_preparations: Array
-    corrector_linear_numeric_refreshes: Array
-    corrector_linear_solves: Array
+    target_corrections: Array
+    curvature_rejections: Array
 
     def __init__(
         self,
@@ -1924,12 +2563,19 @@ class ContinuationDiagnostics(StrictModule):
         accepted_steps: Any,
         rejected_steps: Any,
         corrector_iterations: Any,
+        corrector_residual_evaluations: Any,
+        corrector_jvp_evaluations: Any,
+        corrector_vjp_evaluations: Any,
+        corrector_jacobian_preparations: Any,
+        corrector_linear_solves: Any,
+        corrector_linear_iterations: Any,
+        corrector_setup_refreshes: Any,
+        corrector_numeric_refreshes: Any,
         tangent_failures: Any,
         spectral_evaluations: Any,
         monitor_events: Any,
-        corrector_linear_preparations: Any,
-        corrector_linear_numeric_refreshes: Any,
-        corrector_linear_solves: Any,
+        target_corrections: Any = 0,
+        curvature_rejections: Any = 0,
     ):
         values = tuple(
             jnp.asarray(value, dtype=jnp.int32)
@@ -1939,12 +2585,19 @@ class ContinuationDiagnostics(StrictModule):
                 accepted_steps,
                 rejected_steps,
                 corrector_iterations,
+                corrector_residual_evaluations,
+                corrector_jvp_evaluations,
+                corrector_vjp_evaluations,
+                corrector_jacobian_preparations,
+                corrector_linear_solves,
+                corrector_linear_iterations,
+                corrector_setup_refreshes,
+                corrector_numeric_refreshes,
                 tangent_failures,
                 spectral_evaluations,
                 monitor_events,
-                corrector_linear_preparations,
-                corrector_linear_numeric_refreshes,
-                corrector_linear_solves,
+                target_corrections,
+                curvature_rejections,
             )
         )
         (
@@ -1953,12 +2606,19 @@ class ContinuationDiagnostics(StrictModule):
             self.accepted_steps,
             self.rejected_steps,
             self.corrector_iterations,
+            self.corrector_residual_evaluations,
+            self.corrector_jvp_evaluations,
+            self.corrector_vjp_evaluations,
+            self.corrector_jacobian_preparations,
+            self.corrector_linear_solves,
+            self.corrector_linear_iterations,
+            self.corrector_setup_refreshes,
+            self.corrector_numeric_refreshes,
             self.tangent_failures,
             self.spectral_evaluations,
             self.monitor_events,
-            self.corrector_linear_preparations,
-            self.corrector_linear_numeric_refreshes,
-            self.corrector_linear_solves,
+            self.target_corrections,
+            self.curvature_rejections,
         ) = values
 
 
@@ -1967,34 +2627,50 @@ class ContinuationProvenance(StrictModule):
 
     numeric_version: Array
     corrector_linear_numeric_version: Array
+    corrector_provenance: NonlinearProvenance
     problem_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     corrector_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
     branch_id: str = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    representation_id: str = eqx.field(static=True)
+    public_state_space_id: str = eqx.field(static=True)
+    public_residual_space_id: str = eqx.field(static=True)
+    execution_state_space_id: str = eqx.field(static=True)
+    execution_residual_space_id: str = eqx.field(static=True)
     analyzer_id: str = eqx.field(static=True)
     monitor_ids: tuple[str, ...] = eqx.field(static=True)
     linear_reuse_mode: str = eqx.field(static=True)
     corrector_linear_plan_id: str = eqx.field(static=True)
     corrector_preconditioner_plan_id: str = eqx.field(static=True)
+    terminal_coordinate: float | None = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         numeric_version: Any,
+        corrector_provenance: NonlinearProvenance,
         problem_id: str,
         method_id: str,
         corrector_id: str,
         plan_id: str,
         prepared_id: str,
         branch_id: str,
+        geometry_id: str,
+        representation_id: str,
+        public_state_space_id: str,
+        public_residual_space_id: str,
+        execution_state_space_id: str,
+        execution_residual_space_id: str,
         analyzer_id: str = "",
         monitor_ids: Sequence[str] = (),
         linear_reuse_mode: str = "none",
         corrector_linear_plan_id: str = "",
         corrector_linear_numeric_version: Any = 0,
         corrector_preconditioner_plan_id: str = "",
+        terminal_coordinate: float | None = None,
     ):
         identifiers = tuple(
             str(value)
@@ -2009,6 +2685,30 @@ class ContinuationProvenance(StrictModule):
         )
         if any(not value for value in identifiers):
             raise ValueError("Continuation provenance identities must be non-empty.")
+        if not isinstance(corrector_provenance, NonlinearProvenance):
+            raise TypeError("corrector_provenance must be a NonlinearProvenance.")
+        self.corrector_provenance = corrector_provenance
+        geometry_identifiers = tuple(
+            str(value)
+            for value in (
+                geometry_id,
+                representation_id,
+                public_state_space_id,
+                public_residual_space_id,
+                execution_state_space_id,
+                execution_residual_space_id,
+            )
+        )
+        if any(not value for value in geometry_identifiers):
+            raise ValueError("Continuation geometry identities must be non-empty.")
+        (
+            self.geometry_id,
+            self.representation_id,
+            self.public_state_space_id,
+            self.public_residual_space_id,
+            self.execution_state_space_id,
+            self.execution_residual_space_id,
+        ) = geometry_identifiers
         self.numeric_version = jnp.asarray(numeric_version, dtype=jnp.int32)
         self.corrector_linear_numeric_version = jnp.asarray(
             corrector_linear_numeric_version,
@@ -2023,6 +2723,9 @@ class ContinuationProvenance(StrictModule):
             self.branch_id,
         ) = identifiers
         self.analyzer_id = str(analyzer_id)
+        self.terminal_coordinate = (
+            None if terminal_coordinate is None else float(terminal_coordinate)
+        )
         reuse_mode = str(linear_reuse_mode)
         if reuse_mode not in ("none", "prepared-newton"):
             raise ValueError("linear_reuse_mode must be 'none' or 'prepared-newton'.")
@@ -2115,6 +2818,7 @@ class ContinuationPlan(StrictModule):
     problem_id: str = eqx.field(static=True)
     branch_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    terminal_coordinate: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2126,6 +2830,7 @@ class ContinuationPlan(StrictModule):
         problem_id: str,
         branch_id: str,
         plan_id: str,
+        terminal_coordinate: float | None = None,
     ):
         if not isinstance(method, AbstractContinuationMethod):
             raise TypeError("method must be an AbstractContinuationMethod.")
@@ -2149,10 +2854,14 @@ class ContinuationPlan(StrictModule):
         identifiers = tuple(str(value) for value in (problem_id, branch_id, plan_id))
         if any(not value for value in identifiers):
             raise ValueError("Problem, branch, and plan IDs must be non-empty.")
+        target = None if terminal_coordinate is None else float(terminal_coordinate)
+        if target is not None and not isfinite(target):
+            raise ValueError("terminal_coordinate must be finite or None.")
         self.method = method
         self.stability_analyzer = stability_analyzer
         self.monitors = monitors_
         self.num_steps = steps
+        self.terminal_coordinate = target
         self.problem_id, self.branch_id, self.plan_id = identifiers
 
 
@@ -2161,6 +2870,7 @@ class PreparedContinuation(StrictModule):
 
     problem: ContinuationCurveProblem
     plan: ContinuationPlan
+    geometry: ContinuationGeometry
     initial_state: PyTree[Array]
     initial_coordinate: Array
     initial_tangent: tuple[PyTree[Array], Array] | None
@@ -2187,11 +2897,36 @@ class PreparedContinuation(StrictModule):
             raise TypeError("plan must be a ContinuationPlan.")
         if plan.problem_id != problem.problem_id:
             raise ValueError("Continuation plan and problem IDs must match.")
-        state = _validate_real_inexact_tree(initial_state, name="initial state")
+        public_state = _validate_inexact_tree(initial_state, name="initial state")
         coordinate = _real_scalar(initial_coordinate, name="initial coordinate")
         if not bool(problem.contains_coordinate(coordinate)):
             raise ValueError("initial_coordinate lies outside the continuation interval.")
-        tangent = _normalize_initial_tangent(initial_tangent, state)
+        public_residual = problem.residual(public_state, coordinate, args)
+        declared_state_space, declared_residual_space = problem.declared_spaces()
+        geometry = ContinuationGeometry.resolve(
+            public_state,
+            public_residual,
+            state_space=declared_state_space,
+            residual_space=declared_residual_space,
+            representation=problem.representation_policy(),
+            coordinate_scale=plan.method.coordinate_scale,
+        )
+        state = geometry.state_to_execution(public_state)
+        coordinate = jnp.asarray(coordinate, dtype=geometry.coordinate_dtype)
+        if (
+            plan.terminal_coordinate is not None
+            and isinstance(plan.method, NaturalParameterContinuation)
+            and plan.method.direction * (plan.terminal_coordinate - float(coordinate))
+            < 0.0
+        ):
+            raise ValueError(
+                "terminal_coordinate lies opposite the natural continuation direction."
+            )
+        tangent = _normalize_initial_tangent(
+            initial_tangent,
+            public_state,
+            geometry,
+        )
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
             raise ValueError("numeric_version must be scalar.")
@@ -2203,6 +2938,7 @@ class PreparedContinuation(StrictModule):
             raise ValueError("prepared_id must be non-empty.")
         self.problem = problem
         self.plan = plan
+        self.geometry = geometry
         self.initial_state = state
         self.initial_coordinate = coordinate
         self.initial_tangent = tangent
@@ -2213,7 +2949,8 @@ class PreparedContinuation(StrictModule):
 
 def _normalize_initial_tangent(
     tangent: tuple[PyTree[Any], Any] | None,
-    state: PyTree[Any],
+    public_state: PyTree[Any],
+    geometry: ContinuationGeometry,
     /,
 ) -> tuple[PyTree[Array], Array] | None:
     if tangent is None:
@@ -2222,23 +2959,21 @@ def _normalize_initial_tangent(
         raise TypeError(
             "initial_tangent must be a (state_tangent, coordinate_tangent) tuple."
         )
-    state_tangent = _validate_real_inexact_tree(tangent[0], name="initial state tangent")
-    if jax.tree.structure(state_tangent) != jax.tree.structure(state):
-        raise ValueError(
-            "Initial state and tangent PyTrees must have the same structure."
-        )
-    if any(
-        tangent_leaf.shape != state_leaf.shape
-        for tangent_leaf, state_leaf in zip(
-            jax.tree.leaves(state_tangent), jax.tree.leaves(state), strict=True
-        )
-    ):
-        raise ValueError("Initial state and tangent leaf shapes must match.")
-    coordinate_tangent = _real_scalar(tangent[1], name="initial coordinate tangent")
-    norm = jnp.sqrt(_tree_inner(state_tangent, state_tangent) + coordinate_tangent**2)
+    state_tangent = geometry.state_tangent_to_execution(
+        public_state,
+        tangent[0],
+    )
+    coordinate_tangent = _real_scalar(
+        tangent[1],
+        name="initial coordinate tangent",
+    ).astype(geometry.coordinate_dtype)
+    norm = geometry.augmented_norm(state_tangent, coordinate_tangent)
     if not bool(jnp.isfinite(norm) & (norm > 0.0)):
         raise ValueError("initial_tangent must have finite nonzero norm.")
-    return _tree_scale(1.0 / norm, state_tangent), coordinate_tangent / norm
+    return (
+        jax.tree.map(lambda value: value / norm, state_tangent),
+        coordinate_tangent / norm,
+    )
 
 
 def plan_continuation(
@@ -2250,6 +2985,7 @@ def plan_continuation(
     branch_id: str = "branch-0",
     stability_analyzer: AbstractStabilityAnalyzer | None = None,
     monitors: Sequence[AbstractBranchMonitor] = (),
+    terminal_coordinate: float | None = None,
     plan_id: str | None = None,
 ) -> ContinuationPlan:
     """Create reusable symbolic continuation and monitoring policy."""
@@ -2258,6 +2994,14 @@ def plan_continuation(
     method_ = PseudoArclengthContinuation() if method is None else method
     if not isinstance(method_, AbstractContinuationMethod):
         raise TypeError("method must be an AbstractContinuationMethod or None.")
+    target = None if terminal_coordinate is None else float(terminal_coordinate)
+    if target is not None:
+        if not isfinite(target):
+            raise ValueError("terminal_coordinate must be finite or None.")
+        if not problem.coordinate_lower <= target <= problem.coordinate_upper:
+            raise ValueError(
+                "terminal_coordinate lies outside the continuation interval."
+            )
     identifier = (
         f"{problem.problem_id}/{method_.method_id}/continuation-plan"
         if plan_id is None
@@ -2270,6 +3014,7 @@ def plan_continuation(
         num_steps=num_steps,
         problem_id=problem.problem_id,
         branch_id=branch_id,
+        terminal_coordinate=target,
         plan_id=identifier,
     )
 
@@ -2309,7 +3054,7 @@ def refresh_continuation(
     """Rebind numerical seed data while retaining symbolic plan identity."""
     if not isinstance(prepared, PreparedContinuation):
         raise TypeError("prepared must be a PreparedContinuation.")
-    return PreparedContinuation(
+    refreshed = PreparedContinuation(
         prepared.problem,
         prepared.plan,
         initial_state,
@@ -2319,12 +3064,16 @@ def refresh_continuation(
         numeric_version=prepared.numeric_version + 1,
         prepared_id=prepared.prepared_id,
     )
+    if refreshed.geometry.geometry_id != prepared.geometry.geometry_id:
+        raise ValueError("Continuation refresh changed the bound geometry.")
+    return refreshed
 
 
 def _arclength_residual(
     variables: tuple[PyTree[Any], Array],
     payload: tuple[
         ContinuationCurveProblem,
+        ContinuationGeometry,
         PyTree[Any],
         Array,
         PyTree[Any],
@@ -2335,6 +3084,7 @@ def _arclength_residual(
 ) -> tuple[PyTree[Array], Array]:
     (
         problem,
+        geometry,
         predicted_state,
         predicted_coordinate,
         state_tangent,
@@ -2342,43 +3092,53 @@ def _arclength_residual(
         args,
     ) = payload
     candidate_state, candidate_coordinate = variables
-    equation = problem.residual(candidate_state, candidate_coordinate, args)
+    equation = _execution_residual(
+        problem,
+        geometry,
+        candidate_state,
+        candidate_coordinate,
+        args,
+    )
     state_displacement = jax.tree.map(
         lambda candidate, predicted: candidate - predicted,
         candidate_state,
         predicted_state,
     )
-    arclength = _tree_inner(
+    arclength = geometry.augmented_inner(
         state_tangent,
+        coordinate_tangent,
         state_displacement,
-    ) + coordinate_tangent * (candidate_coordinate - predicted_coordinate)
+        candidate_coordinate - predicted_coordinate,
+    )
     return equation, arclength
 
 
 def _correct_arclength(
     problem: ContinuationCurveProblem,
+    geometry: ContinuationGeometry,
     predicted_state: PyTree[Any],
     predicted_coordinate: Array,
     state_tangent: PyTree[Any],
     coordinate_tangent: Array,
     method: PseudoArclengthContinuation,
-    prepared_linear: Any,
+    prepared_corrector: PreparedNonlinearSolve | None,
     args: Any,
     /,
 ):
     payload = (
         problem,
+        geometry,
         predicted_state,
         predicted_coordinate,
         state_tangent,
         coordinate_tangent,
         args,
     )
-    return _newton_correct(
+    return _run_corrector(
         lambda variables: _arclength_residual(variables, payload),
         (predicted_state, predicted_coordinate),
         method,
-        prepared_linear,
+        prepared_corrector,
         identity=f"{problem.problem_id}/arclength-corrector",
     )
 
@@ -2415,13 +3175,21 @@ def _continuation_result(
     accepted_steps: int,
     rejected_steps: int,
     corrector_iterations: int,
+    corrector_residual_evaluations: int,
+    corrector_jvp_evaluations: int,
+    corrector_vjp_evaluations: int,
+    corrector_jacobian_preparations: int,
+    corrector_linear_solves: int,
+    corrector_linear_iterations: int,
+    corrector_setup_refreshes: int,
+    corrector_numeric_refreshes: int,
     tangent_failures: int,
     spectral_evaluations: int,
     monitor_events: int,
-    linear_preparations: int,
-    linear_numeric_refreshes: int,
-    linear_solves: int,
-    corrector_prepared_linear: Any,
+    target_corrections: int,
+    curvature_rejections: int,
+    corrector_prepared_linear: PreparedNonlinearSolve | None,
+    corrector_provenance: NonlinearProvenance,
 ) -> ContinuationResult:
     plan = prepared.plan
     if corrector_prepared_linear is None:
@@ -2431,9 +3199,11 @@ def _continuation_result(
         corrector_preconditioner_plan_id = ""
     else:
         linear_reuse_mode = "prepared-newton"
-        corrector_linear_plan_id = corrector_prepared_linear.plan.plan_id
-        corrector_linear_numeric_version = corrector_prepared_linear.numeric_version
-        preconditioner_plan = corrector_prepared_linear.plan.preconditioner_plan
+        corrector_linear_plan_id = corrector_prepared_linear.linear_plan_id
+        corrector_linear_numeric_version = (
+            corrector_prepared_linear.linear_refresh_state.numeric_version
+        )
+        preconditioner_plan = corrector_prepared_linear.linear_plan.preconditioner_plan
         corrector_preconditioner_plan_id = (
             "" if preconditioner_plan is None else preconditioner_plan.plan_id
         )
@@ -2442,6 +3212,7 @@ def _continuation_result(
         events,
         status,
         brackets=brackets,
+        geometry=prepared.geometry,
         branch_id=plan.branch_id,
         problem_id=prepared.problem.problem_id,
         method=plan.method.method_id,
@@ -2456,12 +3227,19 @@ def _continuation_result(
             accepted_steps=accepted_steps,
             rejected_steps=rejected_steps,
             corrector_iterations=corrector_iterations,
+            corrector_residual_evaluations=corrector_residual_evaluations,
+            corrector_jvp_evaluations=corrector_jvp_evaluations,
+            corrector_vjp_evaluations=corrector_vjp_evaluations,
+            corrector_jacobian_preparations=corrector_jacobian_preparations,
+            corrector_linear_solves=corrector_linear_solves,
+            corrector_linear_iterations=corrector_linear_iterations,
+            corrector_setup_refreshes=corrector_setup_refreshes,
+            corrector_numeric_refreshes=corrector_numeric_refreshes,
             tangent_failures=tangent_failures,
             spectral_evaluations=spectral_evaluations,
             monitor_events=monitor_events,
-            corrector_linear_preparations=linear_preparations,
-            corrector_linear_numeric_refreshes=linear_numeric_refreshes,
-            corrector_linear_solves=linear_solves,
+            target_corrections=target_corrections,
+            curvature_rejections=curvature_rejections,
         ),
         provenance=ContinuationProvenance(
             numeric_version=prepared.numeric_version,
@@ -2471,6 +3249,15 @@ def _continuation_result(
             plan_id=plan.plan_id,
             prepared_id=prepared.prepared_id,
             branch_id=plan.branch_id,
+            corrector_provenance=corrector_provenance,
+            geometry_id=prepared.geometry.geometry_id,
+            representation_id=prepared.geometry.representation.policy_id,
+            public_state_space_id=prepared.geometry.public_state_space.space_id,
+            public_residual_space_id=prepared.geometry.public_residual_space.space_id,
+            execution_state_space_id=prepared.geometry.execution_state_space.space_id,
+            execution_residual_space_id=(
+                prepared.geometry.execution_residual_space.space_id
+            ),
             analyzer_id=(
                 ""
                 if plan.stability_analyzer is None
@@ -2481,6 +3268,7 @@ def _continuation_result(
             corrector_linear_plan_id=corrector_linear_plan_id,
             corrector_linear_numeric_version=corrector_linear_numeric_version,
             corrector_preconditioner_plan_id=corrector_preconditioner_plan_id,
+            terminal_coordinate=plan.terminal_coordinate,
         ),
     )
 
@@ -2492,6 +3280,7 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     problem = prepared.problem
     plan = prepared.plan
     method = plan.method
+    geometry = prepared.geometry
     state = prepared.initial_state
     coordinate = prepared.initial_coordinate
     args = prepared.args
@@ -2504,13 +3293,21 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     tangent_failures = 0
     spectral_evaluations = 0
     monitor_events = 0
-    linear_preparations = 0
-    linear_numeric_refreshes = 0
-    linear_solves = 0
-    corrector_prepared_linear = None
+    corrector_residual_evaluations = 0
+    corrector_jvp_evaluations = 0
+    corrector_vjp_evaluations = 0
+    corrector_jacobian_preparations = 0
+    corrector_linear_solves = 0
+    corrector_linear_iterations = 0
+    corrector_setup_refreshes = 0
+    corrector_numeric_refreshes = 0
+    target_corrections = 0
+    curvature_rejections = 0
+    corrector_prepared_linear: PreparedNonlinearSolve | None = None
 
     initial_result, initial_prepared_linear = _correct_initial_point(
         problem,
+        geometry,
         state,
         coordinate,
         method,
@@ -2519,15 +3316,29 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     )
     if isinstance(method, NaturalParameterContinuation):
         corrector_prepared_linear = initial_prepared_linear
-    linear_preparations += int(initial_result.linear_preparations)
-    linear_numeric_refreshes += int(initial_result.linear_numeric_refreshes)
-    linear_solves += int(initial_result.linear_solves)
+    (
+        corrector_iterations,
+        initial_residual_evaluations,
+        initial_jvp_evaluations,
+        initial_vjp_evaluations,
+        initial_jacobian_preparations,
+        initial_linear_solves,
+        initial_linear_iterations,
+        initial_setup_refreshes,
+        initial_numeric_refreshes,
+    ) = _corrector_work(initial_result)
+    last_corrector_provenance = initial_result.provenance
+    corrector_residual_evaluations += initial_residual_evaluations
+    corrector_jvp_evaluations += initial_jvp_evaluations
+    corrector_vjp_evaluations += initial_vjp_evaluations
+    corrector_jacobian_preparations += initial_jacobian_preparations
+    corrector_linear_solves += initial_linear_solves
+    corrector_linear_iterations += initial_linear_iterations
+    corrector_setup_refreshes += initial_setup_refreshes
+    corrector_numeric_refreshes += initial_numeric_refreshes
     state = initial_result.state
-    residual_norm = _tree_norm(initial_result.residual)
-    corrector_iterations = int(initial_result.iterations)
-    initial_success = bool(
-        initial_result.successful & (residual_norm <= method.residual_tolerance)
-    )
+    residual_norm = geometry.residual_norm(initial_result.residual)
+    initial_success = _corrector_success(initial_result, residual_norm, method)
     tangent_attempted = initial_success
     if not initial_success:
         state_tangent = jax.tree.map(jnp.zeros_like, state)
@@ -2536,26 +3347,53 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             LinearSolveStatus.CAPABILITY_REJECTED, dtype=jnp.int32
         )
         tangent_usable = False
+        tangent_residual_norm = jnp.asarray(jnp.inf, dtype=coordinate.dtype)
+        tangent_alignment = jnp.asarray(jnp.nan, dtype=coordinate.dtype)
     elif prepared.initial_tangent is not None:
         state_tangent, coordinate_tangent = prepared.initial_tangent
         tangent_status = jnp.asarray(LinearSolveStatus.SUCCESS, dtype=jnp.int32)
         tangent_usable = True
+        tangent_residual_norm = _tangent_residual_norm(
+            problem,
+            geometry,
+            state,
+            coordinate,
+            state_tangent,
+            coordinate_tangent,
+            args,
+        )
+        tangent_alignment = jnp.asarray(1.0, dtype=coordinate.dtype)
     elif isinstance(method, PseudoArclengthContinuation):
         (
             state_tangent,
             coordinate_tangent,
             tangent_status,
             tangent_usable,
-        ) = _initial_tangent(problem, state, coordinate, method, args)
+            tangent_residual_norm,
+            tangent_alignment,
+        ) = _initial_tangent(problem, geometry, state, coordinate, method, args)
     else:
         state_tangent = jax.tree.map(jnp.zeros_like, state)
         coordinate_tangent = jnp.asarray(float(method.direction), dtype=coordinate.dtype)
         tangent_status = jnp.asarray(LinearSolveStatus.SUCCESS, dtype=jnp.int32)
         tangent_usable = True
+        tangent_residual_norm = jnp.asarray(jnp.nan, dtype=coordinate.dtype)
+        tangent_alignment = jnp.asarray(1.0, dtype=coordinate.dtype)
     if tangent_attempted and int(tangent_status) != int(LinearSolveStatus.SUCCESS):
         tangent_failures += 1
+    public_state = geometry.state_from_execution(state)
+    public_state_tangent = geometry.state_tangent_from_execution(
+        state,
+        state_tangent,
+    )
     initial_stability = (
-        plan.stability_analyzer.analyze(problem, state, coordinate, args)
+        plan.stability_analyzer.analyze(
+            problem,
+            public_state,
+            coordinate,
+            args,
+            geometry=geometry,
+        )
         if plan.stability_analyzer is not None and initial_success
         else None
     )
@@ -2567,15 +3405,17 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
         args,
     )
     initial_point = BranchPoint(
-        state=state,
+        state=public_state,
         coordinate=coordinate,
         parameters=physical_parameters,
-        tangent_state=state_tangent,
+        tangent_state=public_state_tangent,
         tangent_coordinate=coordinate_tangent,
         tangent_parameters=physical_parameter_tangent,
         residual_norm=residual_norm,
         step_size=0.0,
-        corrector_iterations=initial_result.iterations,
+        tangent_residual_norm=tangent_residual_norm,
+        tangent_alignment=tangent_alignment,
+        corrector_iterations=initial_result.diagnostics.iterations,
         corrector_retries=0,
         status=initial_result.status,
         tangent_status=tangent_status,
@@ -2588,15 +3428,12 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     if tangent_attempted and not tangent_usable:
         events.append(
             ContinuationEvent(
-                "tangent-fallback",
+                "tangent-retry",
                 coordinate,
-                indicator=tangent_status,
+                indicator=tangent_residual_norm,
                 source_status=tangent_status,
                 point_id=initial_point.point_id,
-                message=(
-                    "Initial state-Jacobian solve failed; the explicit coordinate "
-                    "direction was retained."
-                ),
+                message="Initial tangent solve failed its residual contract.",
             )
         )
     if not initial_success:
@@ -2611,12 +3448,48 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             accepted_steps=accepted_steps,
             rejected_steps=rejected_steps,
             corrector_iterations=corrector_iterations,
+            corrector_residual_evaluations=corrector_residual_evaluations,
+            corrector_jvp_evaluations=corrector_jvp_evaluations,
+            corrector_vjp_evaluations=corrector_vjp_evaluations,
+            corrector_jacobian_preparations=corrector_jacobian_preparations,
+            corrector_linear_solves=corrector_linear_solves,
+            corrector_linear_iterations=corrector_linear_iterations,
+            corrector_setup_refreshes=corrector_setup_refreshes,
+            corrector_numeric_refreshes=corrector_numeric_refreshes,
             tangent_failures=tangent_failures,
             spectral_evaluations=spectral_evaluations,
             monitor_events=monitor_events,
-            linear_preparations=linear_preparations,
-            linear_numeric_refreshes=linear_numeric_refreshes,
-            linear_solves=linear_solves,
+            target_corrections=target_corrections,
+            curvature_rejections=curvature_rejections,
+            corrector_provenance=last_corrector_provenance,
+            corrector_prepared_linear=initial_prepared_linear,
+        )
+    if tangent_attempted and not tangent_usable:
+        return _continuation_result(
+            prepared,
+            points,
+            events,
+            brackets,
+            ContinuationStatus.TANGENT_FAILED,
+            "initial tangent solve failed",
+            attempted_steps=attempted_steps,
+            accepted_steps=accepted_steps,
+            rejected_steps=rejected_steps,
+            corrector_iterations=corrector_iterations,
+            corrector_residual_evaluations=corrector_residual_evaluations,
+            corrector_jvp_evaluations=corrector_jvp_evaluations,
+            corrector_vjp_evaluations=corrector_vjp_evaluations,
+            corrector_jacobian_preparations=corrector_jacobian_preparations,
+            corrector_linear_solves=corrector_linear_solves,
+            corrector_linear_iterations=corrector_linear_iterations,
+            corrector_setup_refreshes=corrector_setup_refreshes,
+            corrector_numeric_refreshes=corrector_numeric_refreshes,
+            tangent_failures=tangent_failures,
+            spectral_evaluations=spectral_evaluations,
+            monitor_events=monitor_events,
+            target_corrections=target_corrections,
+            curvature_rejections=curvature_rejections,
+            corrector_provenance=last_corrector_provenance,
             corrector_prepared_linear=initial_prepared_linear,
         )
     monitor_events += _observe_monitors(
@@ -2626,17 +3499,126 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     step_size = method.initial_step
     status = ContinuationStatus.ITERATING
     termination_reason = "requested points reached"
-    for point_index in range(1, plan.num_steps + 1):
+    terminal_reached = bool(
+        plan.terminal_coordinate is not None
+        and coordinate == jnp.asarray(plan.terminal_coordinate, dtype=coordinate.dtype)
+    )
+    if terminal_reached:
+        events.append(
+            ContinuationEvent(
+                "coordinate-target",
+                coordinate,
+                indicator=coordinate,
+                point_id=initial_point.point_id,
+                message="The corrected initial point is the terminal coordinate.",
+            )
+        )
+    for point_index in () if terminal_reached else range(1, plan.num_steps + 1):
         accepted = False
         bound_reached = False
+        target_failure_seen = False
+        target_reached_this_step = False
+        tangent_failure_seen = False
+        curvature_failure_seen = False
         retries = 0
+        last_corrector_status = jnp.asarray(-1, dtype=jnp.int32)
+        accepted_step_size = jnp.asarray(step_size, dtype=coordinate.dtype)
         while retries <= method.maximum_retries and step_size >= method.minimum_step:
+            direct_target_correction = False
             if isinstance(method, NaturalParameterContinuation):
                 predicted_state = state
-                predicted_coordinate = coordinate + method.direction * step_size
+                proposed_coordinate = coordinate + method.direction * step_size
+                if (
+                    plan.terminal_coordinate is not None
+                    and method.direction
+                    * (float(proposed_coordinate) - plan.terminal_coordinate)
+                    >= 0.0
+                ):
+                    predicted_coordinate = jnp.asarray(
+                        plan.terminal_coordinate,
+                        dtype=coordinate.dtype,
+                    )
+                    direct_target_correction = True
+                else:
+                    predicted_coordinate = proposed_coordinate
+                if method.predictor == "tangent":
+                    (
+                        state_parameter_tangent,
+                        predictor_status,
+                        predictor_residual_norm,
+                        predictor_usable,
+                    ) = _state_parameter_tangent(
+                        problem,
+                        geometry,
+                        state,
+                        coordinate,
+                        method,
+                        args,
+                    )
+                    if predictor_usable:
+                        predicted_state = _tree_add_scaled(
+                            state,
+                            state_parameter_tangent,
+                            predicted_coordinate - coordinate,
+                        )
+                    elif method.predictor_failure == "constant":
+                        tangent_failures += 1
+                        events.append(
+                            ContinuationEvent(
+                                "predictor-fallback",
+                                coordinate,
+                                indicator=predictor_residual_norm,
+                                source_status=predictor_status,
+                                point_id=points[-1].point_id,
+                                message=(
+                                    "Tangent predictor failed; constant predictor used."
+                                ),
+                            )
+                        )
+                    else:
+                        tangent_failures += 1
+                        status = ContinuationStatus.TANGENT_FAILED
+                        termination_reason = "natural tangent predictor failed"
+                        events.append(
+                            ContinuationEvent(
+                                "tangent-retry",
+                                coordinate,
+                                indicator=predictor_residual_norm,
+                                source_status=predictor_status,
+                                point_id=points[-1].point_id,
+                                message="Natural tangent predictor failed.",
+                            )
+                        )
+                        bound_reached = True
+                        break
             else:
                 predicted_state = _tree_add_scaled(state, state_tangent, step_size)
                 predicted_coordinate = coordinate + step_size * coordinate_tangent
+                if (
+                    plan.terminal_coordinate is not None
+                    and not bool(problem.contains_coordinate(predicted_coordinate))
+                    and _coordinate_target_crossed(
+                        coordinate,
+                        predicted_coordinate,
+                        plan.terminal_coordinate,
+                    )
+                ):
+                    denominator = float(predicted_coordinate - coordinate)
+                    fraction = (
+                        plan.terminal_coordinate - float(coordinate)
+                    ) / denominator
+                    predicted_state = jax.tree.map(
+                        lambda left, right, fraction=fraction: (
+                            left + fraction * (right - left)
+                        ),
+                        state,
+                        predicted_state,
+                    )
+                    predicted_coordinate = jnp.asarray(
+                        plan.terminal_coordinate,
+                        dtype=coordinate.dtype,
+                    )
+                    direct_target_correction = True
             if not bool(problem.contains_coordinate(predicted_coordinate)):
                 events.append(
                     ContinuationEvent(
@@ -2647,23 +3629,35 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                         message="Predictor crossed the declared coordinate interval.",
                     )
                 )
-                status = ContinuationStatus.COORDINATE_BOUND_REACHED
-                termination_reason = "coordinate bound reached"
+                if plan.terminal_coordinate is None:
+                    status = ContinuationStatus.COORDINATE_BOUND_REACHED
+                    termination_reason = "coordinate bound reached"
+                else:
+                    status = ContinuationStatus.TARGET_NOT_REACHED
+                    termination_reason = "coordinate bound reached before target"
                 bound_reached = True
                 break
             attempted_steps += 1
-            if isinstance(method, NaturalParameterContinuation):
-                (
-                    corrector_result,
-                    corrector_prepared_linear,
-                ) = _correct_state(
+            if (
+                isinstance(method, NaturalParameterContinuation)
+                or direct_target_correction
+            ):
+                target_prepared = (
+                    corrector_prepared_linear
+                    if isinstance(method, NaturalParameterContinuation)
+                    else None
+                )
+                corrector_result, refreshed_target = _correct_state(
                     problem,
+                    geometry,
                     predicted_state,
                     predicted_coordinate,
                     method,
-                    corrector_prepared_linear,
+                    target_prepared,
                     args,
                 )
+                if isinstance(method, NaturalParameterContinuation):
+                    corrector_prepared_linear = refreshed_target
                 candidate_state = corrector_result.state
                 candidate_coordinate = predicted_coordinate
             else:
@@ -2672,6 +3666,7 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     corrector_prepared_linear,
                 ) = _correct_arclength(
                     problem,
+                    geometry,
                     predicted_state,
                     predicted_coordinate,
                     state_tangent,
@@ -2681,45 +3676,298 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     args,
                 )
                 candidate_state, candidate_coordinate = corrector_result.state
-            linear_preparations += int(corrector_result.linear_preparations)
-            linear_numeric_refreshes += int(corrector_result.linear_numeric_refreshes)
-            linear_solves += int(corrector_result.linear_solves)
-            corrector_iterations += int(corrector_result.iterations)
-            equation_residual = problem.residual(
-                candidate_state, candidate_coordinate, args
+            (
+                candidate_iterations,
+                candidate_residual_evaluations,
+                candidate_jvp_evaluations,
+                candidate_vjp_evaluations,
+                candidate_jacobian_preparations,
+                candidate_linear_solves,
+                candidate_linear_iterations,
+                candidate_setup_refreshes,
+                candidate_numeric_refreshes,
+            ) = _corrector_work(corrector_result)
+            corrector_iterations += candidate_iterations
+            corrector_residual_evaluations += candidate_residual_evaluations
+            corrector_jvp_evaluations += candidate_jvp_evaluations
+            corrector_vjp_evaluations += candidate_vjp_evaluations
+            corrector_jacobian_preparations += candidate_jacobian_preparations
+            corrector_linear_solves += candidate_linear_solves
+            corrector_linear_iterations += candidate_linear_iterations
+            corrector_setup_refreshes += candidate_setup_refreshes
+            corrector_numeric_refreshes += candidate_numeric_refreshes
+            last_corrector_provenance = corrector_result.provenance
+            if direct_target_correction:
+                target_corrections += 1
+            last_corrector_status = corrector_result.status
+            equation_residual = _execution_residual(
+                problem,
+                geometry,
+                candidate_state,
+                candidate_coordinate,
+                args,
             )
-            candidate_residual_norm = _tree_norm(equation_residual)
+            candidate_residual_norm = geometry.residual_norm(equation_residual)
             accepted = bool(
-                corrector_result.successful
-                & (candidate_residual_norm <= method.residual_tolerance)
-                & problem.contains_coordinate(candidate_coordinate)
+                _corrector_success(
+                    corrector_result,
+                    candidate_residual_norm,
+                    method,
+                )
+                and problem.contains_coordinate(candidate_coordinate)
             )
+            if (
+                direct_target_correction
+                and plan.terminal_coordinate is not None
+                and not accepted
+            ):
+                target_failure_seen = True
+            target_reached_this_step = bool(
+                accepted
+                and plan.terminal_coordinate is not None
+                and candidate_coordinate
+                == jnp.asarray(plan.terminal_coordinate, dtype=coordinate.dtype)
+            )
+            if (
+                accepted
+                and not target_reached_this_step
+                and plan.terminal_coordinate is not None
+                and _coordinate_target_crossed(
+                    coordinate,
+                    candidate_coordinate,
+                    plan.terminal_coordinate,
+                )
+            ):
+                denominator = float(candidate_coordinate - coordinate)
+                fraction = (plan.terminal_coordinate - float(coordinate)) / denominator
+                target_seed = jax.tree.map(
+                    lambda left, right, fraction=fraction: (
+                        left + fraction * (right - left)
+                    ),
+                    state,
+                    candidate_state,
+                )
+                target_coordinate = jnp.asarray(
+                    plan.terminal_coordinate,
+                    dtype=coordinate.dtype,
+                )
+                target_result, _ = _correct_state(
+                    problem,
+                    geometry,
+                    target_seed,
+                    target_coordinate,
+                    method,
+                    None,
+                    args,
+                )
+                (
+                    target_iterations,
+                    target_residual_evaluations,
+                    target_jvp_evaluations,
+                    target_vjp_evaluations,
+                    target_jacobian_preparations,
+                    target_linear_solves,
+                    target_linear_iterations,
+                    target_setup_refreshes,
+                    target_numeric_refreshes,
+                ) = _corrector_work(target_result)
+                corrector_iterations += target_iterations
+                corrector_residual_evaluations += target_residual_evaluations
+                corrector_jvp_evaluations += target_jvp_evaluations
+                corrector_vjp_evaluations += target_vjp_evaluations
+                corrector_jacobian_preparations += target_jacobian_preparations
+                corrector_linear_solves += target_linear_solves
+                corrector_linear_iterations += target_linear_iterations
+                corrector_setup_refreshes += target_setup_refreshes
+                corrector_numeric_refreshes += target_numeric_refreshes
+                target_corrections += 1
+                last_corrector_provenance = target_result.provenance
+                target_residual = _execution_residual(
+                    problem,
+                    geometry,
+                    target_result.state,
+                    target_coordinate,
+                    args,
+                )
+                target_residual_norm = geometry.residual_norm(target_residual)
+                target_success = _corrector_success(
+                    target_result,
+                    target_residual_norm,
+                    method,
+                )
+                if target_success:
+                    candidate_state = target_result.state
+                    candidate_coordinate = target_coordinate
+                    candidate_residual_norm = target_residual_norm
+                    corrector_result = target_result
+                    last_corrector_status = target_result.status
+                    target_reached_this_step = True
+                else:
+                    accepted = False
+                    target_failure_seen = True
+                    last_corrector_status = target_result.status
             if accepted:
+                old_state_tangent = state_tangent
+                old_coordinate_tangent = coordinate_tangent
+                if (
+                    isinstance(method, PseudoArclengthContinuation)
+                    and method.tangent_update == "bordered"
+                ):
+                    (
+                        candidate_state_tangent,
+                        candidate_coordinate_tangent,
+                        candidate_tangent_status,
+                        candidate_tangent_usable,
+                        candidate_tangent_residual_norm,
+                        candidate_tangent_alignment,
+                    ) = _bordered_tangent(
+                        problem,
+                        geometry,
+                        candidate_state,
+                        candidate_coordinate,
+                        old_state_tangent,
+                        old_coordinate_tangent,
+                        method,
+                        args,
+                    )
+                else:
+                    (
+                        candidate_state_tangent,
+                        candidate_coordinate_tangent,
+                    ) = _normalized_secant(
+                        state,
+                        coordinate,
+                        candidate_state,
+                        candidate_coordinate,
+                        old_state_tangent,
+                        old_coordinate_tangent,
+                        geometry,
+                    )
+                    candidate_tangent_status = jnp.asarray(
+                        LinearSolveStatus.SUCCESS,
+                        dtype=jnp.int32,
+                    )
+                    candidate_tangent_residual_norm = _tangent_residual_norm(
+                        problem,
+                        geometry,
+                        candidate_state,
+                        candidate_coordinate,
+                        candidate_state_tangent,
+                        candidate_coordinate_tangent,
+                        args,
+                    )
+                    candidate_tangent_alignment = geometry.augmented_inner(
+                        old_state_tangent,
+                        old_coordinate_tangent,
+                        candidate_state_tangent,
+                        candidate_coordinate_tangent,
+                    )
+                    candidate_tangent_usable = bool(
+                        _tree_allfinite(candidate_state_tangent)
+                        & jnp.isfinite(candidate_coordinate_tangent)
+                        & jnp.isfinite(candidate_tangent_residual_norm)
+                        & jnp.isfinite(candidate_tangent_alignment)
+                    )
+                if not candidate_tangent_usable:
+                    tangent_failure_seen = True
+                    tangent_failures += 1
+                    rejected_steps += 1
+                    retries += 1
+                    step_size = max(
+                        method.minimum_step,
+                        step_size * method.contraction,
+                    )
+                    events.append(
+                        ContinuationEvent(
+                            "tangent-retry",
+                            coordinate,
+                            indicator=candidate_tangent_residual_norm,
+                            source_status=candidate_tangent_status,
+                            point_id=points[-1].point_id,
+                            message="Candidate tangent failed; continuation step reduced.",
+                        )
+                    )
+                    accepted = False
+                    continue
+                if (
+                    isinstance(method, PseudoArclengthContinuation)
+                    and method.minimum_tangent_alignment is not None
+                    and float(candidate_tangent_alignment)
+                    < method.minimum_tangent_alignment
+                ):
+                    curvature_failure_seen = True
+                    curvature_rejections += 1
+                    rejected_steps += 1
+                    retries += 1
+                    step_size = max(
+                        method.minimum_step,
+                        step_size * method.contraction,
+                    )
+                    events.append(
+                        ContinuationEvent(
+                            "curvature-retry",
+                            coordinate,
+                            indicator=candidate_tangent_alignment,
+                            source_status=candidate_tangent_status,
+                            point_id=points[-1].point_id,
+                            message=(
+                                "Candidate tangent alignment was below the configured "
+                                "minimum; continuation step reduced."
+                            ),
+                        )
+                    )
+                    accepted = False
+                    continue
+                accepted_step_size = _branch_step_size(
+                    state,
+                    coordinate,
+                    candidate_state,
+                    candidate_coordinate,
+                    geometry,
+                )
                 break
             rejected_steps += 1
             retries += 1
             step_size = max(method.minimum_step, step_size * method.contraction)
             events.append(
                 ContinuationEvent(
-                    "corrector-retry",
+                    (
+                        "target-corrector-retry"
+                        if target_failure_seen
+                        else "corrector-retry"
+                    ),
                     coordinate,
                     indicator=step_size,
-                    source_status=corrector_result.status,
+                    source_status=last_corrector_status,
                     point_id=points[-1].point_id,
-                    message="Corrector rejected; continuation step reduced.",
+                    message=(
+                        "Target corrector rejected; continuation step reduced."
+                        if target_failure_seen
+                        else "Corrector rejected; continuation step reduced."
+                    ),
                 )
             )
         if bound_reached:
             break
         if not accepted:
-            status = ContinuationStatus.CORRECTOR_FAILED
-            termination_reason = "corrector recovery exhausted"
+            if curvature_failure_seen:
+                status = ContinuationStatus.CURVATURE_LIMIT_REACHED
+                termination_reason = "curvature recovery exhausted"
+            elif tangent_failure_seen:
+                status = ContinuationStatus.TANGENT_FAILED
+                termination_reason = "tangent recovery exhausted"
+            elif target_failure_seen:
+                status = ContinuationStatus.TARGET_CORRECTOR_FAILED
+                termination_reason = "target corrector recovery exhausted"
+            else:
+                status = ContinuationStatus.CORRECTOR_FAILED
+                termination_reason = "corrector recovery exhausted"
             events.append(
                 ContinuationEvent(
                     "corrector-failure",
                     coordinate,
                     indicator=step_size,
-                    source_status=corrector_result.status,
+                    source_status=last_corrector_status,
                     point_id=points[-1].point_id,
                     message="Minimum step or retry budget reached.",
                 )
@@ -2727,22 +3975,29 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             break
 
         previous_point = points[-1]
-        old_state_tangent = state_tangent
         old_coordinate_tangent = coordinate_tangent
-        state_tangent, coordinate_tangent = _normalized_secant(
-            state,
-            coordinate,
-            candidate_state,
-            candidate_coordinate,
-            old_state_tangent,
-            old_coordinate_tangent,
-        )
+        state_tangent = candidate_state_tangent
+        coordinate_tangent = candidate_coordinate_tangent
+        tangent_status = candidate_tangent_status
+        tangent_residual_norm = candidate_tangent_residual_norm
+        tangent_alignment = candidate_tangent_alignment
         state = candidate_state
         coordinate = candidate_coordinate
         fold_candidate = _sign_crossed(old_coordinate_tangent, coordinate_tangent)
         point_id = f"{plan.branch_id}/{point_index}"
+        public_state = geometry.state_from_execution(state)
+        public_state_tangent = geometry.state_tangent_from_execution(
+            state,
+            state_tangent,
+        )
         stability = (
-            plan.stability_analyzer.analyze(problem, state, coordinate, args)
+            plan.stability_analyzer.analyze(
+                problem,
+                public_state,
+                coordinate,
+                args,
+                geometry=geometry,
+            )
             if plan.stability_analyzer is not None
             else None
         )
@@ -2754,18 +4009,20 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             args,
         )
         current_point = BranchPoint(
-            state=state,
+            state=public_state,
             coordinate=coordinate,
             parameters=physical_parameters,
-            tangent_state=state_tangent,
+            tangent_state=public_state_tangent,
             tangent_coordinate=coordinate_tangent,
             tangent_parameters=physical_parameter_tangent,
             residual_norm=candidate_residual_norm,
-            step_size=step_size,
-            corrector_iterations=corrector_result.iterations,
+            step_size=accepted_step_size,
+            tangent_residual_norm=tangent_residual_norm,
+            tangent_alignment=tangent_alignment,
+            corrector_iterations=corrector_result.diagnostics.iterations,
             corrector_retries=retries,
             status=corrector_result.status,
-            tangent_status=LinearSolveStatus.SUCCESS,
+            tangent_status=tangent_status,
             fold_candidate=fold_candidate,
             point_id=point_id,
             parent_point_id=previous_point.point_id,
@@ -2800,17 +4057,40 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             )
         _record_stability_events(events, brackets, previous_point, current_point)
         monitor_events += _observe_monitors(
-            plan.monitors, problem, previous_point, current_point, args, events
+            plan.monitors,
+            problem,
+            previous_point,
+            current_point,
+            args,
+            events,
         )
         points.append(current_point)
         accepted_steps += 1
-        iterations = int(corrector_result.iterations)
+        if target_reached_this_step:
+            events.append(
+                ContinuationEvent(
+                    "coordinate-target",
+                    coordinate,
+                    indicator=coordinate,
+                    point_id=current_point.point_id,
+                    message="The corrected branch reached the terminal coordinate.",
+                )
+            )
+            terminal_reached = True
+            status = ContinuationStatus.SUCCESS
+            termination_reason = "terminal coordinate reached"
+            break
+        iterations = int(corrector_result.diagnostics.iterations)
         if retries == 0 and iterations <= method.target_corrector_steps:
             step_size = min(method.maximum_step, step_size * method.growth)
         elif iterations > 2 * method.target_corrector_steps:
             step_size = max(method.minimum_step, step_size * method.contraction)
     else:
-        status = ContinuationStatus.SUCCESS
+        if plan.terminal_coordinate is None or terminal_reached:
+            status = ContinuationStatus.SUCCESS
+        else:
+            status = ContinuationStatus.TARGET_NOT_REACHED
+            termination_reason = "requested steps exhausted before target"
 
     return _continuation_result(
         prepared,
@@ -2823,17 +4103,25 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
         accepted_steps=accepted_steps,
         rejected_steps=rejected_steps,
         corrector_iterations=corrector_iterations,
+        corrector_residual_evaluations=corrector_residual_evaluations,
+        corrector_jvp_evaluations=corrector_jvp_evaluations,
+        corrector_vjp_evaluations=corrector_vjp_evaluations,
+        corrector_jacobian_preparations=corrector_jacobian_preparations,
+        corrector_linear_solves=corrector_linear_solves,
+        corrector_linear_iterations=corrector_linear_iterations,
+        corrector_setup_refreshes=corrector_setup_refreshes,
+        corrector_numeric_refreshes=corrector_numeric_refreshes,
         tangent_failures=tangent_failures,
         spectral_evaluations=spectral_evaluations,
         monitor_events=monitor_events,
-        linear_preparations=linear_preparations,
-        linear_numeric_refreshes=linear_numeric_refreshes,
-        linear_solves=linear_solves,
+        target_corrections=target_corrections,
+        curvature_rejections=curvature_rejections,
         corrector_prepared_linear=(
             initial_prepared_linear
             if corrector_prepared_linear is None
             else corrector_prepared_linear
         ),
+        corrector_provenance=last_corrector_provenance,
     )
 
 
@@ -2850,6 +4138,7 @@ def continue_branch(
     args: Any = None,
     stability_analyzer: AbstractStabilityAnalyzer | None = None,
     monitors: Sequence[AbstractBranchMonitor] = (),
+    terminal_coordinate: float | None = None,
     plan_id: str | None = None,
 ) -> ContinuationResult:
     """Plan, prepare, and run one immutable continuation result."""
@@ -2860,6 +4149,7 @@ def continue_branch(
         branch_id=branch_id,
         stability_analyzer=stability_analyzer,
         monitors=monitors,
+        terminal_coordinate=terminal_coordinate,
         plan_id=plan_id,
     )
     prepared = prepare_continuation(

@@ -379,11 +379,13 @@ sharding, and first/second-order solution maps remain declared rather than
 inferred.
 
 Generic parameterized residual curves and local bifurcation workflows live in
-`phydrax.continuation`. Natural and pseudo-arclength continuation reuse prepared
-bordered linear solves, adaptive rejection policies, event localization, and
-dense or Krylov stability analyzers. Fold, Hopf, and pitchfork extended systems
-separate numerical convergence from nullspace, transversality, spectral, and
-symmetry certificates; branch switching requires an explicit validated seed.
+`phydrax.continuation`. Natural and pseudo-arclength continuation compose complete
+nonlinear correctors, exact coordinate targets, explicit state/residual geometry,
+canonical real-coordinate maps, adaptive curvature rejection, full-augmented event
+localization, and dense or Krylov stability analyzers. Fold, Hopf, branch-point, and
+pitchfork workflows separate numerical convergence from nullspace, transversality,
+spectral, symmetry, and normal-form certificates; branch switching requires certified
+geometry and a validated seed.
 
 Lyapunov spectra for flows and maps, control-theoretic Gramian actions, implicit
 Lyapunov/Riccati sensitivities, state-space score/Fisher actions, empirical

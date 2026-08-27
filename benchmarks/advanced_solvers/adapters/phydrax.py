@@ -585,22 +585,27 @@ class PhydraxAdapter(BenchmarkAdapter):
             )
         if isinstance(problem, ContinuationProblem):
             continuation = import_module("phydrax.continuation")
+            nonlinear = import_module("phydrax.nonlinear")
             native_problem = continuation.ParameterContinuationProblem(
                 lambda state, parameter, args: state * state - parameter,
                 problem_id=f"benchmark-fold:{problem.identity()['fingerprint']}",
             )
+            maximum_corrector_steps = min(20, spec.tolerances.max_steps)
             method = continuation.PseudoArclengthContinuation(
+                termination=nonlinear.NonlinearTermination(
+                    absolute_residual=max(
+                        spec.tolerances.absolute,
+                        spec.tolerances.relative,
+                    ),
+                    relative_residual=0.0,
+                    absolute_step=0.0,
+                    relative_step=0.0,
+                    maximum_steps=maximum_corrector_steps,
+                ),
                 initial_step=problem.initial_step,
                 minimum_step=problem.min_step,
                 maximum_step=problem.max_step,
-                maximum_corrector_steps=min(
-                    20,
-                    spec.tolerances.max_steps,
-                ),
-                residual_tolerance=max(
-                    spec.tolerances.absolute,
-                    spec.tolerances.relative,
-                ),
+                target_corrector_steps=min(4, maximum_corrector_steps),
                 direction=problem.direction,
             )
             initial_coordinate = jnp.asarray(

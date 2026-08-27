@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Reworked generic continuation around exact terminal coordinates, complete
+  `phydrax.nonlinear` correctors, prepared Newton/trust-region reuse, explicit
+  state/residual geometry, canonical real-coordinate maps for complex, algebra, and
+  constrained spectral states, tangent predictors, full bordered tangents, curvature
+  rejection, full-augmented event localization, execution-coordinate stability, and
+  geometry-aware bifurcation evidence and normal forms.
 - Added independently selectable tangent and adjoint linear policies for exact
   implicit root derivatives, plus prepared lagged-linear nonlinear updates that
   refresh structure-preserving operators, retain complete failure evidence, and

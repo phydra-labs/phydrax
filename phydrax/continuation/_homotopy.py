@@ -15,9 +15,11 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
-from .._tree_math import tree_allfinite, tree_norm
+from .._tree_math import tree_allfinite
+from ..linalg import AbstractVectorSpace
 from ..nonlinear import NonlinearSystemProblem
 from ._core import ParameterContinuationProblem
+from ._geometry import ContinuationGeometry, ContinuationRepresentationPolicy
 
 
 class HomotopyEndpointStatus(IntEnum):
@@ -73,6 +75,9 @@ class HomotopyProblem(StrictModule):
         *,
         physical_parameter: Callable[[Array], Array] | None = None,
         homotopy_id: str = "homotopy",
+        state_space: AbstractVectorSpace | None = None,
+        residual_space: AbstractVectorSpace | None = None,
+        representation: ContinuationRepresentationPolicy | None = None,
     ):
         if not callable(residual):
             raise TypeError("residual must be callable.")
@@ -85,6 +90,9 @@ class HomotopyProblem(StrictModule):
             residual,
             parameter_lower=0.0,
             parameter_upper=1.0,
+            state_space=state_space,
+            residual_space=residual_space,
+            representation=representation,
             problem_id=identifier,
         )
         self.physical_parameter_function = physical_parameter
@@ -137,17 +145,32 @@ class HomotopyProblem(StrictModule):
         *,
         tolerance: float = 1e-8,
         args: Any = None,
+        geometry: ContinuationGeometry | None = None,
     ) -> HomotopyEndpointCertificate:
         tolerance_ = float(tolerance)
         if not isfinite(tolerance_) or tolerance_ < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
         start_residual = self.residual(start_state, jnp.asarray(0.0), args)
         target_residual = self.residual(target_state, jnp.asarray(1.0), args)
-        start_norm = tree_norm(start_residual)
-        target_norm = tree_norm(target_residual)
+        geometry_ = geometry
+        if geometry_ is None:
+            state_space, residual_space = self.continuation_problem.declared_spaces()
+            geometry_ = ContinuationGeometry.resolve(
+                start_state,
+                start_residual,
+                state_space=state_space,
+                residual_space=residual_space,
+                representation=self.continuation_problem.representation_policy(),
+            )
+        if not isinstance(geometry_, ContinuationGeometry):
+            raise TypeError("geometry must be a ContinuationGeometry or None.")
+        start_coordinates = geometry_.residual_to_execution(start_residual)
+        target_coordinates = geometry_.residual_to_execution(target_residual)
+        start_norm = geometry_.residual_norm(start_coordinates)
+        target_norm = geometry_.residual_norm(target_coordinates)
         finite = (
-            tree_allfinite(start_residual)
-            & tree_allfinite(target_residual)
+            tree_allfinite(start_coordinates)
+            & tree_allfinite(target_coordinates)
             & jnp.isfinite(start_norm)
             & jnp.isfinite(target_norm)
         )
@@ -252,6 +275,9 @@ def parameter_homotopy(
     return HomotopyProblem(
         residual,
         physical_parameter=physical_parameter,
+        state_space=problem.state_space,
+        residual_space=problem.residual_space,
+        representation=problem.representation,
         homotopy_id=identifier,
     )
 

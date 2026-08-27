@@ -19,7 +19,32 @@ from .._strict import AbstractAttribute, StrictModule
 from .._tree_math import tree_norm
 from ..linalg import AbstractVectorSpace
 from ._bifurcation import HopfState, NullspaceEvidence
-from ._core import ContinuationCurveProblem
+from ._core import _execution_residual, ContinuationCurveProblem
+from ._geometry import ContinuationGeometry
+
+
+class _ExecutionCurve:
+    def __init__(
+        self,
+        problem: ContinuationCurveProblem,
+        geometry: ContinuationGeometry,
+        args: Any,
+        /,
+    ):
+        self.problem = problem
+        self.geometry = geometry
+        self.args = args
+        self.problem_id = problem.problem_id
+
+    def residual(self, state, parameter, args=None, /):
+        del args
+        return _execution_residual(
+            self.problem,
+            self.geometry,
+            state,
+            parameter,
+            self.args,
+        )
 
 
 class NormalFormStatus(IntEnum):
@@ -565,7 +590,7 @@ def fold_normal_form(
     problem: ContinuationCurveProblem,
     state: PyTree[Any],
     parameter: Any,
-    state_space: AbstractVectorSpace,
+    geometry: ContinuationGeometry,
     nullspace: NullspaceEvidence,
     /,
     *,
@@ -575,32 +600,38 @@ def fold_normal_form(
     """Compute the normalized quadratic coefficient of a fold."""
     if not isinstance(problem, ContinuationCurveProblem):
         raise TypeError("problem must be a ContinuationCurveProblem.")
-    if not isinstance(state_space, AbstractVectorSpace):
-        raise TypeError("state_space must be an AbstractVectorSpace.")
+    if not isinstance(geometry, ContinuationGeometry):
+        raise TypeError("geometry must be a ContinuationGeometry.")
     if not isinstance(nullspace, NullspaceEvidence):
         raise TypeError("nullspace must be NullspaceEvidence.")
     policy_ = NormalFormPolicy() if policy is None else policy
     if not isinstance(policy_, NormalFormPolicy):
         raise TypeError("policy must be NormalFormPolicy or None.")
-    state_ = state_space.validate(state)
+    state_ = geometry.state_to_execution(state)
     parameter_ = jnp.asarray(parameter)
-    pairing = state_space.inner(
-        nullspace.left_nullvector,
+    right = geometry.state_tangent_to_execution(
+        state,
         nullspace.right_nullvector,
     )
-    normalized_left = _tree_scale(
-        1.0 / jnp.conj(pairing),
-        nullspace.left_nullvector,
+    left = geometry.residual_to_execution(nullspace.left_nullvector)
+    pairing = jnp.vdot(
+        geometry.execution_residual_space.flatten(left),
+        geometry.execution_state_space.flatten(right),
     )
+    normalized_left = _tree_scale(1.0 / jnp.conj(pairing), left)
+    execution_problem = _ExecutionCurve(problem, geometry, args)
     curvature = _bilinear_real(
-        problem,
+        execution_problem,
         state_,
         parameter_,
-        nullspace.right_nullvector,
-        nullspace.right_nullvector,
-        args,
+        right,
+        right,
+        None,
     )
-    coefficient = 0.5 * state_space.inner(normalized_left, curvature)
+    coefficient = 0.5 * geometry.execution_residual_space.inner(
+        normalized_left,
+        curvature,
+    )
     status, finite = _verified_nullspace_status(nullspace, policy_, coefficient)
     diagnostics = NormalFormDiagnostics(
         mode_overlap=jnp.abs(pairing),
@@ -609,7 +640,10 @@ def fold_normal_form(
             [nullspace.right_residual_norm, nullspace.left_residual_norm]
         ),
         linear_residuals=jnp.empty((0,), dtype=jnp.real(coefficient).dtype),
-        linear_condition_estimates=jnp.empty((0,), dtype=jnp.real(coefficient).dtype),
+        linear_condition_estimates=jnp.empty(
+            (0,),
+            dtype=jnp.real(coefficient).dtype,
+        ),
         derivative_evaluations=2,
         finite=finite,
     )
@@ -628,7 +662,7 @@ def pitchfork_normal_form(
     problem: ContinuationCurveProblem,
     state: PyTree[Any],
     parameter: Any,
-    state_space: AbstractVectorSpace,
+    geometry: ContinuationGeometry,
     nullspace: NullspaceEvidence,
     linear_solver: AbstractNormalFormLinearSolver,
     /,
@@ -639,8 +673,8 @@ def pitchfork_normal_form(
     """Compute Lyapunov--Schmidt coefficients using an external range solve."""
     if not isinstance(problem, ContinuationCurveProblem):
         raise TypeError("problem must be a ContinuationCurveProblem.")
-    if not isinstance(state_space, AbstractVectorSpace):
-        raise TypeError("state_space must be an AbstractVectorSpace.")
+    if not isinstance(geometry, ContinuationGeometry):
+        raise TypeError("geometry must be a ContinuationGeometry.")
     if not isinstance(nullspace, NullspaceEvidence):
         raise TypeError("nullspace must be NullspaceEvidence.")
     if not isinstance(linear_solver, AbstractNormalFormLinearSolver):
@@ -648,53 +682,61 @@ def pitchfork_normal_form(
     policy_ = NormalFormPolicy() if policy is None else policy
     if not isinstance(policy_, NormalFormPolicy):
         raise TypeError("policy must be NormalFormPolicy or None.")
-    state_ = state_space.validate(state)
+    state_ = geometry.state_to_execution(state)
     parameter_ = jnp.asarray(parameter)
-    right = nullspace.right_nullvector
-    pairing = state_space.inner(nullspace.left_nullvector, right)
-    normalized_left = _tree_scale(
-        1.0 / jnp.conj(pairing),
-        nullspace.left_nullvector,
+    right = geometry.state_tangent_to_execution(
+        state,
+        nullspace.right_nullvector,
     )
+    left = geometry.residual_to_execution(nullspace.left_nullvector)
+    pairing = jnp.vdot(
+        geometry.execution_residual_space.flatten(left),
+        geometry.execution_state_space.flatten(right),
+    )
+    normalized_left = _tree_scale(1.0 / jnp.conj(pairing), left)
+    execution_problem = _ExecutionCurve(problem, geometry, args)
     quadratic_vector = _bilinear_real(
-        problem,
+        execution_problem,
         state_,
         parameter_,
         right,
         right,
-        args,
+        None,
     )
-    quadratic = 0.5 * state_space.inner(normalized_left, quadratic_vector)
+    quadratic = 0.5 * geometry.execution_residual_space.inner(
+        normalized_left,
+        quadratic_vector,
+    )
     action = lambda direction: _tree_real(
-        _linear_action(problem, state_, parameter_, direction, args)
+        _linear_action(execution_problem, state_, parameter_, direction, None)
     )
     range_result = linear_solver.solve(
         action,
         _tree_scale(-1.0, quadratic_vector),
         system_id=f"{problem.problem_id}/pitchfork-range",
     )
-    actual_residual = tree_norm(
+    actual_residual = geometry.residual_norm(
         _tree_add(action(range_result.solution), quadratic_vector)
     )
     solve_residual = jnp.maximum(range_result.residual_norm, actual_residual)
     cubic_vector = _trilinear_real(
-        problem,
+        execution_problem,
         state_,
         parameter_,
         right,
         right,
         right,
-        args,
+        None,
     )
     interaction = _bilinear_real(
-        problem,
+        execution_problem,
         state_,
         parameter_,
         right,
         range_result.solution,
-        args,
+        None,
     )
-    cubic = state_space.inner(
+    cubic = geometry.execution_residual_space.inner(
         normalized_left,
         _tree_add(
             _tree_scale(1.0 / 6.0, cubic_vector),
@@ -761,7 +803,10 @@ def pitchfork_normal_form(
     return PitchforkNormalFormResult(
         quadratic_coefficient=quadratic,
         cubic_coefficient=cubic,
-        second_order_correction=range_result.solution,
+        second_order_correction=geometry.state_tangent_from_execution(
+            state_,
+            range_result.solution,
+        ),
         range_solve=range_result,
         diagnostics=diagnostics,
         status=status,
@@ -776,7 +821,7 @@ def pitchfork_normal_form(
 def hopf_first_lyapunov(
     problem: ContinuationCurveProblem,
     candidate: HopfState,
-    state_space: AbstractVectorSpace,
+    geometry: ContinuationGeometry,
     adjoint_mode_real: PyTree[Any],
     adjoint_mode_imaginary: PyTree[Any],
     linear_solver: AbstractNormalFormLinearSolver,
@@ -790,17 +835,37 @@ def hopf_first_lyapunov(
         raise TypeError("problem must be a ContinuationCurveProblem.")
     if not isinstance(candidate, HopfState):
         raise TypeError("candidate must be a HopfState.")
-    if not isinstance(state_space, AbstractVectorSpace):
-        raise TypeError("state_space must be an AbstractVectorSpace.")
+    if not isinstance(geometry, ContinuationGeometry):
+        raise TypeError("geometry must be a ContinuationGeometry.")
+    if not geometry.execution_state_space.compatible(geometry.execution_residual_space):
+        raise ValueError("Hopf normal forms require an execution-space endomorphism.")
+    if geometry.representation.state_coordinates is not None:
+        raise ValueError(
+            "Hopf normal forms for mapped public states require a dedicated "
+            "higher-complex representation."
+        )
     if not isinstance(linear_solver, AbstractNormalFormLinearSolver):
         raise TypeError("linear_solver must be an AbstractNormalFormLinearSolver.")
     policy_ = NormalFormPolicy() if policy is None else policy
     if not isinstance(policy_, NormalFormPolicy):
         raise TypeError("policy must be NormalFormPolicy or None.")
-    state = state_space.validate(candidate.physical_state)
-    adjoint_real = state_space.validate(adjoint_mode_real)
-    adjoint_imaginary = state_space.validate(adjoint_mode_imaginary)
-    mode = _tree_complex(candidate.mode_real, candidate.mode_imaginary)
+    public_problem = problem
+    public_state = candidate.physical_state
+    state_space = geometry.execution_state_space
+    state = geometry.state_to_execution(public_state)
+    adjoint_real = geometry.residual_to_execution(adjoint_mode_real)
+    adjoint_imaginary = geometry.residual_to_execution(adjoint_mode_imaginary)
+    mode_real = geometry.state_tangent_to_execution(
+        public_state,
+        candidate.mode_real,
+    )
+    mode_imaginary = geometry.state_tangent_to_execution(
+        public_state,
+        candidate.mode_imaginary,
+    )
+    problem = _ExecutionCurve(public_problem, geometry, args)
+    args = None
+    mode = _tree_complex(mode_real, mode_imaginary)
     adjoint = _tree_complex(adjoint_real, adjoint_imaginary)
     overlap = _complex_inner(state_space, adjoint, mode)
     normalized_adjoint = _tree_scale(1.0 / jnp.conj(overlap), adjoint)
@@ -986,11 +1051,39 @@ def hopf_first_lyapunov(
         derivative_evaluations=22,
         finite=finite,
     )
+    zero_real = jax.tree.map(
+        lambda value, template: jnp.asarray(value, dtype=template.dtype),
+        _tree_real(zero_result.solution),
+        state,
+    )
+    zero_imaginary = jax.tree.map(
+        lambda value, template: jnp.asarray(value, dtype=template.dtype),
+        _tree_imaginary(zero_result.solution),
+        state,
+    )
+    second_real = jax.tree.map(
+        lambda value, template: jnp.asarray(value, dtype=template.dtype),
+        _tree_real(second_result.solution),
+        state,
+    )
+    second_imaginary = jax.tree.map(
+        lambda value, template: jnp.asarray(value, dtype=template.dtype),
+        _tree_imaginary(second_result.solution),
+        state,
+    )
+    zero_public = _tree_complex(
+        geometry.state_tangent_from_execution(state, zero_real),
+        geometry.state_tangent_from_execution(state, zero_imaginary),
+    )
+    second_public = _tree_complex(
+        geometry.state_tangent_from_execution(state, second_real),
+        geometry.state_tangent_from_execution(state, second_imaginary),
+    )
     return HopfNormalFormResult(
         first_lyapunov_coefficient=coefficient,
         g21=g21,
-        zero_harmonic_correction=zero_result.solution,
-        second_harmonic_correction=second_result.solution,
+        zero_harmonic_correction=zero_public,
+        second_harmonic_correction=second_public,
         zero_harmonic_solve=zero_result,
         second_harmonic_solve=second_result,
         diagnostics=diagnostics,
