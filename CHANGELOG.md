@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added exact mathematical complex parameter interchange for dense and low-rank
+  holomorphic layers, HMLPs, polynomial and constrained frame coefficients,
+  meromorphic coefficients, and trainable pole locations while retaining real
+  Cartesian trainable leaves, destination dtype/sharding, and affine membership
+  evidence.
 - Generalized representation-preserving holomorphic constraints around reusable
   real-coordinate frames, target-independent functional operators, batched
   minimum-norm lifts, coupled outputs, and target-specific affine maps. Added

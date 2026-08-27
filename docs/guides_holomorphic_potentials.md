@@ -159,6 +159,29 @@ claim.
 the Kähler metric is invariant. `KahlerGaugeInvarianceReport` is a numerical validation
 of that construction, not the source of the proof.
 
+## Complex parameter interchange
+
+`phx.export.export_complex_parameters` converts supported real Cartesian model leaves
+into a canonical `ComplexInterchangeState`. Dense and low-rank complex layers,
+`HolomorphicMLP`, polynomial potentials, constrained frame coefficients,
+meromorphic coefficients, and trainable pole locations retain explicit provider and
+architecture identities.
+
+```python
+state = phx.export.export_complex_parameters(model)
+restored = phx.export.import_complex_parameters(model_template, state)
+```
+
+Import requires exact architecture and array shapes. Precision narrowing is rejected
+unless enabled by `ComplexImportPolicy`; destination leaf dtypes and sharding remain
+authoritative. Constrained coefficient import converts the complex matrix back to real
+frame coordinates, recovers nullspace coordinates, and rejects values outside the
+destination affine set.
+
+This is a mathematical interchange surface, not native complex training. The restored
+model still has real trainable leaves and uses the existing real optimizer,
+continuation, checkpoint, and constraint semantics.
+
 ## Evidence boundaries
 
 The following remain intentionally uncertified:
