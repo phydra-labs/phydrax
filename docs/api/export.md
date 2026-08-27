@@ -2,6 +2,47 @@
 
 Deployment utilities for saving learned inference functions.
 
+## Mathematical complex parameter interchange
+
+Phydrax holomorphic layers and potentials keep trainable state in explicit real
+Cartesian leaves. `export_complex_parameters` presents those leaves as canonical
+mathematical complex arrays; `import_complex_parameters` validates and splits a
+compatible complex state back into the destination model without changing its
+optimizer geometry or PyTree layout.
+
+Complex interchange is not a training checkpoint. It excludes optimizer state, RNG
+state, schedules, normalization progress, and loop position. Constrained-potential
+exports contain derived full frame coefficients; import verifies affine-set
+membership and never silently projects invalid coefficients.
+
+::: phydrax.export.ComplexInterchangeEntry
+
+---
+
+::: phydrax.export.ComplexInterchangeState
+
+---
+
+::: phydrax.export.ComplexImportPolicy
+
+---
+
+::: phydrax.export.export_complex_parameters
+
+---
+
+::: phydrax.export.import_complex_parameters
+
+---
+
+::: phydrax.export.frame_coefficients_to_complex
+
+---
+
+::: phydrax.export.complex_coefficients_to_frame
+
+## ONNX deployment
+
 !!! note
     ONNX export is for a single learned function, not a full solver. A solver
     contains constraints, samplers, losses, optimizer state, and logging behavior;
