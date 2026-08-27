@@ -4,19 +4,27 @@
 
 """Conforming finite element discretizations."""
 
-from ._p1 import (
-    p1_local_matrices,
-    P1DirichletElimination,
-    P1FiniteElementDiscretization,
-    P1FiniteElementPlan,
-    P1HeatDynamics,
+from ._constraints import dirichlet_constraint, FiniteElementDirichletConstraint
+from ._generic import (
+    FiniteElementDiscretization,
+    FiniteElementDofMap,
+    FiniteElementFieldSpec,
+    FiniteElementPlan,
+    IntegrationDomain,
 )
+from ._precision import FiniteElementPrecisionPolicy
+from ._reference import FiniteElementSpec, lagrange_element
 
 
 __all__ = [
-    "P1DirichletElimination",
-    "P1FiniteElementDiscretization",
-    "P1FiniteElementPlan",
-    "P1HeatDynamics",
-    "p1_local_matrices",
+    "FiniteElementDirichletConstraint",
+    "dirichlet_constraint",
+    "FiniteElementDiscretization",
+    "FiniteElementDofMap",
+    "FiniteElementFieldSpec",
+    "FiniteElementPlan",
+    "FiniteElementPrecisionPolicy",
+    "FiniteElementSpec",
+    "IntegrationDomain",
+    "lagrange_element",
 ]

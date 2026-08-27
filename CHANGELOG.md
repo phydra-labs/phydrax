@@ -21,6 +21,12 @@
 - Added several-complex-variable multi-indices, analytic multijets for
   polynomial frames, holomorphic MLPs, and product potentials, pluriharmonic
   real-field wrappers, and metric-invariant holomorphic Kähler gauges.
+- Replaced the scalar triangular P1 vertical slice with a shared computational
+  cell mesh and generic fitted finite-element substrate: triangle P1/P2,
+  quadrilateral Q1, tetrahedron P1, global DOF maps, fixed-topology geometry
+  differentiation, dual-space weak residuals, affine Dirichlet constraints,
+  compensated functionals, sparse affine lowering, and native linear,
+  nonlinear, and DAE adapters.
 - Added shared twofold compensated conservation accounting across structured,
   triangle, unstructured, spectral, and SBP conservation diagnostics, plus
   finite-volume ledgers, remap, overset/sliding, multiblock, small-cell, and

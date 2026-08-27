@@ -40,33 +40,10 @@
 
 ::: phydrax.equations.CompiledDiscreteResidual
 
-## P1 finite elements
+## Finite elements
 
-::: phydrax.discretization.P1FiniteElementPlan
-
----
-
-::: phydrax.discretization.P1FiniteElementDiscretization
-
----
-
-::: phydrax.discretization.P1DirichletElimination
-
----
-
-::: phydrax.discretization.P1HeatDynamics
-
----
-
-::: phydrax.equations.VariationalProblemIR
-
----
-
-::: phydrax.equations.CompiledVariationalProblem
-
----
-
-::: phydrax.equations.compile_variational_problem
+The finite-element mesh, reference-element, field, constraint, form, functional,
+and compiler APIs are documented under [Finite elements](finite_element.md).
 
 ## Structured finite volume
 
