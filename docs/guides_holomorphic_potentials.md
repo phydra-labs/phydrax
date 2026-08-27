@@ -29,6 +29,43 @@ The resulting field is `Re(z²)`. `Domain.Model` attaches an algebraic Laplace
 certificate, so boundary conditions compose through ordinary residual penalties while
 generic hard enforcement is rejected.
 
+## Exact finite coefficient constraints
+
+`HolomorphicPolynomialConstraintPlan` restricts one scalar polynomial potential in
+real Cartesian coefficient space. Point constraints may select the real or imaginary
+part of the potential, its derivative along a supplied normal, or a Robin combination.
+Preparation uses the native dense SVD lifecycle to compute a minimum-norm lift and a
+canonical nullspace basis.
+
+```python
+constraints = (
+    phx.equations.HolomorphicPointConstraint.dirichlet(-1.0, 0.0),
+    phx.equations.HolomorphicPointConstraint.dirichlet(1.0, 0.0),
+)
+prepared = phx.equations.HolomorphicPolynomialConstraintPlan(
+    3,
+    constraints,
+).prepare()
+potential = phx.equations.ConstrainedHolomorphicPolynomialPotential(prepared)
+```
+
+Writing the real Cartesian polynomial coefficients as `q`, preparation constructs
+`q = q₀ + Nη` with `Aq₀ = b` and `AN = 0`. Only `η` is trainable. The affine map
+therefore preserves the holomorphic polynomial construction for every optimization
+step instead of multiplying it by a nonholomorphic trial function.
+
+`HolomorphicConstraintEvidence` records numerical rank, nullity, singular values,
+lift residual, nullspace residual, and their scale-aware tolerances. Inconsistent
+constraints and functionals that vanish identically on the selected polynomial basis
+fail during preparation.
+
+This contract is exact for the finite prepared functionals only. Point constraints do
+not certify a continuous boundary condition between the supplied points. Homogeneous
+constraints retain finite-subspace and linear-parameter evidence; nonzero targets form
+an affine finite-parametric family and are not presented to the linear trial-space
+solver as a linear subspace.
+
+
 ## Holomorphic MLP
 
 `phx.nn.models.HolomorphicMLP` uses dense or explicitly low-rank complex-affine

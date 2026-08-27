@@ -4,6 +4,8 @@ The Trefftz API provides fixed finite bases whose represented fields satisfy one
 homogeneous PDE, trainable real linear coefficient fields, construction certificates,
 and sampled residual audits. See [Exact PDE trial spaces](../../guides_exact_trial_spaces.md)
 for scientific assumptions and workflows.
+Holomorphic polynomial potentials and their coefficient-space constraints are
+documented under [Holomorphic potential fields](holomorphic.md).
 
 ::: phydrax.equations.trefftz.SimilarityNormalization
 

@@ -32,6 +32,14 @@ from ._holomorphic_composition import (
     HolomorphicFactorizationEvidence,
     HolomorphicProductPotential,
 )
+from ._holomorphic_constraints import (
+    ConstrainedHolomorphicPolynomialPotential,
+    HolomorphicConstraintComponent,
+    HolomorphicConstraintEvidence,
+    HolomorphicPointConstraint,
+    HolomorphicPolynomialConstraintPlan,
+    PreparedHolomorphicPolynomialConstraints,
+)
 from ._monogenic import LinearMonogenicField, MonogenicPolynomialBasis
 from ._polynomial import HarmonicPolynomialBasis, PolyharmonicAlmansiBasis
 
@@ -40,14 +48,19 @@ __all__ = [
     "AbstractTrefftzBasis",
     "audit_trial_space",
     "BiharmonicPotential2D",
+    "ConstrainedHolomorphicPolynomialPotential",
     "ComplexAffineNormalization",
     "HarmonicPolynomialBasis",
     "HarmonicPotential2D",
     "HelmholtzPlaneWaveBasis",
     "HolomorphicBranchBundle",
+    "HolomorphicConstraintComponent",
+    "HolomorphicConstraintEvidence",
     "HolomorphicFactorGaugeReport",
     "HolomorphicFactorizationEvidence",
     "HolomorphicProductPotential",
+    "HolomorphicPointConstraint",
+    "HolomorphicPolynomialConstraintPlan",
     "HolomorphicPolynomialPotential",
     "HolomorphicJet",
     "HolomorphicMapCertificate",
@@ -57,6 +70,7 @@ __all__ = [
     "LinearMonogenicField",
     "MonogenicPolynomialBasis",
     "PolyharmonicAlmansiBasis",
+    "PreparedHolomorphicPolynomialConstraints",
     "PlaneElasticityPotential2D",
     "PlaneIsotropicMaterial",
     "sample_unit_directions",

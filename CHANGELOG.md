@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added representation-preserving point value, supplied-normal derivative, and
+  Robin constraints for scalar holomorphic polynomial potentials. Native SVD
+  preparation now exposes rank, nullity, minimum-norm lift, canonical nullspace,
+  and residual evidence; only free real Cartesian nullspace coordinates train.
 - Added shared twofold compensated conservation accounting across structured,
   triangle, unstructured, spectral, and SBP conservation diagnostics, plus
   finite-volume ledgers, remap, overset/sliding, multiblock, small-cell, and
