@@ -24,7 +24,8 @@ from ..nonlinear import (
     NonlinearSystemProblem,
     NonlinearTermination,
 )
-from ._core import ContinuationCurveProblem
+from ._core import _execution_residual, ContinuationCurveProblem
+from ._geometry import ContinuationGeometry
 
 
 BifurcationKind = Literal["fold", "hopf", "branch-point", "pitchfork"]
@@ -996,7 +997,7 @@ class AbstractNullspaceAnalyzer(StrictModule):
         problem: ContinuationCurveProblem,
         state: PyTree[Any],
         parameter: Any,
-        state_space: AbstractVectorSpace,
+        geometry: ContinuationGeometry,
         args: Any = None,
         /,
     ) -> NullspaceEvidence:
@@ -1007,7 +1008,7 @@ class CallableNullspaceAnalyzer(AbstractNullspaceAnalyzer):
     """Adapter for externally solved right/left nullspaces."""
 
     function: Callable[
-        [ContinuationCurveProblem, PyTree[Any], Any, AbstractVectorSpace, Any],
+        [ContinuationCurveProblem, PyTree[Any], Any, ContinuationGeometry, Any],
         NullspaceEvidence,
     ]
     analyzer_id: str = eqx.field(static=True)
@@ -1015,7 +1016,7 @@ class CallableNullspaceAnalyzer(AbstractNullspaceAnalyzer):
     def __init__(
         self,
         function: Callable[
-            [ContinuationCurveProblem, PyTree[Any], Any, AbstractVectorSpace, Any],
+            [ContinuationCurveProblem, PyTree[Any], Any, ContinuationGeometry, Any],
             NullspaceEvidence,
         ],
         /,
@@ -1035,11 +1036,11 @@ class CallableNullspaceAnalyzer(AbstractNullspaceAnalyzer):
         problem: ContinuationCurveProblem,
         state: PyTree[Any],
         parameter: Any,
-        state_space: AbstractVectorSpace,
+        geometry: ContinuationGeometry,
         args: Any = None,
         /,
     ) -> NullspaceEvidence:
-        evidence = self.function(problem, state, parameter, state_space, args)
+        evidence = self.function(problem, state, parameter, geometry, args)
         if not isinstance(evidence, NullspaceEvidence):
             raise TypeError("A nullspace analyzer must return NullspaceEvidence.")
         return evidence
@@ -1049,7 +1050,7 @@ def evaluate_nullspace(
     problem: ContinuationCurveProblem,
     state: PyTree[Any],
     parameter: Any,
-    state_space: AbstractVectorSpace,
+    geometry: ContinuationGeometry,
     right_nullvector: PyTree[Any],
     left_nullvector: PyTree[Any],
     singular_values: Any,
@@ -1061,24 +1062,37 @@ def evaluate_nullspace(
     analyzer_id: str,
     args: Any = None,
 ) -> NullspaceEvidence:
-    """Evaluate residuals for nullvectors produced by an external spectral solve."""
+    """Evaluate right and left nullvectors in their declared execution spaces."""
     if not isinstance(problem, ContinuationCurveProblem):
         raise TypeError("problem must be a ContinuationCurveProblem.")
-    if not isinstance(state_space, AbstractVectorSpace):
-        raise TypeError("state_space must be an AbstractVectorSpace.")
-    state_ = state_space.validate(state)
-    right = state_space.validate(right_nullvector)
-    left = state_space.validate(left_nullvector)
+    if not isinstance(geometry, ContinuationGeometry):
+        raise TypeError("geometry must be a ContinuationGeometry.")
     parameter_ = _validate_scalar(parameter, "nullspace parameter")
-    residual_function = lambda value: problem.residual(value, parameter_, args)
+    state_ = geometry.state_to_execution(state)
+    right = geometry.state_tangent_to_execution(state, right_nullvector)
+    left = geometry.residual_to_execution(left_nullvector)
+
+    def residual_function(value):
+        return _execution_residual(
+            problem,
+            geometry,
+            value,
+            parameter_,
+            args,
+        )
+
     right_action = jax.jvp(residual_function, (state_,), (right,))[1]
     _, pullback = jax.vjp(residual_function, state_)
-    left_covector = state_space.riesz(left)
+    left_covector = geometry.execution_residual_space.riesz(left)
     adjoint_covector = pullback(left_covector)[0]
-    left_action = state_space.inverse_riesz(adjoint_covector)
-    right_norm = jnp.sqrt(jnp.maximum(jnp.real(state_space.inner(right, right)), 0.0))
-    left_norm = jnp.sqrt(jnp.maximum(jnp.real(state_space.inner(left, left)), 0.0))
-    pairing = state_space.inner(left, right)
+    left_action = geometry.execution_state_space.inverse_riesz(adjoint_covector)
+    right_norm = geometry.state_norm(right)
+    left_squared = jnp.real(geometry.execution_residual_space.inner(left, left))
+    left_norm = jnp.sqrt(jnp.maximum(left_squared, 0.0))
+    pairing = jnp.vdot(
+        geometry.execution_residual_space.flatten(left),
+        geometry.execution_state_space.flatten(right),
+    )
     overlap = jnp.abs(pairing)
     condition = jnp.where(
         overlap > 0.0,
@@ -1086,11 +1100,11 @@ def evaluate_nullspace(
         jnp.inf,
     )
     return NullspaceEvidence(
-        right_nullvector=right,
-        left_nullvector=left,
+        right_nullvector=right_nullvector,
+        left_nullvector=left_nullvector,
         singular_values=singular_values,
-        right_residual_norm=tree_norm(right_action),
-        left_residual_norm=tree_norm(left_action),
+        right_residual_norm=geometry.residual_norm(right_action),
+        left_residual_norm=geometry.state_norm(left_action),
         right_norm=right_norm,
         left_norm=left_norm,
         left_right_pairing=pairing,
@@ -1247,6 +1261,7 @@ class BifurcationCertificate(StrictModule):
     left_nullvector: PyTree[Array] | None
     evidence: Any
     status: Array
+    geometry: ContinuationGeometry | None
     kind: BifurcationKind = eqx.field(static=True)
     assumptions_verified: bool = eqx.field(static=True)
     certificate_id: str = eqx.field(static=True)
@@ -1263,6 +1278,7 @@ class BifurcationCertificate(StrictModule):
         kind: BifurcationKind,
         assumptions_verified: bool,
         certificate_id: str,
+        geometry: ContinuationGeometry | None = None,
     ):
         if kind not in ("fold", "hopf", "branch-point", "pitchfork"):
             raise ValueError("Unsupported bifurcation kind.")
@@ -1276,6 +1292,9 @@ class BifurcationCertificate(StrictModule):
         self.evidence = evidence
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.kind = kind
+        if geometry is not None and not isinstance(geometry, ContinuationGeometry):
+            raise TypeError("geometry must be a ContinuationGeometry or None.")
+        self.geometry = geometry
         self.assumptions_verified = bool(assumptions_verified)
         self.certificate_id = identifier
 
@@ -1419,35 +1438,51 @@ def certify_fold(
     if not isinstance(policy, BifurcationTolerances):
         raise TypeError("tolerances must be BifurcationTolerances or None.")
     candidate = result.state
+    public_residual = problem.problem.residual(
+        candidate.physical_state,
+        candidate.parameter,
+        args,
+    )
+    _, declared_residual_space = problem.problem.declared_spaces()
+    geometry = ContinuationGeometry.resolve(
+        candidate.physical_state,
+        public_residual,
+        state_space=problem.state_space,
+        residual_space=declared_residual_space,
+        representation=problem.problem.representation_policy(),
+    )
     nullspace = analyzer.analyze(
         problem.problem,
         candidate.physical_state,
         candidate.parameter,
-        problem.state_space,
+        geometry,
         args,
     )
-    parameter_derivative = _parameter_derivative(
-        problem.problem,
-        candidate.physical_state,
-        candidate.parameter,
-        args,
+    parameter_derivative = geometry.residual_to_execution(
+        _parameter_derivative(
+            problem.problem,
+            candidate.physical_state,
+            candidate.parameter,
+            args,
+        )
     )
-    curvature = _second_state_derivative(
-        problem.problem,
-        candidate.physical_state,
-        candidate.parameter,
-        nullspace.right_nullvector,
-        args,
+    curvature = geometry.residual_to_execution(
+        _second_state_derivative(
+            problem.problem,
+            candidate.physical_state,
+            candidate.parameter,
+            nullspace.right_nullvector,
+            args,
+        )
     )
+    left = geometry.residual_to_execution(nullspace.left_nullvector)
     transversality = jnp.abs(
-        problem.state_space.inner(nullspace.left_nullvector, parameter_derivative)
+        geometry.execution_residual_space.inner(left, parameter_derivative)
     )
-    quadratic = 0.5 * problem.state_space.inner(
-        nullspace.left_nullvector,
-        curvature,
-    )
+    quadratic = 0.5 * geometry.execution_residual_space.inner(left, curvature)
+    equilibrium = geometry.residual_to_execution(result.residual_blocks.equilibrium)
     evidence = FoldEvidence(
-        equilibrium_residual=tree_norm(result.residual_blocks.equilibrium),
+        equilibrium_residual=geometry.residual_norm(equilibrium),
         nullspace=nullspace,
         parameter_transversality=transversality,
         quadratic_coefficient=quadratic,
@@ -1487,6 +1522,7 @@ def certify_fold(
         kind="fold",
         assumptions_verified=assumptions.verified,
         certificate_id=f"{problem.problem_id}/{analyzer.analyzer_id}/certificate",
+        geometry=geometry,
     )
 
 
@@ -1494,7 +1530,7 @@ def certify_branch_point(
     problem: ContinuationCurveProblem,
     state: PyTree[Any],
     parameter: Any,
-    state_space: AbstractVectorSpace,
+    geometry: ContinuationGeometry,
     analyzer: AbstractNullspaceAnalyzer,
     assumptions: BranchPointAssumptions,
     /,
@@ -1505,8 +1541,8 @@ def certify_branch_point(
     """Certify a simple branch point with explicit range and mixed tests."""
     if not isinstance(problem, ContinuationCurveProblem):
         raise TypeError("problem must be a ContinuationCurveProblem.")
-    if not isinstance(state_space, AbstractVectorSpace):
-        raise TypeError("state_space must be an AbstractVectorSpace.")
+    if not isinstance(geometry, ContinuationGeometry):
+        raise TypeError("geometry must be a ContinuationGeometry.")
     if not isinstance(analyzer, AbstractNullspaceAnalyzer):
         raise TypeError("analyzer must be an AbstractNullspaceAnalyzer.")
     if not isinstance(assumptions, BranchPointAssumptions):
@@ -1514,22 +1550,30 @@ def certify_branch_point(
     policy = BifurcationTolerances() if tolerances is None else tolerances
     if not isinstance(policy, BifurcationTolerances):
         raise TypeError("tolerances must be BifurcationTolerances or None.")
-    state_ = state_space.validate(state)
+    state_ = geometry.public_state_space.validate(state)
     parameter_ = _validate_scalar(parameter, "branch-point parameter")
-    nullspace = analyzer.analyze(problem, state_, parameter_, state_space, args)
-    equilibrium_residual = tree_norm(problem.residual(state_, parameter_, args))
-    parameter_derivative = _parameter_derivative(problem, state_, parameter_, args)
-    mixed = _mixed_derivative(
-        problem,
-        state_,
-        parameter_,
-        nullspace.right_nullvector,
-        args,
+    nullspace = analyzer.analyze(problem, state_, parameter_, geometry, args)
+    equilibrium = geometry.residual_to_execution(
+        problem.residual(state_, parameter_, args)
     )
+    equilibrium_residual = geometry.residual_norm(equilibrium)
+    parameter_derivative = geometry.residual_to_execution(
+        _parameter_derivative(problem, state_, parameter_, args)
+    )
+    mixed = geometry.residual_to_execution(
+        _mixed_derivative(
+            problem,
+            state_,
+            parameter_,
+            nullspace.right_nullvector,
+            args,
+        )
+    )
+    left = geometry.residual_to_execution(nullspace.left_nullvector)
     parameter_projection = jnp.abs(
-        state_space.inner(nullspace.left_nullvector, parameter_derivative)
+        geometry.execution_residual_space.inner(left, parameter_derivative)
     )
-    mixed_transversality = jnp.abs(state_space.inner(nullspace.left_nullvector, mixed))
+    mixed_transversality = jnp.abs(geometry.execution_residual_space.inner(left, mixed))
     evidence = BranchPointEvidence(
         equilibrium_residual=equilibrium_residual,
         nullspace=nullspace,
@@ -1566,6 +1610,7 @@ def certify_branch_point(
         kind="branch-point",
         assumptions_verified=assumptions.verified,
         certificate_id=f"{problem.problem_id}/{analyzer.analyzer_id}/branch-certificate",
+        geometry=geometry,
     )
 
 
@@ -1678,7 +1723,6 @@ def certify_hopf(
 def certify_pitchfork(
     branch_certificate: BifurcationCertificate,
     problem: ContinuationCurveProblem,
-    state_space: AbstractVectorSpace,
     symmetry: Callable[[PyTree[Any]], PyTree[Any]],
     assumptions: PitchforkAssumptions,
     /,
@@ -1697,10 +1741,11 @@ def certify_pitchfork(
         raise TypeError("branch_certificate must be a BifurcationCertificate.")
     if branch_certificate.kind != "branch-point":
         raise ValueError("Pitchfork certification requires a branch-point certificate.")
+    if branch_certificate.geometry is None:
+        raise ValueError("Pitchfork certification requires branch-point geometry.")
+    geometry = branch_certificate.geometry
     if not isinstance(problem, ContinuationCurveProblem):
         raise TypeError("problem must be a ContinuationCurveProblem.")
-    if not isinstance(state_space, AbstractVectorSpace):
-        raise TypeError("state_space must be an AbstractVectorSpace.")
     if not callable(symmetry):
         raise TypeError("symmetry must be callable.")
     if not isinstance(assumptions, PitchforkAssumptions):
@@ -1713,31 +1758,45 @@ def certify_pitchfork(
         raise TypeError("tolerances must be BifurcationTolerances or None.")
     if branch_certificate.right_nullvector is None:
         raise ValueError("The branch-point certificate has no right nullvector.")
-    state = state_space.validate(branch_certificate.state)
-    mode = state_space.validate(branch_certificate.right_nullvector)
-    symmetric_state = state_space.validate(symmetry(state))
-    symmetric_mode = state_space.validate(symmetry(mode))
-    twice_symmetric_state = state_space.validate(symmetry(symmetric_state))
-    fixed_defect = tree_norm(jax.tree.map(lambda x, y: x - y, symmetric_state, state))
-    odd_defect = tree_norm(jax.tree.map(lambda x, y: x + y, symmetric_mode, mode))
-    involution_defect = tree_norm(
-        jax.tree.map(lambda x, y: x - y, twice_symmetric_state, state)
+    state = geometry.public_state_space.validate(branch_certificate.state)
+    mode = geometry.public_state_space.validate(branch_certificate.right_nullvector)
+    symmetric_state = geometry.public_state_space.validate(symmetry(state))
+    symmetric_mode = geometry.public_state_space.validate(symmetry(mode))
+    twice_symmetric_state = geometry.public_state_space.validate(
+        symmetry(symmetric_state)
+    )
+    state_coordinates = geometry.state_to_execution(state)
+    mode_coordinates = geometry.state_tangent_to_execution(state, mode)
+    symmetric_coordinates = geometry.state_to_execution(symmetric_state)
+    symmetric_mode_coordinates = geometry.state_tangent_to_execution(
+        symmetric_state,
+        symmetric_mode,
+    )
+    twice_symmetric_coordinates = geometry.state_to_execution(twice_symmetric_state)
+    fixed_defect = geometry.state_norm(
+        tree_add_scaled(symmetric_coordinates, state_coordinates, -1.0)
+    )
+    odd_defect = geometry.state_norm(
+        tree_add_scaled(symmetric_mode_coordinates, mode_coordinates, 1.0)
+    )
+    involution_defect = geometry.state_norm(
+        tree_add_scaled(twice_symmetric_coordinates, state_coordinates, -1.0)
     )
     probe = tree_add_scaled(state, mode, scale)
-    symmetric_probe = state_space.validate(symmetry(probe))
+    symmetric_probe = geometry.public_state_space.validate(symmetry(probe))
     residual_at_symmetric = problem.residual(
         symmetric_probe,
         branch_certificate.parameter,
         args,
     )
-    symmetric_residual = state_space.validate(
+    symmetric_residual = geometry.public_residual_space.validate(
         symmetry(problem.residual(probe, branch_certificate.parameter, args))
     )
-    equivariance_defect = tree_norm(
-        jax.tree.map(
-            lambda x, y: x - y,
-            residual_at_symmetric,
-            symmetric_residual,
+    equivariance_defect = geometry.residual_norm(
+        tree_add_scaled(
+            geometry.residual_to_execution(residual_at_symmetric),
+            geometry.residual_to_execution(symmetric_residual),
+            -1.0,
         )
     )
     quadratic = jnp.asarray(quadratic_coefficient)
@@ -1818,6 +1877,7 @@ def certify_pitchfork(
         kind="pitchfork",
         assumptions_verified=assumptions.verified,
         certificate_id=f"{branch_certificate.certificate_id}/pitchfork",
+        geometry=branch_certificate.geometry,
     )
 
 
@@ -1839,12 +1899,24 @@ def switch_branches_from_nullspace(
     amplitude_ = float(amplitude)
     if not isfinite(amplitude_) or amplitude_ <= 0.0:
         raise ValueError("amplitude must be finite and positive.")
-    mode_norm = tree_norm(certificate.right_nullvector)
-    if not bool(jnp.isfinite(mode_norm) & (mode_norm > 0.0)):
-        raise ValueError("The certified right nullvector has invalid Euclidean norm.")
-    unit_mode = jax.tree.map(
-        lambda value: value / mode_norm,
+    if certificate.geometry is None:
+        raise ValueError("Branch switching requires certificate geometry.")
+    geometry = certificate.geometry
+    state_coordinates = geometry.state_to_execution(certificate.state)
+    mode_coordinates = geometry.state_tangent_to_execution(
+        certificate.state,
         certificate.right_nullvector,
+    )
+    mode_norm = geometry.state_norm(mode_coordinates)
+    if not bool(jnp.isfinite(mode_norm) & (mode_norm > 0.0)):
+        raise ValueError("The certified right nullvector has invalid geometry norm.")
+    unit_coordinates = jax.tree.map(
+        lambda value: value / mode_norm,
+        mode_coordinates,
+    )
+    unit_mode = geometry.state_tangent_from_execution(
+        state_coordinates,
+        unit_coordinates,
     )
     plus = tree_add_scaled(certificate.state, unit_mode, amplitude_)
     minus = tree_add_scaled(certificate.state, unit_mode, -amplitude_)

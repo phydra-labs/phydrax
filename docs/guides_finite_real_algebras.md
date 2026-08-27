@@ -83,6 +83,13 @@ the canonical real coordinates. Real-coordinate quaternion and octonion states a
 work directly with delay, jump, and rough solvers because those backends already
 operate on real arrays.
 
+Continuation uses the same maps through
+`phydrax.continuation.ContinuationRepresentationPolicy`. Native-complex and explicit
+algebra-array states remain public branch values, while branch correction and tangent
+systems execute over canonical real coordinates. Constrained coordinate maps are
+accepted only when state and residual defects satisfy the declared tolerance; no
+projection is inserted by the continuation runtime.
+
 Nontrivial geometry remains family-specific. Unit complex and unit quaternion
 geometries are provided over real coordinates. Unit octonions are not assigned a Lie
 group geometry: their multiplication is nonassociative and their unit sphere is a

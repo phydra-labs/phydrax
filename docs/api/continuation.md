@@ -31,9 +31,12 @@ result = phx.continuation.continue_branch(
     jnp.asarray(0.0),
     num_steps=12,
     method=phx.continuation.PseudoArclengthContinuation(
+        termination=phx.nonlinear.NonlinearTermination(
+            absolute_residual=1e-8,
+            relative_residual=0.0,
+        ),
         initial_step=0.18,
         maximum_step=0.24,
-        residual_tolerance=1e-8,
     ),
 )
 ```
@@ -42,6 +45,48 @@ Natural continuation uses the coordinate as the step variable and exposes its
 turning-point limitation. Pseudo-arclength continuation predicts in the augmented
 state-coordinate space and corrects with an arclength equation. Step growth,
 contraction, retries, tangent orientation, and termination all remain explicit.
+`terminal_coordinate` requests an exact corrected section: natural continuation
+shortens its coordinate step, while pseudo-arclength corrects the first branch segment
+that crosses the requested coordinate. Exhausting the branch before that section and
+failing its fixed-coordinate corrector are distinct terminal statuses.
+
+Each continuation method composes one complete
+`phydrax.nonlinear.AbstractNonlinearMethod` with `NonlinearTermination`.
+`NewtonKrylov` and `NewtonTrustRegion` retain prepared Jacobian, linear-plan, and
+preconditioner state across compatible branch steps. Other complete nonlinear methods
+remain valid correctors but run without cross-step prepared-root reuse. Finite
+`AbstractNonlinearUpdate` values are not correctors by themselves; wrap them in a
+complete method such as `NonlinearRichardson`.
+
+## Public states, real execution coordinates, and geometry
+
+`ContinuationRepresentationPolicy` binds optional `AbstractRealCoordinateMap` values
+for public state and residual storage. The branch remains public-facing while all
+corrector, tangent, and arclength work runs in canonical real execution coordinates.
+This supports native-complex arrays, finite-real-algebra layouts, and constrained
+Hermitian spectral coordinates without introducing a second packing convention.
+Constrained representatives must satisfy their declared defect tolerance; continuation
+never projects them silently.
+
+`ContinuationGeometry` binds public and execution spaces, their pairings, coordinate
+maps, and one positive `coordinate_scale`. State and residual PyTrees may differ when
+their real coordinate dimensions and dtypes agree. Execution-space overrides may
+supply a mesh or mass pairing while retaining a coordinate map's representation.
+Every accepted branch stores this geometry once, and localization, stability,
+nullspace evidence, normal forms, and branch switching consume the same artifact.
+
+Natural continuation supports constant or implicit-tangent predictors.
+Pseudo-arclength supports metric-normalized secants or a full bordered tangent solve.
+`minimum_tangent_alignment` rejects excessive branch curvature before stability
+analysis, monitors, or prepared-state commitment.
+
+::: phydrax.continuation.ContinuationRepresentationPolicy
+
+---
+
+::: phydrax.continuation.ContinuationGeometry
+
+---
 
 ::: phydrax.continuation.ContinuationCurveProblem
 
@@ -87,17 +132,24 @@ contraction, retries, tangent orientation, and termination all remain explicit.
 
 ## Plan, prepare, refresh, and run
 
-`plan_continuation` validates the immutable method, stability analyzer, monitor,
-step-count, and identifiers. `prepare_continuation` binds a numerical seed and owns
-reusable prepared state. `refresh_continuation` accepts a same-structure seed,
-preserves plan and prepared identity, and increments the numeric version.
-`run_continuation` executes that exact prepared artifact. `continue_branch` is the
-one-call convenience wrapper.
+`plan_continuation` validates the immutable method, complete nonlinear corrector,
+termination policy, stability analyzer, monitors, step-count, optional terminal
+coordinate, and identifiers. `prepare_continuation` binds a numerical seed and owns
+reusable prepared state when the selected corrector supports it.
+`refresh_continuation` accepts a same-structure seed, preserves plan and prepared
+identity, and increments the numeric version. `run_continuation` executes that exact
+prepared artifact. `continue_branch` is the one-call convenience wrapper.
 
-A pseudo-arclength corrector uses the reusable bordered subsystem. It performs an
-exact Schur-complement correction from two solves with the principal operator. A
-singular or ambiguous Schur complement has a typed failure status; the implementation
-never substitutes a least-squares step.
+The core pseudo-arclength corrector solves the full augmented Jacobian system. The
+separate bordered subsystem exposes a principal-Schur strategy for workflows that
+explicitly know the principal operator is invertible. A principal solve or Schur
+failure is not treated as proof that the full augmented system is singular, and
+neither path substitutes a least-squares step.
+
+Tangent and adjoint linear policies come from
+`phydrax.nonlinear.ImplicitRootDerivativePolicy`. With Newton correctors they default
+to the corrector linear policy; derivative-based continuation with another nonlinear
+method must supply the required tangent policy explicitly.
 
 ::: phydrax.continuation.ContinuationPlan
 
@@ -166,15 +218,18 @@ never substitutes a least-squares step.
 `DenseSchurStabilityAnalyzer` is an explicit small-system path.
 `SelfAdjointKrylovStabilityAnalyzer` uses the self-adjoint spectral contract.
 `GeneralKrylovStabilityAnalyzer` constructs a matrix-free Jacobian operator and uses
-native restarted Arnoldi through the public general-eigen API. Stability evaluation
-returns status and residual evidence; an unavailable or partial spectrum is not
-silently replaced by dense materialization.
+native restarted Arnoldi through the public general-eigen API. All analyzers act on
+the bound real execution operator, so nonholomorphic complex public residuals retain
+their full real-linear spectrum. Automatic stability requires an execution-space
+endomorphism; incompatible state and residual spaces return `CAPABILITY_REJECTED`
+rather than an arbitrary coordinate-rebased spectrum.
 
 Crossing monitors produce `ContinuationEvent` and `EventBracket` records. A bracket
 is a candidate interval, not a bifurcation certificate. `localize_event` repeatedly
-interpolates a state/coordinate seed, corrects onto the residual curve, evaluates the
-caller-declared indicator, and updates the bracket. It returns explicit success,
-invalid-bracket, corrector-failure, nonfinite, and maximum-step states.
+interpolates a state/coordinate seed, solves the full augmented correction through a
+complete nonlinear method, evaluates the caller-declared indicator, and updates the
+bracket. It returns explicit success, invalid-bracket, corrector-failure, nonfinite,
+and maximum-step states.
 
 ::: phydrax.continuation.DenseSchurStabilityAnalyzer
 
@@ -263,11 +318,16 @@ Fold and Hopf solvers operate on explicit augmented residual blocks. Their resul
 separate numerical convergence from a problem-specific certificate. Callable
 nullspace and Hopf analyzers let domain code supply independently justified evidence;
 the core runtime does not guess symmetry, transversality, or normal-form assumptions.
+Right nullvectors belong to the execution state space, left nullvectors belong to the
+execution residual space, and certificate pairings use the bound Riesz geometry.
 
-`fold_normal_form`, `hopf_first_lyapunov`, and `pitchfork_normal_form` require explicit
-multilinear actions and a caller-declared linear solver. Diagnostics count every
-multilinear and linear action. `CallableNormalFormLinearSolver` must report residual
-and status evidence; returning an array alone is insufficient.
+`fold_normal_form`, `hopf_first_lyapunov`, and `pitchfork_normal_form` consume
+`ContinuationGeometry`, explicit multilinear actions, and a caller-declared range
+solver. Diagnostics count every multilinear and linear action.
+`CallableNormalFormLinearSolver` must report residual and status evidence; returning
+an array alone is insufficient. Hopf normal forms require an execution-space
+endomorphism; mapped public states that would require a higher-complex perturbation
+representation are rejected explicitly.
 
 ::: phydrax.continuation.FoldProblem
 

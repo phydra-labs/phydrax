@@ -14,6 +14,16 @@ ct = phx.continuation
 nl = phx.nonlinear
 
 
+def _geometry(problem, state, parameter, state_space):
+    residual = problem.residual(state, parameter)
+    return ct.ContinuationGeometry.resolve(
+        state,
+        residual,
+        state_space=state_space,
+        residual_space=state_space,
+    )
+
+
 def _nullspace_analyzer(
     right,
     left,
@@ -23,12 +33,12 @@ def _nullspace_analyzer(
     source_success=True,
     analyzer_id="deterministic-nullspace",
 ):
-    def analyze(problem, state, parameter, state_space, args):
+    def analyze(problem, state, parameter, geometry, args):
         return ct.evaluate_nullspace(
             problem,
             state,
             parameter,
-            state_space,
+            geometry,
             right,
             left,
             jnp.asarray(singular_values),
@@ -113,7 +123,7 @@ def test_fold_extended_system_exposes_blocks_and_requires_certificate():
         problem,
         result.state.physical_state,
         result.state.parameter,
-        state_space,
+        certificate.geometry,
         certificate.evidence.nullspace,
     )
 
@@ -200,7 +210,12 @@ def test_hopf_extended_system_and_spectral_certificate_are_distinct():
     normal_form = ct.hopf_first_lyapunov(
         problem,
         result.state,
-        state_space,
+        _geometry(
+            problem,
+            result.state.physical_state,
+            result.state.parameter,
+            state_space,
+        ),
         mode_real,
         mode_imaginary,
         _successful_linear_solve(harmonic_solution),
@@ -219,12 +234,13 @@ def test_pitchfork_certificate_drives_two_automatic_switches():
     state = jnp.asarray(0.0, dtype=dtype)
     parameter = jnp.asarray(0.0, dtype=dtype)
     mode = jnp.asarray(1.0, dtype=dtype)
+    geometry = _geometry(problem, state, parameter, state_space)
     analyzer = _nullspace_analyzer(mode, mode, [0.0])
     branch = ct.certify_branch_point(
         problem,
         state,
         parameter,
-        state_space,
+        geometry,
         analyzer,
         ct.BranchPointAssumptions(
             smoothness_order=3,
@@ -239,7 +255,7 @@ def test_pitchfork_certificate_drives_two_automatic_switches():
         problem,
         state,
         parameter,
-        state_space,
+        geometry,
         branch.evidence.nullspace,
         _successful_linear_solve(
             lambda action, right_hand_side, system_id: jnp.zeros_like(right_hand_side)
@@ -248,7 +264,6 @@ def test_pitchfork_certificate_drives_two_automatic_switches():
     pitchfork = ct.certify_pitchfork(
         branch,
         problem,
-        state_space,
         lambda value: -value,
         ct.PitchforkAssumptions(
             smoothness_order=3,
@@ -283,6 +298,12 @@ def test_incomplete_or_ill_conditioned_evidence_never_certifies():
     )
     state = jnp.asarray(0.0, dtype=dtype)
     mode = jnp.asarray(1.0, dtype=dtype)
+    geometry = _geometry(
+        problem,
+        state,
+        jnp.asarray(0.0, dtype=dtype),
+        state_space,
+    )
     incomplete = _nullspace_analyzer(
         mode,
         mode,
@@ -293,7 +314,7 @@ def test_incomplete_or_ill_conditioned_evidence_never_certifies():
         problem,
         state,
         jnp.asarray(0.0, dtype=dtype),
-        state_space,
+        geometry,
         incomplete,
         ct.BranchPointAssumptions(
             smoothness_order=3,
@@ -314,13 +335,13 @@ def test_incomplete_or_ill_conditioned_evidence_never_certifies():
         problem,
         state,
         jnp.asarray(0.0, dtype=dtype),
-        state_space,
+        geometry,
     )
     ill_conditioned = ct.pitchfork_normal_form(
         problem,
         state,
         jnp.asarray(0.0, dtype=dtype),
-        state_space,
+        geometry,
         complete,
         _successful_linear_solve(
             lambda action, right_hand_side, system_id: jnp.zeros_like(right_hand_side),
@@ -436,3 +457,45 @@ def test_public_continuation_namespace_owns_workflows():
     assert all(hasattr(phx.continuation, name) for name in names)
     assert not hasattr(phx.dynamics.analysis, "ContinuationProblem")
     assert not hasattr(phx.dynamics.analysis, "branch_switch_seed")
+
+
+def test_nullspace_evidence_respects_distinct_state_and_residual_spaces():
+    state_space = phx.linalg.PyTreeSpace(
+        {"x": jnp.zeros((1,), dtype=jnp.float64)},
+        space_id="nullspace-state",
+    )
+    residual_space = phx.linalg.PyTreeSpace(
+        {"f": jnp.zeros((1,), dtype=jnp.float64)},
+        space_id="nullspace-residual",
+    )
+    problem = ct.ParameterContinuationProblem(
+        lambda state, parameter, args: {"f": parameter * state["x"]},
+        state_space=state_space,
+        residual_space=residual_space,
+        problem_id="distinct-nullspace-spaces",
+    )
+    state = {"x": jnp.zeros((1,), dtype=jnp.float64)}
+    parameter = jnp.asarray(0.0, dtype=jnp.float64)
+    geometry = ct.ContinuationGeometry.resolve(
+        state,
+        problem.residual(state, parameter),
+        state_space=state_space,
+        residual_space=residual_space,
+    )
+    evidence = ct.evaluate_nullspace(
+        problem,
+        state,
+        parameter,
+        geometry,
+        {"x": jnp.ones((1,), dtype=jnp.float64)},
+        {"f": jnp.ones((1,), dtype=jnp.float64)},
+        jnp.asarray([0.0]),
+        source_success=True,
+        full_spectrum=True,
+        analyzer_id="distinct-nullspace",
+    )
+
+    assert float(evidence.right_residual_norm) == 0.0
+    assert float(evidence.left_residual_norm) == 0.0
+    assert float(evidence.right_norm) == 1.0
+    assert float(evidence.left_norm) == 1.0

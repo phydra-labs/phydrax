@@ -38,6 +38,7 @@ from ._types import (
 
 _DEFAULT_ARGS = object()
 
+
 class ImplicitRootDerivativePolicy(StrictModule):
     """Linear policies for exact tangent and adjoint root derivatives."""
 
@@ -53,17 +54,34 @@ class ImplicitRootDerivativePolicy(StrictModule):
         if tangent_linear_policy is not None and not isinstance(
             tangent_linear_policy, LinearSolvePolicy
         ):
-            raise TypeError(
-                "tangent_linear_policy must be LinearSolvePolicy or None."
-            )
+            raise TypeError("tangent_linear_policy must be LinearSolvePolicy or None.")
         if adjoint_linear_policy is not None and not isinstance(
             adjoint_linear_policy, LinearSolvePolicy
         ):
-            raise TypeError(
-                "adjoint_linear_policy must be LinearSolvePolicy or None."
-            )
+            raise TypeError("adjoint_linear_policy must be LinearSolvePolicy or None.")
         self.tangent_linear_policy = tangent_linear_policy
         self.adjoint_linear_policy = adjoint_linear_policy
+
+    def resolve(
+        self,
+        method: AbstractNonlinearMethod,
+        /,
+    ) -> tuple[LinearSolvePolicy, LinearSolvePolicy]:
+        """Resolve tangent and adjoint policies against one nonlinear method."""
+        if not isinstance(method, AbstractNonlinearMethod):
+            raise TypeError("method must be an AbstractNonlinearMethod.")
+        tangent = self.tangent_linear_policy
+        if tangent is None:
+            if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
+                raise ValueError(
+                    "A tangent linear policy is required when the nonlinear method "
+                    "has no native linear policy."
+                )
+            tangent = method.linear_policy
+        adjoint = (
+            tangent if self.adjoint_linear_policy is None else self.adjoint_linear_policy
+        )
+        return tangent, adjoint
 
 
 def _resolve_derivative_policies(
@@ -73,23 +91,8 @@ def _resolve_derivative_policies(
 ) -> tuple[LinearSolvePolicy, LinearSolvePolicy]:
     policy_ = ImplicitRootDerivativePolicy() if policy is None else policy
     if not isinstance(policy_, ImplicitRootDerivativePolicy):
-        raise TypeError(
-            "derivative_policy must be ImplicitRootDerivativePolicy or None."
-        )
-    tangent = policy_.tangent_linear_policy
-    if tangent is None:
-        if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
-            raise ValueError(
-                "A tangent linear policy is required when the nonlinear method "
-                "has no native linear policy."
-            )
-        tangent = method.linear_policy
-    adjoint = (
-        tangent
-        if policy_.adjoint_linear_policy is None
-        else policy_.adjoint_linear_policy
-    )
-    return tangent, adjoint
+        raise TypeError("derivative_policy must be ImplicitRootDerivativePolicy or None.")
+    return policy_.resolve(method)
 
 
 def _diagnostic_counts(
@@ -304,9 +307,7 @@ def implicit_root_result(
         return jax.lax.custom_linear_solve(
             linearized,
             right_hand_side,
-            solve=lambda action, rhs: _checked_tangent_solve(
-                action, rhs, tangent_policy
-            ),
+            solve=lambda action, rhs: _checked_tangent_solve(action, rhs, tangent_policy),
             transpose_solve=lambda action, rhs: _checked_tangent_solve(
                 action, rhs, adjoint_policy
             ),

@@ -41,3 +41,11 @@
 ---
 
 ::: phydrax.solver.AlgebraStatePackingEvidence
+
+## Continuation
+
+`phydrax.continuation.ContinuationRepresentationPolicy` consumes these same prepared
+maps. Public complex or finite-algebra branch states are reconstructed at every
+accepted point, while nonlinear correction, arclength geometry, stability, and
+nullspace actions operate on the map's real coordinate space. An optional execution
+space with the same coordinate structure may supply a problem-specific pairing.

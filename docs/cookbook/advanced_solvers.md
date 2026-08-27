@@ -301,9 +301,11 @@ multiple eigenvalue.
 ## 5. Traverse and localize a fold
 
 Natural parameter continuation cannot pass a turning point. Pseudo-arclength
-continuation augments the residual with an arclength condition and uses a bordered
-linear correction. It can detect and bracket a candidate event; that detection is
-not itself a fold/Hopf/pitchfork certificate.
+continuation augments the residual with an arclength condition and solves the full
+augmented correction. It can detect and bracket a candidate event; that detection is
+not itself a fold/Hopf/pitchfork certificate. When one exact coordinate section is the
+goal, pass `terminal_coordinate`; an interpolated point is never accepted without a
+fixed-coordinate residual correction.
 
 ```python
 fold_problem = phx.continuation.ParameterContinuationProblem(
@@ -318,9 +320,12 @@ branch_result = phx.continuation.continue_branch(
     jnp.asarray(0.0),
     num_steps=12,
     method=phx.continuation.PseudoArclengthContinuation(
+        termination=phx.nonlinear.NonlinearTermination(
+            absolute_residual=1e-8,
+            relative_residual=0.0,
+        ),
         initial_step=0.18,
         maximum_step=0.24,
-        residual_tolerance=1e-8,
     ),
 )
 assert branch_result.status == phx.continuation.ContinuationStatus.SUCCESS
@@ -333,9 +338,13 @@ localized = phx.continuation.localize_event(
     lambda problem, state, coordinate, args: state["x"],
     indicator_id="quadratic-fold/state-zero",
     policy=phx.continuation.EventLocalizationPolicy(
+        termination=phx.nonlinear.NonlinearTermination(
+            absolute_residual=1e-8,
+            relative_residual=0.0,
+            maximum_steps=12,
+        ),
         bracket_tolerance=1e-6,
         indicator_tolerance=1e-6,
-        residual_tolerance=1e-8,
         maximum_steps=16,
     ),
 )
@@ -349,6 +358,36 @@ stores both the physical parameters and tangent parameters at every branch point
 `GeneralKrylovStabilityAnalyzer` uses the public general-eigen Arnoldi contract for
 nonsymmetric matrix-free Jacobians. Explicit fold, Hopf, and pitchfork workflows add
 augmented solves and problem-specific assumptions/certificates.
+
+Native-complex public states use the shared real-coordinate boundary:
+
+```python
+complex_space = phx.linalg.ArraySpace((1,), dtype=jnp.complex128)
+complex_coordinates = phx.linalg.ComplexCartesianCoordinates(complex_space)
+representation = phx.continuation.ContinuationRepresentationPolicy(
+    state_coordinates=complex_coordinates,
+    residual_coordinates=complex_coordinates,
+)
+complex_problem = phx.continuation.ParameterContinuationProblem(
+    lambda state, coordinate, _: (
+        state + 0.2 * jnp.conj(state) - (1.0 + 1.0j) * coordinate
+    ),
+    representation=representation,
+)
+complex_branch = phx.continuation.continue_branch(
+    complex_problem,
+    jnp.asarray([0.0 + 0.0j]),
+    jnp.asarray(0.0),
+    num_steps=8,
+    method=phx.continuation.NaturalParameterContinuation(predictor="tangent"),
+    terminal_coordinate=0.5,
+)
+assert jnp.iscomplexobj(complex_branch.points[-1].state)
+```
+
+For a unit-interval homotopy, pass `terminal_coordinate=1.0` and then call
+`HomotopyProblem.verify_endpoints` with `branch.geometry`. Endpoint evidence is based
+on the corrected target state, never the last point before a coordinate bound.
 
 ## 6. Build one canonical sparse system for optional providers
 

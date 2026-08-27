@@ -104,6 +104,7 @@ from ._deflation import (
     solve_deflated,
     VectorSpaceDeflationMetric,
 )
+from ._geometry import ContinuationGeometry, ContinuationRepresentationPolicy
 from ._homotopy import (
     HomotopyEndpointCertificate,
     HomotopyEndpointStatus,
@@ -157,8 +158,10 @@ __all__ = [
     "ContinuationBranch",
     "ContinuationDiagnostics",
     "ContinuationEvent",
+    "ContinuationGeometry",
     "ContinuationPlan",
     "ContinuationProvenance",
+    "ContinuationRepresentationPolicy",
     "ContinuationResult",
     "ContinuationCurveProblem",
     "ContinuationStatus",

@@ -331,10 +331,11 @@ Nonlinear algebraic systems have a separate `phydrax.nonlinear` contract for
 matrix-free Newton roots, fixed-point acceleration, nonlinear preconditioning,
 full-approximation multigrid, complementarity, and implicit root derivatives.
 Generic parameterized curves and local bifurcation workflows live in
-`phydrax.continuation`, with reusable bordered corrections, adaptive
-pseudo-arclength traversal, stability evidence, event localization, branch
-switching, and fold/Hopf/pitchfork certification. Failed solves, singular
-derivative systems, and ambiguous certificates remain explicit. See the
+`phydrax.continuation`, with exact coordinate targets, complete nonlinear correctors,
+metric-aware pseudo-arclength traversal, public-to-real complex/algebra coordinates,
+stability evidence, full-augmented event localization, branch switching, and
+fold/Hopf/pitchfork certification. Failed solves, singular derivative systems,
+capability boundaries, and ambiguous certificates remain explicit. See the
 [optimization API](docs/api/optim.md), [nonlinear systems API](docs/api/nonlinear.md),
 and [continuation API](docs/api/continuation.md).
 
