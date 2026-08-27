@@ -51,6 +51,18 @@ from ._fd_compile import (
     CompiledFiniteDifferenceDynamics,
     FiniteDifferenceCompilationPolicy,
 )
+from ._finite_element_variational import (
+    BoundaryLoadTerm,
+    coefficient,
+    compile_finite_element_problem,
+    CompiledFiniteElementProblem,
+    DiffusionTerm,
+    FiniteElementFunctional,
+    MassTerm,
+    ResolvedCoefficient,
+    SourceTerm,
+    WeakForm,
+)
 from ._finite_volume_verification import (
     couette_velocity_profile,
     double_rarefaction_verification_case,
@@ -174,11 +186,6 @@ from ._transport_closures import (
     TransportProperties,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
-from ._variational import (
-    compile_variational_problem,
-    CompiledVariationalProblem,
-    VariationalProblemIR,
-)
 from .trefftz import (
     AbstractTrefftzBasis,
     audit_trial_space,
@@ -279,7 +286,16 @@ __all__ = [
     "CompiledSpectralDynamics",
     "CompiledFiniteDifferenceDynamics",
     "CompiledStencilDynamics",
-    "CompiledVariationalProblem",
+    "BoundaryLoadTerm",
+    "coefficient",
+    "compile_finite_element_problem",
+    "CompiledFiniteElementProblem",
+    "DiffusionTerm",
+    "FiniteElementFunctional",
+    "MassTerm",
+    "ResolvedCoefficient",
+    "SourceTerm",
+    "WeakForm",
     "CompiledConservationProblem",
     "ConservationProblemIR",
     "ConvexEntropyPair",
@@ -423,7 +439,6 @@ __all__ = [
     "compile_pde_expression",
     "compile_pde_residual_term",
     "compile_pde_randomized_term",
-    "compile_variational_problem",
     "lower_fd_interfaces",
     "prepare_fd_boundary_program",
     "compile_conservation_problem",
@@ -465,5 +480,4 @@ __all__ = [
     "StencilStateLayout",
     "validate_pde_ir",
     "validate_convex_entropy_pair",
-    "VariationalProblemIR",
 ]

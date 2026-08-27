@@ -143,7 +143,7 @@ def polygonal_connectivity(
     if any(len(values) > 2 for values in incidents):
         raise ValueError("Polygonal cells must be edge-manifold.")
     if any(len(values) == 2 and values[0] == values[1] for values in incidents):
-        raise ValueError("Shared polygon edges must have opposite incidence orientation.")
+        raise ValueError("Shared polygon edges must have opposite orientation.")
 
     edges = np.asarray(tuple(edge_keys), dtype=np.int32)
     counts = np.asarray([len(values) for values in incidents], dtype=np.int32)

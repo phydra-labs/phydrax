@@ -120,6 +120,7 @@ nav:
     - Guides:
         - Domains and sampling: "guides_domain.md"
         - Discretization: "guides_discretization.md"
+        - Finite elements: "guides_finite_elements.md"
         - Global spectral methods: "guides_spectral_methods.md"
         - Finite real algebras: "guides_finite_real_algebras.md"
         - Structured finite volume: "guides_finite_volume.md"
@@ -185,6 +186,7 @@ nav:
             - Topology and support: "api/discretization/topology.md"
             - Field spaces and axes: "api/discretization/spaces.md"
             - Prepared methods: "api/discretization/methods.md"
+            - Finite elements: "api/discretization/finite_element.md"
             - Global spectral methods: "api/discretization/spectral.md"
             - Temporal and stochastic composition: "api/discretization/stochastic.md"
             - Finite differences: "api/discretization/finite_difference.md"

@@ -14,6 +14,8 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace, DiagonalPairing
+from .._cell_complex import PolygonalConnectivity
+from .._cell_mesh import CellMesh
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -28,12 +30,7 @@ from .._lifecycle import (
 from .._measure import DiscreteMeasure
 from .._spaces import DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
-from .._topology import CellComplexTopology
-from .._triangular import (
-    triangle_cell_complex,
-    triangle_connectivity,
-    TriangleConnectivity,
-)
+from .._triangular import triangle_connectivity, TriangleConnectivity
 from ._geometry_protocol import FiniteVolumeFaceBlock
 from ._structured import _component_names
 
@@ -57,7 +54,7 @@ def _normalized_triangles(vertices: np.ndarray, triangles: np.ndarray) -> np.nda
     return normalized
 
 
-def _owner_neighbour(connectivity: TriangleConnectivity, cell_count: int):
+def _owner_neighbour(connectivity: PolygonalConnectivity, cell_count: int):
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
     cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=float)
     edge_count = np.asarray(connectivity.edges).shape[0]
@@ -84,7 +81,7 @@ def _owner_neighbour(connectivity: TriangleConnectivity, cell_count: int):
 def evaluate_triangle_fv_geometry(
     vertices: ArrayLike,
     triangles: ArrayLike,
-    connectivity: TriangleConnectivity,
+    connectivity: PolygonalConnectivity,
     owner: ArrayLike,
     owner_sign: ArrayLike,
     /,
@@ -124,8 +121,8 @@ def evaluate_triangle_fv_geometry(
         "Triangle face area vector must point outward from owner.",
     )
     closure = jnp.zeros_like(cell_centers)
-    cell_edges = jnp.asarray(connectivity.cell_edges, dtype=jnp.int32)
-    cell_signs = jnp.asarray(connectivity.cell_edge_signs)
+    cell_edges = jnp.asarray(connectivity.cell_edges[:, :3], dtype=jnp.int32)
+    cell_signs = jnp.asarray(connectivity.cell_edge_signs[:, :3])
     closure = closure.at[jnp.repeat(jnp.arange(cells.shape[0]), 3)].add(
         (cell_signs[..., None] * canonical_normal[cell_edges]).reshape((-1, 2))
     )
@@ -143,8 +140,7 @@ class TriangleFiniteVolumeQualityReport(StrictModule):
 
 
 class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
-    vertices: Array
-    triangles: Array
+    mesh: CellMesh
     patch_names: tuple[str, ...] = eqx.field(static=True)
     patch_edges: tuple[Array, ...]
     field_name: str = eqx.field(static=True)
@@ -172,7 +168,8 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
         if np.any(cells < 0) or np.any(cells >= points.shape[0]):
             raise ValueError("Triangle FV connectivity indexes invalid vertices.")
         cells = _normalized_triangles(points, cells)
-        connectivity = triangle_connectivity(cells, points.shape[0])
+        mesh = CellMesh.from_triangles(points, cells)
+        connectivity = mesh.connectivity
         edges = np.asarray(connectivity.edges, dtype=np.int32)
         boundary_mask = np.asarray(connectivity.boundary_edges, dtype=bool)
         patches = {} if boundary_patches is None else dict(boundary_patches)
@@ -212,8 +209,7 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
             DiscretizationCapability.MATRIX_FREE,
             DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
         )
-        self.vertices = jnp.asarray(points)
-        self.triangles = jnp.asarray(cells)
+        self.mesh = mesh
         self.patch_names = names
         self.patch_edges = tuple(jnp.asarray(value) for value in normalized_patch_edges)
         self.field_name = field
@@ -223,8 +219,7 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "triangle-finite-volume-plan",
-                "vertices": array_tree_fingerprint(points),
-                "triangles": array_tree_fingerprint(cells),
+                "mesh": mesh.mesh_id,
                 "patches": {
                     name: array_tree_fingerprint(value)
                     for name, value in zip(names, normalized_patch_edges, strict=True)
@@ -234,15 +229,21 @@ class TriangleFiniteVolumePlan(AbstractDiscretizationPlan):
             }
         )
 
+    @property
+    def vertices(self) -> Array:
+        return self.mesh.coordinates
+
+    @property
+    def triangles(self) -> Array:
+        return self.mesh.blocks[0].vertices
+
     def prepare(self, /, *, numeric_version: str = "0"):
         return TriangleFiniteVolumeDiscretization(self, numeric_version=numeric_version)
 
 
 class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
-    vertices: Array
-    triangles: Array
-    topology: CellComplexTopology
-    connectivity: TriangleConnectivity
+    mesh: CellMesh
+    triangle_connectivity: TriangleConnectivity
     face_block: FiniteVolumeFaceBlock
     face_blocks: tuple[FiniteVolumeFaceBlock, ...]
     cell_volumes: Array
@@ -274,10 +275,11 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
     def __init__(self, plan: TriangleFiniteVolumePlan, /, *, numeric_version: str = "0"):
         if not isinstance(plan, TriangleFiniteVolumePlan):
             raise TypeError("plan must be TriangleFiniteVolumePlan.")
-        points = np.asarray(plan.vertices)
-        cells = np.asarray(plan.triangles, dtype=np.int32)
+        mesh = plan.mesh
+        points = np.asarray(mesh.coordinates)
+        cells = np.asarray(mesh.blocks[0].vertices, dtype=np.int32)
         connectivity = triangle_connectivity(cells, points.shape[0])
-        topology = triangle_cell_complex(cells, points.shape[0])
+        topology = mesh.topology
         owner, neighbour, owner_sign = _owner_neighbour(connectivity, cells.shape[0])
         area, centers, face_centers, area_vectors, measures, closure = (
             evaluate_triangle_fv_geometry(
@@ -302,10 +304,7 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         boundary_patch_ids = np.full((owner.shape[0],), -1, dtype=np.int32)
         for patch_id, edge_indices in enumerate(plan.patch_edges):
             boundary_patch_ids[np.asarray(edge_indices, dtype=np.int32)] = patch_id
-        embedding_id = canonical_fingerprint(
-            {"kind": "triangle-fv-embedding", "vertices": array_tree_fingerprint(points)}
-        )
-        support = DiscreteSupport(topology, 2, embedding_id)
+        support = mesh.support
         components = len(plan.component_names)
         cell_entities = topology.entity_sets[2]
         face_entities = topology.entity_sets[1]
@@ -407,10 +406,8 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be non-empty.")
-        self.vertices = plan.vertices
-        self.triangles = plan.triangles
-        self.topology = topology
-        self.connectivity = connectivity
+        self.mesh = mesh
+        self.triangle_connectivity = connectivity
         self.face_block = face_block
         self.face_blocks = (face_block,)
         self.cell_volumes = area
@@ -441,11 +438,27 @@ class TriangleFiniteVolumeDiscretization(AbstractPreparedDiscretization):
             {
                 "kind": "prepared-triangle-finite-volume",
                 "plan": plan.plan_id,
-                "topology": topology.topology_id,
-                "geometry": embedding_id,
+                "topology": mesh.topology_id,
+                "geometry": mesh.geometry_id,
                 "numeric_version": version,
             }
         )
+
+    @property
+    def vertices(self) -> Array:
+        return self.mesh.coordinates
+
+    @property
+    def triangles(self) -> Array:
+        return self.mesh.blocks[0].vertices
+
+    @property
+    def topology(self):
+        return self.mesh.topology
+
+    @property
+    def connectivity(self) -> TriangleConnectivity:
+        return self.triangle_connectivity
 
     @property
     def cell_count(self) -> int:

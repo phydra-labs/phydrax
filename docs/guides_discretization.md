@@ -36,6 +36,8 @@ return exact tensor entity layouts with their own shapes, coordinates, measures,
 boundary masks.
 
 ```python
+import jax.numpy as jnp
+
 import phydrax as phx
 
 plan = phx.discretization.TensorGridPlan(
@@ -77,6 +79,9 @@ diagonalization = phx.discretization.diagonalize_fd_laplacian(
     {"x": ("dirichlet", "neumann")},
 )
 solve = phx.discretization.FDLaplacianSolvePlan(diagonalization)
+rhs = jnp.zeros_like(diagonalization.unknown_coordinates[0])
+lower_value = 0.0
+upper_flux = 1.0
 result = solve.solve(rhs, boundary_values={"x": (lower_value, upper_flux)})
 ```
 
@@ -90,7 +95,7 @@ boundary rates separately, so a high interior order cannot hide a failed closure
 
 Conservative operators retain expression form and entity transitions:
 
-```python
+```text
 diffusion = phx.discretization.ConservativeDiffusionPlan(
     support,
     boundaries={"x": ("dirichlet", "neumann")},
@@ -127,7 +132,7 @@ small or irregular bases. `OperatorSpectrum` separately binds one operator's mod
 values, nullspace, degeneracy groups, and approximation provenance. A
 `SpectralDecomposition` is their convenience pairing:
 
-```python
+```text
 decomposition = phx.discretization.SpectralDecomposition.from_eigenpairs(
     eigenvalues,
     eigenfunctions,
@@ -154,37 +159,57 @@ Triangle and segment geometry expose canonical cell-complex views through their
 simplicial topology objects. `TriangleMesh.discrete_support()` binds this topology to
 the mesh embedding identity.
 
-## P1 finite elements
+## Finite elements
 
-The first variational backend is scalar conforming H¹ P1 on affine triangles:
+Finite elements separate the shared computational mesh, reference element,
+global field coordinates, weak form, and solver:
 
 ```python
-plan = phx.discretization.P1FiniteElementPlan(
-    vertices,
-    faces,
-    field_name="u",
-)
-space = plan.prepare()
+import jax.numpy as jnp
+import phydrax as phx
 
-weak_problem = phx.equations.VariationalProblemIR(
+vertices = jnp.asarray(
+    [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.25, 0.25]]
+)
+cells = jnp.asarray(
+    [[0, 1, 3], [1, 2, 3], [2, 0, 3]],
+    dtype=jnp.int32,
+)
+mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
+field = phx.discretization.FiniteElementFieldSpec(
+    "u",
+    phx.discretization.lagrange_element("triangle", 1),
+)
+space = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+constraint = phx.discretization.dirichlet_constraint(space, "u")
+form = phx.equations.WeakForm(
     "poisson",
     "u",
-    diffusion=1.0,
-    source=lambda points: forcing(points),
-    dirichlet=lambda points: boundary_value(points),
+    (
+        phx.equations.DiffusionTerm("u", 1.0),
+        phx.equations.SourceTerm("u", 0.0),
+    ),
 )
-compiled = phx.equations.compile_variational_problem(weak_problem, space)
-solution, linear_result = compiled.solve()
+compiled = phx.equations.compile_finite_element_problem(
+    form,
+    space,
+    constraint=constraint,
+    dirichlet_values=lambda points: points[..., 0] + points[..., 1],
+)
+system, right_hand_side = compiled.linear_system()
+result = phx.linalg.solve(system, right_hand_side)
+solution = compiled.expand(result.value)
 ```
 
-Preparation constructs consistent mass and stiffness operators, lumped vertex
-measure, P1 basis gradients, trace subsets, and sparse Dirichlet elimination. Volume
-loads use a degree-two three-point triangle rule; Neumann loads use boundary-edge
-midpoints. `p1_local_matrices` is differentiable with respect to vertex coordinates
-under fixed topology.
+The native reference family currently includes triangle P1/P2,
+quadrilateral Q1, and tetrahedron P1. Weak residuals live in the coordinate
+dual of the test space; solver adapters perform Riesz conversion explicitly.
+Consistent mass remains distinct from the field pairing. Fixed-topology
+geometry evaluation is JAX-differentiable through
+`space.evaluate_geometry(field_name, coordinates)`.
 
-`space.heat_dynamics(diffusivity)` returns mass-matrix-consistent semidiscrete heat
-dynamics suitable for differential solvers.
+See [Finite elements](guides_finite_elements.md) for reference tabulation,
+DOF maps, constraints, functionals, sparse lowering, and DAE integration.
 
 ## Finite volume
 
@@ -248,7 +273,7 @@ records and the realized internal-time record.
 `SpatialNoiseBasis` lives in `phydrax.stochastic` and binds to an exact
 `DiscreteFieldSpace.field_space_id`:
 
-```python
+```text
 noise_precision = phx.stochastic.SpatialNoisePrecisionPolicy(
     construction_dtype="float64",
     basis_storage_dtype="float32",

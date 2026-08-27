@@ -41,6 +41,7 @@ from ._cell_complex import (
     tetrahedral_connectivity,
     TetrahedralConnectivity,
 )
+from ._cell_mesh import CellBlock, CellMesh
 from ._cochain import (
     CochainBoundaryKind,
     CochainBoundaryPolicy,
@@ -164,11 +165,16 @@ from .amr import (
 )
 from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
 from .fem import (
-    p1_local_matrices,
-    P1DirichletElimination,
-    P1FiniteElementDiscretization,
-    P1FiniteElementPlan,
-    P1HeatDynamics,
+    dirichlet_constraint,
+    FiniteElementDirichletConstraint,
+    FiniteElementDiscretization,
+    FiniteElementDofMap,
+    FiniteElementFieldSpec,
+    FiniteElementPlan,
+    FiniteElementPrecisionPolicy,
+    FiniteElementSpec,
+    IntegrationDomain,
+    lagrange_element,
 )
 from .finite_difference import (
     AxisBoundaryPair,
@@ -550,6 +556,8 @@ from .spectral import (
 
 
 __all__ = [
+    "CellBlock",
+    "CellMesh",
     "AMRAxisEntity",
     "AMREntityTransferPlan",
     "AMREntityTransferReport",
@@ -891,10 +899,16 @@ __all__ = [
     "MappedMetricMode",
     "MappedTensorGridPlan",
     "LegendreAxisSpec",
-    "P1DirichletElimination",
-    "P1FiniteElementDiscretization",
-    "P1FiniteElementPlan",
-    "P1HeatDynamics",
+    "dirichlet_constraint",
+    "FiniteElementDirichletConstraint",
+    "FiniteElementDiscretization",
+    "FiniteElementDofMap",
+    "FiniteElementFieldSpec",
+    "FiniteElementPlan",
+    "FiniteElementPrecisionPolicy",
+    "FiniteElementSpec",
+    "IntegrationDomain",
+    "lagrange_element",
     "MeasureNormalization",
     "ModalDofLayout",
     "ModalTransform",
@@ -1057,6 +1071,5 @@ __all__ = [
     "finite_difference",
     "fornberg_weights",
     "field_space",
-    "p1_local_matrices",
     "require_capabilities",
 ]
