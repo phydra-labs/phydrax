@@ -100,6 +100,154 @@
 
 ::: phydrax.discretization.BarotropicSPHStepRestriction
 
+## Weakly compressible SPH
+
+::: phydrax.discretization.AbstractSPHDensityPlan
+
+---
+
+::: phydrax.discretization.SummationDensityPlan
+
+---
+
+::: phydrax.discretization.ContinuityDensityPlan
+
+---
+
+::: phydrax.discretization.WeaklyCompressibleSPHStateLayout
+
+---
+
+::: phydrax.discretization.MorrisViscosityPlan
+
+---
+
+::: phydrax.discretization.WeaklyCompressibleSPHMethodPlan
+
+---
+
+::: phydrax.discretization.PreparedWeaklyCompressibleSPHDynamics
+
+---
+
+::: phydrax.discretization.WeaklyCompressibleSPHDiagnostics
+
+---
+
+::: phydrax.discretization.WeaklyCompressibleSPHStepRestriction
+
+## Advanced particle methods
+
+::: phydrax.discretization.ParticleAssemblyPlan
+
+---
+
+::: phydrax.discretization.DenseBipartiteParticleNeighborhoodPlan
+
+---
+
+::: phydrax.discretization.WallParticleGenerationPlan
+
+---
+
+::: phydrax.discretization.AdamiWallBoundaryPlan
+
+---
+
+::: phydrax.discretization.FreeSurfaceDetectionPlan
+
+---
+
+::: phydrax.discretization.AntuonoDeltaSPHDiffusionPlan
+
+---
+
+::: phydrax.discretization.MonaghanArtificialViscosityPlan
+
+---
+
+::: phydrax.discretization.TransportVelocitySPHMethodPlan
+
+---
+
+::: phydrax.discretization.AlgebraicSmoothingLengthPlan
+
+---
+
+::: phydrax.discretization.MultiphaseWCSPHPlan
+
+---
+
+::: phydrax.discretization.IISPHMethodPlan
+
+---
+
+::: phydrax.discretization.DFSPHMethodPlan
+
+## Qualification
+
+::: phydrax.discretization.ParticleMethodMaturity
+
+---
+
+::: phydrax.discretization.ParticleQualificationClaim
+
+---
+
+::: phydrax.discretization.ParticleConstraintResiduals
+
+---
+
+::: phydrax.discretization.ParticleQualificationProfile
+
+---
+
+::: phydrax.discretization.ParticleQualificationResult
+
+---
+
+::: phydrax.discretization.particle_constraint_residuals
+
+## Production hardening
+
+::: phydrax.discretization.MultiPopulationCellPlan
+
+---
+
+::: phydrax.linalg.SmallLinearSolvePlan
+
+---
+
+::: phydrax.discretization.AdaptiveHRootPlan
+
+---
+
+::: phydrax.discretization.FreeSurfaceReconstructionPlan
+
+---
+
+::: phydrax.discretization.BalancedInterfaceForcePlan
+
+---
+
+::: phydrax.discretization.IISPHAssembledOracle
+
+---
+
+::: phydrax.discretization.ProductionProjectedSolvePlan
+
+---
+
+::: phydrax.discretization.ParticleDomainDecompositionPlan
+
+---
+
+::: phydrax.discretization.ParticleBenchmarkRegistry
+
+---
+
+::: phydrax.discretization.ParticleReplayPacket
+
 ## Materials and compilation
 
 ::: phydrax.equations.AbstractBarotropicMaterial
@@ -119,3 +267,15 @@
 ---
 
 ::: phydrax.equations.compile_barotropic_sph_problem
+
+---
+
+::: phydrax.equations.WeaklyCompressibleFluidProblemIR
+
+---
+
+::: phydrax.equations.CompiledWeaklyCompressibleSPHProblem
+
+---
+
+::: phydrax.equations.compile_weakly_compressible_sph_problem

@@ -91,9 +91,14 @@ Material particles retain stable entity IDs and a physical mass measure while
 current positions remain temporal state. Fixed-h conservative barotropic SPH
 uses canonical unordered pairs, normalized compact kernels, energy-derived
 pressure forces, dense or fail-closed cell-list execution, exact `GraphIR`
-views, and the native separable-Hamiltonian solver path. See
-[Guide → Particle methods](guides_particle_methods.md) and
-[Guide → Smoothed particle hydrodynamics](guides_sph.md).
+views, and the native separable-Hamiltonian solver path. First-order WCSPH adds
+explicit summation/continuity density semantics, Morris physical viscosity,
+energy/dissipation ledgers, and native SSPRK integration. See
+[Guide → Particle methods](guides_particle_methods.md),
+[Guide → Smoothed particle hydrodynamics](guides_sph.md),
+[Guide → Weakly compressible SPH](guides_wcsph.md),
+[Guide → SPH boundaries](guides_sph_boundaries.md), and
+[Guide → Multiphase and incompressible SPH](guides_multiphase_incompressible_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and

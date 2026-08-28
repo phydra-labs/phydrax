@@ -328,6 +328,20 @@ from ._finite_volume_topology_events import (
     TopologyEventState,
     TopologyEventStatus,
 )
+from ._fixed_step import (
+    AbstractAcceptedStepTransform,
+    AbstractFixedStepMethod,
+    AcceptedStepTransformResult,
+    CallableFixedStepMethod,
+    CompositeAcceptedStepTransform,
+    FixedStepProblem,
+    FixedStepResult,
+    FixedStepSolution,
+    IdentityAcceptedStepTransform,
+    solve_fixed_step,
+    SSPRK33FixedStepMethod,
+    SSPRK54FixedStepMethod,
+)
 from ._fock_continuation import (
     FockContinuationPolicy,
     FockContinuationResult,
@@ -526,6 +540,12 @@ from ._nonmarkov_campaign import (
     SpinBosonComparisonResult,
 )
 from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
+from ._particle_methods import (
+    DFSPHFixedStepMethod,
+    IISPHFixedStepMethod,
+    TransportVelocityFixedStepMethod,
+)
+from ._particle_transforms import ShepardDensityRenormalizationTransform
 from ._particles import (
     InteractingParticleProblem,
     InteractingParticleSolution,
@@ -1334,4 +1354,20 @@ __all__ = [
     "StinespringTomographyProblem",
     "StinespringTomographyResult",
     "fit_stinespring_process",
+    "AbstractAcceptedStepTransform",
+    "AbstractFixedStepMethod",
+    "AcceptedStepTransformResult",
+    "CompositeAcceptedStepTransform",
+    "CallableFixedStepMethod",
+    "FixedStepProblem",
+    "FixedStepResult",
+    "FixedStepSolution",
+    "IdentityAcceptedStepTransform",
+    "SSPRK33FixedStepMethod",
+    "SSPRK54FixedStepMethod",
+    "solve_fixed_step",
+    "DFSPHFixedStepMethod",
+    "IISPHFixedStepMethod",
+    "ShepardDensityRenormalizationTransform",
+    "TransportVelocityFixedStepMethod",
 ]
