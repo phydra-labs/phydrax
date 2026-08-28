@@ -29,6 +29,7 @@ from ._geometric import (
     CommutatorFreeSolver,
     GeometricEuler,
     RKMK,
+    SeparableHamiltonianVectorField,
     SRKMK,
     StormerVerlet,
 )
@@ -664,8 +665,15 @@ def _native_solution(
         start = problem.t0
         end = problem.t1
         resolved_dt0 = dt0
-        lowered = lower_deterministic_problem(problem)
-        terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter))
+        if isinstance(problem.drift, SeparableHamiltonianVectorField):
+            if state_adapter.active:
+                raise TypeError(
+                    "Separable Hamiltonian solves require native real state packing."
+                )
+            terms = dfx.ODETerm(problem.drift)
+        else:
+            lowered = lower_deterministic_problem(problem)
+            terms = dfx.ODETerm(_vector_field(lowered.explicit_rhs, state_adapter))
     time_dtype = jnp.asarray(problem.initial_state).real.dtype
     start = precision.coefficient(jnp.asarray(start, dtype=time_dtype))
     end = precision.coefficient(jnp.asarray(end, dtype=time_dtype))

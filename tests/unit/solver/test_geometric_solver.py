@@ -148,6 +148,39 @@ def test_euclidean_geometric_euler_agrees_with_ordinary_euler():
         phx.solver.solver_state_geometry(invalid_solver)
 
 
+def test_stormer_verlet_runs_through_the_diffrax_backend():
+    geometry = phx.metrix.EuclideanStateGeometry(
+        geometry_id="state-geometry:canonical-phase"
+    )
+    vector_field = phx.solver.SeparableHamiltonianVectorField(
+        lambda time, configuration, args: configuration,
+        lambda time, momentum, args: momentum,
+        1,
+    )
+    problem = phx.solver.DifferentialProblem(
+        vector_field,
+        jnp.asarray([1.0, 0.0]),
+        t0=0.0,
+        t1=1.0,
+        state_geometry=geometry,
+    )
+
+    solution = phx.solver.solve_diffrax(
+        problem,
+        save_times=jnp.asarray([1.0]),
+        solver=phx.solver.StormerVerlet(1),
+        dt0=0.01,
+    )
+
+    assert solution.backend_successful
+    assert jnp.allclose(
+        solution.states[-1],
+        jnp.asarray([jnp.cos(1.0), -jnp.sin(1.0)]),
+        rtol=3e-5,
+        atol=3e-5,
+    )
+
+
 def test_rkmk_so_dense_output_jit_gradient_and_convergence():
     times = jnp.asarray([0.0, 0.5, 1.0])
 

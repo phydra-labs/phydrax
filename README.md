@@ -38,8 +38,9 @@ Most workflows are composing a few primitives:
   boundary atlases, topology identities, and design parameters.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
-  volumes, WENO fluxes, fixed-capacity AMR, field spaces, measures, transfers,
-  temporal/stochastic composition, and auditable plan/preparation identities.
+  volumes, material-particle supports, conservative SPH, WENO fluxes,
+  fixed-capacity AMR, field spaces, measures, transfers, temporal/stochastic
+  composition, and auditable plan/preparation identities.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
 - **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
   transformations, metrics, connections, curvature, embedded charts, and
@@ -124,9 +125,12 @@ thin labeled-domain adapter used by sampling, integration, and constraints. See 
 [geometry substrate API](docs/api/geometry.md).
 
 Numerical supports and finite field spaces live in `phx.discretization`, including
-global tensor bases and exact-sampling round-sphere spaces with S2FFT transforms,
-Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
+global tensor bases, material-particle supports and conservative SPH, and
+exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami actions,
+area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
+[particle-method guide](docs/guides_particle_methods.md), the
+[SPH guide](docs/guides_sph.md), the
 [global spectral guide](docs/guides_spectral_methods.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).

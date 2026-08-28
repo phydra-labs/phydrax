@@ -87,6 +87,13 @@ Local stencil programs, structured compact line solves, periodic/bounded SBP
 calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
 WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose
 without treating quadrature sites, mesh entities, and field DOFs as interchangeable.
+Material particles retain stable entity IDs and a physical mass measure while
+current positions remain temporal state. Fixed-h conservative barotropic SPH
+uses canonical unordered pairs, normalized compact kernels, energy-derived
+pressure forces, dense or fail-closed cell-list execution, exact `GraphIR`
+views, and the native separable-Hamiltonian solver path. See
+[Guide → Particle methods](guides_particle_methods.md) and
+[Guide → Smoothed particle hydrodynamics](guides_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and

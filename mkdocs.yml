@@ -120,6 +120,8 @@ nav:
     - Guides:
         - Domains and sampling: "guides_domain.md"
         - Discretization: "guides_discretization.md"
+        - Particle methods: "guides_particle_methods.md"
+        - Smoothed particle hydrodynamics: "guides_sph.md"
         - Finite elements: "guides_finite_elements.md"
         - Smoothed finite elements: "guides_fem_smoothing.md"
         - Global spectral methods: "guides_spectral_methods.md"
@@ -188,6 +190,7 @@ nav:
             - Field spaces and axes: "api/discretization/spaces.md"
             - Prepared methods: "api/discretization/methods.md"
             - Finite elements: "api/discretization/finite_element.md"
+            - Particle methods: "api/discretization/particle.md"
             - Smoothed finite elements: "api/discretization/fem_smoothing.md"
             - Global spectral methods: "api/discretization/spectral.md"
             - Temporal and stochastic composition: "api/discretization/stochastic.md"

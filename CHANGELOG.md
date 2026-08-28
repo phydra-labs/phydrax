@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Added a first-class material-particle discretization with stable physical IDs,
+  static active selections, physical mass measures, explicit precision/execution
+  policies, periodic pair geometry, budgeted canonical dense neighborhoods,
+  fail-closed fixed-capacity cell-list neighborhoods, exact solver-relation
+  `GraphIR` views, and equal/opposite pair accumulation. Added normalized
+  Wendland C2 and cubic-spline SPH kernels, a Tait barotropic energy closure,
+  conservative fixed-h summation-density SPH, complete conservation and step
+  diagnostics, and native separable-Hamiltonian compilation through
+  `StormerVerlet`.
 - Added a typed finite-element local-action IR and compiled worksets; arbitrary-
   order tensor-product nodal tabulation and sum factorization; mixed elasticity,
   Darcy, Maxwell, advection, and penalty proof-form builders; bounded implicit

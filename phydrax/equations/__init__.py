@@ -5,6 +5,7 @@
 """Serializable, validated equation representations for physics-aware models."""
 
 from . import fem, trefftz
+from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._channel_flow import (
     ChannelVelocityDiagnostics,
     compile_channel_flow,
@@ -123,6 +124,11 @@ from ._ir import (
     PDERegion,
     PDERegionKind,
     PDERepresentation,
+)
+from ._lagrangian_fluid import (
+    BarotropicFluidProblemIR,
+    compile_barotropic_sph_problem,
+    CompiledBarotropicSPHProblem,
 )
 from ._manufactured import (
     ManufacturedConvergencePlan,
@@ -503,4 +509,9 @@ __all__ = [
     "StencilStateLayout",
     "validate_pde_ir",
     "validate_convex_entropy_pair",
+    "AbstractBarotropicMaterial",
+    "BarotropicFluidProblemIR",
+    "CompiledBarotropicSPHProblem",
+    "TaitBarotropicMaterial",
+    "compile_barotropic_sph_problem",
 ]
