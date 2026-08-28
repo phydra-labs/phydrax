@@ -141,7 +141,7 @@ class SolveStage(StrictModule, NonTrainableState):
         /,
         *,
         commit: Callable = lambda state, diagnostics: state,
-        rollback: Callable = lambda state, diagnostics: state,
+        rollback: Callable = lambda committed, candidate, diagnostics: committed,
     ):
         identifier = str(stage_id)
         start = float(start_time)
@@ -171,7 +171,7 @@ class SolveStage(StrictModule, NonTrainableState):
         accepted_state = (
             self.commit(result.state, result.diagnostics)
             if bool(jnp.asarray(result.accepted))
-            else self.rollback(result.state, result.diagnostics)
+            else self.rollback(state, result.state, result.diagnostics)
         )
         return ScheduleStepResult(
             state=accepted_state,

@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
+from ....linalg import ArraySpace, FunctionLinearOperator
 from ..._cell_mesh import CellMesh
 from ._cell import q4_cell_smoothing_layout
 from ._common import (
@@ -22,10 +23,7 @@ from ._common import (
     SmoothingPatchLayout,
 )
 from ._edge import edge_smoothing_layout
-from ._elasticity import (
-    assemble_smoothing_stiffness,
-    smoothing_local_stiffness,
-)
+from ._elasticity import SmoothedElasticityOperator, smoothing_local_stiffness
 from ._moments import boundary_moment, primitive_volume_moment, shape_average
 from ._node import node_smoothing_layout
 from ._stabilization import SmoothingStabilizationPolicy
@@ -93,14 +91,14 @@ class SmoothedElasticityPlan(StrictModule, NonTrainableState):
             stabilization=self.stabilization,
         )
 
-    def stiffness(
+    def operator(
         self,
         coordinates: ArrayLike,
         /,
         *,
         compatible_local_stiffness: ArrayLike | None = None,
-    ) -> Array:
-        return assemble_smoothing_stiffness(
+    ) -> SmoothedElasticityOperator:
+        return SmoothedElasticityOperator(
             self.layout,
             self.local_stiffness(
                 coordinates,
@@ -108,6 +106,19 @@ class SmoothedElasticityPlan(StrictModule, NonTrainableState):
             ),
             self.global_node_count,
         )
+
+    def materialize_stiffness(
+        self,
+        coordinates: ArrayLike,
+        /,
+        *,
+        compatible_local_stiffness: ArrayLike | None = None,
+        max_entries: int = 4_000_000,
+    ) -> Array:
+        return self.operator(
+            coordinates,
+            compatible_local_stiffness=compatible_local_stiffness,
+        ).materialize(max_entries=max_entries)
 
 
 class SelectiveESNSPlan(StrictModule, NonTrainableState):
@@ -134,10 +145,28 @@ class SelectiveESNSPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def stiffness(self, coordinates: ArrayLike, /) -> Array:
-        return self.edge_plan.stiffness(coordinates) + self.node_plan.stiffness(
-            coordinates
+    def operator(self, coordinates: ArrayLike, /) -> FunctionLinearOperator:
+        edge = self.edge_plan.operator(coordinates)
+        node = self.node_plan.operator(coordinates)
+        size = 2 * self.edge_plan.global_node_count
+        space = ArraySpace((size,), dtype=edge.local_stiffness.dtype)
+        return FunctionLinearOperator(
+            lambda value: edge.mv(value) + node.mv(value),
+            source=space,
+            target=space,
+            operator_id=self.plan_id,
         )
+
+    def materialize_stiffness(
+        self,
+        coordinates: ArrayLike,
+        /,
+        *,
+        max_entries: int = 4_000_000,
+    ) -> Array:
+        edge = self.edge_plan.operator(coordinates).materialize(max_entries=max_entries)
+        node = self.node_plan.operator(coordinates).materialize(max_entries=max_entries)
+        return edge + node
 
 
 class Q4FSDTChannels(StrictModule):

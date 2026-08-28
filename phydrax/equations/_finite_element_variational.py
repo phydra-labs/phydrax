@@ -883,8 +883,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     discretization: FiniteElementDiscretization
     constraint: FiniteElementDirichletConstraint | None
     execution_policy: FiniteElementExecutionPolicy
-    action_ir: object
-    workset_program: object
+    _action_ir: object
+    _workset_program: object
     work_blocks: tuple[_FiniteElementWorkBlock, ...]
     lift: Array
     discretization_bundle: DiscretizationBundle
@@ -1010,8 +1010,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         self.discretization = discretization
         self.constraint = constraint
         self.execution_policy = policy
-        self.action_ir = action_ir
-        self.workset_program = workset_program
+        self._action_ir = action_ir
+        self._workset_program = workset_program
         self.lift = lift
         self.work_blocks = work_blocks
         self.discretization_bundle = DiscretizationBundle(

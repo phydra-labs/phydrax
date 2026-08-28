@@ -14,9 +14,9 @@ from ._common import (
 )
 from ._edge import edge_smoothing_layout
 from ._elasticity import (
-    assemble_smoothing_stiffness,
     plane_strain_matrix,
     plane_stress_matrix,
+    SmoothedElasticityOperator,
     smoothing_internal_force,
     smoothing_local_stiffness,
     smoothing_strain_matrix,
@@ -47,6 +47,7 @@ __all__ = [
     "Q4FSDTSmoothingPlan",
     "SelectiveESNSPlan",
     "SmoothedElasticityPlan",
+    "SmoothedElasticityOperator",
     "SmoothingEnergyEvidence",
     "SmoothingEvidence",
     "SmoothingPatchGeometry",
@@ -54,7 +55,6 @@ __all__ = [
     "SmoothingPatchLayout",
     "SmoothingStabilizationKind",
     "SmoothingStabilizationPolicy",
-    "assemble_smoothing_stiffness",
     "certify_smoothing_operator",
     "boundary_moment",
     "edge_smoothing_layout",

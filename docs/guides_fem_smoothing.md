@@ -63,7 +63,8 @@ mesh = phx.discretization.CellMesh.from_triangles(vertices, cells)
 smoothed = phx.discretization.fem.smoothing
 constitutive = smoothed.plane_stress_matrix(1.0, 0.3)
 edge_plan = smoothed.SmoothedElasticityPlan("ES", mesh, constitutive)
-stiffness = edge_plan.stiffness(vertices)
+operator = edge_plan.operator(vertices)
+residual = operator.mv(jnp.zeros((10,)))
 ```
 
 ## Node smoothing
