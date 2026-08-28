@@ -118,6 +118,23 @@ the same field/entity identities.
 individual axis specifications. `GridBatch` remains an evaluation batch rather than
 a state-space declaration.
 
+## Material particles
+
+`ParticleSetPlan` prepares stable zero-dimensional material entities, a physical
+mass measure, and `particle_value` position/velocity spaces. Current positions
+remain temporal state rather than support identity. Geometry-dependent pair
+relations are separate prepared execution artifacts. Dense pairs are the
+correctness authority; fixed-capacity cell lists preserve logical particle
+order, expose complete overflow/domain status, and fail before a truncated
+relation reaches a physical residual.
+
+`BarotropicSPHMethodPlan` combines a normalized compact smoothing kernel with a
+barotropic material problem. The compiler evaluates each unordered pressure
+interaction once, binds particle/neighborhood/method provenance, and lowers the
+Hamiltonian state to `DifferentialProblem`. See [Particle methods](guides_particle_methods.md)
+and [Smoothed particle hydrodynamics](guides_sph.md).
+
+
 ## Spectral bases
 
 `TensorSpectralPlan` prepares global Fourier, sine, cosine, Chebyshev, Legendre,

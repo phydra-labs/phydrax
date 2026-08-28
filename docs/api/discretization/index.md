@@ -6,7 +6,9 @@ It composes with `domain`, `geometry`, `integration`, `linalg`, `stochastic`,
 `equations`, and `solver` without replacing their scientific contracts.
 
 See [Guide → Discretization](../../guides_discretization.md) for lifecycle and method
-examples.
+examples, [Guide → Particle methods](../../guides_particle_methods.md) for material
+entity and interaction contracts, and [Guide → SPH](../../guides_sph.md) for the
+conservative barotropic workflow.
 
 ## Identity and lifecycle
 
