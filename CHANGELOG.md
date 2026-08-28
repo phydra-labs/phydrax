@@ -27,6 +27,14 @@
   differentiation, dual-space weak residuals, affine Dirichlet constraints,
   compensated functionals, sparse affine lowering, and native linear,
   nonlinear, and DAE adapters.
+- Completed the fitted finite-element runtime contracts with dynamic geometry
+  and coefficient refresh, component and mixed `BlockSpace` fields, selected
+  cell/exterior/interior domains with native rules, user residual/energy/
+  bilinear/facet kernels, execution and accumulation policies, sparse lifecycle,
+  lagged and adjoint operator factories, nullspace-aware linear solves, dynamic
+  DAE/second-order/eigen adapters, curved coordinate elements, P0/RT0/Nedelec0,
+  local/HDG condensation, material transactions and checkpoints, hierarchy/error
+  evidence, embedded/enriched bases, partitioned DOFs, halo semantics, and FE IO.
 - Added shared twofold compensated conservation accounting across structured,
   triangle, unstructured, spectral, and SBP conservation diagnostics, plus
   finite-volume ledgers, remap, overset/sliding, multiblock, small-cell, and

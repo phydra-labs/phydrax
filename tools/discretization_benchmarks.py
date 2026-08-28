@@ -72,16 +72,33 @@ def _fem_case(width, repeats):
         phx.discretization.lagrange_element("triangle", 1),
     )
     discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
+    form = phx.equations.WeakForm(
+        "benchmark-diffusion",
+        "u",
+        (phx.equations.DiffusionTerm("u"),),
+    )
+    compiled = phx.equations.compile_finite_element_problem(
+        form,
+        discretization,
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free"
+        ),
+    )
     preparation = time.perf_counter() - started
     state = jnp.sin(jnp.pi * vertices[:, 0]) * jnp.sin(jnp.pi * vertices[:, 1])
-    action = eqx.filter_jit(discretization.stiffness.mv)
-    action(state).block_until_ready()
-    value, steady = _timed(lambda: action(state), repeats)
+    matrix_free = eqx.filter_jit(compiled.full_residual)
+    sparse = eqx.filter_jit(discretization.stiffness.mv)
+    matrix_free(state).block_until_ready()
+    sparse(state).block_until_ready()
+    value, matrix_free_steady = _timed(lambda: matrix_free(state), repeats)
+    _, sparse_steady = _timed(lambda: sparse(state), repeats)
     return {
         "preparation_seconds": preparation,
-        "steady_action_seconds": steady,
+        "matrix_free_steady_seconds": matrix_free_steady,
+        "sparse_steady_seconds": sparse_steady,
         "vertices": int(vertices.shape[0]),
         "cells": int(faces.shape[0]),
+        "dofs": int(discretization.dof_maps[0].global_dof_count),
         "routes": int(discretization.stiffness.relation.route_shape[0]),
         "maximum_absolute_value": float(jnp.max(jnp.abs(value))),
     }

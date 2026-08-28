@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,7 +14,12 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, ConstraintMap, FunctionLinearOperator
+from ...linalg import (
+    ArraySpace,
+    ConstraintMap,
+    DenseLinearOperator,
+    FunctionLinearOperator,
+)
 from .._cell_complex import PolygonalConnectivity
 from ._generic import FiniteElementDiscretization
 
@@ -40,21 +45,28 @@ class FiniteElementDirichletConstraint(StrictModule, NonTrainableState):
         if not isinstance(full_space, ArraySpace):
             raise TypeError("Finite-element Dirichlet lifts require an ArraySpace.")
         full_shape = full_space.shape
+        full_size = int(np.prod(full_shape, dtype=int))
         if raw.shape == ():
-            full = jnp.broadcast_to(raw, full_shape)
+            full = jnp.broadcast_to(raw, full_shape).reshape((full_size,))
         elif raw.shape == full_shape:
-            full = raw
-        elif raw.shape == (int(self.constrained_dofs.size),) and len(full_shape) == 1:
+            full = raw.reshape((full_size,))
+        elif raw.shape == (int(self.constrained_dofs.size),):
             full = (
-                jnp.zeros(full_shape, dtype=raw.dtype).at[self.constrained_dofs].set(raw)
+                jnp.zeros((full_size,), dtype=raw.dtype)
+                .at[self.constrained_dofs]
+                .set(raw)
             )
         else:
             raise ValueError(
                 "Dirichlet values must be scalar, full-space shaped, or contain "
-                "one scalar per constrained DOF."
+                "one value per constrained coordinate."
             )
-        zeros = jnp.zeros(full_shape, dtype=full.dtype)
-        return zeros.at[self.constrained_dofs].set(full[self.constrained_dofs])
+        zeros = jnp.zeros((full_size,), dtype=full.dtype)
+        return (
+            zeros.at[self.constrained_dofs]
+            .set(full[self.constrained_dofs])
+            .reshape(full_shape)
+        )
 
 
 def _validate_component_constraints(
@@ -105,6 +117,7 @@ def dirichlet_constraint(
     /,
     *,
     boundary_mask: ArrayLike | None = None,
+    components: Sequence[int] | None = None,
 ) -> FiniteElementDirichletConstraint:
     """Resolve one reduced-coordinate strong Dirichlet constraint."""
 
@@ -113,23 +126,43 @@ def dirichlet_constraint(
     field_index = discretization._field_index(field_name)
     field_space = discretization.field_spaces[field_index]
     dof_map = discretization.dof_maps[field_index]
-    if (
-        not isinstance(field_space.vector_space, ArraySpace)
-        or len(field_space.vector_space.shape) != 1
-    ):
-        raise ValueError(
-            "The initial Dirichlet builder supports scalar FE field coordinates."
-        )
-    mask = (
+    if not isinstance(field_space.vector_space, ArraySpace):
+        raise ValueError("Finite-element Dirichlet constraints require ArraySpace.")
+    node_mask = (
         np.asarray(dof_map.boundary_dof_mask, dtype=bool)
         if boundary_mask is None
         else np.asarray(boundary_mask, dtype=bool)
     )
-    if mask.shape != (dof_map.global_dof_count,):
-        raise ValueError("boundary_mask must contain one value per global DOF.")
-    _validate_component_constraints(discretization, mask)
-    constrained = np.flatnonzero(mask).astype(np.int32)
-    free = np.flatnonzero(~mask).astype(np.int32)
+    full_shape = field_space.vector_space.shape
+    component_count = int(np.prod(full_shape[1:], dtype=int)) if full_shape[1:] else 1
+    if node_mask.shape == full_shape:
+        full_mask = node_mask.reshape((dof_map.global_dof_count, component_count))
+        node_mask = np.any(full_mask, axis=1)
+    elif node_mask.shape == (dof_map.global_dof_count,):
+        selected_components = (
+            np.arange(component_count, dtype=np.int32)
+            if components is None
+            else np.asarray(tuple(int(value) for value in components), dtype=np.int32)
+        )
+        if (
+            selected_components.ndim != 1
+            or selected_components.size == 0
+            or np.any(selected_components < 0)
+            or np.any(selected_components >= component_count)
+            or np.unique(selected_components).size != selected_components.size
+        ):
+            raise ValueError("components must select unique valid flattened components.")
+        full_mask = np.zeros(
+            (dof_map.global_dof_count, component_count),
+            dtype=bool,
+        )
+        full_mask[:, selected_components] = node_mask[:, None]
+    else:
+        raise ValueError("boundary_mask must have global-DOF shape or full field shape.")
+    _validate_component_constraints(discretization, node_mask)
+    flattened_mask = full_mask.reshape((-1,))
+    constrained = np.flatnonzero(flattened_mask).astype(np.int32)
+    free = np.flatnonzero(~flattened_mask).astype(np.int32)
     if constrained.size == 0 or free.size == 0:
         raise ValueError(
             "Dirichlet constraints require a non-empty proper subset of DOFs."
@@ -137,13 +170,17 @@ def dirichlet_constraint(
     reduced_space = ArraySpace((free.size,), pairing=None)
     full_space = field_space.vector_space
     free_array = jnp.asarray(free)
+    full_size = int(np.prod(full_space.shape, dtype=int))
     prolongation = FunctionLinearOperator(
         lambda reduced: (
-            jnp.zeros(full_space.shape, dtype=reduced.dtype).at[free_array].set(reduced)
+            jnp.zeros((full_size,), dtype=reduced.dtype)
+            .at[free_array]
+            .set(reduced, unique_indices=True)
+            .reshape(full_space.shape)
         ),
         source=reduced_space,
         target=full_space,
-        transpose_action=lambda full: full[free_array],
+        transpose_action=lambda full: full.reshape((full_size,))[free_array],
         operator_id=canonical_fingerprint(
             {
                 "kind": "finite-element-dirichlet-prolongation",
@@ -174,4 +211,48 @@ def dirichlet_constraint(
     )
 
 
-__all__ = ["FiniteElementDirichletConstraint", "dirichlet_constraint"]
+def affine_dof_constraint(
+    discretization: FiniteElementDiscretization,
+    field_name: str,
+    prolongation_matrix: ArrayLike,
+    /,
+    *,
+    constraint_id: str | None = None,
+) -> ConstraintMap:
+    """Create periodic, multipoint, or hanging-node affine coordinates."""
+
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise TypeError("discretization must be FiniteElementDiscretization.")
+    field_index = discretization._field_index(field_name)
+    full_space = discretization.field_spaces[field_index].vector_space
+    matrix = jnp.asarray(prolongation_matrix)
+    if matrix.ndim != 2 or matrix.shape[0] != full_space.size:
+        raise ValueError(
+            "prolongation_matrix must map reduced coordinates to the full field."
+        )
+    reduced_space = ArraySpace((int(matrix.shape[1]),), dtype=matrix.dtype)
+    operator = DenseLinearOperator(
+        matrix,
+        source=reduced_space,
+        target=full_space,
+        operator_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-affine-dof-prolongation",
+                "field_space": discretization.field_spaces[field_index].field_space_id,
+                "matrix_shape": list(matrix.shape),
+            }
+        ),
+    )
+    return ConstraintMap(
+        full_space,
+        reduced_space,
+        operator,
+        constraint_id=constraint_id,
+    )
+
+
+__all__ = [
+    "FiniteElementDirichletConstraint",
+    "affine_dof_constraint",
+    "dirichlet_constraint",
+]
