@@ -4,6 +4,11 @@
 
 """Global tensor spectral spaces, operators, and pseudospectral methods."""
 
+from ..._spectral._spherical import (
+    SphericalExecution,
+    SphericalHarmonicPlan,
+    SphericalSampling,
+)
 from ._basis import (
     AbstractSpectralBasisPlan,
     ChebyshevBasisPlan,
@@ -66,6 +71,12 @@ from ._operators import (
 )
 from ._precision import SpectralPrecisionPolicy
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
+from ._spherical import (
+    spherical_laplacian_operator,
+    SphericalSpectralDiscretization,
+    SphericalSpectralPlan,
+)
+from ._spherical_layout import SphericalModeLayout
 from ._symmetry import (
     project_tensor_spectral_symmetries,
     TensorSpectralSymmetry,
@@ -110,6 +121,12 @@ __all__ = [
     "TensorSpectralSymmetry",
     "PseudospectralMethodPlan",
     "SineBasisPlan",
+    "SphericalExecution",
+    "SphericalHarmonicPlan",
+    "SphericalModeLayout",
+    "SphericalSampling",
+    "SphericalSpectralDiscretization",
+    "SphericalSpectralPlan",
     "SpectralBasisFamily",
     "SpectralBoundaryConditionPlan",
     "SpectralBoundaryKind",
@@ -127,4 +144,5 @@ __all__ = [
     "TensorSpectralPlan",
     "spectral_derivative_operator",
     "spectral_laplacian_operator",
+    "spherical_laplacian_operator",
 ]

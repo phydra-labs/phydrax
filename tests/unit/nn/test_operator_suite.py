@@ -599,7 +599,8 @@ def test_cno_family_handles_odd_grids_and_native_batches(model_name):
 
 
 def test_sfno_is_finite_on_its_exact_s2fft_sampling():
-    plan = phx.nn.operator.architectures.SphericalHarmonicPlan(3)
+    space = phx.discretization.SphericalSpectralPlan(3).prepare()
+    plan = space.transform
     axes = (
         phx.nn.operator.OperatorAxis(
             "theta",
@@ -624,7 +625,7 @@ def test_sfno_is_finite_on_its_exact_s2fft_sampling():
         case_axes=("case",),
     )
     model = phx.nn.operator.architectures.SFNO(
-        plan, width=4, depth=2, source_key="field", key=jr.key(0)
+        space, width=4, depth=2, source_key="field", key=jr.key(0)
     )
     count = _parameter_count(model)
     output = model(batch)

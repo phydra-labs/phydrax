@@ -1990,7 +1990,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         )
     )
 
-    spherical_plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+    spherical_plan = phx.discretization.SphericalHarmonicPlan(
         4,
         sampling="mw",
         execution="recursive",

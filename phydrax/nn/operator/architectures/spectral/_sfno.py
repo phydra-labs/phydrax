@@ -14,8 +14,11 @@ import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
-from phydrax._spectral._spherical import SphericalHarmonicPlan
 from phydrax._strict import StrictModule
+from phydrax.discretization import (
+    SphericalHarmonicPlan,
+    SphericalSpectralDiscretization,
+)
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
@@ -172,7 +175,7 @@ class SFNO(AbstractOperatorModel):
 
     def __init__(
         self,
-        plan: SphericalHarmonicPlan,
+        discretization: SphericalSpectralDiscretization,
         /,
         *,
         in_channels: int | Literal["scalar"] = "scalar",
@@ -182,10 +185,13 @@ class SFNO(AbstractOperatorModel):
         source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ):
-        if not isinstance(plan, SphericalHarmonicPlan):
-            raise TypeError("plan must be a SphericalHarmonicPlan.")
+        if not isinstance(discretization, SphericalSpectralDiscretization):
+            raise TypeError(
+                "discretization must be a SphericalSpectralDiscretization."
+            )
+        plan = discretization.transform
         if plan.spin != 0 or not plan.reality:
-            raise ValueError("SFNO currently requires a real spin-zero transform plan.")
+            raise ValueError("SFNO currently requires a real spin-zero spherical space.")
         self.plan = plan
         self.in_size = in_channels
         self.out_size = out_channels
@@ -316,4 +322,4 @@ class SFNO(AbstractOperatorModel):
         return self.__call_operator_batch__(x, key=key)
 
 
-__all__ = ["SFNO", "SphericalHarmonicPlan", "SphericalSpectralConv"]
+__all__ = ["SFNO", "SphericalSpectralConv"]

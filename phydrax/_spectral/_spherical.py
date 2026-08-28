@@ -352,6 +352,42 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @property
+    def layout_id(self) -> str:
+        """Identity of the mathematical coefficient layout, independent of sampling."""
+        return canonical_fingerprint(
+            {
+                "kind": "spherical-mode-layout-v1",
+                "bandlimit": self.bandlimit,
+                "spin": self.spin,
+                "reality": self.reality,
+                "normalization": "s2fft-orthonormal-condon-shortley",
+            }
+        )
+
+    @property
+    def transform_id(self) -> str:
+        """Sampling-theorem identity shared by equivalent execution strategies."""
+        return self.fingerprint
+
+    @property
+    def precompute_bytes(self) -> int:
+        """Materialized recursive tables or precomputed transform kernels."""
+        return _array_bytes(self.transform)
+
+    @property
+    def execution_id(self) -> str:
+        """Identity of one concrete transform execution realization."""
+        return canonical_fingerprint(
+            {
+                "kind": "spherical-harmonic-execution-v1",
+                "transform": self.transform_id,
+                "execution": self.execution,
+                "precompute_bytes": self.precompute_bytes,
+            }
+        )
+
+
     def _forward_field(self, values: Array, /) -> Array:
         return self.transform.forward(
             values,

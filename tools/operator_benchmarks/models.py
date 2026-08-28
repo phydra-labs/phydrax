@@ -1327,12 +1327,12 @@ def _sfno_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
         name, _ = _primary_source(scenario)
         metadata = dict(scenario.metadata)
-        plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+        space = phx.discretization.SphericalSpectralPlan(
             int(metadata["bandlimit"]),
             sampling=metadata["sampling"],
-        )
+        ).prepare()
         return phx.nn.operator.architectures.SFNO(
-            plan,
+            space,
             in_channels="scalar",
             out_channels="scalar",
             width=max(2, round((4 if quick else 24) * size_scale)),

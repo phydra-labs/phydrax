@@ -100,7 +100,7 @@ def test_sphere_kernel_is_rotation_invariant_unit_diagonal_and_differentiable():
     assert jnp.allclose(matrix, kernel.matrix(points @ rotation.T, points @ rotation.T))
     assert jnp.isfinite(jax.jit(jax.grad(objective))(jnp.asarray(0.7)))
     _assert_psd(matrix)
-    with pytest.raises(Exception, match="unit vectors"):
+    with pytest.raises(Exception, match="declared round sphere"):
         kernel.matrix(jnp.asarray([[2.0, 0.0, 0.0]]), points)
 
 
@@ -120,6 +120,24 @@ def test_tolerance_near_sphere_points_are_canonicalized_before_expansion():
     _assert_psd(matrix)
     with pytest.raises(ValueError, match="one sphere point"):
         kernel.pairwise(points[:2], points[0])
+
+def test_sphere_kernel_binds_spherical_discretization_radius_and_bandlimit():
+    space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=2.0)
+    kernel = phx.kernels.SphereSpectralKernel.from_discretization(
+        space,
+        phx.kernels.HeatSpectralMultiplier(0.3),
+    )
+    points = space.points[jnp.asarray([0, 3, -1])]
+    matrix = kernel.matrix(points, points)
+
+    assert kernel.radius == 2.0
+    assert kernel.spectrum.dimension == 2
+    assert kernel.spectrum.max_level == 3
+    assert jnp.allclose(jnp.diag(matrix), 1.0)
+    assert f"radius={space.radius}" in kernel.kernel_id
+    _assert_psd(matrix)
+    with pytest.raises(ValueError, match="declared round sphere"):
+        kernel.matrix(points / 2.0, points)
 
 
 def test_special_orthogonal_character_kernel_is_biinvariant_and_psd():

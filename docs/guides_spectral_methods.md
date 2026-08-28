@@ -1,8 +1,9 @@
 # Global spectral methods
 
-Phydrax separates a spectral basis, its physical evaluation grid, modal degrees of
-freedom, nonlinear realization, and temporal method. These objects are global tensor
-products; they are not spectral elements and do not introduce element topology.
+Phydrax separates a spectral basis, its physical evaluation support, modal degrees of
+freedom, nonlinear realization, and temporal method. Tensor spectral objects are global
+products rather than spectral elements. Spherical spaces instead bind exact S2FFT
+sampling theorems to a round-sphere support; neither path invents element topology.
 
 ## Spaces and representations
 
@@ -39,6 +40,42 @@ Fourier fields use full complex modal storage. Real reconstruction is explicit a
 encode homogeneous Dirichlet and Neumann endpoint semantics respectively. Chebyshev
 and Legendre plans use the internal polynomial preparation substrate and budgeted
 dense linear transforms.
+
+## Exact-sampling spherical spaces
+
+`SphericalSpectralPlan` prepares scalar or spin-weighted fields on a round two-sphere.
+The stable differential contract is scalar spin zero; nonzero-spin complex plans expose
+analysis and synthesis without claiming scalar Laplace--Beltrami, kernel, stochastic,
+or SFNO semantics.
+
+```python
+sphere = phx.discretization.SphericalSpectralPlan(
+    32,
+    sampling="mw",
+    field_name="u",
+).prepare(radius=1.0)
+
+values = jnp.cos(sphere.transform.theta)[:, None] * jnp.ones(
+    (1, sphere.transform.phi.size)
+)
+coefficients = sphere.project(values)
+reconstructed = sphere.reconstruct(coefficients)
+laplacian_values = sphere.laplacian(values)
+```
+
+The physical point-value field is the primary state. S2FFT coefficient storage has
+shape `(L, 2*L-1)` and contains invalid `|m| > ell` capacity; `SphericalModeLayout`
+owns the valid mask, conjugacy, degree groups, and logical mode identity. Invalid
+capacity is masked before arithmetic and is not advertised as a modal field space.
+`layout_id`, `transform_id`, and `execution_id` respectively distinguish coefficient
+meaning, exact sampling realization, and recursive versus precomputed execution.
+
+The physical measure sums to `4*pi*radius**2`. Scalar Laplace--Beltrami uses the
+negative-semidefinite multiplier `-ell*(ell+1)/radius**2`; `eigenpairs` reports the
+nonnegative spectrum of `-laplacian` and accepts only ranks ending at a complete
+`2*ell+1` degree block. Explicit eigenbases and dense Laplacians are separately
+resource-bounded. Coordinate partial derivatives, arbitrary masks, HEALPix sampling,
+and nonlinear spherical dealiasing are outside this contract.
 
 ## Operators
 

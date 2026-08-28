@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added first-class exact-sampling round-sphere spectral discretizations with
+  explicit S2FFT mode layouts, physical area measures, matrix-free
+  Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,
+  radius-aware addition-theorem kernels, resource/precision provenance, and one
+  shared prepared-space contract for SFNO.
 - Added native computation-aware scalar Gaussian processes with fixed, normalized
   block-sparse, and pseudo-input action policies; bounded sparse kernel-action
   contraction; reusable projected factors and low-storage conditioners; diagonal

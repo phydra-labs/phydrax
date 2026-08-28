@@ -509,7 +509,8 @@ def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path)
 
 
 def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
-    plan = phx.nn.operator.architectures.SphericalHarmonicPlan(3)
+    space = phx.discretization.SphericalSpectralPlan(3).prepare()
+    plan = space.transform
     axes = (
         phx.nn.operator.OperatorAxis(
             "theta",
@@ -568,7 +569,7 @@ def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
         ),
     )
     model = phx.nn.operator.architectures.SFNO(
-        plan,
+        space,
         width=4,
         depth=1,
         source_key="u",
@@ -593,6 +594,7 @@ def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
     actual = restored.predict(batch).field("solution").values
 
     assert restored.execution_model.plan.fingerprint == plan.fingerprint
+    assert restored.execution_model.plan.layout_id == space.layout.layout_id
     assert jnp.allclose(actual, expected)
 
 

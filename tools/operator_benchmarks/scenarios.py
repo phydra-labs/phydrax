@@ -9,7 +9,7 @@ import jax.random as jr
 import numpy as np
 import opt_einsum as oe
 
-from phydrax.discretization import CochainFieldSpec
+from phydrax.discretization import CochainFieldSpec, SphericalHarmonicPlan
 from phydrax.graph import compute_harmonic_subspace, triangle_mesh_to_cochain_complex
 from phydrax.nn.operator import (
     function_samples_from_cochain,
@@ -22,7 +22,6 @@ from phydrax.nn.operator import (
     OperatorTargetBatch,
     OperatorTask,
 )
-from phydrax.nn.operator.architectures import SphericalHarmonicPlan
 
 
 SquareSymmetryGroup = Literal["p4", "p4m"]

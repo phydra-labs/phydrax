@@ -451,38 +451,6 @@ def trigonometric_modal_transform(
     )
 
 
-def spherical_laplacian_spectrum(
-    transform: ModalTransform,
-    degrees: ArrayLike,
-    /,
-    *,
-    radius: float = 1.0,
-    operator_id: str = "laplace_beltrami",
-) -> OperatorSpectrum:
-    """Bind analytic spherical Laplace–Beltrami values to a supplied SHT basis."""
-    degree_values = np.asarray(degrees, dtype=np.int32).reshape((-1,))
-    radius_ = float(radius)
-    if (
-        not isinstance(transform, ModalTransform)
-        or degree_values.shape != (transform.num_modes,)
-        or np.any(degree_values < 0)
-        or not np.isfinite(radius_)
-        or radius_ <= 0.0
-    ):
-        raise ValueError("Spherical degrees/radius must match the modal transform.")
-    unique_degrees = tuple(int(value) for value in np.unique(degree_values))
-    group_lookup = {degree: index for index, degree in enumerate(unique_degrees)}
-    groups = np.asarray([group_lookup[int(value)] for value in degree_values])
-    modal_values = -degree_values * (degree_values + 1) / radius_**2
-    return OperatorSpectrum(
-        transform,
-        operator_id,
-        modal_values,
-        group_ids=groups,
-        nullspace_mask=degree_values == 0,
-        classification="pseudospectral",
-        spectral_dimension=2.0,
-    )
 
 
 class TensorModalTransform(StrictModule, NonTrainableState):
@@ -1314,7 +1282,6 @@ __all__ = [
     "OperatorSpectrum",
     "SpectralDecomposition",
     "TensorModalTransform",
-    "spherical_laplacian_spectrum",
     "trigonometric_modal_transform",
     "SpectrumClassification",
 ]

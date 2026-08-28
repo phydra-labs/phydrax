@@ -12,7 +12,7 @@ import s2fft
 from s2fft.transforms import spherical as s2fft_spherical
 from scipy.special import sph_harm_y
 
-from phydrax._spectral._spherical import SphericalHarmonicPlan
+from phydrax.discretization import SphericalHarmonicPlan
 
 
 def _real_bandlimited_field(plan):
@@ -114,6 +114,11 @@ def test_recursive_and_precomputed_spherical_plans_share_semantic_identity():
     actual = precomputed.analysis(values)
 
     assert recursive.fingerprint == precomputed.fingerprint
+    assert recursive.layout_id == precomputed.layout_id
+    assert recursive.transform_id == precomputed.transform_id
+    assert recursive.execution_id != precomputed.execution_id
+    assert recursive.precompute_bytes > 0
+    assert precomputed.precompute_bytes > 0
     assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)
     assert jnp.allclose(
         precomputed.synthesis(actual),
