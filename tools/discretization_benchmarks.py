@@ -112,21 +112,30 @@ def _smoothing_case(width, repeats):
     started = time.perf_counter()
     edge = smoothing.SmoothedElasticityPlan("ES", mesh, constitutive)
     node = smoothing.SmoothedElasticityPlan("NS", mesh, constitutive)
+    edge_operator = edge.operator(vertices)
+    node_operator = node.operator(vertices)
     preparation = time.perf_counter() - started
-    edge_action = eqx.filter_jit(edge.stiffness)
-    node_action = eqx.filter_jit(node.stiffness)
-    edge_action(vertices).block_until_ready()
-    node_action(vertices).block_until_ready()
-    edge_stiffness, edge_steady = _timed(lambda: edge_action(vertices), repeats)
-    node_stiffness, node_steady = _timed(lambda: node_action(vertices), repeats)
+    displacement = jnp.stack(
+        (
+            jnp.sin(jnp.pi * vertices[:, 0]),
+            jnp.sin(jnp.pi * vertices[:, 1]),
+        ),
+        axis=-1,
+    ).reshape((-1,))
+    edge_action = eqx.filter_jit(edge_operator.mv)
+    node_action = eqx.filter_jit(node_operator.mv)
+    edge_action(displacement).block_until_ready()
+    node_action(displacement).block_until_ready()
+    edge_residual, edge_steady = _timed(lambda: edge_action(displacement), repeats)
+    node_residual, node_steady = _timed(lambda: node_action(displacement), repeats)
     return {
         "preparation_seconds": preparation,
         "edge_steady_seconds": edge_steady,
         "node_steady_seconds": node_steady,
         "edge_patches": int(edge.layout.owner_entities.size),
         "node_patches": int(node.layout.owner_entities.size),
-        "edge_matrix_norm": float(jnp.linalg.norm(edge_stiffness)),
-        "node_matrix_norm": float(jnp.linalg.norm(node_stiffness)),
+        "edge_action_norm": float(jnp.linalg.norm(edge_residual)),
+        "node_action_norm": float(jnp.linalg.norm(node_residual)),
     }
 
 

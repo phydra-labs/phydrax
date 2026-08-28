@@ -28,15 +28,16 @@ def test_weak_form_lowers_to_typed_ir_and_worksets():
         "u",
         (phx.equations.DiffusionTerm("u"), phx.equations.SourceTerm("u", 1.0)),
     )
-    compiled = phx.equations.compile_finite_element_problem(form, discretization)
 
-    assert compiled.action_ir.ir_id
-    assert tuple(slot.name for slot in compiled.action_ir.slots) == ("u",)
-    assert len(compiled.action_ir.terms) == 2
-    assert compiled.workset_program.program_id
-    assert all(
-        workset.entity_indices.size for workset in compiled.workset_program.worksets
+    action_ir = phx.equations.fem.lower_weak_form(form, discretization)
+    workset_program = phx.equations.fem.compile_workset_program(
+        action_ir, form, discretization
     )
+    assert action_ir.ir_id
+    assert tuple(slot.name for slot in action_ir.slots) == ("u",)
+    assert len(action_ir.terms) == 2
+    assert workset_program.program_id
+    assert all(workset.entity_indices.size for workset in workset_program.worksets)
 
 
 def test_high_order_tensor_family_partition_unity_and_sum_factorization():
@@ -73,8 +74,8 @@ def test_edge_and_node_smoothing_partition_patch_and_rigid_modes():
     node = smoothing.SmoothedElasticityPlan("NS", mesh, constitutive)
     edge_geometry = edge.geometry(mesh.coordinates)
     node_geometry = node.geometry(mesh.coordinates)
-    edge_stiffness = edge.stiffness(mesh.coordinates)
-    node_stiffness = node.stiffness(mesh.coordinates)
+    edge_stiffness = edge.operator(mesh.coordinates).materialize()
+    node_stiffness = node.operator(mesh.coordinates).materialize()
     translation_x = jnp.tile(jnp.asarray([1.0, 0.0]), (5, 1)).reshape((-1,))
     rotation = jnp.stack(
         (-mesh.coordinates[:, 1], mesh.coordinates[:, 0]), axis=-1
@@ -191,11 +192,7 @@ def test_element_partial_and_p_transfer_operators_are_consistent():
     assert jnp.allclose(transfer.prolong(constant), 1.0)
 
 
-def test_proof_form_and_application_models_are_executable():
-    elasticity = phx.equations.fem.linear_elasticity_form("u", 1.0, 1.0)
-    assert elasticity.form_id
-    upwind = phx.equations.fem.upwind_advection_form("c", jnp.asarray([1.0, 0.0]))
-    assert upwind.form_id
+def test_application_model_primitives_are_executable():
     parameters = phx.equations.fem.J2PlasticityParameters(1.0, 2.0, 0.1, 0.2)
     response = phx.equations.fem.j2_radial_return(
         jnp.asarray([0.2, -0.1, -0.1, 0.0, 0.0, 0.0]),

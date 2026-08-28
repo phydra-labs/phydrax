@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import ArrayLike
 
 from ._common import (
@@ -19,6 +20,7 @@ from ._moments import boundary_moment
 def certify_smoothing_operator(
     layout: SmoothingPatchLayout,
     geometry: SmoothingPatchGeometry,
+    dof_coordinates: ArrayLike,
     stiffness: ArrayLike,
     constrained_dofs: ArrayLike,
     expected_total_measure: ArrayLike,
@@ -40,6 +42,24 @@ def certify_smoothing_operator(
     eigenvalues = jnp.linalg.eigvalsh(0.5 * (reduced + reduced.T))
     scale = jnp.maximum(jnp.max(jnp.abs(eigenvalues)), 1.0)
     near_zero = int(jnp.sum(jnp.abs(eigenvalues) <= eigen_tolerance * scale))
+    coordinates = jnp.asarray(dof_coordinates)
+    if coordinates.ndim != 2:
+        raise ValueError("Smoothing DOF coordinates must be rank-2.")
+    safe_routes = jnp.where(layout.dof_valid, layout.dof_routes, 0)
+    gathered_coordinates = coordinates[safe_routes]
+    gathered_coordinates = jnp.where(
+        layout.dof_valid[..., None],
+        gathered_coordinates,
+        0.0,
+    )
+    moments = boundary_moment(layout, geometry)
+    affine_tensor = oe.contract(
+        "plc,pld->pcd",
+        gathered_coordinates,
+        moments,
+    )
+    identity = jnp.eye(coordinates.shape[-1], dtype=affine_tensor.dtype)
+    affine = affine_tensor - identity[None, :, :]
     closure = jnp.sum(
         geometry.boundary_lengths[..., None] * geometry.boundary_normals,
         axis=1,
@@ -51,7 +71,7 @@ def certify_smoothing_operator(
         geometry.valid,
         jnp.sqrt(jnp.sum(closure**2, axis=-1)),
         partition_defect,
-        jnp.sqrt(jnp.sum(affine**2, axis=-1)),
+        jnp.sqrt(jnp.sum(affine**2, axis=(-2, -1))),
         expected_rigid_modes,
         max(near_zero - expected_rigid_modes, 0),
         jnp.min(eigenvalues),

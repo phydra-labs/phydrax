@@ -36,16 +36,6 @@ from ._operators import (
     symmetric_gradient,
     tangential_trace,
 )
-from ._proofs import (
-    darcy_form,
-    HDGPoissonSolution,
-    interior_penalty_form,
-    linear_elasticity_form,
-    maxwell_form,
-    sipg_poisson_ir,
-    solve_hdg_poisson,
-    upwind_advection_form,
-)
 from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
@@ -75,14 +65,6 @@ __all__ = [
     "WorksetProgram",
     "WorksetSignature",
     "average",
-    "HDGPoissonSolution",
-    "darcy_form",
-    "interior_penalty_form",
-    "linear_elasticity_form",
-    "maxwell_form",
-    "sipg_poisson_ir",
-    "solve_hdg_poisson",
-    "upwind_advection_form",
     "compile_workset_program",
     "curl",
     "divergence",

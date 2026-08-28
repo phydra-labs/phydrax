@@ -198,17 +198,17 @@ class SumFactorizationPlan(StrictModule, NonTrainableState):
     def gradient(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)
         dx = oe.contract(
-            "pi,...ij,qj->...pqi",
+            "pi,...ij,qj->...pq",
             self.tabulation.gradient_x,
             values,
             self.tabulation.basis_y,
-        )[..., 0]
+        )
         dy = oe.contract(
-            "pi,...ij,qj->...pqi",
+            "pi,...ij,qj->...pq",
             self.tabulation.basis_x,
             values,
             self.tabulation.gradient_y,
-        )[..., 0]
+        )
         return jnp.stack((dx, dy), axis=-1)
 
 

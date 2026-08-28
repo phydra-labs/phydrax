@@ -120,8 +120,7 @@ class LocalImplicitMaterial(StrictModule, NonTrainableState):
         args: object,
         /,
     ) -> tuple[Array, LocalImplicitDiagnostics]:
-        initial = jnp.asarray(initial_state)
-        root = self._newton_solve(self.residual, initial, args)
+        root = self.solve(initial_state, args)
         residual = jnp.asarray(self.residual(root, args))
         norm = jnp.linalg.norm(residual.reshape((-1,)))
         finite = jnp.all(jnp.isfinite(root)) & jnp.all(jnp.isfinite(residual))

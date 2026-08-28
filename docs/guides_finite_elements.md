@@ -118,20 +118,21 @@ sum/average/update semantics.
 
 ## Local-action IR and high order
 
-Every compiled weak form lowers to `phydrax.equations.fem.LocalActionIR` and a
-typed `WorksetProgram`. Field slots, differential operators, region/rule
-identities, and workset gathers therefore have one canonical fingerprint even
-when the existing variational frontend is used.
+Weak forms can be lowered to `phydrax.equations.fem.LocalActionIR` and a typed
+`WorksetProgram` for identity, validation, and executor development. The
+production residual still uses the existing variational executor; the IR is not
+yet the authoritative evaluation path.
 
-`ReferenceNodalFamily` supplies arbitrary-order quadrilateral Lagrange elements
-with equispaced or Gauss-Lobatto nodes. `TensorProductTabulation` and
-`SumFactorizationPlan` retain one-dimensional factors for high-order
-interpolation and gradients. `QuadratureChunkPolicy` makes memory/chunking
-decisions explicit.
+`ReferenceNodalFamily` currently supplies arbitrary-order quadrilateral
+Lagrange tabulation with equispaced or Gauss-Lobatto nodes.
+`TensorProductTabulation` and `SumFactorizationPlan` provide prototype
+factorized interpolation/gradient utilities; they are not yet the physical
+high-order multi-cell operator backend.
 
-Proof-form builders under `phydrax.equations.fem` provide linear elasticity,
-upwind advection, interior penalty, mixed Darcy, and curl-curl Maxwell
-configurations over the common compiler contracts.
+Proof builders under `phydrax.equations.fem` currently provide semantic or
+small-problem configurations. In particular, SIPG is an IR declaration, HDG
+solves caller-supplied local systems, and mixed Darcy/Maxwell require the future
+authoritative mixed IR executor before being production solve paths.
 
 ## Smoothed finite elements
 

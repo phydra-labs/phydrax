@@ -4,10 +4,15 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from ...._fingerprint import canonical_fingerprint
+from ...._strict import StrictModule
+from ...._trainable import NonTrainableState
+from ....linalg import ArraySpace, FunctionLinearOperator
 from ._common import SmoothingPatchGeometry, SmoothingPatchLayout
 from ._moments import boundary_moment, smoothed_symmetric_gradient_matrix
 from ._stabilization import SmoothingStabilizationPolicy
@@ -54,6 +59,99 @@ def smoothing_local_stiffness(
             "Active smoothing stabilization needs compatible local stiffness."
         )
     return stabilization.apply(local, compatible_local_stiffness)
+
+
+class SmoothedElasticityOperator(StrictModule, NonTrainableState):
+    """Matrix-free patch gather/action/scatter for 2-D smoothed elasticity."""
+
+    layout: SmoothingPatchLayout
+    local_stiffness: Array
+    global_node_count: int = eqx.field(static=True)
+    operator_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        layout: SmoothingPatchLayout,
+        local_stiffness: ArrayLike,
+        global_node_count: int,
+        /,
+    ):
+        local = jnp.asarray(local_stiffness)
+        count = int(global_node_count)
+        local_width = 2 * int(layout.dof_routes.shape[1])
+        if local.shape != (
+            layout.dof_routes.shape[0],
+            local_width,
+            local_width,
+        ):
+            raise ValueError("Smoothed local stiffness shape is incompatible.")
+        if count <= 0:
+            raise ValueError("global_node_count must be positive.")
+        self.layout = layout
+        self.local_stiffness = local
+        self.global_node_count = count
+        self.operator_id = canonical_fingerprint(
+            {
+                "kind": "smoothed-elasticity-operator",
+                "layout": layout.layout_id,
+                "patches": int(local.shape[0]),
+                "local_width": local_width,
+                "global_nodes": count,
+            }
+        )
+
+    def mv(self, displacement: ArrayLike, /) -> Array:
+        value = jnp.asarray(displacement)
+        original_shape = value.shape
+        flat_value = value.reshape((-1,))
+        if flat_value.shape != (2 * self.global_node_count,):
+            raise ValueError("Smoothed displacement has invalid global shape.")
+        nodes = self.layout.dof_routes
+        valid = self.layout.dof_valid
+        flat_routes = (2 * nodes[..., None] + jnp.arange(2)).reshape((nodes.shape[0], -1))
+        flat_valid = jnp.repeat(valid, 2, axis=1)
+        safe = jnp.where(flat_valid, flat_routes, 0)
+        local_value = jnp.where(flat_valid, flat_value[safe], 0.0)
+        local_result = oe.contract("pij,pj->pi", self.local_stiffness, local_value)
+        local_result = jnp.where(flat_valid, local_result, 0.0)
+        result = jnp.zeros_like(flat_value).at[safe].add(local_result)
+        return result.reshape(original_shape)
+
+    def diagonal(self, /) -> Array:
+        nodes = self.layout.dof_routes
+        valid = self.layout.dof_valid
+        flat_routes = (2 * nodes[..., None] + jnp.arange(2)).reshape((nodes.shape[0], -1))
+        flat_valid = jnp.repeat(valid, 2, axis=1)
+        safe = jnp.where(flat_valid, flat_routes, 0)
+        local = jnp.diagonal(self.local_stiffness, axis1=-2, axis2=-1)
+        return (
+            jnp.zeros((2 * self.global_node_count,), dtype=local.dtype)
+            .at[safe]
+            .add(jnp.where(flat_valid, local, 0.0))
+        )
+
+    def materialize(self, /, *, max_entries: int = 4_000_000) -> Array:
+        size = 2 * self.global_node_count
+        if size * size > int(max_entries):
+            raise ValueError(
+                "Dense smoothing materialization exceeds the explicit entry budget."
+            )
+        return assemble_smoothing_stiffness(
+            self.layout,
+            self.local_stiffness,
+            self.global_node_count,
+        )
+
+    def as_linear_operator(self, /) -> FunctionLinearOperator:
+        space = ArraySpace(
+            (2 * self.global_node_count,), dtype=self.local_stiffness.dtype
+        )
+        return FunctionLinearOperator(
+            self.mv,
+            source=space,
+            target=space,
+            operator_id=self.operator_id,
+        )
 
 
 def assemble_smoothing_stiffness(
