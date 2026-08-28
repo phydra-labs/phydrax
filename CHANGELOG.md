@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added native computation-aware scalar Gaussian processes with fixed, normalized
+  block-sparse, and pseudo-input action policies; bounded sparse kernel-action
+  contraction; reusable projected factors and low-storage conditioners; diagonal
+  prediction; a full-data ELBO; numerical/resource diagnostics; and exact,
+  conservative-covariance, differentiation, and scaling qualification gates.
 - Added JAX-native static nested slice sampling over `PosteriorProblem` with
   weighted posterior quadrature, stochastic evidence-shrinkage uncertainty,
   insertion-rank and constrained-kernel diagnostics, semantic replay keys,

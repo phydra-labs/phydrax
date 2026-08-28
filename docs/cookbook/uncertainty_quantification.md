@@ -668,6 +668,38 @@ sparse_factor = phx.uq.SparseGaussianProcessFactor(
 )
 ```
 
+Choose computation-aware inference instead of FITC when unresolved numerical
+directions must remain in the posterior covariance. It consumes every observation
+in full-batch kernel passes, but stores only action-projected geometry:
+
+```python
+computation_aware = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+    sensor_x,
+    misspecified_observations,
+)
+actions = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
+    jr.key(9),
+    sensor_x.size,
+    8,
+)
+factor = computation_aware.factor(state=gp_state, actions=actions)
+residual = computation_aware.residual(4.0 * sensor_basis)
+bound = factor.elbo(residual)
+mean, variance = factor.latent_moments(residual, posterior_query)
+```
+
+The three paths answer different questions:
+
+- exact or exact finite-feature inference is preferred whenever affordable;
+- FITC changes the prior covariance through an inducing approximation;
+- computation-aware inference preserves the prior and conditions on a budgeted
+  subspace of linear observations.
+
+The computation-aware objective is an ELBO, not exact evidence at reduced action
+rank. Its covariance is conservative relative to the same exact GP at fixed
+hyperparameters; that statement is not a calibration guarantee for a misspecified
+kernel or actions learned from the same observations.
+
 ### 10a. Preserve missing correlated outputs
 
 Do not impute absent channels or fit one independent GP per output. Encode the

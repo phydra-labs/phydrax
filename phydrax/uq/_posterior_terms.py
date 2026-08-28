@@ -22,6 +22,11 @@ if TYPE_CHECKING:
     from ..domain import DomainFunction
     from ..terms._likelihood import _AbstractSupervisedLikelihoodTerm
     from ..terms._supervised_dataset import SupervisedDatasetBatch
+    from ._gp_actions import AbstractGaussianProcessActionPolicy
+    from ._gp_computation_aware import (
+        ComputationAwareGaussianProcessDiscrepancy,
+        GaussianProcessComputationPolicy,
+    )
     from ._gp_scalar import (
         ExactGaussianProcessDiscrepancy,
         SparseGaussianProcessDiscrepancy,
@@ -202,6 +207,97 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
         return jnp.asarray(value, dtype=float).reshape((1,))
 
 
+class ComputationAwareGaussianProcessELBO(AbstractPosteriorTerm):
+    """Full-data variational bound from an action-projected scalar GP posterior."""
+
+    discrepancy: ComputationAwareGaussianProcessDiscrepancy
+    physical_mean_fn: Callable[[PyTree[Any]], ArrayLike | cx.Field] = eqx.field(
+        static=True
+    )
+    state_fn: Callable[[PyTree[Any]], GaussianProcessLikelihoodState] = eqx.field(
+        static=True
+    )
+    actions_fn: Callable[[PyTree[Any]], AbstractGaussianProcessActionPolicy] | None = (
+        eqx.field(static=True)
+    )
+    fixed_actions: AbstractGaussianProcessActionPolicy | None
+    computation: GaussianProcessComputationPolicy
+
+    def __init__(
+        self,
+        discrepancy: ComputationAwareGaussianProcessDiscrepancy,
+        physical_mean: Callable[[PyTree[Any]], ArrayLike | cx.Field],
+        /,
+        *,
+        state: Callable[[PyTree[Any]], GaussianProcessLikelihoodState],
+        actions: AbstractGaussianProcessActionPolicy
+        | Callable[[PyTree[Any]], AbstractGaussianProcessActionPolicy],
+        computation: GaussianProcessComputationPolicy | None = None,
+        label: str = "computation_aware_gp",
+    ):
+        from ._gp_actions import AbstractGaussianProcessActionPolicy
+        from ._gp_computation_aware import (
+            ComputationAwareGaussianProcessDiscrepancy,
+            GaussianProcessComputationPolicy,
+        )
+
+        if not isinstance(discrepancy, ComputationAwareGaussianProcessDiscrepancy):
+            raise TypeError(
+                "discrepancy must be a ComputationAwareGaussianProcessDiscrepancy."
+            )
+        if not callable(physical_mean):
+            raise TypeError("physical_mean must be callable.")
+        if not callable(state):
+            raise TypeError("state must be callable.")
+        if isinstance(actions, AbstractGaussianProcessActionPolicy):
+            fixed_actions = actions
+            actions_fn = None
+        elif callable(actions):
+            fixed_actions = None
+            actions_fn = actions
+        else:
+            raise TypeError(
+                "actions must be an AbstractGaussianProcessActionPolicy or callback."
+            )
+        computation_policy = (
+            GaussianProcessComputationPolicy() if computation is None else computation
+        )
+        if not isinstance(computation_policy, GaussianProcessComputationPolicy):
+            raise TypeError("computation must be a GaussianProcessComputationPolicy.")
+        self.discrepancy = discrepancy
+        self.physical_mean_fn = physical_mean
+        self.state_fn = state
+        self.actions_fn = actions_fn
+        self.fixed_actions = fixed_actions
+        self.computation = computation_policy
+        self.label = _label(label)
+
+    def per_case_log_prob(self, parameters: PyTree[Any], /) -> Array:
+        from ._gp_actions import AbstractGaussianProcessActionPolicy
+
+        physical_mean = _field_data(self.physical_mean_fn(parameters))
+        state = self.state_fn(parameters)
+        if not isinstance(state, GaussianProcessLikelihoodState):
+            raise TypeError(
+                "GP state callback must return a GaussianProcessLikelihoodState."
+            )
+        action_policy = (
+            self.fixed_actions if self.actions_fn is None else self.actions_fn(parameters)
+        )
+        if not isinstance(action_policy, AbstractGaussianProcessActionPolicy):
+            raise TypeError(
+                "GP actions callback must return an AbstractGaussianProcessActionPolicy."
+            )
+        assert action_policy is not None
+        value = self.discrepancy.elbo(
+            physical_mean,
+            state=state,
+            actions=action_policy,
+            computation=self.computation,
+        )
+        return jnp.asarray(value, dtype=float).reshape((1,))
+
+
 class FixedSupervisedLikelihood(AbstractPosteriorTerm):
     """Adapter from a supervised likelihood term and its frozen full batch."""
 
@@ -315,5 +411,6 @@ __all__ = [
     "FixedSupervisedLikelihood",
     "FixedObservationLikelihood",
     "FixedResidualLikelihood",
+    "ComputationAwareGaussianProcessELBO",
     "GaussianProcessMarginalLikelihood",
 ]

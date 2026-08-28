@@ -1038,6 +1038,93 @@ coordinate partial derivatives, and differential-functional GP states require
             - sample
             - predictive_field
 
+### Computation-aware scalar GPs
+
+Computation-aware factors condition on a native linear action operator and retain
+unobserved prior directions in the latent covariance. The statistical
+`GaussianProcessLikelihoodState` remains independent of action selection and
+execution resources. Use `latent_moments` for a mean and diagonal variance; full
+`condition` calls obey the query-covariance byte limit in
+`GaussianProcessComputationPolicy`.
+
+`ComputationAwareGaussianProcessELBO` is a full-data variational lower bound.
+It equals exact marginal likelihood only for a complete independent action basis.
+
+::: phydrax.uq.AbstractGaussianProcessActionPolicy
+
+---
+
+::: phydrax.uq.FixedGaussianProcessActionPolicy
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.uq.BlockSparseGaussianProcessActionPolicy
+    options:
+        members:
+            - __init__
+            - from_random
+
+---
+
+::: phydrax.uq.PseudoInputGaussianProcessActionPolicy
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.uq.GaussianProcessComputationPolicy
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.uq.ComputationAwareGaussianProcessDiscrepancy
+    options:
+        members:
+            - __init__
+            - residual
+            - factor
+            - elbo
+            - condition
+
+---
+
+::: phydrax.uq.ComputationAwareGaussianProcessFactor
+    options:
+        members:
+            - __init__
+            - factor_storage_elements
+            - elbo
+            - latent_moments
+            - conditioner
+            - condition
+
+---
+
+::: phydrax.uq.ComputationAwareGaussianProcessConditioner
+    options:
+        members:
+            - storage_elements
+            - condition
+
+---
+
+::: phydrax.uq.ComputationAwareGaussianProcessDiagnostics
+
+---
+
+::: phydrax.uq.ComputationAwareGaussianProcessELBO
+    options:
+        members:
+            - __init__
+            - per_case_log_prob
+            - log_prob
+
 ### Correlated outputs
 
 `MultiOutputDesign` stores one flat row per observed point/channel pair. Construct it
