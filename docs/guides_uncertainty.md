@@ -1801,6 +1801,44 @@ pathfinder_prediction = pathfinder.predict(jnp.linspace(0.0, 1.0, 65))
 The result retains the optimization path, ELBO, target and approximation densities,
 importance log ratios, runtime, and sample memory.
 
+Use `sample_nested` when normalized model evidence or separated modes are central to
+the analysis. It samples the declared prior subject to monotonically increasing
+likelihood constraints and retains the complete weighted quadrature:
+
+```python
+nested = phx.uq.sample_nested(
+    posterior,
+    key=jr.key(13),
+    num_live=500,
+    method="hit-and-run",
+)
+equal_weight = nested.resample_posterior(jr.key(14), num_samples=1000)
+```
+
+`nested.log_evidence_shrinkage_std` measures uncertainty from stochastic prior-volume
+compression only. It does not include missed modes, insufficient constrained-chain
+mixing, or omitted likelihood normalization. Inspect `nested.diagnostics`, especially
+the insertion-rank cross-check, constraint satisfaction, cap exhaustion, and effective
+lineage count. The raw `nested.samples` are dependent weighted points; use
+`nested.posterior_measure()` for weighted integration.
+
+Nested sampling requires a deterministic likelihood. Do not use minibatch likelihood
+estimates, dropout, stochastic solver outputs, or unnormalized training losses.
+NaN and positive-infinite likelihoods are errors; negative infinity is exact zero
+likelihood and remains part of the prior-volume traversal. The initial live set must
+contain at least one finite-likelihood point.
+
+The default covariance-shaped hit-and-run method requires more live points than the
+flattened parameter dimension. Use `"slice-within-gibbs"` when the live covariance is
+unreliable or the target is approximately axis-aligned. Increasing `num_delete`
+vectorizes replacements but changes the batch order statistics, so compare accelerator
+settings against `num_delete=1`.
+
+Nested checkpoints use iteration counts and semantic random streams. Supply
+`checkpoint_path`, `checkpoint_id`, and later `resume_from`; resuming validates the
+posterior fingerprint, parameter tree, algorithm settings, and runtime versions
+without invoking the prior sampler again.
+
 Use `sample_tempered_smc` for demonstrated low-dimensional multimodal posteriors.
 It draws particles from declared priors, adaptively chooses likelihood temperatures
 by ESS, applies fixed-trajectory HMC rejuvenation, and performs a final unweighted
@@ -2105,6 +2143,85 @@ the explained fraction. Reuse a selection only while its point geometry and kern
 remain fixed. Pivoted Cholesky optimizes residual kernel trace, not predictive
 likelihood, and does not replace validation.
 
+### Computation-aware Gaussian processes
+
+Computation-aware inference conditions on a declared set of linear actions rather
+than replacing the GP prior covariance. For an observation covariance
+`C = K(X, X) + D` and actions `S` with shape `(n, m)`, the projected system is
+`S.T @ C @ S`. The posterior retains every prior direction that the actions did
+not observe. At fixed kernel and noise parameters its covariance is therefore no
+smaller than the exact GP covariance, and any independent full-rank action basis
+recovers exact inference.
+
+Use this path when approximation uncertainty must remain visible and a full-data,
+matrix-free kernel pass is acceptable. Unlike FITC, it does not define a
+diagonal-plus-low-rank approximation of the prior. It retains `O(n m + m^2)`
+factor storage and is not a stochastic-minibatch method.
+
+```python
+actions = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
+    jr.key(13),
+    observation_points.shape[0],
+    16,
+)
+model = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+    observation_points,
+    observations,
+)
+factor = model.factor(
+    state=sparse_state,
+    actions=actions,
+)
+residual = model.residual(physical_observation_mean)
+
+lower_bound = factor.elbo(residual)
+query_mean, query_variance = factor.latent_moments(residual, query_points)
+conditioned = factor.condition(residual, bounded_query_points)
+```
+
+`latent_moments` evaluates a mean and latent variance without allocating a dense
+query covariance. `condition` deliberately constructs that covariance so the
+existing coherent sampling and `PredictiveField` contracts remain available.
+`GaussianProcessComputationPolicy` sets hard workspace, retained-factor, and
+query-covariance byte limits. `factor.diagnostics` records the resolved action
+kind, projected conditioning, kernel work, and storage evidence.
+
+Three action policies are native:
+
+- `FixedGaussianProcessActionPolicy` accepts a dense matrix or a native sparse
+  coordinate operator.
+- `BlockSparseGaussianProcessActionPolicy` assigns every observation to one
+  balanced contiguous action block and normalizes each block on every resolution.
+- `PseudoInputGaussianProcessActionPolicy` constructs kernel-section actions
+  `K(X, U)` and, by default, orthogonalizes their span.
+
+For inferred actions, reconstruct the policy from the current parameter PyTree:
+
+```python
+term = phx.uq.ComputationAwareGaussianProcessELBO(
+    model,
+    lambda parameters: parameters["source"] * basis,
+    state=gp_state,
+    actions=lambda parameters: phx.uq.BlockSparseGaussianProcessActionPolicy(
+        parameters["action_values"],
+        16,
+    ),
+)
+```
+
+This term is an evidence lower bound, not the exact marginal likelihood unless
+the action space is complete. Using it as a posterior term therefore defines an
+approximate pseudo-posterior over hyperparameters. Learned or residual-dependent
+actions also do not inherit calibration merely from the covariance-ordering
+guarantee. Do not use weight decay on raw block values: their resolved columns are
+scale invariant and are normalized during every factor construction.
+
+The construction follows Wenger et al. (2022,
+[arXiv:2205.15449](https://arxiv.org/abs/2205.15449)) and Wenger et al. (2024,
+[arXiv:2411.01036](https://arxiv.org/abs/2411.01036)). The distinction between
+conservative and calibrated computational uncertainty is discussed by Hegde et
+al. (2025, [PMLR 258](https://proceedings.mlr.press/v258/hegde25a.html)).
+
 ### Correlated and heterotopic outputs
 
 `MultiOutputDesign` stores one row per observed point/channel pair. Its dense
@@ -2246,11 +2363,14 @@ Phydrax currently recommends:
    benchmarked against NUTS or Laplace where feasible.
 7. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
 8. Tempered SMC for low-dimensional mode discovery and evidence estimation.
-9. Fixed-step SGLD, optionally with an exact-center control variate, for large
+9. Static nested sampling for normalized model evidence, separated modes, and an
+   algorithmically independent check on tempered SMC; require insertion-rank and
+   constrained-mixing diagnostics.
+10. Fixed-step SGLD, optionally with an exact-center control variate, for large
    uniformly factorized likelihoods after step-halving and exact-reference checks.
    Use SGNHT only when its momentum/thermostat dynamics improve measured mixing.
-10. Deep ensembles for independently trained neural-model epistemic variation.
-11. Exact GP discrepancy for moderate scalar data; explicit ICM/LMC for correlated
+11. Deep ensembles for independently trained neural-model epistemic variation.
+12. Exact GP discrepancy for moderate scalar data; explicit ICM/LMC for correlated
     heterotopic outputs; functional GP blocks for value/operator data; exact
     finite-feature factors when the covariance has declared finite rank; and FITC
     only when dense scaling fails a measured workload.

@@ -188,11 +188,15 @@ metadata records both implementations as research status.
 `phydrax.uq` keeps epistemic, uncertain-input, observation, stochastic-process,
 and numerical axes explicit in named `PredictiveField` results. NUTS/HMC, Laplace
 approximation, deep ensembles, and Gaussian-process discrepancy models produce
-coherent epistemic draws. Scalar exact/FITC, correlated heterotopic outputs, and
-linear-functional value/PDE observations share the covariance-safe
-`phydrax.kernels` PyTree algebra. Exact scalar GP inference automatically selects
-weight space for a lower-rank finite-feature kernel; learned feature maps and
-kernel hyperparameters remain differentiable leaves. Matrix-free JVP/VJP propagation
+coherent epistemic draws. Scalar exact/FITC and computation-aware inference,
+correlated heterotopic outputs, and linear-functional value/PDE observations share
+the covariance-safe `phydrax.kernels` PyTree algebra. Computation-aware scalar
+factors use native dense or sparse linear actions, bounded kernel-row workspaces,
+small projected Cholesky solves, and explicit resource/conditioning evidence while
+retaining unresolved action directions in covariance. Exact scalar GP inference
+automatically selects weight space for a lower-rank finite-feature kernel; learned
+feature maps and kernel hyperparameters remain differentiable leaves. Matrix-free
+JVP/VJP propagation
 transports diagonal, dense, low-rank, or operator-valued covariance through
 scientific maps; normalized
 errors-in-variables likelihoods account jointly for uncertain predictors and

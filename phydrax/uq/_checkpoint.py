@@ -103,6 +103,7 @@ def checkpoint_compatibility(
     *,
     checkpoint_id: str,
     settings: Mapping[str, Any],
+    gradient_probe: bool = True,
 ) -> dict[str, Any]:
     """Build a deterministic compatibility contract for one posterior run."""
     if not isinstance(problem, PosteriorProblem):
@@ -112,16 +113,19 @@ def checkpoint_compatibility(
         raise ValueError("checkpoint_id must be a non-empty string.")
     normalized_settings = _json_value(dict(settings), path="settings")
     initial = problem.initial_position
-    value, gradient = jax.value_and_grad(problem.log_density)(initial)
+    if gradient_probe:
+        value, gradient = jax.value_and_grad(problem.log_density)(initial)
+        probe = {"value": value, "gradient": gradient}
+    else:
+        value = problem.log_density(initial)
+        probe = {"value": value}
     jax.block_until_ready(value)
     return {
         "checkpoint_id": identifier,
         "problem_type": _qualified_type(problem),
         "parameter_tree": array_tree_signature(initial),
         "problem_array_digest": array_tree_fingerprint(problem)["sha256"],
-        "initial_probe_digest": array_tree_fingerprint(
-            {"value": value, "gradient": gradient}
-        )["sha256"],
+        "initial_probe_digest": array_tree_fingerprint(probe)["sha256"],
         "settings": normalized_settings,
     }
 

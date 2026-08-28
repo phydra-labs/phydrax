@@ -33,6 +33,8 @@ _MIN_FITC_FIXED_FACTOR_SPEEDUP = 1.2
 _FIXED_FACTOR_GATE_MIN_OBSERVATIONS = 256
 _MAX_FITC_EXACT_MEAN_RMSE = 0.01
 _MAX_FITC_EXACT_VARIANCE_RMSE = 0.003
+_MAX_CAGP_EXACT_STORAGE_RATIO = 0.75
+_MAX_CAGP_CONSERVATIVE_VIOLATION = 1e-8
 
 
 def _block_until_ready(value: Any) -> None:
@@ -115,17 +117,38 @@ def _case(
         observations,
         inducing_points,
     )
+    computation_aware_model = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+        points,
+        observations,
+    )
+    action_values = jax.random.normal(
+        jax.random.key(seed + 10_000),
+        (num_observations,),
+    )
+    computation_aware_actions = phx.uq.BlockSparseGaussianProcessActionPolicy(
+        action_values,
+        num_inducing,
+    )
     exact_factor, exact_factor_build_seconds = _timed_call(
         lambda: exact_model.factor(state=state)
     )
     sparse_factor, fitc_factor_build_seconds = _timed_call(
         lambda: sparse_model.factor(state=state)
     )
+    computation_aware_factor, cagp_factor_build_seconds = _timed_call(
+        lambda: computation_aware_model.factor(
+            state=state,
+            actions=computation_aware_actions,
+        )
+    )
     exact_conditioner, exact_conditioner_build_seconds = _timed_call(
         lambda: exact_factor.conditioner(query)
     )
     sparse_conditioner, fitc_conditioner_build_seconds = _timed_call(
         lambda: sparse_factor.conditioner(query)
+    )
+    computation_aware_conditioner, cagp_conditioner_build_seconds = _timed_call(
+        lambda: computation_aware_factor.conditioner(query)
     )
 
     exact_rebuild = lambda mean, factor_state: exact_model.log_marginal_likelihood(
@@ -138,6 +161,12 @@ def _case(
         state=factor_state,
     )
     fitc_reuse = lambda mean, factor: factor.log_probability(sparse_model.residual(mean))
+    cagp_rebuild = lambda mean, factor_state, action_policy: computation_aware_model.elbo(
+        mean,
+        state=factor_state,
+        actions=action_policy,
+    )
+    cagp_reuse = lambda mean, factor: factor.elbo(computation_aware_model.residual(mean))
     exact_rebuild_timing = _jit_timings(
         exact_rebuild, physical_mean, state, repetitions=repetitions
     )
@@ -150,12 +179,30 @@ def _case(
     fitc_reuse_timing = _jit_timings(
         fitc_reuse, physical_mean, sparse_factor, repetitions=repetitions
     )
+    cagp_rebuild_timing = _jit_timings(
+        cagp_rebuild,
+        physical_mean,
+        state,
+        computation_aware_actions,
+        repetitions=repetitions,
+    )
+    cagp_reuse_timing = _jit_timings(
+        cagp_reuse,
+        physical_mean,
+        computation_aware_factor,
+        repetitions=repetitions,
+    )
 
     def fixed_exact_objective(parameter):
         return exact_factor.log_probability(exact_model.residual(parameter * points))
 
     def fixed_fitc_objective(parameter):
         return sparse_factor.log_probability(sparse_model.residual(parameter * points))
+
+    def fixed_cagp_objective(parameter):
+        return computation_aware_factor.elbo(
+            computation_aware_model.residual(parameter * points)
+        )
 
     def inferred_exact_objective(unconstrained):
         parameter, log_amplitude, log_length_scale, log_noise_scale = unconstrained
@@ -179,6 +226,28 @@ def _case(
             ),
         )
 
+    def inferred_cagp_objective(unconstrained):
+        parameter, log_amplitude, log_length_scale, log_noise_scale = unconstrained
+        return computation_aware_model.elbo(
+            parameter * points,
+            state=_matern32_state(
+                jnp.exp(log_amplitude),
+                jnp.exp(log_length_scale),
+                jnp.exp(log_noise_scale),
+            ),
+            actions=computation_aware_actions,
+        )
+
+    def inferred_cagp_action_objective(values):
+        return computation_aware_model.elbo(
+            physical_mean,
+            state=state,
+            actions=phx.uq.BlockSparseGaussianProcessActionPolicy(
+                values,
+                num_inducing,
+            ),
+        )
+
     fixed_parameter = jnp.asarray(0.75)
     inferred_parameters = jnp.asarray(
         [
@@ -198,6 +267,11 @@ def _case(
         fixed_parameter,
         repetitions=repetitions,
     )
+    cagp_fixed_gradient_timing = _jit_timings(
+        jax.value_and_grad(fixed_cagp_objective),
+        fixed_parameter,
+        repetitions=repetitions,
+    )
     exact_inferred_gradient_timing = _jit_timings(
         jax.value_and_grad(inferred_exact_objective),
         inferred_parameters,
@@ -206,6 +280,16 @@ def _case(
     fitc_inferred_gradient_timing = _jit_timings(
         jax.value_and_grad(inferred_fitc_objective),
         inferred_parameters,
+        repetitions=repetitions,
+    )
+    cagp_inferred_gradient_timing = _jit_timings(
+        jax.value_and_grad(inferred_cagp_objective),
+        inferred_parameters,
+        repetitions=repetitions,
+    )
+    cagp_action_gradient_timing = _jit_timings(
+        jax.value_and_grad(inferred_cagp_action_objective),
+        action_values,
         repetitions=repetitions,
     )
 
@@ -220,16 +304,35 @@ def _case(
         residual,
         repetitions=repetitions,
     )
+    cagp_condition_apply_timing = _jit_timings(
+        lambda value: computation_aware_conditioner.condition(value),
+        residual,
+        repetitions=repetitions,
+    )
     exact_condition = exact_conditioner.condition(residual)
     fitc_condition = sparse_conditioner.condition(residual)
     _block_until_ready((exact_condition, fitc_condition))
+    cagp_condition = computation_aware_conditioner.condition(residual)
+    _block_until_ready(cagp_condition)
     mean_rmse = jnp.sqrt(jnp.mean((fitc_condition.mean - exact_condition.mean) ** 2))
     variance_rmse = jnp.sqrt(
         jnp.mean((fitc_condition.variance - exact_condition.variance) ** 2)
     )
+    cagp_mean_rmse = jnp.sqrt(jnp.mean((cagp_condition.mean - exact_condition.mean) ** 2))
+    cagp_variance_rmse = jnp.sqrt(
+        jnp.mean((cagp_condition.variance - exact_condition.variance) ** 2)
+    )
+    conservative_eigenvalue = jnp.linalg.eigvalsh(
+        cagp_condition.covariance - exact_condition.covariance
+    ).min()
+    conservative_violation = jnp.maximum(-conservative_eigenvalue, 0.0)
+    exact_log_probability = exact_factor.log_probability(residual)
+    cagp_elbo = computation_aware_factor.elbo(residual)
+    cagp_elbo_gap = exact_log_probability - cagp_elbo
     dtype_bytes = int(observations.dtype.itemsize)
     exact_factor_bytes = dtype_bytes * exact_factor.factor_storage_elements
     fitc_factor_bytes = dtype_bytes * sparse_factor.factor_storage_elements
+    cagp_factor_bytes = dtype_bytes * computation_aware_factor.factor_storage_elements
 
     metrics = {
         "exact_factor_build_seconds": metric(
@@ -238,19 +341,36 @@ def _case(
         "fitc_factor_build_seconds": metric(
             fitc_factor_build_seconds, "performance", unit="s"
         ),
+        "cagp_factor_build_seconds": metric(
+            cagp_factor_build_seconds, "performance", unit="s"
+        ),
         "exact_conditioner_build_seconds": metric(
             exact_conditioner_build_seconds, "performance", unit="s"
         ),
         "fitc_conditioner_build_seconds": metric(
             fitc_conditioner_build_seconds, "performance", unit="s"
         ),
+        "cagp_conditioner_build_seconds": metric(
+            cagp_conditioner_build_seconds, "performance", unit="s"
+        ),
         "exact_factor_bytes": metric(exact_factor_bytes, "performance", unit="bytes"),
         "fitc_factor_bytes": metric(fitc_factor_bytes, "performance", unit="bytes"),
+        "cagp_factor_bytes": metric(cagp_factor_bytes, "performance", unit="bytes"),
         "fitc_exact_storage_ratio": metric(
             fitc_factor_bytes / exact_factor_bytes,
             "performance",
             maximum=0.75,
             description="Reusable FITC factor storage relative to dense Cholesky.",
+        ),
+        "cagp_exact_storage_ratio": metric(
+            cagp_factor_bytes / exact_factor_bytes,
+            "performance",
+            maximum=(
+                _MAX_CAGP_EXACT_STORAGE_RATIO
+                if num_observations >= _FIXED_FACTOR_GATE_MIN_OBSERVATIONS
+                else None
+            ),
+            description="Reusable computation-aware factor storage relative to exact.",
         ),
         "exact_rebuild_compile_seconds": metric(
             exact_rebuild_timing[1], "performance", unit="s"
@@ -294,11 +414,24 @@ def _case(
             ),
             description="Warm reusable-FITC likelihood speedup over rebuilding factors.",
         ),
+        "cagp_rebuild_compile_seconds": metric(
+            cagp_rebuild_timing[1], "performance", unit="s"
+        ),
+        "cagp_rebuild_warm_seconds": metric(
+            cagp_rebuild_timing[2], "performance", unit="s"
+        ),
+        "cagp_reuse_compile_seconds": metric(
+            cagp_reuse_timing[1], "performance", unit="s"
+        ),
+        "cagp_reuse_warm_seconds": metric(cagp_reuse_timing[2], "performance", unit="s"),
         "exact_fixed_gradient_warm_seconds": metric(
             exact_fixed_gradient_timing[2], "performance", unit="s"
         ),
         "fitc_fixed_gradient_warm_seconds": metric(
             fitc_fixed_gradient_timing[2], "performance", unit="s"
+        ),
+        "cagp_fixed_gradient_warm_seconds": metric(
+            cagp_fixed_gradient_timing[2], "performance", unit="s"
         ),
         "exact_inferred_gradient_compile_seconds": metric(
             exact_inferred_gradient_timing[1], "performance", unit="s"
@@ -312,11 +445,26 @@ def _case(
         "fitc_inferred_gradient_warm_seconds": metric(
             fitc_inferred_gradient_timing[2], "performance", unit="s"
         ),
+        "cagp_inferred_gradient_compile_seconds": metric(
+            cagp_inferred_gradient_timing[1], "performance", unit="s"
+        ),
+        "cagp_inferred_gradient_warm_seconds": metric(
+            cagp_inferred_gradient_timing[2], "performance", unit="s"
+        ),
+        "cagp_action_gradient_compile_seconds": metric(
+            cagp_action_gradient_timing[1], "performance", unit="s"
+        ),
+        "cagp_action_gradient_warm_seconds": metric(
+            cagp_action_gradient_timing[2], "performance", unit="s"
+        ),
         "exact_condition_apply_warm_seconds": metric(
             exact_condition_apply_timing[2], "performance", unit="s"
         ),
         "fitc_condition_apply_warm_seconds": metric(
             fitc_condition_apply_timing[2], "performance", unit="s"
+        ),
+        "cagp_condition_apply_warm_seconds": metric(
+            cagp_condition_apply_timing[2], "performance", unit="s"
         ),
         "fitc_exact_mean_rmse": metric(
             mean_rmse,
@@ -328,15 +476,28 @@ def _case(
             "accuracy",
             maximum=_MAX_FITC_EXACT_VARIANCE_RMSE,
         ),
+        "cagp_exact_mean_rmse": metric(cagp_mean_rmse, "accuracy"),
+        "cagp_exact_variance_rmse": metric(cagp_variance_rmse, "accuracy"),
+        "cagp_conservative_covariance_violation": metric(
+            conservative_violation,
+            "accuracy",
+            maximum=_MAX_CAGP_CONSERVATIVE_VIOLATION,
+        ),
+        "cagp_elbo_gap": metric(
+            cagp_elbo_gap,
+            "accuracy",
+            minimum=-_MAX_CAGP_CONSERVATIVE_VIOLATION,
+        ),
     }
     return ScenarioResult(
         name=f"gp_scaling_n{num_observations}_m{num_inducing}",
-        description="Compare exact and FITC fixed/inferred GP costs at one design size.",
+        description="Compare exact, FITC, and computation-aware GP costs.",
         seed=seed,
         metrics=metrics,
         metadata={
             "num_observations": num_observations,
             "num_inducing": num_inducing,
+            "num_actions": num_inducing,
             "timing_repetitions": repetitions,
         },
     )
@@ -363,7 +524,7 @@ def run_gp_scaling_benchmark(
     profile: ProfileName = "smoke",
     root_seed: int = 20260718,
 ) -> BenchmarkReport:
-    """Run deterministic exact-versus-FITC scaling cases."""
+    """Run deterministic exact, FITC, and computation-aware GP scaling cases."""
     if profile == "smoke":
         cases = _SMOKE_CASES
         repetitions = 3
@@ -392,7 +553,11 @@ def run_gp_scaling_benchmark(
         configuration={
             "profile": profile,
             "cases": [
-                {"num_observations": observations, "num_inducing": inducing}
+                {
+                    "num_observations": observations,
+                    "num_inducing": inducing,
+                    "num_actions": inducing,
+                }
                 for observations, inducing in cases
             ],
             "timing_repetitions": repetitions,
@@ -412,15 +577,32 @@ def run_gp_scaling_benchmark(
                     exact_metric="exact_inferred_gradient_warm_seconds",
                     fitc_metric="fitc_inferred_gradient_warm_seconds",
                 ),
+                "computation_aware_elbo_rebuild": _sustained_crossover(
+                    scenarios,
+                    exact_metric="exact_rebuild_warm_seconds",
+                    fitc_metric="cagp_rebuild_warm_seconds",
+                ),
+                "computation_aware_elbo_reuse": _sustained_crossover(
+                    scenarios,
+                    exact_metric="exact_reuse_warm_seconds",
+                    fitc_metric="cagp_reuse_warm_seconds",
+                ),
+                "computation_aware_hyperparameter_gradient": _sustained_crossover(
+                    scenarios,
+                    exact_metric="exact_inferred_gradient_warm_seconds",
+                    fitc_metric="cagp_inferred_gradient_warm_seconds",
+                ),
             },
             "regression_gates": {
                 "minimum_exact_fixed_factor_speedup": (_MIN_EXACT_FIXED_FACTOR_SPEEDUP),
                 "minimum_fitc_fixed_factor_speedup": (_MIN_FITC_FIXED_FACTOR_SPEEDUP),
-                "fixed_factor_gate_minimum_observations": (
+                "fitc_fixed_factor_gate_minimum_observations": (
                     _FIXED_FACTOR_GATE_MIN_OBSERVATIONS
                 ),
                 "maximum_fitc_exact_mean_rmse": _MAX_FITC_EXACT_MEAN_RMSE,
                 "maximum_fitc_exact_variance_rmse": (_MAX_FITC_EXACT_VARIANCE_RMSE),
+                "maximum_cagp_exact_storage_ratio": (_MAX_CAGP_EXACT_STORAGE_RATIO),
+                "maximum_cagp_conservative_violation": (_MAX_CAGP_CONSERVATIVE_VIOLATION),
             },
         },
         environment=collect_environment(),
@@ -431,7 +613,7 @@ def run_gp_scaling_benchmark(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the PhydraX exact-versus-FITC GP scaling benchmark."
+        description="Run exact, FITC, and computation-aware GP scaling benchmarks."
     )
     parser.add_argument("--profile", choices=("smoke", "standard"), default="smoke")
     parser.add_argument("--root-seed", type=int, default=20260718)
