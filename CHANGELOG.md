@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added JAX-native static nested slice sampling over `PosteriorProblem` with
+  weighted posterior quadrature, stochastic evidence-shrinkage uncertainty,
+  insertion-rank and constrained-kernel diagnostics, semantic replay keys,
+  portable checkpoints/results, and predictive integration.
 - Added exact mathematical complex parameter interchange for dense and low-rank
   holomorphic layers, HMLPs, polynomial and constrained frame coefficients,
   meromorphic coefficients, and trainable pole locations while retaining real

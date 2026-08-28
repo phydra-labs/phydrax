@@ -40,6 +40,7 @@ from ._map import MAPResult
 from ._map_candidate_search import MAPCandidateSearchResult
 from ._map_search import GaussianProcessMAPSearchResult, MAPSearchResult
 from ._mcmc import MCMCResult
+from ._nested import nested_sampling_status_name, NestedSamplingResult
 from ._particle import (
     ParticleBackwardSimulationResult,
     ParticleBackwardSmootherResult,
@@ -1427,6 +1428,73 @@ def _adapt_result(result, arrays, fields, trees):
             "structured_laplace",
             metadata,
             ("problem", "scale_mv", "covariance_mv", "whitening"),
+        )
+
+    if isinstance(result, NestedSamplingResult):
+        for name in ("samples", "unconstrained_samples"):
+            _put_tree(trees, arrays, name, getattr(result, name))
+        _put_array_leaves(trees, arrays, "final_state", result.final_state)
+        for name in (
+            "log_prior",
+            "log_likelihood",
+            "birth_log_likelihood",
+            "posterior_log_weights",
+            "log_prior_volume",
+            "live_counts",
+            "sample_ids",
+            "batch_indices",
+            "log_evidence",
+            "log_evidence_replicates",
+            "log_evidence_shrinkage_std",
+            "information",
+            "posterior_effective_sample_size",
+            "remaining_log_evidence",
+            "remaining_evidence_fraction",
+            "status",
+            "valid",
+        ):
+            _put_field(fields, arrays, name, getattr(result, name))
+        for name in (
+            "insertion_ranks",
+            "insertion_rank_pvalue",
+            "rolling_insertion_rank_pvalues",
+            "likelihood_monotonic",
+            "constraints_satisfied",
+            "initial_finite_fraction",
+            "inner_acceptance_rate",
+            "expansion_cap_fraction",
+            "shrinkage_cap_fraction",
+            "zero_movement_fraction",
+            "unique_lineage_count",
+            "effective_lineage_count",
+            "covariance_rank",
+            "covariance_condition",
+        ):
+            _put_field(
+                fields,
+                arrays,
+                f"diagnostics.{name}",
+                getattr(result.diagnostics, name),
+            )
+        _put_field(fields, arrays, "root_key", jr.key_data(result.root_key))
+        metadata = {
+            "method": result.method,
+            "status_name": nested_sampling_status_name(int(result.status)),
+            "converged": result.converged,
+            "diagnostic_failures": result.diagnostics.failures,
+            "duration_seconds": result.duration_seconds,
+            "sample_memory_bytes": result.sample_memory_bytes,
+            "num_live": result.num_live,
+            "num_dead": result.num_dead,
+            "num_samples": result.num_samples,
+            "num_likelihood_evaluations": result.num_likelihood_evaluations,
+            "num_inner_steps": result.num_inner_steps,
+            "num_delete": result.num_delete,
+        }
+        return (
+            "nested_sampling",
+            metadata,
+            ("problem", "final_state.static"),
         )
 
     if isinstance(result, PathfinderResult):

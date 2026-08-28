@@ -1786,6 +1786,44 @@ pathfinder_prediction = pathfinder.predict(jnp.linspace(0.0, 1.0, 65))
 The result retains the optimization path, ELBO, target and approximation densities,
 importance log ratios, runtime, and sample memory.
 
+Use `sample_nested` when normalized model evidence or separated modes are central to
+the analysis. It samples the declared prior subject to monotonically increasing
+likelihood constraints and retains the complete weighted quadrature:
+
+```python
+nested = phx.uq.sample_nested(
+    posterior,
+    key=jr.key(13),
+    num_live=500,
+    method="hit-and-run",
+)
+equal_weight = nested.resample_posterior(jr.key(14), num_samples=1000)
+```
+
+`nested.log_evidence_shrinkage_std` measures uncertainty from stochastic prior-volume
+compression only. It does not include missed modes, insufficient constrained-chain
+mixing, or omitted likelihood normalization. Inspect `nested.diagnostics`, especially
+the insertion-rank cross-check, constraint satisfaction, cap exhaustion, and effective
+lineage count. The raw `nested.samples` are dependent weighted points; use
+`nested.posterior_measure()` for weighted integration.
+
+Nested sampling requires a deterministic likelihood. Do not use minibatch likelihood
+estimates, dropout, stochastic solver outputs, or unnormalized training losses.
+NaN and positive-infinite likelihoods are errors; negative infinity is exact zero
+likelihood and remains part of the prior-volume traversal. The initial live set must
+contain at least one finite-likelihood point.
+
+The default covariance-shaped hit-and-run method requires more live points than the
+flattened parameter dimension. Use `"slice-within-gibbs"` when the live covariance is
+unreliable or the target is approximately axis-aligned. Increasing `num_delete`
+vectorizes replacements but changes the batch order statistics, so compare accelerator
+settings against `num_delete=1`.
+
+Nested checkpoints use iteration counts and semantic random streams. Supply
+`checkpoint_path`, `checkpoint_id`, and later `resume_from`; resuming validates the
+posterior fingerprint, parameter tree, algorithm settings, and runtime versions
+without invoking the prior sampler again.
+
 Use `sample_tempered_smc` for demonstrated low-dimensional multimodal posteriors.
 It draws particles from declared priors, adaptively chooses likelihood temperatures
 by ESS, applies fixed-trajectory HMC rejuvenation, and performs a final unweighted
@@ -2231,11 +2269,14 @@ Phydrax currently recommends:
    benchmarked against NUTS or Laplace where feasible.
 7. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
 8. Tempered SMC for low-dimensional mode discovery and evidence estimation.
-9. Fixed-step SGLD, optionally with an exact-center control variate, for large
+9. Static nested sampling for normalized model evidence, separated modes, and an
+   algorithmically independent check on tempered SMC; require insertion-rank and
+   constrained-mixing diagnostics.
+10. Fixed-step SGLD, optionally with an exact-center control variate, for large
    uniformly factorized likelihoods after step-halving and exact-reference checks.
    Use SGNHT only when its momentum/thermostat dynamics improve measured mixing.
-10. Deep ensembles for independently trained neural-model epistemic variation.
-11. Exact GP discrepancy for moderate scalar data; explicit ICM/LMC for correlated
+11. Deep ensembles for independently trained neural-model epistemic variation.
+12. Exact GP discrepancy for moderate scalar data; explicit ICM/LMC for correlated
     heterotopic outputs; functional GP blocks for value/operator data; exact
     finite-feature factors when the covariance has declared finite rank; and FITC
     only when dense scaling fails a measured workload.
