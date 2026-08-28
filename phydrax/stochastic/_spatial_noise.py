@@ -28,7 +28,10 @@ from .._precision import (
 )
 from .._strict import StrictModule
 from ..discretization._tensor import AbstractStrongFormDiscretization
-from ..discretization.spectral import TensorSpectralDiscretization
+from ..discretization.spectral import (
+    SphericalSpectralDiscretization,
+    TensorSpectralDiscretization,
+)
 
 
 def _point_value_basis_metadata(
@@ -560,6 +563,12 @@ class SpatialNoiseBasis(StrictModule):
                 f"laplacian:{index}:{float(value):.17g}"
                 for index, value in enumerate(np.asarray(laplacian_eigenvalues))
             )
+        elif isinstance(discretization, SphericalSpectralDiscretization):
+            laplacian_eigenvalues, modes = discretization.eigenpairs(rank=retained)
+            basis_weights = discretization.quadrature_weights
+            state_shape = discretization.state_shape
+            field_space_id = discretization.physical_space.field_space_id
+            mode_ids = discretization.eigenmode_ids(rank=retained)
         else:
             laplacian_eigenvalues, modes = discretization.eigenpairs(rank=retained)
             basis_weights = discretization.quadrature_weights

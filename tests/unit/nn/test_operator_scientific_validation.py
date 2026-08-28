@@ -479,7 +479,7 @@ def test_laplace_recurrence_is_stable_and_differentiable_for_long_sequences():
 
 
 def _degree_filter(gains, *, sampling="mw", execution="recursive"):
-    plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+    plan = phx.discretization.SphericalHarmonicPlan(
         len(gains),
         sampling=sampling,
         execution=execution,
@@ -795,7 +795,7 @@ def test_basis_transform_plan_reuses_exact_projection_matrices():
 
 def test_spherical_execution_plans_are_interchangeable_and_jittable():
     layer, recursive = _degree_filter((0.8, -0.3, 1.2, 0.4))
-    precomputed = phx.nn.operator.architectures.SphericalHarmonicPlan(
+    precomputed = phx.discretization.SphericalHarmonicPlan(
         4, execution="precomputed"
     )
     values = jr.normal(jr.key(40), (*recursive.sample_shape, 1))

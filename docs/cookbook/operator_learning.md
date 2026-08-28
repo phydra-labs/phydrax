@@ -599,17 +599,17 @@ an aligned modal transform and compatible Laplacian spectrum. Build a mesh plan 
 There is no provider wrapper. A target plan is a declared cross-discretization,
 not an arbitrary-coordinate query path.
 
-SFNO similarly receives a prepared exact spherical sampling plan rather than
+SFNO similarly receives a prepared exact spherical discretization rather than
 inferring a transform from arbitrary nodes:
 
 ```python
-sphere_plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+sphere = phx.discretization.SphericalSpectralPlan(
     16,
     sampling="mw",
     execution="recursive",
-)
+).prepare()
 sfno = phx.nn.operator.architectures.SFNO(
-    sphere_plan,
+    sphere,
     width=16,
     depth=2,
     source_key="state",
@@ -618,9 +618,11 @@ sfno = phx.nn.operator.architectures.SFNO(
 ```
 
 Construct the colatitude and longitude `OperatorAxis` objects from
-`sphere_plan.theta`, `sphere_plan.phi`, and their corresponding quadrature
-weights. SFNO rejects shifted nodes, missing samples, masks containing invalid
-sites, and grids from a different sampling theorem.
+`sphere.transform.theta`, `sphere.transform.phi`, and their corresponding
+quadrature weights. SFNO rejects shifted nodes, missing samples, masks containing
+invalid sites, and grids from a different sampling theorem. The same prepared
+space also supplies physical area integration, scalar Laplace--Beltrami actions,
+spherical kernels, and complete-degree spatial-noise bases.
 
 For coincident irregular-time sequences, choose the state contract explicitly.
 `DiagonalStateSpaceMixer` is input-independent; `SelectiveStateSpaceMixer`

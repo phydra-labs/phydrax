@@ -54,18 +54,12 @@ def test_one_modal_transform_supports_distinct_operator_spectra():
     assert np.array_equal(discrete.nullspace_mask, np.array([True, False, False, False]))
 
 
-def test_trigonometric_transforms_and_spherical_spectrum_are_independent():
+def test_trigonometric_transforms_tensorize_without_dense_runtime_storage():
     dct = phx.discretization.trigonometric_modal_transform("dct", 2, 8)
     dst = phx.discretization.trigonometric_modal_transform("dst", 1, 8)
     values = jnp.arange(8.0)
     tensor = phx.discretization.TensorModalTransform((dct, dst))
     tensor_values = jnp.arange(64.0).reshape((8, 8))
-    degrees = jnp.asarray([0, 1, 1, 1, 2, 2, 2, 2])
-    spherical = phx.discretization.spherical_laplacian_spectrum(
-        dct,
-        degrees,
-        radius=2.0,
-    )
 
     assert jnp.allclose(dct.synthesize(dct.analyze(values)), values, atol=1e-12)
     assert jnp.allclose(dst.synthesize(dst.analyze(values)), values, atol=1e-12)
@@ -74,12 +68,6 @@ def test_trigonometric_transforms_and_spherical_spectrum_are_independent():
         tensor_values,
         atol=1e-12,
     )
-    assert spherical.transform_id == dct.transform_id
-    assert jnp.array_equal(
-        spherical.modal_values,
-        -degrees * (degrees + 1) / 4.0,
-    )
-    assert jnp.array_equal(spherical.nullspace_mask, degrees == 0)
 
 
 def test_transform_diagonal_solve_projects_only_under_explicit_policy():

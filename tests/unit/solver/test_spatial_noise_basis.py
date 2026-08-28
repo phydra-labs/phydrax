@@ -36,6 +36,33 @@ def test_spectral_noise_modes_are_weighted_orthonormal_and_scaled():
         basis.modes * jnp.sqrt(basis.eigenvalues)[None, :],
     )
 
+def test_spherical_spectral_noise_uses_complete_real_degree_blocks():
+    discretization = phx.discretization.SphericalSpectralPlan(4).prepare(radius=1.5)
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        lambda eigenvalues: jnp.exp(-0.2 * eigenvalues),
+        rank=4,
+    )
+    modes = basis.modes.reshape((-1, basis.rank))
+    weights = basis.quadrature_weights.reshape((-1, 1))
+    gram = modes.T @ (weights * modes)
+
+    assert basis.state_shape == discretization.state_shape
+    assert basis.field_space_id == discretization.physical_space.field_space_id
+    assert basis.mode_ids == discretization.eigenmode_ids(rank=4)
+    assert basis.diffusion.shape == (*discretization.state_shape, 4)
+    assert jnp.allclose(gram, jnp.eye(4), rtol=1e-10, atol=1e-10)
+    assert jnp.allclose(
+        basis.eigenvalues,
+        jnp.exp(-0.2 * jnp.asarray([0.0, 2.0, 2.0, 2.0]) / 1.5**2),
+    )
+    with pytest.raises(ValueError, match="complete-degree square"):
+        phx.stochastic.SpatialNoiseBasis.from_spectrum(
+            discretization,
+            0.1,
+            rank=2,
+        )
+
 
 def test_mode_and_discrete_covariance_constructors_reconstruct_covariance():
     discretization = _periodic_grid(6)

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import abstractmethod
 
 import equinox as eqx
@@ -11,6 +12,7 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from ..discretization.spectral import SphericalSpectralDiscretization
 from ..metrix import SphereLaplacianLevels
 from ._base import AbstractPositiveDefiniteKernel
 from ._spectral import AbstractSpectralMultiplier
@@ -49,7 +51,11 @@ def _spectral_coefficients(
 
 
 def _sphere_points(
-    points: ArrayLike, ambient_dimension: int, tolerance: float, /
+    points: ArrayLike,
+    ambient_dimension: int,
+    radius: float,
+    tolerance: float,
+    /,
 ) -> Array:
     array = jnp.asarray(points, dtype=float)
     if array.ndim == 1:
@@ -60,10 +66,13 @@ def _sphere_points(
             f"(point, {ambient_dimension})."
         )
     norms = jnp.sum(array * array, axis=-1)
+    squared_radius = float(radius) ** 2
+    absolute_tolerance = float(tolerance) * max(1.0, squared_radius)
     array = eqx.error_if(
         array,
-        jnp.any(~jnp.isfinite(array)) | jnp.any(jnp.abs(norms - 1.0) > tolerance),
-        "Sphere points must be finite unit vectors.",
+        jnp.any(~jnp.isfinite(array))
+        | jnp.any(jnp.abs(norms - squared_radius) > absolute_tolerance),
+        "Sphere points must be finite and lie on the declared round sphere.",
     )
     return array / jnp.sqrt(norms)[:, None]
 
@@ -97,10 +106,11 @@ def _sphere_series(
 
 
 class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
-    """Isotropic heat or Matérn kernel on a unit sphere via addition theorems."""
+    """Isotropic heat or Matérn kernel on a round sphere via addition theorems."""
 
     spectrum: SphereLaplacianLevels
     multiplier: AbstractSpectralMultiplier
+    radius: float = eqx.field(static=True)
     normalize: bool = eqx.field(static=True)
     membership_tolerance: float = eqx.field(static=True)
 
@@ -111,24 +121,54 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
         multiplier: AbstractSpectralMultiplier,
         /,
         *,
+        radius: float = 1.0,
         normalize: bool = True,
         membership_tolerance: float = 1e-6,
     ):
         if not isinstance(multiplier, AbstractSpectralMultiplier):
             raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
+        radius_ = float(radius)
+        if not math.isfinite(radius_) or radius_ <= 0.0:
+            raise ValueError("radius must be finite and positive.")
         if not 0.0 < float(membership_tolerance) < 1.0:
             raise ValueError(
                 "membership_tolerance must lie strictly between zero and one."
             )
         self.spectrum = SphereLaplacianLevels(dimension, max_level)
         self.multiplier = multiplier
+        self.radius = radius_
         self.normalize = bool(normalize)
         self.membership_tolerance = float(membership_tolerance)
+
+    @classmethod
+    def from_discretization(
+        cls,
+        discretization: SphericalSpectralDiscretization,
+        multiplier: AbstractSpectralMultiplier,
+        /,
+        *,
+        normalize: bool = True,
+        membership_tolerance: float = 1e-6,
+    ) -> "SphereSpectralKernel":
+        if not isinstance(discretization, SphericalSpectralDiscretization):
+            raise TypeError(
+                "discretization must be a SphericalSpectralDiscretization."
+            )
+        if discretization.layout.spin != 0:
+            raise ValueError("Sphere spectral kernels require a spin-zero space.")
+        return cls(
+            2,
+            discretization.layout.bandlimit - 1,
+            multiplier,
+            radius=discretization.radius,
+            normalize=normalize,
+            membership_tolerance=membership_tolerance,
+        )
 
     def _coefficients(self) -> Array:
         return _spectral_coefficients(
             self.multiplier,
-            self.spectrum.eigenvalues,
+            self.spectrum.eigenvalues / self.radius**2,
             float(self.spectrum.dimension),
             level_multiplicities=jnp.asarray(self.spectrum.multiplicities, dtype=float),
             normalize=self.normalize,
@@ -136,10 +176,16 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         left_points = _sphere_points(
-            left, self.spectrum.dimension + 1, self.membership_tolerance
+            left,
+            self.spectrum.dimension + 1,
+            self.radius,
+            self.membership_tolerance,
         )
         right_points = _sphere_points(
-            right, self.spectrum.dimension + 1, self.membership_tolerance
+            right,
+            self.spectrum.dimension + 1,
+            self.radius,
+            self.membership_tolerance,
         )
         if left_points.shape[0] != 1 or right_points.shape[0] != 1:
             raise ValueError("pairwise requires one sphere point per argument.")
@@ -153,10 +199,16 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
 
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         left_points = _sphere_points(
-            left, self.spectrum.dimension + 1, self.membership_tolerance
+            left,
+            self.spectrum.dimension + 1,
+            self.radius,
+            self.membership_tolerance,
         )
         right_points = _sphere_points(
-            right, self.spectrum.dimension + 1, self.membership_tolerance
+            right,
+            self.spectrum.dimension + 1,
+            self.radius,
+            self.membership_tolerance,
         )
         similarities = jnp.clip(left_points @ right_points.T, -1.0, 1.0)
         return _sphere_series(
@@ -168,7 +220,10 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
 
     def diagonal(self, points: ArrayLike, /) -> Array:
         point_design = _sphere_points(
-            points, self.spectrum.dimension + 1, self.membership_tolerance
+            points,
+            self.spectrum.dimension + 1,
+            self.radius,
+            self.membership_tolerance,
         )
         return jnp.full(
             (point_design.shape[0],),
@@ -187,7 +242,7 @@ class SphereSpectralKernel(AbstractPositiveDefiniteKernel):
     @property
     def kernel_id(self) -> str:
         return (
-            f"SphereSpectralKernel[S{self.spectrum.dimension};"
+            f"SphereSpectralKernel[S{self.spectrum.dimension};radius={self.radius};"
             f"levels={self.spectrum.max_level};{self.multiplier.multiplier_id};"
             f"normalize={int(self.normalize)}]"
         )

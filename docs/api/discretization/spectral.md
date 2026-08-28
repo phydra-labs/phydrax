@@ -36,6 +36,26 @@
 
 ::: phydrax.discretization.TensorSpectralDiscretization
 
+## Exact-sampling spherical spaces
+
+::: phydrax.discretization.SphericalModeLayout
+
+---
+
+::: phydrax.discretization.SphericalHarmonicPlan
+
+---
+
+::: phydrax.discretization.SphericalSpectralPlan
+
+---
+
+::: phydrax.discretization.SphericalSpectralDiscretization
+
+---
+
+::: phydrax.discretization.spherical_laplacian_operator
+
 ## Pseudospectral realization
 
 ::: phydrax.discretization.PseudospectralMethodPlan

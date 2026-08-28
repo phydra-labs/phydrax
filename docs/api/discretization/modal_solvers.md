@@ -37,12 +37,9 @@
 
 ---
 
-
-::: phydrax.discretization.spherical_laplacian_spectrum
-
----
-
----
+Spherical coefficient layouts and Laplace--Beltrami actions are owned by
+`SphericalSpectralDiscretization`; they are not attached to arbitrary dense modal
+transforms.
 
 ::: phydrax.discretization.SpectralDecomposition
 

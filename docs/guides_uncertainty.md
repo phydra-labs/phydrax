@@ -101,6 +101,21 @@ records the spatial noise modes, eigenvalues, quadrature, and discretization ide
 A refined grid or changed truncation therefore receives a different fingerprint and
 cannot be paired accidentally.
 
+Round-sphere point-value noise uses the same factory:
+
+```python
+sphere = phx.discretization.SphericalSpectralPlan(8).prepare(radius=1.0)
+spherical_noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
+    sphere,
+    lambda eigenvalue: 0.01 * jnp.exp(-0.1 * eigenvalue),
+    rank=16,
+)
+```
+
+Spherical ranks must end at a complete degree, so scalar spin-zero ranks are
+`1, 4, 9, 16, ...`. The returned real modes are weighted-orthonormal under the
+prepared physical area measure and bind to its point-value field-space identity.
+
 The tensor-spectral trajectory is modal. Reconstruct it before computing
 point-value observables or applying the physical spatial quadrature measure.
 

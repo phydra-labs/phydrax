@@ -1272,14 +1272,14 @@ promotion still requires benchmark evidence.
 
 `CNO` uses oversampled nonlinearities and band-limited resampling to prevent
 ordinary CNN aliasing. `UNO` adds a U-shaped multiresolution topology over the
-same representation-aware blocks. `SFNO` uses an explicit
-`SphericalHarmonicPlan` backed by S2FFT, shares one channel map across every
-order of a spherical-harmonic degree, and is not a planar FFT over an
-equirectangular image. The plan fixes bandlimit, exact sampling theorem
-(`"mw"`, `"mwss"`, `"dh"`, or `"gl"`), spin, and real/complex convention.
-Current SFNO models require real spin-zero fields, exact plan nodes and
-quadrature, and all-valid samples; they do not claim arbitrary spherical grids
-or resolution transfer.
+same representation-aware blocks. `SFNO` consumes a prepared
+`phydrax.discretization.SphericalSpectralDiscretization`, shares one channel map
+across every order of a spherical-harmonic degree, and is not a planar FFT over
+an equirectangular image. The discretization fixes bandlimit, exact sampling
+theorem (`"mw"`, `"mwss"`, `"dh"`, or `"gl"`), coefficient layout, quadrature,
+and execution provenance. Current SFNO models require real spin-zero fields,
+exact plan nodes and quadrature, and all-valid samples; they do not claim
+arbitrary spherical grids or resolution transfer.
 
 Every CNO convolution consumes source observation masks and non-negative physical
 quadrature through `MeasureNormalizedConvND`. The learned signed kernel appears
@@ -1313,15 +1313,9 @@ zero-valued observations.
             - __call__
 
 
----
-
-::: phydrax.nn.operator.architectures.SphericalHarmonicPlan
-    options:
-        members:
-            - __init__
-            - analysis
-            - synthesis
----
+The reusable transform, mode-layout, area-measure, and Laplace--Beltrami APIs live
+under `phydrax.discretization`; the NN architecture namespace does not own a second
+spherical transform plan.
 
 #### Finite-group Cartesian tensor fields
 

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added first-class exact-sampling round-sphere spectral discretizations with
+  explicit S2FFT mode layouts, physical area measures, matrix-free
+  Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,
+  radius-aware addition-theorem kernels, resource/precision provenance, and one
+  shared prepared-space contract for SFNO.
 - Added exact mathematical complex parameter interchange for dense and low-rank
   holomorphic layers, HMLPs, polynomial and constrained frame coefficients,
   meromorphic coefficients, and trainable pole locations while retaining real

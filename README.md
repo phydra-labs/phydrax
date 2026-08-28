@@ -123,8 +123,11 @@ Geometry construction lives in `phx.geometry`; `phx.domain.GeometryDomain` is th
 thin labeled-domain adapter used by sampling, integration, and constraints. See the
 [geometry substrate API](docs/api/geometry.md).
 
-Numerical supports and finite field spaces live in `phx.discretization`; see the
+Numerical supports and finite field spaces live in `phx.discretization`, including
+global tensor bases and exact-sampling round-sphere spaces with S2FFT transforms,
+Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
+[global spectral guide](docs/guides_spectral_methods.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).
 

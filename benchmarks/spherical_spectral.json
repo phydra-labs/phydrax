@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "bandlimit": 16,
+  "sampling": "mw",
+  "execution": "recursive",
+  "radius": 1.0,
+  "physical_points": 496,
+  "padded_coefficients": 496,
+  "logical_modes": 256,
+  "precompute_bytes": 34688,
+  "prepare_ms": 1091.0748750029597,
+  "project_first_jit_ms": 607.114874990657,
+  "project_steady_ms": 0.38729160150978714,
+  "laplacian_first_jit_ms": 449.0688749938272,
+  "laplacian_steady_ms": 0.5069749982794747,
+  "roundtrip_error": 1.1324274851176597e-14,
+  "area_defect": 3.019806626980426e-14,
+  "laplacian_error": 1.979527652906654e-12,
+  "invalid_capacity_error": 0.0,
+  "finite": true,
+  "passed": true
+}

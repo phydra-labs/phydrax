@@ -119,11 +119,7 @@ from .spectral._fno import (
 from .spectral._hofno import HOFNO
 from .spectral._laplace import LaplaceTemporalOperator
 from .spectral._manifold_spectral import ManifoldSpectralOperator
-from .spectral._sfno import (
-    SFNO,
-    SphericalHarmonicPlan,
-    SphericalSpectralConv,
-)
+from .spectral._sfno import SFNO, SphericalSpectralConv
 from .spectral._wavelet import MultiwaveletOperator, WaveletNeuralOperator
 
 
@@ -272,7 +268,6 @@ __all__ = [
     "SFNO",
     "WeightSpaceOperator",
     "SphericalSpectralConv",
-    "SphericalHarmonicPlan",
     "Transolver",
     "ABUPT",
     "LatentTokenBlock",
