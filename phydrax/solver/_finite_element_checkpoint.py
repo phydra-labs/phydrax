@@ -159,8 +159,29 @@ def read_finite_element_checkpoint(
     return checkpoint
 
 
+def write_partitioned_finite_element_checkpoint(
+    directory: str | Path,
+    partition_id: int,
+    partition_count: int,
+    checkpoint: FiniteElementCheckpoint,
+    /,
+) -> Path:
+    """Write one deterministic partition shard and return its path."""
+
+    root = Path(directory)
+    partition = int(partition_id)
+    count = int(partition_count)
+    if partition < 0 or count <= 0 or partition >= count:
+        raise ValueError("Partition checkpoint IDs are invalid.")
+    root.mkdir(parents=True, exist_ok=True)
+    shard = root / f"part-{partition:06d}-of-{count:06d}.npz"
+    write_finite_element_checkpoint(shard, checkpoint)
+    return shard
+
+
 __all__ = [
     "FiniteElementCheckpoint",
     "read_finite_element_checkpoint",
     "write_finite_element_checkpoint",
+    "write_partitioned_finite_element_checkpoint",
 ]

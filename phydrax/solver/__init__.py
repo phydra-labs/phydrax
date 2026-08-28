@@ -264,6 +264,7 @@ from ._finite_element_checkpoint import (
     FiniteElementCheckpoint,
     read_finite_element_checkpoint,
     write_finite_element_checkpoint,
+    write_partitioned_finite_element_checkpoint,
 )
 from ._finite_volume import (
     DirectionalSplitFiniteVolumePlan,
@@ -659,6 +660,7 @@ from ._rough_delay import (
 )
 from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 from ._rough_logode import LinearLogODE, LogODE
+from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
 from ._semilinear import (
     exact_modal_stochastic_convolution,
     SemilinearFallback,
@@ -1199,8 +1201,13 @@ __all__ = [
     "PrecisionDType",
     "load_finite_volume_case",
     "PreparedFiniteVolumeCase",
+    "ScheduleStepResult",
+    "SolveSchedule",
+    "SolveStage",
+    "TimeLaw",
     "FiniteElementCheckpoint",
     "read_finite_element_checkpoint",
+    "write_partitioned_finite_element_checkpoint",
     "write_finite_element_checkpoint",
     "FiniteVolumeCheckpoint",
     "FiniteVolumeCheckpointPlan",

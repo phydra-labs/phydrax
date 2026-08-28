@@ -144,6 +144,30 @@
 
 ::: phydrax.equations.compile_finite_element_problem
 
+## Local-action IR and high order
+
+::: phydrax.equations.fem.LocalActionIR
+
+---
+
+::: phydrax.equations.fem.WorksetProgram
+
+---
+
+::: phydrax.discretization.fem.ReferenceNodalFamily
+
+---
+
+::: phydrax.discretization.fem.TensorProductTabulation
+
+---
+
+::: phydrax.discretization.fem.SumFactorizationPlan
+
+---
+
+::: phydrax.discretization.fem.QuadratureChunkPolicy
+
 ## Materials and local algebra
 
 ::: phydrax.equations.ConstitutiveModel

@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -25,6 +27,8 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
     value_shape: tuple[int, ...] = eqx.field(static=True)
     reference_nodes: Array
     entity_dofs: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
+    tabulator: Callable | None
+    tabulator_id: str | None = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
 
     def __init__(
@@ -39,6 +43,8 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         conformity: str = "H1",
         mapping: str = "identity",
         value_shape: tuple[int, ...] = (),
+        tabulator: Callable | None = None,
+        tabulator_id: str | None = None,
     ):
         family_ = str(family)
         cell = str(cell_kind)
@@ -78,6 +84,11 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         values = tuple(int(size) for size in value_shape)
         if any(size <= 0 for size in values):
             raise ValueError("Finite-element value dimensions must be positive.")
+        if tabulator is not None and not callable(tabulator):
+            raise TypeError("tabulator must be callable or None.")
+        resolved_tabulator_id = None if tabulator_id is None else str(tabulator_id)
+        if tabulator is not None and not resolved_tabulator_id:
+            raise ValueError("Custom tabulators require a non-empty tabulator_id.")
         self.family = family_
         self.cell_kind = cell
         self.degree = order
@@ -86,6 +97,8 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         self.value_shape = values
         self.reference_nodes = jnp.asarray(nodes)
         self.entity_dofs = normalized_entity_dofs
+        self.tabulator = tabulator
+        self.tabulator_id = resolved_tabulator_id
         self.element_id = canonical_fingerprint(
             {
                 "kind": "finite-element-spec",
@@ -97,6 +110,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
                 "value_shape": list(values),
                 "reference_nodes": array_tree_fingerprint(nodes),
                 "entity_dofs": normalized_entity_dofs,
+                "tabulator_id": resolved_tabulator_id,
             }
         )
 
@@ -116,6 +130,20 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Reference evaluation points must have shape (point_count, cell_dimension)."
             )
+        if self.tabulator is not None:
+            values, gradients = self.tabulator(locations)
+            values_ = jnp.asarray(values)
+            gradients_ = jnp.asarray(gradients)
+            if (
+                values_.shape[:2]
+                != (
+                    locations.shape[0],
+                    self.local_dof_count,
+                )
+                or gradients_.shape[:2] != values_.shape[:2]
+            ):
+                raise ValueError("Custom tabulator returned incompatible leading axes.")
+            return values_, gradients_
         if self.family == "DiscontinuousLagrange" and self.degree == 0:
             return (
                 jnp.ones((locations.shape[0], 1)),

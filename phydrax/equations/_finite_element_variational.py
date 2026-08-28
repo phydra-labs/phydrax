@@ -883,6 +883,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     discretization: FiniteElementDiscretization
     constraint: FiniteElementDirichletConstraint | None
     execution_policy: FiniteElementExecutionPolicy
+    action_ir: object
+    workset_program: object
     work_blocks: tuple[_FiniteElementWorkBlock, ...]
     lift: Array
     discretization_bundle: DiscretizationBundle
@@ -976,6 +978,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 )
             )
         work_blocks = tuple(work_block_values)
+        from .fem import compile_workset_program, lower_weak_form
+
+        action_ir = lower_weak_form(form, discretization)
+        workset_program = compile_workset_program(
+            action_ir,
+            form,
+            discretization,
+        )
         compilation_id = canonical_fingerprint(
             {
                 "kind": "compiled-finite-element-problem",
@@ -986,6 +996,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 "constraint": (None if constraint is None else constraint.constraint_id),
                 "lift": array_tree_fingerprint(np.asarray(lift)),
                 "work_blocks": [block.work_id for block in work_blocks],
+                "action_ir": action_ir.ir_id,
+                "workset_program": workset_program.program_id,
                 "execution_policy": policy.policy_id,
             }
         )
@@ -998,6 +1010,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         self.discretization = discretization
         self.constraint = constraint
         self.execution_policy = policy
+        self.action_ir = action_ir
+        self.workset_program = workset_program
         self.lift = lift
         self.work_blocks = work_blocks
         self.discretization_bundle = DiscretizationBundle(
