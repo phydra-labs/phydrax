@@ -12,6 +12,13 @@
   conservative fixed-h summation-density SPH, complete conservation and step
   diagnostics, and native separable-Hamiltonian compilation through
   `StormerVerlet`.
+- Added a typed finite-element local-action IR and compiled worksets; arbitrary-
+  order tensor-product nodal tabulation and sum factorization; mixed elasticity,
+  Darcy, Maxwell, advection, and penalty proof-form builders; bounded implicit
+  local materials; time laws and accepted/rejected solve schedules; uniform T3
+  refinement; and source-specific Q4 plate/shell, ES-FEM, NS-FEM, selective
+  ES/NS, and fully smoothed axisymmetric patch/moment operators with explicit
+  stabilization and certification evidence.
 - Added first-class exact-sampling round-sphere spectral discretizations with
   explicit S2FFT mode layouts, physical area measures, matrix-free
   Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,

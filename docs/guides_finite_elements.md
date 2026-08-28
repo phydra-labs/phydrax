@@ -116,10 +116,41 @@ transfer roles, refinement lineage, residual/jump and DWR estimators, embedded
 quadrature, enrichment/multiscale bases, partitioned DOF maps, and halo
 sum/average/update semantics.
 
+## Local-action IR and high order
+
+Every compiled weak form lowers to `phydrax.equations.fem.LocalActionIR` and a
+typed `WorksetProgram`. Field slots, differential operators, region/rule
+identities, and workset gathers therefore have one canonical fingerprint even
+when the existing variational frontend is used.
+
+`ReferenceNodalFamily` supplies arbitrary-order quadrilateral Lagrange elements
+with equispaced or Gauss-Lobatto nodes. `TensorProductTabulation` and
+`SumFactorizationPlan` retain one-dimensional factors for high-order
+interpolation and gradients. `QuadratureChunkPolicy` makes memory/chunking
+decisions explicit.
+
+Proof-form builders under `phydrax.equations.fem` provide linear elasticity,
+upwind advection, interior penalty, mixed Darcy, and curl-curl Maxwell
+configurations over the common compiler contracts.
+
+## Smoothed finite elements
+
+Cell-, edge-, node-, and fully smoothed axisymmetric methods use composite
+smoothing patches and boundary moments rather than ordinary cell quadrature.
+See [Smoothed finite elements](guides_fem_smoothing.md) for exact method scopes,
+stability evidence, source-backed presets, and axisymmetric primitive moments.
+
+## Time laws and solve schedules
+
+`TimeLaw` exposes value, first derivative, and second derivative. `SolveStage`
+and `SolveSchedule` own accepted/rejected stage transitions above the existing
+linear, nonlinear, DAE, and second-order solvers.
+
 ## Current limits
 
-Implemented compatible and discontinuous families are deliberately small:
-triangle RT0/Nedelec0 and discontinuous P0. General p, hexahedral compatible
-families, automatic mesh refinement kernels, cut-cell classification, contact,
-and real multi-process communication backends remain future family/backend
-implementations over the now-explicit contracts.
+Implemented compatible/discontinuous families remain deliberately compact:
+triangle RT0/Nedelec0 and discontinuous P0. Arbitrary-order nodal support is
+currently quadrilateral tensor-product Lagrange. General simplex p, hexahedral
+compatible families, cut-cell classification, contact search, and real
+multi-process communication backends remain future family/backend
+implementations over the now-explicit compiler contracts.

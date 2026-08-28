@@ -104,6 +104,32 @@ def _fem_case(width, repeats):
     }
 
 
+def _smoothing_case(width, repeats):
+    vertices, faces = _triangular_grid(width)
+    mesh = phx.discretization.CellMesh.from_triangles(vertices, faces)
+    smoothing = phx.discretization.fem.smoothing
+    constitutive = smoothing.plane_stress_matrix(1.0, 0.3)
+    started = time.perf_counter()
+    edge = smoothing.SmoothedElasticityPlan("ES", mesh, constitutive)
+    node = smoothing.SmoothedElasticityPlan("NS", mesh, constitutive)
+    preparation = time.perf_counter() - started
+    edge_action = eqx.filter_jit(edge.stiffness)
+    node_action = eqx.filter_jit(node.stiffness)
+    edge_action(vertices).block_until_ready()
+    node_action(vertices).block_until_ready()
+    edge_stiffness, edge_steady = _timed(lambda: edge_action(vertices), repeats)
+    node_stiffness, node_steady = _timed(lambda: node_action(vertices), repeats)
+    return {
+        "preparation_seconds": preparation,
+        "edge_steady_seconds": edge_steady,
+        "node_steady_seconds": node_steady,
+        "edge_patches": int(edge.layout.owner_entities.size),
+        "node_patches": int(node.layout.owner_entities.size),
+        "edge_matrix_norm": float(jnp.linalg.norm(edge_stiffness)),
+        "node_matrix_norm": float(jnp.linalg.norm(node_stiffness)),
+    }
+
+
 def _finite_volume_case(width, repeats):
     grid = phx.discretization.TensorGridPlan(
         (
@@ -163,6 +189,10 @@ def main():
     report = {
         "tensor": _tensor_case(arguments.tensor_size, arguments.repeats),
         "finite_element": _fem_case(arguments.mesh_width, arguments.repeats),
+        "smoothed_finite_element": _smoothing_case(
+            arguments.mesh_width,
+            arguments.repeats,
+        ),
         "structured_finite_volume": _finite_volume_case(
             arguments.mesh_width,
             arguments.repeats,
