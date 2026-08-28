@@ -779,6 +779,40 @@ on a tractable reference before interpreting these draws quantitatively.
             - predict
             - predict_observations
 
+## Nested sampling
+
+`sample_nested` performs static nested slice sampling over the normalized prior and
+the deterministic physical likelihood of a `PosteriorProblem`. Returned quadrature
+samples are weighted and dependent; use `posterior_measure()` to preserve those
+semantics or `resample_posterior(...)` for equal-weight draws.
+
+::: phydrax.uq.sample_nested
+
+---
+
+::: phydrax.uq.NestedSamplingResult
+    options:
+        members:
+            - converged
+            - num_samples
+            - resample_posterior
+            - posterior_measure
+            - predict
+            - predict_observations
+            - diagnostic_report
+
+---
+
+::: phydrax.uq.NestedSamplingDiagnostics
+    options:
+        members:
+            - passed
+            - as_dict
+
+---
+
+::: phydrax.uq.nested_sampling_status_name
+
 ## Tempered SMC
 
 ::: phydrax.uq.sample_tempered_smc
