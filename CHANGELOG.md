@@ -12,6 +12,29 @@
   conservative fixed-h summation-density SPH, complete conservation and step
   diagnostics, and native separable-Hamiltonian compilation through
   `StormerVerlet`.
+- Added first-order weakly compressible SPH with explicit summation- and
+  continuity-density state layouts, pair-once continuity and conservative
+  pressure operators, symmetric Morris physical viscosity, external
+  acceleration power accounting, SSPRK33/SSPRK54 lowering, complete
+  energy/dissipation diagnostics, periodic shear qualification, and dense versus
+  cell-list scaling evidence.
+- Added particle assemblies and bipartite relations, fixed-step programs and
+  accepted-step transforms, geometry-derived wall particles, free-surface
+  detection and atmospheric pressure policies, first-order kernel correction,
+  delta-SPH diffusion, Monaghan artificial viscosity, Shepard density
+  renormalization, transport velocity, adaptive smoothing length and grad-h,
+  reciprocal multiphase WCSPH, and fail-closed IISPH/DFSPH projection steps with
+  explicit residual and work evidence.
+- Added explicit experimental/qualified/production/certified particle-method
+  maturity, evidence-backed claims, dimensionless original density/divergence
+  residuals, pressure and boundary constraint diagnostics, and a production gate
+  that separates finite execution from numerical qualification.
+- Added native multi-population cell execution, specialized batched 1D--3D
+  local solves, safeguarded adaptive-h roots, production boundary and interface
+  geometry evidence, stateful stabilization controls, assembled projection
+  oracles and complementarity diagnostics, reference halo/migration semantics,
+  benchmark registries, qualification artifacts, support matrices, and replay
+  packets for commercial particle-method hardening.
 - Added typed finite-element local-action IR identities, workset planning, eager
   differential operators, element/partial operator utilities, quadrilateral
   nodal tabulation and p-transfer prototypes, bounded implicit-material and time

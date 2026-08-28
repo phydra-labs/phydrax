@@ -27,6 +27,10 @@ class AbstractBarotropicMaterial(StrictModule, NonTrainableState):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def density_from_pressure(self, pressure: Array, /) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def sound_speed(self, density: Array, /) -> Array:
         raise NotImplementedError
 
@@ -107,6 +111,20 @@ class TaitBarotropicMaterial(AbstractBarotropicMaterial):
     def pressure(self, density: Array, /) -> Array:
         ratio = self._ratio(density)
         return self.stiffness * (ratio**self.exponent - 1.0) + self.background_pressure
+
+    def density_from_pressure(self, pressure: Array, /) -> Array:
+        pressure_ = jnp.asarray(pressure)
+        if not jnp.issubdtype(pressure_.dtype, jnp.inexact):
+            pressure_ = pressure_.astype(jnp.float32)
+        stiffness = jnp.asarray(self.stiffness, dtype=pressure_.dtype)
+        background = jnp.asarray(self.background_pressure, dtype=pressure_.dtype)
+        base = 1.0 + (pressure_ - background) / stiffness
+        base = eqx.error_if(
+            base,
+            jnp.any(~jnp.isfinite(base) | (base <= 0.0)),
+            "Tait pressure is outside the invertible density range.",
+        )
+        return self.reference_density * base ** (1.0 / self.exponent)
 
     def sound_speed(self, density: Array, /) -> Array:
         ratio = self._ratio(density)

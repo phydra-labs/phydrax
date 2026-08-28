@@ -131,6 +131,9 @@ area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [SPH guide](docs/guides_sph.md), the
+[WCSPH guide](docs/guides_wcsph.md), the
+[advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
+[particle qualification guide](docs/guides_particle_qualification.md), the
 [global spectral guide](docs/guides_spectral_methods.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).

@@ -31,14 +31,13 @@ from ._neighborhood import (
     AbstractPreparedParticleNeighborhood,
     ParticleNeighborhoodState,
 )
-from ._pairwise import (
-    particle_pair_geometry,
-    ParticlePairGeometry,
-    scatter_pair_exchange,
-    scatter_pair_sum,
-)
+from ._pairwise import particle_pair_geometry, ParticlePairGeometry
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._smoothing import AbstractSPHSmoothingKernel
+from ._sph_operators import (
+    sph_summation_density,
+    sph_symmetric_pressure_gradient,
+)
 
 
 ParticleDifferentiabilityPolicy: TypeAlias = Literal["branchwise"]
@@ -299,29 +298,17 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
         valid: Array,
         /,
     ) -> Array:
-        masses = self.precision.evaluation(self.particles.safe_masses)
-        pair_kernel = self.precision.evaluation(
-            self.method.kernel.value(geometry.distance, self.method.smoothing_length)
-        )
-        left_mass = masses[pairs.left_indices]
-        right_mass = masses[pairs.right_indices]
-        neighbor_density = scatter_pair_sum(
+        return sph_summation_density(
+            self.particles.safe_masses,
+            self.particles.active_mask,
             pairs,
-            right_mass * pair_kernel,
-            left_mass * pair_kernel,
-            size=self.particles.capacity,
-            accumulation=self.execution.accumulation,
-            valid=valid,
-        )
-        zero = jnp.asarray(0.0, dtype=pair_kernel.dtype)
-        self_kernel = self.method.kernel.value(zero, self.method.smoothing_length)
-        self_density = masses * self_kernel
-        return self.precision.evaluation(
-            jnp.where(
-                self.particles.active_mask,
-                self_density + neighbor_density,
-                0.0,
-            )
+            geometry,
+            valid,
+            self.method.kernel,
+            self.method.smoothing_length,
+            particle_count=self.particles.capacity,
+            execution=self.execution,
+            precision=self.precision,
         )
 
     def _evaluate(self, position: ArrayLike, /) -> _BarotropicSPHEvaluation:
@@ -423,33 +410,18 @@ class PreparedBarotropicSPHDynamics(StrictModule, NonTrainableState):
     def _internal_gradient_from_evaluation(
         self, evaluation: _BarotropicSPHEvaluation, /
     ) -> Array:
-        pairs = evaluation.neighborhood.pair_relation
-        masses = self.precision.evaluation(self.particles.safe_masses)
-        left = pairs.left_indices
-        right = pairs.right_indices
-        coefficient = (
-            evaluation.pressure[left] / evaluation.density[left] ** 2
-            + evaluation.pressure[right] / evaluation.density[right] ** 2
-        )
-        kernel_gradient = self.method.kernel.gradient(
-            evaluation.geometry.displacement,
-            evaluation.geometry.distance,
+        return sph_symmetric_pressure_gradient(
+            self.particles.safe_masses,
+            evaluation.density,
+            evaluation.pressure,
+            evaluation.neighborhood.pair_relation,
+            evaluation.geometry,
+            evaluation.physical_pairs,
+            self.method.kernel,
             self.method.smoothing_length,
-        )
-        pair_gradient = (
-            masses[left, None]
-            * masses[right, None]
-            * coefficient[:, None]
-            * kernel_gradient
-        )
-        return self.precision.output(
-            scatter_pair_exchange(
-                pairs,
-                self.precision.accumulation(pair_gradient),
-                size=self.particles.capacity,
-                accumulation=self.execution.accumulation,
-                valid=evaluation.physical_pairs,
-            )
+            particle_count=self.particles.capacity,
+            execution=self.execution,
+            precision=self.precision,
         )
 
     def internal_potential_gradient(self, position: ArrayLike, /) -> Array:

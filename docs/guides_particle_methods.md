@@ -76,6 +76,15 @@ The implemented contract is the fixed discrete particle program:
 
 No straight-through topology estimator is used.
 
+## Fluid method families
+
+Conservative barotropic SPH compiles position and canonical momentum to a
+separable Hamiltonian problem. [Weakly compressible SPH](guides_wcsph.md) uses a
+first-order position/velocity state, explicit summation or continuity density,
+optional Morris physical viscosity, and SSPRK integration. Both methods share
+the same kernels, pair relations, dense authority, cell-list execution, and
+`GraphIR` views.
+
 ## Current limits
 
 The substrate supports a fixed population, one particle set, fixed search and

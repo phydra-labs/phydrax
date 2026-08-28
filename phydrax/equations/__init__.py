@@ -204,6 +204,11 @@ from ._transport_closures import (
     TransportProperties,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
+from ._weakly_compressible import (
+    compile_weakly_compressible_sph_problem,
+    CompiledWeaklyCompressibleSPHProblem,
+    WeaklyCompressibleFluidProblemIR,
+)
 from .trefftz import (
     AbstractTrefftzBasis,
     audit_trial_space,
@@ -514,4 +519,7 @@ __all__ = [
     "CompiledBarotropicSPHProblem",
     "TaitBarotropicMaterial",
     "compile_barotropic_sph_problem",
+    "CompiledWeaklyCompressibleSPHProblem",
+    "WeaklyCompressibleFluidProblemIR",
+    "compile_weakly_compressible_sph_problem",
 ]

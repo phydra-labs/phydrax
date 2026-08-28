@@ -134,7 +134,8 @@ solver interface.
 This method has one barotropic material, one particle set, fixed h, summation
 density, no viscosity, and no walls or free-surface correction. Neighborhoods
 are rebuilt for every evaluation; cached Verlet lists and fused cell traversal
-are not yet implemented. The method does not claim WCSPH continuity-density,
-delta-SPH, adaptive h, compressible-energy SPH, IISPH/DFSPH, rigid coupling, or
-particle emission. Those require distinct method and solver contracts rather
-than hidden options.
+are not yet implemented. First-order summation/continuity density and Morris
+physical viscosity are provided by the distinct
+[weakly compressible SPH](guides_wcsph.md) contract. Neither method yet claims
+delta-SPH, adaptive h, compressible-energy SPH, IISPH/DFSPH, rigid coupling, wall
+particles, or particle emission.

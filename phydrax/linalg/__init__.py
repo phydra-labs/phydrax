@@ -396,6 +396,11 @@ from ._shifted import (
     ShiftedSolveStatus,
     solve_shifted,
 )
+from ._small_batched import (
+    SmallLinearSolvePlan,
+    SmallLinearSolveResult,
+    solve_small_linear,
+)
 from ._space_extensions import CoordaxSpace, TensorProductSpace
 from ._spaces import (
     AbstractVectorSpace,
@@ -946,4 +951,7 @@ __all__ = [
     "solve_sparse_triangular",
     "sparse_provider_availability",
     "sparse_provider_capabilities",
+    "SmallLinearSolvePlan",
+    "SmallLinearSolveResult",
+    "solve_small_linear",
 ]
