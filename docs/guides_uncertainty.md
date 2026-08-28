@@ -2090,6 +2090,85 @@ the explained fraction. Reuse a selection only while its point geometry and kern
 remain fixed. Pivoted Cholesky optimizes residual kernel trace, not predictive
 likelihood, and does not replace validation.
 
+### Computation-aware Gaussian processes
+
+Computation-aware inference conditions on a declared set of linear actions rather
+than replacing the GP prior covariance. For an observation covariance
+`C = K(X, X) + D` and actions `S` with shape `(n, m)`, the projected system is
+`S.T @ C @ S`. The posterior retains every prior direction that the actions did
+not observe. At fixed kernel and noise parameters its covariance is therefore no
+smaller than the exact GP covariance, and any independent full-rank action basis
+recovers exact inference.
+
+Use this path when approximation uncertainty must remain visible and a full-data,
+matrix-free kernel pass is acceptable. Unlike FITC, it does not define a
+diagonal-plus-low-rank approximation of the prior. It retains `O(n m + m^2)`
+factor storage and is not a stochastic-minibatch method.
+
+```python
+actions = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
+    jr.key(13),
+    observation_points.shape[0],
+    16,
+)
+model = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+    observation_points,
+    observations,
+)
+factor = model.factor(
+    state=sparse_state,
+    actions=actions,
+)
+residual = model.residual(physical_observation_mean)
+
+lower_bound = factor.elbo(residual)
+query_mean, query_variance = factor.latent_moments(residual, query_points)
+conditioned = factor.condition(residual, bounded_query_points)
+```
+
+`latent_moments` evaluates a mean and latent variance without allocating a dense
+query covariance. `condition` deliberately constructs that covariance so the
+existing coherent sampling and `PredictiveField` contracts remain available.
+`GaussianProcessComputationPolicy` sets hard workspace, retained-factor, and
+query-covariance byte limits. `factor.diagnostics` records the resolved action
+kind, projected conditioning, kernel work, and storage evidence.
+
+Three action policies are native:
+
+- `FixedGaussianProcessActionPolicy` accepts a dense matrix or a native sparse
+  coordinate operator.
+- `BlockSparseGaussianProcessActionPolicy` assigns every observation to one
+  balanced contiguous action block and normalizes each block on every resolution.
+- `PseudoInputGaussianProcessActionPolicy` constructs kernel-section actions
+  `K(X, U)` and, by default, orthogonalizes their span.
+
+For inferred actions, reconstruct the policy from the current parameter PyTree:
+
+```python
+term = phx.uq.ComputationAwareGaussianProcessELBO(
+    model,
+    lambda parameters: parameters["source"] * basis,
+    state=gp_state,
+    actions=lambda parameters: phx.uq.BlockSparseGaussianProcessActionPolicy(
+        parameters["action_values"],
+        16,
+    ),
+)
+```
+
+This term is an evidence lower bound, not the exact marginal likelihood unless
+the action space is complete. Using it as a posterior term therefore defines an
+approximate pseudo-posterior over hyperparameters. Learned or residual-dependent
+actions also do not inherit calibration merely from the covariance-ordering
+guarantee. Do not use weight decay on raw block values: their resolved columns are
+scale invariant and are normalized during every factor construction.
+
+The construction follows Wenger et al. (2022,
+[arXiv:2205.15449](https://arxiv.org/abs/2205.15449)) and Wenger et al. (2024,
+[arXiv:2411.01036](https://arxiv.org/abs/2411.01036)). The distinction between
+conservative and calibrated computational uncertainty is discussed by Hegde et
+al. (2025, [PMLR 258](https://proceedings.mlr.press/v258/hegde25a.html)).
+
 ### Correlated and heterotopic outputs
 
 `MultiOutputDesign` stores one row per observed point/channel pair. Its dense

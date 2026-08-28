@@ -120,6 +120,80 @@ def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients():
         malformed.log_prob(parameters)
 
 
+def test_computation_aware_gp_elbo_term_matches_direct_bound_and_gradients():
+    points = jnp.linspace(0.0, 1.0, 12)
+    observations = 0.75 * points + 0.1 * jnp.sin(2.0 * jnp.pi * points)
+    discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+        points,
+        observations,
+    )
+    physical_mean = lambda parameters: parameters["coefficient"] * points
+    state = lambda parameters: phx.uq.GaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.Matern32Kernel(
+                length_scale=parameters["length_scale"],
+            ),
+            parameters["amplitude"],
+        ),
+        noise_scale=parameters["noise_scale"],
+    )
+    actions = lambda parameters: phx.uq.BlockSparseGaussianProcessActionPolicy(
+        parameters["actions"],
+        4,
+    )
+    term = phx.uq.ComputationAwareGaussianProcessELBO(
+        discrepancy,
+        physical_mean,
+        state=state,
+        actions=actions,
+        label="computation_aware_discrepancy",
+    )
+    parameters = {
+        "coefficient": jnp.asarray(0.7),
+        "amplitude": jnp.asarray(0.25),
+        "length_scale": jnp.asarray(0.2),
+        "noise_scale": jnp.asarray(0.04),
+        "actions": jnp.linspace(0.5, 1.5, points.size),
+    }
+    expected = discrepancy.elbo(
+        physical_mean(parameters),
+        state=state(parameters),
+        actions=actions(parameters),
+    )
+
+    assert term.label == "computation_aware_discrepancy"
+    assert term.per_case_log_prob(parameters).shape == (1,)
+    assert jnp.allclose(term.log_prob(parameters), expected)
+    gradient = jax.grad(term.log_prob)(parameters)
+    assert all(jnp.all(jnp.isfinite(value)) for value in gradient.values())
+
+    fixed_actions = actions(parameters)
+    fixed_term = phx.uq.ComputationAwareGaussianProcessELBO(
+        discrepancy,
+        physical_mean,
+        state=state,
+        actions=fixed_actions,
+    )
+    assert jnp.allclose(fixed_term.log_prob(parameters), expected)
+
+
+def test_computation_aware_gp_elbo_term_rejects_malformed_callbacks():
+    points = jnp.linspace(0.0, 1.0, 6)
+    discrepancy = phx.uq.ComputationAwareGaussianProcessDiscrepancy(
+        points,
+        jnp.sin(points),
+    )
+    state = lambda _: phx.uq.GaussianProcessLikelihoodState(noise_scale=0.1)
+    malformed = phx.uq.ComputationAwareGaussianProcessELBO(
+        discrepancy,
+        lambda _: jnp.zeros_like(points),
+        state=state,
+        actions=lambda _: jnp.eye(points.size),
+    )
+    with pytest.raises(TypeError, match="AbstractGaussianProcessActionPolicy"):
+        malformed.log_prob({})
+
+
 def test_fixed_supervised_likelihood_preserves_operator_and_ignores_training_weight():
     rows = jnp.linspace(0.0, 1.0, 6)[:, None]
     domain = phx.domain.DatasetDomain(rows)

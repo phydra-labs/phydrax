@@ -246,6 +246,13 @@ from ._gaussian_factor import (
     GaussianFactorStatus,
     solve_triangular_rank_aware,
 )
+from ._gp_actions import (
+    AbstractGaussianProcessActionPolicy,
+    BlockSparseGaussianProcessActionPolicy,
+    FixedGaussianProcessActionPolicy,
+    GaussianProcessActionKind,
+    PseudoInputGaussianProcessActionPolicy,
+)
 from ._gp_classification import (
     BernoulliGaussianProcessLikelihood,
     BernoulliGaussianProcessPosterior,
@@ -253,6 +260,19 @@ from ._gp_classification import (
     CategoricalGaussianProcessPosterior,
     condition_bernoulli_gaussian_process,
     condition_categorical_gaussian_process,
+)
+from ._gp_computation_aware import (
+    COMPUTATION_AWARE_GP_CONDITION_LIMIT,
+    COMPUTATION_AWARE_GP_NONFINITE,
+    COMPUTATION_AWARE_GP_PROJECTED_COVARIANCE_FAILURE,
+    COMPUTATION_AWARE_GP_PROJECTED_NOISE_FAILURE,
+    COMPUTATION_AWARE_GP_SUCCESS,
+    ComputationAwareGaussianProcessConditioner,
+    ComputationAwareGaussianProcessDiagnostics,
+    ComputationAwareGaussianProcessDiscrepancy,
+    ComputationAwareGaussianProcessFactor,
+    ComputationAwareGaussianProcessStatus,
+    GaussianProcessComputationPolicy,
 )
 from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
 from ._gp_functional import (
@@ -492,6 +512,7 @@ from ._posterior_diagnostics import (
 from ._posterior_terms import (
     AbstractPosteriorTerm,
     CompositePosteriorLikelihood,
+    ComputationAwareGaussianProcessELBO,
     FixedObservationLikelihood,
     FixedResidualLikelihood,
     FixedSupervisedLikelihood,
@@ -1223,6 +1244,7 @@ __all__ = [
     "FixedSupervisedLikelihood",
     "FixedObservationLikelihood",
     "FixedResidualLikelihood",
+    "ComputationAwareGaussianProcessELBO",
     "GaussianProcessMarginalLikelihood",
     "GaussianProcessMAPSearch",
     "GaussianProcessMAPSearchResult",
@@ -1300,6 +1322,22 @@ __all__ = [
     "LaplaceResult",
     "StructuredLaplaceResult",
     "fit_laplace",
+    "AbstractGaussianProcessActionPolicy",
+    "BlockSparseGaussianProcessActionPolicy",
+    "COMPUTATION_AWARE_GP_CONDITION_LIMIT",
+    "COMPUTATION_AWARE_GP_NONFINITE",
+    "COMPUTATION_AWARE_GP_PROJECTED_COVARIANCE_FAILURE",
+    "COMPUTATION_AWARE_GP_PROJECTED_NOISE_FAILURE",
+    "COMPUTATION_AWARE_GP_SUCCESS",
+    "ComputationAwareGaussianProcessConditioner",
+    "ComputationAwareGaussianProcessDiagnostics",
+    "ComputationAwareGaussianProcessDiscrepancy",
+    "ComputationAwareGaussianProcessFactor",
+    "ComputationAwareGaussianProcessStatus",
+    "FixedGaussianProcessActionPolicy",
+    "GaussianProcessActionKind",
+    "GaussianProcessComputationPolicy",
+    "PseudoInputGaussianProcessActionPolicy",
     "AbstractMultiOutputKernel",
     "Coregionalization",
     "ExactGaussianProcessDiscrepancy",

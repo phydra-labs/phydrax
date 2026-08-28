@@ -48,6 +48,8 @@ def test_gp_scaling_benchmark_passes_accuracy_and_reuse_speedup_gates(tmp_path):
     assert payload["summary"]["scenarios_failed"] == 0
     assert payload["configuration"]["regression_gates"] == {
         "fitc_fixed_factor_gate_minimum_observations": 256,
+        "maximum_cagp_conservative_violation": 1e-08,
+        "maximum_cagp_exact_storage_ratio": 0.75,
         "maximum_fitc_exact_mean_rmse": 0.01,
         "maximum_fitc_exact_variance_rmse": 0.003,
         "minimum_exact_fixed_factor_speedup": 2.0,
