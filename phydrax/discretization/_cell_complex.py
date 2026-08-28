@@ -54,6 +54,33 @@ def _validated_cells(
     return cells
 
 
+def _resolved_entity_ids(
+    name: str,
+    value: ArrayLike | None,
+    count: int,
+    /,
+) -> np.ndarray:
+    identifiers = (
+        np.arange(count, dtype=np.int64)
+        if value is None
+        else np.asarray(value, dtype=np.int64)
+    )
+    if identifiers.shape != (count,):
+        raise ValueError(f"{name} must have shape {(count,)}.")
+    if np.any(identifiers < 0) or np.unique(identifiers).size != count:
+        raise ValueError(f"{name} must contain unique non-negative IDs.")
+    return identifiers
+
+
+def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
+    if keys.ndim != 2:
+        raise ValueError("Canonical entity keys must be rank-2.")
+    order = np.lexsort(tuple(keys[:, axis] for axis in range(keys.shape[1] - 1, -1, -1)))
+    identifiers = np.empty((keys.shape[0],), dtype=np.int64)
+    identifiers[order] = np.arange(keys.shape[0], dtype=np.int64)
+    return identifiers
+
+
 class PolygonalConnectivity(StrictModule, NonTrainableState):
     """Canonical edge incidence for mixed triangular/quadrilateral cells."""
 
@@ -172,30 +199,40 @@ def polygonal_cell_complex(
     quadrilaterals: ArrayLike | None,
     vertex_count: int,
     /,
+    *,
+    vertex_global_ids: ArrayLike | None = None,
+    cell_global_ids: ArrayLike | None = None,
 ) -> CellComplexTopology:
-    """Build the validated cell complex for mixed 2-D polygonal cells."""
 
     connectivity = polygonal_connectivity(triangles, quadrilaterals, vertex_count)
     edges = np.asarray(connectivity.edges, dtype=np.int32)
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
     cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
     cell_signs = np.asarray(connectivity.cell_edge_signs)
+    vertex_ids = _resolved_entity_ids(
+        "vertex_global_ids", vertex_global_ids, vertex_count
+    )
+    cell_ids_global = _resolved_entity_ids(
+        "cell_global_ids", cell_global_ids, connectivity.cell_count
+    )
+    edge_keys = np.sort(vertex_ids[edges], axis=1)
+    edge_ids_global = _canonical_entity_ids(edge_keys)
     vertices = EntitySet(
         "vertices",
         0,
-        np.arange(vertex_count, dtype=np.int32),
+        vertex_ids,
         subsets=(EntitySubset("boundary", connectivity.boundary_vertices),),
     )
     edge_entities = EntitySet(
         "edges",
         1,
-        np.arange(edges.shape[0], dtype=np.int32),
+        edge_ids_global,
         subsets=(EntitySubset("boundary", connectivity.boundary_edges),),
     )
     cell_entities = EntitySet(
         "cells",
         2,
-        np.arange(connectivity.cell_count, dtype=np.int32),
+        cell_ids_global,
         subsets=(
             EntitySubset("boundary", np.zeros((connectivity.cell_count,), dtype=bool)),
         ),
@@ -327,6 +364,9 @@ def tetrahedral_cell_complex(
     tetrahedra: ArrayLike,
     vertex_count: int,
     /,
+    *,
+    vertex_global_ids: ArrayLike | None = None,
+    cell_global_ids: ArrayLike | None = None,
 ) -> CellComplexTopology:
     """Build the validated 0→1→2→3 complex for tetrahedral cells."""
 
@@ -336,28 +376,36 @@ def tetrahedral_cell_complex(
     face_edges = np.asarray(connectivity.face_edges, dtype=np.int32)
     cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
     cells = np.asarray(tetrahedra, dtype=np.int32)
+    vertex_ids = _resolved_entity_ids(
+        "vertex_global_ids", vertex_global_ids, vertex_count
+    )
+    cell_ids_global = _resolved_entity_ids(
+        "cell_global_ids", cell_global_ids, cells.shape[0]
+    )
+    edge_ids_global = _canonical_entity_ids(np.sort(vertex_ids[edges], axis=1))
+    face_ids_global = _canonical_entity_ids(np.sort(vertex_ids[faces], axis=1))
     vertex_entities = EntitySet(
         "vertices",
         0,
-        np.arange(vertex_count, dtype=np.int32),
+        vertex_ids,
         subsets=(EntitySubset("boundary", connectivity.boundary_vertices),),
     )
     edge_entities = EntitySet(
         "edges",
         1,
-        np.arange(edges.shape[0], dtype=np.int32),
+        edge_ids_global,
         subsets=(EntitySubset("boundary", connectivity.boundary_edges),),
     )
     face_entities = EntitySet(
         "faces",
         2,
-        np.arange(faces.shape[0], dtype=np.int32),
+        face_ids_global,
         subsets=(EntitySubset("boundary", connectivity.boundary_faces),),
     )
     cell_entities = EntitySet(
         "cells",
         3,
-        np.arange(cells.shape[0], dtype=np.int32),
+        cell_ids_global,
         subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=bool)),),
     )
     vertex_edge_relation = EdgeRelation(

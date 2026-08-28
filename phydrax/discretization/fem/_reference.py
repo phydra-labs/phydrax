@@ -22,6 +22,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
     degree: int = eqx.field(static=True)
     conformity: str = eqx.field(static=True)
     mapping: str = eqx.field(static=True)
+    value_shape: tuple[int, ...] = eqx.field(static=True)
     reference_nodes: Array
     entity_dofs: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
     element_id: str = eqx.field(static=True)
@@ -37,6 +38,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         *,
         conformity: str = "H1",
         mapping: str = "identity",
+        value_shape: tuple[int, ...] = (),
     ):
         family_ = str(family)
         cell = str(cell_kind)
@@ -47,8 +49,8 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError("Finite-element identifiers must be non-empty.")
         if cell not in ("triangle", "quadrilateral", "tetrahedron"):
             raise ValueError("Unsupported reference cell kind.")
-        if order <= 0:
-            raise ValueError("Finite-element degree must be positive.")
+        if order < 0:
+            raise ValueError("Finite-element degree must be non-negative.")
         nodes = np.asarray(reference_nodes, dtype=float)
         dimension = {"triangle": 2, "quadrilateral": 2, "tetrahedron": 3}[cell]
         if nodes.ndim != 2 or nodes.shape[1] != dimension or nodes.shape[0] == 0:
@@ -73,11 +75,15 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Each local DOF must belong to exactly one reference entity."
             )
+        values = tuple(int(size) for size in value_shape)
+        if any(size <= 0 for size in values):
+            raise ValueError("Finite-element value dimensions must be positive.")
         self.family = family_
         self.cell_kind = cell
         self.degree = order
         self.conformity = conformity_
         self.mapping = mapping_
+        self.value_shape = values
         self.reference_nodes = jnp.asarray(nodes)
         self.entity_dofs = normalized_entity_dofs
         self.element_id = canonical_fingerprint(
@@ -88,6 +94,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
                 "degree": order,
                 "conformity": conformity_,
                 "mapping": mapping_,
+                "value_shape": list(values),
                 "reference_nodes": array_tree_fingerprint(nodes),
                 "entity_dofs": normalized_entity_dofs,
             }
@@ -109,6 +116,15 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Reference evaluation points must have shape (point_count, cell_dimension)."
             )
+        if self.family == "DiscontinuousLagrange" and self.degree == 0:
+            return (
+                jnp.ones((locations.shape[0], 1)),
+                jnp.zeros((locations.shape[0], 1, self.topological_dimension)),
+            )
+        if self.family == "RaviartThomas" and self.cell_kind == "triangle":
+            return _triangle_rt0(locations)
+        if self.family == "Nedelec" and self.cell_kind == "triangle":
+            return _triangle_nedelec0(locations)
         if self.cell_kind == "triangle" and self.degree == 1:
             return _triangle_p1(locations)
         if self.cell_kind == "triangle" and self.degree == 2:
@@ -204,6 +220,54 @@ def _tetrahedron_p1(points: Array, /) -> tuple[Array, Array]:
     return values, gradients
 
 
+def _triangle_rt0(points: Array, /) -> tuple[Array, Array]:
+    x = points[:, 0]
+    y = points[:, 1]
+    values = jnp.stack(
+        (
+            jnp.stack((x, y - 1.0), axis=-1),
+            jnp.stack((x, y), axis=-1),
+            jnp.stack((x - 1.0, y), axis=-1),
+        ),
+        axis=1,
+    )
+    identity = jnp.eye(2)
+    gradients = jnp.broadcast_to(
+        identity,
+        (points.shape[0], 3, 2, 2),
+    )
+    return values, gradients
+
+
+def _triangle_nedelec0(points: Array, /) -> tuple[Array, Array]:
+    lambda_0 = 1.0 - points[:, 0] - points[:, 1]
+    lambda_1 = points[:, 0]
+    lambda_2 = points[:, 1]
+    barycentric = (lambda_0, lambda_1, lambda_2)
+    gradients = jnp.asarray(((-1.0, -1.0), (1.0, 0.0), (0.0, 1.0)))
+    pairs = ((0, 1), (1, 2), (2, 0))
+    values = jnp.stack(
+        tuple(
+            barycentric[first][:, None] * gradients[second]
+            - barycentric[second][:, None] * gradients[first]
+            for first, second in pairs
+        ),
+        axis=1,
+    )
+    derivative = jnp.stack(
+        tuple(
+            gradients[second][:, None] * gradients[first][None, :]
+            - gradients[first][:, None] * gradients[second][None, :]
+            for first, second in pairs
+        ),
+        axis=0,
+    )
+    return values, jnp.broadcast_to(
+        derivative,
+        (points.shape[0],) + derivative.shape,
+    )
+
+
 def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
     """Construct one implemented scalar nodal Lagrange reference element."""
 
@@ -254,4 +318,73 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
     )
 
 
-__all__ = ["FiniteElementSpec", "lagrange_element"]
+def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSpec:
+    cell = str(cell_kind)
+    order = int(degree)
+    if order != 0:
+        raise ValueError("Only discontinuous P0 is currently implemented.")
+    dimension = {"triangle": 2, "quadrilateral": 2, "tetrahedron": 3}.get(cell)
+    if dimension is None:
+        raise ValueError("Unsupported discontinuous reference cell.")
+    center = {
+        "triangle": ((1.0 / 3.0, 1.0 / 3.0),),
+        "quadrilateral": ((0.5, 0.5),),
+        "tetrahedron": ((0.25, 0.25, 0.25),),
+    }[cell]
+    entities = {
+        "triangle": (((), (), ()), ((), (), ()), ((0,),)),
+        "quadrilateral": (((), (), (), ()), ((), (), (), ()), ((0,),)),
+        "tetrahedron": (
+            ((), (), (), ()),
+            ((),) * 6,
+            ((),) * 4,
+            ((0,),),
+        ),
+    }[cell]
+    return FiniteElementSpec(
+        "DiscontinuousLagrange",
+        cell,
+        0,
+        center,
+        entities,
+        conformity="L2",
+    )
+
+
+def raviart_thomas_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSpec:
+    if str(cell_kind) != "triangle" or int(degree) != 0:
+        raise ValueError("Only triangular Raviart-Thomas RT0 is implemented.")
+    return FiniteElementSpec(
+        "RaviartThomas",
+        "triangle",
+        0,
+        ((0.5, 0.0), (0.5, 0.5), (0.0, 0.5)),
+        (((), (), ()), ((0,), (1,), (2,)), ((),)),
+        conformity="Hdiv",
+        mapping="contravariant_piola",
+        value_shape=(2,),
+    )
+
+
+def nedelec_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSpec:
+    if str(cell_kind) != "triangle" or int(degree) != 0:
+        raise ValueError("Only triangular first-kind Nedelec order zero is implemented.")
+    return FiniteElementSpec(
+        "Nedelec",
+        "triangle",
+        0,
+        ((0.5, 0.0), (0.5, 0.5), (0.0, 0.5)),
+        (((), (), ()), ((0,), (1,), (2,)), ((),)),
+        conformity="Hcurl",
+        mapping="covariant_piola",
+        value_shape=(2,),
+    )
+
+
+__all__ = [
+    "FiniteElementSpec",
+    "discontinuous_element",
+    "lagrange_element",
+    "nedelec_element",
+    "raviart_thomas_element",
+]

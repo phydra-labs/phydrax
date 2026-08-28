@@ -17,52 +17,65 @@ routes remain canonical.
 
 ## Reference elements and fields
 
-`lagrange_element(cell_kind, degree)` currently constructs:
+`lagrange_element(cell_kind, degree)` constructs triangle P1/P2,
+quadrilateral Q1, and tetrahedron P1. Additional constructors provide
+discontinuous P0, triangular RT0, and triangular first-kind Nedelec order zero.
+Compatible elements carry their Piola mapping and edge orientation through the
+prepared DOF map.
 
-- triangle P1 and P2;
-- quadrilateral Q1;
-- tetrahedron P1.
+`FiniteElementFieldSpec` supports replicated component shapes and multiple named
+fields. Preparation exposes one ordered `BlockSpace`; mixed weak forms return one
+residual block per declared field. P2 vertex and edge coordinates remain
+entity-stratified in `BlockDofLayout`.
 
-`FiniteElementSpec.tabulate(points)` returns basis values and reference gradients.
-A `FiniteElementFieldSpec` assigns one compatible element to every mesh block.
-Preparation builds `DiscreteFieldSpace` coordinates and a separate
-`FiniteElementDofMap` for cell-local gathers. P2 triangles share edge DOFs through
-the mesh edge entities.
+`FiniteElementCoordinateSpec` assigns an independent coordinate element and
+geometry DOF map to every block. This permits curved P2 geometry with a lower-
+or higher-order field element.
 
 ## Geometry
 
-Physical points, metric determinants, and physical gradients are computed from
-reference geometry in pure JAX. For fixed connectivity:
+Physical points, metric determinants, normals, physical gradients, and Piola-
+mapped compatible bases are computed in pure JAX. `prepare_runtime` creates a
+fixed-topology numeric realization:
 
 ```text
-areas = discretization.evaluate_geometry("u", new_coordinates)[0].measure
+runtime = discretization.prepare_runtime(new_coordinates, numeric_version="moved")
+context = phx.equations.FiniteElementExecutionContext(runtime)
+residual = compiled.residual(state, context)
 ```
 
-This path is differentiable with respect to `new_coordinates`. Changing
-connectivity or coordinate shape requires a new plan.
+Coordinates flow through residuals, sparse refresh, functionals, DAE mass
+operators, and shape derivatives. Connectivity changes require a new plan.
 
-## Weak forms and dual residuals
+## Domains, coefficients, and weak forms
 
-`WeakForm` is an ordered graph of `DiffusionTerm`, `MassTerm`, `SourceTerm`, and
-`BoundaryLoadTerm`. Constants become `ResolvedCoefficient` values. A staged
-callable coefficient requires an explicit ID:
+`EntitySelection` composes union, intersection, difference, and complement over
+one exact entity set. A selected cell, exterior-facet, or interior-facet
+`IntegrationDomain` owns resolved owner/neighbour and local-facet routes. Terms
+bind existing `phydrax.integration` reference rules by cell block.
+
+`WeakForm` supports built-in diffusion, mass, source, and boundary load terms,
+general `CellResidualTerm`, energy-derived `CellEnergyTerm`, optimized
+`CellBilinearTerm`, and two-sided `InteriorFacetTerm` numerical fluxes.
+
+Coefficients may be point functions, cell arrays, facet arrays, or quadrature
+arrays. A staged coefficient receives the execution context:
 
 ```python
 import phydrax as phx
 
 forcing = phx.equations.coefficient(
-    lambda points, args: args["amplitude"] * points[..., 0],
+    lambda points, context: context.user_args["amplitude"] * points[..., 0],
     coefficient_id="x-forcing",
 )
 ```
 
-The assembled weak residual belongs to `DualSpace(test_space)`. This preserves the
-difference between a test functional, a primal field vector, the field Riesz map,
-and the physical mass operator.
+The assembled weak residual belongs to `DualSpace(test_space)`. This preserves
+the distinction between a test functional, a primal field vector, the field
+Riesz map, and the physical mass operator.
 
-`FiniteElementFunctional` uses the same geometry and quadrature machinery but
-reduces to one scalar. Its reduction uses compensated accumulation when enabled by
-`FiniteElementPrecisionPolicy`.
+`FiniteElementFunctional` accepts selected domains and native reference rules;
+its reduction follows `FiniteElementPrecisionPolicy`.
 
 ## Essential constraints
 
@@ -76,30 +89,37 @@ with explicit full and reduced spaces. Raw weak residuals use the algebraic dual
 pullback, while primal vectors use the pairing-aware adjoint. Every connected mesh
 component must be anchored. Natural boundary data remains a weak-form term.
 
-## Solvers
+## Solvers and execution
 
-A compiled affine form provides `linear_system()`, returning native `LinearSystem`
-and right-hand side values. General residuals expose `as_nonlinear_problem()` for
-the existing nonlinear preparation and Jacobian policies.
+A compiled affine form provides `linear_system()` and explicit nullspace policy.
+General residuals expose `as_nonlinear_problem()`, matrix-free linearization,
+lagged/Picard operator factories, and a scalable adjoint solve.
 
-`as_dae_system()` constructs the native mass-matrix residual
+`as_dae_system()` includes dynamic geometry, time, lift, and lift-rate terms.
+`as_second_order_system()` adds configuration, velocity, acceleration, and
+lift-acceleration semantics. `as_generalized_eigenproblem()` returns native
+constrained stiffness/mass operators.
 
-```text
-M u_dot + r(u, t) = 0
-```
+`FiniteElementExecutionPolicy` selects matrix-free or sparse realization and
+fast, deterministic, or compensated residual accumulation. Sparse execution
+uses the existing `SparseAssemblyPlan` prepare/refresh lifecycle.
 
-without conflating `M` with the field Riesz map.
+## Materials, compatible methods, and hierarchy
 
-## Sparse and matrix-free execution
+Pure `ConstitutiveModel` updates return response, candidate quadrature state, and
+diagnostics. `FiniteElementMaterialTransaction` commits or rolls back all
+material regions atomically; FE checkpoints bind field/material state to exact
+prepared and compilation IDs.
 
-Cell residual evaluation is matrix-free gather/evaluate/scatter. Certified
-constant affine mass and diffusion terms additionally lower to
-`SparseCoordinateOperator` over current sparse relations. Constraint projection
-is applied after the full-space action.
+The substrate exposes local elimination, HDG trace condensation, explicit
+transfer roles, refinement lineage, residual/jump and DWR estimators, embedded
+quadrature, enrichment/multiscale bases, partitioned DOF maps, and halo
+sum/average/update semantics.
 
 ## Current limits
 
-The current release is fitted, fixed-topology, and single-device. H(div), H(curl),
-DG/HDG, curved high-order geometry, path-dependent materials, adaptivity, contact,
-and distributed FE layouts are not yet exposed. Unsupported element/cell
-combinations fail during planning.
+Implemented compatible and discontinuous families are deliberately small:
+triangle RT0/Nedelec0 and discontinuous P0. General p, hexahedral compatible
+families, automatic mesh refinement kernels, cut-cell classification, contact,
+and real multi-process communication backends remain future family/backend
+implementations over the now-explicit contracts.
