@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -12,7 +13,8 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ConstraintMap
+from ...linalg import AbstractLinearOperator, ConstraintMap
+from .._cell_mesh import CellMesh
 from ._generic import FiniteElementDofMap
 
 
@@ -207,8 +209,106 @@ class DistributedFiniteElementConstraint(StrictModule, NonTrainableState):
         self.partition_id = partition.partition_id
 
 
+class FiniteElementPartition(StrictModule, NonTrainableState):
+    """Contiguous host partition of top-dimensional cells."""
+
+    cell_owner: Array
+    part_count: int = eqx.field(static=True)
+    partition_id: str = eqx.field(static=True)
+
+    def __init__(self, cell_owner: ArrayLike, part_count: int, /):
+        owner = np.asarray(cell_owner, dtype=np.int32)
+        count = int(part_count)
+        if owner.ndim != 1 or count <= 0 or np.any(owner < 0) or np.any(owner >= count):
+            raise ValueError("Cell ownership or part_count is invalid.")
+        if set(owner.tolist()) != set(range(count)):
+            raise ValueError("Every partition must own at least one cell.")
+        self.cell_owner = jnp.asarray(owner)
+        self.part_count = count
+        self.partition_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-partition",
+                "cell_owner": array_tree_fingerprint(owner),
+                "part_count": count,
+            }
+        )
+
+
+def partition_cells_contiguous(
+    mesh: CellMesh,
+    part_count: int,
+    /,
+) -> FiniteElementPartition:
+    if not isinstance(mesh, CellMesh):
+        raise TypeError("mesh must be CellMesh.")
+    count = sum(block.cell_count for block in mesh.blocks)
+    parts = int(part_count)
+    if parts <= 0 or parts > count:
+        raise ValueError("part_count must lie between one and the cell count.")
+    owner = np.minimum(
+        np.arange(count, dtype=np.int64) * parts // count,
+        parts - 1,
+    ).astype(np.int32)
+    return FiniteElementPartition(owner, parts)
+
+
+class JaxCollectiveBackend(StrictModule, NonTrainableState):
+    """Real JAX named-axis collective reduction for pmap/shard-map execution."""
+
+    axis_name: str = eqx.field(static=True)
+
+    def __init__(self, axis_name: str, /):
+        name = str(axis_name)
+        if not name:
+            raise ValueError("axis_name must be non-empty.")
+        self.axis_name = name
+
+    def sum(self, value: ArrayLike, /) -> Array:
+        return jax.lax.psum(jnp.asarray(value), self.axis_name)
+
+    def mean(self, value: ArrayLike, /) -> Array:
+        return jax.lax.pmean(jnp.asarray(value), self.axis_name)
+
+
+class DistributedFiniteElementOperator(StrictModule, NonTrainableState):
+    """Local FE action followed by a real named-axis contribution sum."""
+
+    local_operator: AbstractLinearOperator
+    collective: JaxCollectiveBackend
+    operator_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        local_operator: AbstractLinearOperator,
+        collective: JaxCollectiveBackend,
+        /,
+    ):
+        if not isinstance(local_operator, AbstractLinearOperator) or not isinstance(
+            collective, JaxCollectiveBackend
+        ):
+            raise TypeError(
+                "Distributed operator requires local operator and JAX collective."
+            )
+        self.local_operator = local_operator
+        self.collective = collective
+        self.operator_id = canonical_fingerprint(
+            {
+                "kind": "distributed-finite-element-operator",
+                "local_operator": local_operator.operator_id,
+                "axis_name": collective.axis_name,
+            }
+        )
+
+    def mv(self, value: ArrayLike, /) -> Array:
+        return self.collective.sum(self.local_operator.mv(value))
+
+
 __all__ = [
     "DistributedFiniteElementConstraint",
+    "FiniteElementPartition",
+    "DistributedFiniteElementOperator",
+    "JaxCollectiveBackend",
     "FiniteElementHaloPlan",
     "PartitionedFiniteElementDofMap",
+    "partition_cells_contiguous",
 ]

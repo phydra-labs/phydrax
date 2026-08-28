@@ -4,7 +4,7 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
-from . import trefftz
+from . import fem, trefftz
 from ._channel_flow import (
     ChannelVelocityDiagnostics,
     compile_channel_flow,
@@ -348,6 +348,7 @@ __all__ = [
     "HarmonicPotential2D",
     "HelmholtzPlaneWaveBasis",
     "HolomorphicAffineCoefficientMap",
+    "fem",
     "HolomorphicBranchBundle",
     "HolomorphicConstraintComponent",
     "HolomorphicConstraintLiftEvidence",
