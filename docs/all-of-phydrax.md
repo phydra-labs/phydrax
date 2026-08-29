@@ -305,6 +305,19 @@ soft order operations, prepared references, spatial/intensity UQ metrics, scalar
 terms, distributional semigroup losses, and deterministic particle transforms reuse
 the native substrate. See [Guides → Optimal transport](guides_transport.md).
 
+### Native combinatorial decisions and learning
+
+`phydrax.combinatorial` separates logical finite decisions from the real feature
+PyTrees dual to linear objective costs. Explicit catalogs, stable fixed-cardinality
+selection, primal-dual Hungarian assignment, and signed-cost DAG shortest paths
+share native JAX batching, deterministic ties, content-sensitive topology,
+portable statuses, and independent feasibility/objective/optimality certificates.
+Hard solves stop gradients by default. `BlackboxInterpolation` adds an explicit
+loss-dependent one-extra-solve surrogate pullback without presenting it as a
+classical solver Jacobian. See
+[API → Native combinatorial optimization](api/combinatorial.md) and the
+[combinatorial learning cookbook](cookbook/combinatorial_learning.md).
+
 ### Dynamical systems, identification, nonlinear analysis, and chaos
 
 `phydrax.dynamics` separates local system laws, pathwise numerical evolution,
@@ -967,6 +980,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   combinatorial, and fixed-noise noncompact kernels shared by GP and coreset methods.
 - `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
   state-space estimation, sensitivities, and stochastic spectra.
+- `phydrax.combinatorial` for exact native finite, cardinality, assignment, and
+  DAG path oracles, independent certificates, and explicit blackbox surrogate
+  pullbacks.
 - `phydrax.optim` for typed scalar, least-squares, proximal-composite, constrained,
   state/design, and stochastic optimization, differentiable solution maps,
   canonical QPs, and the explicit QPax backend.

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added a native linear-combinatorial substrate with separate logical decisions
+  and objective features, content-addressed plans, deterministic ties, portable
+  statuses, and independent certificates. Added exact streamed finite,
+  fixed-cardinality, primal-dual Hungarian assignment, and signed-cost DAG path
+  oracles, plus explicit one-extra-solve blackbox surrogate pullbacks.
 - Added a method-neutral structured nonlinear optimization spine with
   topology/numeric prepare-refresh lifecycles, exact sparse Jacobian and
   Lagrangian-Hessian reuse, portable primal/dual warm starts, independently
