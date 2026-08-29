@@ -4,7 +4,15 @@
 
 """Scientific conditions independent of soft or hard numerical treatment."""
 
-from . import cfd, conservation, electromagnetics, solids, stochastic, thermal
+from . import (
+    cfd,
+    conservation,
+    electromagnetics,
+    free_boundary,
+    solids,
+    stochastic,
+    thermal,
+)
 from ._base import (
     AbstractCondition,
     AbstractMomentCondition,
@@ -30,6 +38,7 @@ __all__ = [
     "Dirichlet",
     "Initial",
     "electromagnetics",
+    "free_boundary",
     "Moment",
     "Neumann",
     "Observation",

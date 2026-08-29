@@ -74,6 +74,16 @@ from ._fractional_ops import (
     fractional_laplacian,
     riesz_fractional_derivative_gl_mc,
 )
+from ._level_set import (
+    level_set_coarea_density,
+    level_set_curvature,
+    level_set_gradient_norm,
+    level_set_normal,
+    level_set_normal_velocity,
+    level_set_phase_indicator,
+    regularized_delta,
+    regularized_heaviside,
+)
 from ._lie_ops import lie_bracket
 from ._map_ops import (
     riemannian_map_conformality_residual,
@@ -192,6 +202,14 @@ __all__ = [
     "probability_current",
     "ProbeDistribution",
     "lie_bracket",
+    "level_set_coarea_density",
+    "level_set_curvature",
+    "level_set_gradient_norm",
+    "level_set_normal",
+    "level_set_normal_velocity",
+    "level_set_phase_indicator",
+    "regularized_delta",
+    "regularized_heaviside",
     "riemannian_div",
     "riemannian_div_tensor",
     "riemannian_grad",

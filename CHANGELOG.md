@@ -3,6 +3,22 @@
 ## Unreleased
 
 ### Added
+- Added an end-to-end free-boundary SciML substrate: differentiable compact
+  Heaviside/delta and coarea calculus; level-set phase, normal, curvature,
+  velocity, and Eikonal operators; discontinuity-aware coordinate lifts;
+  implicit phase/interface functionals; Stefan, jump, kinematic,
+  Gibbs--Thomson, Young--Laplace, and traction conditions; causal time slabs
+  and narrow-band adaptive collocation.
+- Added explicit-front, implicit-level-set, reference-map, and relaxed
+  probabilistic Stefan workflows with common collocation, optimization, and
+  representation comparison. Added free-boundary operator contracts,
+  Jacobian/pullback/GCL evidence, VOF/PLIC and SPH adapters, and
+  residual-controlled hybrid rollouts.
+- Added interface predictive uncertainty, residual/diversity acquisition,
+  bounded test-time context adaptation, phase geometry and masked interface
+  distance evidence, plus exact Stefan, Mullins--Sekerka, topology-event,
+  Hysing bubble, Turek--Hron FSI, obstacle, fracture, and
+  trajectory-disjoint OOD benchmark contracts.
 - Added certified variational eigenspaces across continuous, learned-operator,
   factorized high-dimensional, and discrete quantum workflows: basis-invariant
   block Rayleigh objectives, native reduced Ritz extraction and full-space

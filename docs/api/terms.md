@@ -356,3 +356,20 @@ condition type. Attach a policy through
 ---
 
 ::: phydrax.sampling.collocation.collocation_policy_support
+
+## Implicit free-boundary functionals
+
+These factories derive their phase or surface density from the *current*
+level-set field inside the differentiated integrand. They therefore preserve a
+fixed ambient target and compiled sample shape while the interface evolves.
+The band width, phase side, integration target, and plan remain explicit.
+
+::: phydrax.terms.implicit_phase_penalty
+
+---
+
+::: phydrax.terms.implicit_interface_penalty
+
+---
+
+::: phydrax.terms.free_boundary_term_suite

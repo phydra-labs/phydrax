@@ -47,6 +47,14 @@ from ._cubature import (
     CubatureAtlasProvider,
     CubatureComponent,
 )
+from ._interface import (
+    interface_distance_metrics,
+    InterfaceDistanceMetrics,
+    phase_geometry_metrics,
+    PhaseGeometryMetrics,
+    regularized_delta_values,
+    regularized_heaviside_values,
+)
 from ._partition import BoundaryAtlasPartition, GeometryMeasurePartition
 from ._sampling import (
     AtlasSamplingPlan,
@@ -208,6 +216,12 @@ __all__ = [
     "IntersectionResult",
     "IntersectionStatus",
     "PredicateEvidence",
+    "InterfaceDistanceMetrics",
+    "PhaseGeometryMetrics",
+    "interface_distance_metrics",
+    "phase_geometry_metrics",
+    "regularized_delta_values",
+    "regularized_heaviside_values",
     "intersect_convex_polygons",
     "TetraIntersectionEvidence",
     "TetraIntersectionLimits",

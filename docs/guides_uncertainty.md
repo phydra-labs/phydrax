@@ -799,6 +799,24 @@ external adapters; it rejects geometry or output mismatches. Use
 `operator_input_predictive` reclassifies explicitly named physical case axes as
 input draws, and ensemble prediction can retain crossed epistemic/input axes.
 
+### Interface-derived uncertainty and acquisition
+
+`interface_predictive_summary` converts coherent level-set draws into
+occupancy probability, a bounded interface-probability score, level-set moments,
+and phase-measure samples. This is derived geometric uncertainty; it does not
+declare calibrated interface coverage by itself.
+
+`select_interface_acquisition` scores candidate simulations or observations by
+separately normalized predictive uncertainty, free-boundary physics residual,
+and sequential geometric diversity. Report ablations against each single
+signal and random acquisition.
+
+::: phydrax.uq.interface_predictive_summary
+
+---
+
+::: phydrax.uq.select_interface_acquisition
+
 ### Distributional operator models
 
 `AbstractProbabilisticOperatorModel.distribution(batch)` returns one

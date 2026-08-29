@@ -82,6 +82,11 @@ from ._graph_data import (
     GraphTrajectorySupervisedTerm,
 )
 from ._integral_functional import IntegralFunctional
+from ._interface import (
+    free_boundary_term_suite,
+    implicit_interface_penalty,
+    implicit_phase_penalty,
+)
 from ._likelihood import SupervisedLikelihoodTerm
 from ._moment import MomentPenalty
 from ._observation import ObservationPenalty
@@ -192,6 +197,9 @@ __all__ = [
     "FlowMatchingPolicy",
     "FlowMatchingSamplingMode",
     "FlowMatchingTerm",
+    "free_boundary_term_suite",
+    "implicit_interface_penalty",
+    "implicit_phase_penalty",
     "GraphSupervisedTerm",
     "GraphTarget",
     "GraphClassificationReduction",
