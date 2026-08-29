@@ -2,6 +2,7 @@
 
 Ownership is explicit:
 
+- :mod:`phydrax.nn.atomistic` contains finite-molecule equivariant potentials.
 - :mod:`phydrax.nn.models` contains pointwise and structured finite-dimensional models.
 - :mod:`phydrax.nn.layers` contains reusable tensor-to-tensor layers.
 - :mod:`phydrax.nn.parameters` contains physical parameter transforms and selections.
@@ -11,4 +12,4 @@ Ownership is explicit:
 from . import activations, layers, models, operator, parameters
 
 
-__all__ = ["activations", "layers", "models", "operator", "parameters"]
+__all__ = ["activations", "atomistic", "layers", "models", "operator", "parameters"]
