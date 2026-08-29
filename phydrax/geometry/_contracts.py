@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, Key
 
 from .._strict import StrictModule
-from ._capabilities import GeometryCapability
+from ._capabilities import ContactCurvatureProvider, GeometryCapability
 from ._certificate import FieldCertificate
 from .design._schema import (
     _ParameterCollector,
@@ -60,6 +60,32 @@ class GeometryTolerance:
     def threshold(self, scale: Array, /) -> Array:
         scale_ = jnp.asarray(scale, dtype=float)
         return self.absolute + self.relative * jnp.maximum(scale_, 1.0)
+
+
+class ContactCurvatureResult(StrictModule):
+    principal_curvatures: Array
+    valid: Array
+    regularity_margin: Array
+
+    def __init__(
+        self,
+        principal_curvatures: Array,
+        valid: Array,
+        regularity_margin: Array,
+        /,
+    ):
+        curvature = jnp.asarray(principal_curvatures)
+        valid_ = jnp.asarray(valid, dtype=bool)
+        margin = jnp.asarray(regularity_margin, dtype=curvature.dtype)
+        if curvature.ndim != 2 or curvature.shape[1] not in (1, 2):
+            raise ValueError(
+                "Principal curvatures must have shape (points, dimension-1)."
+            )
+        if valid_.shape != curvature.shape[:1] or margin.shape != valid_.shape:
+            raise ValueError("Curvature validity and margins must have point shape.")
+        self.principal_curvatures = curvature
+        self.valid = valid_
+        self.regularity_margin = margin
 
 
 class AbstractGeometryKernel(StrictModule):
@@ -220,6 +246,17 @@ class CompiledGeometry(StrictModule):
     def boundary_normal(self, points: Array, /) -> Array:
         self.require(GeometryCapability.BOUNDARY_NORMAL)
         return self.kernel.boundary_normal(self.state, points)
+
+    def contact_curvature(self, points: Array, /) -> ContactCurvatureResult:
+        kernel = self.require(GeometryCapability.CONTACT_CURVATURE)
+        if not isinstance(kernel, ContactCurvatureProvider):
+            raise TypeError("Geometry advertises contact curvature without a provider.")
+        result = kernel.contact_curvature(self.state, points)
+        if not isinstance(result, ContactCurvatureResult):
+            raise TypeError(
+                "Contact-curvature provider must return ContactCurvatureResult."
+            )
+        return result
 
     @property
     def bounds(self) -> Array:
@@ -384,6 +421,7 @@ GeometrySource = AbstractGeometrySource
 
 
 __all__ = [
+    "ContactCurvatureResult",
     "CompiledGeometry",
     "GeometryKernel",
     "GeometryKind",

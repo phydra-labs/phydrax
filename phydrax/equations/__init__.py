@@ -6,6 +6,15 @@
 
 from . import fem, trefftz
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
+from ._cfd_dem import (
+    AbstractHydrodynamicClosurePlan,
+    CFDEMCouplingEvaluation,
+    evaluate_unresolved_cfd_dem,
+    FluidParticleSample,
+    HydrodynamicClosureResult,
+    StokesDragPlan,
+    UnresolvedCFDEMCouplingPlan,
+)
 from ._channel_flow import (
     ChannelVelocityDiagnostics,
     compile_channel_flow,
@@ -26,6 +35,12 @@ from ._conservation import (
     compile_conservation_problem,
     CompiledConservationProblem,
     ConservationProblemIR,
+)
+from ._dem_material import DEMMaterialTable
+from ._discrete_element import (
+    compile_discrete_element_problem,
+    CompiledDiscreteElementProblem,
+    DiscreteElementProblemIR,
 )
 from ._entropy_pair import (
     ConvexEntropyPair,
@@ -103,6 +118,13 @@ from ._hyperbolic_systems import (
     MultispeciesEulerSystem,
     ScalarConservationSystem,
     ShallowWaterSystem,
+)
+from ._ib_cfd_dem import (
+    evaluate_resolved_ib_cfd_dem,
+    IBConstraintPlan,
+    ResolvedIBCFDEMCouplingPlan,
+    ResolvedIBEvaluation,
+    ResolvedIBGeometryPlan,
 )
 from ._incompressible import (
     compile_periodic_incompressible_flow,
@@ -186,6 +208,15 @@ from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
     StencilStateLayout,
+)
+from ._thermal_cfd_dem import (
+    evaluate_thermal_cfd_dem,
+    initialize_thermal_cfd_dem,
+    step_thermal_cfd_dem,
+    ThermalCFDEMCouplingPlan,
+    ThermalCFDEMCouplingState,
+    ThermalCFDEMEvaluation,
+    ThermalCFDEMStepResult,
 )
 from ._tokens import (
     pad_pde_tokens,
@@ -522,4 +553,27 @@ __all__ = [
     "CompiledWeaklyCompressibleSPHProblem",
     "WeaklyCompressibleFluidProblemIR",
     "compile_weakly_compressible_sph_problem",
+    "CompiledDiscreteElementProblem",
+    "DEMMaterialTable",
+    "DiscreteElementProblemIR",
+    "compile_discrete_element_problem",
+    "AbstractHydrodynamicClosurePlan",
+    "CFDEMCouplingEvaluation",
+    "FluidParticleSample",
+    "HydrodynamicClosureResult",
+    "IBConstraintPlan",
+    "ResolvedIBCFDEMCouplingPlan",
+    "ResolvedIBEvaluation",
+    "ResolvedIBGeometryPlan",
+    "StokesDragPlan",
+    "ThermalCFDEMCouplingPlan",
+    "ThermalCFDEMCouplingState",
+    "ThermalCFDEMEvaluation",
+    "ThermalCFDEMStepResult",
+    "UnresolvedCFDEMCouplingPlan",
+    "evaluate_resolved_ib_cfd_dem",
+    "evaluate_thermal_cfd_dem",
+    "evaluate_unresolved_cfd_dem",
+    "initialize_thermal_cfd_dem",
+    "step_thermal_cfd_dem",
 ]

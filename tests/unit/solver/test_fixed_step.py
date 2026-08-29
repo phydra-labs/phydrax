@@ -3,6 +3,7 @@
 #
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -65,3 +66,61 @@ def test_fixed_step_composes_accepted_step_transforms():
     assert solution.successful
     assert jnp.all(solution.transform_applied)
     assert jnp.allclose(solution.states[-1], jnp.asarray([0.15]))
+
+
+def test_fixed_step_saves_and_atomically_freezes_structured_state():
+    def step(step_index, time, state, step_size, args):
+        del time, step_size, args
+        candidate = {
+            "position": state["position"] + 1.0,
+            "route": state["route"] + 1,
+            "active": ~state["active"],
+        }
+        successful = step_index < 1
+        accepted = jax.tree.map(
+            lambda proposed, current: jnp.where(successful, proposed, current),
+            candidate,
+            state,
+        )
+        return phx.solver.FixedStepResult(
+            candidate,
+            accepted,
+            successful,
+            jnp.zeros(()),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(1, dtype=jnp.int32),
+            jnp.asarray(False),
+            jnp.zeros(()),
+        )
+
+    initial = {
+        "position": jnp.asarray([0.0]),
+        "route": jnp.asarray([4], dtype=jnp.int32),
+        "active": jnp.asarray([True]),
+    }
+    problem = phx.solver.FixedStepProblem(
+        phx.solver.CallableFixedStepMethod(step, "structured-test-step"),
+        initial,
+        t0=0.0,
+        t1=0.03,
+        step_size=0.01,
+        state_geometry=phx.discretization.DEMStateGeometry("structured-test"),
+    )
+
+    solution = phx.solver.solve_fixed_step(problem)
+
+    assert not solution.successful
+    assert jnp.array_equal(solution.valid, jnp.asarray([True, True, False, False]))
+    assert jnp.array_equal(
+        solution.states["position"][:, 0], jnp.asarray([0.0, 1.0, 1.0, 1.0])
+    )
+    assert jnp.array_equal(solution.states["route"][:, 0], jnp.asarray([4, 5, 5, 5]))
+    assert jnp.array_equal(
+        solution.states["active"][:, 0],
+        jnp.asarray([True, False, False, False]),
+    )
+    first = jax.tree.map(lambda leaf: leaf[1], solution.states)
+    midpoint = problem.state_geometry.interpolate(initial, first, 0.5)
+    assert jnp.array_equal(midpoint["position"], jnp.asarray([0.5]))
+    assert jnp.array_equal(midpoint["route"], initial["route"])
+    assert jnp.array_equal(midpoint["active"], initial["active"])

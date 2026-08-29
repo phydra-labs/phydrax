@@ -45,11 +45,131 @@ from ._bipartite_neighborhood import (
     PreparedCellListBipartiteParticleNeighborhood,
     PreparedDenseBipartiteParticleNeighborhood,
 )
+from ._bond import (
+    DEMBondEvaluation,
+    DEMBondState,
+    evaluate_bonds,
+    FixedBondGraphPlan,
+    MixedModeBondDamagePlan,
+    PreparedFixedBondGraph,
+)
 from ._cell_list import (
     CellListParticleNeighborhoodPlan,
     PreparedCellListParticleNeighborhood,
 )
+from ._convex_contact import (
+    convex_sat_contact,
+    ConvexContactResult,
+    ConvexShapePlan,
+    PreparedConvexShape,
+)
 from ._core import ParticleDiscretization, ParticleSetPlan
+from ._dem import (
+    DEMDiagnostics,
+    DEMEnergyLedgerState,
+    DEMEvaluation,
+    DEMExternalLoad,
+    DEMRejectionReason,
+    DEMResolvedLoad,
+    DEMRuntimeState,
+    DEMStateGeometry,
+    DEMStepEnergyLedger,
+    DEMStepEvaluation,
+    DEMStepRestriction,
+    PreparedSoftSphereDEMDynamics,
+    SoftSphereDEMMethodPlan,
+)
+from ._dem_batch import (
+    batch_step_detailed,
+    DEMBatchExecutionMode,
+    DEMBatchExecutionPlan,
+    initialize_dem_batch,
+    stack_dem_states,
+)
+from ._dem_boundary import (
+    AbstractDEMBarrierMotionPlan,
+    DEMBarrierMotion,
+    DEMBarrierSide,
+    DEMBoundaryResponse,
+    evaluate_dem_barrier,
+    ImplicitDEMBarrier,
+    PrescribedDEMBarrierMotionPlan,
+    ServoDEMBarrierMotionPlan,
+    ServoDEMBarrierState,
+    StaticDEMBarrierMotionPlan,
+)
+from ._dem_contact import (
+    AbstractDEMNormalContactPlan,
+    AbstractDEMRollingContactPlan,
+    AbstractDEMTangentialContactPlan,
+    ConstantRollingResistancePlan,
+    CundallStrackTangentialPlan,
+    DEMContactBatch,
+    DEMContactHistory,
+    DEMContactModelPlan,
+    DEMContactResponse,
+    DEMRollingResponse,
+    DMTAdhesiveNormalPlan,
+    HertzNormalContactPlan,
+    LinearSpringDashpotNormalPlan,
+    MindlinTangentialContactPlan,
+    PreparedDEMContactModel,
+    ThorntonLinearPlasticNormalPlan,
+)
+from ._dem_hybrid import (
+    DEMHybridEventKind,
+    DEMHybridEventPlan,
+    DEMHybridSensitivityResult,
+    localize_and_differentiate_hybrid_event,
+)
+from ._dem_inverse import (
+    DEMEnsembleResult,
+    DEMInverseProblem,
+    DEMInverseQualification,
+    DEMInverseResult,
+    evaluate_dem_inverse,
+    evaluate_dem_parameter_ensemble,
+)
+from ._dem_qualification import (
+    dem_constraint_residuals,
+    dem_differentiability_margins,
+    DEMConstraintResiduals,
+    DEMDifferentiabilityMargins,
+    DEMQualificationArtifact,
+    DEMQualificationProfile,
+    qualify_dem,
+)
+from ._dem_replay import (
+    checkpointed_dem_rollout,
+    checkpointed_dem_vjp,
+    dem_replay_matches,
+    DEMCheckpointPolicy,
+    DEMCheckpointVJPResult,
+    DEMReplayRecord,
+    DEMReplayResult,
+)
+from ._dem_sensitivity import (
+    dem_local_validity_certificate,
+    DEMLocalValidityCertificate,
+    DEMSensitivityMode,
+    DEMSensitivityPolicy,
+    DEMSensitivityResult,
+    DEMTrainableMaterialParameters,
+    sharp_branchwise_jvp,
+    sharp_branchwise_vjp,
+)
+from ._dem_smooth import (
+    DEMSurrogateBiasCertificate,
+    SmoothCoulombTangentialPlan,
+    SmoothPenaltyNormalPlan,
+    surrogate_bias_certificate,
+)
+from ._dem_support import DEMSupportMatrix, DEMSupportMatrixEntry, DEMSupportStatus
+from ._dem_thermal import (
+    DEMContactThermalResponse,
+    DEMTemperatureState,
+    LumpedContactThermalPlan,
+)
 from ._dfsph import (
     DFSPHFactorState,
     DFSPHMethodPlan,
@@ -79,7 +199,16 @@ from ._free_surface import (
     FreeSurfaceState,
 )
 from ._graph import particle_graph_view
+from ._hierarchical_cell_list import (
+    HierarchicalRadiusParticleNeighborhoodPlan,
+    PreparedHierarchicalRadiusParticleNeighborhood,
+)
 from ._iisph import IISPHMethodPlan, IISPHStateLayout, IISPHStepResult, PreparedIISPH
+from ._implicit_contact import (
+    ImplicitContactResult,
+    ImplicitRigidShapePlan,
+    sphere_implicit_contact,
+)
 from ._multiphase import (
     multiphase_interface_interaction,
     MultiphaseInteractionResult,
@@ -95,6 +224,13 @@ from ._neighborhood import (
     ParticleNeighborhoodState,
     PreparedDenseParticleNeighborhood,
 )
+from ._pair_state import (
+    match_particle_pair_keys,
+    ParticlePairKeys,
+    ParticlePairKeySpace,
+    ParticlePairRemap,
+    remap_particle_pair_values,
+)
 from ._pairwise import (
     particle_pair_geometry,
     ParticleBox,
@@ -102,6 +238,11 @@ from ._pairwise import (
     ParticlePairRelation,
     scatter_pair_exchange,
     scatter_pair_sum,
+)
+from ._particle_grid_transfer import (
+    ConservativeParticleGridTransferPlan,
+    ParticleGridRelation,
+    PreparedParticleGridTransfer,
 )
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._production_boundaries import (
@@ -160,6 +301,7 @@ from ._production_stabilization import (
     update_shock_viscosity,
 )
 from ._qualification import (
+    AbstractParticleQualificationProfile,
     particle_constraint_residuals,
     ParticleBenchmarkIdentity,
     ParticleClaimEvidence,
@@ -169,6 +311,32 @@ from ._qualification import (
     ParticleQualificationClaim,
     ParticleQualificationProfile,
     ParticleQualificationResult,
+)
+from ._rigid_body import (
+    PreparedRigidBodySet,
+    quaternion_rotation_matrix,
+    rigid_body_angular_acceleration,
+    rigid_body_kick_drift_kick,
+    RigidBodyKinematics,
+    RigidBodyLoad,
+    RigidBodySetPlan,
+    RigidBodyStateGeometry,
+    RigidBodyStepResult,
+)
+from ._rigid_contact import (
+    clump_component_contact_geometry,
+    RigidContactGeometry,
+    sphere_contact_adapter,
+)
+from ._rigid_sphere import (
+    PreparedRigidSphereSet,
+    RigidSphereKinematics,
+    RigidSphereLoad,
+    RigidSphereSetPlan,
+    sphere_lever_torque,
+    sphere_pair_contact_geometry,
+    sphere_spin_velocity,
+    SpherePairContactGeometry,
 )
 from ._smoothing import (
     AbstractSPHSmoothingKernel,
@@ -182,6 +350,15 @@ from ._sph_density import (
 )
 from ._sph_state import WeaklyCompressibleSPHStateLayout
 from ._sph_viscosity import MorrisViscosityPlan
+from ._sphere_clump import (
+    ClumpComponentKinematics,
+    ClumpComponentPairBatch,
+    expand_clump_owner_pairs,
+    PreparedRigidSphereClumpSet,
+    reduce_clump_component_loads,
+    RigidSphereClumpSetPlan,
+    SphereClumpTemplatePlan,
+)
 from ._stabilization import (
     AbstractSPHDensityDiffusionPlan,
     AntuonoDeltaSPHDiffusionPlan,
@@ -198,11 +375,25 @@ from ._stabilization import (
     SPHFirstOrderGradientCorrectionPlan,
     SPHKernelNormalizationState,
 )
+from ._topology_events import (
+    initialize_topology_event_record,
+    split_preallocated_owner,
+    TopologyEventPlan,
+    TopologyEventRecord,
+    TopologyEventResult,
+    TopologyPoolState,
+)
 from ._transport_velocity import (
     PreparedTransportVelocityDynamics,
     TransportVelocityDiagnostics,
     TransportVelocitySPHMethodPlan,
     TransportVelocityStateLayout,
+)
+from ._triangle_wall import (
+    PreparedTriangleWall,
+    sphere_triangle_contact_geometry,
+    TriangleWallContactResult,
+    TriangleWallPlan,
 )
 from ._verification import (
     particle_refinement_report,
@@ -217,6 +408,11 @@ from ._verification import (
     replay_particle_failure,
     write_particle_qualification_artifact,
     write_particle_replay,
+)
+from ._verlet import (
+    ParticleVerletState,
+    PreparedVerletParticleNeighborhood,
+    VerletParticleNeighborhoodPlan,
 )
 from ._wall import (
     AdamiWallBoundaryPlan,
@@ -422,4 +618,154 @@ __all__ = [
     "particle_pair_geometry",
     "scatter_pair_exchange",
     "scatter_pair_sum",
+    "AbstractDEMNormalContactPlan",
+    "AbstractDEMTangentialContactPlan",
+    "CundallStrackTangentialPlan",
+    "DEMBarrierSide",
+    "DEMBoundaryResponse",
+    "DEMContactBatch",
+    "DEMContactHistory",
+    "DEMContactModelPlan",
+    "DEMContactResponse",
+    "DEMDiagnostics",
+    "DEMEnergyLedgerState",
+    "DEMEvaluation",
+    "DEMExternalLoad",
+    "DEMRejectionReason",
+    "DEMResolvedLoad",
+    "DEMRuntimeState",
+    "DEMStateGeometry",
+    "DEMStepEvaluation",
+    "DEMStepEnergyLedger",
+    "DEMStepRestriction",
+    "HertzNormalContactPlan",
+    "ImplicitDEMBarrier",
+    "LinearSpringDashpotNormalPlan",
+    "MindlinTangentialContactPlan",
+    "ParticlePairKeySpace",
+    "ParticlePairKeys",
+    "ParticlePairRemap",
+    "PreparedDEMContactModel",
+    "PreparedRigidSphereSet",
+    "PreparedSoftSphereDEMDynamics",
+    "RigidSphereKinematics",
+    "RigidSphereLoad",
+    "RigidSphereSetPlan",
+    "SoftSphereDEMMethodPlan",
+    "SpherePairContactGeometry",
+    "evaluate_dem_barrier",
+    "match_particle_pair_keys",
+    "remap_particle_pair_values",
+    "sphere_lever_torque",
+    "sphere_pair_contact_geometry",
+    "sphere_spin_velocity",
+    "AbstractParticleQualificationProfile",
+    "DEMConstraintResiduals",
+    "DEMDifferentiabilityMargins",
+    "DEMQualificationArtifact",
+    "DEMQualificationProfile",
+    "dem_constraint_residuals",
+    "dem_differentiability_margins",
+    "qualify_dem",
+    "ParticleVerletState",
+    "PreparedVerletParticleNeighborhood",
+    "VerletParticleNeighborhoodPlan",
+    "DEMCheckpointPolicy",
+    "DEMCheckpointVJPResult",
+    "DEMLocalValidityCertificate",
+    "DEMReplayRecord",
+    "DEMReplayResult",
+    "DEMSensitivityMode",
+    "DEMSensitivityPolicy",
+    "DEMSensitivityResult",
+    "DEMTrainableMaterialParameters",
+    "checkpointed_dem_rollout",
+    "checkpointed_dem_vjp",
+    "dem_local_validity_certificate",
+    "dem_replay_matches",
+    "sharp_branchwise_jvp",
+    "sharp_branchwise_vjp",
+    "AbstractDEMBarrierMotionPlan",
+    "AbstractDEMRollingContactPlan",
+    "ClumpComponentKinematics",
+    "ClumpComponentPairBatch",
+    "ConservativeParticleGridTransferPlan",
+    "ConstantRollingResistancePlan",
+    "ConvexContactResult",
+    "ConvexShapePlan",
+    "DEMBatchExecutionMode",
+    "DEMBatchExecutionPlan",
+    "DEMBarrierMotion",
+    "DEMBondEvaluation",
+    "DEMBondState",
+    "DEMContactThermalResponse",
+    "DEMEnsembleResult",
+    "DEMHybridEventKind",
+    "DEMHybridEventPlan",
+    "DEMHybridSensitivityResult",
+    "DEMInverseProblem",
+    "DEMInverseQualification",
+    "DEMInverseResult",
+    "DEMRollingResponse",
+    "DEMSupportMatrix",
+    "DEMSupportMatrixEntry",
+    "DEMSupportStatus",
+    "DEMSurrogateBiasCertificate",
+    "DEMTemperatureState",
+    "DMTAdhesiveNormalPlan",
+    "FixedBondGraphPlan",
+    "HierarchicalRadiusParticleNeighborhoodPlan",
+    "ImplicitContactResult",
+    "ImplicitRigidShapePlan",
+    "LumpedContactThermalPlan",
+    "MixedModeBondDamagePlan",
+    "ParticleGridRelation",
+    "PreparedConvexShape",
+    "PreparedFixedBondGraph",
+    "PreparedHierarchicalRadiusParticleNeighborhood",
+    "PreparedParticleGridTransfer",
+    "PreparedRigidBodySet",
+    "PreparedRigidSphereClumpSet",
+    "PreparedTriangleWall",
+    "PrescribedDEMBarrierMotionPlan",
+    "RigidBodyKinematics",
+    "RigidBodyLoad",
+    "RigidBodySetPlan",
+    "RigidBodyStateGeometry",
+    "RigidBodyStepResult",
+    "RigidContactGeometry",
+    "RigidSphereClumpSetPlan",
+    "ServoDEMBarrierMotionPlan",
+    "ServoDEMBarrierState",
+    "SmoothCoulombTangentialPlan",
+    "SmoothPenaltyNormalPlan",
+    "SphereClumpTemplatePlan",
+    "StaticDEMBarrierMotionPlan",
+    "ThorntonLinearPlasticNormalPlan",
+    "TopologyEventPlan",
+    "TopologyEventRecord",
+    "TopologyEventResult",
+    "TopologyPoolState",
+    "TriangleWallContactResult",
+    "TriangleWallPlan",
+    "batch_step_detailed",
+    "clump_component_contact_geometry",
+    "convex_sat_contact",
+    "evaluate_bonds",
+    "evaluate_dem_inverse",
+    "evaluate_dem_parameter_ensemble",
+    "expand_clump_owner_pairs",
+    "initialize_dem_batch",
+    "initialize_topology_event_record",
+    "localize_and_differentiate_hybrid_event",
+    "quaternion_rotation_matrix",
+    "reduce_clump_component_loads",
+    "rigid_body_angular_acceleration",
+    "rigid_body_kick_drift_kick",
+    "sphere_contact_adapter",
+    "sphere_implicit_contact",
+    "sphere_triangle_contact_geometry",
+    "split_preallocated_owner",
+    "stack_dem_states",
+    "surrogate_bias_certificate",
 ]

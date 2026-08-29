@@ -40,19 +40,25 @@ unordered pairs without changing public logical particle order.
 permutations, cell counts and offsets, actual pair count, maximum occupancy,
 and independent cell-overflow, pair-overflow, and nonperiodic-domain status.
 Overflow is fail-closed: truncated routes remain inspectable but cannot be used
-by SPH dynamics.
+by particle dynamics.
 
 `ParticleBox` implements branchwise minimum-image displacement on selected
 periodic axes. Nonperiodic axes use half-open bounds. Pair geometry is finite at
-coincident positions and returns a zero direction there. Conservative pair
-exchange evaluates one unordered interaction and scatters equal and opposite
-endpoint contributions.
+coincident positions and returns a zero direction there. Methods that require a
+defined contact normal, including DEM, reject an overlapping coincident pair.
+Conservative pair exchange evaluates one unordered interaction and scatters
+equal and opposite endpoint contributions.
 
 `ParticleExecutionPolicy` provides `dense_pairs` and `cell_edge_list`
 realizations with fast, deterministic, or compensated accumulation. Dense
 execution remains the correctness authority. `particle_graph_view` converts the
 exact existing candidate or physical interaction relation to fixed-capacity
 `GraphIR` without a second search.
+
+`ParticlePairKeySpace` assigns collision-free keys from stable endpoint
+identities. `match_particle_pair_keys` remaps edge-local state when a rebuilt
+cell-list relation moves a physical pair to another route slot. This is the
+persistent-state substrate for frictional contact.
 
 ## Precision
 
@@ -85,11 +91,19 @@ optional Morris physical viscosity, and SSPRK integration. Both methods share
 the same kernels, pair relations, dense authority, cell-list execution, and
 `GraphIR` views.
 
+## Discrete element method
+
+[Soft-sphere DEM](guides_discrete_element_method.md) composes rigid-sphere
+properties, stable pair-state remapping, normal and tangential contact channels,
+rotational velocity, exact-signed-distance barriers, and structured fixed-step
+state. DEM reuses the same dense authority, cell-list execution, precision, and
+reduction policies as SPH; it does not introduce a second particle search API.
+
 ## Current limits
 
-The substrate supports a fixed population, one particle set, fixed search and
-smoothing radii, dense or fixed-capacity cell-list pairs, and periodic or
-nonperiodic boxes. Cached Verlet neighborhoods, fused cell-range traversal,
-wall particles, particle emission, edge-local contact history, distribution,
-and particle–continuum transfer remain future prepared backends or method
-families over these contracts.
+The substrate supports fixed populations, dense or fixed-capacity cell-list
+pairs, periodic or nonperiodic boxes, and persistent same-set pair state.
+Cached Verlet neighborhoods, particle emission, partial rigid-body constraints,
+distributed contact ownership, nonspherical particles, and particle–continuum
+transfer remain future prepared backends or method families over these
+contracts.

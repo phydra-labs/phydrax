@@ -93,8 +93,16 @@ uses canonical unordered pairs, normalized compact kernels, energy-derived
 pressure forces, dense or fail-closed cell-list execution, exact `GraphIR`
 views, and the native separable-Hamiltonian solver path. First-order WCSPH adds
 explicit summation/continuity density semantics, Morris physical viscosity,
-energy/dissipation ledgers, and native SSPRK integration. See
+energy/dissipation ledgers, and native SSPRK integration. DEM adds stable
+contact history, accepted-step work/energy ledgers, cached and fused
+neighborhoods, rolling/adhesive/plastic/thermal laws, SO(2)/SO(3) bodies,
+clumps, triangle/convex/implicit geometry, bonds/topology events, certified
+sensitivity modes, and conservative unresolved/resolved CFD coupling. See
 [Guide → Particle methods](guides_particle_methods.md),
+[Guide → Discrete element method](guides_discrete_element_method.md),
+[Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
+[Guide → Differentiable DEM](guides_differentiable_dem.md), and
+[Guide → CFD-DEM coupling](guides_cfd_dem.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
 [Guide → Weakly compressible SPH](guides_wcsph.md),
 [Guide → SPH boundaries](guides_sph_boundaries.md), and

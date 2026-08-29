@@ -3,6 +3,31 @@
 ## Unreleased
 
 ### Added
+- Added experimental two- and three-dimensional soft-sphere DEM with rigid
+  translational/angular state, collision-free stable pair keys, persistent
+  Cundall--Strack contact history, linear spring--dashpot and Hertz--Mindlin
+  contact families, exact-signed-distance barriers, dense/cell-list execution,
+  structured fail-closed fixed stepping, contact qualification, an executable
+  settling example, and dense/cell performance evidence.
+- Added source-resolved accepted-step DEM energy/work ledgers, explicit rejection
+  reasons, qualification artifacts, certified Verlet caching, fused/reference
+  pair reductions, radius-class filtering, replay/checkpointed VJPs, sharp and
+  smooth sensitivity contracts, inverse/UQ qualification, and transverse
+  hybrid-event saltation.
+- Added rolling resistance, prescribed and servo barriers, certified analytic
+  contact curvature and curved Hertz walls, finite-range DMT adhesion,
+  bilinear elasto-plastic normal contact, and conservative lumped contact heat
+  transfer.
+- Added SO(2)/SO(3) rigid bodies, immutable sphere-clump templates, common rigid
+  contact geometry, triangle walls, elastic/damageable fixed bond graphs,
+  fixed-pool topology events, convex SAT contact, and certified
+  sphere-to-implicit contact.
+- Added conservative particle-grid transfer, unresolved Stokes CFD--DEM,
+  atomic multirate coupling windows, work-adjoint resolved immersed-boundary
+  coupling, thermal CFD--DEM energy exchange, expanded examples, qualification
+  campaign artifacts, and performance evidence.
+- Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
+  while preserving the existing array-valued SSPRK contract.
 - Added a first-class material-particle discretization with stable physical IDs,
   static active selections, physical mass measures, explicit precision/execution
   policies, periodic pair geometry, budgeted canonical dense neighborhoods,
