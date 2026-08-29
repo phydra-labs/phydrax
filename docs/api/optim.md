@@ -770,6 +770,34 @@ the returned tangent.
     )
     ```
 
+### Structured sparse nonlinear programs
+
+`StructuredNonlinearProgram` pairs a scalar objective and bound-form constraint vector
+with normalized variable and constraint bounds, exact scalar source identities, a
+compiled `SparseDerivativePlan` for the Jacobian, and an optional sparse Lagrangian
+Hessian. `StructuredNonlinearEvaluation` returns the sparse operator rather than
+materializing a dense Jacobian. `StructuredNonlinearWarmStart` keeps primal,
+constraint-dual, and variable-bound-dual arrays tied to one exact structure ID.
+
+`IpoptMinimize.solve_structured` uses low-level `cyipopt.Problem` callbacks. It supplies
+the Jacobian topology and values directly and, when present, the lower triangle of the
+exact Lagrangian Hessian. Without a Hessian plan the caller must use the explicit
+`hessian_approximation=\"limited-memory\"` route. The ordinary
+`IpoptMinimize.solve(MinimizationProblem, ...)` behavior remains available and distinct.
+
+Final constraint multipliers and variable-bound multipliers are normalized into a
+`ConstrainedOptimalityCertificate`. Stationarity uses the sparse transpose action;
+primal feasibility, dual signs, slacks, activity, and complementarity are reconstructed
+independently. Ipopt backend success that misses the requested physical KKT tolerance is
+returned as certification failure. This external route declares
+`implicit_differentiation=False`.
+
+::: phydrax.optim.StructuredNonlinearProgram
+
+::: phydrax.optim.StructuredNonlinearEvaluation
+
+::: phydrax.optim.StructuredNonlinearWarmStart
+
 ### Implicit solution maps
 
 `implicit_minimize` and `implicit_least_squares` expose converged unconstrained

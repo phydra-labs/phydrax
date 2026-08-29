@@ -315,13 +315,18 @@ physical model. See the
 Control support includes linear and differential dynamics, control
 parameterizations, sampled costs and constraints, linearization, Lyapunov and
 Riccati equations, Gramians, frequency response, LQR/iLQR, dense multiple
-shooting, dense or structural-sparse prepared linear-control QPs, explicit
-receding-horizon warm-start shifting, and affine stage/terminal SOCP constraints.
-Sampled nonlinear constraints are not continuous-time certificates; iLQR and
-multiple shooting accept one physical case; bounded coefficient search is not
-globally optimal; dense guards and solver status are explicit rather than hidden
-behind fallback or repair. See the [control cookbook](docs/cookbook/control.md),
-[control API](docs/api/control.md), and [mathematical-programming API](docs/api/optim.md).
+shooting, controlled-DAE direct collocation with exact sparse derivatives,
+dense or structural-sparse prepared linear-control QPs, explicit receding-horizon
+warm-start shifting, and affine stage/terminal SOCP constraints. Direct
+collocation supports fixed or variable duration, shared optimized parameters,
+bound-form trajectory constraints, explicit native-dense or sparse-Ipopt
+selection, KKT recertification, and physical defect audits. Sampled nonlinear
+constraints are not continuous-time certificates; off-grid collocation checks
+remain non-certifying diagnostics; iLQR and multiple shooting accept one
+physical case; bounded coefficient search is not globally optimal; dense guards
+and solver status are explicit rather than hidden behind fallback or repair. See
+the [control cookbook](docs/cookbook/control.md), [control API](docs/api/control.md),
+and [mathematical-programming API](docs/api/optim.md).
 
 Sensitivity utilities add score/Fisher actions and empirical
 controllability/observability directions. Stationary linear-Gaussian state,

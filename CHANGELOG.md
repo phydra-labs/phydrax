@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added JAX-native direct collocation for explicit controlled systems and
+  input-aware state-shaped DAEs, with fixed/nonuniform or optimized-duration
+  meshes, backward-Euler and midpoint transcription, interval controls, shared
+  optimized parameter spaces, bound-form path and trajectory constraints,
+  physical scaling, exact sparse Jacobians and optional Lagrangian Hessians,
+  explicitly selected native-dense or low-level sparse-Ipopt execution,
+  independent KKT recertification, typed decisions/layouts/results, and
+  non-certifying off-grid defect audits.
 - Added a first-class material-particle discretization with stable physical IDs,
   static active selections, physical mass measures, explicit precision/execution
   policies, periodic pair geometry, budgeted canonical dense neighborhoods,
