@@ -45,6 +45,10 @@ from ._dense_classification import (
     DenseSiteClassificationBatch,
     DenseSiteClassificationTerm,
 )
+from ._factorized_variational_eigenspace import (
+    factorized_variational_eigenspace,
+    FactorizedVariationalEigenspaceResult,
+)
 from ._feynman_kac import (
     FeynmanKacRegressionDiagnostics,
     FeynmanKacRegressionTerm,
@@ -142,6 +146,12 @@ from ._transport import (
     SpatialSinkhornDivergenceTerm,
 )
 from ._unbalanced_transport import SpatialUnbalancedSinkhornDivergenceTerm
+from ._variational_eigenspace import (
+    FormDensity,
+    VariationalEigenspace,
+    VariationalEigenspaceEvaluation,
+    VariationalEigenspaceResult,
+)
 
 
 __all__ = [
@@ -165,6 +175,8 @@ __all__ = [
     "DeepSplittingRegressionTerm",
     "DifferentialPhysicsInformedOperatorTerm",
     "EmpiricalSinkhornDivergenceTerm",
+    "FactorizedVariationalEigenspaceResult",
+    "factorized_variational_eigenspace",
     "EuclideanFlowMatchingMetric",
     "RiemannianFlowMatchingMetric",
     "ManifoldFlowMatchingMetric",
@@ -192,6 +204,7 @@ __all__ = [
     "GraphTrajectorySignal",
     "GraphTrajectorySupervisedTerm",
     "IntegralFunctional",
+    "FormDensity",
     "LabelProvider",
     "MomentPenalty",
     "ObservationPenalty",
@@ -220,6 +233,9 @@ __all__ = [
     "ScoreMatchingSamplingMode",
     "ScoreMatchingTerm",
     "SlicedWassersteinTerm",
+    "VariationalEigenspace",
+    "VariationalEigenspaceEvaluation",
+    "VariationalEigenspaceResult",
     "SoftQuantileFunctional",
     "SpatialSinkhornDivergenceTerm",
     "SpatialUnbalancedSinkhornDivergenceTerm",

@@ -13,15 +13,15 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
-from phydrax.nn._base import _AbstractBaseModel
-from phydrax.nn.models import LatentContractionModel
-from phydrax.nn.models.wrappers._axis_contraction import (
+from phydrax.integration import (
     AxisContractionPlan,
     AxisFactor,
     AxisGather,
     AxisProductTerm,
     contract_axis_factors,
 )
+from phydrax.nn._base import _AbstractBaseModel
+from phydrax.nn.models import LatentContractionModel
 from phydrax.terms import RaggedTimeSeriesDataTerm
 
 

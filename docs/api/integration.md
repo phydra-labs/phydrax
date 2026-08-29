@@ -103,6 +103,40 @@ as widened accumulation.
 
 ---
 
+## Factor-preserving bilinear assembly
+
+`AxisFactorizedField` stores a sum-of-products field as named latent factors and
+an `AxisContractionPlan`. `SeparableMLP.factorize_axes(...)` and
+`LatentContractionModel.factorize_axis_batch(...)` expose this representation,
+including selected coordinate partials, without evaluating the Cartesian
+product support.
+
+`factorized_bilinear_form` pairs each independent axis block locally, contracts
+latent indices with `opt_einsum`, and returns the complete output-channel form
+matrix. Its evidence records the full product point count and the largest local
+block actually materialized. Coupled weights and masks are rejected rather than
+silently destroying separability; represent such terms as additional declared
+factors or use the ordinary integration path.
+
+::: phydrax.integration.AxisFactorizedField
+
+---
+
+::: phydrax.integration.FactorizedBilinearTerm
+
+---
+
+::: phydrax.integration.FactorizedBilinearEvaluation
+
+---
+
+::: phydrax.integration.factorized_inner_product
+
+---
+
+::: phydrax.integration.factorized_bilinear_form
+
+
 ## Measure calibration
 
 `calibrate` reweights an already materialized finite positive measure to exact or

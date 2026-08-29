@@ -34,6 +34,7 @@ from . import (
     context,
     data,
     distribution,
+    eigen,
     engine,
     field,
     layers,
@@ -114,6 +115,12 @@ from .distribution import (
     AbstractProbabilisticOperatorModel,
     GaussianOperatorDistribution,
 )
+from .eigen import (
+    operator_trial_subspace,
+    OperatorTrialSubspace,
+    rayleigh_ritz_from_samples,
+    warm_started_eigensolve_from_samples,
+)
 from .encoded import AbstractEncodedOperatorModel
 from .engine import AbstractOperatorModel
 from .field import OperatorFieldRole, OperatorFieldSpec
@@ -178,6 +185,7 @@ __all__ = [
     "catalog",
     "ConfiguredOperatorContract",
     "data",
+    "eigen",
     "domain",
     "field",
     "representations",
@@ -215,6 +223,7 @@ __all__ = [
     "OperatorOutputSpec",
     "OperatorPrediction",
     "OperatorPredictionBuilder",
+    "OperatorTrialSubspace",
     "OperatorProblemSpec",
     "OperatorQuadraturePolicy",
     "OperatorQuerySpec",
@@ -246,6 +255,8 @@ __all__ = [
     "operator_domain_view_from_trajectory",
     "operator_graph_fingerprint",
     "operator_graph_from_samples",
+    "operator_trial_subspace",
+    "rayleigh_ritz_from_samples",
     "operator_topology_fingerprint",
     "pad_function_samples",
     "pad_operator_topology",
@@ -259,6 +270,7 @@ __all__ = [
     "take_operator_topology",
     "TensorGridLatentGeometry",
     "tensor_product",
+    "warm_started_eigensolve_from_samples",
     "topology",
     "validate_operator_contract",
     "validate_operator_architecture",
