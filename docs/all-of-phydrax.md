@@ -93,8 +93,13 @@ uses canonical unordered pairs, normalized compact kernels, energy-derived
 pressure forces, dense or fail-closed cell-list execution, exact `GraphIR`
 views, and the native separable-Hamiltonian solver path. First-order WCSPH adds
 explicit summation/continuity density semantics, Morris physical viscosity,
-energy/dissipation ledgers, and native SSPRK integration. See
+energy/dissipation ledgers, and native SSPRK integration. Structured
+particle-grid splatting adds measure-aware extensive deposition, intensive
+reconstruction, adjoint gather, explicit boundary loss, multilinear and
+degree-one through degree-three B-spline assignments, mixed entity layouts,
+route moments, and fast/deterministic/compensated reductions. See
 [Guide → Particle methods](guides_particle_methods.md),
+[Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
 [Guide → Weakly compressible SPH](guides_wcsph.md),
 [Guide → SPH boundaries](guides_sph_boundaries.md), and

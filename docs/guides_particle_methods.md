@@ -76,6 +76,14 @@ The implemented contract is the fixed discrete particle program:
 
 No straight-through topology estimator is used.
 
+## Particle-grid transfer
+
+[`ParticleGridSplatPlan`](guides_particle_splatting.md) prepares multilinear or
+degree-one through degree-three tensor B-spline transfer from material particles
+to nodal, cell, face, or edge layouts. Extensive deposition, intensive
+reconstruction, grid-to-particle gather, route moments, support truncation,
+balance evidence, and piecewise routing derivatives share one prepared contract.
+
 ## Fluid method families
 
 Conservative barotropic SPH compiles position and canonical momentum to a
@@ -90,6 +98,5 @@ the same kernels, pair relations, dense authority, cell-list execution, and
 The substrate supports a fixed population, one particle set, fixed search and
 smoothing radii, dense or fixed-capacity cell-list pairs, and periodic or
 nonperiodic boxes. Cached Verlet neighborhoods, fused cell-range traversal,
-wall particles, particle emission, edge-local contact history, distribution,
-and particle–continuum transfer remain future prepared backends or method
-families over these contracts.
+wall particles, particle emission, edge-local contact history, and distribution
+remain future prepared backends or method families over these contracts.

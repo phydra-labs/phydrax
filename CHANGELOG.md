@@ -43,6 +43,14 @@
   oracles and complementarity diagnostics, reference halo/migration semantics,
   benchmark registries, qualification artifacts, support matrices, and replay
   packets for commercial particle-method hardening.
+- Added experimental measure-aware particle-grid splatting with multilinear
+  and degree-one through degree-three tensor B-spline assignments over nodal,
+  cell, face, and edge layouts; extensive content and density outputs; weighted
+  intensive reconstruction; adjoint grid gather; route gradients and moments;
+  periodic and explicit reject/drop boundaries; piecewise or frozen geometry
+  differentiation; static resource budgets; precision evidence; and
+  fast/deterministic/compensated accumulation with independent balance,
+  partition, reproduction, and gradient diagnostics.
 - Added typed finite-element local-action IR identities, workset planning, eager
   differential operators, element/partial operator utilities, quadrilateral
   nodal tabulation and p-transfer prototypes, bounded implicit-material and time

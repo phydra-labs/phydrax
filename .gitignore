@@ -35,6 +35,7 @@ benchmarks/*
 !benchmarks/maxwell_amoeba.json
 !benchmarks/incompressible_spectral.json
 !benchmarks/structured_flow.json
+!benchmarks/particle_splat.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/
