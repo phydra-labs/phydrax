@@ -13,6 +13,7 @@ from . import (
     multiblock,
     particle,
     spectral,
+    splatting,
 )
 from ._axis import (
     AbstractAxisSpec,
@@ -781,6 +782,24 @@ from .spectral import (
     TensorSpectralPlan,
     TensorSpectralSymmetry,
 )
+from .splatting import (
+    AbstractStructuredSplatAssignment,
+    MultilinearSplatAssignment,
+    ParticleGridSplatBudget,
+    ParticleGridSplatPlan,
+    ParticleGridSplatState,
+    PreparedParticleGridSplat,
+    SplatAccumulation,
+    SplatAssignmentCapabilities,
+    SplatAssignmentState,
+    SplatBalanceEvidence,
+    SplatBoundaryPolicy,
+    SplatDepositResult,
+    SplatExecutionPolicy,
+    SplatGeometryAD,
+    SplatReconstructionResult,
+    TensorBSplineSplatAssignment,
+)
 
 
 __all__ = [
@@ -1313,6 +1332,22 @@ __all__ = [
     "ParticlePairGeometry",
     "ParticlePairRelation",
     "ParticlePrecisionPolicy",
+    "AbstractStructuredSplatAssignment",
+    "MultilinearSplatAssignment",
+    "ParticleGridSplatBudget",
+    "ParticleGridSplatPlan",
+    "ParticleGridSplatState",
+    "PreparedParticleGridSplat",
+    "SplatAssignmentCapabilities",
+    "SplatAssignmentState",
+    "SplatAccumulation",
+    "SplatBalanceEvidence",
+    "SplatBoundaryPolicy",
+    "SplatDepositResult",
+    "SplatExecutionPolicy",
+    "SplatGeometryAD",
+    "SplatReconstructionResult",
+    "TensorBSplineSplatAssignment",
     "ParticleBenchmarkIdentity",
     "ParticleClaimEvidence",
     "ParticleConstraintResiduals",
@@ -1337,6 +1372,7 @@ __all__ = [
     "WeaklyCompressibleSPHStepRestriction",
     "particle_graph_view",
     "particle",
+    "splatting",
     "particle_pair_geometry",
     "scatter_pair_exchange",
     "scatter_pair_sum",
