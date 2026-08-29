@@ -528,10 +528,12 @@ share optimized parameters.
 stage times, states, rates, and controls, raw dynamics defects, every declared
 constraint block, the generic optimization result, optional structured result
 and portable warm start, sparse topology counts, and physical feasibility
-diagnostics. Collocation constraints are enforced at their declared stages.
-The interior-point audit evaluates additional piecewise-linear states and held
-controls, but `off_grid_certified` remains `False`: neither site set is a
-continuous-time path certificate.
+diagnostics. `DirectCollocationOffGridAudit` retains sampled times, raw
+residuals, and per-case/per-interval defect and path-violation arrays rather
+than only global maxima. Collocation constraints are enforced at their declared
+stages. The audit evaluates additional piecewise-linear states and held
+controls, but `certified=False`: neither site set is a continuous-time path
+certificate.
 
 The direct statuses are `DIRECT_COLLOCATION_SUCCESS`,
 `DIRECT_COLLOCATION_OPTIMIZER_FAILED`, `DIRECT_COLLOCATION_NONFINITE`,
@@ -539,6 +541,21 @@ The direct statuses are `DIRECT_COLLOCATION_SUCCESS`,
 `DIRECT_COLLOCATION_RECONSTRUCTION_FAILED`. Backend success is never sufficient:
 scaled KKT evidence, raw physical defects, and raw physical constraint bounds are
 checked independently.
+
+`refine_direct_collocation` bisects an explicit interval selection and transfers only
+the physical primal: states use the declared piecewise-linear interpolation, controls
+preserve the held representation at target stage times, and shared parameters and
+duration transfer identically. Mesh-shaped bounds require an explicit
+`DirectCollocationBoundProvider`. Topology-changing dual multipliers are never reused.
+`solve_refined_direct_collocation` records every selection, transfer, solve, objective
+change, common-grid state/control change, and sampled-defect reduction. Its convergence
+status remains sampled evidence, not a continuous certificate.
+
+`replay_direct_collocation` independently replays one unbatched controlled-DAE result
+through the native DAE consistency and implicit-stage lifecycle. It constructs a
+`HeldInputPolicy`, preserves optimized parameters and duration, and reports node,
+terminal, and algebraic discrepancies in `DirectCollocationReplayEvidence`. Replay
+never rewrites the collocation result status.
 
 ::: phydrax.control.TrajectoryOptimizationContext
 
@@ -572,6 +589,23 @@ checked independently.
 
 ::: phydrax.control.DirectCollocationDiagnostics
 
+::: phydrax.control.DirectCollocationOffGridAudit
+
+::: phydrax.control.DirectCollocationRefinementPolicy
+
+::: phydrax.control.DirectCollocationRefinementSelection
+
+::: phydrax.control.DirectCollocationPrimalTransfer
+
+::: phydrax.control.DirectCollocationRefinementLevel
+
+::: phydrax.control.DirectCollocationRefinementStudy
+
+::: phydrax.control.DirectCollocationReplayPolicy
+
+::: phydrax.control.DirectCollocationReplayEvidence
+
+
 ::: phydrax.control.DirectCollocationResult
 
 ::: phydrax.control.compile_direct_collocation
@@ -581,6 +615,15 @@ checked independently.
 ::: phydrax.control.solve_prepared_direct_collocation
 
 ::: phydrax.control.solve_direct_collocation
+
+::: phydrax.control.select_direct_collocation_intervals
+
+::: phydrax.control.refine_direct_collocation
+
+::: phydrax.control.solve_refined_direct_collocation
+
+::: phydrax.control.replay_direct_collocation
+
 
 ## Exact finite control catalogs
 

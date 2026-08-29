@@ -70,6 +70,9 @@ cudss = [
 hdf5 = [
   "h5py>=3.11",
 ]
+ipopt = [
+  "cyipopt>=1.7,<2",
+]
 docs = [
   "hippogriffe==0.2.2",
   "griffe==1.7.3",

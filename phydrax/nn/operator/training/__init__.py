@@ -4,6 +4,11 @@ from ...._model import (
     OperatorArchitectureCodec,
     register_operator_architecture_codec,
 )
+from ._adaptation import (
+    adapt_operator_context,
+    BoundedResidualAdaptationPolicy,
+    TestTimeAdaptationResult,
+)
 from ._artifact import (
     load_external_trained_operator,
     load_operator_artifact_manifest,
@@ -166,6 +171,9 @@ __all__ = [
     "register_operator_architecture_codec",
     "OperatorArtifactManifest",
     "OperatorArtifactTrainingState",
+    "BoundedResidualAdaptationPolicy",
+    "TestTimeAdaptationResult",
+    "adapt_operator_context",
     "AffineNormalizer",
     "AbstractOperatorLossTerm",
     "CochainResidualInput",

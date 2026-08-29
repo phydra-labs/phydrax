@@ -803,11 +803,24 @@ identity. Pooling is explicit and never splits mathematically coupled case axes.
 the control compilers reuse this path rather than defining alternate sparse NLP
 representations.
 
-`IpoptMinimize` supplies low-level `cyipopt.Problem` callbacks with exact sparse
-topology and returns the same portable structured result. Without an exact
-Hessian plan, the caller must explicitly request Ipopt limited-memory Hessian
-approximation. No backend is selected by problem size and no failure causes a
+`IpoptMinimize` implements the same structured method boundary through low-level
+`cyipopt.Problem` callbacks. Install `phydrax[ipopt]` together with an external
+Ipopt library, or use conda-forge's `ipopt` and `cyipopt` packages. The adapter
+canonicalizes duplicate-free Jacobian coordinates and one lower-triangular
+Hessian representative per symmetric pair. Without a Hessian plan it declares
+limited-memory mode; an exact plan and an approximation override are mutually
+exclusive. No backend is selected by problem size and no failure causes a
 fallback.
+
+`StructuredIpoptEvidence` retains mapped/raw status, complete callback and
+host/device conversion counts, sparse plan identities, option identity, Hessian
+mode, and a typed final `StructuredNonlinearWarmStart`. Warm starts require the
+exact program and structure IDs and finite sign-valid bound multipliers. Final
+multipliers are normalized into a `ConstrainedOptimalityCertificate`; Ipopt
+backend success that misses the requested physical KKT tolerance is returned as
+certification failure. This external route declares
+`implicit_differentiation=False`; ordinary
+`IpoptMinimize.solve(MinimizationProblem, ...)` remains separate.
 
 `structured_solution_jvp` and `structured_solution_vjp` differentiate certified
 fixed-active or barrier KKT equations. `structured_parameter_continuation`
@@ -820,6 +833,11 @@ exposes a certified fixed-active KKT branch to `phydrax.continuation`.
 ::: phydrax.optim.StructuredNonlinearWarmStart
 
 ::: phydrax.optim.StructuredNonlinearResult
+::: phydrax.optim.IpoptCallbackCounts
+
+::: phydrax.optim.IpoptStatusEvidence
+
+::: phydrax.optim.StructuredIpoptEvidence
 
 ### Implicit solution maps
 

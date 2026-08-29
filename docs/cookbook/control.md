@@ -339,6 +339,56 @@ failure triggers a fallback. Repeated fixed-topology problems should call
 `solve_prepared_direct_collocation`; independent initial decisions can use
 `solve_pooled_direct_collocation`.
 
+Per-interval audit values drive an explicit refinement policy. Refinement transfers only
+the primal decision; changed-topology dual multipliers are intentionally discarded.
+
+```python
+refinement_policy = phx.control.DirectCollocationRefinementPolicy(
+    mode="bulk-defect",
+    maximum_levels=3,
+    maximum_intervals=128,
+    bulk_fraction=0.5,
+    off_grid_defect_tolerance=1e-6,
+)
+refinement = phx.control.solve_refined_direct_collocation(
+    collocated,
+    refinement_policy,
+    method=phx.optim.PrimalDualInteriorPoint(
+        mode="dense-filter",
+        max_dense_dimension=512,
+    ),
+    termination=phx.optim.OptimizationTermination(
+        absolute_optimality=1e-8,
+        relative_optimality=0.0,
+        maximum_steps=80,
+    ),
+)
+```
+
+For a controlled DAE, causal replay is a separate operation. It uses the optimized held
+controls and the native DAE consistency/stage lifecycle; it does not rewrite the
+collocation status.
+
+```python
+replay = phx.control.replay_direct_collocation(
+    refinement.final_result,
+    phx.control.DirectCollocationReplayPolicy(
+        dae_policy=phx.solver.DAESolvePolicy(
+            method=phx.solver.ThetaMethod(1.0, endpoint=True)
+        ),
+        node_state_tolerance=1e-5,
+        terminal_state_tolerance=1e-5,
+        algebraic_constraint_tolerance=1e-6,
+    ),
+)
+if not bool(replay.passed):
+    raise RuntimeError(
+        "causal replay disagrees with collocation: "
+        f"node_error={replay.maximum_node_discrepancy}, "
+        f"constraint={replay.maximum_algebraic_residual}"
+    )
+```
+
 ## B-spline controls, finite catalogs, and bounded initialization
 
 Choose a piecewise-constant parameterization for discrete interval controls and direct

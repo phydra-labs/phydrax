@@ -160,6 +160,9 @@ class StructuredNonlinearWarmStart(StrictModule):
     upper_bound_multipliers: Array
     numeric_version: Array
     structure_id: str = eqx.field(static=True)
+    source_result_id: str | None = eqx.field(static=True)
+    source_program_id: str | None = eqx.field(static=True)
+    source_backend: str | None = eqx.field(static=True)
     warm_start_id: str = eqx.field(static=True)
 
     def __init__(
@@ -172,6 +175,10 @@ class StructuredNonlinearWarmStart(StrictModule):
         *,
         structure_id: str,
         numeric_version: Any = 0,
+        source_result_id: str | None = None,
+        source_program_id: str | None = None,
+        source_backend: str | None = None,
+        warm_start_id: str | None = None,
     ):
         primal_ = _real_vector(primal, None, "warm-start primal")
         constraints = _real_vector(
@@ -183,16 +190,25 @@ class StructuredNonlinearWarmStart(StrictModule):
         upper = _real_vector(
             upper_bound_multipliers, int(primal_.size), "warm-start upper multipliers"
         )
-        finite = (
-            jnp.all(jnp.isfinite(primal_))
-            & jnp.all(jnp.isfinite(constraints))
-            & jnp.all(jnp.isfinite(lower))
-            & jnp.all(jnp.isfinite(upper))
-        )
         primal_ = eqx.error_if(
             primal_,
-            ~finite,
-            "Structured nonlinear warm-start values must be finite.",
+            jnp.any(~jnp.isfinite(primal_)),
+            "warm-start primal must be finite.",
+        )
+        constraints = eqx.error_if(
+            constraints,
+            jnp.any(~jnp.isfinite(constraints)),
+            "warm-start constraint multipliers must be finite.",
+        )
+        lower = eqx.error_if(
+            lower,
+            jnp.any(~jnp.isfinite(lower)) | jnp.any(lower < 0.0),
+            "warm-start lower multipliers must be finite and non-negative.",
+        )
+        upper = eqx.error_if(
+            upper,
+            jnp.any(~jnp.isfinite(upper)) | jnp.any(upper < 0.0),
+            "warm-start upper multipliers must be finite and non-negative.",
         )
         version = jnp.asarray(numeric_version, dtype=jnp.int32)
         if version.shape != ():
@@ -209,17 +225,41 @@ class StructuredNonlinearWarmStart(StrictModule):
         self.upper_bound_multipliers = upper
         self.numeric_version = version
         self.structure_id = structure
-        self.warm_start_id = canonical_fingerprint(
-            {
-                "kind": "structured-nonlinear-warm-start",
-                "structure": structure,
-                "numeric_version": (
-                    "traced"
-                    if isinstance(version, jax.core.Tracer)
-                    else int(np.asarray(version))
-                ),
-                "values": _numeric_fingerprint((primal_, constraints, lower, upper)),
-            }
+        self.source_result_id = (
+            None
+            if source_result_id is None
+            else _identifier(source_result_id, "source_result_id")
+        )
+        self.source_program_id = (
+            None
+            if source_program_id is None
+            else _identifier(source_program_id, "source_program_id")
+        )
+        self.source_backend = (
+            None
+            if source_backend is None
+            else _identifier(source_backend, "source_backend")
+        )
+        self.warm_start_id = (
+            canonical_fingerprint(
+                {
+                    "kind": "structured-nonlinear-warm-start",
+                    "structure": structure,
+                    "numeric_version": (
+                        "traced"
+                        if isinstance(version, jax.core.Tracer)
+                        else int(np.asarray(version))
+                    ),
+                    "source_result": self.source_result_id,
+                    "source_program": self.source_program_id,
+                    "source_backend": self.source_backend,
+                    "primal_size": int(primal_.size),
+                    "constraint_size": int(constraints.size),
+                    "values": _numeric_fingerprint((primal_, constraints, lower, upper)),
+                }
+            )
+            if warm_start_id is None
+            else _identifier(warm_start_id, "warm_start_id")
         )
 
 
@@ -388,6 +428,8 @@ class StructuredNonlinearProgram(StrictModule):
         /,
         *,
         numeric_version: Any = 0,
+        source_result_id: str | None = None,
+        source_backend: str | None = None,
     ) -> StructuredNonlinearWarmStart:
         warm = StructuredNonlinearWarmStart(
             primal,
@@ -396,6 +438,9 @@ class StructuredNonlinearProgram(StrictModule):
             upper_bound_multipliers,
             structure_id=self.structure_id,
             numeric_version=numeric_version,
+            source_result_id=source_result_id,
+            source_program_id=self.program_id,
+            source_backend=source_backend,
         )
         if warm.constraint_multipliers.shape != (self.num_constraints,):
             raise ValueError(
@@ -849,6 +894,9 @@ class PreparedStructuredNonlinearProgram(StrictModule):
         lower_bound_multipliers: ArrayLike,
         upper_bound_multipliers: ArrayLike,
         /,
+        *,
+        source_result_id: str | None = None,
+        source_backend: str | None = None,
     ) -> StructuredNonlinearWarmStart:
         return self.program.warm_start(
             primal,
@@ -856,6 +904,8 @@ class PreparedStructuredNonlinearProgram(StrictModule):
             lower_bound_multipliers,
             upper_bound_multipliers,
             numeric_version=self.numeric_version,
+            source_result_id=source_result_id,
+            source_backend=source_backend,
         )
 
     def certificate(

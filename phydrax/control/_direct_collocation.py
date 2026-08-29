@@ -908,6 +908,7 @@ class DirectCollocationCompilation(StrictModule):
     coordinate_lower: Array
     coordinate_upper: Array
     dynamics_scale: Array
+    bounds: DirectCollocationBounds
     minimization_problem: MinimizationProblem
     structured_program: StructuredNonlinearProgram
     structured_template: StructuredNonlinearTemplate
@@ -942,6 +943,21 @@ class PreparedDirectCollocation(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
 
+class DirectCollocationOffGridAudit(StrictModule):
+    """Per-interval sampled defect evidence for the declared interpolant."""
+
+    times: Array
+    dynamics_residuals: Array
+    interval_defects: Array
+    interval_path_violations: Array
+    maximum_defect: Array
+    maximum_path_violation: Array
+    finite: Array
+    approximation_id: str = eqx.field(static=True)
+    audit_id: str = eqx.field(static=True)
+    certified: bool = eqx.field(static=True)
+
+
 class DirectCollocationDiagnostics(StrictModule):
     """Physical feasibility, off-grid defects, and sparse topology evidence."""
 
@@ -949,6 +965,7 @@ class DirectCollocationDiagnostics(StrictModule):
     maximum_constraint_violation: Array
     maximum_off_grid_defect: Array
     maximum_off_grid_path_violation: Array
+    off_grid: DirectCollocationOffGridAudit
     jacobian_nonzeros: int = eqx.field(static=True)
     hessian_nonzeros: int = eqx.field(static=True)
     num_variables: int = eqx.field(static=True)
@@ -1308,6 +1325,7 @@ def compile_direct_collocation(
         coordinate_lower,
         coordinate_upper,
         dynamics_scale,
+        resolved_bounds,
         dense_problem,
         structured,
         prepared_structured.template,
@@ -1383,16 +1401,38 @@ def _off_grid_audit(
     values: _DirectValues,
     args: Any,
     /,
-) -> tuple[Array, Array]:
+) -> DirectCollocationOffGridAudit:
     points = compilation.plan.audit.off_grid_points
     dtype = values.decision.states.dtype
-    if points == 0:
-        zero = jnp.asarray(0.0, dtype=dtype)
-        return zero, zero
     problem = compilation.problem
-    fractions = jnp.linspace(0.0, 1.0, points + 2, dtype=dtype)[1:-1]
-    axis = len(problem.case_shape)
     steps = compilation.plan.mesh.num_steps
+    axis = len(problem.case_shape)
+    if points == 0:
+        residuals = jnp.empty(
+            problem.case_shape + (steps, 0) + problem.state_shape,
+            dtype=dtype,
+        )
+        zeros = jnp.zeros(problem.case_shape + (steps,), dtype=dtype)
+        return DirectCollocationOffGridAudit(
+            jnp.empty((steps, 0), dtype=dtype),
+            residuals,
+            zeros,
+            zeros,
+            jnp.asarray(0.0, dtype=dtype),
+            jnp.asarray(0.0, dtype=dtype),
+            jnp.asarray(True),
+            approximation_id=values.view.approximation_id,
+            audit_id=canonical_fingerprint(
+                {
+                    "kind": "direct-collocation-off-grid-audit",
+                    "compilation": compilation.compilation_id,
+                    "policy": compilation.plan.audit.audit_id,
+                    "points": 0,
+                }
+            ),
+            certified=False,
+        )
+    fractions = jnp.linspace(0.0, 1.0, points + 2, dtype=dtype)[1:-1]
     left = jnp.take(values.decision.states, jnp.arange(steps), axis=axis)
     right = jnp.take(values.decision.states, jnp.arange(steps) + 1, axis=axis)
     widths = jnp.diff(values.times)
@@ -1439,7 +1479,22 @@ def _off_grid_audit(
                 time, state, rate, callback_args, inputs=control
             )
         )(flat_times, flat_states, flat_rates, flat_controls)
-    path_violation = jnp.asarray(0.0, dtype=dtype)
+    residuals = residual.reshape(
+        problem.case_shape + (steps, points) + problem.state_shape
+    )
+    residual_magnitudes = jnp.abs(residuals)
+    if problem.state_shape:
+        residual_magnitudes = jnp.max(
+            residual_magnitudes,
+            axis=tuple(
+                range(
+                    residual_magnitudes.ndim - len(problem.state_shape),
+                    residual_magnitudes.ndim,
+                )
+            ),
+        )
+    interval_defects = jnp.max(residual_magnitudes, axis=-1)
+    interval_path = jnp.zeros(problem.case_shape + (steps,), dtype=dtype)
     for constraint in problem.path_constraints:
 
         def evaluate_path(time, state, control, callback=constraint):
@@ -1448,10 +1503,43 @@ def _off_grid_audit(
         path = jax.vmap(evaluate_path)(flat_times, flat_states, flat_controls)
         lower = _array_bound(constraint.lower, path, "off-grid path lower")
         upper = _array_bound(constraint.upper, path, "off-grid path upper")
-        path_violation = jnp.maximum(
-            path_violation, _maximum_bound_violation(path, lower, upper)
-        )
-    return _maximum_absolute(residual), path_violation
+        violation = jnp.maximum(jnp.maximum(lower - path, path - upper), 0.0)
+        event_shape = path.shape[1:]
+        if event_shape:
+            violation = jnp.max(
+                violation,
+                axis=tuple(range(1, 1 + len(event_shape))),
+            )
+        violation = violation.reshape(problem.case_shape + (steps, points))
+        interval_path = jnp.maximum(interval_path, jnp.max(violation, axis=-1))
+    maximum_defect = jnp.max(
+        interval_defects,
+        initial=jnp.asarray(0.0, dtype=dtype),
+    )
+    maximum_path = jnp.max(
+        interval_path,
+        initial=jnp.asarray(0.0, dtype=dtype),
+    )
+    finite = jnp.all(jnp.isfinite(residuals)) & jnp.all(jnp.isfinite(interval_path))
+    return DirectCollocationOffGridAudit(
+        times,
+        residuals,
+        interval_defects,
+        interval_path,
+        maximum_defect,
+        maximum_path,
+        finite,
+        approximation_id=values.view.approximation_id,
+        audit_id=canonical_fingerprint(
+            {
+                "kind": "direct-collocation-off-grid-audit",
+                "compilation": compilation.compilation_id,
+                "policy": compilation.plan.audit.audit_id,
+                "points": points,
+            }
+        ),
+        certified=False,
+    )
 
 
 def solve_prepared_direct_collocation(
@@ -1494,7 +1582,10 @@ def solve_prepared_direct_collocation(
             )
         structured_result = _structured_result
         optimization = structured_result.optimization
-    elif isinstance(prepared.method, AbstractStructuredNonlinearMethod):
+    elif (
+        isinstance(prepared.method, AbstractStructuredNonlinearMethod)
+        and prepared.method.structured_capabilities.exact_sparse_jacobian
+    ):
         structured_result = solve_structured_nonlinear(
             structured_program,
             coordinates,
@@ -1533,7 +1624,7 @@ def solve_prepared_direct_collocation(
         compilation.constraint_layout.lower,
         compilation.constraint_layout.upper,
     )
-    off_grid_defect, off_grid_path = _off_grid_audit(compilation, values, runtime_args)
+    off_grid = _off_grid_audit(compilation, values, runtime_args)
     finite = (
         jnp.isfinite(values.objective)
         & jnp.all(jnp.isfinite(raw_constraints))
@@ -1602,8 +1693,9 @@ def solve_prepared_direct_collocation(
     diagnostics = DirectCollocationDiagnostics(
         maximum_defect,
         maximum_constraint_violation,
-        off_grid_defect,
-        off_grid_path,
+        off_grid.maximum_defect,
+        off_grid.maximum_path_violation,
+        off_grid,
         jacobian_nonzeros=compilation.structured_program.jacobian_plan.nnz,
         hessian_nonzeros=hessian_nnz,
         num_variables=compilation.decision_layout.num_variables,
@@ -1643,8 +1735,13 @@ def solve_pooled_direct_collocation(
     """Solve independent decisions with one prepared fixed-topology transcription."""
     if not isinstance(prepared, PreparedDirectCollocation):
         raise TypeError("prepared must be a PreparedDirectCollocation.")
-    if not isinstance(prepared.method, AbstractStructuredNonlinearMethod):
-        raise TypeError("Pooled direct collocation requires a structured NLP method.")
+    if (
+        not isinstance(prepared.method, AbstractStructuredNonlinearMethod)
+        or not prepared.method.structured_capabilities.pooled_batch
+    ):
+        raise TypeError(
+            "Pooled direct collocation requires a pool-capable structured NLP method."
+        )
     decisions = tuple(initial_decisions)
     if not decisions:
         raise ValueError("initial_decisions must contain at least one decision.")
@@ -1730,6 +1827,7 @@ __all__ = [
     "DirectCollocationDerivativePolicy",
     "DirectCollocationDiagnostics",
     "DirectCollocationHessianMode",
+    "DirectCollocationOffGridAudit",
     "DirectCollocationPlan",
     "DirectCollocationResult",
     "PooledDirectCollocationResult",

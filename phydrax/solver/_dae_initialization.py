@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..dynamics import DifferentialAlgebraicSystem
+from ..dynamics import AbstractInputPolicy, DifferentialAlgebraicSystem
 from ..linalg import ArraySpace, DiagonalPairing
 from ..nonlinear import (
     AbstractNonlinearMethod,
@@ -204,6 +204,7 @@ class _DAEInitializationArguments(StrictModule):
 
 class _DAEInitializationResidual(StrictModule):
     system: DifferentialAlgebraicSystem
+    input_policy: AbstractInputPolicy | None
     state_indices: Array
     rate_indices: Array
     state_unknown_count: int = eqx.field(static=True)
@@ -226,16 +227,23 @@ class _DAEInitializationResidual(StrictModule):
         )
         state = flat_state.reshape(self.system.state_shape)
         state_rate = flat_rate.reshape(self.system.state_shape)
+        inputs = (
+            None
+            if self.input_policy is None
+            else self.input_policy.evaluate(arguments.time, state, arguments.model_args)
+        )
         return self.system.scaled_residual(
             arguments.time,
             state,
             state_rate,
             arguments.model_args,
+            inputs=inputs,
         ).reshape(unknown.shape)
 
 
 class _PreparedDAEInitialization(StrictModule):
     system: DifferentialAlgebraicSystem
+    input_policy: AbstractInputPolicy | None
     spec: DAEInitializationSpec
     fixed_state_mask: Array
     fixed_rate_mask: Array
@@ -383,12 +391,17 @@ def _prepare_dae_initialization(
     /,
     *,
     args: Any,
+    input_policy: AbstractInputPolicy | None,
     spec: DAEInitializationSpec,
     method: AbstractNonlinearMethod,
     termination: NonlinearTermination,
 ) -> _PreparedDAEInitialization:
     if not isinstance(system, DifferentialAlgebraicSystem):
         raise TypeError("system must be a DifferentialAlgebraicSystem.")
+    if input_policy is not None and not isinstance(
+        input_policy, AbstractInputPolicy
+    ):
+        raise TypeError("input_policy must be an AbstractInputPolicy or None.")
     if not isinstance(spec, DAEInitializationSpec):
         raise TypeError("spec must be a DAEInitializationSpec.")
     state, state_rate = _validated_guesses(system, initial_state, initial_state_rate)
@@ -406,6 +419,7 @@ def _prepare_dae_initialization(
     else:
         residual_function = _DAEInitializationResidual(
             system,
+            input_policy,
             state_indices,
             rate_indices,
             state_unknown_count,
@@ -463,6 +477,7 @@ def _prepare_dae_initialization(
             (
                 system.system_id,
                 spec.initialization_id,
+                None if input_policy is None else input_policy.policy_id,
                 method.method_id,
                 linear_plan_id,
             )
@@ -470,6 +485,7 @@ def _prepare_dae_initialization(
     )
     return _PreparedDAEInitialization(
         system,
+        input_policy,
         spec,
         fixed_state,
         fixed_rate,
@@ -534,12 +550,18 @@ def _initialize_dae(
         state_rate = rate_guess
         nonlinear_result = None
         nonlinear_success = jnp.asarray(True)
+        inputs = (
+            None
+            if prepared.input_policy is None
+            else prepared.input_policy.evaluate(arguments.time, state, args)
+        )
         initial_residual_norm = _masked_rms(
             prepared.system.scaled_residual(
                 arguments.time,
                 state,
                 state_rate,
                 args,
+                inputs=inputs,
             ),
             jnp.ones(prepared.system.state_shape, dtype=bool),
         )
@@ -568,11 +590,17 @@ def _initialize_dae(
         nonlinear_success = nonlinear_result.status == int(NonlinearStatus.SUCCESS)
         initial_residual_norm = nonlinear_result.diagnostics.initial_residual_norm
 
+    inputs = (
+        None
+        if prepared.input_policy is None
+        else prepared.input_policy.evaluate(arguments.time, state, args)
+    )
     scaled_residual = prepared.system.scaled_residual(
         arguments.time,
         state,
         state_rate,
         args,
+        inputs=inputs,
     )
     differential_equations = prepared.system.structure.differential_equation_mask(
         prepared.system.state_shape

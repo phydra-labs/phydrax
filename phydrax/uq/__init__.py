@@ -324,6 +324,13 @@ from ._guided_particle import (
 from ._inducing import InducingPointSelection, select_inducing_points
 from ._information_geometry import ExponentialFamilyInformationGeometry
 from ._integration import particle_posterior_measure
+from ._interface import (
+    interface_predictive_summary,
+    InterfaceAcquisitionPolicy,
+    InterfaceAcquisitionResult,
+    InterfacePredictiveSummary,
+    select_interface_acquisition,
+)
 from ._kalman import (
     initialize_kalman_filter,
     kalman_filter,
@@ -1203,6 +1210,11 @@ __all__ = [
     "operator_ensemble_crps",
     "operator_interval_coverage",
     "operator_interval_width",
+    "InterfaceAcquisitionPolicy",
+    "InterfaceAcquisitionResult",
+    "InterfacePredictiveSummary",
+    "interface_predictive_summary",
+    "select_interface_acquisition",
     "aggregate_free_support_transport_barycenter",
     "aggregate_transport_barycenter",
     "FreeSupportTransportBarycenterAggregationResult",

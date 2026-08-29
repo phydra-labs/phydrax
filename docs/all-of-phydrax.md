@@ -369,13 +369,17 @@ shared parameter coordinates, fixed or variable duration, exact sparse
 derivatives, and explicitly selected dense-native, sparse-native, or sparse
 Ipopt optimization. Its structured template supports numeric refresh, portable
 primal/dual warm starts, and explicit completion pools for independent initial
-decisions. Multiple shooting additionally lowers to the same structured
-nonlinear IR without changing the original dense SQP contract. Sampled
-nonlinear path constraints report feasibility only at their declared sites and
-are not continuous-time certificates. Coefficient search is bounded
-initialization, not a globally optimal solver. Dense algorithms enforce
-dimension guards; no failed solve is hidden by fallback, projection, covariance
-repair, or undeclared regularization.
+decisions. Typed Ipopt evidence retains callback work, topology, status, and
+warm starts; per-interval sampled defects drive nested h-refinement with
+primal-only transfer; and controlled-DAE replay binds held controls into
+consistency and every implicit stage. Fingerprinted native/Ipopt campaigns
+derive graduation claims. Multiple shooting additionally lowers to the same
+structured nonlinear IR without changing the original dense SQP contract.
+Sampled nonlinear path constraints and off-grid audits are not continuous-time
+certificates, and replay does not rewrite collocation success. Coefficient
+search is bounded initialization, not a globally optimal solver. Dense
+algorithms enforce dimension guards; no failed solve is hidden by fallback,
+projection, covariance repair, or undeclared regularization.
 
 Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC/PSD/exponential/power
 product-cone programs live in `phydrax.optim`. PSD uses scaled upper-column symmetric
@@ -636,6 +640,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 
 - **Forward PDE solve (PINN-style)**: interior residual + boundary/initial terms (soft or enforced).
   Start at [Getting started](index.md) and continue with the conditions-and-terms guide.
+- **Neural eigenproblems**: use `VariationalEigenspace` to select the lowest
+  self-adjoint trial subspace, `InvariantSubspaceResidual` to refine the strong
+  equation `A U = B U H`, learned `FunctionSamples` trial spaces for amortized
+  warm starts, or multi-state VMC for discrete quantum amplitudes. Eigenvalues
+  come from the reduced Ritz problem; linear eigen-PINNs do not require a
+  separately trainable scalar eigenvalue.
 - **Integral and nonlocal field learning**: compose deterministic causal,
   spatial, or fractional operators inside ordinary residuals. Use
   `RandomizedMomentPenalty` when a squared moment is resampled rather than
@@ -759,12 +769,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   shooting, direct collocation, or receding-horizon MPC according to the problem
   structure. `TrajectoryOptimizationProblem` adds controlled implicit DAEs,
   bound-form global constraints, shared optimized parameters, and variable
-  duration for direct collocation. Results retain case/control axes, validity and
-  backend status, plus control, discretization, approximation, method, and
-  backend IDs. Nonlinear sampled constraints are not between-sample
-  certificates; direct-collocation off-grid checks are diagnostics, iLQR and
-  multiple shooting are single-case, and bounded search is not globally optimal.
-  Dense paths enforce guards and never hide failure behind a repair or fallback.
+  duration for direct collocation. Per-interval audit evidence supports explicit
+  nested refinement, controlled DAEs can be causally replayed through a held input
+  policy, and structured Ipopt results retain typed work/KKT/warm-start evidence.
+  Results retain case/control axes, validity and backend status, plus control,
+  discretization, approximation, method, and backend IDs. Nonlinear sampled
+  constraints and off-grid audits are not continuous-time certificates; replay
+  is independent evidence; iLQR and multiple shooting are single-case; and
+  bounded search is not globally optimal. Dense paths enforce guards and never
+  hide failure behind repair or fallback.
   See [Control cookbook](cookbook/control.md), [API → Control](api/control.md),
   and [API → Optimization](api/optim.md).
 - **Linear systems, sensitivities, and spectra**: linearize dynamics; solve

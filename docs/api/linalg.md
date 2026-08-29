@@ -2081,6 +2081,47 @@ runtime.
 
 ::: phydrax.linalg.eigen.eigensolve
 
+### Trial-subspace Rayleigh--Ritz and warm starts
+
+`block_rayleigh_trace` evaluates a Hermitian block quotient with a native
+Cholesky solve and explicit mass-rank, conditioning, Hermitian, and finite-value
+evidence. `solve_reduced_ritz` feeds the same matrices to the ordinary dense
+generalized eigensolver.
+
+`rayleigh_ritz` accepts coordinate columns in any Phydrax vector space,
+projects declared excluded constraints, applies the physical operator and
+metric, solves the reduced pencil, lifts its modes, and reports full-space
+absolute and relative residuals. `warm_started_eigensolve` first records that
+trial-space certificate, then refines its Ritz vectors through the selected
+authoritative eigensolver.
+
+::: phydrax.linalg.eigen.BlockRayleighEvaluation
+
+---
+
+::: phydrax.linalg.eigen.block_rayleigh_trace
+
+---
+
+::: phydrax.linalg.eigen.solve_reduced_ritz
+
+---
+
+::: phydrax.linalg.eigen.TrialSubspaceRitzResult
+
+---
+
+::: phydrax.linalg.eigen.rayleigh_ritz
+
+---
+
+::: phydrax.linalg.eigen.WarmStartedEigenResult
+
+---
+
+::: phydrax.linalg.eigen.warm_started_eigensolve
+
+
 ### Self-adjoint spectra, invariant subspaces, and spectral functions
 
 ::: phydrax.linalg.eigen.SelfAdjointSpectrumPolicy
