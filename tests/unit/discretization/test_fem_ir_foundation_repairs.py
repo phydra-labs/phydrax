@@ -121,21 +121,21 @@ def test_smoothing_certificate_checks_full_affine_identity():
     assert jnp.max(evidence.closure_defect) < 1.0e-12
 
 
-def test_ir_is_explicitly_lowered_but_not_advertised_as_executor():
+def test_ir_workset_is_the_compiled_executor_program():
     mesh = _tri_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)
     )
     discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "poisson",
         "u",
-        (phx.equations.DiffusionTerm("u"),),
+        (phx.equations.DiffusionAction("u"),),
     )
     compiled = phx.equations.compile_finite_element_problem(form, discretization)
-    action_ir = phx.equations.fem.lower_weak_form(form, discretization)
+    action_ir = phx.equations.fem.lower_finite_element_form(form, discretization)
 
     assert action_ir.ir_id
-    assert "action_ir" not in compiled.__dataclass_fields__
-    assert "darcy_form" not in phx.equations.fem.__all__
-    assert "sipg_poisson_ir" not in phx.equations.fem.__all__
+    assert compiled._action_ir.ir_id == action_ir.ir_id
+    assert compiled._kernel_table.table_id
+    assert compiled._workset_program.ir.ir_id == action_ir.ir_id

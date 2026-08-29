@@ -86,39 +86,39 @@
 
 ---
 
-::: phydrax.equations.DiffusionTerm
+::: phydrax.equations.DiffusionAction
 
 ---
 
-::: phydrax.equations.MassTerm
+::: phydrax.equations.MassAction
 
 ---
 
-::: phydrax.equations.SourceTerm
+::: phydrax.equations.SourceAction
 
 ---
 
-::: phydrax.equations.BoundaryLoadTerm
+::: phydrax.equations.BoundaryLoadAction
 
 ---
 
-::: phydrax.equations.CellResidualTerm
+::: phydrax.equations.CellResidualAction
 
 ---
 
-::: phydrax.equations.CellEnergyTerm
+::: phydrax.equations.CellEnergyAction
 
 ---
 
-::: phydrax.equations.CellBilinearTerm
+::: phydrax.equations.CellBilinearAction
 
 ---
 
-::: phydrax.equations.InteriorFacetTerm
+::: phydrax.equations.InteriorFacetAction
 
 ---
 
-::: phydrax.equations.WeakForm
+::: phydrax.equations.FiniteElementForm
 
 ---
 
@@ -136,17 +136,28 @@
 
 ::: phydrax.equations.CompiledFiniteElementProblem
 
----
-
-::: phydrax.equations.CompiledMixedFiniteElementProblem
-
----
 
 ::: phydrax.equations.compile_finite_element_problem
+
+---
+
+::: phydrax.equations.fem.SIPGPenaltyPolicy
+
+---
+
+::: phydrax.equations.fem.sipg_poisson_form
+
+---
+
+::: phydrax.equations.fem.solve_hdg_poisson
 
 ## Local-action IR and high order
 
 ::: phydrax.equations.fem.LocalActionIR
+
+---
+
+::: phydrax.equations.fem.FiniteElementActionIR
 
 ---
 
@@ -168,6 +179,18 @@
 
 ::: phydrax.discretization.fem.QuadratureChunkPolicy
 
+---
+
+::: phydrax.equations.fem.ElementTensorOperator
+
+---
+
+::: phydrax.equations.fem.PartialAssemblyOperator
+
+---
+
+::: phydrax.equations.fem.TensorProductPartialAssemblyOperator
+
 ## Materials and local algebra
 
 ::: phydrax.equations.ConstitutiveModel
@@ -186,6 +209,18 @@
 
 ---
 
+::: phydrax.equations.fem.FiniteElementAuxiliaryEvaluation
+
+---
+
+::: phydrax.equations.fem.CoordinateObservation
+
+---
+
+::: phydrax.equations.fem.FiniteElementLeastSquaresObjective
+
+---
+
 ::: phydrax.discretization.FiniteElementLocalEliminationPlan
 
 ---
@@ -196,13 +231,45 @@
 
 ::: phydrax.discretization.HDGCondensationPlan
 
-## Hierarchy, embedding, and distribution
+## Hierarchy and embedding
 
 ::: phydrax.discretization.FiniteElementRefinementMap
 
 ---
 
 ::: phydrax.discretization.FiniteElementTransferPlan
+
+---
+
+::: phydrax.discretization.FiniteElementAdaptationMap
+
+---
+
+::: phydrax.discretization.FiniteElementTransferBundle
+
+---
+
+::: phydrax.solver.FiniteElementAcceptedStepSchedule
+
+---
+
+::: phydrax.solver.FiniteElementTopologyTransaction
+
+---
+
+::: phydrax.solver.FiniteElementRestartManifest
+
+---
+
+::: phydrax.solver.FiniteElementResult
+
+---
+
+::: phydrax.solver.FiniteElementRunConfiguration
+
+---
+
+::: phydrax.solver.FiniteElementSolveDiagnostics
 
 ---
 

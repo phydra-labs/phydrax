@@ -4,81 +4,216 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import equinox as eqx
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, FunctionLinearOperator
+from ...discretization.fem import (
+    FiniteElementLocalEliminationPlan,
+    LocalEliminationResult,
+    SumFactorizationPlan,
+)
+from ...linalg import ArraySpace, FunctionLinearOperator, OperatorProperties
+from ...sparse import EdgeRelation, SparseCoordinateOperator
 
 
 class ElementTensorOperator(StrictModule, NonTrainableState):
+    """Rectangular local tensors with independent input/output scatter routes."""
+
     local_matrices: Array
-    gathers: Array
-    global_size: int = eqx.field(static=True)
+    input_gathers: Array
+    output_gathers: Array
+    valid: Array
+    source_size: int = eqx.field(static=True)
+    target_size: int = eqx.field(static=True)
+    properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         local_matrices: ArrayLike,
-        gathers: ArrayLike,
-        global_size: int,
+        input_gathers: ArrayLike,
+        output_gathers: ArrayLike,
+        source_size: int,
+        target_size: int,
         /,
+        *,
+        valid: ArrayLike | None = None,
+        properties: OperatorProperties | None = None,
     ):
         matrices = jnp.asarray(local_matrices)
-        routes = jnp.asarray(gathers, dtype=jnp.int32)
-        size = int(global_size)
-        if matrices.ndim != 3 or matrices.shape[0] != routes.shape[0]:
-            raise ValueError("Element matrices and gather routes must share cells.")
-        if matrices.shape[1:] != (routes.shape[1], routes.shape[1]):
-            raise ValueError("Element matrix local width must match gathers.")
-        if size <= 0 or jnp.any(routes < 0) or jnp.any(routes >= size):
-            raise ValueError("Element gather routes or global size are invalid.")
+        inputs = jnp.asarray(input_gathers, dtype=jnp.int32)
+        outputs = jnp.asarray(output_gathers, dtype=jnp.int32)
+        source = int(source_size)
+        target = int(target_size)
+        if matrices.ndim != 3:
+            raise ValueError("Local element matrices must have shape (entity, out, in).")
+        if inputs.shape != (matrices.shape[0], matrices.shape[2]):
+            raise ValueError("Input gathers must match local matrix columns.")
+        if outputs.shape != (matrices.shape[0], matrices.shape[1]):
+            raise ValueError("Output gathers must match local matrix rows.")
+        if source <= 0 or target <= 0:
+            raise ValueError("Element tensor source/target sizes must be positive.")
+        if bool(jnp.any((inputs < 0) | (inputs >= source))):
+            raise ValueError("Element tensor input gathers are out of bounds.")
+        if bool(jnp.any((outputs < 0) | (outputs >= target))):
+            raise ValueError("Element tensor output gathers are out of bounds.")
+        valid_ = (
+            jnp.ones((matrices.shape[0],), dtype=bool)
+            if valid is None
+            else jnp.asarray(valid, dtype=bool)
+        )
+        if valid_.shape != (matrices.shape[0],):
+            raise ValueError("Element tensor validity must have one entry per entity.")
+        properties_ = OperatorProperties() if properties is None else properties
+        if not isinstance(properties_, OperatorProperties):
+            raise TypeError("properties must be OperatorProperties or None.")
         self.local_matrices = matrices
-        self.gathers = routes
-        self.global_size = size
+        self.input_gathers = inputs
+        self.output_gathers = outputs
+        self.valid = valid_
+        self.source_size = source
+        self.target_size = target
+        self.properties = properties_
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "element-tensor-operator",
-                "cell_count": int(routes.shape[0]),
-                "local_width": int(routes.shape[1]),
-                "global_size": size,
+                "matrix_shape": list(matrices.shape),
+                "input_shape": list(inputs.shape),
+                "output_shape": list(outputs.shape),
+                "source_size": source,
+                "target_size": target,
             }
         )
 
     def mv(self, value: ArrayLike, /) -> Array:
         value_ = jnp.asarray(value)
-        if value_.shape != (self.global_size,):
-            raise ValueError("Element tensor input has invalid shape.")
-        local = value_[self.gathers]
-        contribution = oe.contract("cij,cj->ci", self.local_matrices, local)
-        return jnp.zeros_like(value_).at[self.gathers].add(contribution)
+        if value_.shape != (self.source_size,):
+            raise ValueError("Element tensor input shape is incompatible.")
+        local_input = value_[self.input_gathers]
+        contribution = oe.contract("eoi,ei->eo", self.local_matrices, local_input)
+        contribution = jnp.where(self.valid[:, None], contribution, 0.0)
+        return (
+            jnp.zeros((self.target_size,), dtype=contribution.dtype)
+            .at[self.output_gathers]
+            .add(contribution)
+        )
+
+    def transpose_mv(self, value: ArrayLike, /) -> Array:
+        value_ = jnp.asarray(value)
+        if value_.shape != (self.target_size,):
+            raise ValueError("Element tensor transpose input shape is incompatible.")
+        local_input = value_[self.output_gathers]
+        contribution = oe.contract("eoi,eo->ei", self.local_matrices, local_input)
+        contribution = jnp.where(self.valid[:, None], contribution, 0.0)
+        return (
+            jnp.zeros((self.source_size,), dtype=contribution.dtype)
+            .at[self.input_gathers]
+            .add(contribution)
+        )
 
     def diagonal(self, /) -> Array:
+        if self.source_size != self.target_size or not bool(
+            jnp.array_equal(self.input_gathers, self.output_gathers)
+        ):
+            raise ValueError("Diagonal requires square operators with identical routes.")
         local = jnp.diagonal(self.local_matrices, axis1=-2, axis2=-1)
+        local = jnp.where(self.valid[:, None], local, 0.0)
         return (
-            jnp.zeros((self.global_size,), dtype=local.dtype).at[self.gathers].add(local)
+            jnp.zeros((self.source_size,), dtype=local.dtype)
+            .at[self.input_gathers]
+            .add(local)
         )
 
     def as_linear_operator(self, /) -> FunctionLinearOperator:
-        space = ArraySpace((self.global_size,), dtype=self.local_matrices.dtype)
+        source = ArraySpace((self.source_size,), dtype=self.local_matrices.dtype)
+        target = ArraySpace((self.target_size,), dtype=self.local_matrices.dtype)
         return FunctionLinearOperator(
             self.mv,
-            source=space,
-            target=space,
+            source=source,
+            target=target,
+            transpose_action=self.transpose_mv,
+            properties=self.properties,
             operator_id=self.operator_id,
+            closure_convert=False,
         )
+
+    def as_sparse_coordinate(self, /) -> SparseCoordinateOperator:
+        entity_count, output_width, input_width = self.local_matrices.shape
+        source_routes = jnp.broadcast_to(
+            self.input_gathers[:, None, :],
+            (entity_count, output_width, input_width),
+        ).reshape((-1,))
+        target_routes = jnp.broadcast_to(
+            self.output_gathers[:, :, None],
+            (entity_count, output_width, input_width),
+        ).reshape((-1,))
+        valid = jnp.broadcast_to(
+            self.valid[:, None, None],
+            (entity_count, output_width, input_width),
+        ).reshape((-1,))
+        relation = EdgeRelation(
+            source_routes,
+            target_routes,
+            source_size=self.source_size,
+            target_size=self.target_size,
+            valid=valid,
+        )
+        return SparseCoordinateOperator(
+            relation,
+            self.local_matrices.reshape((-1,)),
+            source=ArraySpace((self.source_size,), dtype=self.local_matrices.dtype),
+            target=ArraySpace((self.target_size,), dtype=self.local_matrices.dtype),
+            properties=self.properties,
+            operator_id=canonical_fingerprint(
+                {"kind": "element-tensor-sparse", "operator": self.operator_id}
+            ),
+        )
+
+    def condense(
+        self,
+        plan: FiniteElementLocalEliminationPlan,
+        local_right_hand_side: ArrayLike,
+        retained_gathers: ArrayLike,
+        retained_global_size: int,
+        /,
+    ) -> tuple[ElementTensorOperator, LocalEliminationResult]:
+        if not isinstance(plan, FiniteElementLocalEliminationPlan):
+            raise TypeError("plan must be FiniteElementLocalEliminationPlan.")
+        if (
+            self.local_matrices.shape[1] != self.local_matrices.shape[2]
+            or self.local_matrices.shape[1] != plan.local_size
+        ):
+            raise ValueError("Static condensation requires square compatible tensors.")
+        result = plan.condense(self.local_matrices, local_right_hand_side)
+        retained = jnp.asarray(retained_gathers, dtype=jnp.int32)
+        condensed = ElementTensorOperator(
+            result.schur,
+            retained,
+            retained,
+            retained_global_size,
+            retained_global_size,
+            valid=self.valid & ~result.failed,
+        )
+        return condensed, result
 
 
 class PartialAssemblyOperator(StrictModule, NonTrainableState):
+    """Scalar quadrature action with reusable geometry/coefficient data."""
+
     basis_values: Array
     quadrature_weights: Array
     quadrature_coefficient: Array
     gathers: Array
+    valid: Array
     global_size: int = eqx.field(static=True)
+    properties: OperatorProperties
     operator_id: str = eqx.field(static=True)
 
     def __init__(
@@ -89,6 +224,9 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         gathers: ArrayLike,
         global_size: int,
         /,
+        *,
+        valid: ArrayLike | None = None,
+        properties: OperatorProperties | None = None,
     ):
         basis = jnp.asarray(basis_values)
         weights = jnp.asarray(quadrature_weights)
@@ -102,11 +240,25 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
             or coefficient.shape != weights.shape
         ):
             raise ValueError("Partial quadrature weights/coefficient shapes are invalid.")
+        if size <= 0 or bool(jnp.any((routes < 0) | (routes >= size))):
+            raise ValueError("Partial assembly routes or global size are invalid.")
+        valid_ = (
+            jnp.ones((routes.shape[0],), dtype=bool)
+            if valid is None
+            else jnp.asarray(valid, dtype=bool)
+        )
+        if valid_.shape != (routes.shape[0],):
+            raise ValueError("Partial assembly validity must match entities.")
+        properties_ = OperatorProperties() if properties is None else properties
+        if not isinstance(properties_, OperatorProperties):
+            raise TypeError("properties must be OperatorProperties or None.")
         self.basis_values = basis
         self.quadrature_weights = weights
         self.quadrature_coefficient = coefficient
         self.gathers = routes
+        self.valid = valid_
         self.global_size = size
+        self.properties = properties_
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "partial-assembly-operator",
@@ -119,15 +271,42 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
 
     def mv(self, value: ArrayLike, /) -> Array:
         value_ = jnp.asarray(value)
+        if value_.shape != (self.global_size,):
+            raise ValueError("Partial assembly input shape is incompatible.")
         local = value_[self.gathers]
         quadrature = oe.contract("qi,ci->cq", self.basis_values, local)
         weighted = self.quadrature_weights * self.quadrature_coefficient * quadrature
         contribution = oe.contract("qi,cq->ci", self.basis_values, weighted)
+        contribution = jnp.where(self.valid[:, None], contribution, 0.0)
         return (
-            jnp.zeros((self.global_size,), dtype=value_.dtype)
+            jnp.zeros((self.global_size,), dtype=contribution.dtype)
             .at[self.gathers]
             .add(contribution)
         )
+
+    def transpose_mv(self, value: ArrayLike, /) -> Array:
+        return self.mv(value)
+
+    def as_element_tensor(self, /) -> ElementTensorOperator:
+        local = oe.contract(
+            "cq,cq,qi,qj->cij",
+            self.quadrature_weights,
+            self.quadrature_coefficient,
+            self.basis_values,
+            self.basis_values,
+        )
+        return ElementTensorOperator(
+            local,
+            self.gathers,
+            self.gathers,
+            self.global_size,
+            self.global_size,
+            valid=self.valid,
+            properties=self.properties,
+        )
+
+    def as_sparse_coordinate(self, /) -> SparseCoordinateOperator:
+        return self.as_element_tensor().as_sparse_coordinate()
 
     def as_linear_operator(self, /) -> FunctionLinearOperator:
         space = ArraySpace((self.global_size,), dtype=self.quadrature_weights.dtype)
@@ -135,8 +314,179 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
             self.mv,
             source=space,
             target=space,
+            transpose_action=self.transpose_mv,
+            properties=self.properties,
             operator_id=self.operator_id,
+            closure_convert=False,
         )
 
 
-__all__ = ["ElementTensorOperator", "PartialAssemblyOperator"]
+TensorProductAction = Literal["mass", "diffusion"]
+
+
+class FiniteElementPreconditionerData(StrictModule, NonTrainableState):
+    """Prepared diagonal/block/workset evidence for generic preconditioner builders."""
+
+    diagonal: object
+    block_graph: tuple[tuple[bool, ...], ...] = eqx.field(static=True)
+    workset_ids: tuple[str, ...] = eqx.field(static=True)
+    data_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        diagonal: object,
+        block_graph: tuple[tuple[bool, ...], ...],
+        workset_ids: tuple[str, ...],
+        /,
+    ):
+        graph = tuple(tuple(bool(value) for value in row) for row in block_graph)
+        identifiers = tuple(str(value) for value in workset_ids)
+        if not graph or any(len(row) != len(graph) for row in graph):
+            raise ValueError("Preconditioner block graph must be non-empty and square.")
+        if not identifiers or any(not value for value in identifiers):
+            raise ValueError("Preconditioner workset identities must be non-empty.")
+        self.diagonal = diagonal
+        self.block_graph = graph
+        self.workset_ids = identifiers
+        self.data_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-preconditioner-data",
+                "diagonal": array_tree_fingerprint(diagonal),
+                "block_graph": [list(row) for row in graph],
+                "worksets": list(identifiers),
+            }
+        )
+
+
+class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
+    """Physical tensor-product mass or diffusion action without dense tabulation."""
+
+    plan: SumFactorizationPlan
+
+    quadrature_data: Array
+    gathers: Array
+    valid: Array
+    action_kind: TensorProductAction = eqx.field(static=True)
+    global_size: int = eqx.field(static=True)
+    properties: OperatorProperties
+    operator_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: SumFactorizationPlan,
+        quadrature_data: ArrayLike,
+        gathers: ArrayLike,
+        global_size: int,
+        /,
+        *,
+        action_kind: TensorProductAction,
+        valid: ArrayLike | None = None,
+    ):
+        if not isinstance(plan, SumFactorizationPlan):
+            raise TypeError("plan must be SumFactorizationPlan.")
+        kind = str(action_kind)
+        if kind not in ("mass", "diffusion"):
+            raise ValueError("Unknown tensor-product action kind.")
+        data = jnp.asarray(quadrature_data)
+        routes = jnp.asarray(gathers, dtype=jnp.int32)
+        size = int(global_size)
+        nodal_shape = (
+            plan.tabulation.basis_x.shape[1],
+            plan.tabulation.basis_y.shape[1],
+        )
+        quadrature_shape = (
+            plan.tabulation.basis_x.shape[0],
+            plan.tabulation.basis_y.shape[0],
+        )
+        if routes.ndim != 2 or routes.shape[1] != nodal_shape[0] * nodal_shape[1]:
+            raise ValueError("Tensor-product gathers do not match nodal axes.")
+        expected = (
+            (routes.shape[0],) + quadrature_shape
+            if kind == "mass"
+            else (routes.shape[0],) + quadrature_shape + (2, 2)
+        )
+        if data.shape != expected:
+            raise ValueError("Tensor-product quadrature data have incompatible shape.")
+        if size <= 0 or bool(jnp.any((routes < 0) | (routes >= size))):
+            raise ValueError("Tensor-product routes or global size are invalid.")
+        valid_ = (
+            jnp.ones((routes.shape[0],), dtype=bool)
+            if valid is None
+            else jnp.asarray(valid, dtype=bool)
+        )
+        if valid_.shape != (routes.shape[0],):
+            raise ValueError("Tensor-product validity must match entities.")
+        self.plan = plan
+        self.quadrature_data = data
+        self.gathers = routes
+        self.valid = valid_
+        self.action_kind = kind
+        self.global_size = size
+        self.properties = OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        )
+        self.operator_id = canonical_fingerprint(
+            {
+                "kind": "tensor-product-partial-assembly",
+                "plan": plan.plan_id,
+                "action": kind,
+                "data_shape": list(data.shape),
+                "gather_shape": list(routes.shape),
+                "global_size": size,
+            }
+        )
+
+    def mv(self, value: ArrayLike, /) -> Array:
+        value_ = jnp.asarray(value)
+        if value_.shape != (self.global_size,):
+            raise ValueError("Tensor-product input shape is incompatible.")
+        nodal_shape = (
+            self.plan.tabulation.basis_x.shape[1],
+            self.plan.tabulation.basis_y.shape[1],
+        )
+        local = value_[self.gathers].reshape((self.gathers.shape[0],) + nodal_shape)
+        if self.action_kind == "mass":
+            quadrature = self.plan.interpolate(local)
+            local_output = self.plan.interpolate_transpose(
+                self.quadrature_data * quadrature
+            )
+        else:
+            gradient = self.plan.gradient(local)
+            flux = oe.contract("epqab,epqb->epqa", self.quadrature_data, gradient)
+            local_output = self.plan.gradient_transpose(flux)
+        contribution = local_output.reshape(self.gathers.shape)
+        contribution = jnp.where(self.valid[:, None], contribution, 0.0)
+        return (
+            jnp.zeros((self.global_size,), dtype=contribution.dtype)
+            .at[self.gathers]
+            .add(contribution)
+        )
+
+    def transpose_mv(self, value: ArrayLike, /) -> Array:
+        return self.mv(value)
+
+    def as_linear_operator(self, /) -> FunctionLinearOperator:
+        space = ArraySpace((self.global_size,), dtype=self.quadrature_data.dtype)
+        return FunctionLinearOperator(
+            self.mv,
+            source=space,
+            target=space,
+            transpose_action=self.transpose_mv,
+            properties=self.properties,
+            operator_id=self.operator_id,
+            closure_convert=False,
+        )
+
+
+__all__ = [
+    "ElementTensorOperator",
+    "FiniteElementPreconditionerData",
+    "PartialAssemblyOperator",
+    "TensorProductAction",
+    "TensorProductPartialAssemblyOperator",
+]

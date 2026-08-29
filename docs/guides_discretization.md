@@ -199,12 +199,12 @@ field = phx.discretization.FiniteElementFieldSpec(
 )
 space = phx.discretization.FiniteElementPlan(mesh, field).prepare()
 constraint = phx.discretization.dirichlet_constraint(space, "u")
-form = phx.equations.WeakForm(
+form = phx.equations.FiniteElementForm(
     "poisson",
     "u",
     (
-        phx.equations.DiffusionTerm("u", 1.0),
-        phx.equations.SourceTerm("u", 0.0),
+        phx.equations.DiffusionAction("u", 1.0),
+        phx.equations.SourceAction("u", 0.0),
     ),
 )
 compiled = phx.equations.compile_finite_element_problem(
