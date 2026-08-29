@@ -260,11 +260,32 @@ from ._fermionic_gaussian import (
     open_kitaev_chain,
     solve_fermionic_gaussian,
 )
+from ._finite_element_adaptivity import (
+    FiniteElementTopologyResult,
+    FiniteElementTopologyTransaction,
+)
 from ._finite_element_checkpoint import (
     FiniteElementCheckpoint,
     read_finite_element_checkpoint,
     write_finite_element_checkpoint,
     write_partitioned_finite_element_checkpoint,
+)
+from ._finite_element_result import (
+    FiniteElementResult,
+    FiniteElementRunConfiguration,
+    FiniteElementSolveDiagnostics,
+    read_finite_element_result,
+    write_finite_element_result,
+)
+from ._finite_element_schedule import (
+    FiniteElementAcceptedState,
+    FiniteElementAcceptedStepSchedule,
+    FiniteElementAttemptResult,
+    FiniteElementRestartManifest,
+    FiniteElementStepDiagnostics,
+    FiniteElementStepPolicy,
+    read_finite_element_restart,
+    write_finite_element_restart,
 )
 from ._finite_volume import (
     DirectionalSplitFiniteVolumePlan,
@@ -1229,6 +1250,21 @@ __all__ = [
     "read_finite_element_checkpoint",
     "write_partitioned_finite_element_checkpoint",
     "write_finite_element_checkpoint",
+    "FiniteElementResult",
+    "FiniteElementRunConfiguration",
+    "FiniteElementSolveDiagnostics",
+    "read_finite_element_result",
+    "write_finite_element_result",
+    "FiniteElementAcceptedState",
+    "FiniteElementAcceptedStepSchedule",
+    "FiniteElementAttemptResult",
+    "FiniteElementStepDiagnostics",
+    "FiniteElementRestartManifest",
+    "FiniteElementStepPolicy",
+    "FiniteElementTopologyResult",
+    "FiniteElementTopologyTransaction",
+    "read_finite_element_restart",
+    "write_finite_element_restart",
     "FiniteVolumeCheckpoint",
     "FiniteVolumeCheckpointPlan",
     "read_finite_volume_checkpoint",

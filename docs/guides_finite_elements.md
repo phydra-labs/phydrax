@@ -17,16 +17,17 @@ routes remain canonical.
 
 ## Reference elements and fields
 
-`lagrange_element(cell_kind, degree)` constructs triangle P1/P2,
-quadrilateral Q1, and tetrahedron P1. Additional constructors provide
-discontinuous P0, triangular RT0, and triangular first-kind Nedelec order zero.
-Compatible elements carry their Piola mapping and edge orientation through the
-prepared DOF map.
+`lagrange_element(cell_kind, degree)` constructs conforming triangle P1/P2,
+quadrilateral Q1, tetrahedron P1, and hexahedron Q1 elements. Arbitrary-order
+simplex and quadrilateral nodal families are executable as cell-local
+discontinuous fields; their global conforming entity numbering remains limited
+to the explicitly listed continuous families. Additional constructors provide
+discontinuous P0/P1+, triangular RT0, and triangular first-kind Nedelec order
+zero.
 
 `FiniteElementFieldSpec` supports replicated component shapes and multiple named
-fields. Preparation exposes one ordered `BlockSpace`; mixed weak forms return one
-residual block per declared field. P2 vertex and edge coordinates remain
-entity-stratified in `BlockDofLayout`.
+fields. One `CompiledFiniteElementProblem` owns the ordered product space and
+scatters every coupled term directly to its output residual block.
 
 `FiniteElementCoordinateSpec` assigns an independent coordinate element and
 geometry DOF map to every block. This permits curved P2 geometry with a lower-
@@ -54,9 +55,10 @@ one exact entity set. A selected cell, exterior-facet, or interior-facet
 `IntegrationDomain` owns resolved owner/neighbour and local-facet routes. Terms
 bind existing `phydrax.integration` reference rules by cell block.
 
-`WeakForm` supports built-in diffusion, mass, source, and boundary load terms,
-general `CellResidualTerm`, energy-derived `CellEnergyTerm`, optimized
-`CellBilinearTerm`, and two-sided `InteriorFacetTerm` numerical fluxes.
+`FiniteElementForm` supports diffusion, mass, source, boundary load, general
+cell residual/energy/bilinear actions, exterior and interior numerical fluxes,
+SIPG facet actions, and prepared global operator actions. The compiled
+`WorksetProgram` is the authoritative residual execution schedule.
 
 Coefficients may be point functions, cell arrays, facet arrays, or quadrature
 arrays. A staged coefficient receives the execution context:
@@ -118,21 +120,43 @@ sum/average/update semantics.
 
 ## Local-action IR and high order
 
-Weak forms can be lowered to `phydrax.equations.fem.LocalActionIR` and a typed
-`WorksetProgram` for identity, validation, and executor development. The
-production residual still uses the existing variational executor; the IR is not
-yet the authoritative evaluation path.
+`FiniteElementForm` lowers to `LocalActionIR`, `KernelTable`, and a typed
+`WorksetProgram`. Cell and facet worksets own the static gathers, orientations,
+domains, and rule identities used by residual execution. Matrix-free JVPs
+differentiate this same program.
 
-`ReferenceNodalFamily` currently supplies arbitrary-order quadrilateral
-Lagrange tabulation with equispaced or Gauss-Lobatto nodes.
-`TensorProductTabulation` and `SumFactorizationPlan` provide prototype
-factorized interpolation/gradient utilities; they are not yet the physical
-high-order multi-cell operator backend.
+`SimplexNodalFamily` and `ReferenceNodalFamily` provide arbitrary-order
+cell-local simplex and quadrilateral execution. `TensorProductTabulation` and
+`SumFactorizationPlan` expose reusable tensor contractions; hexahedron Q1 uses
+the physical finite-element geometry and residual path.
 
-Proof builders under `phydrax.equations.fem` currently provide semantic or
-small-problem configurations. In particular, SIPG is an IR declaration, HDG
-solves caller-supplied local systems, and mixed Darcy/Maxwell require the future
-authoritative mixed IR executor before being production solve paths.
+Built-in executable workflows include linear elasticity, upwind DG advection,
+RT0-P0 Darcy, Nedelec Maxwell, lowest-order triangular primal HDG, and
+Taylor-Hood Stokes.
+
+## SIPG Poisson
+
+`sipg_poisson_form` implements cell diffusion, weighted consistency and
+symmetry terms, harmonic coefficient weighting, explicit `p²/h` penalty
+scaling, Nitsche Dirichlet data, natural Neumann data, Robin data, and a
+verified constant nullspace for pure Neumann problems. Plus is the owner side;
+the stored normal points outward from plus; both normal derivatives use that
+same normal. Current executable SIPG support is scalar DG on one homogeneous
+triangle or quadrilateral block.
+
+## Local adaptation and applications
+
+`dorfler_mark`/`maximum_mark`, `refine_triangles_local`, complete-family
+coarsening, P1 primal/dual transfers, local DWR indicators, and
+`FiniteElementTopologyTransaction` provide a single-device accepted topology
+transaction. Failed material transfer or certification preserves the accepted
+state.
+
+Executable application namespaces live under `phydrax.applications`:
+phase-field Allen-Cahn/Cahn-Hilliard, finite-strain crystal plasticity,
+frictionless persistent-pair contact, phase-field fracture, and fixed-crack
+XFEM classification/enrichment.
+
 
 ## Smoothed finite elements
 
@@ -141,17 +165,18 @@ smoothing patches and boundary moments rather than ordinary cell quadrature.
 See [Smoothed finite elements](guides_fem_smoothing.md) for exact method scopes,
 stability evidence, source-backed presets, and axisymmetric primitive moments.
 
-## Time laws and solve schedules
+## Time laws and accepted-step schedules
 
-`TimeLaw` exposes value, first derivative, and second derivative. `SolveStage`
-and `SolveSchedule` own accepted/rejected stage transitions above the existing
-linear, nonlinear, DAE, and second-order solvers.
+`TimeLaw` supplies value and time derivatives. `FiniteElementAcceptedState`,
+`FiniteElementAcceptedStepSchedule`, and `FiniteElementTopologyTransaction`
+separate immutable accepted data from candidate field/material/topology state.
+Rejected attempts do not increment state or material versions.
 
 ## Current limits
 
-Implemented compatible/discontinuous families remain deliberately compact:
-triangle RT0/Nedelec0 and discontinuous P0. Arbitrary-order nodal support is
-currently quadrilateral tensor-product Lagrange. General simplex p, hexahedral
-compatible families, cut-cell classification, contact search, and real
-multi-process communication backends remain future family/backend
-implementations over the now-explicit compiler contracts.
+Execution is single-device. Compatible elements are triangle RT0/Nedelec0;
+HDG is lowest-order triangular primal HDG; SIPG is scalar on one homogeneous
+2-D polygon block; local adaptation is conforming T3 refinement with
+complete-family coarsening; contact and XFEM expose fixed-pair/fixed-crack
+derivative scopes. Search, active-set selection, marking, and topology events
+are discrete derivative boundaries. No real multi-process backend is claimed.

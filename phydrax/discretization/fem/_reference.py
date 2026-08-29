@@ -53,12 +53,17 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         mapping_ = str(mapping)
         if not family_ or not conformity_ or not mapping_:
             raise ValueError("Finite-element identifiers must be non-empty.")
-        if cell not in ("triangle", "quadrilateral", "tetrahedron"):
+        if cell not in ("triangle", "quadrilateral", "tetrahedron", "hexahedron"):
             raise ValueError("Unsupported reference cell kind.")
         if order < 0:
             raise ValueError("Finite-element degree must be non-negative.")
         nodes = np.asarray(reference_nodes, dtype=float)
-        dimension = {"triangle": 2, "quadrilateral": 2, "tetrahedron": 3}[cell]
+        dimension = {
+            "triangle": 2,
+            "quadrilateral": 2,
+            "tetrahedron": 3,
+            "hexahedron": 3,
+        }[cell]
         if nodes.ndim != 2 or nodes.shape[1] != dimension or nodes.shape[0] == 0:
             raise ValueError(
                 "Reference nodes must have shape (local_dof_count, cell_dimension)."
@@ -161,6 +166,8 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             return _quadrilateral_q1(locations)
         if self.cell_kind == "tetrahedron" and self.degree == 1:
             return _tetrahedron_p1(locations)
+        if self.cell_kind == "hexahedron" and self.degree == 1:
+            return _hexahedron_q1(locations)
         raise ValueError("Finite-element tabulation is not implemented for this spec.")
 
 
@@ -228,6 +235,42 @@ def _quadrilateral_q1(points: Array, /) -> tuple[Array, Array]:
             jnp.stack((1.0 - eta, -xi), axis=-1),
             jnp.stack((eta, xi), axis=-1),
             jnp.stack((-eta, 1.0 - xi), axis=-1),
+        ),
+        axis=1,
+    )
+    return values, gradients
+
+
+def _hexahedron_q1(points: Array, /) -> tuple[Array, Array]:
+    xi = points[:, 0]
+    eta = points[:, 1]
+    zeta = points[:, 2]
+    one_x = 1.0 - xi
+    one_y = 1.0 - eta
+    one_z = 1.0 - zeta
+    values = jnp.stack(
+        (
+            one_x * one_y * one_z,
+            xi * one_y * one_z,
+            xi * eta * one_z,
+            one_x * eta * one_z,
+            one_x * one_y * zeta,
+            xi * one_y * zeta,
+            xi * eta * zeta,
+            one_x * eta * zeta,
+        ),
+        axis=-1,
+    )
+    gradients = jnp.stack(
+        (
+            jnp.stack((-one_y * one_z, -one_x * one_z, -one_x * one_y), axis=-1),
+            jnp.stack((one_y * one_z, -xi * one_z, -xi * one_y), axis=-1),
+            jnp.stack((eta * one_z, xi * one_z, -xi * eta), axis=-1),
+            jnp.stack((-eta * one_z, one_x * one_z, -one_x * eta), axis=-1),
+            jnp.stack((-one_y * zeta, -one_x * zeta, one_x * one_y), axis=-1),
+            jnp.stack((one_y * zeta, -xi * zeta, xi * one_y), axis=-1),
+            jnp.stack((eta * zeta, xi * zeta, xi * eta), axis=-1),
+            jnp.stack((-eta * zeta, one_x * zeta, one_x * eta), axis=-1),
         ),
         axis=1,
     )
@@ -340,24 +383,74 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
             ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
             (((0,), (1,), (2,), (3,)), ((),) * 6, ((),) * 4, ((),)),
         )
+    if cell == "hexahedron" and order == 1:
+        return FiniteElementSpec(
+            "Lagrange",
+            cell,
+            order,
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (1.0, 1.0, 0.0),
+                (0.0, 1.0, 0.0),
+                (0.0, 0.0, 1.0),
+                (1.0, 0.0, 1.0),
+                (1.0, 1.0, 1.0),
+                (0.0, 1.0, 1.0),
+            ),
+            (
+                tuple((index,) for index in range(8)),
+                ((),) * 12,
+                ((),) * 6,
+                ((),),
+            ),
+        )
+    if cell in ("triangle", "tetrahedron") and order >= 1:
+        from ._high_order import SimplexNodalFamily
+
+        return SimplexNodalFamily(cell, order).finite_element()
+    if cell == "quadrilateral" and order >= 1:
+        from ._high_order import ReferenceNodalFamily
+
+        return ReferenceNodalFamily(cell, order).finite_element()
     raise ValueError(
-        "Implemented Lagrange elements are triangle P1/P2, quadrilateral Q1, "
-        "and tetrahedron P1."
+        "Implemented Lagrange elements require a supported simplex/tensor cell "
+        "and polynomial degree."
     )
 
 
 def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSpec:
     cell = str(cell_kind)
     order = int(degree)
+    if order >= 1:
+        base = lagrange_element(cell, order)
+        entities = [tuple(() for _ in dimension) for dimension in base.entity_dofs]
+        entities[-1] = (tuple(range(base.local_dof_count)),)
+        return FiniteElementSpec(
+            "DiscontinuousLagrange",
+            cell,
+            order,
+            base.reference_nodes,
+            tuple(entities),
+            conformity="L2",
+            tabulator=base.tabulate,
+            tabulator_id=f"discontinuous:{base.element_id}",
+        )
     if order != 0:
-        raise ValueError("Only discontinuous P0 is currently implemented.")
-    dimension = {"triangle": 2, "quadrilateral": 2, "tetrahedron": 3}.get(cell)
+        raise ValueError("Discontinuous degree must be nonnegative.")
+    dimension = {
+        "triangle": 2,
+        "quadrilateral": 2,
+        "tetrahedron": 3,
+        "hexahedron": 3,
+    }.get(cell)
     if dimension is None:
         raise ValueError("Unsupported discontinuous reference cell.")
     center = {
         "triangle": ((1.0 / 3.0, 1.0 / 3.0),),
         "quadrilateral": ((0.5, 0.5),),
         "tetrahedron": ((0.25, 0.25, 0.25),),
+        "hexahedron": ((0.5, 0.5, 0.5),),
     }[cell]
     entities = {
         "triangle": (((), (), ()), ((), (), ()), ((0,),)),
@@ -366,6 +459,12 @@ def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSp
             ((), (), (), ()),
             ((),) * 6,
             ((),) * 4,
+            ((0,),),
+        ),
+        "hexahedron": (
+            ((),) * 8,
+            ((),) * 12,
+            ((),) * 6,
             ((0,),),
         ),
     }[cell]

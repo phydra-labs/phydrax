@@ -69,12 +69,12 @@ def test_generic_preparation_assembles_mass_stiffness_and_p2_dofs():
 def test_variational_compiler_reproduces_affine_dirichlet_solution():
     discretization = _square_discretization()
     constraint = phx.discretization.dirichlet_constraint(discretization, "u")
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "affine-laplace",
         "u",
         (
-            phx.equations.DiffusionTerm("u"),
-            phx.equations.SourceTerm("u", 0.0),
+            phx.equations.DiffusionAction("u"),
+            phx.equations.SourceAction("u", 0.0),
         ),
     )
     compiled = phx.equations.compile_finite_element_problem(
@@ -99,10 +99,10 @@ def test_variational_compiler_reproduces_affine_dirichlet_solution():
 
 def test_boundary_loading_reconstruction_and_functional_preserve_integrals():
     discretization = _square_discretization()
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "boundary-load",
         "u",
-        (phx.equations.BoundaryLoadTerm("u", 1.0),),
+        (phx.equations.BoundaryLoadAction("u", 1.0),),
     )
     compiled = phx.equations.compile_finite_element_problem(form, discretization)
     load = -compiled.full_residual(jnp.zeros((5,)), None)
@@ -146,10 +146,10 @@ def test_fixed_topology_geometry_is_differentiable():
 
 def test_native_dae_adapter_preserves_constant_heat_state():
     discretization = _square_discretization()
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "heat",
         "u",
-        (phx.equations.DiffusionTerm("u", 0.25),),
+        (phx.equations.DiffusionAction("u", 0.25),),
     )
     dae = phx.equations.compile_finite_element_problem(
         form, discretization

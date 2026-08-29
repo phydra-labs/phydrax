@@ -82,34 +82,48 @@ class WorksetSignature(StrictModule, NonTrainableState):
 
 class CompiledWorkset(StrictModule, NonTrainableState):
     signature: WorksetSignature
-    term_indices: Array
+    action_indices: Array
+    action_index_values: tuple[int, ...] = eqx.field(static=True)
+    entity_index_values: tuple[int, ...] = eqx.field(static=True)
     entity_indices: Array
     owner_cells: Array
     neighbour_cells: Array
+    owner_local_entities: Array
+    neighbour_local_entities: Array
+    owner_permutations: Array
+    neighbour_permutations: Array
     gathers: tuple[tuple[str, Array], ...]
+    neighbour_gathers: tuple[tuple[str, Array], ...]
     valid: Array
     workset_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         signature: WorksetSignature,
-        term_indices: ArrayLike,
+        action_indices: ArrayLike,
         entity_indices: ArrayLike,
         owner_cells: ArrayLike,
         neighbour_cells: ArrayLike,
         gathers: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]],
         /,
         *,
+        neighbour_gathers: Mapping[str, ArrayLike]
+        | Sequence[tuple[str, ArrayLike]]
+        | None = None,
+        owner_local_entities: ArrayLike | None = None,
+        neighbour_local_entities: ArrayLike | None = None,
+        owner_permutations: ArrayLike | None = None,
+        neighbour_permutations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
     ):
         if not isinstance(signature, WorksetSignature):
             raise TypeError("signature must be WorksetSignature.")
-        terms = np.asarray(term_indices, dtype=np.int32)
+        actions = np.asarray(action_indices, dtype=np.int32)
         entities = np.asarray(entity_indices, dtype=np.int32)
         owners = np.asarray(owner_cells, dtype=np.int32)
         neighbours = np.asarray(neighbour_cells, dtype=np.int32)
-        if terms.ndim != 1 or entities.ndim != 1:
-            raise ValueError("Workset term/entity indices must be rank-1.")
+        if actions.ndim != 1 or entities.ndim != 1:
+            raise ValueError("Workset action/entity indices must be rank-1.")
         if owners.shape != entities.shape or neighbours.shape != entities.shape:
             raise ValueError("Workset owner/neighbour routes must match entities.")
         gather_items = tuple(
@@ -129,6 +143,50 @@ class CompiledWorkset(StrictModule, NonTrainableState):
             width = dict(signature.local_widths)[name]
             if route.shape != (count, width):
                 raise ValueError("Workset gather shape does not match its signature.")
+        if neighbour_gathers is None:
+            neighbour_items = tuple(
+                (name, np.full_like(route, -1)) for name, route in gather_items
+            )
+        else:
+            neighbour_items = tuple(
+                sorted(
+                    (str(name), np.asarray(route, dtype=np.int32))
+                    for name, route in (
+                        neighbour_gathers.items()
+                        if isinstance(neighbour_gathers, Mapping)
+                        else neighbour_gathers
+                    )
+                )
+            )
+        if tuple(name for name, _ in neighbour_items) != tuple(
+            name for name, _ in gather_items
+        ) or any(
+            route.shape != dict(gather_items)[name].shape
+            for name, route in neighbour_items
+        ):
+            raise ValueError("Neighbour gathers must match owner gather layouts.")
+
+        def route(values, default, dtype):
+            return (
+                np.full((count,), default, dtype=dtype)
+                if values is None
+                else np.asarray(values, dtype=dtype)
+            )
+
+        owner_local = route(owner_local_entities, -1, np.int32)
+        neighbour_local = route(neighbour_local_entities, -1, np.int32)
+        owner_permutation = route(owner_permutations, 1, np.int8)
+        neighbour_permutation = route(neighbour_permutations, 1, np.int8)
+        if any(
+            value.shape != (count,)
+            for value in (
+                owner_local,
+                neighbour_local,
+                owner_permutation,
+                neighbour_permutation,
+            )
+        ):
+            raise ValueError("Workset local-entity/permutation routes are invalid.")
         valid_ = (
             np.ones((count,), dtype=bool)
             if valid is None
@@ -137,22 +195,39 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         if valid_.shape != (count,):
             raise ValueError("Workset validity must have one entry per entity.")
         self.signature = signature
-        self.term_indices = jnp.asarray(terms)
+        self.action_indices = jnp.asarray(actions)
+        self.action_index_values = tuple(int(value) for value in actions)
+        self.entity_index_values = tuple(int(value) for value in entities)
         self.entity_indices = jnp.asarray(entities)
         self.owner_cells = jnp.asarray(owners)
         self.neighbour_cells = jnp.asarray(neighbours)
+        self.owner_local_entities = jnp.asarray(owner_local)
+        self.neighbour_local_entities = jnp.asarray(neighbour_local)
+        self.owner_permutations = jnp.asarray(owner_permutation)
+        self.neighbour_permutations = jnp.asarray(neighbour_permutation)
         self.gathers = tuple((name, jnp.asarray(route)) for name, route in gather_items)
+        self.neighbour_gathers = tuple(
+            (name, jnp.asarray(route)) for name, route in neighbour_items
+        )
         self.valid = jnp.asarray(valid_)
         self.workset_id = canonical_fingerprint(
             {
                 "kind": "compiled-finite-element-workset",
                 "signature": signature.signature_id,
-                "terms": array_tree_fingerprint(terms),
+                "actions": array_tree_fingerprint(actions),
                 "entities": array_tree_fingerprint(entities),
                 "owners": array_tree_fingerprint(owners),
                 "neighbours": array_tree_fingerprint(neighbours),
+                "owner_local_entities": array_tree_fingerprint(owner_local),
+                "neighbour_local_entities": array_tree_fingerprint(neighbour_local),
+                "owner_permutations": array_tree_fingerprint(owner_permutation),
+                "neighbour_permutations": array_tree_fingerprint(neighbour_permutation),
                 "gathers": [
                     [name, array_tree_fingerprint(route)] for name, route in gather_items
+                ],
+                "neighbour_gathers": [
+                    [name, array_tree_fingerprint(route)]
+                    for name, route in neighbour_items
                 ],
                 "valid": array_tree_fingerprint(valid_),
             }
@@ -164,6 +239,20 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         if name not in routes:
             raise KeyError(f"Workset has no field gather {name!r}.")
         return jnp.asarray(values)[routes[name]]
+
+    def gather_neighbour(self, field_name: str, values: ArrayLike, /) -> Array:
+        name = str(field_name)
+        routes = dict(self.neighbour_gathers)
+        if name not in routes:
+            raise KeyError(f"Workset has no neighbour gather {name!r}.")
+        safe = jnp.maximum(routes[name], 0)
+        gathered = jnp.asarray(values)[safe]
+        valid = routes[name] >= 0
+        return jnp.where(
+            valid.reshape(valid.shape + (1,) * (gathered.ndim - valid.ndim)),
+            gathered,
+            jnp.zeros_like(gathered),
+        )
 
 
 class WorksetProgram(StrictModule, NonTrainableState):

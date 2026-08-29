@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
@@ -76,10 +77,16 @@ class ConstraintMap(StrictModule, NonTrainableState):
         self.dual_pullback = pullback
         self.constraint_id = resolved_id
 
-    def expand(self, reduced: Array, lift: Array, /):
+    def expand(self, reduced: object, lift: object, /):
         reduced_ = self.reduced_space.validate(reduced)
         lift_ = self.full_space.validate(lift)
-        return self.full_space.validate(self.prolongation.mv(reduced_) + lift_)
+        return self.full_space.validate(
+            jax.tree.map(
+                lambda correction, offset: correction + offset,
+                self.prolongation.mv(reduced_),
+                lift_,
+            )
+        )
 
     def homogeneous_correction(self, reduced: Array, /):
         return self.prolongation.mv(self.reduced_space.validate(reduced))
