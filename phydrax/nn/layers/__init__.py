@@ -22,6 +22,7 @@ from ._fourier_embeddings import (
     TrainableFourierFeatureEmbeddings,
 )
 from ._fourier_sampling import FourierEvaluationMethod, sample_fourier_grid
+from ._interface import InterfaceDistanceSemantics, InterfaceFeatureLift
 from ._linear import Linear
 from ._linear_recurrent_unit import LinearRecurrentUnit
 from ._low_rank_complex_linear import (
@@ -96,6 +97,8 @@ __all__ = [
     "sample_fourier_grid",
     "Dropout",
     "ComplexLinear",
+    "InterfaceDistanceSemantics",
+    "InterfaceFeatureLift",
     "Linear",
     "LowRankComplexLinear",
     "LowRankComplexLinearInitializationReport",

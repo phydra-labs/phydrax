@@ -240,6 +240,45 @@ evidence.
 ::: phydrax.terms.SoftQuantileFunctional
 
 
+## Variational eigenspaces
+
+`VariationalEigenspace` assembles Hermitian stiffness and mass matrices from
+named `DomainFunction` trial fields on one shared integration realization. Its
+training scalar is the basis-invariant block quotient
+`real(trace(solve(M, K)))`, not a normalization or pairwise-orthogonality
+penalty. The mass matrix must remain positive definite; rank loss, a material
+Hermitian defect, a failed integration estimate, or a failed native Cholesky
+solve rejects the objective.
+
+Fixed deterministic quadrature is the default. Randomized quadrature requires
+an explicit fixed key or per-step policy and does not retain the conforming Ritz
+upper-bound interpretation. `ritz(...)` solves the reduced pencil through
+`phydrax.linalg.eigen`, retains its diagnostics, and reconstructs continuous
+Ritz modes from the current trial fields.
+
+::: phydrax.terms.VariationalEigenspace
+
+---
+
+::: phydrax.terms.VariationalEigenspaceEvaluation
+
+---
+
+::: phydrax.terms.VariationalEigenspaceResult
+
+Product-factor models can bypass global Cartesian materialization. Assemble
+mass, gradient, potential, or other separated form terms with
+`FactorizedBilinearTerm`, then call
+`factorized_variational_eigenspace`. The result retains both factorized
+integration evidence and the same native block/Ritz diagnostics.
+
+::: phydrax.terms.factorized_variational_eigenspace
+
+---
+
+::: phydrax.terms.FactorizedVariationalEigenspaceResult
+
+
 ## Supporting contracts
 
 `BatchSampler` and `ResidualEvaluator` are the callable protocols used by randomized
@@ -317,3 +356,20 @@ condition type. Attach a policy through
 ---
 
 ::: phydrax.sampling.collocation.collocation_policy_support
+
+## Implicit free-boundary functionals
+
+These factories derive their phase or surface density from the *current*
+level-set field inside the differentiated integrand. They therefore preserve a
+fixed ambient target and compiled sample shape while the interface evolves.
+The band width, phase side, integration target, and plan remain explicit.
+
+::: phydrax.terms.implicit_phase_penalty
+
+---
+
+::: phydrax.terms.implicit_interface_penalty
+
+---
+
+::: phydrax.terms.free_boundary_term_suite

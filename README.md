@@ -254,6 +254,14 @@ and geometry-informed operators, and transformer operators. See the
 contracts and audited architecture comparisons, and the
 [architecture API](docs/api/nn/architectures.md) for constructor details.
 
+Free-boundary support composes implicit level-set measures, discontinuity-aware
+PINN features, interface physics conditions, causal/narrow-band collocation,
+explicit-front/level-set/reference-map and probabilistic Stefan workflows,
+reference-map neural-operator contracts, conservative solver adapters,
+interface-aware UQ, and problem-specific benchmark evidence. The
+topology-preserving reference-map path is kept distinct from level-set,
+phase-fraction, phase-field, particle, and complementarity paths.
+
 Stochastic support includes reproducible SDE/SPDE path ensembles, finite-rank
 spatial noise, semilinear exponential integration, convergence/error-budget
 diagnostics, strong/weak/mild physics contracts, static random fields, latent

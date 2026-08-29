@@ -61,6 +61,33 @@ region, safe-step information, and parameter differentiability. Approximate CAD
 and reconstruction fields therefore do not masquerade as exact analytic signed
 distances.
 
+## Interface observables
+
+`phase_geometry_metrics` integrates a flattened phase fraction against explicit
+physical quadrature weights. It reports phase measure and centroid; a
+zero-measure phase retains `centroid_defined=False` and a NaN centroid instead
+of inventing a location.
+
+`interface_distance_metrics` compares extracted predicted and reference point
+sets. It reports the symmetric directed-nearest mean, symmetric Hausdorff
+distance, and a configurable percentile Hausdorff distance. Masks exclude
+fixed-capacity padding. Point extraction, isovalue, spacing, and physical units
+remain caller-owned and must be identical across compared interfaces.
+
+::: phydrax.geometry.phase_geometry_metrics
+
+---
+
+::: phydrax.geometry.interface_distance_metrics
+
+---
+
+::: phydrax.geometry.PhaseGeometryMetrics
+
+---
+
+::: phydrax.geometry.InterfaceDistanceMetrics
+
 ## Analytic geometry and CSG
 
 Analytic sources provide closed-form fields, measures, samplers, and boundary

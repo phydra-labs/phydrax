@@ -52,6 +52,49 @@ rank-normalized R-hat, bulk ESS, and tail ESS for configurations and the real/im
 local-energy components. These diagnostics are not computed across training
 iterations because each parameter update changes the target.
 
+## Multi-state invariant subspaces
+
+`VariationalMonteCarloSubspaceProblem` owns two or more log-amplitude models,
+one connected Hermitian operator, and one persistent Markov ensemble. The
+sampler targets the mixture proportional to the sum of state densities. On that
+same sample set, relative amplitudes produce an overlap matrix and node-safe
+Hamiltonian actions produce a projected Hamiltonian matrix; their unknown
+common normalization cancels in the generalized Ritz solve.
+
+The evaluator reports raw and Hermitian-projected matrices, Hermitian defects,
+Gram minimum eigenvalue/rank/condition, Ritz energies and coefficient modes,
+per-mode residual variances, acceptance, active samples, and chain diagnostics.
+It never regularizes a collapsed state span into success. Optimization uses a
+score-corrected block objective and one responsibility-weighted native SR solve
+per trainable state. Accept/reject decisions remain outside differentiation.
+
+::: phydrax.solver.VariationalMonteCarloSubspaceProblem
+
+---
+
+::: phydrax.solver.VariationalMonteCarloSubspaceState
+
+---
+
+::: phydrax.solver.VariationalMonteCarloSubspaceEstimate
+
+---
+
+::: phydrax.solver.VariationalMonteCarloSubspaceResult
+
+---
+
+::: phydrax.solver.evaluate_variational_monte_carlo_subspace
+
+---
+
+::: phydrax.solver.solve_variational_monte_carlo_subspace
+
+---
+
+::: phydrax.solver.vmc_subspace_status_name
+
+
 ## Checkpoint and resume
 
 ::: phydrax.solver.write_variational_monte_carlo_checkpoint

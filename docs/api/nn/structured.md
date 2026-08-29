@@ -20,6 +20,10 @@ Models that exploit product-domain structure via low-rank factorization.
       exact latent-factor derivative contraction path under `backend="jet"`; if that
       path is unavailable, execution falls back according to
       `LatentExecutionPolicy.fallback`.
+    - `factorize_axes(...)` and `factorize_axis_batch(...)` expose the same
+      latent products, including selected partials, as
+      `integration.AxisFactorizedField`. Factorized integration can then assemble
+      bilinear forms without materializing the global tensor grid.
     - The separable model families forward `scan` to their internal scalar submodels.
     - Use `key=None` for deterministic inference/export. Fan-out models split real
       evaluation keys for stochastic children, but propagate `None` without creating
@@ -30,6 +34,7 @@ Models that exploit product-domain structure via low-rank factorization.
         members:
             - __init__
             - __call__
+            - factorize_axes
 
 ---
 
@@ -38,6 +43,7 @@ Models that exploit product-domain structure via low-rank factorization.
         members:
             - __init__
             - __call__
+            - factorize_axes
 
 ---
 ::: phydrax.nn.models.SeparableModifiedMLP
@@ -73,6 +79,7 @@ per-layer basis schedules retain the same scan compatibility as `KAN`.
         members:
             - __init__
             - __call__
+            - factorize_axis_batch
 
 ---
 

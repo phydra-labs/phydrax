@@ -93,6 +93,18 @@ Low-level model building blocks.
 
 ::: phydrax.nn.layers.run_affine_recurrence
 
+## Interface feature lift
+
+`InterfaceFeatureLift` keeps an evolving interface out of downstream network
+weights. It can append locally normalized signed distance, its absolute-value
+cusp, and a compact side indicator to the original coordinates. Declare
+`distance_semantics="signed_distance"` only when the supplied callable already
+has that numerical contract.
+
+::: phydrax.nn.layers.InterfaceFeatureLift
+
+---
+
 ## Recurrent substrate
 
 `RecurrentBatch` is the single packed-sequence contract. `valid` marks usable
