@@ -25,6 +25,13 @@ from ._native_block_krylov import (
     solve_native_block_krylov,
 )
 from ._native_krylov import prepare_native_krylov, solve_native_krylov
+from ._spineax import (
+    analyze_spineax,
+    bind_spineax,
+    refresh_spineax,
+    release_spineax,
+    solve_spineax,
+)
 
 
 class AbstractLinearProvider(abc.ABC):
@@ -54,6 +61,30 @@ class AbstractLinearProvider(abc.ABC):
     ) -> Any:
         """Bind current coefficients without rediscovering symbolic structure."""
         raise NotImplementedError
+
+    def refresh(
+        self,
+        symbolic_state: Any,
+        previous_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> Any:
+        """Refresh numeric coefficients while retaining provider-owned structure."""
+        del previous_state
+        return self.bind(
+            symbolic_state,
+            problem,
+            plan,
+            preconditioner=preconditioner,
+        )
+
+    def release(self, state: Any, /) -> bool:
+        """Release provider resources; array-only providers are no-ops."""
+        del state
+        return False
 
     @abc.abstractmethod
     def solve(
@@ -148,6 +179,46 @@ class _SparseProvider(AbstractLinearProvider):
         return solve_host_sparse_transformed(state, rhs, adjoint=adjoint)
 
 
+class _SpineaxProvider(AbstractLinearProvider):
+    backends = ("spineax-cudss",)
+    supports_implicit_differentiation = True
+
+    def analyze(self, problem, plan, /):
+        return analyze_spineax(problem, plan)
+
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        if preconditioner is not None:
+            raise ValueError("Spineax direct binding rejects preconditioning.")
+        return bind_spineax(symbolic_state, problem, plan)
+
+    def refresh(
+        self,
+        symbolic_state,
+        previous_state,
+        problem,
+        plan,
+        /,
+        *,
+        preconditioner=None,
+    ):
+        if preconditioner is not None:
+            raise ValueError("Spineax direct refresh rejects preconditioning.")
+        return refresh_spineax(symbolic_state, previous_state, problem, plan)
+
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+        return solve_spineax(state, rhs, plan)
+
+    def supports_transformed(self, state, /) -> bool:
+        return True
+
+    def solve_transformed(self, state, rhs, plan, /, *, adjoint):
+        del adjoint
+        return solve_spineax(state, rhs, plan)
+
+    def release(self, state, /) -> bool:
+        return release_spineax(state)
+
+
 class _NativeBlockKrylovProvider(AbstractLinearProvider):
     backends = ("native-block-krylov",)
     accepts_initial_guess = True
@@ -225,6 +296,7 @@ _PROVIDERS: tuple[AbstractLinearProvider, ...] = (
     _StructuredProvider(),
     _DenseProvider(),
     _SparseProvider(),
+    _SpineaxProvider(),
     _NativeBlockKrylovProvider(),
     _NativeKrylovProvider(),
     _MatfreeProvider(),

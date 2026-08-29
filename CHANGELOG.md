@@ -9,6 +9,20 @@
   ordinary and induced-relative persistent homology, natural and fixed-capacity
   diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
   and exact-nullity validation of metric cochain harmonic kernels.
+- Added a native linear-combinatorial substrate with separate logical decisions
+  and objective features, content-addressed plans, deterministic ties, portable
+  statuses, and independent certificates. Added exact streamed finite,
+  fixed-cardinality, primal-dual Hungarian assignment, and signed-cost DAG path
+  oracles, plus explicit one-extra-solve blackbox surrogate pullbacks.
+- Added a method-neutral structured nonlinear optimization spine with
+  topology/numeric prepare-refresh lifecycles, exact sparse Jacobian and
+  Lagrangian-Hessian reuse, portable primal/dual warm starts, independently
+  certified native and Ipopt results, a unified dense/matrix-free/sparse
+  `PrimalDualInteriorPoint`, truthful provider-backed KKT preparation, fixed-width
+  root and structured-solve pools, generic PyTree/state-design/multiple-shooting
+  compilers, fixed-active sensitivities and continuation, and optional
+  Spineax/cuDSS sparse LDLT with numerical refactorization, reported inertia,
+  and explicit resource release.
 - Added an end-to-end free-boundary SciML substrate: differentiable compact
   Heaviside/delta and coarea calculus; level-set phase, normal, curvature,
   velocity, and Eikonal operators; discontinuity-aware coordinate lifts;

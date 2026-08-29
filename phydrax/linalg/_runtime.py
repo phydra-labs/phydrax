@@ -243,8 +243,16 @@ def refresh(
         refreshed_template,
         problem,
         previous_preconditioner=prepared.preconditioning_state,
+        previous_state=prepared.state,
         numeric_version=prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32),
     )
+
+
+def release(prepared: PreparedLinearSolve, /) -> bool:
+    """Explicitly release provider-owned resources for one prepared solve."""
+    if not isinstance(prepared, PreparedLinearSolve):
+        raise TypeError("prepared must be a PreparedLinearSolve.")
+    return provider_for(prepared.plan.backend).release(prepared.state)
 
 
 def _operator_symbolic_contract(operator: AbstractLinearOperator, /) -> tuple[Any, ...]:
@@ -272,6 +280,7 @@ def _bind_for_template(
     /,
     *,
     previous_preconditioner: PreparedPreconditioner | None = None,
+    previous_state: Any = None,
     numeric_version: Any = 0,
 ) -> PreparedLinearSolve:
     if not isinstance(template, LinearSolveTemplate):
@@ -308,11 +317,21 @@ def _bind_for_template(
     )
     action = None if preconditioning_state is None else preconditioning_state.action
     provider = provider_for(selected_plan.backend)
-    state = provider.bind(
-        template.symbolic_state,
-        execution_problem,
-        preparation_plan,
-        preconditioner=action,
+    state = (
+        provider.bind(
+            template.symbolic_state,
+            execution_problem,
+            preparation_plan,
+            preconditioner=action,
+        )
+        if previous_state is None
+        else provider.refresh(
+            template.symbolic_state,
+            previous_state,
+            execution_problem,
+            preparation_plan,
+            preconditioner=action,
+        )
     )
     return PreparedLinearSolve(
         problem,

@@ -22,17 +22,25 @@ from ..dynamics import ContinuousSystem, DifferentialAlgebraicSystem, TimeGrid
 from ..linalg import AbstractVectorSpace, ArraySpace
 from ..optim import (
     AbstractMinimizationMethod,
+    AbstractStructuredNonlinearMethod,
+    bind_structured_numeric,
     Bounds,
-    IpoptMinimize,
     MinimizationProblem,
     MinimizationResult,
     minimize,
     NonlinearConstraint,
     OptimizationTermination,
-)
-from ..optim._structured_nonlinear import (
+    PooledStructuredNonlinearResult,
+    prepare_structured_nonlinear,
+    PreparedStructuredNonlinearProgram,
+    refresh_structured_nonlinear,
+    solve_pooled_structured_nonlinear,
+    solve_structured_nonlinear,
     StructuredNonlinearProgram,
+    StructuredNonlinearResult,
+    StructuredNonlinearTemplate,
     StructuredNonlinearWarmStart,
+    StructuredPoolEvidence,
 )
 from ..solver import ThetaMethod
 from ..sparse import (
@@ -105,9 +113,7 @@ def _maximum_absolute(value: Array, /) -> Array:
     return jnp.max(jnp.abs(value), initial=jnp.asarray(0.0, dtype=value.dtype))
 
 
-def _maximum_bound_violation(
-    value: Array, lower: Array, upper: Array, /
-) -> Array:
+def _maximum_bound_violation(value: Array, lower: Array, upper: Array, /) -> Array:
     return jnp.max(
         jnp.maximum(jnp.maximum(lower - value, value - upper), 0.0),
         initial=jnp.asarray(0.0, dtype=value.dtype),
@@ -129,9 +135,7 @@ def _array_bound(
 ) -> Array:
     array = jnp.asarray(bound, dtype=value.dtype)
     if np.broadcast_shapes(array.shape, value.shape) != value.shape:
-        raise ValueError(
-            f"{owner} must be scalar or broadcast to shape {value.shape}."
-        )
+        raise ValueError(f"{owner} must be scalar or broadcast to shape {value.shape}.")
     return jnp.broadcast_to(array, value.shape)
 
 
@@ -260,7 +264,9 @@ class DirectCollocationPlan(StrictModule):
         plan_id: str = "control:direct-collocation",
     ):
         if not isinstance(mesh, TemporalMesh) or mesh.role != "collocation":
-            raise TypeError("Direct collocation requires TemporalMesh(role='collocation').")
+            raise TypeError(
+                "Direct collocation requires TemporalMesh(role='collocation')."
+            )
         if not isinstance(method, ThetaMethod):
             raise TypeError("method must be a ThetaMethod.")
         supported = (method.theta == 1.0 and method.endpoint) or (
@@ -399,9 +405,7 @@ class DirectCollocationDecisionLayout(StrictModule):
         states = _inexact(decision.states, "decision states")
         controls = _inexact(decision.controls, "decision controls")
         if states.shape != self.state_array_shape:
-            raise ValueError(
-                f"decision states must have shape {self.state_array_shape}."
-            )
+            raise ValueError(f"decision states must have shape {self.state_array_shape}.")
         if controls.shape != self.control_array_shape:
             raise ValueError(
                 f"decision controls must have shape {self.control_array_shape}."
@@ -418,7 +422,9 @@ class DirectCollocationDecisionLayout(StrictModule):
             parameter_scale = self.parameter_space.validate(self.parameter_scale)
             parts.append(
                 self.parameter_space.flatten(
-                    jax.tree.map(lambda value, scale: value / scale, parameters, parameter_scale)
+                    jax.tree.map(
+                        lambda value, scale: value / scale, parameters, parameter_scale
+                    )
                 )
             )
         if self.variable_duration:
@@ -601,8 +607,8 @@ def _evaluate_values(
     left = jnp.take(decision.states, indices, axis=axis)
     right = jnp.take(decision.states, indices + 1, axis=axis)
     widths = jnp.diff(times)
-    width_shape = (1,) * len(problem.case_shape) + (steps,) + (
-        (1,) * len(problem.state_shape)
+    width_shape = (
+        (1,) * len(problem.case_shape) + (steps,) + ((1,) * len(problem.state_shape))
     )
     state_rates = (right - left) / widths.reshape(width_shape)
     theta = plan.method.theta
@@ -654,9 +660,7 @@ def _evaluate_values(
     if running_cost is not None:
 
         def running(time, state, control):
-            value = jnp.asarray(
-                running_cost(time, state, control, callback_args)
-            )
+            value = jnp.asarray(running_cost(time, state, control, callback_args))
             if value.shape != ():
                 raise ValueError("RunningCost must return one scalar per stage.")
             return value
@@ -665,8 +669,7 @@ def _evaluate_values(
             flat_times, flat_states, flat_controls
         ).reshape(problem.case_shape + (steps,))
         objective = objective + jnp.sum(
-            running_values
-            * jnp.broadcast_to(widths, problem.case_shape + (steps,))
+            running_values * jnp.broadcast_to(widths, problem.case_shape + (steps,))
         )
     terminal_cost = problem.terminal_cost
     if terminal_cost is not None:
@@ -691,6 +694,7 @@ def _evaluate_values(
     )
     path_values = []
     for constraint in problem.path_constraints:
+
         def evaluate_path(time, state, control, callback=constraint):
             return callback(time, state, control, callback_args)
 
@@ -744,9 +748,7 @@ def _constraint_layout(
     upper_parts.append(jnp.zeros((dynamics_size,), dtype=sample.objective.dtype))
     full_dynamics_scale = jnp.broadcast_to(dynamics_scale, sample.dynamics.shape)
     scale_parts.append(full_dynamics_scale.reshape((-1,)))
-    sources.extend(
-        f"dynamics:{index}" for index in range(dynamics_size)
-    )
+    sources.extend(f"dynamics:{index}" for index in range(dynamics_size))
 
     initial_size = int(sample.initial.size)
     initial_slice = (cursor, cursor + initial_size)
@@ -767,16 +769,16 @@ def _constraint_layout(
         path_slices.append((cursor, cursor + size))
         cursor += size
         lower_parts.append(
-            _array_bound(constraint.lower, value, f"{constraint.constraint_id} lower")
-            .reshape((-1,))
+            _array_bound(
+                constraint.lower, value, f"{constraint.constraint_id} lower"
+            ).reshape((-1,))
         )
         upper_parts.append(
-            _array_bound(constraint.upper, value, f"{constraint.constraint_id} upper")
-            .reshape((-1,))
+            _array_bound(
+                constraint.upper, value, f"{constraint.constraint_id} upper"
+            ).reshape((-1,))
         )
-        scale_parts.append(
-            jnp.broadcast_to(constraint.scale, value.shape).reshape((-1,))
-        )
+        scale_parts.append(jnp.broadcast_to(constraint.scale, value.shape).reshape((-1,)))
         sources.extend(
             f"path:{constraint.constraint_id}:{index}" for index in range(size)
         )
@@ -789,16 +791,16 @@ def _constraint_layout(
         trajectory_slices.append((cursor, cursor + size))
         cursor += size
         lower_parts.append(
-            _array_bound(constraint.lower, value, f"{constraint.constraint_id} lower")
-            .reshape((-1,))
+            _array_bound(
+                constraint.lower, value, f"{constraint.constraint_id} lower"
+            ).reshape((-1,))
         )
         upper_parts.append(
-            _array_bound(constraint.upper, value, f"{constraint.constraint_id} upper")
-            .reshape((-1,))
+            _array_bound(
+                constraint.upper, value, f"{constraint.constraint_id} upper"
+            ).reshape((-1,))
         )
-        scale_parts.append(
-            jnp.broadcast_to(constraint.scale, value.shape).reshape((-1,))
-        )
+        scale_parts.append(jnp.broadcast_to(constraint.scale, value.shape).reshape((-1,)))
         sources.extend(
             f"trajectory:{constraint.constraint_id}:{index}" for index in range(size)
         )
@@ -837,9 +839,13 @@ def _trajectory_problem(
     if isinstance(problem, TrajectoryOptimizationProblem):
         return problem
     if not isinstance(problem, ControlProblem):
-        raise TypeError("problem must be TrajectoryOptimizationProblem or ControlProblem.")
+        raise TypeError(
+            "problem must be TrajectoryOptimizationProblem or ControlProblem."
+        )
     if not isinstance(problem.dynamics, DifferentialControlDynamics):
-        raise TypeError("ControlProblem direct collocation requires differential dynamics.")
+        raise TypeError(
+            "ControlProblem direct collocation requires differential dynamics."
+        )
     if plan.variable_duration:
         raise ValueError(
             "Variable-duration direct collocation requires TrajectoryOptimizationProblem."
@@ -847,7 +853,9 @@ def _trajectory_problem(
     if not np.array_equal(
         np.asarray(problem.time_grid.times), np.asarray(plan.mesh.nodes)
     ):
-        raise ValueError("ControlProblem time grid must exactly match the collocation mesh.")
+        raise ValueError(
+            "ControlProblem time grid must exactly match the collocation mesh."
+        )
     path = tuple(
         BoundedPathConstraint(
             constraint,
@@ -903,11 +911,15 @@ class DirectCollocationCompilation(StrictModule):
     bounds: DirectCollocationBounds
     minimization_problem: MinimizationProblem
     structured_program: StructuredNonlinearProgram
+    structured_template: StructuredNonlinearTemplate
+    prepared_structured_program: PreparedStructuredNonlinearProgram
     jacobian_verification: SparseDerivativeVerification | None
     hessian_verification: SparseDerivativeVerification | None
     compilation_id: str = eqx.field(static=True)
 
-    def values(self, coordinates: ArrayLike, args: Any = _DEFAULT_ARGS, /) -> _DirectValues:
+    def values(
+        self, coordinates: ArrayLike, args: Any = _DEFAULT_ARGS, /
+    ) -> _DirectValues:
         runtime_args = self.problem.args if args is _DEFAULT_ARGS else args
         return _evaluate_values(
             self.problem,
@@ -927,6 +939,7 @@ class PreparedDirectCollocation(StrictModule):
     compilation: DirectCollocationCompilation
     method: AbstractMinimizationMethod
     termination: OptimizationTermination
+    structured_program: PreparedStructuredNonlinearProgram
     prepared_id: str = eqx.field(static=True)
 
 
@@ -974,6 +987,7 @@ class DirectCollocationResult(StrictModule):
     trajectory_residuals: tuple[Array, ...]
     objective: Array
     optimization_result: MinimizationResult
+    structured_result: StructuredNonlinearResult | None
     diagnostics: DirectCollocationDiagnostics
     status: Array
     compilation: DirectCollocationCompilation
@@ -993,6 +1007,17 @@ class DirectCollocationResult(StrictModule):
         if self.decision.duration is not None:
             return self.decision.duration
         return self.trajectory.time_grid.t1 - self.trajectory.time_grid.t0
+
+
+class PooledDirectCollocationResult(StrictModule):
+    """Input-ordered direct-collocation results plus pool evidence."""
+
+    results: tuple[DirectCollocationResult, ...]
+    evidence: StructuredPoolEvidence
+
+    @property
+    def successful(self) -> Array:
+        return jnp.stack(tuple(result.successful for result in self.results))
 
 
 def _resolved_scales(
@@ -1026,7 +1051,9 @@ def _resolved_scales(
         parameter = None
     else:
         if parameter_guess is None:
-            raise ValueError("parameter_guess is required for the declared parameter_space.")
+            raise ValueError(
+                "parameter_guess is required for the declared parameter_space."
+            )
         parameter = (
             _space_ones(problem.parameter_space)
             if plan.scaling.parameters is None
@@ -1105,8 +1132,7 @@ def compile_direct_collocation(
     )
     state_scale_array = jnp.broadcast_to(
         state_scale,
-        (1,) * (len(trajectory_problem.case_shape) + 1)
-        + trajectory_problem.state_shape,
+        (1,) * (len(trajectory_problem.case_shape) + 1) + trajectory_problem.state_shape,
     )
     control_scale_array = jnp.broadcast_to(
         control_scale,
@@ -1138,9 +1164,7 @@ def compile_direct_collocation(
             }
         ),
     )
-    initial_decision = DirectCollocationDecision(
-        states, controls, parameters, duration
-    )
+    initial_decision = DirectCollocationDecision(states, controls, parameters, duration)
     coordinates = layout.pack(initial_decision)
     resolved_bounds = DirectCollocationBounds() if bounds is None else bounds
     if not isinstance(resolved_bounds, DirectCollocationBounds):
@@ -1200,9 +1224,7 @@ def compile_direct_collocation(
         problem_id=f"{trajectory_problem.problem_id}:direct-collocation",
     )
     source = ArraySpace((layout.num_variables,), dtype=coordinates.dtype)
-    target = ArraySpace(
-        (constraint_layout.num_constraints,), dtype=coordinates.dtype
-    )
+    target = ArraySpace((constraint_layout.num_constraints,), dtype=coordinates.dtype)
     jacobian = compile_sparse_jacobian(
         scaled_constraints,
         coordinates,
@@ -1218,9 +1240,8 @@ def compile_direct_collocation(
 
         def lagrangian(value, packed_args):
             runtime_args, objective_factor, multipliers = packed_args
-            return (
-                objective_factor * objective(value, runtime_args)
-                + jnp.vdot(multipliers, scaled_constraints(value, runtime_args))
+            return objective_factor * objective(value, runtime_args) + jnp.vdot(
+                multipliers, scaled_constraints(value, runtime_args)
             )
 
         hessian = compile_sparse_hessian(
@@ -1230,9 +1251,7 @@ def compile_direct_collocation(
             sample_args=(
                 trajectory_problem.args,
                 jnp.asarray(1.0, dtype=coordinates.dtype),
-                jnp.zeros(
-                    (constraint_layout.num_constraints,), dtype=coordinates.dtype
-                ),
+                jnp.zeros((constraint_layout.num_constraints,), dtype=coordinates.dtype),
             ),
             compiler=plan.derivatives.compiler,
             chunk_size=plan.derivatives.chunk_size,
@@ -1265,7 +1284,9 @@ def compile_direct_collocation(
                 num_probes=plan.derivatives.num_verification_probes,
             )
             if not bool(np.asarray(hessian_verification.passed)):
-                raise ValueError("Compiled direct-collocation Hessian failed verification.")
+                raise ValueError(
+                    "Compiled direct-collocation Hessian failed verification."
+                )
     compilation_id = canonical_fingerprint(
         {
             "kind": "direct-collocation-compilation",
@@ -1290,6 +1311,10 @@ def compile_direct_collocation(
         program_id=dense_problem.problem_id,
         structure_id=compilation_id,
     )
+    prepared_structured = prepare_structured_nonlinear(
+        structured,
+        trajectory_problem.args,
+    )
     return DirectCollocationCompilation(
         trajectory_problem,
         plan,
@@ -1303,6 +1328,8 @@ def compile_direct_collocation(
         resolved_bounds,
         dense_problem,
         structured,
+        prepared_structured.template,
+        prepared_structured,
         jacobian_verification,
         hessian_verification,
         compilation_id=compilation_id,
@@ -1324,15 +1351,46 @@ def prepare_direct_collocation(
     termination_ = OptimizationTermination() if termination is None else termination
     if not isinstance(termination_, OptimizationTermination):
         raise TypeError("termination must be OptimizationTermination or None.")
+    structured_program = compilation.prepared_structured_program
     return PreparedDirectCollocation(
         compilation,
         method,
         termination_,
+        structured_program,
         prepared_id=canonical_fingerprint(
             {
                 "kind": "prepared-direct-collocation",
                 "compilation": compilation.compilation_id,
                 "method": method.method_id,
+                "numeric_binding": structured_program.numeric_binding_id,
+            }
+        ),
+    )
+
+
+def refresh_direct_collocation(
+    prepared: PreparedDirectCollocation,
+    args: Any,
+    /,
+) -> PreparedDirectCollocation:
+    """Refresh direct-collocation numerics while retaining transcription topology."""
+    if not isinstance(prepared, PreparedDirectCollocation):
+        raise TypeError("prepared must be a PreparedDirectCollocation.")
+    structured_program = refresh_structured_nonlinear(
+        prepared.structured_program,
+        args,
+    )
+    return PreparedDirectCollocation(
+        prepared.compilation,
+        prepared.method,
+        prepared.termination,
+        structured_program,
+        prepared_id=canonical_fingerprint(
+            {
+                "kind": "prepared-direct-collocation",
+                "compilation": prepared.compilation.compilation_id,
+                "method": prepared.method.method_id,
+                "numeric_binding": structured_program.numeric_binding_id,
             }
         ),
     )
@@ -1378,14 +1436,12 @@ def _off_grid_audit(
     left = jnp.take(values.decision.states, jnp.arange(steps), axis=axis)
     right = jnp.take(values.decision.states, jnp.arange(steps) + 1, axis=axis)
     widths = jnp.diff(values.times)
-    rate_shape = (1,) * len(problem.case_shape) + (steps,) + (
-        (1,) * len(problem.state_shape)
+    rate_shape = (
+        (1,) * len(problem.case_shape) + (steps,) + ((1,) * len(problem.state_shape))
     )
     rates = (right - left) / widths.reshape(rate_shape)
     state_fraction_shape = (
-        (1,) * len(problem.case_shape)
-        + (1, points)
-        + (1,) * len(problem.state_shape)
+        (1,) * len(problem.case_shape) + (1, points) + (1,) * len(problem.state_shape)
     )
     left_points = jnp.expand_dims(left, axis=axis + 1)
     right_points = jnp.expand_dims(right, axis=axis + 1)
@@ -1403,20 +1459,19 @@ def _off_grid_audit(
     )
     case_count = prod(problem.case_shape) if problem.case_shape else 1
     flat_count = case_count * steps * points
-    flat_times = jnp.broadcast_to(
-        times, problem.case_shape + times.shape
-    ).reshape((flat_count,))
+    flat_times = jnp.broadcast_to(times, problem.case_shape + times.shape).reshape(
+        (flat_count,)
+    )
     flat_states = states.reshape((flat_count,) + problem.state_shape)
     flat_rates = rates.reshape((flat_count,) + problem.state_shape)
     flat_controls = controls.reshape((flat_count,) + problem.control_shape)
-    callback_args = _callback_args(
-        problem, compilation.plan, values.decision, args
-    )
+    callback_args = _callback_args(problem, compilation.plan, values.decision, args)
     dynamics_model = problem.dynamics
     if isinstance(dynamics_model, ContinuousSystem):
         residual = jax.vmap(
-            lambda time, state, rate, control: rate
-            - dynamics_model.evaluate(time, state, callback_args, inputs=control)
+            lambda time, state, rate, control: (
+                rate - dynamics_model.evaluate(time, state, callback_args, inputs=control)
+            )
         )(flat_times, flat_states, flat_rates, flat_controls)
     else:
         residual = jax.vmap(
@@ -1441,6 +1496,7 @@ def _off_grid_audit(
     interval_defects = jnp.max(residual_magnitudes, axis=-1)
     interval_path = jnp.zeros(problem.case_shape + (steps,), dtype=dtype)
     for constraint in problem.path_constraints:
+
         def evaluate_path(time, state, control, callback=constraint):
             return callback(time, state, control, callback_args)
 
@@ -1464,10 +1520,7 @@ def _off_grid_audit(
         interval_path,
         initial=jnp.asarray(0.0, dtype=dtype),
     )
-    finite = (
-        jnp.all(jnp.isfinite(residuals))
-        & jnp.all(jnp.isfinite(interval_path))
-    )
+    finite = jnp.all(jnp.isfinite(residuals)) & jnp.all(jnp.isfinite(interval_path))
     return DirectCollocationOffGridAudit(
         times,
         residuals,
@@ -1496,12 +1549,22 @@ def solve_prepared_direct_collocation(
     initial_decision: DirectCollocationDecision | None = None,
     args: Any = _DEFAULT_ARGS,
     warm_start: StructuredNonlinearWarmStart | None = None,
+    _structured_result: StructuredNonlinearResult | None = None,
 ) -> DirectCollocationResult:
     """Solve, decode, and independently audit one prepared direct transcription."""
     if not isinstance(prepared, PreparedDirectCollocation):
         raise TypeError("prepared must be a PreparedDirectCollocation.")
     compilation = prepared.compilation
-    runtime_args = compilation.problem.args if args is _DEFAULT_ARGS else args
+    structured_program = (
+        prepared.structured_program
+        if args is _DEFAULT_ARGS
+        else bind_structured_numeric(
+            prepared.structured_program.template,
+            args,
+            numeric_version=prepared.structured_program.numeric_version + 1,
+        )
+    )
+    runtime_args = structured_program.args
     coordinates = (
         compilation.initial_coordinates
         if initial_decision is None
@@ -1512,17 +1575,31 @@ def solve_prepared_direct_collocation(
         or np.any(np.asarray(coordinates) > np.asarray(compilation.coordinate_upper))
     ):
         raise ValueError("The direct-collocation initial decision violates its bounds.")
-    if isinstance(prepared.method, IpoptMinimize):
-        optimization = prepared.method.solve_structured(
-            compilation.structured_program,
+    if _structured_result is not None:
+        if _structured_result.structure_id != structured_program.structure_id:
+            raise ValueError(
+                "Structured result does not match direct-collocation structure."
+            )
+        structured_result = _structured_result
+        optimization = structured_result.optimization
+    elif (
+        isinstance(prepared.method, AbstractStructuredNonlinearMethod)
+        and prepared.method.structured_capabilities.exact_sparse_jacobian
+    ):
+        structured_result = solve_structured_nonlinear(
+            structured_program,
             coordinates,
+            method=prepared.method,
             termination=prepared.termination,
-            args=runtime_args,
             warm_start=warm_start,
         )
+        optimization = structured_result.optimization
     else:
         if warm_start is not None:
-            raise ValueError("Structured warm starts are currently supported only by Ipopt.")
+            raise ValueError(
+                f"{prepared.method.method_id} does not support structured warm starts."
+            )
+        structured_result = None
         optimization = minimize(
             compilation.minimization_problem,
             coordinates,
@@ -1638,12 +1715,62 @@ def solve_prepared_direct_collocation(
         values.trajectory,
         values.objective,
         optimization,
+        structured_result,
         diagnostics,
         status,
         compilation,
         result_id=f"{compilation.problem.problem_id}:direct-collocation-result",
         method_id=method_id,
     )
+
+
+def solve_pooled_direct_collocation(
+    prepared: PreparedDirectCollocation,
+    initial_decisions: Sequence[DirectCollocationDecision],
+    /,
+    *,
+    lane_count: int,
+    warm_starts: Sequence[StructuredNonlinearWarmStart | None] | None = None,
+) -> PooledDirectCollocationResult:
+    """Solve independent decisions with one prepared fixed-topology transcription."""
+    if not isinstance(prepared, PreparedDirectCollocation):
+        raise TypeError("prepared must be a PreparedDirectCollocation.")
+    if (
+        not isinstance(prepared.method, AbstractStructuredNonlinearMethod)
+        or not prepared.method.structured_capabilities.pooled_batch
+    ):
+        raise TypeError(
+            "Pooled direct collocation requires a pool-capable structured NLP method."
+        )
+    decisions = tuple(initial_decisions)
+    if not decisions:
+        raise ValueError("initial_decisions must contain at least one decision.")
+    coordinates = jnp.stack(
+        tuple(
+            prepared.compilation.decision_layout.pack(decision) for decision in decisions
+        )
+    )
+    pooled: PooledStructuredNonlinearResult = solve_pooled_structured_nonlinear(
+        prepared.structured_program,
+        coordinates,
+        method=prepared.method,
+        termination=prepared.termination,
+        lane_count=lane_count,
+        warm_starts=warm_starts,
+    )
+    results = tuple(
+        solve_prepared_direct_collocation(
+            prepared,
+            initial_decision=decision,
+            _structured_result=structured_result,
+        )
+        for decision, structured_result in zip(
+            decisions,
+            pooled.results,
+            strict=True,
+        )
+    )
+    return PooledDirectCollocationResult(results, pooled.evidence)
 
 
 def solve_direct_collocation(
@@ -1703,9 +1830,12 @@ __all__ = [
     "DirectCollocationOffGridAudit",
     "DirectCollocationPlan",
     "DirectCollocationResult",
+    "PooledDirectCollocationResult",
     "DirectCollocationScaling",
     "prepare_direct_collocation",
+    "refresh_direct_collocation",
     "PreparedDirectCollocation",
     "solve_direct_collocation",
+    "solve_pooled_direct_collocation",
     "solve_prepared_direct_collocation",
 ]

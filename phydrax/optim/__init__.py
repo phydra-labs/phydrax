@@ -41,7 +41,6 @@ from ._external_backends import (
     NLoptMinimize,
     SciPyMinimize,
 )
-from ._filter_ipm import FilterInteriorPoint, FilterInteriorPointEvidence
 from ._finite import FiniteAxis, FiniteExhaustiveSearch, FiniteProductSpace
 from ._graph_least_squares import (
     linearize_residual_graph,
@@ -62,6 +61,7 @@ from ._incremental_factor_graph import (
     remove_incremental_factor,
     update_incremental_factor_graph,
 )
+from ._interior_point import InteriorPointMode, PrimalDualInteriorPoint
 from ._ipopt import (
     IpoptCallbackCounts,
     IpoptMinimize,
@@ -102,6 +102,7 @@ from ._kkt import (
     KKTForm,
     KKTInertia,
     KKTPlan,
+    KKTRegularizationPolicy,
     KKTSolveResult,
     plan_kkt,
     solve_factored_kkt,
@@ -156,10 +157,6 @@ from ._pde_constrained import (
     StateEquationResult,
 )
 from ._pounders import POUNDERS, POUNDERSEvidence
-from ._primal_dual import (
-    PrimalDualNewtonKrylov,
-    PrimalDualPredictorCorrector,
-)
 from ._programming import (
     AbstractConvexCone,
     AbstractConvexProgramMethod,
@@ -265,6 +262,11 @@ from ._robust_losses import (
     SoftL1Loss,
     TukeyLoss,
 )
+from ._sparse_kkt import (
+    assemble_sparse_augmented_kkt,
+    plan_sparse_augmented_kkt,
+    SparseAugmentedKKTPlan,
+)
 from ._stochastic import (
     AbstractRiskMeasure,
     AbstractSamplingPolicy,
@@ -284,10 +286,47 @@ from ._stochastic import (
     StochasticProblem,
     StochasticResult,
 )
+from ._structured_compile import (
+    compile_structured_minimization,
+    solve_structured_minimization,
+    StructuredMinimizationCompilation,
+    StructuredMinimizationResult,
+)
+from ._structured_method import (
+    AbstractStructuredNonlinearMethod,
+    solve_structured_nonlinear,
+    StructuredNonlinearCapabilities,
+)
 from ._structured_nonlinear import (
+    bind_structured_numeric,
+    prepare_structured_nonlinear,
+    prepare_structured_template,
+    PreparedStructuredNonlinearProgram,
+    refresh_structured_nonlinear,
     StructuredNonlinearEvaluation,
     StructuredNonlinearProgram,
+    StructuredNonlinearResult,
+    StructuredNonlinearTemplate,
     StructuredNonlinearWarmStart,
+    StructuredOptimizationWork,
+)
+from ._structured_pool import (
+    PooledStructuredNonlinearResult,
+    solve_pooled_structured_nonlinear,
+    StructuredPoolEvidence,
+)
+from ._structured_sensitivity import (
+    structured_parameter_continuation,
+    structured_solution_jvp,
+    structured_solution_vjp,
+    StructuredContinuationSeed,
+    StructuredSensitivityMode,
+)
+from ._structured_state_design import (
+    compile_structured_state_design,
+    solve_structured_state_design,
+    StructuredStateDesignCompilation,
+    StructuredStateDesignResult,
 )
 from ._trust_region import (
     solve_trust_region_subproblem,
@@ -377,8 +416,8 @@ __all__ = [
     "AbstractRiskMeasure",
     "AbstractSamplingPolicy",
     "AbstractStochasticMethod",
-    "FilterInteriorPoint",
-    "FilterInteriorPointEvidence",
+    "InteriorPointMode",
+    "PrimalDualInteriorPoint",
     "ActiveSetNewton",
     "AbstractScalarIterativeMethod",
     "AugmentedLagrangian",
@@ -437,8 +476,6 @@ __all__ = [
     "ProjectedGradient",
     "ProjectedLBFGS",
     "ProgressiveHedging",
-    "PrimalDualNewtonKrylov",
-    "PrimalDualPredictorCorrector",
     "ProximalGradient",
     "ProximalNewton",
     "ProximalProblem",
@@ -474,6 +511,36 @@ __all__ = [
     "StateDesignResult",
     "StateEquationResult",
     "SteihaugToint",
+    "SparseAugmentedKKTPlan",
+    "assemble_sparse_augmented_kkt",
+    "plan_sparse_augmented_kkt",
+    "PooledStructuredNonlinearResult",
+    "StructuredPoolEvidence",
+    "solve_pooled_structured_nonlinear",
+    "StructuredMinimizationCompilation",
+    "StructuredMinimizationResult",
+    "compile_structured_minimization",
+    "solve_structured_minimization",
+    "StructuredStateDesignCompilation",
+    "StructuredStateDesignResult",
+    "compile_structured_state_design",
+    "solve_structured_state_design",
+    "StructuredContinuationSeed",
+    "StructuredSensitivityMode",
+    "structured_parameter_continuation",
+    "structured_solution_jvp",
+    "structured_solution_vjp",
+    "AbstractStructuredNonlinearMethod",
+    "PreparedStructuredNonlinearProgram",
+    "StructuredNonlinearCapabilities",
+    "StructuredNonlinearResult",
+    "StructuredNonlinearTemplate",
+    "StructuredOptimizationWork",
+    "bind_structured_numeric",
+    "prepare_structured_nonlinear",
+    "prepare_structured_template",
+    "refresh_structured_nonlinear",
+    "solve_structured_nonlinear",
     "StructuredNonlinearEvaluation",
     "StructuredNonlinearProgram",
     "StructuredNonlinearWarmStart",
@@ -548,6 +615,7 @@ __all__ = [
     "KKTForm",
     "KKTInertia",
     "KKTPlan",
+    "KKTRegularizationPolicy",
     "KKTSolveResult",
     "factor_kkt",
     "kkt_inertia",

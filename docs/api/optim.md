@@ -721,35 +721,37 @@ unconstrained inner method. `SQP` forms explicit local QP subproblems through
 `solve_quadratic_program`. Its optional filter keeps objective and violation dominance
 separate; its second-order correction relinearizes constraints at the trial point to
 address the Maratos effect. Elastic restoration has a distinct failure status.
-`PrimalDualPredictorCorrector` performs an affine predictor and centered corrector,
-keeps primal, dual, slack, and complementarity residuals separate, and explicitly
-rejects infeasible or nonfinite initial states. Nested methods aggregate only observable
-work counters; unavailable counts remain explicitly incomplete.
+`PrimalDualInteriorPoint` is the single native primal-dual method. Its explicit
+`mode` selects dense filter, matrix-free centered, matrix-free predictor-corrector,
+or exact sparse augmented KKT execution. The dense and matrix-free modes preserve
+their original accepted-point, restoration, and transformed-execution contracts.
+The sparse mode consumes a prepared `StructuredNonlinearProgram`, retains one
+bound-form slack per non-equality constraint component, and reuses one KKT
+factorization across affine predictor and centering-corrector right-hand sides.
 
-`prepare_constrained_model` fixes the canonical equality/lower/upper ordering,
-source identities, objective and constraint scaling, Jacobian layout, and
-Lagrangian Hessian. `SQP(hessian_update=...)` supports damped BFGS, SR1, and
-exact Lagrangian Hessians. `FilterInteriorPoint` provides affine predictor,
-Mehrotra corrector, fraction-to-boundary, objective-feasibility filter,
-adaptive barrier, and restoration. Both predictor and corrector use one
-condensed KKT factorization per iteration; `FilterInteriorPointEvidence`
-reports factorization builds, right-hand-side solves, and actual reuse.
+`prepare_constrained_model` remains the canonical dense equality/lower/upper
+model. `SQP(hessian_update=...)` supports damped BFGS, SR1, and exact Lagrangian
+Hessians. `FilterGlobalization` owns fixed-capacity objective-feasibility filter
+semantics shared by constrained methods.
 
-`plan_kkt` chooses augmented, null-space, or range-space policy from primal and
-constraint dimensions and Jacobian density. `factor_kkt` builds one
-inertia-corrected canonical factorization; `solve_factored_kkt` reuses it for
-additional right-hand sides, while `solve_kkt` is the one-shot convenience
-form. Final interior-point success is reconciled against an independently
-reconstructed physical active-set KKT certificate. An internal success whose
-stationarity, feasibility, regularity, or complementarity misses tolerance is
-returned as explicit certification failure.
+`plan_kkt` currently declares the actually executed `dense-augmented` form.
+`factor_kkt` routes its factorization through `phydrax.linalg`;
+`solve_factored_kkt` reuses it for additional right-hand sides. Sparse structured
+execution separately uses `plan_sparse_augmented_kkt` and
+`assemble_sparse_augmented_kkt`, which compile exact Hessian, Jacobian, barrier
+diagonal, regularization, and slack-coupling routes into one full-symmetric
+canonical sparse operator.
 
-KKT inertia uses the Hermitian spectral precision path, while KKT residuals and
-active-set decisions use the optimization precision policy. Physical least-squares
-and constrained certificates carry their own precision envelopes. Forward and
-reverse constrained sensitivities retain both the dense linear plan ID and the
-primal precision evidence, so a regularity decision is auditable independently of
-the returned tangent.
+KKT inertia records its source and whether zero inertia is reliable. Dense
+certification uses the Hermitian spectral precision path. A provider-reported
+inertia is never silently treated as equivalent evidence. Final optimizer
+success remains subordinate to an independently reconstructed KKT certificate.
+An internal success whose stationarity, feasibility, regularity, or
+complementarity misses tolerance is returned as explicit certification failure.
+The current Spineax/cuDSS capability declares zero inertia unreliable, so the
+nonconvex structured IPM rejects it as a KKT provider. The sparse-augmented
+representation remains executable through a certified dense provider; cuDSS
+becomes eligible only when its zero-inertia evidence passes the provider gate.
 
 !!! example
     ```python
@@ -772,45 +774,70 @@ the returned tangent.
 
 ### Structured sparse nonlinear programs
 
-`StructuredNonlinearProgram` pairs a scalar objective and bound-form constraint vector
-with normalized variable and constraint bounds, exact scalar source identities, a
-compiled `SparseDerivativePlan` for the Jacobian, and an optional sparse Lagrangian
-Hessian. `StructuredNonlinearEvaluation` returns the sparse operator rather than
-materializing a dense Jacobian. `StructuredNonlinearWarmStart` keeps primal,
-constraint-dual, and variable-bound-dual arrays tied to one exact structure ID.
+`StructuredNonlinearProgram` is the fixed-topology bound-form optimization IR.
+It owns the scalar objective, constraint vector, variable and constraint bounds,
+source identities, exact sparse Jacobian plan, optional exact sparse scalar
+Lagrangian-Hessian plan, and structure identity.
 
-`IpoptMinimize.solve_structured` uses low-level `cyipopt.Problem` callbacks. Install
-`phydrax[ipopt]` together with an external Ipopt library, or use conda-forge's `ipopt`
-and `cyipopt` packages. The adapter canonicalizes duplicate-free Jacobian coordinates
-and one lower-triangular Hessian representative per symmetric pair. Without a Hessian
-plan it declares limited-memory mode; an exact plan and an approximation override are
-mutually exclusive.
+`prepare_structured_template` freezes dimensions, argument signatures, bound
+roles, and derivative topology. `bind_structured_numeric` binds dynamic args,
+bound values, and scaling. `refresh_structured_nonlinear` changes numeric values
+while rejecting every shape, dtype, finite-role, equality-role, or sparsity
+change. `PreparedStructuredNonlinearProgram` is therefore reusable across
+fixed-topology parameter families without rediscovering derivatives.
 
-`StructuredIpoptEvidence` retains mapped/raw status, complete callback and host/device
-conversion counts, sparse plan identities, option identity, Hessian mode, and a typed
-final `StructuredNonlinearWarmStart`. Warm starts require the exact program and structure
-IDs and finite sign-valid bound multipliers.
+`AbstractStructuredNonlinearMethod` is the method-neutral execution boundary.
+`solve_structured_nonlinear` accepts native `PrimalDualInteriorPoint` and
+external `IpoptMinimize` implementations without domain-side backend tests.
+`StructuredNonlinearResult` contains the generic `MinimizationResult`, exact
+structured work, and a portable `StructuredNonlinearWarmStart` containing the
+primal, complete constraint multipliers, and direct variable-bound multipliers.
 
-Final constraint multipliers and variable-bound multipliers are normalized into a
-`ConstrainedOptimalityCertificate`. Stationarity uses the sparse transpose action;
-primal feasibility, dual signs, slacks, activity, and complementarity are reconstructed
-independently. Ipopt backend success that misses the requested physical KKT tolerance is
-returned as certification failure. This external route declares
-`implicit_differentiation=False`. The ordinary
-`IpoptMinimize.solve(MinimizationProblem, ...)` route remains separate.
+`solve_pooled_structured_nonlinear` advances more independent structured tasks
+than execution lanes while retaining input order, exactly-once completion,
+failure results, completion placement, utilization, and one execution-signature
+identity. Pooling is explicit and never splits mathematically coupled case axes.
+
+`compile_structured_minimization` lowers a fixed-topology PyTree
+`MinimizationProblem` into the same IR. `compile_structured_state_design` and
+the control compilers reuse this path rather than defining alternate sparse NLP
+representations.
+
+`IpoptMinimize` implements the same structured method boundary through low-level
+`cyipopt.Problem` callbacks. Install `phydrax[ipopt]` together with an external
+Ipopt library, or use conda-forge's `ipopt` and `cyipopt` packages. The adapter
+canonicalizes duplicate-free Jacobian coordinates and one lower-triangular
+Hessian representative per symmetric pair. Without a Hessian plan it declares
+limited-memory mode; an exact plan and an approximation override are mutually
+exclusive. No backend is selected by problem size and no failure causes a
+fallback.
+
+`StructuredIpoptEvidence` retains mapped/raw status, complete callback and
+host/device conversion counts, sparse plan identities, option identity, Hessian
+mode, and a typed final `StructuredNonlinearWarmStart`. Warm starts require the
+exact program and structure IDs and finite sign-valid bound multipliers. Final
+multipliers are normalized into a `ConstrainedOptimalityCertificate`; Ipopt
+backend success that misses the requested physical KKT tolerance is returned as
+certification failure. This external route declares
+`implicit_differentiation=False`; ordinary
+`IpoptMinimize.solve(MinimizationProblem, ...)` remains separate.
+
+`structured_solution_jvp` and `structured_solution_vjp` differentiate certified
+fixed-active or barrier KKT equations. `structured_parameter_continuation`
+exposes a certified fixed-active KKT branch to `phydrax.continuation`.
 
 ::: phydrax.optim.StructuredNonlinearProgram
 
-::: phydrax.optim.StructuredNonlinearEvaluation
+::: phydrax.optim.PreparedStructuredNonlinearProgram
 
 ::: phydrax.optim.StructuredNonlinearWarmStart
 
+::: phydrax.optim.StructuredNonlinearResult
 ::: phydrax.optim.IpoptCallbackCounts
 
 ::: phydrax.optim.IpoptStatusEvidence
 
 ::: phydrax.optim.StructuredIpoptEvidence
-
 
 ### Implicit solution maps
 
@@ -825,8 +852,8 @@ inequalities, and equalities. It canonicalizes every finite lower and upper side
 the primal problem through any method declaring `implicit_differentiation`, and
 differentiates the locally fixed active-set KKT system with the configured
 `LinearSolvePolicy`. Native projected methods, `AugmentedLagrangian`, `SQP`, and
-`PrimalDualNewtonKrylov` return the multiplier, slack, activity, and stationarity
-certificate required by this path.
+`PrimalDualInteriorPoint` return the multiplier, slack, activity, and
+stationarity certificate required by this path.
 
 The constrained derivative is classical only at a successful regular KKT point with a
 strictly complementary active set. A failed primal solve, ambiguous activity, or
@@ -1160,11 +1187,7 @@ single-process measurements, not backend-independent performance claims.
 
 ---
 
-::: phydrax.optim.PrimalDualNewtonKrylov
-
----
-
-::: phydrax.optim.PrimalDualPredictorCorrector
+::: phydrax.optim.PrimalDualInteriorPoint
 
 ---
 

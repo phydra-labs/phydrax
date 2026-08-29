@@ -104,6 +104,11 @@ from .slepc import (
     SLEPcOperatorMode,
     SLEPcSTOptions,
 )
+from .spineax import (
+    spineax_availability,
+    SPINEAX_CAPABILITIES,
+    SpineaxBackend,
+)
 
 
 __all__ = [
@@ -122,6 +127,9 @@ __all__ = [
     "prepare_mpax",
     "refresh_mpax",
     "solve_mpax",
+    "SPINEAX_CAPABILITIES",
+    "SpineaxBackend",
+    "spineax_availability",
     "AMGX_CAPABILITIES",
     "PYAMGCL_CAPABILITIES",
     "AMGBackendName",

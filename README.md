@@ -69,6 +69,10 @@ Most workflows are composing a few primitives:
 - **Optimal transport**: integration measures lower into balanced finite transport
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
+- **Combinatorial optimization**: native exact finite, cardinality, assignment,
+  and DAG path oracles preserve logical decisions, linear objective features,
+  deterministic ties, independent certificates, JIT batching, and explicit
+  blackbox surrogate pullbacks.
 - **Interpolation**: reusable anisotropic Smolyak surrogates preserve labeled
   domains, array-valued outputs, and JAX differentiation.
 - **Positive-definite kernels**: one covariance-safe PyTree algebra serves Gaussian

@@ -304,7 +304,10 @@ collocated = phx.control.solve_direct_collocation(
     collocation_plan,
     initial_states,
     initial_controls,
-    method=phx.optim.FilterInteriorPoint(max_dense_dimension=128),
+    method=phx.optim.PrimalDualInteriorPoint(
+        mode="dense-filter",
+        max_dense_dimension=128,
+    ),
     termination=phx.optim.OptimizationTermination(
         absolute_optimality=1e-8,
         relative_optimality=0.0,
@@ -326,10 +329,15 @@ Inspect both `maximum_defect` and `maximum_constraint_violation`. The separately
 continuous-time certificate. The result therefore records
 `off_grid_certified=False`.
 
-The native `FilterInteriorPoint` route remains dense and enforces its declared dimension
-guard. For larger transcriptions, explicitly select `IpoptMinimize`; the structured path
-supplies exact sparse constraint Jacobian values and topology. No backend is chosen by
-problem size and no backend failure triggers a fallback.
+The native dense route uses
+`PrimalDualInteriorPoint(mode="dense-filter")` and retains its explicit
+dimension guard. Larger exact-sparse transcriptions can explicitly select
+`PrimalDualInteriorPoint(mode="sparse-augmented")` with a chosen KKT linear
+policy, or `IpoptMinimize`. No backend is chosen by problem size and no backend
+failure triggers a fallback. Repeated fixed-topology problems should call
+`prepare_direct_collocation`, `refresh_direct_collocation`, and
+`solve_prepared_direct_collocation`; independent initial decisions can use
+`solve_pooled_direct_collocation`.
 
 Per-interval audit values drive an explicit refinement policy. Refinement transfers only
 the primal decision; changed-topology dual multipliers are intentionally discarded.
@@ -345,7 +353,10 @@ refinement_policy = phx.control.DirectCollocationRefinementPolicy(
 refinement = phx.control.solve_refined_direct_collocation(
     collocated,
     refinement_policy,
-    method=phx.optim.FilterInteriorPoint(max_dense_dimension=512),
+    method=phx.optim.PrimalDualInteriorPoint(
+        mode="dense-filter",
+        max_dense_dimension=512,
+    ),
     termination=phx.optim.OptimizationTermination(
         absolute_optimality=1e-8,
         relative_optimality=0.0,
