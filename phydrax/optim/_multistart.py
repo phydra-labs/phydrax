@@ -18,9 +18,16 @@ from ..linalg import PyTreeSpace
 from ._bounds import ProjectedLBFGS
 from ._iterative import (
     AbstractMinimizationMethod,
+    ConstrainedOptimalityCertificate,
     MinimizationProblem,
     MinimizationResult,
     OptimizationTermination,
+)
+from ._structured_compile import compile_structured_minimization
+from ._structured_method import AbstractStructuredNonlinearMethod
+from ._structured_pool import (
+    solve_pooled_structured_nonlinear,
+    StructuredPoolEvidence,
 )
 
 
@@ -33,6 +40,7 @@ class MultiStartPolicy(StrictModule):
     generator: StartGenerator = eqx.field(static=True)
     normal_scale: float = eqx.field(static=True)
     seed: int = eqx.field(static=True)
+    lane_count: int | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -42,6 +50,7 @@ class MultiStartPolicy(StrictModule):
         generator: StartGenerator = "uniform-bounds",
         normal_scale: float = 1.0,
         seed: int = 0,
+        lane_count: int | None = None,
     ):
         method = ProjectedLBFGS() if local_method is None else local_method
         if not isinstance(method, AbstractMinimizationMethod):
@@ -54,11 +63,15 @@ class MultiStartPolicy(StrictModule):
             raise ValueError("Unknown multi-start generator.")
         if not isfinite(scale) or scale <= 0.0:
             raise ValueError("normal_scale must be finite and positive.")
+        lanes = None if lane_count is None else int(lane_count)
+        if lanes is not None and (lanes < 1 or lanes > count_):
+            raise ValueError("lane_count must lie in [1, count].")
         self.local_method = method
         self.count = count_
         self.generator = generator
         self.normal_scale = scale
         self.seed = int(seed)
+        self.lane_count = lanes
 
 
 class MultiStartResult(StrictModule):
@@ -70,6 +83,7 @@ class MultiStartResult(StrictModule):
     certified: Array
     best_index: Array
     attempted: Array
+    pool_evidence: StructuredPoolEvidence | None
 
     @property
     def successful(self):
@@ -118,6 +132,34 @@ def _starts(
     return space, jnp.concatenate([center[None, :], generated], axis=0)
 
 
+def _decode_structured_multistart(
+    result,
+    space: PyTreeSpace,
+    /,
+) -> MinimizationResult:
+    raw = result.optimization
+    certificate = raw.certificate
+    if isinstance(certificate, ConstrainedOptimalityCertificate):
+        certificate = eqx.tree_at(
+            lambda value: value.stationarity_residual,
+            certificate,
+            space.unflatten(jnp.asarray(certificate.stationarity_residual)),
+        )
+    return MinimizationResult(
+        space.unflatten(raw.parameters),
+        raw.objective,
+        raw.auxiliary,
+        raw.status,
+        raw.diagnostics,
+        raw.provenance,
+        certificate=certificate,
+        optimality_certificate=raw.optimality_certificate,
+        status_evidence=raw.status_evidence,
+        method_evidence=raw.method_evidence,
+        precision_evidence=raw.precision_evidence,
+    )
+
+
 def multistart_minimize(
     problem: MinimizationProblem,
     initial_parameters: PyTree[Any],
@@ -150,15 +192,41 @@ def multistart_minimize(
         maximum_steps=per_steps,
         maximum_evaluations=per_evaluations,
     )
-    results = tuple(
-        policy_.local_method.solve(
-            problem,
-            space.unflatten(start),
-            termination=local_termination,
-            args=args,
+    pool_evidence = None
+    if policy_.lane_count is None:
+        results = tuple(
+            policy_.local_method.solve(
+                problem,
+                space.unflatten(start),
+                termination=local_termination,
+                args=args,
+            )
+            for start in starts
         )
-        for start in starts
-    )
+    else:
+        if not isinstance(policy_.local_method, AbstractStructuredNonlinearMethod):
+            raise TypeError("Pooled multistart requires a structured nonlinear method.")
+        if not policy_.local_method.structured_capabilities.pooled_batch:
+            raise ValueError(
+                f"{policy_.local_method.method_id} does not support pooled execution."
+            )
+        compilation = compile_structured_minimization(
+            problem,
+            initial_parameters,
+            sample_args=args,
+            exact_hessian=True,
+        )
+        pooled = solve_pooled_structured_nonlinear(
+            compilation.prepared,
+            starts,
+            method=policy_.local_method,
+            termination=local_termination,
+            lane_count=policy_.lane_count,
+        )
+        results = tuple(
+            _decode_structured_multistart(result, space) for result in pooled.results
+        )
+        pool_evidence = pooled.evidence
     objectives = jnp.stack([result.objective for result in results])
     statuses = jnp.stack([result.status for result in results])
     certified = jnp.stack([result.successful for result in results])
@@ -180,6 +248,7 @@ def multistart_minimize(
         certified,
         best_index,
         jnp.asarray(len(results), dtype=jnp.int32),
+        pool_evidence,
     )
 
 

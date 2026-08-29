@@ -21,7 +21,9 @@ QualificationBackend = Literal["native", "ipopt"]
 
 def _method(backend: QualificationBackend):
     if backend == "native":
-        return phx.optim.FilterInteriorPoint(max_dense_dimension=512)
+        return phx.optim.PrimalDualInteriorPoint(
+            mode="dense-filter", max_dense_dimension=512
+        )
     if backend == "ipopt":
         return phx.optim.IpoptMinimize(options={"print_level": 0})
     raise ValueError("backend must be 'native' or 'ipopt'.")
@@ -108,9 +110,7 @@ def run_qualification_case(
         maximum_constraint_violation=float(
             result.diagnostics.maximum_constraint_violation
         ),
-        maximum_off_grid_defect=float(
-            result.diagnostics.maximum_off_grid_defect
-        ),
+        maximum_off_grid_defect=float(result.diagnostics.maximum_off_grid_defect),
         replay_error=replay_error,
         derivative_action_error=derivative_error,
         variables=program.num_variables,

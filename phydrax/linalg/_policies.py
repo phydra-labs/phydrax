@@ -150,6 +150,41 @@ class SparseCholesky(AbstractLinearMethod):
         return "sparse-cholesky"
 
 
+class SparseLDLT(AbstractLinearMethod):
+    """Sparse symmetric-indefinite LDLᵀ through an explicit cuDSS provider."""
+
+    provider: Literal["spineax-cudss"] = eqx.field(static=True)
+    reordering: Literal["default", "nested_dissection", "amd"] = eqx.field(static=True)
+    memory_mode: Literal["device", "hybrid"] = eqx.field(static=True)
+    refinement_steps: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        provider: Literal["spineax-cudss"] = "spineax-cudss",
+        reordering: Literal["default", "nested_dissection", "amd"] = "default",
+        memory_mode: Literal["device", "hybrid"] = "device",
+        refinement_steps: int = 1,
+    ):
+        if provider != "spineax-cudss":
+            raise ValueError(f"Unknown sparse LDLT provider {provider!r}.")
+        if reordering not in ("default", "nested_dissection", "amd"):
+            raise ValueError(f"Unknown sparse LDLT reordering {reordering!r}.")
+        if memory_mode not in ("device", "hybrid"):
+            raise ValueError(f"Unknown sparse LDLT memory mode {memory_mode!r}.")
+        refinement = int(refinement_steps)
+        if refinement < 0:
+            raise ValueError("refinement_steps must be non-negative.")
+        self.provider = provider
+        self.reordering = reordering
+        self.memory_mode = memory_mode
+        self.refinement_steps = refinement
+
+    @property
+    def name(self) -> str:
+        return "sparse-ldlt"
+
+
 class SparseQR(AbstractLinearMethod):
     """Sparse QR with an explicit device JAX or host SPQR provider."""
 
@@ -679,6 +714,7 @@ __all__ = [
     "RankPolicy",
     "SolveResourcePolicy",
     "SparseLU",
+    "SparseLDLT",
     "SparseQR",
     "StructuredDirect",
     "TolerancePolicy",

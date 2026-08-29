@@ -168,7 +168,9 @@ def _direct_result():
         plan,
         jnp.stack((mesh.nodes, mesh.nodes), axis=-1),
         jnp.ones((mesh.num_steps, 1)),
-        method=phx.optim.FilterInteriorPoint(max_dense_dimension=128),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="dense-filter", max_dense_dimension=128
+        ),
         termination=phx.optim.OptimizationTermination(
             absolute_optimality=1.0e-8,
             relative_optimality=0.0,

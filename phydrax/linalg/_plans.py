@@ -47,6 +47,7 @@ from ._policies import (
     PCG,
     ProjectedPCG,
     SparseCholesky,
+    SparseLDLT,
     SparseLU,
     SparseQR,
     StructuredDirect,
@@ -90,6 +91,7 @@ LinearBackend: TypeAlias = Literal[
     "jax-dense",
     "jax-sparse",
     "host-sparse",
+    "spineax-cudss",
     "native-krylov",
     "native-block-krylov",
     "matfree",
@@ -134,6 +136,7 @@ class LinearSolvePlan(StrictModule):
             "jax-dense",
             "jax-sparse",
             "host-sparse",
+            "spineax-cudss",
             "native-krylov",
             "native-block-krylov",
             "matfree",
@@ -342,6 +345,35 @@ def _validate_precision_policy(
         return
 
     rejection = "MixedPrecisionPolicy is capability-rejected"
+    if isinstance(method, SparseLDLT):
+        coordinate_dtype = _coordinate_dtype(problem.operator.source)
+        requested_operator = (
+            coordinate_dtype
+            if precision.operator_dtype is None
+            else jnp.dtype(precision.operator_dtype)
+        )
+        factorization_dtype = (
+            coordinate_dtype
+            if precision.factorization_dtype is None
+            else jnp.dtype(precision.factorization_dtype)
+        )
+        if requested_operator != coordinate_dtype:
+            raise LinearCapabilityError(
+                f"{rejection}: operator_dtype must match stored sparse coordinates."
+            )
+        if factorization_dtype != coordinate_dtype:
+            raise LinearCapabilityError(
+                f"{rejection}: Spineax cuDSS currently requires factorization_dtype "
+                "to match stored sparse coordinates."
+            )
+        if (
+            precision.preconditioner_dtype is not None
+            or precision.krylov_dtype is not None
+        ):
+            raise LinearCapabilityError(
+                f"{rejection}: sparse LDLT has no preconditioner or Krylov storage."
+            )
+        return
     iterative_methods = (
         PCG,
         ProjectedPCG,
@@ -779,7 +811,7 @@ def _validate_method(
             if rows < operator.source.size:
                 raise ValueError("Dense QR requires at least as many rows as columns.")
         return "jax-dense"
-    if isinstance(method, (SparseQR, SparseLU, SparseCholesky)):
+    if isinstance(method, (SparseQR, SparseLU, SparseCholesky, SparseLDLT)):
         if not isinstance(problem, LinearSystem):
             raise ValueError(f"{method.name} requires a LinearSystem.")
         if not isinstance(operator, AbstractSparseLinearOperator):
@@ -798,6 +830,20 @@ def _validate_method(
             raise ValueError(
                 "SparseCholesky requires certified positive-definite structure."
             )
+        if isinstance(method, SparseLDLT):
+            if not operator.properties.certifies("self_adjoint"):
+                raise ValueError("SparseLDLT requires certified self-adjoint structure.")
+            if operator.sparse_storage().index_width != 32:
+                raise ValueError("Spineax cuDSS execution requires 32-bit CSR indices.")
+            if policy.differentiation.mode == "algorithmic":
+                raise ValueError(
+                    "SparseLDLT exposes mathematical differentiation, not an "
+                    "algorithmic factorization derivative."
+                )
+            availability = sparse_provider_availability(method.provider)
+            if not availability.available:
+                raise ValueError(availability.reason)
+            return "spineax-cudss"
         if isinstance(method, SparseQR) and method.provider == "jax-cuda":
             if not _cuda_sparse_available():
                 raise ValueError(
@@ -1331,7 +1377,7 @@ def _selected_estimate(
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         regularizer_action_cost = estimate_operator_action_cost(problem.regularizer)
         existing += regularizer_action_cost.storage_bytes
-    sparse_direct = backend in ("jax-sparse", "host-sparse")
+    sparse_direct = backend in ("jax-sparse", "host-sparse", "spineax-cudss")
     structured_direct = backend == "jax-structured"
     dense_requires_materialization = dense_direct and _requires_dense_materialization(
         problem
@@ -1767,10 +1813,14 @@ def _method_configuration(
     elif isinstance(method, (LSMR, GeneralizedLSMR)):
         configuration["condition_limit"] = method.condition_limit
         configuration["damping"] = method.damping
-    elif isinstance(method, (SparseQR, SparseLU, SparseCholesky)):
+    elif isinstance(method, (SparseQR, SparseLU, SparseCholesky, SparseLDLT)):
         configuration["provider"] = method.provider
         if isinstance(method, SparseQR):
             configuration["reorder"] = method.reorder
+        if isinstance(method, SparseLDLT):
+            configuration["reordering"] = method.reordering
+            configuration["memory_mode"] = method.memory_mode
+            configuration["refinement_steps"] = method.refinement_steps
     return configuration
 
 

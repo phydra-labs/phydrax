@@ -56,7 +56,9 @@ def test_primal_dual_newton_krylov_solves_mixed_constraints_without_jacobians(
     result = phx.optim.minimize(
         problem,
         jnp.array([3.0, 3.0]),
-        method=phx.optim.PrimalDualNewtonKrylov(),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-centered",
+        ),
         termination=_termination(),
     )
 
@@ -92,7 +94,9 @@ def test_primal_dual_canonical_layout_includes_parameter_bounds():
     result = phx.optim.minimize(
         problem,
         jnp.array([0.0]),
-        method=phx.optim.PrimalDualNewtonKrylov(),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-centered",
+        ),
         termination=_termination(),
     )
 
@@ -114,7 +118,9 @@ def test_primal_dual_eager_and_filtered_jit_agree_with_large_step_limit():
         bounds=phx.optim.Bounds(-jnp.inf, 1.0),
         problem_id="compiled-primal-dual",
     )
-    method = phx.optim.PrimalDualNewtonKrylov()
+    method = phx.optim.PrimalDualInteriorPoint(
+        mode="matrix-free-centered",
+    )
     termination = _termination(steps=100_000)
 
     def solve(target):
@@ -187,7 +193,9 @@ def test_primal_dual_filtered_jit_supports_function_operator_preconditioner():
         lambda initial: phx.optim.minimize(
             problem,
             initial,
-            method=phx.optim.PrimalDualNewtonKrylov(linear_policy=policy),
+            method=phx.optim.PrimalDualInteriorPoint(
+                mode="matrix-free-centered", linear_policy=policy
+            ),
             termination=_termination(),
         )
     )
@@ -212,7 +220,9 @@ def test_primal_dual_final_certificate_promotes_exhausted_budget_to_success():
     result = phx.optim.minimize(
         problem,
         jnp.array([0.0]),
-        method=phx.optim.PrimalDualNewtonKrylov(),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-centered",
+        ),
         termination=phx.optim.OptimizationTermination(
             absolute_optimality=1e-7,
             relative_optimality=0.0,
@@ -243,7 +253,9 @@ def test_primal_dual_handles_redundant_equalities_matrix_free():
     result = phx.optim.minimize(
         problem,
         jnp.zeros(2),
-        method=phx.optim.PrimalDualNewtonKrylov(),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-centered",
+        ),
         termination=_termination(),
     )
 
@@ -266,7 +278,9 @@ def test_primal_dual_reports_explicit_restoration_failure():
     result = phx.optim.minimize(
         problem,
         jnp.array([1.0]),
-        method=phx.optim.PrimalDualNewtonKrylov(linear_maximum_steps=3),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-centered", linear_maximum_steps=3
+        ),
         termination=_termination(steps=5),
     )
 

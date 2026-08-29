@@ -16,12 +16,20 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..optim import (
+    AbstractStructuredNonlinearMethod,
+    compile_structured_minimization,
     ConvexProgramResult,
     ConvexSolvePolicy,
     ConvexTermination,
     DensePrimalDualQP,
+    MinimizationProblem,
+    NonlinearConstraint,
+    OptimizationTermination,
     QuadraticProgram,
     solve_quadratic_program,
+    solve_structured_minimization,
+    StructuredMinimizationCompilation,
+    StructuredMinimizationResult,
 )
 from ..solver import DifferentialProblem, solve_diffrax
 from ._constraints import evaluate_sampled_feasibility
@@ -1445,6 +1453,168 @@ def solve_multiple_shooting(
     )
 
 
+class StructuredMultipleShootingCompilation(StrictModule):
+    """Multiple-shooting layout paired with one structured NLP compilation."""
+
+    problem: ControlProblem
+    layout: MultipleShootingDecisionLayout
+    optimization: StructuredMinimizationCompilation
+    solver_options: dict[str, Any] = eqx.field(static=True)
+
+
+class StructuredMultipleShootingResult(StrictModule):
+    """Structured optimizer output plus original multiple-shooting residuals."""
+
+    state_nodes: Array
+    control_nodes: Array
+    boundary_defect: Array
+    continuity_defects: Array
+    path_residuals: Array
+    terminal_residuals: Array
+    objective: Array
+    maximum_defect: Array
+    maximum_constraint_violation: Array
+    optimization: StructuredMinimizationResult
+    status: Array
+    layout: MultipleShootingDecisionLayout
+
+    @property
+    def successful(self) -> Array:
+        return self.status == MULTIPLE_SHOOTING_SUCCESS
+
+
+def compile_structured_multiple_shooting(
+    problem: ControlProblem,
+    initial_states: ArrayLike,
+    initial_controls: ArrayLike,
+    /,
+    *,
+    solver_options: dict[str, Any] | None = None,
+    exact_hessian: bool = True,
+    compiler: Any = "auto",
+    chunk_size: int | None = None,
+) -> StructuredMultipleShootingCompilation:
+    """Lower fixed-topology multiple shooting to the canonical structured NLP."""
+    _validate_problem(problem)
+    layout = MultipleShootingDecisionLayout(
+        problem.time_grid.num_steps,
+        problem.state_shape,
+        problem.control_shape,
+    )
+    initial = layout.pack(initial_states, initial_controls)
+    options = {} if solver_options is None else dict(solver_options)
+    equality_size = (layout.num_steps + 1) * layout.state_size
+    inequality_size = layout.num_steps * len(problem.path_constraints) + len(
+        problem.terminal_constraints
+    )
+    equality = NonlinearConstraint(
+        lambda decision, _: _equality_function(
+            problem,
+            layout,
+            decision,
+            solver_options=options,
+        ),
+        lower=jnp.zeros((equality_size,), dtype=initial.dtype),
+        upper=jnp.zeros((equality_size,), dtype=initial.dtype),
+        constraint_id=f"{problem.problem_id}:multiple-shooting-equalities",
+    )
+    constraints = [equality]
+    if inequality_size:
+        constraints.append(
+            NonlinearConstraint(
+                lambda decision, _: _inequality_function(problem, layout, decision),
+                lower=jnp.full((inequality_size,), -jnp.inf, dtype=initial.dtype),
+                upper=jnp.zeros((inequality_size,), dtype=initial.dtype),
+                constraint_id=f"{problem.problem_id}:multiple-shooting-inequalities",
+            )
+        )
+    minimization = MinimizationProblem(
+        lambda decision, _: _objective_function(problem, layout, decision),
+        constraints=tuple(constraints),
+        problem_id=f"{problem.problem_id}:structured-multiple-shooting",
+    )
+    compiled = compile_structured_minimization(
+        minimization,
+        initial,
+        exact_hessian=exact_hessian,
+        compiler=compiler,
+        chunk_size=chunk_size,
+    )
+    return StructuredMultipleShootingCompilation(
+        problem,
+        layout,
+        compiled,
+        options,
+    )
+
+
+def solve_structured_multiple_shooting(
+    compilation: StructuredMultipleShootingCompilation,
+    /,
+    *,
+    method: AbstractStructuredNonlinearMethod,
+    termination: OptimizationTermination | None = None,
+    warm_start: Any = None,
+    constraint_tolerance: float = 1e-6,
+) -> StructuredMultipleShootingResult:
+    """Solve and independently audit one structured multiple-shooting NLP."""
+    if not isinstance(compilation, StructuredMultipleShootingCompilation):
+        raise TypeError("compilation must be a StructuredMultipleShootingCompilation.")
+    solved = solve_structured_minimization(
+        compilation.optimization,
+        method=method,
+        termination=termination,
+        warm_start=warm_start,
+    )
+    decision = jnp.asarray(solved.structured.parameters)
+    values = _nonlinear_values(
+        compilation.problem,
+        compilation.layout,
+        decision,
+        solver_options=compilation.solver_options,
+    )
+    states, controls = compilation.layout.unpack(decision)
+    maximum_defect = _maximum_abs(values.equality_residuals)
+    maximum_violation = _maximum_violation(values.inequality_residuals)
+    finite = (
+        jnp.all(jnp.isfinite(states))
+        & jnp.all(jnp.isfinite(controls))
+        & jnp.isfinite(values.objective)
+    )
+    status = jnp.where(
+        ~finite,
+        MULTIPLE_SHOOTING_NONFINITE,
+        jnp.where(
+            ~jnp.all(values.integration_valid),
+            MULTIPLE_SHOOTING_INTEGRATION_FAILED,
+            jnp.where(
+                ~solved.successful,
+                MULTIPLE_SHOOTING_QP_FAILED,
+                jnp.where(
+                    (maximum_defect > constraint_tolerance)
+                    | (maximum_violation > constraint_tolerance),
+                    MULTIPLE_SHOOTING_LINE_SEARCH_FAILED,
+                    MULTIPLE_SHOOTING_SUCCESS,
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+    return StructuredMultipleShootingResult(
+        states,
+        controls,
+        values.boundary_defect,
+        values.continuity_defects,
+        values.path_residuals,
+        values.terminal_residuals,
+        values.objective,
+        maximum_defect,
+        maximum_violation,
+        solved,
+        status,
+        compilation.layout,
+    )
+
+
 __all__ = [
     "MULTIPLE_SHOOTING_INTEGRATION_FAILED",
     "MULTIPLE_SHOOTING_LINE_SEARCH_FAILED",
@@ -1456,6 +1626,10 @@ __all__ = [
     "MultipleShootingDecisionLayout",
     "MultipleShootingHistory",
     "MultipleShootingLinearization",
+    "StructuredMultipleShootingCompilation",
+    "StructuredMultipleShootingResult",
+    "compile_structured_multiple_shooting",
+    "solve_structured_multiple_shooting",
     "MultipleShootingResult",
     "linearize_multiple_shooting",
     "solve_multiple_shooting",

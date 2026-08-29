@@ -341,7 +341,9 @@ def test_predictor_corrector_reports_all_kkt_residuals():
     result = phx.optim.minimize(
         problem,
         jnp.array([1.5]),
-        method=phx.optim.PrimalDualPredictorCorrector(),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-predictor-corrector",
+        ),
         termination=_termination(steps=100, evaluations=2000, tolerance=2e-5),
     )
 
@@ -379,7 +381,9 @@ def test_predictor_corrector_rejects_nonfinite_and_infeasible_inputs_explicitly(
     nonfinite = phx.optim.minimize(
         nonfinite_problem,
         jnp.array([jnp.nan]),
-        method=phx.optim.PrimalDualPredictorCorrector(),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-predictor-corrector",
+        ),
         termination=_termination(steps=2, evaluations=100),
     )
     assert nonfinite.status == int(phx.optim.OptimizationStatus.NONFINITE_INPUT)
@@ -404,7 +408,8 @@ def test_predictor_corrector_rejects_nonfinite_and_infeasible_inputs_explicitly(
     infeasible = phx.optim.minimize(
         infeasible_problem,
         jnp.array([0.5]),
-        method=phx.optim.PrimalDualPredictorCorrector(
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-predictor-corrector",
             maximum_restoration_steps=4,
         ),
         termination=_termination(steps=10, evaluations=500),
@@ -502,7 +507,9 @@ def test_jitted_dynamic_upper_excludes_known_infinite_lower_from_primal_dual():
         return phx.optim.minimize(
             problem,
             initial,
-            method=phx.optim.PrimalDualPredictorCorrector(),
+            method=phx.optim.PrimalDualInteriorPoint(
+                mode="matrix-free-predictor-corrector",
+            ),
             termination=_termination(
                 steps=100,
                 evaluations=2000,
@@ -602,7 +609,9 @@ def test_predictor_corrector_rejects_equality_only_problem():
         phx.optim.minimize(
             problem,
             jnp.array([0.0]),
-            method=phx.optim.PrimalDualPredictorCorrector(),
+            method=phx.optim.PrimalDualInteriorPoint(
+                mode="matrix-free-predictor-corrector",
+            ),
             termination=_termination(steps=2, evaluations=100),
         )
 
@@ -640,7 +649,8 @@ def test_predictor_corrector_reports_unusable_kkt_direction():
     result = phx.optim.minimize(
         problem,
         jnp.array([1.0]),
-        method=phx.optim.PrimalDualPredictorCorrector(
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-predictor-corrector",
             linear_policy=policy,
         ),
         termination=_termination(steps=2, evaluations=100),
@@ -663,7 +673,8 @@ def test_predictor_corrector_reports_exhausted_line_search():
     result = phx.optim.minimize(
         problem,
         jnp.array([1.0]),
-        method=phx.optim.PrimalDualPredictorCorrector(
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-predictor-corrector",
             sufficient_decrease=0.999999,
             maximum_line_search_steps=1,
         ),
