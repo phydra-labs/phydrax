@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added exact scalar temporal Matérn-3/2 and Matérn-5/2 Gaussian processes
+  through content-addressed continuous state-space compilation, stable irregular
+  train/query schedules, exact missing/query masks, sequential square-root
+  Kalman/RTS inference, active-observation marginal likelihoods, linear-storage
+  predictive marginals, precision/status provenance, portable result export,
+  dense-parity tests, and dense-versus-state-space scaling benchmarks.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

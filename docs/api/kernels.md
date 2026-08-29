@@ -114,6 +114,21 @@ count; otherwise it retains the dense observation-space path.
 
 ::: phydrax.kernels.InverseMultiquadricKernel
 
+### Exact temporal Matérn state-space compilation
+
+Scalar one-dimensional `Matern32Kernel` and `Matern52Kernel` objects have exact
+finite-dimensional continuous-time state representations. The UQ compiler accepts
+either kernel directly or beneath one `ScaleKernel`, resolves its drift, stationary
+covariance and factor, continuous process-noise covariance and factor, observation
+map, state dimension, and content identity, then checks the stationary Lyapunov
+residual. See
+[UQ → Filtering and smoothing → Exact temporal Matérn Gaussian processes](uq/filtering.md#exact-temporal-matern-gaussian-processes).
+
+This capability is intentionally narrower than general kernel algebra. Sums,
+products, amplitude wrappers, transformed inputs, vector length scales,
+multidimensional inputs, SHO/CARMA models, and derivative observations do not acquire
+a state-space interpretation merely because they are positive definite.
+
 ## Linear and path kernels
 
 `LinearKernel` evaluates ordinary inner products with specialized matrix and

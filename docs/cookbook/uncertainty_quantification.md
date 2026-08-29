@@ -649,6 +649,48 @@ Put positive bijectors and informative priors on those leaves. Always compare ag
 a no-discrepancy model: the physical parameters and a flexible discrepancy may
 otherwise explain the same observations.
 
+### Use exact state space for supported temporal Matérn data
+
+When the GP input is only scalar time and the covariance is Matérn-3/2 or
+Matérn-5/2, the exact state-space path avoids dense observation-space storage:
+
+```python
+temporal_plan = phx.uq.compile_state_space_kernel(
+    phx.kernels.ScaleKernel(
+        phx.kernels.Matern52Kernel(length_scale=0.25),
+        0.03**2,
+    ),
+    sensor_time,
+    forecast_time,
+    train_mask=sensor_available,
+)
+temporal_result = phx.uq.fit_state_space_gaussian_process(
+    temporal_plan,
+    sensor_residual,
+    noise_scale=0.005,
+)
+
+latent_mean = temporal_result.posterior_mean
+latent_variance = temporal_result.posterior_variance
+future_observation_variance = temporal_result.predictive_variance
+log_marginal_likelihood = temporal_result.log_marginal_likelihood
+```
+
+Times may be irregular and unsorted, and forecasts may extrapolate before or after
+training. Supply a finite filler value wherever `sensor_available` is false; the
+mask, not a large covariance, removes that value from the likelihood. Training times
+must be unique. Repeated forecast times are allowed and restore repeated output
+positions. Inspect `successful`, `status`, and `query_valid` before using the
+marginals.
+
+The kernel's `ScaleKernel.scale` is covariance variance, whereas `noise_scale` is
+observation standard deviation. Recompile after changing kernel parameters so the
+plan's content identity and resolved coefficients describe the evaluated kernel.
+The linear-storage result deliberately returns marginal variances rather than a
+dense forecast covariance. Use the dense scalar GP when a complete joint query
+covariance, unsupported kernel algebra, multidimensional input, derivative
+observation, or non-Gaussian likelihood is required.
+
 The exact scalar GP is the correctness reference. Use explicit FITC only when dense
 $O(n^3)$ conditioning is a measured bottleneck. Compare held-out scores and
 `factor_storage_elements` against exact inference. The same kernel object can select
