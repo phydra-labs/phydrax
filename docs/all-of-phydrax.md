@@ -627,6 +627,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 
 - **Forward PDE solve (PINN-style)**: interior residual + boundary/initial terms (soft or enforced).
   Start at [Getting started](index.md) and continue with the conditions-and-terms guide.
+- **Neural eigenproblems**: use `VariationalEigenspace` to select the lowest
+  self-adjoint trial subspace, `InvariantSubspaceResidual` to refine the strong
+  equation `A U = B U H`, learned `FunctionSamples` trial spaces for amortized
+  warm starts, or multi-state VMC for discrete quantum amplitudes. Eigenvalues
+  come from the reduced Ritz problem; linear eigen-PINNs do not require a
+  separately trainable scalar eigenvalue.
 - **Integral and nonlocal field learning**: compose deterministic causal,
   spatial, or fractional operators inside ordinary residuals. Use
   `RandomizedMomentPenalty` when a squared moment is resampled rather than

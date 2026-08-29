@@ -152,7 +152,11 @@ from ._transport import (
 )
 from ._unbalanced_transport import SpatialUnbalancedSinkhornDivergenceTerm
 from ._variational_eigenspace import (
+    EigenspaceAction,
     FormDensity,
+    InvariantSubspaceResidual,
+    InvariantSubspaceResidualEvaluation,
+    InvariantSubspaceResidualResult,
     VariationalEigenspace,
     VariationalEigenspaceEvaluation,
     VariationalEigenspaceResult,
@@ -188,6 +192,7 @@ __all__ = [
     "ricci_flat_kahler_term",
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
+    "EigenspaceAction",
     "FlowEndpointProvider",
     "DenseOverlapClassificationTerm",
     "DenseSiteClassificationBatch",
@@ -213,6 +218,9 @@ __all__ = [
     "GraphTrajectorySupervisedTerm",
     "IntegralFunctional",
     "FormDensity",
+    "InvariantSubspaceResidual",
+    "InvariantSubspaceResidualEvaluation",
+    "InvariantSubspaceResidualResult",
     "LabelProvider",
     "MomentPenalty",
     "ObservationPenalty",

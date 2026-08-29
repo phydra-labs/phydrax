@@ -26,6 +26,11 @@
   without global tensor materialization, and mixture-sampled multi-state VMC
   with overlap/Hamiltonian evidence, span conditioning, Ritz modes, stochastic
   reconfiguration, and explicit failure statuses.
+  Added a self-adjoint strong-form `InvariantSubspaceResidual` for neural trial
+  fields, with projected reduced operators, basis-invariant residual Grams,
+  generalized positive metrics, complex/vector pairings, continuous residual
+  modes, absolute/relative residual evidence, and explicit rejection of
+  collapsed, indefinite, or non-Hermitian trial systems.
 - Added JAX-native direct collocation for explicit controlled systems and
   input-aware state-shaped DAEs, with fixed/nonuniform or optimized-duration
   meshes, backward-Euler and midpoint transcription, interval controls, shared
