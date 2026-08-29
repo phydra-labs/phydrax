@@ -60,3 +60,16 @@ stationarity.
 `independent=False`. Consequently `phydrax.integration.integrate` does not report an
 IID standard error. Rank-normalized R-hat and effective sample sizes require a frozen
 target and remain part of the UQ chain-diagnostic layer.
+
+## Free-boundary collocation
+
+`CausalTimeSlabSchedule` supplies ordered, optionally overlapping time slabs
+and detached causal loss weights. `NarrowBandCollocationPolicy` composes an
+ordinary `CollocationPolicy`; it adds a compact level-set band score without
+changing the base R3, RAR-D, or periodic population lifecycle.
+
+::: phydrax.sampling.collocation.CausalTimeSlabSchedule
+
+---
+
+::: phydrax.sampling.collocation.NarrowBandCollocationPolicy

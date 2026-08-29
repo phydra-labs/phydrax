@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.flatten_util import ravel_pytree
-from jaxtyping import PyTree
+from jaxtyping import Array, PyTree
 
 from .._tree_math import validate_real_inexact_tree
 from ..linalg import (
@@ -34,6 +34,10 @@ from ._iterative import (
     OptimizationProvenance,
     OptimizationStatus,
     OptimizationTermination,
+)
+from ._structured_nonlinear import (
+    StructuredNonlinearProgram,
+    StructuredNonlinearWarmStart,
 )
 
 
@@ -305,6 +309,80 @@ class NLoptMinimize(AbstractMinimizationMethod):
         )
 
 
+class _StructuredIpoptCallbacks:
+    def __init__(self, program: StructuredNonlinearProgram, args: Any, /):
+        self.program = program
+        self.args = args
+        self.jacobian_rows = np.asarray(program.jacobian_plan.pattern.rows, dtype=np.int32)
+        self.jacobian_cols = np.asarray(program.jacobian_plan.pattern.cols, dtype=np.int32)
+        self._objective = jax.jit(lambda value: program.objective(value, args))
+        self._gradient = jax.jit(
+            jax.grad(lambda value: jnp.asarray(program.objective(value, args)))
+        )
+        self._constraints = jax.jit(lambda value: program.constraints(value, args))
+        self._jacobian = jax.jit(
+            lambda value: program.jacobian_plan.coefficients(value, args)
+        )
+        if program.hessian_plan is None:
+            self.hessian_rows = None
+            self.hessian_cols = None
+            self.hessian_positions = None
+            self._hessian = None
+        else:
+            hessian_plan = program.hessian_plan
+            rows = np.asarray(hessian_plan.pattern.rows, dtype=np.int32)
+            cols = np.asarray(hessian_plan.pattern.cols, dtype=np.int32)
+            positions = np.flatnonzero(rows >= cols)
+            self.hessian_rows = rows[positions]
+            self.hessian_cols = cols[positions]
+            self.hessian_positions = positions
+            self._hessian = jax.jit(
+                lambda value, objective_factor, multipliers: (
+                    hessian_plan.coefficients(
+                        value,
+                        (args, objective_factor, multipliers),
+                    )
+                )
+            )
+
+    @staticmethod
+    def _point(value: Any, /) -> Array:
+        return jnp.asarray(value)
+
+    def objective(self, value):
+        return float(np.asarray(self._objective(self._point(value))))
+
+    def gradient(self, value):
+        return np.asarray(self._gradient(self._point(value)), dtype=float)
+
+    def constraints(self, value):
+        return np.asarray(self._constraints(self._point(value)), dtype=float)
+
+    def jacobian(self, value):
+        return np.asarray(self._jacobian(self._point(value)), dtype=float)
+
+    def jacobianstructure(self):
+        return self.jacobian_rows, self.jacobian_cols
+
+    def hessian(self, value, multipliers, objective_factor):
+        if self._hessian is None or self.hessian_positions is None:
+            raise RuntimeError("Ipopt requested an unavailable exact Hessian.")
+        coefficients = np.asarray(
+            self._hessian(
+                self._point(value),
+                jnp.asarray(objective_factor),
+                jnp.asarray(multipliers),
+            ),
+            dtype=float,
+        )
+        return coefficients[self.hessian_positions]
+
+    def hessianstructure(self):
+        if self.hessian_rows is None or self.hessian_cols is None:
+            raise RuntimeError("Ipopt requested an unavailable exact Hessian structure.")
+        return self.hessian_rows, self.hessian_cols
+
+
 class IpoptMinimize(AbstractMinimizationMethod):
     """Optional cyipopt minimization boundary with Phydrax KKT recertification."""
 
@@ -407,6 +485,144 @@ class IpoptMinimize(AbstractMinimizationMethod):
                 implicit_differentiation=False,
                 notes=str(result.message),
             ),
+        )
+
+    def solve_structured(
+        self,
+        program: StructuredNonlinearProgram,
+        initial_coordinates: Any,
+        /,
+        *,
+        termination: OptimizationTermination,
+        args: Any = None,
+        warm_start: StructuredNonlinearWarmStart | None = None,
+    ) -> MinimizationResult:
+        """Solve an exact sparse bound-form NLP through low-level cyipopt callbacks."""
+        if not isinstance(program, StructuredNonlinearProgram):
+            raise TypeError("program must be a StructuredNonlinearProgram.")
+        if not isinstance(termination, OptimizationTermination):
+            raise TypeError("termination must be an OptimizationTermination.")
+        coordinates = program.validate_coordinates(initial_coordinates)
+        if warm_start is not None:
+            if not isinstance(warm_start, StructuredNonlinearWarmStart):
+                raise TypeError("warm_start must be StructuredNonlinearWarmStart or None.")
+            if warm_start.structure_id != program.structure_id:
+                raise ValueError("warm_start structure does not match the program.")
+            coordinates = program.validate_coordinates(warm_start.primal)
+            if warm_start.constraint_multipliers.shape != (program.num_constraints,):
+                raise ValueError("warm_start constraint multipliers have the wrong shape.")
+
+        cyipopt = _module("cyipopt")
+        callbacks = _StructuredIpoptCallbacks(program, args)
+        options = dict(self.options)
+        options.setdefault("max_iter", termination.maximum_steps)
+        options.setdefault("tol", termination.absolute_optimality)
+        if program.hessian_plan is None:
+            requested_hessian = options.get("hessian_approximation", "limited-memory")
+            if requested_hessian != "limited-memory":
+                raise ValueError(
+                    "A structured program without an exact Hessian requires "
+                    "hessian_approximation='limited-memory'."
+                )
+            options["hessian_approximation"] = "limited-memory"
+        problem = cyipopt.Problem(
+            n=program.num_variables,
+            m=program.num_constraints,
+            problem_obj=callbacks,
+            lb=np.asarray(program.variable_lower, dtype=float),
+            ub=np.asarray(program.variable_upper, dtype=float),
+            cl=np.asarray(program.constraint_lower, dtype=float),
+            cu=np.asarray(program.constraint_upper, dtype=float),
+        )
+        for name, value in options.items():
+            problem.add_option(name, value)
+        if warm_start is None:
+            final_coordinates, info = problem.solve(np.asarray(coordinates, dtype=float))
+        else:
+            problem.add_option("warm_start_init_point", "yes")
+            final_coordinates, info = problem.solve(
+                np.asarray(coordinates, dtype=float),
+                lagrange=np.asarray(warm_start.constraint_multipliers, dtype=float),
+                zl=np.asarray(warm_start.lower_bound_multipliers, dtype=float),
+                zu=np.asarray(warm_start.upper_bound_multipliers, dtype=float),
+            )
+        final = jnp.asarray(final_coordinates, dtype=coordinates.dtype)
+        constraint_multipliers = jnp.asarray(
+            info["mult_g"], dtype=coordinates.dtype
+        )
+        lower_multipliers = jnp.asarray(
+            info["mult_x_L"], dtype=coordinates.dtype
+        )
+        upper_multipliers = jnp.asarray(
+            info["mult_x_U"], dtype=coordinates.dtype
+        )
+        active_tolerance = float(np.sqrt(termination.absolute_optimality))
+        certificate = program.certificate(
+            final,
+            constraint_multipliers,
+            lower_multipliers,
+            upper_multipliers,
+            args,
+            active_tolerance=active_tolerance,
+        )
+        evaluation = program.evaluate(final, args)
+        stationarity = jnp.max(
+            jnp.abs(jnp.asarray(certificate.stationarity_residual)),
+            initial=0.0,
+        )
+        optimality = jnp.maximum(
+            stationarity,
+            jnp.maximum(
+                certificate.primal_feasibility,
+                jnp.maximum(
+                    certificate.dual_feasibility,
+                    certificate.complementarity,
+                ),
+            ),
+        )
+        backend_status = int(info["status"])
+        backend_success = backend_status in (0, 1)
+        certified = (
+            evaluation.finite
+            & jnp.asarray(backend_success)
+            & (optimality <= termination.absolute_optimality)
+        )
+        public_status = jnp.where(
+            certified,
+            int(OptimizationStatus.SUCCESS),
+            (
+                int(OptimizationStatus.CERTIFICATION_FAILED)
+                if backend_success
+                else int(OptimizationStatus.BACKEND_FAILED)
+            ),
+        ).astype(jnp.int32)
+        iterations = int(info.get("iter_count", 0))
+        message = str(info["status_msg"])
+        return MinimizationResult(
+            final,
+            evaluation.objective,
+            None,
+            public_status,
+            OptimizationDiagnostics(
+                iterations=iterations,
+                final_optimality_norm=optimality,
+                primal_feasibility=certificate.primal_feasibility,
+                dual_feasibility=certificate.dual_feasibility,
+                complementarity=certificate.complementarity,
+                active_constraints=jnp.sum(certificate.active_mask),
+                counts_complete=False,
+            ),
+            OptimizationProvenance(
+                problem_id=program.program_id,
+                method=self.method_id,
+                backend="ipopt",
+                globalization="filter-interior-point",
+                matrix_free=False,
+                implicit_differentiation=False,
+                notes=message,
+            ),
+            certificate=certificate,
+            method_evidence=info,
         )
 
 

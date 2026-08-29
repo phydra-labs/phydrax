@@ -17,6 +17,7 @@ failure, or hide a fallback.
 | Receding-horizon affine control | `solve_receding_horizon_mpc` | Re-solves canonical QPs and records every subproblem result and exact state handoff. |
 | One unconstrained nonlinear case | `solve_ilqr` | iLQR with a fixed requested regularization and explicit line-search or curvature failure. |
 | One constrained nonlinear case | `solve_multiple_shooting` | Dense SQP with independent state nodes, exact defect accounting, and sampled path constraints. |
+| Implicit DAE or all-at-once trajectory optimization | `solve_direct_collocation` | Backward-Euler or midpoint transcription with interval controls, exact sparse derivatives, physical defect audits, and an explicitly selected dense-native or sparse-Ipopt method. |
 | An explicit finite control catalog | `search_control_candidates` | Exact minimum over the declared coefficient arrays; retains invalidity, index, signature, and winner-reconstruction evidence. |
 | A bounded stochastic initializer | `search_control` | Differential evolution over a continuous coefficient box; returns the best candidate found, never a global-optimality claim. |
 
@@ -472,6 +473,92 @@ constraints remain sample-node checks and do not certify feasibility between nod
 ::: phydrax.control.linearize_multiple_shooting
 
 ::: phydrax.control.solve_multiple_shooting
+
+## Direct collocation
+
+`TrajectoryOptimizationProblem` is the continuous boundary-value contract used by
+direct collocation. It accepts an input-aware `ContinuousSystem` or
+`DifferentialAlgebraicSystem`, an optional fixed initial state, running, terminal, and
+whole-trajectory costs, bound-form path and trajectory constraints, shared optimized
+parameter coordinates, fixed arguments, and explicit case axes. A continuous
+`ControlProblem` can be passed directly for the fixed-duration, fixed-initial-state
+case; discrete control problems and variable-duration conversion are rejected.
+
+`DirectCollocationPlan` owns a `TemporalMesh(role="collocation")`, one verified
+`ThetaMethod`, scaling, sparse-derivative compilation, and physical audit policy. The
+supported methods are endpoint backward Euler and implicit midpoint. States are nodal
+decisions and controls are interval decisions, so no unused endpoint-control coordinate
+is introduced. A variable-duration plan uses one log-duration coordinate and maps the
+static reference mesh affinely into physical time.
+
+The compiler produces both:
+
+- a dense-compatible `MinimizationProblem` for an explicitly selected native method
+  such as `FilterInteriorPoint`, retaining that method's dimension guard; and
+- a `StructuredNonlinearProgram` with exact sparse Jacobian callbacks for
+  `IpoptMinimize.solve_structured`.
+
+No backend is selected from problem size and no sparse-to-dense fallback is used.
+`DirectCollocationDerivativePolicy(hessian="limited-memory")` requests Ipopt's declared
+limited-memory Hessian approximation. `"exact-sparse"` compiles and verifies the
+Lagrangian Hessian and supplies its lower triangle.
+
+`DirectCollocationResult` retains the physical decision, a `ControlTrajectory`, stage
+times, states, rates, and controls, raw dynamics defects, every declared constraint
+block, the normalized optimization result and KKT certificate, sparse topology counts,
+and physical feasibility diagnostics. Collocation constraints are enforced at their
+declared stages. The interior-point audit evaluates additional piecewise-linear states
+and held controls, but `off_grid_certified` remains `False`: neither site set is a
+continuous-time path certificate.
+
+The direct statuses are `DIRECT_COLLOCATION_SUCCESS`,
+`DIRECT_COLLOCATION_OPTIMIZER_FAILED`, `DIRECT_COLLOCATION_NONFINITE`,
+`DIRECT_COLLOCATION_DEFECT_FAILED`, `DIRECT_COLLOCATION_CONSTRAINT_FAILED`, and
+`DIRECT_COLLOCATION_RECONSTRUCTION_FAILED`. Backend success is never sufficient:
+scaled KKT evidence, raw physical defects, and raw physical constraint bounds are
+checked independently.
+
+::: phydrax.control.TrajectoryOptimizationContext
+
+::: phydrax.control.TrajectoryOptimizationView
+
+::: phydrax.control.BoundedPathConstraint
+
+::: phydrax.control.BoundedTrajectoryConstraint
+
+::: phydrax.control.TrajectoryOptimizationProblem
+
+::: phydrax.control.DirectCollocationScaling
+
+::: phydrax.control.DirectCollocationDerivativePolicy
+
+::: phydrax.control.DirectCollocationAuditPolicy
+
+::: phydrax.control.DirectCollocationPlan
+
+::: phydrax.control.DirectCollocationBounds
+
+::: phydrax.control.DirectCollocationDecision
+
+::: phydrax.control.DirectCollocationDecisionLayout
+
+::: phydrax.control.DirectCollocationConstraintLayout
+
+::: phydrax.control.DirectCollocationCompilation
+
+::: phydrax.control.PreparedDirectCollocation
+
+::: phydrax.control.DirectCollocationDiagnostics
+
+::: phydrax.control.DirectCollocationResult
+
+::: phydrax.control.compile_direct_collocation
+
+::: phydrax.control.prepare_direct_collocation
+
+::: phydrax.control.solve_prepared_direct_collocation
+
+::: phydrax.control.solve_direct_collocation
 
 ## Exact finite control catalogs
 

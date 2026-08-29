@@ -516,6 +516,11 @@ class DifferentialAlgebraicProblem(StrictModule):
     ):
         if not isinstance(system, DifferentialAlgebraicSystem):
             raise TypeError("system must be a DifferentialAlgebraicSystem.")
+        if system.input_layout is not None:
+            raise ValueError(
+                "DifferentialAlgebraicProblem currently requires an autonomous "
+                "system; input-aware DAEs are supported by control direct collocation."
+            )
         state = _inexact(initial_state)
         state_rate = (
             jnp.zeros_like(state)
@@ -2020,6 +2025,7 @@ def _solve_prepared(
         axis=0,
     )
     if isinstance(policy.method, ThetaMethod):
+        assert policy.method.capabilities.order is not None
         orders = jnp.full_like(indices, policy.method.capabilities.order)
     else:
         orders = jnp.minimum(

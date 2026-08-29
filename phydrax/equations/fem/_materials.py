@@ -24,6 +24,47 @@ class LocalImplicitDiagnostics(StrictModule):
     finite: Array
 
 
+class FiniteElementAuxiliaryEvaluation(StrictModule):
+    """Material/contact/history candidate state returned with one residual."""
+
+    trial_state: object
+    successful: Array
+    admissible: Array
+    retry_requested: Array
+    suggested_step: Array
+    diagnostics: object
+
+    def __init__(
+        self,
+        trial_state: object = None,
+        /,
+        *,
+        successful: ArrayLike = True,
+        admissible: ArrayLike = True,
+        retry_requested: ArrayLike = False,
+        suggested_step: ArrayLike = 0.0,
+        diagnostics: object = None,
+    ):
+        successful_ = jnp.asarray(successful, dtype=bool)
+        admissible_ = jnp.asarray(admissible, dtype=bool)
+        retry_ = jnp.asarray(retry_requested, dtype=bool)
+        suggested = jnp.asarray(suggested_step)
+        if any(
+            value.shape != () for value in (successful_, admissible_, retry_, suggested)
+        ):
+            raise ValueError("Auxiliary decision values must be scalars.")
+        self.trial_state = trial_state
+        self.successful = successful_
+        self.admissible = admissible_
+        self.retry_requested = retry_
+        self.suggested_step = suggested
+        self.diagnostics = diagnostics
+
+    @property
+    def valid(self) -> Array:
+        return self.successful & self.admissible
+
+
 class LocalImplicitMaterial(StrictModule, NonTrainableState):
     """Bounded local constitutive root with implicit-function derivatives."""
 
@@ -154,4 +195,8 @@ class LocalImplicitMaterial(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["LocalImplicitDiagnostics", "LocalImplicitMaterial"]
+__all__ = [
+    "FiniteElementAuxiliaryEvaluation",
+    "LocalImplicitDiagnostics",
+    "LocalImplicitMaterial",
+]

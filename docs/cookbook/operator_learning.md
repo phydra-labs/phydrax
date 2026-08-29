@@ -1715,6 +1715,38 @@ Probabilistic routes are sampled only when a key is supplied. Passing the same
 key to `evaluate_with_diagnostics` makes its recorded displacement exactly the
 route used for the returned prediction; keyless evaluation uses the mean route.
 
+## Free-boundary operator contracts
+
+`FreeBoundaryOperatorSpec` binds an ordinary `OperatorTask` to a named
+level-set, phase-fraction, or reference-map output and named physical state
+fields. It rejects topology-change claims for reference maps. No new neural
+architecture is implied: MIONet, GINO, GeometryInformedFlower, or another
+compatible operator remains selected through the ordinary capability contract.
+
+Reference-map utilities expose Jacobian determinants, singular values, scalar
+gradient pullbacks, nonfolding loss, and a discrete geometric-conservation
+residual. VOF/PLIC and reconstructed SPH free surfaces lower to measured
+`OperatorBatch` branches without discarding masks or physical quadrature.
+`solver_corrected_operator_rollout` advances only accepted corrections whose
+declared residual does not increase.
+
+::: phydrax.nn.operator.FreeBoundaryOperatorSpec
+
+::: phydrax.nn.operator.reference_map_evidence
+
+::: phydrax.nn.operator.reference_map_constraint_loss
+
+::: phydrax.nn.operator.operator_batch_from_vof
+
+::: phydrax.nn.operator.operator_batch_from_sph_free_surface
+
+::: phydrax.nn.operator.solver_corrected_operator_rollout
+
+Test-time physics adaptation is deliberately limited to a small context vector;
+model weights remain frozen.
+
+::: phydrax.nn.operator.training.adapt_operator_context
+
 ## Audited operator benchmarks
 
 Use Operator Benchmark v2 artifacts for architecture decisions.

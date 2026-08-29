@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,10 +14,19 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+from ._layout import InputLayout
 
 
 DAERole: TypeAlias = Literal["differential", "algebraic"]
-DifferentialAlgebraicResidual: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
+AutonomousDifferentialAlgebraicResidual: TypeAlias = Callable[
+    [Array, Array, Array, Any], ArrayLike
+]
+InputDifferentialAlgebraicResidual: TypeAlias = Callable[
+    [Array, Array, Array, Array, Any], ArrayLike
+]
+DifferentialAlgebraicResidual: TypeAlias = (
+    AutonomousDifferentialAlgebraicResidual | InputDifferentialAlgebraicResidual
+)
 
 
 def _identifier(value: str, owner: str, /) -> str:
@@ -151,6 +160,7 @@ class DifferentialAlgebraicSystem(StrictModule):
     """State-shaped implicit residual independent of initialization and integration."""
 
     residual: DifferentialAlgebraicResidual
+    input_layout: InputLayout | None
     structure: DAEStructure
     state_scale: Array
     state_rate_scale: Array
@@ -166,6 +176,7 @@ class DifferentialAlgebraicSystem(StrictModule):
         *,
         state_shape: Sequence[int],
         structure: DAEStructure,
+        input_layout: InputLayout | None = None,
         state_scale: ArrayLike | None = None,
         state_rate_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
@@ -176,6 +187,8 @@ class DifferentialAlgebraicSystem(StrictModule):
             raise TypeError("DifferentialAlgebraicSystem residual must be callable.")
         if not isinstance(structure, DAEStructure):
             raise TypeError("structure must be a DAEStructure.")
+        if input_layout is not None and not isinstance(input_layout, InputLayout):
+            raise TypeError("input_layout must be an InputLayout or None.")
         shape = _shape(state_shape, "DifferentialAlgebraicSystem state_shape")
         structure.resolved_axis(shape)
         geometry = EuclideanStateGeometry() if state_geometry is None else state_geometry
@@ -194,6 +207,7 @@ class DifferentialAlgebraicSystem(StrictModule):
         )
         self.residual = residual
         self.structure = structure
+        self.input_layout = input_layout
         self.state_scale = resolved_state_scale
         self.state_rate_scale = resolved_rate_scale
         self.residual_scale = _positive_scale(
@@ -219,6 +233,8 @@ class DifferentialAlgebraicSystem(StrictModule):
         state_rate: ArrayLike,
         args: Any = None,
         /,
+        *,
+        inputs: ArrayLike | None = None,
     ) -> Array:
         time_array = jnp.asarray(time)
         if time_array.shape != () or jnp.issubdtype(
@@ -238,7 +254,28 @@ class DifferentialAlgebraicSystem(StrictModule):
             )
         if state_array.dtype != rate_array.dtype:
             raise TypeError("state and state_rate must have the same dtype.")
-        value = _inexact(self.residual(time_array, state_array, rate_array, args))
+        if self.input_layout is None:
+            if inputs is not None:
+                raise ValueError(
+                    "An autonomous DifferentialAlgebraicSystem does not accept inputs."
+                )
+            residual = cast(AutonomousDifferentialAlgebraicResidual, self.residual)
+            value = _inexact(residual(time_array, state_array, rate_array, args))
+        else:
+            if inputs is None:
+                raise ValueError(
+                    "This DifferentialAlgebraicSystem requires explicit inputs."
+                )
+            input_array = _inexact(inputs)
+            if input_array.shape != self.input_layout.shape:
+                raise ValueError(
+                    f"inputs must have shape {self.input_layout.shape}; "
+                    f"got {input_array.shape}."
+                )
+            residual = cast(InputDifferentialAlgebraicResidual, self.residual)
+            value = _inexact(
+                residual(time_array, state_array, rate_array, input_array, args)
+            )
         if value.shape != self.state_shape:
             raise ValueError(
                 "DifferentialAlgebraicSystem residual returned shape "
@@ -253,8 +290,10 @@ class DifferentialAlgebraicSystem(StrictModule):
         state_rate: ArrayLike,
         args: Any = None,
         /,
+        *,
+        inputs: ArrayLike | None = None,
     ) -> Array:
-        residual = self.evaluate(time, state, state_rate, args)
+        residual = self.evaluate(time, state, state_rate, args, inputs=inputs)
         return residual / self.residual_scale.astype(residual.dtype)
 
     def __call__(
@@ -264,18 +303,21 @@ class DifferentialAlgebraicSystem(StrictModule):
         state_rate: ArrayLike,
         args: Any = None,
         /,
+        *,
+        inputs: ArrayLike | None = None,
     ) -> Array:
-        return self.evaluate(time, state, state_rate, args)
+        return self.evaluate(time, state, state_rate, args, inputs=inputs)
 
     @classmethod
     def from_mass_matrix(
         cls,
         mass_matrix: Any,
-        vector_field: Callable[[Array, Array, Any], ArrayLike],
+        vector_field: Callable[..., ArrayLike],
         /,
         *,
         state_shape: Sequence[int],
         structure: DAEStructure,
+        input_layout: InputLayout | None = None,
         state_scale: ArrayLike | None = None,
         state_rate_scale: ArrayLike | None = None,
         residual_scale: ArrayLike | None = None,
@@ -287,6 +329,8 @@ class DifferentialAlgebraicSystem(StrictModule):
 
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
+        if input_layout is not None and not isinstance(input_layout, InputLayout):
+            raise TypeError("input_layout must be an InputLayout or None.")
         shape = _shape(state_shape, "Mass-matrix DAE state_shape")
         size = prod(shape)
         constant_operator = isinstance(mass_matrix, AbstractLinearOperator)
@@ -300,35 +344,49 @@ class DifferentialAlgebraicSystem(StrictModule):
                     f"got {constant_array.shape}."
                 )
 
-        def residual(time, state, state_rate, args):
+        def apply_mass(time, state, state_rate, args):
             resolved_mass = (
                 mass_matrix(time, state, args) if dynamic_mass else mass_matrix
             )
             if isinstance(resolved_mass, AbstractLinearOperator):
-                mass_rate = resolved_mass.mv(state_rate)
-            else:
-                matrix = (
-                    constant_array
-                    if constant_array is not None
-                    else _inexact(resolved_mass)
+                return resolved_mass.mv(state_rate)
+            matrix = (
+                constant_array if constant_array is not None else _inexact(resolved_mass)
+            )
+            if matrix.shape != (size, size):
+                raise ValueError(
+                    f"Dynamic mass matrix must have shape {(size, size)}; "
+                    f"got {matrix.shape}."
                 )
-                if matrix.shape != (size, size):
-                    raise ValueError(
-                        f"Dynamic mass matrix must have shape {(size, size)}; "
-                        f"got {matrix.shape}."
-                    )
-                mass_rate = (matrix @ state_rate.reshape((size,))).reshape(shape)
-            drift = _inexact(vector_field(time, state, args))
+            return (matrix @ state_rate.reshape((size,))).reshape(shape)
+
+        def validate_drift(value):
+            drift = _inexact(value)
             if drift.shape != shape:
                 raise ValueError(
                     f"vector_field must return shape {shape}; got {drift.shape}."
                 )
-            return mass_rate - drift
+            return drift
+
+        if input_layout is None:
+
+            def residual(time, state, state_rate, args):
+                return apply_mass(time, state, state_rate, args) - validate_drift(
+                    vector_field(time, state, args)
+                )
+
+        else:
+
+            def residual(time, state, state_rate, inputs, args):
+                return apply_mass(time, state, state_rate, args) - validate_drift(
+                    vector_field(time, state, inputs, args)
+                )
 
         return cls(
             residual,
             state_shape=shape,
             structure=structure,
+            input_layout=input_layout,
             state_scale=state_scale,
             state_rate_scale=state_rate_scale,
             residual_scale=residual_scale,
@@ -338,8 +396,10 @@ class DifferentialAlgebraicSystem(StrictModule):
 
 
 __all__ = [
+    "AutonomousDifferentialAlgebraicResidual",
     "DAERole",
     "DAEStructure",
     "DifferentialAlgebraicResidual",
     "DifferentialAlgebraicSystem",
+    "InputDifferentialAlgebraicResidual",
 ]

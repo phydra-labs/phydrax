@@ -241,6 +241,96 @@ SQP method with explicit Hessian and QP regularization, dense guard, defect audi
 failure statuses. Its nonlinear path constraints are still enforced only at the declared
 nodes; neither it nor `ControlProblem.evaluate` certifies feasibility between nodes.
 
+## Optimize an implicit DAE by direct collocation
+
+Multiple shooting repeatedly integrates explicit dynamics. Direct collocation instead
+makes every state node and interval control an optimization variable and enforces an
+implicit residual locally. This is the appropriate route when the natural model is a
+regular DAE, when open-loop integration is fragile, or when shared physical parameters
+must be optimized with the trajectory.
+
+The example enforces the differential equation `ydot = u` and algebraic equation
+`z = y`. It fixes the initial state, requires `y(1) = 1`, and minimizes control energy.
+The midpoint solution is `y = z = t` and `u = 1`.
+
+```python
+dae = phx.dynamics.DifferentialAlgebraicSystem(
+    lambda time, state, state_rate, control, args: jnp.asarray(
+        (
+            state_rate[0] - control[0],
+            state[1] - state[0],
+        )
+    ),
+    state_shape=(2,),
+    structure=phx.dynamics.DAEStructure(("differential", "algebraic")),
+    input_layout=phx.dynamics.InputLayout((1,), roles="control"),
+    system_id="controlled-index-one-dae",
+)
+terminal = phx.control.BoundedTrajectoryConstraint(
+    lambda trajectory, args: trajectory.final_state[0],
+    lower=1.0,
+    upper=1.0,
+    constraint_id="unit-terminal-state",
+)
+trajectory_problem = phx.control.TrajectoryOptimizationProblem(
+    dae,
+    initial_state=jnp.asarray((0.0, 0.0)),
+    running_cost=lambda time, state, control, args: 0.5 * control[0] ** 2,
+    trajectory_constraints=(terminal,),
+    problem_id="controlled-dae-energy",
+)
+collocation_mesh = phx.discretization.TemporalMesh(
+    jnp.linspace(0.0, 1.0, 6),
+    role="collocation",
+    mesh_id="controlled-dae-collocation",
+)
+collocation_plan = phx.control.DirectCollocationPlan(
+    collocation_mesh,
+    method=phx.solver.ThetaMethod(0.5, endpoint=False),
+    audit=phx.control.DirectCollocationAuditPolicy(
+        defect_tolerance=1e-7,
+        constraint_tolerance=1e-7,
+        off_grid_points=2,
+    ),
+    plan_id="controlled-dae-midpoint",
+)
+initial_states = jnp.stack(
+    (collocation_mesh.nodes, collocation_mesh.nodes),
+    axis=-1,
+)
+initial_controls = jnp.ones((collocation_mesh.num_steps, 1))
+collocated = phx.control.solve_direct_collocation(
+    trajectory_problem,
+    collocation_plan,
+    initial_states,
+    initial_controls,
+    method=phx.optim.FilterInteriorPoint(max_dense_dimension=128),
+    termination=phx.optim.OptimizationTermination(
+        absolute_optimality=1e-8,
+        relative_optimality=0.0,
+        maximum_steps=80,
+    ),
+)
+if not bool(collocated.successful):
+    raise RuntimeError(
+        "direct collocation failed: "
+        f"status={collocated.status}, "
+        f"optimizer={collocated.optimization_result.status}"
+    )
+if collocated.optimization_result.certificate is None:
+    raise RuntimeError("direct collocation returned no KKT certificate")
+```
+
+Inspect both `maximum_defect` and `maximum_constraint_violation`. The separately sampled
+`maximum_off_grid_defect` detects interpolation error but is not an enforced
+continuous-time certificate. The result therefore records
+`off_grid_certified=False`.
+
+The native `FilterInteriorPoint` route remains dense and enforces its declared dimension
+guard. For larger transcriptions, explicitly select `IpoptMinimize`; the structured path
+supplies exact sparse constraint Jacobian values and topology. No backend is chosen by
+problem size and no backend failure triggers a fallback.
+
 ## B-spline controls, finite catalogs, and bounded initialization
 
 Choose a piecewise-constant parameterization for discrete interval controls and direct

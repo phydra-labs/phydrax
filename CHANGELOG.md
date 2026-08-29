@@ -28,6 +28,37 @@
   campaign artifacts, and performance evidence.
 - Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
   while preserving the existing array-valued SSPRK contract.
+- Added an end-to-end free-boundary SciML substrate: differentiable compact
+  Heaviside/delta and coarea calculus; level-set phase, normal, curvature,
+  velocity, and Eikonal operators; discontinuity-aware coordinate lifts;
+  implicit phase/interface functionals; Stefan, jump, kinematic,
+  Gibbs--Thomson, Young--Laplace, and traction conditions; causal time slabs
+  and narrow-band adaptive collocation.
+- Added explicit-front, implicit-level-set, reference-map, and relaxed
+  probabilistic Stefan workflows with common collocation, optimization, and
+  representation comparison. Added free-boundary operator contracts,
+  Jacobian/pullback/GCL evidence, VOF/PLIC and SPH adapters, and
+  residual-controlled hybrid rollouts.
+- Added interface predictive uncertainty, residual/diversity acquisition,
+  bounded test-time context adaptation, phase geometry and masked interface
+  distance evidence, plus exact Stefan, Mullins--Sekerka, topology-event,
+  Hysing bubble, Turek--Hron FSI, obstacle, fracture, and
+  trajectory-disjoint OOD benchmark contracts.
+- Added certified variational eigenspaces across continuous, learned-operator,
+  factorized high-dimensional, and discrete quantum workflows: basis-invariant
+  block Rayleigh objectives, native reduced Ritz extraction and full-space
+  residuals, learned trial-space warm starts, product-factor bilinear assembly
+  without global tensor materialization, and mixture-sampled multi-state VMC
+  with overlap/Hamiltonian evidence, span conditioning, Ritz modes, stochastic
+  reconfiguration, and explicit failure statuses.
+- Added JAX-native direct collocation for explicit controlled systems and
+  input-aware state-shaped DAEs, with fixed/nonuniform or optimized-duration
+  meshes, backward-Euler and midpoint transcription, interval controls, shared
+  optimized parameter spaces, bound-form path and trajectory constraints,
+  physical scaling, exact sparse Jacobians and optional Lagrangian Hessians,
+  explicitly selected native-dense or low-level sparse-Ipopt execution,
+  independent KKT recertification, typed decisions/layouts/results, and
+  non-certifying off-grid defect audits.
 - Added a first-class material-particle discretization with stable physical IDs,
   static active selections, physical mass measures, explicit precision/execution
   policies, periodic pair geometry, budgeted canonical dense neighborhoods,
@@ -60,14 +91,24 @@
   oracles and complementarity diagnostics, reference halo/migration semantics,
   benchmark registries, qualification artifacts, support matrices, and replay
   packets for commercial particle-method hardening.
-- Added typed finite-element local-action IR identities, workset planning, eager
-  differential operators, element/partial operator utilities, quadrilateral
-  nodal tabulation and p-transfer prototypes, bounded implicit-material and time
-  schedule foundations, uniform T3 refinement, and source-specific Q4
-  plate/shell, ES-FEM, NS-FEM, selective ES/NS, and fully smoothed
-  axisymmetric patch/moment operators. The IR and proof builders remain
-  developmental planning/front-end surfaces until the authoritative executor
-  cutover; smoothed elasticity now defaults to matrix-free patch action.
+- Added experimental measure-aware particle-grid splatting with multilinear
+  and degree-one through degree-three tensor B-spline assignments over nodal,
+  cell, face, and edge layouts; extensive content and density outputs; weighted
+  intensive reconstruction; adjoint grid gather; route gradients and moments;
+  periodic and explicit reject/drop boundaries; piecewise or frozen geometry
+  differentiation; static resource budgets; precision evidence; and
+  fast/deterministic/compensated accumulation with independent balance,
+  partition, reproduction, and gradient diagnostics.
+- Made the finite-element local-action/workset program authoritative for scalar
+  and product-space residuals; replaced split mixed subproblems with one compiled
+  problem; added executable SIPG/Nitsche/nullspace handling, conservative upwind
+  facets, Darcy, Maxwell, generated lowest-order primal HDG, and Taylor-Hood
+  forms; connected high-order cell-local simplex/tensor and hexahedron Q1
+  execution; and bound smoothed-elasticity actions to the same form program.
+  Added accepted field/material/topology transactions, deterministic local T3
+  marking/refinement/coarsening and transfer data, local DWR indicators, and
+  executable phase-field, CPFEM, persistent-pair contact, fracture, and fixed-
+  crack XFEM application workflows. Distributed execution remains out of scope.
 - Added first-class exact-sampling round-sphere spectral discretizations with
   explicit S2FFT mode layouts, physical area measures, matrix-free
   Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,

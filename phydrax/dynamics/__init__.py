@@ -6,10 +6,12 @@
 
 from . import analysis, identification
 from ._differential_algebraic import (
+    AutonomousDifferentialAlgebraicResidual,
     DAERole,
     DAEStructure,
     DifferentialAlgebraicResidual,
     DifferentialAlgebraicSystem,
+    InputDifferentialAlgebraicResidual,
 )
 from ._evolution import (
     AbstractDifferentiableEvolution,
@@ -61,6 +63,7 @@ __all__ = [
     "AbstractInputPolicy",
     "AutonomousContinuousVectorField",
     "AutonomousDiscreteTransition",
+    "AutonomousDifferentialAlgebraicResidual",
     "CallableInputPolicy",
     "CaseAxisRole",
     "ContinuousModelVectorField",
@@ -80,6 +83,7 @@ __all__ = [
     "EvolutionStep",
     "EvolutionTangentStep",
     "EvolutionTrajectory",
+    "InputDifferentialAlgebraicResidual",
     "InputContinuousVectorField",
     "InputDiscreteTransition",
     "InputLayout",

@@ -146,14 +146,14 @@ class RegionIR(StrictModule, NonTrainableState):
         )
 
 
-class LocalActionTermIR(StrictModule, NonTrainableState):
+class FiniteElementActionIR(StrictModule, NonTrainableState):
     action_kind: ActionKind = eqx.field(static=True)
     output_slot: str = eqx.field(static=True)
     input_slots: tuple[str, ...] = eqx.field(static=True)
     operators: tuple[tuple[str, DifferentialOperator], ...] = eqx.field(static=True)
     region: RegionIR
     kernel_id: str = eqx.field(static=True)
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -181,9 +181,9 @@ class LocalActionTermIR(StrictModule, NonTrainableState):
         self.operators = operations
         self.region = region
         self.kernel_id = kernel
-        self.term_id = canonical_fingerprint(
+        self.action_id = canonical_fingerprint(
             {
-                "kind": "finite-element-local-action-term",
+                "kind": "finite-element-action",
                 "action_kind": action_kind,
                 "output": output,
                 "inputs": list(inputs),
@@ -196,35 +196,35 @@ class LocalActionTermIR(StrictModule, NonTrainableState):
 
 class LocalActionIR(StrictModule, NonTrainableState):
     slots: tuple[FieldSlot, ...]
-    terms: tuple[LocalActionTermIR, ...]
+    actions: tuple[FiniteElementActionIR, ...]
     ir_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         slots: Sequence[FieldSlot],
-        terms: Sequence[LocalActionTermIR],
+        actions: Sequence[FiniteElementActionIR],
         /,
     ):
         slots_ = tuple(slots)
-        terms_ = tuple(terms)
-        if not slots_ or not terms_:
-            raise ValueError("LocalActionIR requires slots and terms.")
+        actions_ = tuple(actions)
+        if not slots_ or not actions_:
+            raise ValueError("LocalActionIR requires slots and actions.")
         names = tuple(slot.name for slot in slots_)
         if len(set(names)) != len(names):
             raise ValueError("LocalActionIR slot names must be unique.")
         declared = set(names)
-        for term in terms_:
-            if term.output_slot not in declared or any(
-                name not in declared for name in term.input_slots
+        for action in actions_:
+            if action.output_slot not in declared or any(
+                name not in declared for name in action.input_slots
             ):
-                raise ValueError("Local action term references an undeclared slot.")
+                raise ValueError("Finite-element action references an undeclared slot.")
         self.slots = slots_
-        self.terms = terms_
+        self.actions = actions_
         self.ir_id = canonical_fingerprint(
             {
                 "kind": "finite-element-local-action-ir",
                 "slots": [slot.slot_id for slot in slots_],
-                "terms": [term.term_id for term in terms_],
+                "actions": [action.action_id for action in actions_],
             }
         )
 
@@ -235,7 +235,7 @@ __all__ = [
     "FieldSlot",
     "FieldSlotRole",
     "LocalActionIR",
-    "LocalActionTermIR",
+    "FiniteElementActionIR",
     "RegionIR",
     "RegionKind",
 ]

@@ -110,6 +110,16 @@ implementation. See LICENSES/PETSC-BSD-2-CLAUSE.txt.
 
 Research and design acknowledgments
 
+The direct-collocation design study considered csu-hmc/opty at commit
+fdad07d0f0ae149e2eedb479e7a87298fd6722ef, Copyright (c) 2014-2025,
+opty authors, licensed under the BSD 2-Clause License, together with Moore and
+van den Bogert, “opty: Software for trajectory optimization and parameter
+identification using direct collocation,” JOSS 2(16), 300 (2017). Phydrax's
+controlled-DAE contracts, normalized decision layouts, JAX sparse derivatives,
+solver boundaries, certificates, tests, and examples are independent
+implementations; no opty source, generated templates, fixtures, or runtime code
+is copied or redistributed.
+
 The Markov-chain-cubature design study considered tttc3/MCCube at commit
 d5653d88005ef9a421f14aa0c1e9ee6cfee5cecc, licensed under the Apache License,
 Version 2.0, together with the cubature-on-Wiener-space construction of Lyons

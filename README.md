@@ -38,8 +38,9 @@ Most workflows are composing a few primitives:
   boundary atlases, topology identities, and design parameters.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
-  volumes, material-particle supports, conservative SPH, WENO fluxes,
-  fixed-capacity AMR, field spaces, measures, transfers, temporal/stochastic
+  volumes, material-particle supports, conservative SPH, measure-aware
+  particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
+  measures, transfers, temporal/stochastic
   composition, and auditable plan/preparation identities.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
 - **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
@@ -130,6 +131,7 @@ exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami acti
 area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
+[particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -252,6 +254,14 @@ and geometry-informed operators, and transformer operators. See the
 contracts and audited architecture comparisons, and the
 [architecture API](docs/api/nn/architectures.md) for constructor details.
 
+Free-boundary support composes implicit level-set measures, discontinuity-aware
+PINN features, interface physics conditions, causal/narrow-band collocation,
+explicit-front/level-set/reference-map and probabilistic Stefan workflows,
+reference-map neural-operator contracts, conservative solver adapters,
+interface-aware UQ, and problem-specific benchmark evidence. The
+topology-preserving reference-map path is kept distinct from level-set,
+phase-fraction, phase-field, particle, and complementarity paths.
+
 Stochastic support includes reproducible SDE/SPDE path ensembles, finite-rank
 spatial noise, semilinear exponential integration, convergence/error-budget
 diagnostics, strong/weak/mild physics contracts, static random fields, latent
@@ -315,13 +325,18 @@ physical model. See the
 Control support includes linear and differential dynamics, control
 parameterizations, sampled costs and constraints, linearization, Lyapunov and
 Riccati equations, Gramians, frequency response, LQR/iLQR, dense multiple
-shooting, dense or structural-sparse prepared linear-control QPs, explicit
-receding-horizon warm-start shifting, and affine stage/terminal SOCP constraints.
-Sampled nonlinear constraints are not continuous-time certificates; iLQR and
-multiple shooting accept one physical case; bounded coefficient search is not
-globally optimal; dense guards and solver status are explicit rather than hidden
-behind fallback or repair. See the [control cookbook](docs/cookbook/control.md),
-[control API](docs/api/control.md), and [mathematical-programming API](docs/api/optim.md).
+shooting, controlled-DAE direct collocation with exact sparse derivatives,
+dense or structural-sparse prepared linear-control QPs, explicit receding-horizon
+warm-start shifting, and affine stage/terminal SOCP constraints. Direct
+collocation supports fixed or variable duration, shared optimized parameters,
+bound-form trajectory constraints, explicit native-dense or sparse-Ipopt
+selection, KKT recertification, and physical defect audits. Sampled nonlinear
+constraints are not continuous-time certificates; off-grid collocation checks
+remain non-certifying diagnostics; iLQR and multiple shooting accept one
+physical case; bounded coefficient search is not globally optimal; dense guards
+and solver status are explicit rather than hidden behind fallback or repair. See
+the [control cookbook](docs/cookbook/control.md), [control API](docs/api/control.md),
+and [mathematical-programming API](docs/api/optim.md).
 
 Sensitivity utilities add score/Fisher actions and empirical
 controllability/observability directions. Stationary linear-Gaussian state,

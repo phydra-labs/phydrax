@@ -227,6 +227,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
     cell_dofs: tuple[Array, ...]
     relations: tuple[RowRelation, ...]
     orientations: tuple[Array, ...]
+    cell_coordinate_weights: tuple[Array, ...]
     global_dof_count: int = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
     association: str = eqx.field(static=True)
@@ -256,7 +257,10 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         connectivity = mesh.connectivity
         if conformity == "L2":
             association = "cell"
-            global_count = sum(block.cell_count for block in mesh.blocks)
+            global_count = sum(
+                block.cell_count * element.local_dof_count
+                for block, element in zip(mesh.blocks, resolved, strict=True)
+            )
         elif conformity in ("Hdiv", "Hcurl"):
             if not isinstance(connectivity, PolygonalConnectivity):
                 raise ValueError(
@@ -269,13 +273,33 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
             association = "edge"
             global_count = int(connectivity.edges.shape[0])
         elif conformity == "H1":
-            p2 = any(element.degree == 2 for element in resolved)
-            association = "vertex_edge" if p2 else "vertex"
-            if p2:
-                if not isinstance(connectivity, PolygonalConnectivity):
-                    raise ValueError("P2 DOF maps require polygonal connectivity.")
-                global_count = vertex_count + int(connectivity.edges.shape[0])
+            high_order_polygon = isinstance(connectivity, PolygonalConnectivity) and any(
+                element.degree > 1 for element in resolved
+            )
+            if high_order_polygon:
+                association = "entity"
+                edge_widths = {
+                    len(edge_dofs)
+                    for element in resolved
+                    for edge_dofs in element.entity_dofs[1]
+                }
+                if len(edge_widths) != 1:
+                    raise ValueError(
+                        "One H1 field requires a consistent edge order across blocks."
+                    )
+                edge_width = edge_widths.pop()
+                interior_count = sum(
+                    block.cell_count * len(element.entity_dofs[2][0])
+                    for block, element in zip(mesh.blocks, resolved, strict=True)
+                )
+                global_count = (
+                    vertex_count
+                    + int(connectivity.edges.shape[0]) * edge_width
+                    + interior_count
+                )
             else:
+                association = "vertex"
+                edge_width = 0
                 global_count = vertex_count
         else:
             raise ValueError(f"Unsupported finite-element conformity {conformity!r}.")
@@ -283,14 +307,22 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         orientations = []
         relations = []
         cell_offset = 0
+        dof_offset = 0
+        entity_interior_offset = (
+            vertex_count + int(connectivity.edges.shape[0]) * edge_width
+            if association == "entity"
+            else 0
+        )
         for block, element in zip(mesh.blocks, resolved, strict=True):
             vertices = np.asarray(block.vertices, dtype=np.int32)
             if association == "cell":
+                width = element.local_dof_count
                 local = np.arange(
-                    cell_offset,
-                    cell_offset + block.cell_count,
+                    dof_offset,
+                    dof_offset + block.cell_count * width,
                     dtype=np.int32,
-                )[:, None]
+                ).reshape((block.cell_count, width))
+                dof_offset += block.cell_count * width
                 orientation = np.ones_like(local, dtype=float)
             elif association == "edge":
                 if not isinstance(connectivity, PolygonalConnectivity):
@@ -308,17 +340,52 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     cell_offset : cell_offset + block.cell_count,
                     : element.local_dof_count,
                 ]
-            elif element.degree == 1:
-                local = vertices
-                orientation = np.ones_like(local, dtype=float)
-            elif block.cell_kind == "triangle" and element.degree == 2:
+            elif association == "entity":
                 if not isinstance(connectivity, PolygonalConnectivity):
-                    raise TypeError("Triangle P2 requires polygonal connectivity.")
-                edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
+                    raise TypeError("High-order H1 entity map requires polygonal cells.")
+                local = np.full(
+                    (block.cell_count, element.local_dof_count),
+                    -1,
+                    dtype=np.int32,
+                )
+                for local_vertex, entity_dofs in enumerate(element.entity_dofs[0]):
+                    if len(entity_dofs) != 1:
+                        raise ValueError("H1 nodal vertices require one DOF per vertex.")
+                    local[:, entity_dofs[0]] = vertices[:, local_vertex]
+                cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)[
                     cell_offset : cell_offset + block.cell_count,
-                    :3,
+                    : len(element.entity_dofs[1]),
                 ]
-                local = np.concatenate((vertices, vertex_count + edges), axis=1)
+                cell_signs = np.asarray(connectivity.cell_edge_signs)[
+                    cell_offset : cell_offset + block.cell_count,
+                    : len(element.entity_dofs[1]),
+                ]
+                for local_edge, entity_dofs in enumerate(element.entity_dofs[1]):
+                    if len(entity_dofs) != edge_width:
+                        raise ValueError("High-order H1 edge widths are inconsistent.")
+                    for position, local_dof in enumerate(entity_dofs):
+                        canonical_position = np.where(
+                            cell_signs[:, local_edge] > 0.0,
+                            position,
+                            edge_width - 1 - position,
+                        )
+                        local[:, local_dof] = (
+                            vertex_count
+                            + cell_edges[:, local_edge] * edge_width
+                            + canonical_position
+                        )
+                interior_dofs = element.entity_dofs[2][0]
+                for cell in range(block.cell_count):
+                    for position, local_dof in enumerate(interior_dofs):
+                        local[cell, local_dof] = (
+                            entity_interior_offset + cell * len(interior_dofs) + position
+                        )
+                entity_interior_offset += block.cell_count * len(interior_dofs)
+                if np.any(local < 0):
+                    raise ValueError("High-order H1 entity map left unassigned DOFs.")
+                orientation = np.ones_like(local, dtype=float)
+            elif association == "vertex":
+                local = vertices
                 orientation = np.ones_like(local, dtype=float)
             else:
                 raise ValueError("Unsupported finite-element DOF map.")
@@ -326,20 +393,25 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
             orientations.append(jnp.asarray(orientation))
             relations.append(RowRelation(local, source_size=global_count))
             cell_offset += block.cell_count
+        coordinate_weights = tuple(
+            lagrange_element(block.cell_kind, 1).tabulate(element.reference_nodes)[0]
+            for block, element in zip(mesh.blocks, resolved, strict=True)
+        )
         if association == "cell":
             boundary = np.zeros((global_count,), dtype=bool)
-            dof_coordinates = np.concatenate(
-                tuple(
-                    np.mean(
-                        np.asarray(mesh.coordinates)[
-                            np.asarray(block.vertices, dtype=np.int32)
-                        ],
-                        axis=1,
-                    )
-                    for block in mesh.blocks
-                ),
-                axis=0,
-            )
+            coordinate_blocks = []
+            mesh_coordinates = np.asarray(mesh.coordinates)
+            for block, weights_ in zip(mesh.blocks, coordinate_weights, strict=True):
+                cell_coordinates = mesh_coordinates[
+                    np.asarray(block.vertices, dtype=np.int32)
+                ]
+                mapped = oe.contract(
+                    "ia,cad->cid",
+                    np.asarray(weights_),
+                    cell_coordinates,
+                )
+                coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
+            dof_coordinates = np.concatenate(tuple(coordinate_blocks), axis=0)
         elif association == "edge":
             if not isinstance(connectivity, PolygonalConnectivity):
                 raise TypeError("Compatible edge map requires polygonal connectivity.")
@@ -355,23 +427,46 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 mesh.topology.entity_sets[0].subset("boundary").mask,
                 dtype=bool,
             )
-            dof_coordinates = np.asarray(mesh.coordinates)
-            if association == "vertex_edge":
+            if association == "entity":
                 if not isinstance(connectivity, PolygonalConnectivity):
-                    raise TypeError("P2 boundary map requires polygonal connectivity.")
-                boundary[vertex_count:] = np.asarray(
-                    connectivity.boundary_edges,
-                    dtype=bool,
+                    raise TypeError("High-order H1 coordinates require polygonal cells.")
+                boundary_edges = np.flatnonzero(
+                    np.asarray(connectivity.boundary_edges, dtype=bool)
                 )
-                edge_vertices = np.asarray(connectivity.edges, dtype=np.int32)
-                edge_coordinates = np.mean(dof_coordinates[edge_vertices], axis=1)
-                dof_coordinates = np.concatenate(
-                    (dof_coordinates, edge_coordinates),
-                    axis=0,
+                for edge in boundary_edges:
+                    start = vertex_count + int(edge) * edge_width
+                    boundary[start : start + edge_width] = True
+                accumulated = np.zeros(
+                    (global_count, mesh.ambient_dimension),
+                    dtype=np.asarray(mesh.coordinates).dtype,
                 )
+                counts = np.zeros((global_count,), dtype=np.int32)
+                for block, weights_, routes in zip(
+                    mesh.blocks, coordinate_weights, block_dofs, strict=True
+                ):
+                    mapped = oe.contract(
+                        "ia,cad->cid",
+                        np.asarray(weights_),
+                        np.asarray(mesh.coordinates)[np.asarray(block.vertices)],
+                    )
+                    routes_ = np.asarray(routes)
+                    np.add.at(
+                        accumulated,
+                        routes_.reshape((-1,)),
+                        mapped.reshape((-1, mesh.ambient_dimension)),
+                    )
+                    np.add.at(counts, routes_.reshape((-1,)), 1)
+                if np.any(counts == 0):
+                    raise ValueError("High-order H1 coordinates contain unassigned DOFs.")
+                dof_coordinates = accumulated / counts[:, None]
+            else:
+                dof_coordinates = np.asarray(mesh.coordinates)
         self.block_names = tuple(block.name for block in mesh.blocks)
         self.cell_dofs = tuple(block_dofs)
         self.orientations = tuple(orientations)
+        self.cell_coordinate_weights = tuple(
+            jnp.asarray(value) for value in coordinate_weights
+        )
         self.relations = tuple(relations)
         self.global_dof_count = global_count
         self.component_shape = components
@@ -390,6 +485,10 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 "orientations": [
                     array_tree_fingerprint(np.asarray(value)) for value in orientations
                 ],
+                "cell_coordinate_weights": [
+                    array_tree_fingerprint(np.asarray(value))
+                    for value in coordinate_weights
+                ],
             }
         )
 
@@ -405,21 +504,45 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         if self.association == "vertex":
             return points
         connectivity = mesh.connectivity
-        if self.association in ("edge", "vertex_edge"):
+        if self.association == "edge":
             if not isinstance(connectivity, PolygonalConnectivity):
                 raise TypeError("Edge DOF coordinates require polygonal connectivity.")
             edges = jnp.asarray(connectivity.edges, dtype=jnp.int32)
-            edge_coordinates = 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
-            return (
-                edge_coordinates
-                if self.association == "edge"
-                else jnp.concatenate((points, edge_coordinates), axis=0)
+            return 0.5 * (points[edges[:, 0]] + points[edges[:, 1]])
+        if self.association == "entity":
+            accumulated = jnp.zeros(
+                (self.global_dof_count, mesh.ambient_dimension),
+                dtype=points.dtype,
             )
+            counts = jnp.zeros((self.global_dof_count,), dtype=jnp.int32)
+            for block, weights_, routes in zip(
+                mesh.blocks,
+                self.cell_coordinate_weights,
+                self.cell_dofs,
+                strict=True,
+            ):
+                mapped = oe.contract(
+                    "ia,cad->cid",
+                    weights_,
+                    points[block.vertices],
+                )
+                accumulated = accumulated.at[routes].add(mapped)
+                counts = counts.at[routes].add(1)
+            return accumulated / counts[:, None]
         if self.association == "cell":
-            return jnp.concatenate(
-                tuple(jnp.mean(points[block.vertices], axis=1) for block in mesh.blocks),
-                axis=0,
-            )
+            coordinate_blocks = []
+            for block, weights_ in zip(
+                mesh.blocks,
+                self.cell_coordinate_weights,
+                strict=True,
+            ):
+                mapped = oe.contract(
+                    "ia,cad->cid",
+                    weights_,
+                    points[block.vertices],
+                )
+                coordinate_blocks.append(mapped.reshape((-1, mesh.ambient_dimension)))
+            return jnp.concatenate(tuple(coordinate_blocks), axis=0)
         raise ValueError("Unknown finite-element DOF association.")
 
 
@@ -641,6 +764,17 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
             )
             gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
             determinant = np.linalg.det(gram)
+        elif block.cell_kind == "hexahedron":
+            edge_matrix = np.stack(
+                (
+                    points[:, 1] - points[:, 0],
+                    points[:, 3] - points[:, 0],
+                    points[:, 4] - points[:, 0],
+                ),
+                axis=-1,
+            )
+            gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
+            determinant = np.linalg.det(gram)
         else:
             raise ValueError("Unsupported finite-element cell kind.")
         if np.any(~np.isfinite(determinant)) or np.any(determinant <= 0.0):
@@ -798,25 +932,48 @@ class FiniteElementDiscretization(AbstractPreparedDiscretization):
                     vertex_count,
                     component_shape=field.component_shape,
                 )
-            elif dof_map.association == "vertex_edge":
-                edge_count = dof_map.global_dof_count - vertex_count
-                layout = BlockDofLayout(
-                    ("vertices", "edges"),
-                    (
-                        EntityDofLayout(
-                            mesh.topology.entity_sets[0].entity_set_id,
-                            vertex_count,
-                            vertex_count,
-                            component_shape=field.component_shape,
-                        ),
-                        EntityDofLayout(
-                            mesh.topology.entity_sets[1].entity_set_id,
-                            edge_count,
-                            edge_count,
-                            component_shape=field.component_shape,
-                        ),
+            elif dof_map.association == "entity":
+                if not isinstance(mesh.connectivity, PolygonalConnectivity):
+                    raise TypeError("High-order H1 layout requires polygonal cells.")
+                edge_count = int(mesh.connectivity.edges.shape[0])
+                edge_width = len(elements[0].entity_dofs[1][0])
+                interior_widths = {len(element.entity_dofs[2][0]) for element in elements}
+                if len(interior_widths) != 1:
+                    raise ValueError(
+                        "High-order H1 mixed blocks require one interior width."
+                    )
+                interior_width = interior_widths.pop()
+                block_names = ["vertices", "edges"]
+                layouts = [
+                    EntityDofLayout(
+                        mesh.topology.entity_sets[0].entity_set_id,
+                        vertex_count,
+                        vertex_count,
+                        component_shape=field.component_shape,
                     ),
-                )
+                    EntityDofLayout(
+                        mesh.topology.entity_sets[1].entity_set_id,
+                        edge_count,
+                        edge_count * edge_width,
+                        dofs_per_entity=edge_width,
+                        component_shape=field.component_shape,
+                    ),
+                ]
+                if interior_width:
+                    cell_count = sum(block.cell_count for block in mesh.blocks)
+                    block_names.append("cells")
+                    layouts.append(
+                        EntityDofLayout(
+                            mesh.topology.entity_sets[
+                                mesh.topological_dimension
+                            ].entity_set_id,
+                            cell_count,
+                            cell_count * interior_width,
+                            dofs_per_entity=interior_width,
+                            component_shape=field.component_shape,
+                        )
+                    )
+                layout = BlockDofLayout(tuple(block_names), tuple(layouts))
             elif dof_map.association == "edge":
                 edge_count = dof_map.global_dof_count
                 layout = EntityDofLayout(
@@ -1045,6 +1202,28 @@ class FiniteElementDiscretization(AbstractPreparedDiscretization):
             raise TypeError("function must be callable.")
         field_index = self._field_index(field_name)
         realized = self.default_runtime if runtime is None else runtime
+        conformity = self.elements[field_index][0].conformity
+        if conformity in ("Hdiv", "Hcurl"):
+            if not isinstance(self.mesh.connectivity, PolygonalConnectivity):
+                raise ValueError(
+                    "Compatible projection currently requires polygonal edges."
+                )
+            edge_vertices = jnp.asarray(self.mesh.connectivity.edges, dtype=jnp.int32)
+            edge_points = realized.coordinates[edge_vertices]
+            tangent = edge_points[:, 1] - edge_points[:, 0]
+            midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
+            values = jnp.asarray(function(midpoint, args))
+            if values.shape != tangent.shape:
+                raise ValueError(
+                    "Compatible edge projection function must return one vector "
+                    "per edge midpoint."
+                )
+            if conformity == "Hcurl":
+                moments = jnp.sum(values * tangent, axis=-1)
+            else:
+                normal_measure = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
+                moments = jnp.sum(values * normal_measure, axis=-1)
+            return self.field_spaces[field_index].vector_space.validate(moments)
         coordinates = self.dof_maps[field_index].evaluate_coordinates(
             self.mesh,
             realized.coordinates,
@@ -1307,6 +1486,13 @@ def _reference_rule(cell_kind: str, /) -> tuple[Array, Array]:
             * weights[None, None, :]
             * one_minus_first**2
             * one_minus_second
+        )
+        return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
+    if cell_kind == "hexahedron":
+        first, second, third = np.meshgrid(axis, axis, axis, indexing="ij")
+        points = np.stack((first, second, third), axis=-1)
+        combined = (
+            weights[:, None, None] * weights[None, :, None] * weights[None, None, :]
         )
         return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
     raise ValueError("Unsupported finite-element cell kind.")

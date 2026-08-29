@@ -279,6 +279,11 @@ from ._stochastic import (
     StochasticProblem,
     StochasticResult,
 )
+from ._structured_nonlinear import (
+    StructuredNonlinearEvaluation,
+    StructuredNonlinearProgram,
+    StructuredNonlinearWarmStart,
+)
 from ._trust_region import (
     solve_trust_region_subproblem,
     SteihaugToint,
@@ -464,6 +469,9 @@ __all__ = [
     "StateDesignResult",
     "StateEquationResult",
     "SteihaugToint",
+    "StructuredNonlinearEvaluation",
+    "StructuredNonlinearProgram",
+    "StructuredNonlinearWarmStart",
     "StochasticAdam",
     "StochasticProblem",
     "StochasticResult",

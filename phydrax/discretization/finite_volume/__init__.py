@@ -269,6 +269,7 @@ from ._unstructured_remap import (
     UnstructuredRemapReport,
 )
 from ._unstructured_vof import (
+    JAXPLICStageReconstruction,
     PLICFaceApertures,
     PLICInterfaceStatus,
     PLICReconstruction,
@@ -344,6 +345,7 @@ __all__ = [
     "EmbeddedBoundaryEvidence",
     "EmbeddedBoundaryStabilizationPolicy",
     "EmbeddedBoundaryStatus",
+    "JAXPLICStageReconstruction",
     "PLICFaceApertures",
     "PLICInterfaceStatus",
     "PLICReconstruction",

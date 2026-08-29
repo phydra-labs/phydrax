@@ -93,12 +93,17 @@ uses canonical unordered pairs, normalized compact kernels, energy-derived
 pressure forces, dense or fail-closed cell-list execution, exact `GraphIR`
 views, and the native separable-Hamiltonian solver path. First-order WCSPH adds
 explicit summation/continuity density semantics, Morris physical viscosity,
-energy/dissipation ledgers, and native SSPRK integration. DEM adds stable
+energy/dissipation ledgers, and native SSPRK integration. Structured
+particle-grid splatting adds measure-aware extensive deposition, intensive
+reconstruction, adjoint gather, explicit boundary loss, multilinear and
+degree-one through degree-three B-spline assignments, mixed entity layouts,
+route moments, and fast/deterministic/compensated reductions. DEM adds stable
 contact history, accepted-step work/energy ledgers, cached and fused
 neighborhoods, rolling/adhesive/plastic/thermal laws, SO(2)/SO(3) bodies,
 clumps, triangle/convex/implicit geometry, bonds/topology events, certified
 sensitivity modes, and conservative unresolved/resolved CFD coupling. See
 [Guide → Particle methods](guides_particle_methods.md),
+[Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
@@ -364,14 +369,18 @@ physical model.
 costs, and sampled constraints into trajectories with stable control,
 discretization, approximation, method, and backend IDs. It includes
 linearization and frequency response, Lyapunov/Riccati equations, Gramians,
-finite- and infinite-horizon LQR, iLQR, dense multiple shooting, dense or
-structural-sparse prepared linear-control QPs, explicit MPC warm-start shifting,
-and affine stage/terminal SOCP constraints. Sampled nonlinear path constraints
-report feasibility only at the sampled sites and are not continuous-time
-certificates. iLQR and multiple shooting solve one physical case per call.
-Coefficient search is bounded initialization, not a globally optimal solver.
-Dense algorithms enforce dimension guards; no failed solve is hidden by a
-fallback, projection, covariance repair, or undeclared regularization.
+finite- and infinite-horizon LQR, iLQR, dense multiple shooting, implicit
+direct collocation, dense or structural-sparse prepared linear-control QPs,
+explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
+Direct collocation accepts explicit systems or controlled state-shaped DAEs,
+shared parameter coordinates, fixed or variable duration, exact sparse
+derivatives, and explicitly selected dense-native or sparse-Ipopt optimization.
+Sampled nonlinear path constraints report feasibility only at their declared
+sites and are not continuous-time certificates. iLQR and multiple shooting solve
+one physical case per call. Coefficient search is bounded initialization, not a
+globally optimal solver. Dense algorithms enforce dimension guards; no failed
+solve is hidden by a fallback, projection, covariance repair, or undeclared
+regularization.
 
 Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC/PSD/exponential/power
 product-cone programs live in `phydrax.optim`. PSD uses scaled upper-column symmetric
@@ -746,12 +755,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Optimal control, QPs, and MPC**: compose `ControlProblem` from a typed grid,
   dynamics, parameterization, costs, and sampled constraints; use LQR/iLQR,
   compiled linear-control QPs, bounded coefficient search, dense multiple
-  shooting, or receding-horizon MPC according to the problem structure. Results
-  retain case/control axes, validity and backend status, plus control,
-  discretization, approximation, method, and backend IDs. Nonlinear sampled
-  constraints are not between-sample certificates; iLQR and multiple shooting
-  are single-case; bounded search is not globally optimal. Dense paths enforce
-  guards and never hide failure behind a repair or fallback.
+  shooting, direct collocation, or receding-horizon MPC according to the problem
+  structure. `TrajectoryOptimizationProblem` adds controlled implicit DAEs,
+  bound-form global constraints, shared optimized parameters, and variable
+  duration for direct collocation. Results retain case/control axes, validity and
+  backend status, plus control, discretization, approximation, method, and
+  backend IDs. Nonlinear sampled constraints are not between-sample
+  certificates; direct-collocation off-grid checks are diagnostics, iLQR and
+  multiple shooting are single-case, and bounded search is not globally optimal.
+  Dense paths enforce guards and never hide failure behind a repair or fallback.
   See [Control cookbook](cookbook/control.md), [API → Control](api/control.md),
   and [API → Optimization](api/optim.md).
 - **Linear systems, sensitivities, and spectra**: linearize dynamics; solve
