@@ -33,6 +33,19 @@ broadcast to that shape:
 - residual scale defines the equation weights used by convergence checks;
 - none of the scales changes the raw value returned by `system(...)`.
 
+`DifferentialAlgebraicSystem` also accepts an optional `InputLayout`. An autonomous
+residual keeps the signature `residual(time, state, state_rate, args)`. An input-aware
+residual uses `residual(time, state, state_rate, inputs, args)` and must be evaluated
+with keyword-only `inputs`. Missing, extra, or incorrectly shaped inputs fail before
+the residual runs. `from_mass_matrix` supports the same input-aware vector-field form;
+the mass matrix itself remains independent of the input in this contract.
+
+The native DAE IVP lifecycle is currently autonomous and rejects an input-aware system
+when constructing `DifferentialAlgebraicProblem`. Controlled DAEs are consumed by
+[`phydrax.control` direct collocation](../control.md#direct-collocation), which evaluates
+the implicit residual at every collocation stage without pretending an input policy has
+been supplied to the IVP solver.
+
 Nontrivial state geometry is rejected by the native BDF backend. The current BDF
 formula combines ambient Euclidean states and therefore cannot honestly preserve a
 manifold-valued state.
