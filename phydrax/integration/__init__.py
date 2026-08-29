@@ -4,6 +4,15 @@
 
 """Measure-aware deterministic, adaptive, and stochastic integration."""
 
+from .._axis_factorization import (
+    AxisContractionPlan,
+    AxisContractionResult,
+    AxisFactor,
+    AxisFactorizedField,
+    AxisGather,
+    AxisProductTerm,
+    contract_axis_factors,
+)
 from ._adaptive_callable import adaptive_interval_callable, adaptive_triangle_callable
 from ._api import from_samples, integrate, IntegrationRealization, materialize, reduce
 from ._atlas import (
@@ -56,6 +65,12 @@ from ._execution import (
     IntegrationSource,
     per_step,
     PerStepIntegration,
+)
+from ._factorized import (
+    factorized_bilinear_form,
+    factorized_inner_product,
+    FactorizedBilinearEvaluation,
+    FactorizedBilinearTerm,
 )
 from ._markov import markov_chain_measure
 from ._multilevel import (
@@ -169,6 +184,12 @@ from ._transformations import (
 
 
 __all__ = [
+    "AxisContractionPlan",
+    "AxisContractionResult",
+    "AxisFactor",
+    "AxisFactorizedField",
+    "AxisGather",
+    "AxisProductTerm",
     "AtlasIntegrationResult",
     "AtlasIntegrationTarget",
     "AtlasPatchQuadrature",
@@ -207,6 +228,8 @@ __all__ = [
     "ControlVariateEstimator",
     "DensityTarget",
     "DiscreteMeasureTarget",
+    "FactorizedBilinearEvaluation",
+    "FactorizedBilinearTerm",
     "FixedQuadratureDiagnostics",
     "FixedIntegration",
     "FixedQuadraturePlan",
@@ -221,6 +244,9 @@ __all__ = [
     "ImportanceSamplingPlan",
     "IntegrationBatch",
     "IntegrationEstimate",
+    "contract_axis_factors",
+    "factorized_bilinear_form",
+    "factorized_inner_product",
     "IntegrationPlan",
     "IntegrationPrecisionPolicy",
     "MeasureCalibrationDiagnostics",

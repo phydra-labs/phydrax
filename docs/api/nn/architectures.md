@@ -741,6 +741,35 @@ both its volume and boundary sources.
 
 ::: phydrax.nn.operator.OperatorBatch
 
+### Learned eigenspace predictions
+
+A neural operator should emit trial-space channels rather than mode-indexed
+eigenvectors. `operator_trial_subspace` lowers one unbatched
+`FunctionSamples.values[..., mode]` prediction into the physical vector-space
+coordinates, honoring the support mask. `rayleigh_ritz_from_samples` applies
+the physical operator and metric, solves the reduced pencil, and reports
+full-space residuals. `warm_started_eigensolve_from_samples` additionally feeds
+the certified Ritz vectors to the selected native eigensolver.
+
+The adapter does not reinterpret quadrature weights: the eigenproblem vector
+space and metric own that pairing. Per-case predictions must be sliced before
+lowering, and the flattened value shape must exactly match the physical space.
+
+::: phydrax.nn.operator.OperatorTrialSubspace
+
+---
+
+::: phydrax.nn.operator.operator_trial_subspace
+
+---
+
+::: phydrax.nn.operator.rayleigh_ritz_from_samples
+
+---
+
+::: phydrax.nn.operator.warm_started_eigensolve_from_samples
+
+
 ### Engine contract and package ownership
 
 `AbstractOperatorModel` is the public base for native and third-party PhydraX

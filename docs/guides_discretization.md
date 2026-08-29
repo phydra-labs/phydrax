@@ -134,6 +134,13 @@ interaction once, binds particle/neighborhood/method provenance, and lowers the
 Hamiltonian state to `DifferentialProblem`. See [Particle methods](guides_particle_methods.md)
 and [Smoothed particle hydrodynamics](guides_sph.md).
 
+`ParticleGridSplatPlan` binds material support to an exact tensor-grid entity
+layout through multilinear or degree-one through degree-three B-spline
+assignments. Extensive deposition, normalized reconstruction, grid-to-particle
+gather, route gradients and moments, source/target provenance, boundary loss,
+reduction order, and balance evidence remain explicit. See
+[Particle-grid splatting](guides_particle_splatting.md).
+
 
 ## Spectral bases
 

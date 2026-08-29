@@ -19,6 +19,13 @@
   distance evidence, plus exact Stefan, Mullins--Sekerka, topology-event,
   Hysing bubble, Turek--Hron FSI, obstacle, fracture, and
   trajectory-disjoint OOD benchmark contracts.
+- Added certified variational eigenspaces across continuous, learned-operator,
+  factorized high-dimensional, and discrete quantum workflows: basis-invariant
+  block Rayleigh objectives, native reduced Ritz extraction and full-space
+  residuals, learned trial-space warm starts, product-factor bilinear assembly
+  without global tensor materialization, and mixture-sampled multi-state VMC
+  with overlap/Hamiltonian evidence, span conditioning, Ritz modes, stochastic
+  reconfiguration, and explicit failure statuses.
 - Added JAX-native direct collocation for explicit controlled systems and
   input-aware state-shaped DAEs, with fixed/nonuniform or optimized-duration
   meshes, backward-Euler and midpoint transcription, interval controls, shared
@@ -59,6 +66,14 @@
   oracles and complementarity diagnostics, reference halo/migration semantics,
   benchmark registries, qualification artifacts, support matrices, and replay
   packets for commercial particle-method hardening.
+- Added experimental measure-aware particle-grid splatting with multilinear
+  and degree-one through degree-three tensor B-spline assignments over nodal,
+  cell, face, and edge layouts; extensive content and density outputs; weighted
+  intensive reconstruction; adjoint grid gather; route gradients and moments;
+  periodic and explicit reject/drop boundaries; piecewise or frozen geometry
+  differentiation; static resource budgets; precision evidence; and
+  fast/deterministic/compensated accumulation with independent balance,
+  partition, reproduction, and gradient diagnostics.
 - Made the finite-element local-action/workset program authoritative for scalar
   and product-space residuals; replaced split mixed subproblems with one compiled
   problem; added executable SIPG/Nitsche/nullspace handling, conservative upwind

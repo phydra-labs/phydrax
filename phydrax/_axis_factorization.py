@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ...._strict import StrictModule
+from ._strict import StrictModule
 
 
 class AxisGather(StrictModule):
@@ -107,6 +107,56 @@ class AxisContractionPlan(StrictModule):
             raise ValueError(f"AxisContractionPlan has duplicate output axes {axes!r}.")
         self.terms = terms_
         self.output_axes = axes
+
+
+class AxisFactorizedField(StrictModule):
+    """A portable sum-of-products field without a materialized tensor grid."""
+
+    factors: tuple[AxisFactor, ...]
+    plan: AxisContractionPlan
+    factor_names: tuple[str, ...]
+
+    def __init__(
+        self,
+        factors: Sequence[AxisFactor],
+        plan: AxisContractionPlan,
+        /,
+    ):
+        factors_ = tuple(factors)
+        if not factors_:
+            raise ValueError("AxisFactorizedField requires at least one factor.")
+        names = tuple(factor.name for factor in factors_)
+        if len(set(names)) != len(names):
+            raise ValueError("AxisFactorizedField factor names must be unique.")
+        if not isinstance(plan, AxisContractionPlan):
+            raise TypeError("plan must be an AxisContractionPlan.")
+        missing = tuple(
+            name
+            for term in plan.terms
+            for name in term.factor_names
+            if name not in names
+        )
+        if missing:
+            raise ValueError(
+                f"AxisFactorizedField plan references missing factors {missing!r}."
+            )
+        self.factors = factors_
+        self.plan = plan
+        self.factor_names = names
+
+    def factor(self, name: str, /) -> AxisFactor:
+        """Return one named factor without constructing a mutable mapping."""
+        name_ = str(name)
+        if name_ not in self.factor_names:
+            raise KeyError(f"Unknown factor {name_!r}.")
+        return self.factors[self.factor_names.index(name_)]
+
+    def contract(self) -> AxisContractionResult:
+        """Materialize the represented field only when explicitly requested."""
+        return contract_axis_factors(
+            dict(zip(self.factor_names, self.factors, strict=True)),
+            self.plan,
+        )
 
 
 class AxisContractionResult(StrictModule):
@@ -222,6 +272,7 @@ def contract_axis_factors(
 __all__ = [
     "AxisContractionPlan",
     "AxisContractionResult",
+    "AxisFactorizedField",
     "AxisFactor",
     "AxisGather",
     "AxisProductTerm",
