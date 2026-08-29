@@ -53,7 +53,9 @@ result = phx.control.solve_direct_collocation(
     plan,
     initial_states,
     initial_controls,
-    method=phx.optim.FilterInteriorPoint(max_dense_dimension=128),
+    method=phx.optim.PrimalDualInteriorPoint(
+        mode="dense-filter", max_dense_dimension=128
+    ),
     termination=phx.optim.OptimizationTermination(
         absolute_optimality=1.0e-8,
         relative_optimality=0.0,

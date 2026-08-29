@@ -80,6 +80,37 @@ external method is selected after a Clarabel failure.
 
 ---
 
+## Spineax cuDSS sparse direct execution
+
+Spineax is an optional Linux x86-64 CUDA 13 bridge to NVIDIA cuDSS. Install the
+`cudss` extra only on a supported NVIDIA system, inspect
+`spineax_availability`, and select
+`SparseLDLT(provider="spineax-cudss")` explicitly. Importing Phydrax does not
+import Spineax or initialize CUDA.
+
+The provider accepts sorted canonical 32-bit CSR structure, supports
+shared-pattern numeric value batches, retains symbolic analysis across
+`phydrax.linalg.refresh`, reuses factors for multiple right-hand sides, and
+requires explicit `phydrax.linalg.release`. Original-coordinate residual
+certification remains Phydrax-owned.
+
+Spineax reports positive and negative LDLᵀ inertia. Its current cuDSS path does
+not claim reliable zero inertia; this limitation is retained in capability and
+KKT evidence rather than inferred away. No unavailable or insufficient-inertia
+execution falls back to another provider.
+
+Accordingly, the current nonconvex structured IPM rejects Spineax as its KKT
+provider until that zero-inertia capability is certified. The provider remains
+available for ordinary sparse linear systems.
+
+::: phydrax.backends.SpineaxBackend
+
+---
+
+::: phydrax.backends.spineax_availability
+
+---
+
 ## MPAX mathematical programming
 
 MPAX 0.2.4 is an optional device backend for assembled LPs and convex QPs. Install

@@ -379,17 +379,20 @@ direct collocation, dense or structural-sparse prepared linear-control QPs,
 explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
 Direct collocation accepts explicit systems or controlled state-shaped DAEs,
 shared parameter coordinates, fixed or variable duration, exact sparse
-derivatives, and explicitly selected dense-native or sparse-Ipopt optimization.
-Typed Ipopt evidence retains callback work, topology, status, and warm starts;
-per-interval sampled defects drive nested h-refinement with primal-only transfer;
-and controlled-DAE replay binds held controls into consistency and every implicit
-stage. Fingerprinted native/Ipopt campaigns derive graduation claims. Sampled
-nonlinear path constraints and off-grid audits are not continuous-time
-certificates, and replay does not rewrite collocation success. iLQR and multiple
-shooting solve one physical case per call. Coefficient search is bounded
-initialization, not a globally optimal solver. Dense algorithms enforce dimension
-guards; no failed solve is hidden by fallback, projection, covariance repair, or
-undeclared regularization.
+derivatives, and explicitly selected dense-native, sparse-native, or sparse
+Ipopt optimization. Its structured template supports numeric refresh, portable
+primal/dual warm starts, and explicit completion pools for independent initial
+decisions. Typed Ipopt evidence retains callback work, topology, status, and
+warm starts; per-interval sampled defects drive nested h-refinement with
+primal-only transfer; and controlled-DAE replay binds held controls into
+consistency and every implicit stage. Fingerprinted native/Ipopt campaigns
+derive graduation claims. Multiple shooting additionally lowers to the same
+structured nonlinear IR without changing the original dense SQP contract.
+Sampled nonlinear path constraints and off-grid audits are not continuous-time
+certificates, and replay does not rewrite collocation success. Coefficient
+search is bounded initialization, not a globally optimal solver. Dense
+algorithms enforce dimension guards; no failed solve is hidden by fallback,
+projection, covariance repair, or undeclared regularization.
 
 Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC/PSD/exponential/power
 product-cone programs live in `phydrax.optim`. PSD uses scaled upper-column symmetric
@@ -401,13 +404,19 @@ dense, QPax 0.1.4, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods rem
 explicit choices with no automatic fallback or universal differentiability claim.
 
 General nonlinear optimization lives in `phydrax.optim`. Scalar, block-residual,
-proximal-composite, constrained, state/design, stochastic, manifold, and factor
-graph problems share typed termination, status, diagnostics, provenance, and
-PyTree contracts. Native methods include matrix-free Newton--Krylov and
-Steihaug--Toint, dense/subspace dogleg and dogbox, robust-loss GN/LM,
-trust-reflective bounds, variable projection, POUNDERS, projected quasi-Newton,
-augmented Lagrangian, filter/SOC SQP with BFGS/SR1/exact Hessians, and a filter
-interior-point method with restoration and KKT inertia planning. BOBYQA, COBYQA,
+proximal-composite, constrained, state/design, stochastic, manifold, factor
+graph, and structured sparse programs share typed termination, status,
+diagnostics, provenance, and certificate contracts.
+`StructuredNonlinearProgram` separates fixed bound roles and sparse derivative
+topology from refreshable numeric data. Native `PrimalDualInteriorPoint`
+explicitly selects dense filter, matrix-free, or sparse augmented KKT
+execution; structured methods return portable primal/dual warm starts and may
+run input-ordered completion pools. Sparse LDLT through optional
+Spineax/cuDSS remains an explicit provider with reported inertia and resource
+release. Native methods also include Newton--Krylov, Steihaug--Toint,
+dense/subspace dogleg and dogbox, robust-loss GN/LM, trust-reflective bounds,
+variable projection, POUNDERS, projected quasi-Newton, augmented Lagrangian,
+and filter/SOC SQP with BFGS/SR1/exact Hessians. BOBYQA, COBYQA,
 deterministic multistart, and explicitly recertified SciPy/NLopt/Ipopt/Ceres
 boundaries cover black-box and specialist routes. Residual graphs retain block
 sparsity, Schur ordering, manifold retractions, and incremental factor versions.

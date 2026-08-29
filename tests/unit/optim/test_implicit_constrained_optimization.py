@@ -34,7 +34,12 @@ def _bound_problem():
         (phx.optim.ActiveSetNewton(), False),
         (phx.optim.AugmentedLagrangian(), True),
         (phx.optim.SQP(), False),
-        (phx.optim.PrimalDualNewtonKrylov(), False),
+        (
+            phx.optim.PrimalDualInteriorPoint(
+                mode="matrix-free-centered",
+            ),
+            False,
+        ),
     ],
 )
 def test_compatible_constrained_methods_supply_implicit_kkt_derivatives(
