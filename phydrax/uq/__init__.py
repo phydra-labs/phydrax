@@ -307,6 +307,12 @@ from ._gp_scalar import (
     SparseGaussianProcessDiscrepancy,
     SparseGaussianProcessFactor,
 )
+from ._state_space_gp import (
+    compile_state_space_kernel,
+    fit_state_space_gaussian_process,
+    StateSpaceGaussianProcessPlan,
+    StateSpaceGaussianProcessResult,
+)
 from ._guided_particle import (
     AbstractParticleProposal,
     AuxiliaryResamplingPolicy,
@@ -1412,6 +1418,10 @@ __all__ = [
     "SparseGaussianProcessDiscrepancy",
     "SparseGaussianProcessFactor",
     "value_functional",
+    "StateSpaceGaussianProcessPlan",
+    "StateSpaceGaussianProcessResult",
+    "compile_state_space_kernel",
+    "fit_state_space_gaussian_process",
     "DiscrepancyIdentifiabilityReport",
     "DiscrepancyIdentifiabilityThresholds",
     "discrepancy_identifiability_report",

@@ -318,6 +318,78 @@ assert square_root_smoothed.execution_method == "sequential"
 
 ::: phydrax.uq.kalman_innovation_diagnostics
 
+## Exact temporal Matérn Gaussian processes
+
+`compile_state_space_kernel` prepares a scalar one-dimensional `Matern32Kernel` or
+`Matern52Kernel`, directly or inside one `ScaleKernel`, on fixed training and query
+times. Preparation resolves the exact continuous drift, stationary covariance and
+factor, process-noise covariance and factor, observation map, state dimension, and
+content ID. It verifies the stationary Lyapunov residual before constructing a
+canonical `StateSpaceProblem`.
+
+Training and query times may arrive in any order. Preparation makes one strictly
+increasing schedule and retains stable sort indices, inverse permutations, and
+original-order schedule indices. Training times must be unique. Repeated query
+times and train-query overlaps share one latent schedule state and are repeated in
+the returned original query order. Query-only and explicitly missing training
+positions are represented by `ObservationSequence.observation_mask`; no large-noise
+sentinel is used. `max_schedule_size` is a preparation-time resource guard.
+
+```python
+kernel = phx.kernels.ScaleKernel(
+    phx.kernels.Matern52Kernel(length_scale=0.4),
+    1.5,
+)
+plan = phx.uq.compile_state_space_kernel(
+    kernel,
+    jnp.asarray([0.8, 0.0, 0.35]),
+    jnp.asarray([1.2, -0.2, 0.35]),
+    train_mask=jnp.asarray([True, True, False]),
+)
+gp = phx.uq.fit_state_space_gaussian_process(
+    plan,
+    jnp.asarray([0.1, -0.3, 0.0]),
+    noise_scale=0.02,
+)
+```
+
+`noise_scale` is an observation standard deviation. Execution is always the
+canonical sequential square-root Kalman filter and matching square-root RTS
+smoother with zero covariance regularization. `posterior_mean` and
+`posterior_variance` are latent query marginals; `predictive_variance` adds the
+declared observation variance. The result also retains the exact active-observation
+log marginal likelihood, active count, masks, filter/smoother histories,
+validity/status, kernel/schedule/method IDs, and precision evidence. It exports
+through `export_result`.
+
+The returned query contract is marginal and therefore remains linear in schedule
+storage; it does not materialize a dense query-by-query posterior covariance.
+Unsupported regimes are rejected during preparation: kernel sums/products,
+amplitude wrappers, vector length scales, multidimensional inputs, derivative
+observations, SHO/CARMA models, non-Gaussian likelihoods, and parallel square-root
+execution. Covariances are not projected, clipped, repaired, or given implicit
+jitter. A degenerate zero-signal, zero-noise active observation consequently reports
+the canonical filtering failure instead of manufacturing a posterior.
+
+`tools/state_space_gp_benchmarks.py` compares this path with independent dense GP
+algebra over increasing schedules. Its report retains per-size accuracy, factor
+storage, compilation and steady execution times, scaling summaries, an admission
+gate, environment details, and source provenance.
+
+::: phydrax.uq.StateSpaceGaussianProcessPlan
+
+---
+
+::: phydrax.uq.StateSpaceGaussianProcessResult
+
+---
+
+::: phydrax.uq.compile_state_space_kernel
+
+---
+
+::: phydrax.uq.fit_state_space_gaussian_process
+
 ## Nonlinear Gaussian moment transforms
 
 The nonlinear transforms accept one unbatched Gaussian mean PyTree and one

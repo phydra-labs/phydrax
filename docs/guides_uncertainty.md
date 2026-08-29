@@ -409,6 +409,41 @@ streaming and batch execution, status-aware diagnostics, and pickle-free compati
 checkpoints. Predictive conversion is available where mathematically defined. Complete
 histories can be exported as portable results.
 
+#### Exact temporal Matérn Gaussian processes
+
+For a scalar time coordinate, Matérn-3/2 and Matérn-5/2 covariances have exact
+two- and three-state Markov representations. Use `compile_state_space_kernel` when
+that supported temporal structure is present instead of paying for dense GP
+factorization:
+
+```python
+plan = phx.uq.compile_state_space_kernel(
+    phx.kernels.Matern32Kernel(length_scale=0.6),
+    observation_times,
+    prediction_times,
+    train_mask=observation_available,
+)
+temporal_gp = phx.uq.fit_state_space_gaussian_process(
+    plan,
+    observation_values,
+    noise_scale=0.03,
+)
+```
+
+The compiler sorts one irregular schedule, restores the caller's train/query
+orders, and uses exact observation masks for missing or query-only positions.
+Training timestamps must be unique; repeated query timestamps and train-query
+overlaps share a latent state. Filtering and smoothing are sequential and
+square-root, so state history and marginal query output use linear schedule
+storage. The result contains latent and observation-predictive marginals, the
+active-observation log marginal likelihood, status/masks, stable content and method
+IDs, and precision evidence.
+
+This is an exact temporal-kernel route, not a generic conversion of covariance
+algebra. It does not support sums, SHO/CARMA, multidimensional inputs, derivative
+observations, non-Gaussian likelihoods, or parallel filtering, and it does not use
+large-noise missing-data sentinels or covariance repair.
+
 #### Variational latent-SDE smoothing with SING
 
 `sing_smoother` performs natural-gradient variational inference over one

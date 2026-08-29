@@ -63,6 +63,7 @@ from ._smc import TemperedSMCResult
 from ._state_space_amortized import AmortizedStateSpaceVariationalResult
 from ._state_space_buffered import BufferedStateSpaceVariationalResult
 from ._state_space_variational import StateSpaceVariationalResult
+from ._state_space_gp import StateSpaceGaussianProcessResult
 from ._variational import VariationalResult
 
 
@@ -390,6 +391,43 @@ def _adapt_result(result, arrays, fields, trees):
             "rank_tolerance": result.state.information.rank_tolerance,
         }
         return "sing_smoother", metadata, ("state.expectation_key",)
+
+    if isinstance(result, StateSpaceGaussianProcessResult):
+        for name, value in (
+            ("posterior_times", result.posterior_times),
+            ("posterior_mean", result.posterior_mean),
+            ("posterior_variance", result.posterior_variance),
+            ("predictive_mean", result.predictive_mean),
+            ("predictive_variance", result.predictive_variance),
+            ("log_marginal_likelihood", result.log_marginal_likelihood),
+            ("active_observation_count", result.active_observation_count),
+            ("valid", result.valid),
+            ("status", result.status),
+            ("query_valid", result.query_valid),
+            ("train_mask", result.train_mask),
+            ("schedule_times", result.schedule_times),
+            ("schedule_observation_mask", result.schedule_observation_mask),
+            (
+                "incremental_log_likelihood",
+                result.filter_result.incremental_log_likelihood,
+            ),
+            ("filter_status", result.filter_result.status),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = {
+            "state_dimension": result.state_dimension,
+            "kernel_id": result.kernel_id,
+            "kernel_content_id": result.kernel_content_id,
+            "schedule_id": result.schedule_id,
+            "method_id": result.method_id,
+            "repeated_time_policy": result.repeated_time_policy,
+            "precision_evidence": result.precision_evidence.to_dict(),
+        }
+        return (
+            "state_space_gaussian_process",
+            metadata,
+            ("filter_result", "smoother_result"),
+        )
 
     if isinstance(result, KalmanFilterResult):
         metadata = _put_kalman_filter_result(result, arrays, fields, prefix="")

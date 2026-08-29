@@ -228,8 +228,20 @@ factors use native dense or sparse linear actions, bounded kernel-row workspaces
 small projected Cholesky solves, and explicit resource/conditioning evidence while
 retaining unresolved action directions in covariance. Exact scalar GP inference
 automatically selects weight space for a lower-rank finite-feature kernel; learned
-feature maps and kernel hyperparameters remain differentiable leaves. Matrix-free
-JVP/VJP propagation
+feature maps and kernel hyperparameters remain differentiable leaves.
+
+Scalar temporal Matérn-3/2 and Matérn-5/2 kernels also compile to exact
+two- or three-state continuous linear Gaussian models. One stable sorted schedule
+shares train/query overlaps and repeated queries, while real observation masks
+represent query-only and missing training positions. Sequential square-root
+Kalman/RTS execution returns linear-storage query marginals, the exact
+active-observation log marginal likelihood, status/masks, kernel and schedule
+content IDs, method provenance, and precision evidence. Repeated training times,
+unsupported kernel algebra, multidimensional inputs, derivative observations,
+SHO/CARMA, non-Gaussian likelihoods, and parallel execution are rejected rather
+than approximated; no large-noise sentinel or covariance repair is used.
+
+Matrix-free JVP/VJP propagation
 transports diagonal, dense, low-rank, or operator-valued covariance through
 scientific maps; normalized
 errors-in-variables likelihoods account jointly for uncertain predictors and
