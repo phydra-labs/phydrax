@@ -27,6 +27,7 @@ from ._rules import (
     ProbabilityRule,
     ReferenceRule,
 )
+from ._bayesian_quadrature import BayesianQuadraturePlan
 
 
 class StratifiedDesign(StrictModule):
@@ -498,10 +499,13 @@ class ProductIntegrationPlan(StrictModule):
         self.plans = frozendict(normalized)
 
 
+
+
 IntegrationPlan: TypeAlias = (
     FixedQuadraturePlan
     | AdaptiveQuadraturePlan
     | AdaptiveTrianglePlan
+    | BayesianQuadraturePlan
     | MonteCarloPlan
     | StratifiedMonteCarloPlan
     | QuasiMonteCarloPlan
@@ -517,6 +521,7 @@ __all__ = [
     "AdaptiveQuadraturePlan",
     "AdaptiveTrianglePlan",
     "AntitheticDesign",
+    "BayesianQuadraturePlan",
     "CellQuadraturePlan",
     "ControlVariateEstimator",
     "FixedQuadraturePlan",
