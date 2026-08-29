@@ -25,6 +25,7 @@ from ._bdf_method import (
     bdf_predict as _general_bdf_predict,
     bdf_rate as _general_bdf_rate,
     bdf_shift_offset as _general_bdf_shift_offset,
+    BDFMethod,
 )
 from ._dae_initialization import (
     _initialize_dae,
@@ -218,18 +219,35 @@ def _rejected_factor(error_ratio: Array, order: Array, policy, /) -> Array:
     )
 
 
+def _scaled_problem_residual(problem, time, state, state_rate, args, /):
+    inputs = (
+        None
+        if problem.input_policy is None
+        else problem.input_policy.evaluate(time, state, args)
+    )
+    return problem.system.scaled_residual(
+        time,
+        state,
+        state_rate,
+        args,
+        inputs=inputs,
+    )
+
+
 def _continuation_initialization(
     prepared: PreparedDAESolve,
     continuation: DAEContinuation,
     args: Any,
     /,
 ) -> DAEInitializationResult:
-    system = prepared.problem.system
+    problem = prepared.problem
+    system = problem.system
     policy = prepared.plan.policy
     adaptive = policy.adaptive
     if adaptive is None:
         raise ValueError("Continuation initialization requires adaptive policy.")
-    scaled = system.scaled_residual(
+    scaled = _scaled_problem_residual(
+        problem,
         continuation.time,
         continuation.state,
         continuation.state_rate,
@@ -342,6 +360,11 @@ def _validate_continuation(
         raise ValueError("DAE continuation problem identity does not match.")
     if continuation.system_id != problem.system.system_id:
         raise ValueError("DAE continuation system identity does not match.")
+    expected_policy_id = (
+        None if problem.input_policy is None else problem.input_policy.policy_id
+    )
+    if continuation.input_policy_id != expected_policy_id:
+        raise ValueError("DAE continuation input policy identity does not match.")
     if continuation.state_shape != problem.system.state_shape:
         raise ValueError("DAE continuation state shape does not match.")
     if continuation.state_dtype != str(problem.initial_state.dtype):
@@ -512,6 +535,9 @@ def _adaptive_primal(
     adaptive = policy.adaptive
     if adaptive is None:
         raise ValueError("Adaptive execution requires a DAEAdaptivePolicy.")
+    temporal_method = policy.method
+    if not isinstance(temporal_method, BDFMethod):
+        raise ValueError("Adaptive DAE execution requires BDFMethod.")
     save_times = jax.lax.stop_gradient(prepared.time_grid.times)
     differential_variables = system.structure.differential_variable_mask(
         system.state_shape
@@ -700,7 +726,7 @@ def _adaptive_primal(
             & (current.consecutive_rejections == 0)
         )
         available_order = jnp.minimum(
-            jnp.asarray(policy.method.maximum_order, dtype=jnp.int32),
+            jnp.asarray(temporal_method.maximum_order, dtype=jnp.int32),
             jnp.maximum(current.history_depth - 1, 1),
         )
         order = jnp.where(ratio_valid, available_order, 1).astype(jnp.int32)
@@ -780,7 +806,8 @@ def _adaptive_primal(
             stage_time,
             order,
         )
-        scaled = system.scaled_residual(
+        scaled = _scaled_problem_residual(
+            prepared.problem,
             current.time + step_size,
             state,
             state_rate,
@@ -1089,6 +1116,9 @@ def _adaptive_primal(
         nonlinear_solve=carry.retained_nonlinear,
         problem_id=problem.problem_id,
         system_id=system.system_id,
+        input_policy_id=(
+            None if problem.input_policy is None else problem.input_policy.policy_id
+        ),
         method_id=policy.method.method_id,
         initialization_id=problem.initialization.initialization_id,
         nonlinear_method_id=policy.nonlinear_method.method_id,
@@ -1167,6 +1197,9 @@ def _adaptive_primal(
         termination_status=terminal_status,
         problem_id=problem.problem_id,
         system_id=system.system_id,
+        input_policy_id=(
+            None if problem.input_policy is None else problem.input_policy.policy_id
+        ),
         time_id=prepared.time_grid.time_id,
         plan_id=prepared.plan.plan_id,
         prepared_id=prepared.prepared_id,
@@ -1400,7 +1433,13 @@ def _replay_solution(
     algebraic_equations = system.structure.algebraic_equation_mask(system.state_shape)
 
     def certify(time, state, rate):
-        scaled = system.scaled_residual(time, state, rate, args)
+        scaled = _scaled_problem_residual(
+            prepared.problem,
+            time,
+            state,
+            rate,
+            args,
+        )
         return (
             _masked_rms(scaled, jnp.ones(system.state_shape, dtype=bool)),
             _masked_rms(scaled, differential_equations),

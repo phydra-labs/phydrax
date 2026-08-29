@@ -367,12 +367,16 @@ explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
 Direct collocation accepts explicit systems or controlled state-shaped DAEs,
 shared parameter coordinates, fixed or variable duration, exact sparse
 derivatives, and explicitly selected dense-native or sparse-Ipopt optimization.
-Sampled nonlinear path constraints report feasibility only at their declared
-sites and are not continuous-time certificates. iLQR and multiple shooting solve
-one physical case per call. Coefficient search is bounded initialization, not a
-globally optimal solver. Dense algorithms enforce dimension guards; no failed
-solve is hidden by a fallback, projection, covariance repair, or undeclared
-regularization.
+Typed Ipopt evidence retains callback work, topology, status, and warm starts;
+per-interval sampled defects drive nested h-refinement with primal-only transfer;
+and controlled-DAE replay binds held controls into consistency and every implicit
+stage. Fingerprinted native/Ipopt campaigns derive graduation claims. Sampled
+nonlinear path constraints and off-grid audits are not continuous-time
+certificates, and replay does not rewrite collocation success. iLQR and multiple
+shooting solve one physical case per call. Coefficient search is bounded
+initialization, not a globally optimal solver. Dense algorithms enforce dimension
+guards; no failed solve is hidden by fallback, projection, covariance repair, or
+undeclared regularization.
 
 Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC/PSD/exponential/power
 product-cone programs live in `phydrax.optim`. PSD uses scaled upper-column symmetric
@@ -750,12 +754,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   shooting, direct collocation, or receding-horizon MPC according to the problem
   structure. `TrajectoryOptimizationProblem` adds controlled implicit DAEs,
   bound-form global constraints, shared optimized parameters, and variable
-  duration for direct collocation. Results retain case/control axes, validity and
-  backend status, plus control, discretization, approximation, method, and
-  backend IDs. Nonlinear sampled constraints are not between-sample
-  certificates; direct-collocation off-grid checks are diagnostics, iLQR and
-  multiple shooting are single-case, and bounded search is not globally optimal.
-  Dense paths enforce guards and never hide failure behind a repair or fallback.
+  duration for direct collocation. Per-interval audit evidence supports explicit
+  nested refinement, controlled DAEs can be causally replayed through a held input
+  policy, and structured Ipopt results retain typed work/KKT/warm-start evidence.
+  Results retain case/control axes, validity and backend status, plus control,
+  discretization, approximation, method, and backend IDs. Nonlinear sampled
+  constraints and off-grid audits are not continuous-time certificates; replay
+  is independent evidence; iLQR and multiple shooting are single-case; and
+  bounded search is not globally optimal. Dense paths enforce guards and never
+  hide failure behind repair or fallback.
   See [Control cookbook](cookbook/control.md), [API → Control](api/control.md),
   and [API → Optimization](api/optim.md).
 - **Linear systems, sensitivities, and spectra**: linearize dynamics; solve

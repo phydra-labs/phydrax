@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..dynamics import DifferentialAlgebraicSystem
+from ..dynamics import AbstractInputPolicy, DifferentialAlgebraicSystem
 
 
 class ImplicitStageArguments(StrictModule):
@@ -68,11 +68,22 @@ class ImplicitStageResidual(StrictModule):
     """Prepared residual form shared by BDF, theta, DIRK, and IMEX stages."""
 
     system: DifferentialAlgebraicSystem
+    input_policy: AbstractInputPolicy | None
 
-    def __init__(self, system: DifferentialAlgebraicSystem, /):
+    def __init__(
+        self,
+        system: DifferentialAlgebraicSystem,
+        input_policy: AbstractInputPolicy | None = None,
+        /,
+    ):
         if not isinstance(system, DifferentialAlgebraicSystem):
             raise TypeError("ImplicitStageResidual requires DifferentialAlgebraicSystem.")
+        if input_policy is not None and not isinstance(
+            input_policy, AbstractInputPolicy
+        ):
+            raise TypeError("input_policy must be an AbstractInputPolicy or None.")
         self.system = system
+        self.input_policy = input_policy
 
     def __call__(
         self,
@@ -82,11 +93,22 @@ class ImplicitStageResidual(StrictModule):
     ) -> Array:
         if not isinstance(arguments, ImplicitStageArguments):
             raise TypeError("arguments must be ImplicitStageArguments.")
+        state_rate = arguments.state_rate(state)
+        inputs = (
+            None
+            if self.input_policy is None
+            else self.input_policy.evaluate(
+                arguments.time,
+                state,
+                arguments.model_args,
+            )
+        )
         physical = self.system.scaled_residual(
             arguments.time,
             state,
-            arguments.state_rate(state),
+            state_rate,
             arguments.model_args,
+            inputs=inputs,
         )
         residual = physical - arguments.explicit_value / self.system.residual_scale
         return jnp.where(

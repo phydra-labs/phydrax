@@ -779,24 +779,38 @@ Hessian. `StructuredNonlinearEvaluation` returns the sparse operator rather than
 materializing a dense Jacobian. `StructuredNonlinearWarmStart` keeps primal,
 constraint-dual, and variable-bound-dual arrays tied to one exact structure ID.
 
-`IpoptMinimize.solve_structured` uses low-level `cyipopt.Problem` callbacks. It supplies
-the Jacobian topology and values directly and, when present, the lower triangle of the
-exact Lagrangian Hessian. Without a Hessian plan the caller must use the explicit
-`hessian_approximation=\"limited-memory\"` route. The ordinary
-`IpoptMinimize.solve(MinimizationProblem, ...)` behavior remains available and distinct.
+`IpoptMinimize.solve_structured` uses low-level `cyipopt.Problem` callbacks. Install
+`phydrax[ipopt]` together with an external Ipopt library, or use conda-forge's `ipopt`
+and `cyipopt` packages. The adapter canonicalizes duplicate-free Jacobian coordinates
+and one lower-triangular Hessian representative per symmetric pair. Without a Hessian
+plan it declares limited-memory mode; an exact plan and an approximation override are
+mutually exclusive.
+
+`StructuredIpoptEvidence` retains mapped/raw status, complete callback and host/device
+conversion counts, sparse plan identities, option identity, Hessian mode, and a typed
+final `StructuredNonlinearWarmStart`. Warm starts require the exact program and structure
+IDs and finite sign-valid bound multipliers.
 
 Final constraint multipliers and variable-bound multipliers are normalized into a
 `ConstrainedOptimalityCertificate`. Stationarity uses the sparse transpose action;
 primal feasibility, dual signs, slacks, activity, and complementarity are reconstructed
 independently. Ipopt backend success that misses the requested physical KKT tolerance is
 returned as certification failure. This external route declares
-`implicit_differentiation=False`.
+`implicit_differentiation=False`. The ordinary
+`IpoptMinimize.solve(MinimizationProblem, ...)` route remains separate.
 
 ::: phydrax.optim.StructuredNonlinearProgram
 
 ::: phydrax.optim.StructuredNonlinearEvaluation
 
 ::: phydrax.optim.StructuredNonlinearWarmStart
+
+::: phydrax.optim.IpoptCallbackCounts
+
+::: phydrax.optim.IpoptStatusEvidence
+
+::: phydrax.optim.StructuredIpoptEvidence
+
 
 ### Implicit solution maps
 
