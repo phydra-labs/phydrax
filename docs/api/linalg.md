@@ -295,8 +295,9 @@ before any numeric setup runs.
 | --- | --- | --- |
 | `StructuredDirect` | `jax-structured` | Recognized exact diagonal, triangular, tridiagonal, banded, block-diagonal, Kronecker, or diagonal-plus-low-rank structure; any dense fallback is included in materialization and resource checks |
 | `DenseLU`, `DenseCholesky`, `DenseQR`, `DenseSVD` | `jax-dense` | Explicitly materializable operators within entry, byte, factor, and workspace budgets |
-| `SparseDirect` | `jax-sparse` | Canonical unbatched CSR square system on CUDA; native device sparse QR |
-| `HostSparseLU` | `host-sparse` | Explicit non-JIT SciPy SuperLU CPU fallback |
+| `SparseQR(provider="jax-cuda")` | `jax-sparse` | Canonical unbatched CSR square system on CUDA through native JAX sparse QR |
+| `SparseLDLT(provider="spineax-cudss")` | `spineax-cudss` | Optional Linux x86-64 CUDA 13 symmetric-indefinite factorization, shared-pattern value batches, numerical refactorization, multiple RHS, reported inertia, and explicit release |
+| `SparseLU`, `SparseCholesky`, `SparseQR(provider="spqr")` | `host-sparse` | Explicit non-JIT host sparse direct providers |
 | `GMRES`, `PCG`, `MINRES`, `FGMRES`, `GeneralizedLSMR` | `native-krylov` | Pairing-aware native JAX Krylov methods |
 | `LSMR` | `matfree` | Real Euclidean unweighted least squares or minimum norm |
 | `ConjugateGradient`, `BiCGStab` | `lineax` | Lineax-backed Euclidean or diagonal-metric methods; CG additionally requires real coordinates |
@@ -580,11 +581,13 @@ compiled_solve = jax.jit(lambda rhs: phx.linalg.solve(prepared, rhs).value)
 value = compiled_solve(jnp.array([1.0, 2.0]))
 ```
 
-Device dense, structured, native Krylov, Matfree, Lineax, and supported CUDA
-sparse execution are JIT-compatible. `HostSparseLU` is intentionally host-only,
-non-JIT, and requires `DifferentiationPolicy("none")`. Public dense
-factorizations and matrix-function/spectral artifacts are currently unbatched;
-operator-batched dense solves remain supported through `solve`.
+Device dense, structured, native Krylov, Matfree, Lineax, native CUDA sparse
+QR, and optional Spineax/cuDSS execution are JIT-compatible. Host sparse
+providers are intentionally non-JIT and require
+`DifferentiationPolicy("none")`. Spineax preparation retains provider-owned
+factor resources; call `phx.linalg.release(prepared)` when their lifetime ends.
+Public dense factorizations and matrix-function/spectral artifacts are currently
+unbatched; shared-pattern sparse LDLT values may carry explicit batch axes.
 
 All iterative methods use fixed-capacity states with dynamic iteration counts
 and breakdown status, so compiled shapes do not depend on convergence.
@@ -1029,9 +1032,13 @@ Current boundaries are deliberate and reported before execution:
 
 - iterative providers require an unbatched operator; use explicit outer
   `vmap`/batch policy rather than accidental batch semantics;
-- device sparse direct execution currently requires CUDA canonical CSR;
-- host sparse LU is non-JIT and non-differentiable;
-- public factorization artifacts are unbatched and dense;
+- native device sparse QR requires CUDA canonical CSR;
+- Spineax/cuDSS requires an explicitly installed optional backend on Linux
+  x86-64 with CUDA 13, uses 32-bit canonical CSR indices, and reports
+  positive/negative inertia without claiming reliable zero inertia;
+- host sparse direct providers are non-JIT and non-differentiable;
+- provider-owned sparse LDLT resources require explicit release;
+- public dense factorization artifacts remain unbatched;
 - matrix functions and stochastic spectral estimators require unbatched
   endomorphisms;
 - mixed-precision execution supports capability-checked dense `DenseLU`

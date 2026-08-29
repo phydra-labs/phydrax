@@ -22,7 +22,14 @@ from ._architecture import (
     RootResidualCertificate,
 )
 from ._aspin import ASPIN
-from ._batched import batched_small_root, BatchedRootResult, SmallRootKernel
+from ._batched import (
+    batched_small_root,
+    BatchedRootResult,
+    pooled_small_root,
+    PooledRootResult,
+    RootPoolEvidence,
+    SmallRootKernel,
+)
 from ._causal import (
     CausalLevenbergMarquardt,
     CausalLinearizationMode,
@@ -212,6 +219,8 @@ __all__ = [
     "AbstractGlobalizationPolicy",
     "AbstractScalarRootMethod",
     "BatchedRootResult",
+    "PooledRootResult",
+    "RootPoolEvidence",
     "AbstractNonlinearCertificate",
     "AbstractNonlinearModelPolicy",
     "AbstractNonlinearMethod",
@@ -348,6 +357,7 @@ __all__ = [
     "implicit_root",
     "implicit_root_result",
     "batched_small_root",
+    "pooled_small_root",
     "left_precondition",
     "nonlinear_status_message",
     "nonlinear_update_status_message",

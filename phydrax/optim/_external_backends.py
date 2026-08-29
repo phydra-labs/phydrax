@@ -35,9 +35,16 @@ from ._iterative import (
     OptimizationStatus,
     OptimizationTermination,
 )
+from ._structured_method import (
+    AbstractStructuredNonlinearMethod,
+    StructuredNonlinearCapabilities,
+)
 from ._structured_nonlinear import (
+    PreparedStructuredNonlinearProgram,
     StructuredNonlinearProgram,
+    StructuredNonlinearResult,
     StructuredNonlinearWarmStart,
+    StructuredOptimizationWork,
 )
 
 
@@ -313,8 +320,12 @@ class _StructuredIpoptCallbacks:
     def __init__(self, program: StructuredNonlinearProgram, args: Any, /):
         self.program = program
         self.args = args
-        self.jacobian_rows = np.asarray(program.jacobian_plan.pattern.rows, dtype=np.int32)
-        self.jacobian_cols = np.asarray(program.jacobian_plan.pattern.cols, dtype=np.int32)
+        self.jacobian_rows = np.asarray(
+            program.jacobian_plan.pattern.rows, dtype=np.int32
+        )
+        self.jacobian_cols = np.asarray(
+            program.jacobian_plan.pattern.cols, dtype=np.int32
+        )
         self._objective = jax.jit(lambda value: program.objective(value, args))
         self._gradient = jax.jit(
             jax.grad(lambda value: jnp.asarray(program.objective(value, args)))
@@ -337,11 +348,9 @@ class _StructuredIpoptCallbacks:
             self.hessian_cols = cols[positions]
             self.hessian_positions = positions
             self._hessian = jax.jit(
-                lambda value, objective_factor, multipliers: (
-                    hessian_plan.coefficients(
-                        value,
-                        (args, objective_factor, multipliers),
-                    )
+                lambda value, objective_factor, multipliers: hessian_plan.coefficients(
+                    value,
+                    (args, objective_factor, multipliers),
                 )
             )
 
@@ -383,7 +392,7 @@ class _StructuredIpoptCallbacks:
         return self.hessian_rows, self.hessian_cols
 
 
-class IpoptMinimize(AbstractMinimizationMethod):
+class IpoptMinimize(AbstractStructuredNonlinearMethod):
     """Optional cyipopt minimization boundary with Phydrax KKT recertification."""
 
     options: dict[str, Any] = eqx.field(static=True)
@@ -403,6 +412,21 @@ class IpoptMinimize(AbstractMinimizationMethod):
             matrix_free=False,
             prepared_refresh=False,
             implicit_differentiation=False,
+        )
+
+    @property
+    def structured_capabilities(self):
+        return StructuredNonlinearCapabilities(
+            exact_sparse_jacobian=True,
+            exact_sparse_hessian=True,
+            limited_memory_hessian=True,
+            portable_warm_start=True,
+            numeric_refresh=True,
+            jit=False,
+            ordinary_batch=False,
+            pooled_batch=False,
+            implicit_differentiation=False,
+            device_execution=False,
         )
 
     def solve(self, problem, initial_parameters, /, *, termination, args):
@@ -489,31 +513,35 @@ class IpoptMinimize(AbstractMinimizationMethod):
 
     def solve_structured(
         self,
-        program: StructuredNonlinearProgram,
+        prepared: PreparedStructuredNonlinearProgram,
         initial_coordinates: Any,
         /,
         *,
         termination: OptimizationTermination,
-        args: Any = None,
         warm_start: StructuredNonlinearWarmStart | None = None,
-    ) -> MinimizationResult:
+    ) -> StructuredNonlinearResult:
         """Solve an exact sparse bound-form NLP through low-level cyipopt callbacks."""
-        if not isinstance(program, StructuredNonlinearProgram):
-            raise TypeError("program must be a StructuredNonlinearProgram.")
+        if not isinstance(prepared, PreparedStructuredNonlinearProgram):
+            raise TypeError("prepared must be a PreparedStructuredNonlinearProgram.")
         if not isinstance(termination, OptimizationTermination):
             raise TypeError("termination must be an OptimizationTermination.")
-        coordinates = program.validate_coordinates(initial_coordinates)
+        program = prepared.program
+        coordinates = prepared.validate_coordinates(initial_coordinates)
         if warm_start is not None:
             if not isinstance(warm_start, StructuredNonlinearWarmStart):
-                raise TypeError("warm_start must be StructuredNonlinearWarmStart or None.")
-            if warm_start.structure_id != program.structure_id:
+                raise TypeError(
+                    "warm_start must be StructuredNonlinearWarmStart or None."
+                )
+            if warm_start.structure_id != prepared.structure_id:
                 raise ValueError("warm_start structure does not match the program.")
-            coordinates = program.validate_coordinates(warm_start.primal)
+            coordinates = prepared.validate_coordinates(warm_start.primal)
             if warm_start.constraint_multipliers.shape != (program.num_constraints,):
-                raise ValueError("warm_start constraint multipliers have the wrong shape.")
+                raise ValueError(
+                    "warm_start constraint multipliers have the wrong shape."
+                )
 
         cyipopt = _module("cyipopt")
-        callbacks = _StructuredIpoptCallbacks(program, args)
+        callbacks = _StructuredIpoptCallbacks(program, prepared.args)
         options = dict(self.options)
         options.setdefault("max_iter", termination.maximum_steps)
         options.setdefault("tol", termination.absolute_optimality)
@@ -525,47 +553,42 @@ class IpoptMinimize(AbstractMinimizationMethod):
                     "hessian_approximation='limited-memory'."
                 )
             options["hessian_approximation"] = "limited-memory"
-        problem = cyipopt.Problem(
+        backend_problem = cyipopt.Problem(
             n=program.num_variables,
             m=program.num_constraints,
             problem_obj=callbacks,
-            lb=np.asarray(program.variable_lower, dtype=float),
-            ub=np.asarray(program.variable_upper, dtype=float),
-            cl=np.asarray(program.constraint_lower, dtype=float),
-            cu=np.asarray(program.constraint_upper, dtype=float),
+            lb=np.asarray(prepared.variable_lower, dtype=float),
+            ub=np.asarray(prepared.variable_upper, dtype=float),
+            cl=np.asarray(prepared.constraint_lower, dtype=float),
+            cu=np.asarray(prepared.constraint_upper, dtype=float),
         )
         for name, value in options.items():
-            problem.add_option(name, value)
+            backend_problem.add_option(name, value)
         if warm_start is None:
-            final_coordinates, info = problem.solve(np.asarray(coordinates, dtype=float))
+            final_coordinates, info = backend_problem.solve(
+                np.asarray(coordinates, dtype=float)
+            )
         else:
-            problem.add_option("warm_start_init_point", "yes")
-            final_coordinates, info = problem.solve(
+            backend_problem.add_option("warm_start_init_point", "yes")
+            final_coordinates, info = backend_problem.solve(
                 np.asarray(coordinates, dtype=float),
                 lagrange=np.asarray(warm_start.constraint_multipliers, dtype=float),
                 zl=np.asarray(warm_start.lower_bound_multipliers, dtype=float),
                 zu=np.asarray(warm_start.upper_bound_multipliers, dtype=float),
             )
         final = jnp.asarray(final_coordinates, dtype=coordinates.dtype)
-        constraint_multipliers = jnp.asarray(
-            info["mult_g"], dtype=coordinates.dtype
-        )
-        lower_multipliers = jnp.asarray(
-            info["mult_x_L"], dtype=coordinates.dtype
-        )
-        upper_multipliers = jnp.asarray(
-            info["mult_x_U"], dtype=coordinates.dtype
-        )
+        constraint_multipliers = jnp.asarray(info["mult_g"], dtype=coordinates.dtype)
+        lower_multipliers = jnp.asarray(info["mult_x_L"], dtype=coordinates.dtype)
+        upper_multipliers = jnp.asarray(info["mult_x_U"], dtype=coordinates.dtype)
         active_tolerance = float(np.sqrt(termination.absolute_optimality))
-        certificate = program.certificate(
+        certificate = prepared.certificate(
             final,
             constraint_multipliers,
             lower_multipliers,
             upper_multipliers,
-            args,
             active_tolerance=active_tolerance,
         )
-        evaluation = program.evaluate(final, args)
+        evaluation = prepared.evaluate(final)
         stationarity = jnp.max(
             jnp.abs(jnp.asarray(certificate.stationarity_residual)),
             initial=0.0,
@@ -598,7 +621,7 @@ class IpoptMinimize(AbstractMinimizationMethod):
         ).astype(jnp.int32)
         iterations = int(info.get("iter_count", 0))
         message = str(info["status_msg"])
-        return MinimizationResult(
+        optimization = MinimizationResult(
             final,
             evaluation.objective,
             None,
@@ -623,6 +646,22 @@ class IpoptMinimize(AbstractMinimizationMethod):
             ),
             certificate=certificate,
             method_evidence=info,
+        )
+        return StructuredNonlinearResult(
+            optimization,
+            prepared.warm_start(
+                final,
+                constraint_multipliers,
+                lower_multipliers,
+                upper_multipliers,
+            ),
+            StructuredOptimizationWork(
+                certificate_evaluations=1,
+                complete=False,
+            ),
+            numeric_version=prepared.numeric_version,
+            structure_id=prepared.structure_id,
+            method_id=self.method_id,
         )
 
 

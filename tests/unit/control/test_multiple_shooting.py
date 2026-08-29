@@ -386,3 +386,24 @@ def test_global_control_search_trajectory_is_a_native_seed():
     np.testing.assert_allclose(positional.state_nodes, keyword.state_nodes)
     np.testing.assert_allclose(positional.control_nodes, keyword.control_nodes)
     assert positional.trajectory.problem_id == global_result.trajectory.problem_id
+
+
+def test_multiple_shooting_lowers_to_structured_nlp_and_solves_natively():
+    problem = _linear_problem()
+    compilation = phx.control.compile_structured_multiple_shooting(
+        problem,
+        jnp.zeros((3, 1)),
+        jnp.zeros((2, 1)),
+    )
+    result = phx.control.solve_structured_multiple_shooting(
+        compilation,
+        method=phx.optim.PrimalDualInteriorPoint(mode="sparse-augmented"),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=1e-6,
+            relative_optimality=0.0,
+            maximum_steps=80,
+        ),
+    )
+    assert bool(result.successful)
+    assert result.maximum_defect <= 1e-6
+    assert result.maximum_constraint_violation <= 1e-6

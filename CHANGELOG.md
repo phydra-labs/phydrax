@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Added a method-neutral structured nonlinear optimization spine with
+  topology/numeric prepare-refresh lifecycles, exact sparse Jacobian and
+  Lagrangian-Hessian reuse, portable primal/dual warm starts, independently
+  certified native and Ipopt results, a unified dense/matrix-free/sparse
+  `PrimalDualInteriorPoint`, truthful provider-backed KKT preparation, fixed-width
+  root and structured-solve pools, generic PyTree/state-design/multiple-shooting
+  compilers, fixed-active sensitivities and continuation, and optional
+  Spineax/cuDSS sparse LDLT with numerical refactorization, reported inertia,
+  and explicit resource release.
 - Added JAX-native direct collocation for explicit controlled systems and
   input-aware state-shaped DAEs, with fixed/nonuniform or optimized-duration
   meshes, backward-Euler and midpoint transcription, interval controls, shared

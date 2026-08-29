@@ -252,3 +252,37 @@ def test_event_capacity_exhaustion_is_explicit_not_an_infinite_sentinel():
     assert jnp.all(solution.events.status == phx.stochastic.JUMP_MAX_EVENTS)
     assert jnp.all(solution.events.counts == 1)
     assert not jnp.any(solution.valid)
+
+
+def test_direct_ssa_lane_pool_preserves_semantic_path_results():
+    process = _counting_process(process_id="pooled-direct-ssa")
+    realization = phx.stochastic.PoissonClockRealization(
+        jr.key(11),
+        1,
+        support=(0.0, 1.0),
+        max_events_per_channel=8,
+        sample_shape=(5,),
+        process_id=process.process_id,
+    )
+    options = {
+        "t0": 0.0,
+        "t1": 1.0,
+        "save_times": jnp.asarray([0.0, 0.5, 1.0]),
+    }
+    full = phx.solver.solve_direct_ssa(
+        process,
+        realization,
+        jnp.asarray([0.0]),
+        **options,
+    )
+    pooled = phx.solver.solve_direct_ssa(
+        process,
+        realization,
+        jnp.asarray([0.0]),
+        lane_count=2,
+        **options,
+    )
+    assert jnp.array_equal(pooled.events.valid, full.events.valid)
+    assert jnp.array_equal(pooled.events.channels, full.events.channels)
+    assert jnp.allclose(pooled.events.times, full.events.times, equal_nan=True)
+    assert jnp.allclose(pooled.states, full.states)

@@ -25,6 +25,7 @@ from ..linalg import (
     solve as solve_linear,
     TolerancePolicy,
 )
+from ._interior_point import PrimalDualInteriorPoint
 from ._iterative._base import (
     AbstractLeastSquaresMethod,
     AbstractMinimizationMethod,
@@ -45,7 +46,6 @@ from ._least_squares import (
 )
 from ._newton_krylov import NewtonKrylov
 from ._nonlinear_constraints import _canonical_constraints, _constraint_layout
-from ._primal_dual import PrimalDualNewtonKrylov
 from ._scalar import _run_scalar_iterations
 
 
@@ -427,7 +427,9 @@ def implicit_constrained_minimize(
     explicitly instead of returning a selected generalized derivative.
     """
 
-    method_ = PrimalDualNewtonKrylov() if method is None else method
+    method_ = (
+        PrimalDualInteriorPoint(mode="matrix-free-centered") if method is None else method
+    )
     termination_ = OptimizationTermination() if termination is None else termination
     policy = (
         _default_constrained_implicit_linear_policy()

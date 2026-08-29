@@ -571,6 +571,42 @@ def _solution_from_paths(
     )
 
 
+def _pooled_path_chunks(
+    runner,
+    path_arrays: tuple[Array, ...],
+    path_count: int,
+    lane_count: int | None,
+    /,
+) -> tuple[Array, ...]:
+    if lane_count is None or int(lane_count) >= path_count:
+        return runner(*path_arrays)
+    lanes = int(lane_count)
+    if lanes < 1:
+        raise ValueError("lane_count must be positive.")
+    outputs: list[list[Array]] | None = None
+    for start in range(0, path_count, lanes):
+        stop = min(start + lanes, path_count)
+        count = stop - start
+        chunks = []
+        for values in path_arrays:
+            chunk = values[start:stop]
+            if count < lanes:
+                padding = jnp.broadcast_to(
+                    values[:1],
+                    (lanes - count,) + values.shape[1:],
+                )
+                chunk = jnp.concatenate((chunk, padding), axis=0)
+            chunks.append(chunk)
+        solved = runner(*chunks)
+        if outputs is None:
+            outputs = [[] for _ in solved]
+        for target, value in zip(outputs, solved, strict=True):
+            target.append(value[:count])
+    if outputs is None:
+        raise RuntimeError("A positive path count produced no jump-process chunks.")
+    return tuple(jnp.concatenate(tuple(values), axis=0) for values in outputs)
+
+
 def solve_next_reaction(
     process: AbstractJumpProcess,
     realization: PoissonClockRealization,
@@ -582,6 +618,7 @@ def solve_next_reaction(
     save_times: ArrayLike,
     args: Any = None,
     max_events: int | None = None,
+    lane_count: int | None = None,
 ) -> JumpSolution:
     """Solve a pure-jump process using reusable per-channel Poisson clocks."""
     if not isinstance(process, AbstractJumpProcess):
@@ -604,15 +641,20 @@ def solve_next_reaction(
         (path_count, process.num_channels, realization.max_events_per_channel)
         + tuple(realization.root_key.shape)
     )
-    arrays = _next_reaction_paths(
-        process,
-        state,
-        start,
-        end,
-        thresholds,
-        mark_keys,
-        args,
-        capacity,
+    arrays = _pooled_path_chunks(
+        lambda local_thresholds, local_marks: _next_reaction_paths(
+            process,
+            state,
+            start,
+            end,
+            local_thresholds,
+            local_marks,
+            args,
+            capacity,
+        ),
+        (thresholds, mark_keys),
+        path_count,
+        lane_count,
     )
     return _solution_from_paths(
         process,
@@ -635,6 +677,7 @@ def solve_direct_ssa(
     save_times: ArrayLike,
     args: Any = None,
     max_events: int | None = None,
+    lane_count: int | None = None,
 ) -> JumpSolution:
     """Solve a pure-jump process with Gillespie's total-rate direct method."""
     if not isinstance(process, AbstractJumpProcess):
@@ -658,15 +701,20 @@ def solve_direct_ssa(
         (path_count, process.num_channels, realization.max_events_per_channel)
         + tuple(realization.root_key.shape)
     )
-    arrays = _direct_ssa_paths(
-        process,
-        state,
-        start,
-        end,
-        proposal_keys,
-        mark_keys,
-        args,
-        capacity,
+    arrays = _pooled_path_chunks(
+        lambda local_proposals, local_marks: _direct_ssa_paths(
+            process,
+            state,
+            start,
+            end,
+            local_proposals,
+            local_marks,
+            args,
+            capacity,
+        ),
+        (proposal_keys, mark_keys),
+        path_count,
+        lane_count,
     )
     return _solution_from_paths(
         process,
