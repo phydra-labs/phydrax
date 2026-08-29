@@ -47,12 +47,15 @@ from . import (
     weighting,
 )
 
+from . import atomistic
+
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
 
 
 # Explicit re-exports for star import
 __all__ = [
+    "atomistic",
     "applications",
     "backends",
     "combinatorial",

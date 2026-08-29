@@ -109,6 +109,32 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
+### Atomistic learning: finite molecular energies and conservative forces
+
+`phydrax.atomistic` specializes the existing material-particle and `GraphIR`
+substrates for scale-identified finite molecules. `AtomicStructure` and
+`AtomisticBatch` retain stable atomic IDs, masses, padding masks, and explicit
+length/energy identity. Case-isolated dense candidate graphs expose
+displacement, distance, direction, masks, and neighbor work under mandatory
+atom-count and neighbor-capacity guards; overflow invalidates the result without
+edge truncation. `phydrax.nn.atomistic.PaiNNPotential` combines invariant scalar
+features, equivariant Cartesian vector features, a smooth radial basis/cutoff,
+masked messages, and an invariant per-atom energy sum. Forces are only the
+negative position derivative of that scalar energy with frozen candidate
+topology. Prediction evidence includes validity/status, scale and precision
+identity, graph provenance, and net-force/net-torque defects.
+
+Domain-specific training accepts energy-only, force-only, or joint supervision,
+fits loss normalization from the training split only, and reuses the shared key,
+callback, selection, patience, and deterministic-continuation lifecycle. The
+offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
+indices. This is a finite nonperiodic molecular research capability: preserved
+cell or periodic metadata is rejected by PaiNN, and there is no stress,
+long-range electrostatics, direct-force head, ASE integration, or molecular-
+dynamics stability claim. See [Guide → Atomistic learning](guides_atomistic.md),
+[Cookbook → Finite-molecule PaiNN](cookbook/atomistic.md), and
+[API → Atomistic molecular learning](api/atomistic.md).
+
 ### Computational topology: exact invariants and filtered fields
 
 `phydrax.topology` consumes the canonical oriented cell complexes above without

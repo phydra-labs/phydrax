@@ -17,6 +17,17 @@
   failure boundaries, and an analytic Gaussian benchmark against IID and
   randomized QMC. The posterior SD is explicitly model uncertainty, not a
   deterministic or frequentist error bound.
+- Added `phydrax.atomistic` and `phydrax.nn.atomistic.PaiNNPotential` for finite
+  nonperiodic molecular research: scale-identified atomic structures and padded
+  batches reuse material-particle identities and `GraphIR`; resource-guarded
+  case-isolated dense neighborhoods fail closed without truncation; invariant
+  energies yield conservative forces with typed status, diagnostics, precision,
+  and provenance; energy-only, force-only, and joint training retain fitted
+  training-only normalization, selection, restart, and complete histories; and
+  local-NPZ rMD17 parsing/splitting plus a fingerprinted multi-seed benchmark
+  tool require explicit data provenance. Periodic execution, stress, long-range
+  electrostatics, direct-force heads, ASE integration, and molecular-dynamics
+  stability claims remain outside this capability.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
