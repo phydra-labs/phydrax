@@ -16,6 +16,12 @@ from opt_einsum import contract
 
 from phydrax.domain import GridBatch, PointBatch
 
+from ...._axis_factorization import (
+    AxisContractionPlan,
+    AxisFactor,
+    AxisFactorizedField,
+    AxisProductTerm,
+)
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
 from ...._model import AxisModelEvaluator, ModelBinding, StructuredDerivativeProvider
@@ -29,13 +35,11 @@ from ..._scan import (
 )
 from ..._utils import _get_size, _identity
 from .._utils import _contract_str, _stack_separable
-from ._axis_contraction import (
-    AxisContractionPlan,
-    AxisFactor,
-    AxisProductTerm,
-    contract_axis_factors,
+from ._latent_derivative import (
+    evaluate_latent_partial,
+    factor_nth_latents,
+    jet_nth,
 )
-from ._latent_derivative import evaluate_latent_partial
 
 
 class LatentExecutionPolicy(StrictModule):
@@ -319,6 +323,113 @@ class LatentContractionModel(
         out = self._contract_latents(latents, batch_shapes, topology=plan.effective)
         return self._finalize(out)
 
+    def factorize_axis_batch(
+        self,
+        batch: PointBatch | GridBatch,
+        deps: tuple[str, ...],
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+        partial: tuple[str, int, int] | None = None,
+    ) -> AxisFactorizedField:
+        """Expose latent factors without materializing their Cartesian product."""
+        if self.factor_inputs is None:
+            raise ValueError(
+                "LatentContractionModel factorization requires factor_inputs."
+            )
+        if not isinstance(batch, (PointBatch, GridBatch)):
+            raise TypeError(
+                "LatentContractionModel factorization requires a PointBatch "
+                "or GridBatch."
+            )
+        if self.output_activation is not _identity:
+            raise ValueError(
+                "Factor-preserving execution requires identity output_activation."
+            )
+        covered: set[str] = set()
+        for labels in self.factor_inputs.values():
+            covered.update(labels)
+        if covered != set(deps):
+            missing = tuple(sorted(set(deps) - covered))
+            extra = tuple(sorted(covered - set(deps)))
+            raise ValueError(
+                "LatentContractionModel factor_inputs must cover exactly the "
+                f"DomainFunction dependencies; missing={missing!r}, extra={extra!r}."
+            )
+        derivative_name: str | None = None
+        derivative_axis = 0
+        derivative_order = 0
+        if partial is not None:
+            variable, derivative_axis, derivative_order = partial
+            variable = str(variable)
+            derivative_axis = int(derivative_axis)
+            derivative_order = int(derivative_order)
+            if derivative_axis < 0 or derivative_order < 1:
+                raise ValueError(
+                    "Factorized partial axis must be non-negative and order positive."
+                )
+            matching = tuple(
+                name
+                for name, labels in self.factor_inputs.items()
+                if variable in labels
+            )
+            if len(matching) != 1:
+                raise ValueError(
+                    "A factorized partial variable must belong to exactly one factor."
+                )
+            derivative_name = matching[0]
+            if len(self.factor_inputs[derivative_name]) != 1:
+                raise ValueError(
+                    "Factorized partials currently require one dependency per factor."
+                )
+
+        keys = self._split_key(key)
+        factors: list[AxisFactor] = []
+        for name, model, k in zip(
+            self.factor_names, self.factor_models, keys, strict=True
+        ):
+            labels = self.factor_inputs[name]
+            values, axes = self._axis_factor_values(batch, labels)
+            if name == derivative_name:
+                latents, batch_shape, reason = factor_nth_latents(
+                    self,
+                    model,
+                    values,
+                    name=name,
+                    key=k,
+                    axis=derivative_axis,
+                    order=derivative_order,
+                )
+                if reason is not None or latents is None or batch_shape is None:
+                    raise ValueError(
+                        "Latent factor partial could not be preserved: "
+                        + (reason or "unknown factor derivative failure.")
+                    )
+                if len(batch_shape) != len(axes):
+                    raise ValueError(
+                        "Latent factor partial batch rank does not match named axes."
+                    )
+            else:
+                latents = self._eval_axis_factor(
+                    model,
+                    values,
+                    axes,
+                    name=name,
+                    key=k,
+                )
+            factors.append(AxisFactor(name, latents, axes))
+        if not self.keep_outputs_complex and any(
+            jnp.iscomplexobj(factor.tensor) for factor in factors
+        ):
+            raise ValueError(
+                "Complex factorization requires keep_outputs_complex=True; taking "
+                "a real part after contraction is not factor preserving."
+            )
+        return AxisFactorizedField(
+            tuple(factors),
+            AxisContractionPlan((AxisProductTerm(self.factor_names),)),
+        )
+
     def __call_axis_batch__(
         self,
         batch: PointBatch | GridBatch,
@@ -330,41 +441,8 @@ class LatentContractionModel(
         **kwargs: Any,
     ) -> cx.Field:
         del iter_, kwargs
-        if self.factor_inputs is None:
-            raise ValueError(
-                "LatentContractionModel axis-batch execution requires factor_inputs."
-            )
-        if not isinstance(batch, (PointBatch, GridBatch)):
-            raise TypeError(
-                "LatentContractionModel axis-batch execution requires a PointBatch "
-                "or GridBatch."
-            )
-
-        covered: set[str] = set()
-        for labels in self.factor_inputs.values():
-            covered.update(labels)
-        if covered != set(deps):
-            missing = tuple(sorted(set(deps) - covered))
-            extra = tuple(sorted(covered - set(deps)))
-            raise ValueError(
-                "LatentContractionModel factor_inputs must cover exactly the "
-                f"DomainFunction dependencies; missing={missing!r}, extra={extra!r}."
-            )
-
-        keys = self._split_key(key)
-        factors: dict[str, AxisFactor] = {}
-        for name, model, k in zip(
-            self.factor_names, self.factor_models, keys, strict=True
-        ):
-            labels = self.factor_inputs[name]
-            values, axes = self._axis_factor_values(batch, labels)
-            latents = self._eval_axis_factor(model, values, axes, name=name, key=k)
-            factors[name] = AxisFactor(name, latents, axes)
-
-        plan = AxisContractionPlan(
-            (AxisProductTerm(self.factor_names),),
-        )
-        result = contract_axis_factors(factors, plan)
+        factorized = self.factorize_axis_batch(batch, deps, key=key)
+        result = factorized.contract()
         out = jnp.asarray(self._finalize(result.data))
         if out.ndim < len(result.axes):
             raise ValueError(
@@ -1099,6 +1177,94 @@ class Separable(_AbstractStructuredInputModel):
         if latents.ndim == 1:
             return latents.reshape(self.latent_size, _get_size(self.out_size))
         return latents.reshape(-1, self.latent_size, _get_size(self.out_size))
+
+    def factorize_axes(
+        self,
+        x: tuple[Array, ...],
+        axes: Sequence[str],
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+        partial: tuple[int, int] | None = None,
+    ) -> AxisFactorizedField:
+        """Evaluate coordinate factors while preserving their product structure."""
+        coordinates = tuple(jnp.asarray(value) for value in x)
+        axes_ = tuple(str(axis) for axis in axes)
+        if len(coordinates) != self._base_in_dim or len(axes_) != len(coordinates):
+            raise ValueError(
+                "factorize_axes requires one coordinate array and axis per base input."
+            )
+        if len(set(axes_)) != len(axes_):
+            raise ValueError("factorize_axes axis names must be unique.")
+        if any(value.ndim != 1 for value in coordinates):
+            raise ValueError("factorize_axes coordinate arrays must be one-dimensional.")
+        if self.output_activation is not _identity:
+            raise ValueError(
+                "Factor-preserving execution requires identity output_activation."
+            )
+        derivative_coordinate = -1
+        derivative_order = 0
+        if partial is not None:
+            derivative_coordinate, derivative_order = (int(value) for value in partial)
+            if (
+                derivative_coordinate < 0
+                or derivative_coordinate >= len(coordinates)
+                or derivative_order < 1
+            ):
+                raise ValueError(
+                    "factorize_axes partial requires a valid coordinate and positive order."
+                )
+
+        keys = self._split_key(key)
+        factors: list[AxisFactor] = []
+        clones = self._clones
+        model_index = 0
+        for coordinate_index, (coordinate, axis) in enumerate(
+            zip(coordinates, axes_, strict=True)
+        ):
+            group_models = self.models[model_index : model_index + clones]
+            group_keys = keys[model_index : model_index + clones]
+
+            def group_latents(value):
+                product = jnp.ones(
+                    (self.latent_size, _get_size(self.out_size)),
+                    dtype=jnp.result_type(value),
+                )
+                for model, model_key in zip(
+                    group_models, group_keys, strict=True
+                ):
+                    product = product * self._reshape_latents(
+                        model(value, key=model_key)
+                    )
+                return product
+
+            if coordinate_index == derivative_coordinate:
+                latents = jax.vmap(
+                    lambda value: jet_nth(
+                        group_latents,
+                        value,
+                        jnp.ones_like(value),
+                        order=derivative_order,
+                    )
+                )(coordinate)
+            else:
+                latents = jax.vmap(group_latents)(coordinate)
+            factors.append(
+                AxisFactor(f"coordinate_{coordinate_index}", latents, (axis,))
+            )
+            model_index += clones
+        if not self.keep_outputs_complex and any(
+            jnp.iscomplexobj(factor.tensor) for factor in factors
+        ):
+            raise ValueError(
+                "Complex factorization requires keep_outputs_complex=True; taking "
+                "a real part after contraction is not factor preserving."
+            )
+        names = tuple(factor.name for factor in factors)
+        return AxisFactorizedField(
+            tuple(factors),
+            AxisContractionPlan((AxisProductTerm(names),)),
+        )
 
     def _call_separable(
         self,

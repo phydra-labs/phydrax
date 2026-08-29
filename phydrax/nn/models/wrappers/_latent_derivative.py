@@ -14,7 +14,7 @@ from jax.experimental.jet import jet
 from ..._utils import _get_size
 
 
-def _jet_dn(fun, x: jax.Array, direction: jax.Array, /, *, order: int) -> jax.Array:
+def jet_nth(fun, x: jax.Array, direction: jax.Array, /, *, order: int) -> jax.Array:
     order_i = int(order)
     if order_i < 1:
         raise ValueError("order must be positive.")
@@ -55,7 +55,7 @@ def _contraction_plan(model: Any, /):
     return executor, plan.fallback_message
 
 
-def _factor_nth_latents(
+def factor_nth_latents(
     model: Any,
     factor_model: Any,
     points: Any,
@@ -101,7 +101,7 @@ def _factor_nth_latents(
             return latents
 
         direction = jnp.ones_like(coordinates[axis])
-        latents = _jet_dn(
+        latents = jet_nth(
             latents_at_coordinate,
             coordinates[axis],
             direction,
@@ -128,7 +128,7 @@ def _factor_nth_latents(
                 f"factor {name!r} scalar input is incompatible with "
                 f"in_size={input_size}.",
             )
-        latents = _jet_dn(
+        latents = jet_nth(
             latents_from_input,
             array,
             jnp.ones_like(array),
@@ -147,7 +147,7 @@ def _factor_nth_latents(
                 None,
                 f"factor {name!r} expected shape ({input_size},), got {array.shape}.",
             )
-        latents = _jet_dn(
+        latents = jet_nth(
             latents_from_input,
             array,
             direction,
@@ -169,7 +169,7 @@ def _factor_nth_latents(
                 if int(input_size) == 1
                 else jnp.zeros_like(row).at[axis].set(1.0)
             )
-            return _jet_dn(latents_from_input, row, direction, order=order)
+            return jet_nth(latents_from_input, row, direction, order=order)
 
         return jax.vmap(nth_single)(array), (int(array.shape[0]),), None
 
@@ -225,7 +225,7 @@ def evaluate_latent_partial(
         zip(model.factor_names, model.factor_models, args, keys, strict=True)
     ):
         if index == dependency_index:
-            latent, batch_shape, reason = _factor_nth_latents(
+            latent, batch_shape, reason = factor_nth_latents(
                 model,
                 factor_model,
                 points,
@@ -290,4 +290,4 @@ def evaluate_latent_partial(
     return output, None
 
 
-__all__ = ["evaluate_latent_partial"]
+__all__ = ["evaluate_latent_partial", "factor_nth_latents", "jet_nth"]

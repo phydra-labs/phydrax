@@ -9,6 +9,7 @@ import jax
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from ..._axis_factorization import AxisFactorizedField
 from ..._doc import DOC_KEY0
 from ..._model import ModelBinding
 from .._base import _AbstractStructuredInputModel
@@ -136,3 +137,20 @@ class SeparableMLP(_AbstractStructuredInputModel):
         of 1D coordinate arrays (see `phydrax.nn.models.Separable`).
         """
         return self.model(x, key=key)
+
+    def factorize_axes(
+        self,
+        x: tuple[Array, ...],
+        axes: Sequence[str],
+        /,
+        *,
+        key: EvalKey = None,
+        partial: tuple[int, int] | None = None,
+    ) -> AxisFactorizedField:
+        """Expose coordinate factors without materializing the tensor grid."""
+        return self.model.factorize_axes(
+            x,
+            axes,
+            key=key,
+            partial=partial,
+        )
