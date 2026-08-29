@@ -236,6 +236,15 @@ errors-in-variables likelihoods account jointly for uncertain predictors and
 observations. Probability domains, static random fields, and joint QMC propagate
 full uncertain-input distributions. Global Wiener, Poisson-clock, composite, and
 coefficient-process realizations provide replayable process paths.
+Independent scalar Uniform and Normal inputs also support labeled nonintrusive
+polynomial chaos. Deterministic guarded total-degree multiindices, normalized
+Legendre/Hermite tensor bases, existing product-integration projection, and
+diagnosed native exact/least-squares regression produce immutable PyTree- and
+Field-preserving expansions. Mean, variance, and first/total Sobol effects follow
+from orthonormal coefficient energy. Rank deficiency and nonfinite data fail
+without silent pseudoinverse repair; this surface does not claim intrusive
+stochastic Galerkin semantics.
+
 
 Regular Bernoulli, Poisson, exponential-rate, and Normal families expose typed natural
 and mean coordinates, normalized laws, weighted sufficient-statistic projection, and
@@ -915,6 +924,10 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   observations, joint QMC for uncertain inputs, proper likelihoods/scores for
   observations, and conformal calibration for coverage. Use FITC only after dense
   scaling is measured.
+  For repeated low-dimensional propagation under independent scalar Uniform or
+  Normal laws, use nonintrusive polynomial-chaos projection or diagnosed regression;
+  retain its coefficient moments and Sobol effects as finite-span evidence, not a
+  truncation-error certificate.
   See [Guides → Uncertainty quantification](guides_uncertainty.md),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).

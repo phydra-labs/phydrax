@@ -79,6 +79,53 @@
 ::: phydrax.uq.propagate
 
 
+## Nonintrusive polynomial chaos
+
+`PolynomialChaosBasis` binds an ordered tuple of independent scalar
+`ProbabilityDomain` factors to a graded total-degree orthonormal basis. `Uniform`
+factors use normalized Legendre polynomials after their exact affine reference
+transform; `Normal` factors use normalized probabilists' Hermite polynomials after
+standardization. Degree zero is a valid constant basis. Multiindex count and storage
+guards fail before allocating an oversized feature table.
+
+Projection and regression are separate nonintrusive contracts:
+
+- `PolynomialChaosProjectionPlan` materializes the supplied
+  `ProductIntegrationPlan` and projects model values against every basis mode.
+- `PolynomialChaosRegressionPlan` uses a native exact linear system for a square
+  design and a diagnosed native least-squares problem for an overdetermined design.
+  The default policies require full rank. A deficient design or nonfinite samples
+  fail rather than selecting an undeclared pseudoinverse.
+
+Both plans support array, `coordax.Field`, and PyTree outputs. The resulting immutable
+`PolynomialChaosExpansion` remains callable under JIT and differentiation; every
+coefficient leaf retains its physical output shape instead of flattening that shape
+into the polynomial-mode axis. These APIs do **not** implement intrusive stochastic
+Galerkin equations.
+
+::: phydrax.uq.PolynomialMultiIndexSet
+
+---
+
+::: phydrax.uq.PolynomialChaosBasis
+
+---
+
+::: phydrax.uq.PolynomialChaosProjectionPlan
+
+---
+
+::: phydrax.uq.PolynomialChaosRegressionPlan
+
+---
+
+::: phydrax.uq.PolynomialChaosExpansion
+
+---
+
+::: phydrax.uq.PolynomialChaosFitResult
+
+
 ## Matrix-free linearized covariance
 
 `propagate_linearized` evaluates the nominal output once, retains a JVP

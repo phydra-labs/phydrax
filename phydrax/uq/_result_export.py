@@ -51,6 +51,7 @@ from ._particle import (
 )
 from ._particle_genealogical_score import ParticleGenealogicalScoreResult
 from ._pathfinder import PathfinderResult
+from ._polynomial_chaos import PolynomialChaosFitResult
 from ._rao_blackwellized import RaoBlackwellizedFilterResult
 from ._rao_blackwellized_smoothing import (
     RaoBlackwellizedBackwardSimulationResult,
@@ -1495,6 +1496,46 @@ def _adapt_result(result, arrays, fields, trees):
             "nested_sampling",
             metadata,
             ("problem", "final_state.static"),
+        )
+
+    if isinstance(result, PolynomialChaosFitResult):
+        expansion = result.expansion
+        _put_tree(trees, arrays, "coefficients", expansion.coefficients)
+        _put_tree(trees, arrays, "mean", expansion.mean)
+        _put_tree(trees, arrays, "variance", expansion.variance)
+        for label, value in expansion.first_order_sobol.items():
+            _put_tree(trees, arrays, f"first_order_sobol.{label}", value)
+        for label, value in expansion.total_order_sobol.items():
+            _put_tree(trees, arrays, f"total_order_sobol.{label}", value)
+        if result.residual_norm is not None:
+            _put_tree(trees, arrays, "residual_norm", result.residual_norm)
+        if result.relative_residual_norm is not None:
+            _put_tree(
+                trees,
+                arrays,
+                "relative_residual_norm",
+                result.relative_residual_norm,
+            )
+        for index, status in enumerate(result.solver_statuses):
+            _put_field(fields, arrays, f"solver_statuses.{index}", status)
+        metadata = {
+            "method": result.method,
+            "sample_count": result.sample_count,
+            "model_evaluations": result.model_evaluations,
+            "rank": result.rank,
+            "successful": result.successful,
+            "basis_id": expansion.basis.basis_id,
+            "expansion_id": expansion.expansion_id,
+            "degree": expansion.basis.degree,
+            "feature_count": expansion.basis.feature_count,
+            "labels": list(expansion.basis.labels),
+            "evidence": dict(result.evidence),
+            "provenance": dict(result.provenance),
+        }
+        return (
+            "polynomial_chaos_fit",
+            metadata,
+            ("expansion.basis.factors", "solver_diagnostics"),
         )
 
     if isinstance(result, PathfinderResult):

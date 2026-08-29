@@ -342,7 +342,7 @@ nav:
             - Inference and ensembles: "api/uq/inference.md"
             - Likelihoods and calibration: "api/uq/calibration.md"
             - Filtering and smoothing: "api/uq/filtering.md"
-            - Propagation: "api/uq/propagation.md"
+            - Propagation and polynomial chaos: "api/uq/propagation.md"
             - Global sensitivity: "api/uq/sensitivity.md"
         - Export: "api/export.md"
     - Misc:

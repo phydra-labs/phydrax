@@ -162,6 +162,51 @@ on a nonlinear model.
 
 
 
+### 5b. Fit a reusable nonintrusive polynomial expansion
+
+For independent scalar Uniform and Normal inputs, project a finite orthonormal
+expansion with an explicit product quadrature:
+
+```python
+coefficient_factor = phx.domain.ProbabilityDomain(
+    phx.uq.Uniform(0.2, 0.6), label="coefficient"
+)
+forcing_factor = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(1.0, 0.1), label="forcing"
+)
+pce_basis = phx.uq.PolynomialChaosBasis(
+    (coefficient_factor, forcing_factor), 3
+)
+pce_quadrature = phx.integration.ProductIntegrationPlan(
+    {
+        "coefficient": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussLegendreRule(5)
+        ),
+        "forcing": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussHermiteRule(5)
+        ),
+    }
+)
+pce_fit = phx.uq.PolynomialChaosProjectionPlan(
+    pce_basis, pce_quadrature
+).fit(solve_forward)
+
+pce_prediction = pce_fit.expansion(
+    {"coefficient": jnp.asarray(0.4), "forcing": jnp.asarray(1.1)}
+)
+pce_mean = pce_fit.expansion.mean
+pce_variance = pce_fit.expansion.variance
+pce_first_order = pce_fit.expansion.first_order_sobol
+pce_total_order = pce_fit.expansion.total_order_sobol
+```
+
+Use `PolynomialChaosRegressionPlan` instead when an existing finite design owns the
+model values. Do not call that regression fit Galerkin: no stochastic residual
+equations are assembled. Increase degree only after measuring truncation error
+against withheld points or a higher-order projection; feature and storage ceilings
+stop combinatorial basis growth rather than truncating it.
+
+
 ## 6. Rank global effects
 
 ```python
