@@ -11,6 +11,7 @@ jax.config.update("jax_enable_x64", True)
 
 from . import (
     backends,
+    combinatorial,
     conditions,
     continuation,
     control,
@@ -53,6 +54,7 @@ from . import applications
 __all__ = [
     "applications",
     "backends",
+    "combinatorial",
     "conditions",
     "control",
     "continuation",

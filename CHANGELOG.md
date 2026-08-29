@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added a native linear-combinatorial substrate with separate logical decisions
+  and objective features, content-addressed plans, deterministic ties, portable
+  statuses, and independent certificates. Added exact streamed finite,
+  fixed-cardinality, primal-dual Hungarian assignment, and signed-cost DAG path
+  oracles, plus explicit one-extra-solve blackbox surrogate pullbacks.
 - Added an end-to-end free-boundary SciML substrate: differentiable compact
   Heaviside/delta and coarea calculus; level-set phase, normal, curvature,
   velocity, and Eikonal operators; discontinuity-aware coordinate lifts;
