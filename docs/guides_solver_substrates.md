@@ -344,3 +344,22 @@ poroelastic, and thermoelastic references.
 dimension budget. `LowRankBoundaryCorrectionPlan` prepares a Green/capacitance Schur
 correction with an explicit construction-byte limit. Neither is represented as local
 finite difference.
+
+Control direct collocation compiles local explicit/DAE defects into both a guarded
+dense-native nonlinear program and an exact structured sparse program. The sparse Ipopt
+boundary canonicalizes Jacobian coordinates, supplies one lower-triangular Hessian
+representative, records complete callback work, and independently reconstructs KKT
+evidence. Per-interval off-grid residuals drive nested h-refinement with explicit primal
+transfer and no topology-changing dual transfer. Controlled-DAE replay binds a
+`HeldInputPolicy` into initialization, every implicit stage, residual certification, and
+continuation identity.
+
+The deterministic qualification campaigns are:
+
+```bash
+python tools/run_direct_collocation_qualification.py
+python tools/direct_collocation_ipopt_qualification.py --intervals 16 64
+```
+
+They write fingerprinted artifacts under `benchmarks/` without promoting sampled
+off-grid evidence to a continuous-time certificate.

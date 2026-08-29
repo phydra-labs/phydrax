@@ -38,7 +38,6 @@ from ._derivative_free_least_squares import FiniteDifferenceGaussNewton
 from ._differential_evolution import DifferentialEvolutionSearch
 from ._external_backends import (
     ceres_least_squares,
-    IpoptMinimize,
     NLoptMinimize,
     SciPyMinimize,
 )
@@ -62,6 +61,12 @@ from ._incremental_factor_graph import (
     prepare_incremental_factor_graph,
     remove_incremental_factor,
     update_incremental_factor_graph,
+)
+from ._ipopt import (
+    IpoptCallbackCounts,
+    IpoptMinimize,
+    IpoptStatusEvidence,
+    StructuredIpoptEvidence,
 )
 from ._iterative import (
     AbstractCompositeLeastSquaresMethod,
@@ -563,6 +568,9 @@ __all__ = [
     "StartGenerator",
     "multistart_minimize",
     "IpoptMinimize",
+    "IpoptCallbackCounts",
+    "IpoptStatusEvidence",
+    "StructuredIpoptEvidence",
     "NLoptMinimize",
     "SciPyMinimize",
     "ceres_least_squares",

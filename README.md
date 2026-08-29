@@ -330,9 +330,12 @@ dense or structural-sparse prepared linear-control QPs, explicit receding-horizo
 warm-start shifting, and affine stage/terminal SOCP constraints. Direct
 collocation supports fixed or variable duration, shared optimized parameters,
 bound-form trajectory constraints, explicit native-dense or sparse-Ipopt
-selection, KKT recertification, and physical defect audits. Sampled nonlinear
-constraints are not continuous-time certificates; off-grid collocation checks
-remain non-certifying diagnostics; iLQR and multiple shooting accept one
+selection, typed callback/work evidence, KKT recertification, per-interval defect
+audits, nested h-refinement with primal transfer, and controlled-DAE causal
+replay. Native and Ipopt qualification artifacts retain analytic, active-path,
+shared-parameter, stiff, unstable, and nonholonomic cases. Sampled nonlinear
+constraints and off-grid audits are not continuous-time certificates; replay
+does not rewrite collocation status; iLQR and multiple shooting accept one
 physical case; bounded coefficient search is not globally optimal; dense guards
 and solver status are explicit rather than hidden behind fallback or repair. See
 the [control cookbook](docs/cookbook/control.md), [control API](docs/api/control.md),

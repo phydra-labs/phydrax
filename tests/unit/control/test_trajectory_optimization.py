@@ -72,7 +72,7 @@ def test_autonomous_dae_rejects_extra_inputs_and_ivp_rejects_controlled_dae():
             -jnp.ones(1),
             inputs=jnp.ones(1),
         )
-    with pytest.raises(ValueError, match="autonomous system"):
+    with pytest.raises(ValueError, match="requires input_policy"):
         phx.solver.DifferentialAlgebraicProblem(
             _controlled_dae(),
             jnp.zeros(2),
