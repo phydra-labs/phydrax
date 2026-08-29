@@ -72,10 +72,10 @@ def _fem_case(width, repeats):
         phx.discretization.lagrange_element("triangle", 1),
     )
     discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "benchmark-diffusion",
         "u",
-        (phx.equations.DiffusionTerm("u"),),
+        (phx.equations.DiffusionAction("u"),),
     )
     compiled = phx.equations.compile_finite_element_problem(
         form,

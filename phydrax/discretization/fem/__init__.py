@@ -6,12 +6,19 @@
 
 from . import smoothing
 from ._adaptivity import (
-    adaptive_uniform_solve,
+    coarsen_triangles_local,
+    dorfler_mark,
     dual_weighted_residual_estimate,
+    FiniteElementAdaptationMap,
+    FiniteElementDWRIndicators,
     FiniteElementErrorEstimate,
     FiniteElementRefinementMap,
+    FiniteElementTransferBundle,
     FiniteElementTransferPlan,
     FiniteElementTransferRole,
+    local_dual_weighted_residual,
+    maximum_mark,
+    refine_triangles_local,
     refine_triangles_uniform,
     residual_jump_estimate,
 )
@@ -50,6 +57,7 @@ from ._high_order import (
     NodeSet,
     QuadratureChunkPolicy,
     ReferenceNodalFamily,
+    SimplexNodalFamily,
     SumFactorizationPlan,
     TensorProductTabulation,
 )
@@ -67,22 +75,38 @@ from ._reference import (
     nedelec_element,
     raviart_thomas_element,
 )
+from ._reference_topology import (
+    reference_cell_topology,
+    REFERENCE_TOPOLOGIES,
+    ReferenceCellTopology,
+)
 
 
 __all__ = [
     "smoothing",
+    "FiniteElementAdaptationMap",
+    "FiniteElementDWRIndicators",
     "FiniteElementErrorEstimate",
     "FiniteElementRefinementMap",
+    "FiniteElementTransferBundle",
     "FiniteElementTransferPlan",
     "NodeSet",
     "QuadratureChunkPolicy",
     "ReferenceNodalFamily",
+    "SimplexNodalFamily",
     "SumFactorizationPlan",
     "TensorProductTabulation",
     "lagrange_1d_tabulation",
+    "REFERENCE_TOPOLOGIES",
+    "ReferenceCellTopology",
+    "reference_cell_topology",
     "local_diagonal",
     "FiniteElementTransferRole",
-    "adaptive_uniform_solve",
+    "coarsen_triangles_local",
+    "dorfler_mark",
+    "local_dual_weighted_residual",
+    "maximum_mark",
+    "refine_triangles_local",
     "PTransferData",
     "quadrilateral_p_transfer",
     "refine_triangles_uniform",

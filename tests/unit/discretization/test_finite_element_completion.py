@@ -51,10 +51,10 @@ def test_runtime_geometry_precision_identity_and_projection_are_operational():
         output_dtype="float64",
     )
     discretization = _scalar_discretization(precision_policy=precision)
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "shape-diffusion",
         "u",
-        (phx.equations.DiffusionTerm("u"),),
+        (phx.equations.DiffusionAction("u"),),
     )
     compiled = phx.equations.compile_finite_element_problem(
         form,
@@ -109,12 +109,12 @@ def test_component_and_mixed_block_spaces_solve_through_native_linalg():
     ).prepare()
     u_constraint = phx.discretization.dirichlet_constraint(discretization, "u")
     p_constraint = phx.discretization.dirichlet_constraint(discretization, "p")
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "mixed",
         ("u", "p"),
         (
-            phx.equations.DiffusionTerm("u", term_id="u-diffusion"),
-            phx.equations.DiffusionTerm("p", term_id="p-diffusion"),
+            phx.equations.DiffusionAction("u", action_id="u-diffusion"),
+            phx.equations.DiffusionAction("p", action_id="p-diffusion"),
         ),
     )
     compiled = phx.equations.compile_finite_element_problem(
@@ -148,14 +148,14 @@ def test_domains_rules_and_entity_coefficients_select_exact_cells():
         jnp.asarray([1.0, 2.0, 3.0, 4.0]),
         location="cell",
     )
-    term = phx.equations.SourceTerm(
+    term = phx.equations.SourceAction(
         "u",
         source,
         domain=domain,
         rules={"triangles": phx.integration.ReferenceTriangleRule()},
     )
     compiled = phx.equations.compile_finite_element_problem(
-        phx.equations.WeakForm("selected-source", "u", (term,)),
+        phx.equations.FiniteElementForm("selected-source", "u", (term,)),
         discretization,
         execution_policy=phx.equations.FiniteElementExecutionPolicy(
             realization="matrix_free"
@@ -170,13 +170,13 @@ def test_domains_rules_and_entity_coefficients_select_exact_cells():
 def test_energy_custom_residual_and_interior_flux_share_one_compiler():
     discretization = _scalar_discretization()
     state = jnp.asarray([0.0, 1.0, 2.0, 1.0, 1.0])
-    energy = phx.equations.CellEnergyTerm(
+    energy = phx.equations.CellEnergyAction(
         "u",
         lambda values, gradients, points, context: 0.5 * jnp.sum(gradients**2, axis=-1),
-        term_id="dirichlet-energy",
+        action_id="dirichlet-energy",
     )
     compiled_energy = phx.equations.compile_finite_element_problem(
-        phx.equations.WeakForm("energy", "u", (energy,)),
+        phx.equations.FiniteElementForm("energy", "u", (energy,)),
         discretization,
         execution_policy=phx.equations.FiniteElementExecutionPolicy(
             realization="matrix_free"
@@ -194,16 +194,16 @@ def test_energy_custom_residual_and_interior_flux_share_one_compiler():
             "w", phx.discretization.discontinuous_element("triangle")
         ),
     ).prepare()
-    flux = phx.equations.InteriorFacetTerm(
+    flux = phx.equations.InteriorFacetAction(
         "w",
         lambda plus, minus, points, weights, normal, context: (
             plus - minus,
             minus - plus,
         ),
-        term_id="jump-flux",
+        action_id="jump-flux",
     )
     compiled_dg = phx.equations.compile_finite_element_problem(
-        phx.equations.WeakForm("dg-jump", "w", (flux,)),
+        phx.equations.FiniteElementForm("dg-jump", "w", (flux,)),
         dg,
         execution_policy=phx.equations.FiniteElementExecutionPolicy(
             realization="matrix_free"
@@ -269,10 +269,10 @@ def test_curved_compatible_local_and_hdg_spaces_are_executable():
 def test_solver_material_checkpoint_and_distributed_contracts(tmp_path):
     discretization = _scalar_discretization()
     compiled = phx.equations.compile_finite_element_problem(
-        phx.equations.WeakForm(
+        phx.equations.FiniteElementForm(
             "stiffness",
             "u",
-            (phx.equations.DiffusionTerm("u"),),
+            (phx.equations.DiffusionAction("u"),),
         ),
         discretization,
     )

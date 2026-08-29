@@ -31,6 +31,58 @@ class FieldJet(StrictModule):
         self.curl = None if curl is None else jnp.asarray(curl)
 
 
+class FacetJet(StrictModule):
+    """Two scalar traces expressed with one plus-oriented facet normal."""
+
+    plus_value: Array
+    minus_value: Array
+    plus_gradient: Array
+    minus_gradient: Array
+    plus_normal_derivative: Array
+    minus_normal_derivative: Array
+    jump: Array
+    average: Array
+    normal: Array
+    measure: Array
+
+    def __init__(
+        self,
+        plus_value: ArrayLike,
+        minus_value: ArrayLike,
+        plus_gradient: ArrayLike,
+        minus_gradient: ArrayLike,
+        normal: ArrayLike,
+        measure: ArrayLike,
+        /,
+    ):
+        plus = jnp.asarray(plus_value)
+        minus = jnp.asarray(minus_value)
+        plus_gradient_ = jnp.asarray(plus_gradient)
+        minus_gradient_ = jnp.asarray(minus_gradient)
+        normal_ = jnp.asarray(normal)
+        measure_ = jnp.asarray(measure)
+        if plus.shape != minus.shape:
+            raise ValueError("Facet plus/minus values must have identical shapes.")
+        if plus_gradient_.shape != minus_gradient_.shape:
+            raise ValueError("Facet plus/minus gradients must have identical shapes.")
+        if plus_gradient_.shape[:-1] != plus.shape:
+            raise ValueError("Facet scalar gradients must extend the value shape.")
+        if normal_.shape != plus_gradient_.shape:
+            raise ValueError("Facet normals must match scalar-gradient shapes.")
+        if measure_.shape != plus.shape:
+            raise ValueError("Facet measure must match scalar trace values.")
+        self.plus_value = plus
+        self.minus_value = minus
+        self.plus_gradient = plus_gradient_
+        self.minus_gradient = minus_gradient_
+        self.plus_normal_derivative = jnp.sum(plus_gradient_ * normal_, axis=-1)
+        self.minus_normal_derivative = jnp.sum(minus_gradient_ * normal_, axis=-1)
+        self.jump = plus - minus
+        self.average = 0.5 * (plus + minus)
+        self.normal = normal_
+        self.measure = measure_
+
+
 def symmetric_gradient(gradient: ArrayLike, /) -> Array:
     gradient_ = jnp.asarray(gradient)
     if gradient_.shape[-1] != gradient_.shape[-2]:
@@ -97,6 +149,7 @@ def average(plus: ArrayLike, minus: ArrayLike, /) -> Array:
 
 
 __all__ = [
+    "FacetJet",
     "FieldJet",
     "average",
     "curl",

@@ -1,6 +1,7 @@
 #
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
+# ruff: noqa: I001
 
 # Ensure JAX uses 64-bit floats by default for numerical robustness
 import jax
@@ -44,9 +45,13 @@ from . import (
     weighting,
 )
 
+# Applications depend on public equation/solver substrates and load last.
+from . import applications
+
 
 # Explicit re-exports for star import
 __all__ = [
+    "applications",
     "backends",
     "conditions",
     "control",

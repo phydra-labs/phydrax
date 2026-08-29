@@ -51,14 +51,16 @@
   differentiation; static resource budgets; precision evidence; and
   fast/deterministic/compensated accumulation with independent balance,
   partition, reproduction, and gradient diagnostics.
-- Added typed finite-element local-action IR identities, workset planning, eager
-  differential operators, element/partial operator utilities, quadrilateral
-  nodal tabulation and p-transfer prototypes, bounded implicit-material and time
-  schedule foundations, uniform T3 refinement, and source-specific Q4
-  plate/shell, ES-FEM, NS-FEM, selective ES/NS, and fully smoothed
-  axisymmetric patch/moment operators. The IR and proof builders remain
-  developmental planning/front-end surfaces until the authoritative executor
-  cutover; smoothed elasticity now defaults to matrix-free patch action.
+- Made the finite-element local-action/workset program authoritative for scalar
+  and product-space residuals; replaced split mixed subproblems with one compiled
+  problem; added executable SIPG/Nitsche/nullspace handling, conservative upwind
+  facets, Darcy, Maxwell, generated lowest-order primal HDG, and Taylor-Hood
+  forms; connected high-order cell-local simplex/tensor and hexahedron Q1
+  execution; and bound smoothed-elasticity actions to the same form program.
+  Added accepted field/material/topology transactions, deterministic local T3
+  marking/refinement/coarsening and transfer data, local DWR indicators, and
+  executable phase-field, CPFEM, persistent-pair contact, fracture, and fixed-
+  crack XFEM application workflows. Distributed execution remains out of scope.
 - Added first-class exact-sampling round-sphere spectral discretizations with
   explicit S2FFT mode layouts, physical area measures, matrix-free
   Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,

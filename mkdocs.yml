@@ -136,6 +136,7 @@ nav:
         - Transport and adaptive SPH: "guides_transport_adaptive_sph.md"
         - Multiphase and incompressible SPH: "guides_multiphase_incompressible_sph.md"
         - Finite elements: "guides_finite_elements.md"
+        - Finite-element applications: "guides_fem_applications.md"
         - Smoothed finite elements: "guides_fem_smoothing.md"
         - Global spectral methods: "guides_spectral_methods.md"
         - Finite real algebras: "guides_finite_real_algebras.md"

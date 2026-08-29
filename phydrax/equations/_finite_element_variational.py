@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,10 +24,6 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
-from ..discretization._cell_complex import (
-    PolygonalConnectivity,
-    TetrahedralConnectivity,
-)
 from ..discretization.fem import (
     FiniteElementDirichletConstraint,
     FiniteElementDiscretization,
@@ -40,11 +36,18 @@ from ..dynamics import (
     SecondOrderDifferentialSystem,
 )
 from ..linalg import (
+    AbstractLinearOperator,
     adjoint,
+    assemble_diagonal,
+    BlockLinearOperator,
     BlockSpace,
+    ConstraintMap,
     DualSpace,
     FunctionLinearOperator,
+    IdentityLinearOperator,
+    KernelCertificate,
     LinearSolvePolicy,
+    LinearSubspace,
     LinearSystem,
     NullspacePolicy,
     OperatorProperties,
@@ -57,7 +60,7 @@ from ..linalg import (
 )
 from ..linalg.eigen import GeneralizedEigenproblem
 from ..nonlinear import LaggedLinearSolveUpdate, NonlinearSystemProblem
-from ..sparse import SparseCoordinateOperator
+from ..sparse import EdgeRelation, SparseCoordinateOperator
 
 
 ReferenceRule: TypeAlias = Any
@@ -91,6 +94,12 @@ def _tetrahedron_rule():
     from ..integration import ReferenceTetrahedronRule
 
     return ReferenceTetrahedronRule()
+
+
+def _hexahedron_rule():
+    from ..integration import ReferenceHexahedronRule
+
+    return ReferenceHexahedronRule()
 
 
 def _rule_id(rule: ReferenceRule, /) -> str:
@@ -127,6 +136,8 @@ def _default_rule(cell_kind: str, /) -> ReferenceRule:
         return _quadrilateral_rule()
     if cell_kind == "tetrahedron":
         return _tetrahedron_rule()
+    if cell_kind == "hexahedron":
+        return _hexahedron_rule()
     raise ValueError(f"No finite-element rule exists for cell kind {cell_kind!r}.")
 
 
@@ -239,9 +250,9 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
 
     runtime: FiniteElementRuntimeData
     time: Array
-    lift: Array | None
-    lift_rate: Array | None
-    lift_acceleration: Array | None
+    lift: object
+    lift_rate: object
+    lift_acceleration: object
     user_args: object
 
     def __init__(
@@ -250,19 +261,23 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
         /,
         *,
         time: ArrayLike = 0.0,
-        lift: ArrayLike | None = None,
-        lift_rate: ArrayLike | None = None,
-        lift_acceleration: ArrayLike | None = None,
+        lift: object = None,
+        lift_rate: object = None,
+        lift_acceleration: object = None,
         user_args: object = None,
     ):
         if not isinstance(runtime, FiniteElementRuntimeData):
             raise TypeError("runtime must be FiniteElementRuntimeData.")
         self.runtime = runtime
         self.time = jnp.asarray(time)
-        self.lift = None if lift is None else jnp.asarray(lift)
-        self.lift_rate = None if lift_rate is None else jnp.asarray(lift_rate)
+        self.lift = None if lift is None else jax.tree.map(jnp.asarray, lift)
+        self.lift_rate = (
+            None if lift_rate is None else jax.tree.map(jnp.asarray, lift_rate)
+        )
         self.lift_acceleration = (
-            None if lift_acceleration is None else jnp.asarray(lift_acceleration)
+            None
+            if lift_acceleration is None
+            else jax.tree.map(jnp.asarray, lift_acceleration)
         )
         self.user_args = user_args
 
@@ -297,10 +312,10 @@ class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
         )
 
 
-class DiffusionTerm(StrictModule, NonTrainableState):
+class DiffusionAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
     diffusivity: _ResolvedCoefficient
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
 
@@ -310,12 +325,12 @@ class DiffusionTerm(StrictModule, NonTrainableState):
         diffusivity: _ResolvedCoefficient | ArrayLike = 1.0,
         /,
         *,
-        term_id: str = "diffusion",
+        action_id: str = "diffusion",
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
     ):
         field = str(field_name)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not field or not identifier:
             raise ValueError("Diffusion field and term IDs must be non-empty.")
         self.field_name = field
@@ -327,16 +342,16 @@ class DiffusionTerm(StrictModule, NonTrainableState):
         if domain is not None and not isinstance(domain, IntegrationDomain):
             raise TypeError("domain must be IntegrationDomain or None.")
         if domain is not None and domain.kind != "cell":
-            raise ValueError("DiffusionTerm requires a cell integration domain.")
+            raise ValueError("DiffusionAction requires a cell integration domain.")
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-class MassTerm(StrictModule, NonTrainableState):
+class MassAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
     coefficient: _ResolvedCoefficient
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
 
@@ -346,12 +361,12 @@ class MassTerm(StrictModule, NonTrainableState):
         value: _ResolvedCoefficient | ArrayLike = 1.0,
         /,
         *,
-        term_id: str = "mass",
+        action_id: str = "mass",
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
     ):
         field = str(field_name)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not field or not identifier:
             raise ValueError("Mass field and term IDs must be non-empty.")
         self.field_name = field
@@ -361,16 +376,16 @@ class MassTerm(StrictModule, NonTrainableState):
         if domain is not None and not isinstance(domain, IntegrationDomain):
             raise TypeError("domain must be IntegrationDomain or None.")
         if domain is not None and domain.kind != "cell":
-            raise ValueError("MassTerm requires a cell integration domain.")
+            raise ValueError("MassAction requires a cell integration domain.")
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-class SourceTerm(StrictModule, NonTrainableState):
+class SourceAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
     source: _ResolvedCoefficient
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
 
@@ -380,12 +395,12 @@ class SourceTerm(StrictModule, NonTrainableState):
         source: _ResolvedCoefficient | ArrayLike,
         /,
         *,
-        term_id: str = "source",
+        action_id: str = "source",
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
     ):
         field = str(field_name)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not field or not identifier:
             raise ValueError("Source field and term IDs must be non-empty.")
         self.field_name = field
@@ -395,16 +410,16 @@ class SourceTerm(StrictModule, NonTrainableState):
         if domain is not None and not isinstance(domain, IntegrationDomain):
             raise TypeError("domain must be IntegrationDomain or None.")
         if domain is not None and domain.kind != "cell":
-            raise ValueError("SourceTerm requires a cell integration domain.")
+            raise ValueError("SourceAction requires a cell integration domain.")
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-class BoundaryLoadTerm(StrictModule, NonTrainableState):
+class BoundaryLoadAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
     load: _ResolvedCoefficient
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
 
@@ -414,12 +429,12 @@ class BoundaryLoadTerm(StrictModule, NonTrainableState):
         load: _ResolvedCoefficient | ArrayLike,
         /,
         *,
-        term_id: str = "boundary-load",
+        action_id: str = "boundary-load",
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
     ):
         field = str(field_name)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not field or not identifier:
             raise ValueError("Boundary-load field and term IDs must be non-empty.")
         self.field_name = field
@@ -428,14 +443,14 @@ class BoundaryLoadTerm(StrictModule, NonTrainableState):
             raise TypeError("domain must be IntegrationDomain or None.")
         if domain is not None and domain.kind != "exterior_facet":
             raise ValueError(
-                "BoundaryLoadTerm requires an exterior-facet integration domain."
+                "BoundaryLoadAction requires an exterior-facet integration domain."
             )
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-class CellResidualTerm(StrictModule, NonTrainableState):
+class CellResidualAction(StrictModule, NonTrainableState):
     """User-defined cell-local residual with explicit field dependencies."""
 
     field_name: str = eqx.field(static=True)
@@ -443,7 +458,7 @@ class CellResidualTerm(StrictModule, NonTrainableState):
     kernel: Callable
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -454,37 +469,37 @@ class CellResidualTerm(StrictModule, NonTrainableState):
         *,
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-        term_id: str,
+        action_id: str,
     ):
         output = str(field_name)
         inputs = tuple(str(value) for value in input_fields)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not output or not inputs or any(not value for value in inputs):
             raise ValueError("Residual output/input field names must be non-empty.")
         if len(set(inputs)) != len(inputs):
             raise ValueError("Residual input field names must be unique.")
         if not callable(kernel) or not identifier:
-            raise ValueError("Residual kernel and term_id are required.")
+            raise ValueError("Residual kernel and action_id are required.")
         if domain is not None and (
             not isinstance(domain, IntegrationDomain) or domain.kind != "cell"
         ):
-            raise ValueError("CellResidualTerm requires a cell integration domain.")
+            raise ValueError("CellResidualAction requires a cell integration domain.")
         self.field_name = output
         self.input_fields = inputs
         self.kernel = kernel
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-class InteriorFacetTerm(StrictModule, NonTrainableState):
+class InteriorFacetAction(StrictModule, NonTrainableState):
     """Two-sided numerical flux density over interior facets."""
 
     field_name: str = eqx.field(static=True)
     kernel: Callable
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -494,31 +509,235 @@ class InteriorFacetTerm(StrictModule, NonTrainableState):
         *,
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-        term_id: str,
+        action_id: str,
     ):
         field = str(field_name)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not field or not callable(kernel) or not identifier:
             raise ValueError("Interior facet field, kernel, and term ID are required.")
         if domain is not None and (
             not isinstance(domain, IntegrationDomain) or domain.kind != "interior_facet"
         ):
-            raise ValueError("InteriorFacetTerm requires an interior-facet domain.")
+            raise ValueError("InteriorFacetAction requires an interior-facet domain.")
         self.field_name = field
         self.kernel = kernel
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-class CellEnergyTerm(StrictModule, NonTrainableState):
+class ExteriorFacetAction(StrictModule, NonTrainableState):
+    """One-sided state-dependent numerical flux over exterior facets."""
+
+    field_name: str = eqx.field(static=True)
+    kernel: Callable
+    domain: IntegrationDomain | None
+    rules: tuple[tuple[str, ReferenceRule], ...]
+    action_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        field_name: str,
+        kernel: Callable,
+        /,
+        *,
+        domain: IntegrationDomain | None = None,
+        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
+        action_id: str,
+    ):
+        field = str(field_name)
+        identifier = str(action_id)
+        if not field or not callable(kernel) or not identifier:
+            raise ValueError("Exterior facet field, kernel, and term ID are required.")
+        if domain is not None and (
+            not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet"
+        ):
+            raise ValueError("ExteriorFacetAction requires an exterior-facet domain.")
+        self.field_name = field
+        self.kernel = kernel
+        self.domain = domain
+        self.rules = _normalize_rules(rules)
+        self.action_id = identifier
+
+
+SIPGBoundaryKind: TypeAlias = Literal["dirichlet", "neumann", "robin"]
+
+
+class SIPGPenaltyPolicy(StrictModule, NonTrainableState):
+    """Explicit symmetric interior-penalty scaling policy."""
+
+    factor: float = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(self, factor: float, /):
+        factor_ = float(factor)
+        if not np.isfinite(factor_) or factor_ <= 0.0:
+            raise ValueError("SIPG penalty factor must be positive and finite.")
+        self.factor = factor_
+        self.policy_id = canonical_fingerprint(
+            {
+                "kind": "sipg-penalty-policy",
+                "factor": factor_,
+                "degree_rule": "maximum",
+                "height_rule": "harmonic-normal-height",
+                "coefficient_rule": "harmonic",
+            }
+        )
+
+    def evaluate(
+        self,
+        plus_order: ArrayLike,
+        minus_order: ArrayLike,
+        plus_height: ArrayLike,
+        minus_height: ArrayLike,
+        plus_diffusivity: ArrayLike,
+        minus_diffusivity: ArrayLike,
+        /,
+    ) -> Array:
+        p_plus = jnp.asarray(plus_order)
+        p_minus = jnp.asarray(minus_order)
+        h_plus = jnp.asarray(plus_height)
+        h_minus = jnp.asarray(minus_height)
+        k_plus = jnp.asarray(plus_diffusivity)
+        k_minus = jnp.asarray(minus_diffusivity)
+        invalid = (
+            ~jnp.isfinite(h_plus)
+            | ~jnp.isfinite(h_minus)
+            | ~jnp.isfinite(k_plus)
+            | ~jnp.isfinite(k_minus)
+            | (h_plus <= 0.0)
+            | (h_minus <= 0.0)
+            | (k_plus <= 0.0)
+            | (k_minus <= 0.0)
+        )
+        h_facet = 2.0 * h_plus * h_minus / (h_plus + h_minus)
+        k_hat = 2.0 * k_plus * k_minus / (k_plus + k_minus)
+        order = jnp.maximum(p_plus, p_minus)
+        penalty = self.factor * order**2 * k_hat / h_facet
+        return eqx.error_if(
+            penalty,
+            jnp.any(invalid | ~jnp.isfinite(penalty) | (penalty <= 0.0)),
+            "SIPG penalty evidence must be positive and finite.",
+        )
+
+
+class SIPGBoundaryCondition(StrictModule, NonTrainableState):
+    """One explicit exterior SIPG boundary declaration."""
+
+    kind: SIPGBoundaryKind = eqx.field(static=True)
+    domain: IntegrationDomain
+    value: _ResolvedCoefficient
+    robin_coefficient: _ResolvedCoefficient | None
+    penalty_policy: SIPGPenaltyPolicy | None
+    condition_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        kind: SIPGBoundaryKind,
+        domain: IntegrationDomain,
+        value: _ResolvedCoefficient | ArrayLike | Callable,
+        /,
+        *,
+        robin_coefficient: _ResolvedCoefficient | ArrayLike | Callable | None = None,
+        penalty_policy: SIPGPenaltyPolicy | None = None,
+    ):
+        if kind not in ("dirichlet", "neumann", "robin"):
+            raise ValueError("Unknown SIPG boundary kind.")
+        if not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet":
+            raise ValueError("SIPG boundary conditions require an exterior-facet domain.")
+        if penalty_policy is not None and not isinstance(
+            penalty_policy, SIPGPenaltyPolicy
+        ):
+            raise TypeError("penalty_policy must be SIPGPenaltyPolicy or None.")
+        value_ = value if isinstance(value, _ResolvedCoefficient) else coefficient(value)
+        robin = (
+            robin_coefficient
+            if isinstance(robin_coefficient, _ResolvedCoefficient)
+            else (None if robin_coefficient is None else coefficient(robin_coefficient))
+        )
+        if kind == "robin" and robin is None:
+            raise ValueError("Robin SIPG data require a boundary coefficient.")
+        if kind != "robin" and robin is not None:
+            raise ValueError("Only Robin SIPG data accept a boundary coefficient.")
+        if kind != "dirichlet" and penalty_policy is not None:
+            raise ValueError("Only Dirichlet SIPG data accept a penalty override.")
+        self.kind = kind
+        self.domain = domain
+        self.value = value_
+        self.robin_coefficient = robin
+        self.penalty_policy = penalty_policy
+        self.condition_id = canonical_fingerprint(
+            {
+                "kind": "sipg-boundary-condition",
+                "boundary_kind": kind,
+                "domain": domain.domain_id,
+                "value": value_.coefficient_id,
+                "robin": None if robin is None else robin.coefficient_id,
+                "penalty": (None if penalty_policy is None else penalty_policy.policy_id),
+            }
+        )
+
+
+class SIPGFacetAction(StrictModule, NonTrainableState):
+    """Executable SIPG interior or exterior facet action."""
+
+    field_name: str = eqx.field(static=True)
+    diffusivity: _ResolvedCoefficient
+    penalty_policy: SIPGPenaltyPolicy
+    boundary: SIPGBoundaryCondition | None
+    domain: IntegrationDomain
+    rules: tuple[tuple[str, ReferenceRule], ...]
+    action_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        field_name: str,
+        diffusivity: _ResolvedCoefficient | ArrayLike | Callable,
+        penalty_policy: SIPGPenaltyPolicy,
+        domain: IntegrationDomain,
+        /,
+        *,
+        boundary: SIPGBoundaryCondition | None = None,
+        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
+        action_id: str,
+    ):
+        field = str(field_name)
+        identifier = str(action_id)
+        if not field or not identifier:
+            raise ValueError("SIPG field and term IDs must be non-empty.")
+        if not isinstance(penalty_policy, SIPGPenaltyPolicy):
+            raise TypeError("penalty_policy must be SIPGPenaltyPolicy.")
+        if not isinstance(domain, IntegrationDomain):
+            raise TypeError("domain must be an IntegrationDomain.")
+        expected_kind = "interior_facet" if boundary is None else "exterior_facet"
+        if domain.kind != expected_kind:
+            raise ValueError(f"SIPG facet term requires a {expected_kind} domain.")
+        if boundary is not None and (
+            not isinstance(boundary, SIPGBoundaryCondition)
+            or boundary.domain.domain_id != domain.domain_id
+        ):
+            raise ValueError("SIPG boundary data must match the facet term domain.")
+        self.field_name = field
+        self.diffusivity = (
+            diffusivity
+            if isinstance(diffusivity, _ResolvedCoefficient)
+            else coefficient(diffusivity)
+        )
+        self.penalty_policy = penalty_policy
+        self.boundary = boundary
+        self.domain = domain
+        self.rules = _normalize_rules(rules)
+        self.action_id = identifier
+
+
+class CellEnergyAction(StrictModule, NonTrainableState):
     """Cell-local scalar energy differentiated into a residual."""
 
     field_name: str = eqx.field(static=True)
     density: Callable
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -528,31 +747,31 @@ class CellEnergyTerm(StrictModule, NonTrainableState):
         *,
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-        term_id: str,
+        action_id: str,
     ):
         field = str(field_name)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not field or not callable(density) or not identifier:
             raise ValueError("Energy field, density, and term ID are required.")
         if domain is not None and (
             not isinstance(domain, IntegrationDomain) or domain.kind != "cell"
         ):
-            raise ValueError("CellEnergyTerm requires a cell domain.")
+            raise ValueError("CellEnergyAction requires a cell domain.")
         self.field_name = field
         self.density = density
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-class CellBilinearTerm(StrictModule, NonTrainableState):
+class CellBilinearAction(StrictModule, NonTrainableState):
     """User-provided cell-local matrix over one field."""
 
     field_name: str = eqx.field(static=True)
     kernel: Callable
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
-    term_id: str = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -562,100 +781,148 @@ class CellBilinearTerm(StrictModule, NonTrainableState):
         *,
         domain: IntegrationDomain | None = None,
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-        term_id: str,
+        action_id: str,
     ):
         field = str(field_name)
-        identifier = str(term_id)
+        identifier = str(action_id)
         if not field or not callable(kernel) or not identifier:
             raise ValueError("Bilinear field, kernel, and term ID are required.")
         if domain is not None and (
             not isinstance(domain, IntegrationDomain) or domain.kind != "cell"
         ):
-            raise ValueError("CellBilinearTerm requires a cell domain.")
+            raise ValueError("CellBilinearAction requires a cell domain.")
         self.field_name = field
         self.kernel = kernel
         self.domain = domain
         self.rules = _normalize_rules(rules)
-        self.term_id = identifier
+        self.action_id = identifier
 
 
-FiniteElementTerm = (
-    DiffusionTerm
-    | MassTerm
-    | SourceTerm
-    | BoundaryLoadTerm
-    | CellResidualTerm
-    | InteriorFacetTerm
-    | CellEnergyTerm
-    | CellBilinearTerm
+class PreparedOperatorAction(StrictModule, NonTrainableState):
+    """One prepared global linear action scheduled by a finite-element form."""
+
+    field_name: str = eqx.field(static=True)
+    operator: AbstractLinearOperator
+    domain: IntegrationDomain | None
+    rules: tuple[tuple[str, ReferenceRule], ...] = eqx.field(static=True)
+    action_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        field_name: str,
+        operator: AbstractLinearOperator,
+        /,
+        *,
+        domain: IntegrationDomain | None = None,
+        action_id: str,
+    ):
+        field = str(field_name)
+        identifier = str(action_id)
+        if not field or not identifier:
+            raise ValueError("Operator action field and term IDs must be non-empty.")
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("operator must be an AbstractLinearOperator.")
+        if domain is not None and domain.kind != "cell":
+            raise ValueError("PreparedOperatorAction requires a cell domain.")
+        self.field_name = field
+        self.operator = operator
+        self.domain = domain
+        self.rules = ()
+        self.action_id = identifier
+
+
+FiniteElementAction = (
+    DiffusionAction
+    | MassAction
+    | SourceAction
+    | BoundaryLoadAction
+    | CellResidualAction
+    | InteriorFacetAction
+    | ExteriorFacetAction
+    | SIPGFacetAction
+    | CellEnergyAction
+    | CellBilinearAction
+    | PreparedOperatorAction
 )
 
 
-class _FiniteElementWorkBlock(StrictModule, NonTrainableState):
-    block_index: int = eqx.field(static=True)
-    block_name: str = eqx.field(static=True)
-    cell_dofs: Array
-    basis_values: Array
-    reference_gradients: Array
-    cell_indices: Array
-    reference_points: Array
-    reference_weights: Array
-    work_id: str = eqx.field(static=True)
-
-
-def _term_payload(term: FiniteElementTerm, /) -> dict[str, object]:
-    if isinstance(term, DiffusionTerm):
+def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
+    if isinstance(term, DiffusionAction):
         coefficient_id = term.diffusivity.coefficient_id
         kind = "diffusion"
-    elif isinstance(term, MassTerm):
+    elif isinstance(term, MassAction):
         coefficient_id = term.coefficient.coefficient_id
         kind = "mass"
-    elif isinstance(term, SourceTerm):
+    elif isinstance(term, SourceAction):
         coefficient_id = term.source.coefficient_id
         kind = "source"
-    elif isinstance(term, BoundaryLoadTerm):
+    elif isinstance(term, BoundaryLoadAction):
         coefficient_id = term.load.coefficient_id
         kind = "boundary-load"
-    elif isinstance(term, CellResidualTerm):
+    elif isinstance(term, CellResidualAction):
         coefficient_id = None
         kind = "cell-residual"
-    elif isinstance(term, InteriorFacetTerm):
+    elif isinstance(term, InteriorFacetAction):
         coefficient_id = None
         kind = "interior-facet"
-    elif isinstance(term, CellEnergyTerm):
+    elif isinstance(term, ExteriorFacetAction):
+        coefficient_id = None
+        kind = "exterior-facet"
+    elif isinstance(term, SIPGFacetAction):
+        coefficient_id = term.diffusivity.coefficient_id
+        kind = "sipg-facet"
+    elif isinstance(term, CellEnergyAction):
         coefficient_id = None
         kind = "cell-energy"
-    elif isinstance(term, CellBilinearTerm):
+    elif isinstance(term, CellBilinearAction):
         coefficient_id = None
         kind = "cell-bilinear"
+    elif isinstance(term, PreparedOperatorAction):
+        coefficient_id = term.operator.operator_id
+        kind = "operator-action"
     else:
-        raise TypeError("Unsupported finite-element term.")
+        raise TypeError("Unsupported finite-element action.")
     return {
         "kind": kind,
-        "term_id": term.term_id,
+        "action_id": term.action_id,
         "field_name": term.field_name,
         "coefficient_id": coefficient_id,
         "input_fields": (
             list(term.input_fields)
-            if isinstance(term, CellResidualTerm)
+            if isinstance(term, CellResidualAction)
             else [term.field_name]
         ),
         "domain_id": None if term.domain is None else term.domain.domain_id,
         "rules": [[block_name, _rule_id(rule)] for block_name, rule in term.rules],
+        "penalty_policy": (
+            term.penalty_policy.policy_id if isinstance(term, SIPGFacetAction) else None
+        ),
+        "boundary": (
+            None
+            if not isinstance(term, SIPGFacetAction) or term.boundary is None
+            else term.boundary.condition_id
+        ),
     }
 
 
-class WeakForm(StrictModule, NonTrainableState):
+class FiniteElementForm(StrictModule, NonTrainableState):
     form_id: str = eqx.field(static=True)
     field_names: tuple[str, ...] = eqx.field(static=True)
-    terms: tuple[FiniteElementTerm, ...]
+    actions: tuple[FiniteElementAction, ...]
+    declared_properties: OperatorProperties
+    auxiliary_evaluator: Callable | None
+    auxiliary_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
         form_id: str,
         field_name: str | Sequence[str],
-        terms: Sequence[FiniteElementTerm],
+        actions: Sequence[FiniteElementAction],
         /,
+        *,
+        properties: OperatorProperties | None = None,
+        auxiliary_evaluator: Callable | None = None,
+        auxiliary_id: str | None = None,
     ):
         identifier = str(form_id)
         fields = (
@@ -663,69 +930,98 @@ class WeakForm(StrictModule, NonTrainableState):
             if isinstance(field_name, str)
             else tuple(str(value) for value in field_name)
         )
-        term_values = tuple(terms)
+        action_values = tuple(actions)
+        properties_ = OperatorProperties() if properties is None else properties
+        if not isinstance(properties_, OperatorProperties):
+            raise TypeError("properties must be OperatorProperties or None.")
+        if (auxiliary_evaluator is None) != (auxiliary_id is None):
+            raise ValueError(
+                "Form auxiliary evaluator and explicit identity must be supplied together."
+            )
+        if auxiliary_evaluator is not None and not callable(auxiliary_evaluator):
+            raise TypeError("auxiliary_evaluator must be callable or None.")
+        auxiliary_identifier = None if auxiliary_id is None else str(auxiliary_id)
+        if auxiliary_identifier == "":
+            raise ValueError("auxiliary_id must be non-empty when supplied.")
         if not identifier or not fields or any(not field for field in fields):
-            raise ValueError("Weak-form and field IDs must be non-empty.")
+            raise ValueError("Finite-element form and field IDs must be non-empty.")
         if len(set(fields)) != len(fields):
-            raise ValueError("Weak-form field names must be unique.")
-        if not term_values:
-            raise ValueError("WeakForm requires at least one term.")
+            raise ValueError("Finite-element form field names must be unique.")
+        if not action_values:
+            raise ValueError("FiniteElementForm requires at least one action.")
         if not all(
             isinstance(
-                term,
+                action,
                 (
-                    DiffusionTerm,
-                    MassTerm,
-                    SourceTerm,
-                    BoundaryLoadTerm,
-                    CellResidualTerm,
-                    InteriorFacetTerm,
-                    CellEnergyTerm,
-                    CellBilinearTerm,
+                    DiffusionAction,
+                    MassAction,
+                    SourceAction,
+                    BoundaryLoadAction,
+                    CellResidualAction,
+                    InteriorFacetAction,
+                    ExteriorFacetAction,
+                    SIPGFacetAction,
+                    CellEnergyAction,
+                    CellBilinearAction,
+                    PreparedOperatorAction,
                 ),
             )
-            for term in term_values
+            for action in action_values
         ):
-            raise TypeError("WeakForm contains an unsupported term type.")
-        if any(term.field_name not in fields for term in term_values):
-            raise ValueError("Every weak-form term must target a declared field.")
-        term_ids = tuple(term.term_id for term in term_values)
+            raise TypeError("FiniteElementForm contains an unsupported action type.")
+        if any(action.field_name not in fields for action in action_values):
+            raise ValueError("Every form action must target a declared field.")
+        action_ids = tuple(action.action_id for action in action_values)
         if any(
-            isinstance(term, CellResidualTerm)
-            and any(input_field not in fields for input_field in term.input_fields)
-            for term in term_values
+            isinstance(action, CellResidualAction)
+            and any(input_field not in fields for input_field in action.input_fields)
+            for action in action_values
         ):
-            raise ValueError("Cell residual inputs must be declared weak-form fields.")
-        if len(set(term_ids)) != len(term_ids):
-            raise ValueError("Weak-form term IDs must be unique.")
+            raise ValueError("Cell residual inputs must be declared form fields.")
+        if len(set(action_ids)) != len(action_ids):
+            raise ValueError("Finite-element form action IDs must be unique.")
         self.form_id = canonical_fingerprint(
             {
-                "kind": "finite-element-weak-form",
+                "kind": "finite-element-form",
                 "declared_id": identifier,
                 "field_names": list(fields),
-                "terms": [_term_payload(term) for term in term_values],
+                "actions": [_action_payload(action) for action in action_values],
+                "properties": {
+                    "diagonal": properties_.diagonal,
+                    "triangular": properties_.triangular,
+                    "self_adjoint": properties_.self_adjoint,
+                    "positive_definite": properties_.positive_definite,
+                    "positive_semidefinite": properties_.positive_semidefinite,
+                    "block_diagonal": properties_.block_diagonal,
+                    "rank": properties_.rank,
+                    "evidence": [list(item) for item in properties_.evidence],
+                },
+                "auxiliary": auxiliary_identifier,
             }
         )
         self.field_names = fields
-        self.terms = term_values
+        self.actions = action_values
+        self.declared_properties = properties_
+        self.auxiliary_evaluator = auxiliary_evaluator
+        self.auxiliary_id = auxiliary_identifier
 
     @property
     def field_name(self) -> str:
         if len(self.field_names) != 1:
-            raise ValueError("field_name is ambiguous for a mixed weak form.")
+            raise ValueError("field_name is ambiguous for a mixed finite-element form.")
         return self.field_names[0]
 
 
-def _term_domain(
-    term: FiniteElementTerm,
+def _action_domain(
+    term: FiniteElementAction,
     discretization: FiniteElementDiscretization,
     /,
 ) -> IntegrationDomain:
     if term.domain is not None:
         domain = term.domain
-    elif isinstance(term, BoundaryLoadTerm):
+    elif isinstance(term, (BoundaryLoadAction, ExteriorFacetAction)):
         domain = discretization.exterior_facet_domain
-    elif isinstance(term, InteriorFacetTerm):
+    elif isinstance(term, InteriorFacetAction):
         domain = discretization.interior_facet_domain
     else:
         domain = discretization.cell_domain
@@ -734,8 +1030,8 @@ def _term_domain(
     return domain
 
 
-def _term_rule(
-    term: FiniteElementTerm,
+def _action_rule(
+    term: FiniteElementAction,
     block_name: str,
     cell_kind: str,
     /,
@@ -878,30 +1174,105 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
         return discretization.precision_policy.output(jnp.sum(combined))
 
 
+def _pure_neumann_sipg(form: FiniteElementForm, /) -> bool:
+    facet_terms = tuple(
+        term for term in form.actions if isinstance(term, SIPGFacetAction)
+    )
+    if not facet_terms:
+        return False
+    boundary_kinds = tuple(
+        term.boundary.kind for term in facet_terms if term.boundary is not None
+    )
+    return not any(kind in ("dirichlet", "robin") for kind in boundary_kinds)
+
+
+def _sipg_constant_subspace(
+    form: FiniteElementForm,
+    discretization: FiniteElementDiscretization,
+    space,
+    /,
+) -> LinearSubspace:
+    if len(form.field_names) != 1:
+        raise ValueError("SIPG nullspace construction requires one field.")
+    field_index = discretization._field_index(form.field_names[0])
+    dof_map = discretization.dof_maps[field_index]
+    if dof_map.component_shape:
+        raise ValueError("SIPG nullspace construction requires a scalar field.")
+    cell_count = sum(block.cell_count for block in discretization.mesh.blocks)
+    parents = np.arange(cell_count, dtype=np.int32)
+
+    def root(value: int) -> int:
+        current = int(value)
+        while parents[current] != current:
+            parents[current] = parents[parents[current]]
+            current = int(parents[current])
+        return current
+
+    def union(first: int, second: int) -> None:
+        first_root = root(first)
+        second_root = root(second)
+        if first_root != second_root:
+            parents[second_root] = first_root
+
+    for owner, neighbour in zip(
+        np.asarray(discretization.interior_facet_domain.owner_cells),
+        np.asarray(discretization.interior_facet_domain.neighbour_cells),
+        strict=True,
+    ):
+        union(int(owner), int(neighbour))
+    roots = tuple(sorted({root(cell) for cell in range(cell_count)}))
+    component_by_root = {value: index for index, value in enumerate(roots)}
+    dtype = np.asarray(space.zeros()).dtype
+    basis = np.zeros((space.size, len(roots)), dtype=dtype)
+    cell_offset = 0
+    for block_dofs in dof_map.cell_dofs:
+        routes = np.asarray(block_dofs, dtype=np.int32)
+        for local_cell, dofs in enumerate(routes):
+            component = component_by_root[root(cell_offset + local_cell)]
+            basis[dofs, component] = 1.0
+        cell_offset += routes.shape[0]
+    return LinearSubspace(
+        space,
+        basis,
+        subspace_id=canonical_fingerprint(
+            {
+                "kind": "sipg-constant-nullspace",
+                "topology": discretization.mesh.topology_id,
+                "field": form.field_names[0],
+                "components": len(roots),
+            }
+        ),
+    )
+
+
 class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
-    form: WeakForm
+    form: FiniteElementForm
     discretization: FiniteElementDiscretization
     constraint: FiniteElementDirichletConstraint | None
+    constraints: tuple[FiniteElementDirichletConstraint | None, ...]
     execution_policy: FiniteElementExecutionPolicy
     _action_ir: object
     _workset_program: object
-    work_blocks: tuple[_FiniteElementWorkBlock, ...]
-    lift: Array
+    _kernel_table: object
+    lift: object
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        form: WeakForm,
+        form: FiniteElementForm,
         discretization: FiniteElementDiscretization,
         /,
         *,
         constraint: FiniteElementDirichletConstraint | None = None,
         dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
+        constraints: Mapping[str, FiniteElementDirichletConstraint] | None = None,
+        dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
+        | None = None,
         execution_policy: FiniteElementExecutionPolicy | None = None,
     ):
-        if not isinstance(form, WeakForm):
-            raise TypeError("form must be a WeakForm.")
+        if not isinstance(form, FiniteElementForm):
+            raise TypeError("form must be a FiniteElementForm.")
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         policy = (
@@ -913,74 +1284,71 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             raise TypeError(
                 "execution_policy must be FiniteElementExecutionPolicy or None."
             )
-        field_index = discretization._field_index(form.field_name)
-        full_space = discretization.field_spaces[field_index].vector_space
-        if constraint is None:
-            if dirichlet_values is not None:
-                raise ValueError("dirichlet_values require a finite-element constraint.")
-            lift = jnp.zeros(
-                full_space.structure().shape, dtype=full_space.structure().dtype
-            )
-        else:
-            if not isinstance(constraint, FiniteElementDirichletConstraint):
-                raise TypeError(
-                    "constraint must be FiniteElementDirichletConstraint or None."
-                )
-            if constraint.field_name != form.field_name:
-                raise ValueError("Constraint field must match the weak form field.")
-            if dirichlet_values is None:
-                raise ValueError("Constrained compilation requires dirichlet_values.")
-            lift = constraint.lift(dirichlet_values)
-        work_block_values = []
-        cell_offset = 0
-        for block_index, (dofs, geometry) in enumerate(
-            zip(
-                discretization.dof_maps[field_index].cell_dofs,
-                discretization.block_geometries[field_index],
-                strict=True,
-            )
+        if len(form.field_names) > 1 and (
+            constraint is not None or dirichlet_values is not None
         ):
-            cell_indices = jnp.arange(
-                cell_offset,
-                cell_offset + dofs.shape[0],
-                dtype=jnp.int32,
+            raise ValueError(
+                "Mixed forms require field-keyed constraints and Dirichlet values."
             )
-            cell_offset += dofs.shape[0]
-            work_block_values.append(
-                _FiniteElementWorkBlock(
-                    block_index=block_index,
-                    block_name=geometry.block_name,
-                    cell_dofs=dofs,
-                    basis_values=geometry.basis_values,
-                    reference_gradients=geometry.reference_gradients,
-                    cell_indices=cell_indices,
-                    reference_points=geometry.reference_points,
-                    reference_weights=geometry.reference_weights,
-                    work_id=canonical_fingerprint(
-                        {
-                            "kind": "finite-element-work-block",
-                            "form": form.form_id,
-                            "discretization": discretization.prepared_id,
-                            "block_index": block_index,
-                            "block": geometry.block_name,
-                            "cell_dofs": array_tree_fingerprint(np.asarray(dofs)),
-                            "cell_indices": array_tree_fingerprint(
-                                np.asarray(cell_indices)
-                            ),
-                            "reference_points": array_tree_fingerprint(
-                                np.asarray(geometry.reference_points)
-                            ),
-                            "reference_weights": array_tree_fingerprint(
-                                np.asarray(geometry.reference_weights)
-                            ),
-                        }
-                    ),
-                )
+        resolved_constraints = {} if constraints is None else dict(constraints)
+        resolved_values = (
+            {} if dirichlet_values_by_field is None else dict(dirichlet_values_by_field)
+        )
+        if len(form.field_names) == 1:
+            field_name = form.field_names[0]
+            if constraint is not None:
+                resolved_constraints[field_name] = constraint
+            if dirichlet_values is not None:
+                resolved_values[field_name] = dirichlet_values
+        unknown_constraints = set(resolved_constraints) - set(form.field_names)
+        unknown_values = set(resolved_values) - set(form.field_names)
+        if unknown_constraints or unknown_values:
+            raise ValueError("Constraint/value mappings contain unknown fields.")
+        if resolved_constraints and any(
+            isinstance(term, SIPGFacetAction) for term in form.actions
+        ):
+            raise ValueError(
+                "DG SIPG Dirichlet data must use Nitsche boundary terms, "
+                "not strong finite-element constraints."
             )
-        work_blocks = tuple(work_block_values)
-        from .fem import compile_workset_program, lower_weak_form
+        constraint_values = []
+        lifts = []
+        for field_name in form.field_names:
+            field_index = discretization._field_index(field_name)
+            full_space = discretization.field_spaces[field_index].vector_space
+            constraint_value = resolved_constraints.get(field_name)
+            boundary_values = resolved_values.get(field_name)
+            if constraint_value is None:
+                if boundary_values is not None:
+                    raise ValueError(
+                        f"Dirichlet values for {field_name!r} require a constraint."
+                    )
+                lift_value = full_space.zeros()
+            else:
+                if not isinstance(constraint_value, FiniteElementDirichletConstraint):
+                    raise TypeError(
+                        "constraints must contain FiniteElementDirichletConstraint "
+                        "values."
+                    )
+                if constraint_value.field_name != field_name:
+                    raise ValueError("Constraint field does not match its map key.")
+                if boundary_values is None:
+                    raise ValueError(
+                        f"Constraint for {field_name!r} requires Dirichlet values."
+                    )
+                lift_value = constraint_value.lift(boundary_values)
+            constraint_values.append(constraint_value)
+            lifts.append(lift_value)
+        constraints_ = tuple(constraint_values)
+        lift = lifts[0] if len(lifts) == 1 else tuple(lifts)
+        from .fem import (
+            compile_workset_program,
+            kernel_table_from_form,
+            lower_finite_element_form,
+        )
 
-        action_ir = lower_weak_form(form, discretization)
+        action_ir = lower_finite_element_form(form, discretization)
+        kernel_table = kernel_table_from_form(form)
         workset_program = compile_workset_program(
             action_ir,
             form,
@@ -990,12 +1358,15 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             {
                 "kind": "compiled-finite-element-problem",
                 "form": form.form_id,
-                "terms": [_term_payload(term) for term in form.terms],
+                "terms": [_action_payload(term) for term in form.actions],
                 "discretization": discretization.prepared_id,
                 "precision": discretization.precision_policy.policy_id,
-                "constraint": (None if constraint is None else constraint.constraint_id),
-                "lift": array_tree_fingerprint(np.asarray(lift)),
-                "work_blocks": [block.work_id for block in work_blocks],
+                "constraints": [
+                    None if value is None else value.constraint_id
+                    for value in constraints_
+                ],
+                "lift": array_tree_fingerprint(lift),
+                "kernel_table": kernel_table.table_id,
                 "action_ir": action_ir.ir_id,
                 "workset_program": workset_program.program_id,
                 "execution_policy": policy.policy_id,
@@ -1008,12 +1379,13 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
         self.form = form
         self.discretization = discretization
-        self.constraint = constraint
+        self.constraint = constraints_[0] if len(constraints_) == 1 else None
+        self.constraints = constraints_
         self.execution_policy = policy
         self._action_ir = action_ir
         self._workset_program = workset_program
+        self._kernel_table = kernel_table
         self.lift = lift
-        self.work_blocks = work_blocks
         self.discretization_bundle = DiscretizationBundle(
             (
                 DiscretizationRecord(
@@ -1036,21 +1408,100 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
 
     @property
     def field_index(self) -> int:
-        return self.discretization._field_index(self.form.field_name)
+        if len(self.form.field_names) != 1:
+            raise ValueError("field_index is ambiguous for a mixed form.")
+        return self.discretization._field_index(self.form.field_names[0])
 
     @property
     def full_space(self):
-        return self.discretization.field_spaces[self.field_index].vector_space
+        spaces = tuple(
+            self.discretization.field_spaces[
+                self.discretization._field_index(name)
+            ].vector_space
+            for name in self.form.field_names
+        )
+        return (
+            spaces[0]
+            if len(spaces) == 1
+            else BlockSpace(spaces, names=self.form.field_names)
+        )
 
     @property
     def state_space(self):
-        if self.constraint is None:
-            return self.full_space
-        return self.constraint.constraint_map.reduced_space
+        spaces = tuple(
+            (
+                self.discretization.field_spaces[
+                    self.discretization._field_index(name)
+                ].vector_space
+                if constraint is None
+                else constraint.constraint_map.reduced_space
+            )
+            for name, constraint in zip(
+                self.form.field_names,
+                self.constraints,
+                strict=True,
+            )
+        )
+        return (
+            spaces[0]
+            if len(spaces) == 1
+            else BlockSpace(spaces, names=self.form.field_names)
+        )
 
     @property
     def residual_space(self):
-        return DualSpace(self.state_space)
+        if len(self.form.field_names) == 1:
+            return DualSpace(self.state_space)
+        return BlockSpace(
+            tuple(DualSpace(space) for space in self.state_space.spaces),
+            names=self.form.field_names,
+        )
+
+    @property
+    def constraint_map(self) -> ConstraintMap | None:
+        if len(self.form.field_names) == 1:
+            constraint = self.constraints[0]
+            return None if constraint is None else constraint.constraint_map
+        blocks = []
+        for row, (full_block, reduced_block, constraint) in enumerate(
+            zip(
+                self.full_space.spaces,
+                self.state_space.spaces,
+                self.constraints,
+                strict=True,
+            )
+        ):
+            block_row = []
+            for column in range(len(self.form.field_names)):
+                if row != column:
+                    block_row.append(None)
+                elif constraint is None:
+                    block_row.append(IdentityLinearOperator(full_block))
+                else:
+                    block_row.append(constraint.constraint_map.prolongation)
+            blocks.append(tuple(block_row))
+        prolongation = BlockLinearOperator(
+            tuple(blocks),
+            source=self.state_space,
+            target=self.full_space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "finite-element-block-constraint-prolongation",
+                    "compilation": self.compilation_id,
+                }
+            ),
+        )
+        return ConstraintMap(
+            self.full_space,
+            self.state_space,
+            prolongation,
+            constraint_id=canonical_fingerprint(
+                {
+                    "kind": "finite-element-block-constraint-map",
+                    "compilation": self.compilation_id,
+                }
+            ),
+        )
 
     def _execution_context(
         self,
@@ -1075,35 +1526,99 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
         return context
 
-    def expand(self, state: ArrayLike, args: object = None, /) -> Array:
-        if self.constraint is None:
-            return self.full_space.validate(state)
+    def expand(self, state: object, args: object = None, /):
+        values = self.state_space.validate(state)
         context = self._execution_context(args)
-        lift = self.lift if context.lift is None else context.lift
-        return self.constraint.constraint_map.expand(state, lift)
+        lifts = self.lift if context.lift is None else context.lift
+        if len(self.form.field_names) == 1:
+            constraint = self.constraints[0]
+            if constraint is None:
+                return self.full_space.validate(values)
+            return constraint.constraint_map.expand(values, lifts)
+        expanded = []
+        for value, lift, constraint, full_block in zip(
+            values,
+            lifts,
+            self.constraints,
+            self.full_space.spaces,
+            strict=True,
+        ):
+            expanded.append(
+                full_block.validate(value)
+                if constraint is None
+                else constraint.constraint_map.expand(value, lift)
+            )
+        return self.full_space.validate(tuple(expanded))
 
-    def full_residual(self, state: ArrayLike, args: object = None, /) -> Array:
+    def full_residual(self, state: object, args: object = None, /):
+        from .fem._executor import execute_finite_element_residual
+
         full = self.full_space.validate(state)
         context = self._execution_context(args)
-        return _full_residual(
+        return execute_finite_element_residual(
+            self._action_ir,
+            self._workset_program,
             self.form,
+            self._kernel_table,
             self.discretization,
-            self.work_blocks,
             full,
             self.execution_policy.accumulation,
             context,
         )
 
-    def residual(self, state: ArrayLike, args: object = None, /) -> Array:
+    def residual(self, state: object, args: object = None, /):
         context = self._execution_context(args)
         full_residual = self.full_residual(self.expand(state, context), context)
-        if self.constraint is None:
-            return DualSpace(self.full_space).validate(full_residual)
-        return self.constraint.constraint_map.pullback_dual(full_residual)
+        if len(self.form.field_names) == 1:
+            constraint = self.constraints[0]
+            if constraint is None:
+                return self.residual_space.validate(full_residual)
+            return constraint.constraint_map.pullback_dual(full_residual)
+        reduced = tuple(
+            full if constraint is None else constraint.constraint_map.pullback_dual(full)
+            for full, constraint in zip(
+                full_residual,
+                self.constraints,
+                strict=True,
+            )
+        )
+        return self.residual_space.validate(reduced)
+
+    def residual_with_auxiliary(
+        self,
+        state: object,
+        args: object = None,
+        /,
+    ):
+        from .fem import FiniteElementAuxiliaryEvaluation
+
+        residual = self.residual(state, args)
+        if self.form.auxiliary_evaluator is None:
+            auxiliary = FiniteElementAuxiliaryEvaluation()
+        else:
+            auxiliary = self.form.auxiliary_evaluator(
+                self.state_space.validate(state),
+                self._execution_context(args),
+            )
+            if not isinstance(auxiliary, FiniteElementAuxiliaryEvaluation):
+                raise TypeError(
+                    "Form auxiliary evaluator must return "
+                    "FiniteElementAuxiliaryEvaluation."
+                )
+        return residual, auxiliary
 
     def as_nonlinear_problem(self) -> NonlinearSystemProblem:
+        if self.form.auxiliary_evaluator is None:
+            return NonlinearSystemProblem(
+                lambda state, args: self.residual(state, args),
+                state_space=self.state_space,
+                residual_space=self.residual_space,
+                problem_id=self.compilation_id,
+            )
         return NonlinearSystemProblem(
-            lambda state, args: self.residual(state, args),
+            lambda state, args: self.residual_with_auxiliary(state, args),
+            has_aux=True,
+            validity=lambda state, residual, auxiliary, args: auxiliary.valid,
             state_space=self.state_space,
             residual_space=self.residual_space,
             problem_id=self.compilation_id,
@@ -1134,25 +1649,193 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             ),
         )
 
+    def block_dependency_graph(self, /) -> tuple[tuple[bool, ...], ...]:
+        fields = self.form.field_names
+        consumed = {
+            (fields.index(action.field_name), fields.index(input_field))
+            for action in self.form.actions
+            for input_field in (
+                action.input_fields
+                if isinstance(action, CellResidualAction)
+                else (action.field_name,)
+            )
+        }
+        return tuple(
+            tuple((row, column) in consumed for column in range(len(fields)))
+            for row in range(len(fields))
+        )
+
+    def block_linearization_operator(
+        self,
+        state: object,
+        args: object = None,
+        /,
+    ) -> BlockLinearOperator:
+        if not isinstance(self.state_space, BlockSpace) or not isinstance(
+            self.residual_space, BlockSpace
+        ):
+            raise ValueError("Block linearization requires a product-space form.")
+        state_ = self.state_space.validate(state)
+        context = self._execution_context(args)
+        graph = self.block_dependency_graph()
+        rows = []
+        for row_index, (target_space, dependencies) in enumerate(
+            zip(self.residual_space.spaces, graph, strict=True)
+        ):
+            row = []
+            for column_index, (source_space, present) in enumerate(
+                zip(self.state_space.spaces, dependencies, strict=True)
+            ):
+                if not present:
+                    row.append(None)
+                    continue
+
+                def block_action(
+                    direction,
+                    row_index_=row_index,
+                    column_index_=column_index,
+                ):
+                    directions = list(self.state_space.zeros())
+                    directions[column_index_] = direction
+                    image = jax.jvp(
+                        lambda value: self.residual(value, context),
+                        (state_,),
+                        (tuple(directions),),
+                    )[1]
+                    return image[row_index_]
+
+                row.append(
+                    FunctionLinearOperator(
+                        block_action,
+                        source=source_space,
+                        target=target_space,
+                        operator_id=canonical_fingerprint(
+                            {
+                                "kind": "finite-element-jacobian-block",
+                                "compilation": self.compilation_id,
+                                "row": row_index,
+                                "column": column_index,
+                                "runtime": context.runtime.runtime_id,
+                            }
+                        ),
+                    )
+                )
+            rows.append(tuple(row))
+        return BlockLinearOperator(
+            tuple(rows),
+            source=self.state_space,
+            target=self.residual_space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "finite-element-block-linearization",
+                    "compilation": self.compilation_id,
+                    "runtime": context.runtime.runtime_id,
+                    "graph": [list(row) for row in graph],
+                }
+            ),
+        )
+
+    def preconditioner_operator(
+        self,
+        preconditioner_form: FiniteElementForm,
+        state: object,
+        args: object = None,
+        /,
+    ):
+        if not isinstance(preconditioner_form, FiniteElementForm):
+            raise TypeError("preconditioner_form must be a FiniteElementForm.")
+        if preconditioner_form.field_names != self.form.field_names:
+            raise ValueError(
+                "Preconditioner form fields must exactly match the problem form."
+            )
+        if any(constraint is not None for constraint in self.constraints):
+            raise ValueError(
+                "Preconditioner-form binding currently requires unconstrained spaces."
+            )
+        compiled = CompiledFiniteElementProblem(
+            preconditioner_form,
+            self.discretization,
+            execution_policy=self.execution_policy,
+        )
+        return (
+            compiled.block_linearization_operator(state, args)
+            if len(self.form.field_names) > 1
+            else compiled.linearization_operator(state, args)
+        )
+
+    def preconditioner_data(
+        self,
+        state: object | None = None,
+        args: object = None,
+        /,
+    ):
+        from .fem import FiniteElementPreconditionerData
+
+        raw = (
+            self.affine_operator(args)
+            if state is None
+            else self.operator_function(self.state_space.validate(state), args)
+        )
+        if isinstance(raw, BlockLinearOperator):
+            diagonal = tuple(
+                (
+                    jnp.zeros(space.structure().shape, dtype=space.structure().dtype)
+                    if raw.blocks[index][index] is None
+                    else assemble_diagonal(raw.blocks[index][index])
+                )
+                for index, space in enumerate(self.state_space.spaces)
+            )
+        else:
+            if isinstance(raw, SparseCoordinateOperator) and isinstance(
+                raw.relation, EdgeRelation
+            ):
+                relation = raw.relation
+                on_diagonal = relation.valid & (
+                    relation.source_indices == relation.target_indices
+                )
+                diagonal = (
+                    jnp.zeros((relation.source_size,), dtype=raw.coefficients.dtype)
+                    .at[relation.source_indices]
+                    .add(jnp.where(on_diagonal, raw.coefficients, 0.0))
+                )
+            else:
+                if not raw.capabilities.diagonal_assembly:
+                    raise ValueError(
+                        "Exact FE preconditioner data require diagonal-capable lowering."
+                    )
+                diagonal = assemble_diagonal(raw)
+        graph = (
+            self.block_dependency_graph()
+            if len(self.form.field_names) > 1
+            else ((True,),)
+        )
+        return FiniteElementPreconditionerData(
+            diagonal,
+            graph,
+            tuple(workset.workset_id for workset in self._workset_program.worksets),
+        )
+
     def operator_function(self, state, args):
+        if len(self.form.field_names) > 1:
+            return self.block_linearization_operator(state, args)
         if self.execution_policy.realization == "sparse":
             try_affine = all(
                 (
                     (
-                        isinstance(term, DiffusionTerm)
+                        isinstance(term, DiffusionAction)
                         and term.diffusivity.constant
                         and term.diffusivity.value.shape == ()
                     )
                     or (
-                        isinstance(term, MassTerm)
+                        isinstance(term, MassAction)
                         and term.coefficient.constant
                         and term.coefficient.value.shape == ()
                     )
-                    or isinstance(term, (SourceTerm, BoundaryLoadTerm))
+                    or isinstance(term, (SourceAction, BoundaryLoadAction))
                 )
                 and term.domain is None
                 and not term.rules
-                for term in self.form.terms
+                for term in self.form.actions
             )
             if try_affine:
                 return self.affine_operator(args)
@@ -1206,6 +1889,24 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
     def affine_operator(self, args: object = None, /):
+        if len(self.form.field_names) > 1:
+            return self.block_linearization_operator(self.state_space.zeros(), args)
+        if any(
+            isinstance(
+                term,
+                (
+                    CellResidualAction,
+                    CellEnergyAction,
+                    CellBilinearAction,
+                    InteriorFacetAction,
+                    ExteriorFacetAction,
+                    PreparedOperatorAction,
+                    SIPGFacetAction,
+                ),
+            )
+            for term in self.form.actions
+        ):
+            return self.linearization_operator(self.state_space.zeros(), args)
         field_index = self.field_index
         dof_map = self.discretization.dof_maps[field_index]
         context = self._execution_context(args)
@@ -1215,19 +1916,19 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
         coefficients = None
         relation = None
-        for term in self.form.terms:
+        for term in self.form.actions:
             if term.domain is not None or term.rules:
                 raise ValueError(
                     "Sparse affine lowering currently requires default domains and rules."
                 )
-            if isinstance(term, DiffusionTerm):
+            if isinstance(term, DiffusionAction):
                 if not term.diffusivity.constant or term.diffusivity.value.shape != ():
                     raise ValueError(
                         "Sparse affine diffusion requires a scalar constant."
                     )
                 operator = stiffness_operator
                 term_values = term.diffusivity.value * operator.coefficients
-            elif isinstance(term, MassTerm):
+            elif isinstance(term, MassAction):
                 if not term.coefficient.constant or term.coefficient.value.shape != ():
                     raise ValueError("Sparse affine mass requires a scalar constant.")
                 operator = mass_operator
@@ -1242,7 +1943,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     raise ValueError("Affine FE term sparse relations are incompatible.")
                 coefficients = coefficients + term_values
         if relation is None or coefficients is None:
-            raise ValueError("Weak form contains no affine operator term.")
+            raise ValueError("Finite-element form contains no affine operator term.")
         full_operator = SparseCoordinateOperator(
             relation,
             coefficients,
@@ -1274,12 +1975,27 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
     def to_scipy_csr(self, args: object = None, /):
-        """Materialize the constrained affine operator as a host SciPy CSR matrix."""
+        """Assemble exact sparse coordinates and convert them directly to SciPy CSR."""
         import scipy.sparse as sp
 
-        system, _ = self.linear_system(args)
-        dense = np.asarray(system.operator.materialize())
-        return sp.csr_array(dense)
+        operator = self.affine_operator(args)
+        plan = plan_sparse_assembly(operator)
+        if plan.uses_materialization:
+            raise ValueError(
+                "Direct SciPy CSR conversion requires a structurally sparse lowering."
+            )
+        sparse = prepare_sparse_assembly(plan, operator).operator
+        if not isinstance(sparse, SparseCoordinateOperator):
+            raise TypeError("Sparse assembly did not produce coordinate storage.")
+        relation = sparse.relation
+        valid = np.asarray(relation.valid, dtype=bool)
+        rows = np.asarray(relation.target_indices)[valid]
+        columns = np.asarray(relation.source_indices)[valid]
+        values = np.asarray(sparse.coefficients)[valid]
+        return sp.coo_array(
+            (values, (rows, columns)),
+            shape=(relation.target_size, relation.source_size),
+        ).tocsr()
 
     def sparse_assembly_plan(
         self,
@@ -1302,26 +2018,108 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         selected_plan = plan_sparse_assembly(operator, policy) if plan is None else plan
         return prepare_sparse_assembly(selected_plan, operator)
 
+    def _default_nullspace_subspace(self, /) -> LinearSubspace | None:
+        if any(constraint is not None for constraint in self.constraints):
+            return None
+        action_ids = {action.action_id for action in self.form.actions}
+        if len(self.form.field_names) > 1 and (
+            {"stokes-momentum", "stokes-incompressibility"} <= action_ids
+            or {"darcy-flux", "darcy-mass-balance"} <= action_ids
+        ):
+            pressure_index = 1
+            blocks = list(self.state_space.zeros())
+            blocks[pressure_index] = jnp.ones_like(blocks[pressure_index])
+            basis = self.state_space.flatten(tuple(blocks))[:, None]
+            return LinearSubspace(
+                self.state_space,
+                basis,
+                subspace_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-element-pressure-nullspace",
+                        "compilation": self.compilation_id,
+                    }
+                ),
+            )
+        if "elasticity" in action_ids and len(self.form.field_names) == 1:
+            zero = self.state_space.zeros()
+            if zero.ndim != 2 or zero.shape[1] not in (2, 3):
+                return None
+            dimension = zero.shape[1]
+            coordinates = self.discretization.dof_maps[
+                self.field_index
+            ].evaluate_coordinates(
+                self.discretization.mesh,
+                self.discretization.default_runtime.coordinates,
+            )
+            modes = []
+            for component in range(dimension):
+                mode = jnp.zeros_like(zero).at[:, component].set(1.0)
+                modes.append(self.state_space.flatten(mode))
+            if dimension == 2:
+                rotation = jnp.stack((-coordinates[:, 1], coordinates[:, 0]), axis=-1)
+                modes.append(self.state_space.flatten(rotation))
+            else:
+                for axis in range(3):
+                    vector = jnp.zeros((3,), dtype=zero.dtype).at[axis].set(1.0)
+                    rotation = jnp.cross(
+                        jnp.broadcast_to(vector, coordinates.shape), coordinates
+                    )
+                    modes.append(self.state_space.flatten(rotation))
+            return LinearSubspace(
+                self.state_space,
+                jnp.stack(tuple(modes), axis=1),
+                subspace_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-element-rigid-nullspace",
+                        "compilation": self.compilation_id,
+                        "dimension": dimension,
+                    }
+                ),
+            )
+        scalar_diffusion = (
+            len(self.form.field_names) == 1
+            and any(isinstance(action, DiffusionAction) for action in self.form.actions)
+            and all(
+                isinstance(
+                    action,
+                    (
+                        DiffusionAction,
+                        SourceAction,
+                        BoundaryLoadAction,
+                    ),
+                )
+                for action in self.form.actions
+            )
+        )
+        if scalar_diffusion and self.state_space.zeros().ndim == 1:
+            return LinearSubspace(
+                self.state_space,
+                jnp.ones(
+                    (self.state_space.size, 1), dtype=self.state_space.zeros().dtype
+                ),
+                subspace_id=canonical_fingerprint(
+                    {
+                        "kind": "finite-element-constant-nullspace",
+                        "compilation": self.compilation_id,
+                    }
+                ),
+            )
+        return None
+
     def linear_system(
         self,
         args: object = None,
         /,
         *,
         nullspace_policy: NullspacePolicy | None = None,
-    ) -> tuple[LinearSystem, Array]:
+    ) -> tuple[LinearSystem, object]:
         raw_operator = self.affine_operator(args)
+        properties = self.form.declared_properties
         primal_operator = FunctionLinearOperator(
             lambda state: self.state_space.inverse_riesz(raw_operator.mv(state)),
             source=self.state_space,
             target=self.state_space,
-            properties=OperatorProperties(
-                self_adjoint=True,
-                positive_semidefinite=True,
-                evidence={
-                    "self_adjoint": "construction",
-                    "positive_semidefinite": "construction",
-                },
-            ),
+            properties=properties,
             operator_id=canonical_fingerprint(
                 {
                     "kind": "riesz-finite-element-affine-operator",
@@ -1329,9 +2127,50 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 }
             ),
         )
-        structure = self.state_space.structure()
-        zero = jnp.zeros(structure.shape, dtype=structure.dtype)
-        right_hand_side = self.state_space.inverse_riesz(-self.residual(zero, args))
+        if nullspace_policy is None and _pure_neumann_sipg(self.form):
+            constant_modes = _sipg_constant_subspace(
+                self.form,
+                self.discretization,
+                self.state_space,
+            )
+            certificate = KernelCertificate(
+                primal_operator,
+                constant_modes,
+                evidence="verified",
+                scope="numerical",
+                complete=True,
+                tolerance=1.0e-9,
+            )
+            nullspace_policy = NullspacePolicy(
+                right=constant_modes,
+                left=constant_modes,
+                certificate=certificate,
+                compatibility="error",
+                gauge="minimum-norm",
+            )
+        if nullspace_policy is None:
+            default_modes = self._default_nullspace_subspace()
+            if default_modes is not None:
+                certificate = KernelCertificate(
+                    primal_operator,
+                    default_modes,
+                    evidence="verified",
+                    left=default_modes,
+                    scope="numerical",
+                    complete=True,
+                    tolerance=1.0e-9,
+                )
+                nullspace_policy = NullspacePolicy(
+                    right=default_modes,
+                    left=default_modes,
+                    certificate=certificate,
+                    compatibility="error",
+                    gauge="minimum-norm",
+                )
+        zero = self.state_space.zeros()
+        right_hand_side = self.state_space.inverse_riesz(
+            jax.tree.map(lambda value: -value, self.residual(zero, args))
+        )
         return (
             LinearSystem(
                 primal_operator,
@@ -1549,744 +2388,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         return GeneralizedEigenproblem(stiffness, mass)
 
 
-class CompiledMixedFiniteElementProblem(StrictModule, NonTrainableState):
-    """Ordered independent-field block compilation with native BlockSpace semantics."""
-
-    form: WeakForm
-    discretization: FiniteElementDiscretization
-    subproblems: tuple[CompiledFiniteElementProblem, ...]
-    state_space: BlockSpace
-    residual_space: BlockSpace
-    compilation_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        form: WeakForm,
-        discretization: FiniteElementDiscretization,
-        subproblems: Sequence[CompiledFiniteElementProblem],
-        /,
-    ):
-        problems = tuple(subproblems)
-        if len(problems) != len(form.field_names):
-            raise ValueError("Mixed compilation requires one subproblem per field.")
-        if tuple(problem.form.field_name for problem in problems) != form.field_names:
-            raise ValueError("Mixed subproblem order must match weak-form fields.")
-        self.form = form
-        self.discretization = discretization
-        self.subproblems = problems
-        self.state_space = BlockSpace(
-            tuple(problem.state_space for problem in problems),
-            names=form.field_names,
-        )
-        self.residual_space = BlockSpace(
-            tuple(problem.residual_space for problem in problems),
-            names=form.field_names,
-        )
-        self.compilation_id = canonical_fingerprint(
-            {
-                "kind": "compiled-mixed-finite-element-problem",
-                "form": form.form_id,
-                "subproblems": [problem.compilation_id for problem in problems],
-            }
-        )
-
-    def expand(self, state, args: object = None, /):
-        values = self.state_space.validate(state)
-        return tuple(
-            problem.expand(value, args)
-            for problem, value in zip(self.subproblems, values, strict=True)
-        )
-
-    def _coupled_residual(
-        self,
-        term: CellResidualTerm,
-        full_states: tuple,
-        context: FiniteElementExecutionContext,
-        /,
-    ) -> Array:
-        output_index = self.form.field_names.index(term.field_name)
-        output_problem = self.subproblems[output_index]
-        output_dof_map = self.discretization.dof_maps[
-            self.discretization._field_index(term.field_name)
-        ]
-        full_output_space = output_problem.full_space
-        result = jnp.zeros(
-            full_output_space.structure().shape,
-            dtype=full_output_space.structure().dtype,
-        )
-        domain = _term_domain(term, self.discretization)
-        cell_offset = 0
-        for block_index, block in enumerate(self.discretization.mesh.blocks):
-            block_cells = jnp.arange(
-                cell_offset,
-                cell_offset + block.cell_count,
-                dtype=jnp.int32,
-            )
-            cell_offset += block.cell_count
-            selected = jnp.isin(block_cells, domain.entity_indices)
-            rule = _term_rule(term, block.name, block.cell_kind)
-            data = _reference_rule_data(rule)
-            output_geometry = self.discretization.evaluate_block_geometry(
-                term.field_name,
-                block_index,
-                context.runtime.coordinates,
-                data.points,
-                data.weights,
-            )
-            input_values = []
-            input_gradients = []
-            for input_field in term.input_fields:
-                input_form_index = self.form.field_names.index(input_field)
-                input_field_index = self.discretization._field_index(input_field)
-                input_geometry = self.discretization.evaluate_block_geometry(
-                    input_field,
-                    block_index,
-                    context.runtime.coordinates,
-                    data.points,
-                    data.weights,
-                )
-                input_dofs = self.discretization.dof_maps[input_field_index].cell_dofs[
-                    block_index
-                ]
-                local_input = full_states[input_form_index][input_dofs]
-                input_values.append(
-                    oe.contract(
-                        "qi,ci...->cq...",
-                        input_geometry.basis_values,
-                        local_input,
-                    )
-                )
-                input_gradients.append(
-                    oe.contract(
-                        "cqid,ci...->cqd...",
-                        input_geometry.physical_gradients,
-                        local_input,
-                    )
-                )
-            output_dofs = output_dof_map.cell_dofs[block_index]
-            local = jnp.asarray(
-                term.kernel(
-                    tuple(input_values),
-                    tuple(input_gradients),
-                    output_geometry.physical_points,
-                    output_geometry.physical_weights * selected[:, None],
-                    output_geometry.basis_values,
-                    output_geometry.physical_gradients,
-                    context,
-                )
-            )
-            expected = full_states[output_index][output_dofs].shape
-            if local.shape != expected:
-                raise ValueError(
-                    "Coupled residual kernel returned an incompatible local shape."
-                )
-            result = result.at[output_dofs].add(local)
-        if output_problem.constraint is None:
-            return DualSpace(full_output_space).validate(result)
-        return output_problem.constraint.constraint_map.pullback_dual(result)
-
-    def residual(self, state, args: object = None, /):
-        values = self.state_space.validate(state)
-        full_states = self.expand(values, args)
-        context = self.subproblems[0]._execution_context(args)
-        residuals = [
-            problem.residual(value, args)
-            for problem, value in zip(self.subproblems, values, strict=True)
-        ]
-        for term in self.form.terms:
-            if isinstance(term, CellResidualTerm) and any(
-                input_field != term.field_name for input_field in term.input_fields
-            ):
-                output_index = self.form.field_names.index(term.field_name)
-                residuals[output_index] = residuals[
-                    output_index
-                ] + self._coupled_residual(term, full_states, context)
-        return self.residual_space.validate(tuple(residuals))
-
-    def as_nonlinear_problem(self) -> NonlinearSystemProblem:
-        return NonlinearSystemProblem(
-            lambda state, args: self.residual(state, args),
-            state_space=self.state_space,
-            residual_space=self.residual_space,
-            problem_id=self.compilation_id,
-        )
-
-    def linear_system(self, args: object = None, /) -> tuple[LinearSystem, tuple]:
-        if any(
-            isinstance(term, CellResidualTerm)
-            and any(input_field != term.field_name for input_field in term.input_fields)
-            for term in self.form.terms
-        ):
-            raise ValueError(
-                "Coupled CellResidualTerm forms require nonlinear operator preparation."
-            )
-        systems_and_rhs = tuple(
-            problem.linear_system(args) for problem in self.subproblems
-        )
-        operators = tuple(system.operator for system, _ in systems_and_rhs)
-        right_hand_side = tuple(rhs for _, rhs in systems_and_rhs)
-        operator = FunctionLinearOperator(
-            lambda state: tuple(
-                block.mv(value) for block, value in zip(operators, state, strict=True)
-            ),
-            source=self.state_space,
-            target=self.state_space,
-            transpose_action=lambda state: tuple(
-                block.transpose_mv(value)
-                for block, value in zip(operators, state, strict=True)
-            ),
-            operator_id=canonical_fingerprint(
-                {
-                    "kind": "mixed-finite-element-linear-operator",
-                    "compilation": self.compilation_id,
-                    "blocks": [block.operator_id for block in operators],
-                }
-            ),
-        )
-        return LinearSystem(operator), right_hand_side
-
-
-def _coefficient_values(
-    coefficient_: _ResolvedCoefficient,
-    points: Array,
-    context: FiniteElementExecutionContext,
-    /,
-    *,
-    value_shape: tuple[int, ...] = (),
-    entity_indices: ArrayLike | None = None,
-) -> Array:
-    values = coefficient_.evaluate(
-        points,
-        context,
-        entity_indices=entity_indices,
-    )
-    point_shape = points.shape[:-1]
-    expected = point_shape + value_shape
-    if values.shape == ():
-        return jnp.broadcast_to(values, expected)
-    if values.shape == point_shape and value_shape:
-        return jnp.broadcast_to(
-            values.reshape(point_shape + (1,) * len(value_shape)),
-            expected,
-        )
-    if values.shape != expected:
-        raise ValueError(
-            f"Finite-element coefficient must return shape {expected}; "
-            f"got {values.shape}."
-        )
-    return values
-
-
-def _scatter_local(
-    residual: Array,
-    dofs: Array,
-    local: Array,
-    accumulation: str,
-    /,
-) -> Array:
-    if accumulation == "fast":
-        return residual.at[dofs].add(local)
-    flat_dofs = dofs.reshape((-1,))
-    component_shape = residual.shape[1:]
-    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
-    flat_local = local.reshape((flat_dofs.size, component_count))
-    if accumulation == "deterministic":
-        grouped = jax.ops.segment_sum(
-            flat_local,
-            flat_dofs,
-            residual.shape[0],
-            indices_are_sorted=False,
-            unique_indices=False,
-        )
-    elif accumulation == "compensated":
-        grouped_components = []
-        for component in range(component_count):
-            grouped_components.append(
-                jnp.stack(
-                    tuple(
-                        compensated_sum(
-                            jnp.where(
-                                flat_dofs == index,
-                                flat_local[:, component],
-                                jnp.zeros((), dtype=flat_local.dtype),
-                            )
-                        )
-                        for index in range(residual.shape[0])
-                    )
-                )
-            )
-        grouped = jnp.stack(tuple(grouped_components), axis=-1)
-    else:
-        raise ValueError("Unknown finite-element accumulation policy.")
-    return residual + grouped.reshape(residual.shape)
-
-
-def _full_residual(
-    form: WeakForm,
-    discretization: FiniteElementDiscretization,
-    work_blocks: tuple[_FiniteElementWorkBlock, ...],
-    state: Array,
-    accumulation: str,
-    context: FiniteElementExecutionContext,
-    /,
-) -> Array:
-    field_index = discretization._field_index(form.field_name)
-    residual = jnp.zeros_like(state)
-    for term in form.terms:
-        domain = _term_domain(term, discretization)
-        if isinstance(term, BoundaryLoadTerm):
-            residual = residual - _boundary_load(
-                discretization,
-                field_index,
-                term,
-                domain,
-                context,
-            )
-            continue
-        if isinstance(term, InteriorFacetTerm):
-            residual = residual + _interior_facet_residual(
-                discretization,
-                field_index,
-                state,
-                term,
-                domain,
-                context,
-                accumulation,
-            )
-            continue
-        for work in work_blocks:
-            block = discretization.mesh.blocks[work.block_index]
-            rule = _term_rule(term, work.block_name, block.cell_kind)
-            rule_data = _reference_rule_data(rule)
-            geometry = discretization.evaluate_block_geometry(
-                form.field_name,
-                work.block_index,
-                context.runtime.coordinates,
-                rule_data.points,
-                rule_data.weights,
-            )
-            work_cells = jnp.asarray(work.cell_indices, dtype=jnp.int32)
-            selected = jnp.isin(work_cells, domain.entity_indices)
-            dofs = work.cell_dofs
-            local_state = state[dofs]
-            orientation = discretization.dof_maps[field_index].orientations[
-                work.block_index
-            ]
-            local_state = local_state * orientation.reshape(
-                orientation.shape + (1,) * (local_state.ndim - orientation.ndim)
-            )
-            physical_points = geometry.physical_points
-            physical_gradients = geometry.physical_gradients
-            physical_weights = geometry.physical_weights * selected[:, None]
-            basis_values = geometry.basis_values
-            if isinstance(term, DiffusionTerm):
-                field_gradient = oe.contract(
-                    "cqid,ci...->cqd...",
-                    physical_gradients,
-                    local_state,
-                )
-                values = _coefficient_values(
-                    term.diffusivity,
-                    physical_points,
-                    context,
-                    entity_indices=work_cells,
-                )
-                local = oe.contract(
-                    "cq,cq,cqid,cqd...->ci...",
-                    physical_weights,
-                    values,
-                    physical_gradients,
-                    field_gradient,
-                )
-            elif isinstance(term, MassTerm):
-                field_value = oe.contract(
-                    "qi,ci...->cq...",
-                    basis_values,
-                    local_state,
-                )
-                values = _coefficient_values(
-                    term.coefficient,
-                    physical_points,
-                    context,
-                    entity_indices=work_cells,
-                )
-                local = oe.contract(
-                    "cq,cq,qi,cq...->ci...",
-                    physical_weights,
-                    values,
-                    basis_values,
-                    field_value,
-                )
-            elif isinstance(term, SourceTerm):
-                values = _coefficient_values(
-                    term.source,
-                    physical_points,
-                    context,
-                    entity_indices=work_cells,
-                    value_shape=state.shape[1:],
-                )
-                local = -oe.contract(
-                    "cq,cq...,qi->ci...",
-                    physical_weights,
-                    values,
-                    basis_values,
-                )
-            elif isinstance(term, CellResidualTerm):
-                if any(
-                    input_field != form.field_name for input_field in term.input_fields
-                ):
-                    raise ValueError(
-                        "Cross-field CellResidualTerm requires mixed compilation."
-                    )
-                if basis_values.ndim == 2:
-                    field_value = oe.contract(
-                        "qi,ci...->cq...",
-                        basis_values,
-                        local_state,
-                    )
-                    field_gradient = oe.contract(
-                        "cqid,ci...->cqd...",
-                        physical_gradients,
-                        local_state,
-                    )
-                else:
-                    field_value = oe.contract(
-                        "cqiv,ci->cqv",
-                        basis_values,
-                        local_state,
-                    )
-                    field_gradient = oe.contract(
-                        "cqivd,ci->cqvd",
-                        physical_gradients,
-                        local_state,
-                    )
-                local = jnp.asarray(
-                    term.kernel(
-                        (field_value,),
-                        (field_gradient,),
-                        physical_points,
-                        physical_weights,
-                        basis_values,
-                        physical_gradients,
-                        context,
-                    )
-                )
-                if local.shape != local_state.shape:
-                    raise ValueError(
-                        "Cell residual kernel must return one local test residual "
-                        "per selected cell and output-field DOF."
-                    )
-            elif isinstance(term, CellEnergyTerm):
-
-                def energy(
-                    local_coefficients,
-                    basis_values_=basis_values,
-                    physical_gradients_=physical_gradients,
-                    physical_points_=physical_points,
-                    physical_weights_=physical_weights,
-                    term_=term,
-                    context_=context,
-                ):
-                    if basis_values_.ndim == 2:
-                        values_ = oe.contract(
-                            "qi,ci...->cq...",
-                            basis_values_,
-                            local_coefficients,
-                        )
-                        gradients_ = oe.contract(
-                            "cqid,ci...->cqd...",
-                            physical_gradients_,
-                            local_coefficients,
-                        )
-                    else:
-                        values_ = oe.contract(
-                            "cqiv,ci->cqv",
-                            basis_values_,
-                            local_coefficients,
-                        )
-                        gradients_ = oe.contract(
-                            "cqivd,ci->cqvd",
-                            physical_gradients_,
-                            local_coefficients,
-                        )
-                    density = jnp.asarray(
-                        term_.density(
-                            values_,
-                            gradients_,
-                            physical_points_,
-                            context_,
-                        )
-                    )
-                    if density.shape != physical_weights_.shape:
-                        raise ValueError(
-                            "Cell energy density must return one scalar per "
-                            "selected quadrature point."
-                        )
-                    return jnp.sum(density * physical_weights_)
-
-                local = jax.grad(energy)(local_state)
-            elif isinstance(term, CellBilinearTerm):
-                matrix = jnp.asarray(
-                    term.kernel(
-                        physical_points,
-                        physical_weights,
-                        basis_values,
-                        physical_gradients,
-                        context,
-                    )
-                )
-                expected_prefix = (
-                    local_state.shape[0],
-                    local_state.shape[1],
-                    local_state.shape[1],
-                )
-                if matrix.shape != expected_prefix:
-                    raise ValueError(
-                        "Cell bilinear kernel must return shape "
-                        "(cells, local_dofs, local_dofs)."
-                    )
-                local = oe.contract(
-                    "cij,cj...->ci...",
-                    matrix,
-                    local_state,
-                )
-            else:
-                raise TypeError("Unsupported finite-element term.")
-            local = local * orientation.reshape(
-                orientation.shape + (1,) * (local.ndim - orientation.ndim)
-            )
-            residual = _scatter_local(residual, dofs, local, accumulation)
-    return DualSpace(discretization.field_spaces[field_index].vector_space).validate(
-        residual
-    )
-
-
-def _interior_facet_residual(
-    discretization: FiniteElementDiscretization,
-    field_index: int,
-    state: Array,
-    term: InteriorFacetTerm,
-    domain: IntegrationDomain,
-    context: FiniteElementExecutionContext,
-    accumulation: str,
-    /,
-) -> Array:
-    connectivity = discretization.mesh.connectivity
-    facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
-    owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
-    neighbours = jnp.asarray(domain.neighbour_cells, dtype=jnp.int32)
-    dof_map = discretization.dof_maps[field_index]
-    result = jnp.zeros_like(state)
-    if isinstance(connectivity, PolygonalConnectivity):
-        rule = _interval_rule()
-        if term.rules:
-            rule = term.rules[0][1]
-        data = _reference_rule_data(rule)
-        if data.cell != "interval":
-            raise ValueError("Polygon interior facets require an interval rule.")
-        edge_vertices = jnp.asarray(connectivity.edges)[facets]
-        edge_points = context.runtime.coordinates[edge_vertices]
-        parameter = data.points[:, 0]
-        physical_points = (1.0 - parameter)[None, :, None] * edge_points[
-            :, None, 0, :
-        ] + parameter[None, :, None] * edge_points[:, None, 1, :]
-        tangent = edge_points[:, 1] - edge_points[:, 0]
-        measure = jnp.sqrt(jnp.sum(tangent**2, axis=-1))
-        normal = jnp.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
-        normal = normal / measure[:, None]
-        cell_centers = jnp.concatenate(
-            tuple(
-                jnp.mean(
-                    context.runtime.coordinates[block.vertices],
-                    axis=1,
-                )
-                for block in discretization.mesh.blocks
-            ),
-            axis=0,
-        )
-        owner_centers = cell_centers[owners]
-        midpoint = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
-        outward = jnp.sum(normal * (midpoint - owner_centers), axis=-1)
-        normal = jnp.where((outward < 0.0)[:, None], -normal, normal)
-        weights = measure[:, None] * data.weights[None, :]
-        if dof_map.association == "cell":
-            plus_dofs = jnp.asarray(owners)[:, None]
-            minus_dofs = jnp.asarray(neighbours)[:, None]
-            trace_basis = jnp.ones((data.points.shape[0], 1))
-        elif dof_map.association == "edge":
-            plus_dofs = jnp.asarray(facets)[:, None]
-            minus_dofs = plus_dofs
-            trace_basis = jnp.ones((data.points.shape[0], 1))
-        elif dof_map.association == "vertex_edge":
-            edge_dofs = int(discretization.mesh.coordinates.shape[0]) + jnp.asarray(
-                facets
-            )
-            plus_dofs = jnp.concatenate((edge_vertices, edge_dofs[:, None]), axis=1)
-            minus_dofs = plus_dofs
-            trace_basis = jnp.stack(
-                (
-                    (1.0 - parameter) * (1.0 - 2.0 * parameter),
-                    parameter * (2.0 * parameter - 1.0),
-                    4.0 * parameter * (1.0 - parameter),
-                ),
-                axis=-1,
-            )
-        else:
-            plus_dofs = edge_vertices
-            minus_dofs = edge_vertices
-            trace_basis = jnp.stack((1.0 - parameter, parameter), axis=-1)
-    elif isinstance(connectivity, TetrahedralConnectivity):
-        data = _reference_rule_data(_triangle_rule())
-        face_vertices = jnp.asarray(connectivity.faces)[facets]
-        face_points = context.runtime.coordinates[face_vertices]
-        first = data.points[:, 0]
-        second = data.points[:, 1]
-        trace_basis = jnp.stack((1.0 - first - second, first, second), axis=-1)
-        physical_points = oe.contract("qi,eid->eqd", trace_basis, face_points)
-        cross = jnp.cross(
-            face_points[:, 1] - face_points[:, 0],
-            face_points[:, 2] - face_points[:, 0],
-        )
-        measure = jnp.sqrt(jnp.sum(cross**2, axis=-1))
-        normal = cross / measure[:, None]
-        weights = measure[:, None] * data.weights[None, :]
-        plus_dofs = face_vertices
-        minus_dofs = face_vertices
-    else:
-        raise TypeError("Unsupported interior-facet connectivity.")
-    plus_local = state[plus_dofs]
-    minus_local = state[minus_dofs]
-    plus_value = oe.contract("qi,ei...->eq...", trace_basis, plus_local)
-    minus_value = oe.contract("qi,ei...->eq...", trace_basis, minus_local)
-    plus_flux, minus_flux = term.kernel(
-        plus_value,
-        minus_value,
-        physical_points,
-        weights,
-        normal,
-        context,
-    )
-    plus_flux = jnp.asarray(plus_flux)
-    minus_flux = jnp.asarray(minus_flux)
-    expected = plus_value.shape
-    if plus_flux.shape != expected or minus_flux.shape != expected:
-        raise ValueError(
-            "Interior facet kernel must return plus/minus quadrature flux densities."
-        )
-    plus_residual = oe.contract(
-        "eq,eq...,qi->ei...",
-        weights,
-        plus_flux,
-        trace_basis,
-    )
-    minus_residual = oe.contract(
-        "eq,eq...,qi->ei...",
-        weights,
-        minus_flux,
-        trace_basis,
-    )
-    result = _scatter_local(result, plus_dofs, plus_residual, accumulation)
-    return _scatter_local(result, minus_dofs, minus_residual, accumulation)
-
-
-def _boundary_load(
-    discretization: FiniteElementDiscretization,
-    field_index: int,
-    term: BoundaryLoadTerm,
-    domain: IntegrationDomain,
-    context: FiniteElementExecutionContext,
-    /,
-) -> Array:
-    connectivity = discretization.mesh.connectivity
-    selected = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
-    owner_cells = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
-    field_shape = discretization.field_spaces[field_index].vector_space.structure().shape
-    component_shape = field_shape[1:]
-    result = jnp.zeros(field_shape, dtype=context.runtime.coordinates.dtype)
-    rule_bindings = dict(term.rules)
-    cell_start = 0
-    for block in discretization.mesh.blocks:
-        cell_end = cell_start + block.cell_count
-        active = (owner_cells >= cell_start) & (owner_cells < cell_end)
-        cell_start = cell_end
-        facet_indices = selected
-        rule = rule_bindings.get(
-            block.name,
-            _interval_rule()
-            if isinstance(connectivity, PolygonalConnectivity)
-            else _triangle_rule(),
-        )
-        data = _reference_rule_data(rule)
-        if isinstance(connectivity, PolygonalConnectivity):
-            if data.cell != "interval":
-                raise ValueError("Polygon boundary terms require an interval rule.")
-            edge_vertices = jnp.asarray(connectivity.edges)[facet_indices]
-            edge_points = context.runtime.coordinates[edge_vertices]
-            parameter = data.points[:, 0]
-            physical_points = (1.0 - parameter)[None, :, None] * edge_points[
-                :, None, 0, :
-            ] + parameter[None, :, None] * edge_points[:, None, 1, :]
-            measure = jnp.sqrt(
-                jnp.sum((edge_points[:, 1] - edge_points[:, 0]) ** 2, axis=-1)
-            )
-            physical_weights = measure[:, None] * data.weights[None, :]
-            if (
-                discretization.dof_maps[field_index].global_dof_count
-                > discretization.mesh.coordinates.shape[0]
-            ):
-                basis = jnp.stack(
-                    (
-                        (1.0 - parameter) * (1.0 - 2.0 * parameter),
-                        parameter * (2.0 * parameter - 1.0),
-                        4.0 * parameter * (1.0 - parameter),
-                    ),
-                    axis=-1,
-                )
-                edge_dofs = int(discretization.mesh.coordinates.shape[0]) + jnp.asarray(
-                    facet_indices
-                )
-                dofs = jnp.concatenate((edge_vertices, edge_dofs[:, None]), axis=1)
-            else:
-                basis = jnp.stack((1.0 - parameter, parameter), axis=-1)
-                dofs = edge_vertices
-        elif isinstance(connectivity, TetrahedralConnectivity):
-            if data.cell != "triangle":
-                raise ValueError("Tetrahedron boundary terms require a triangle rule.")
-            face_vertices = jnp.asarray(connectivity.faces)[facet_indices]
-            face_points = context.runtime.coordinates[face_vertices]
-            first = data.points[:, 0]
-            second = data.points[:, 1]
-            basis = jnp.stack((1.0 - first - second, first, second), axis=-1)
-            physical_points = oe.contract("qi,eid->eqd", basis, face_points)
-            cross = jnp.cross(
-                face_points[:, 1] - face_points[:, 0],
-                face_points[:, 2] - face_points[:, 0],
-            )
-            measure_factor = jnp.sqrt(jnp.sum(cross**2, axis=-1))
-            physical_weights = measure_factor[:, None] * data.weights[None, :]
-            dofs = face_vertices
-        else:
-            raise TypeError("Unsupported finite-element boundary connectivity.")
-        physical_weights = physical_weights * active[:, None]
-        values = _coefficient_values(
-            term.load,
-            physical_points,
-            context,
-            entity_indices=facet_indices,
-            value_shape=component_shape,
-        )
-        local = oe.contract(
-            "eq,eq...,qi->ei...",
-            physical_weights,
-            values,
-            basis,
-        )
-        result = result.at[dofs].add(local)
-    return result
-
-
 def compile_finite_element_problem(
-    form: WeakForm,
+    form: FiniteElementForm,
     discretization: FiniteElementDiscretization,
     /,
     *,
@@ -2296,88 +2399,38 @@ def compile_finite_element_problem(
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
     | None = None,
     execution_policy: FiniteElementExecutionPolicy | None = None,
-) -> CompiledFiniteElementProblem | CompiledMixedFiniteElementProblem:
-    if len(form.field_names) == 1:
-        if constraints is not None or dirichlet_values_by_field is not None:
-            field = form.field_names[0]
-            resolved_constraints = {} if constraints is None else dict(constraints)
-            resolved_values = (
-                {}
-                if dirichlet_values_by_field is None
-                else dict(dirichlet_values_by_field)
-            )
-            constraint = resolved_constraints.get(field, constraint)
-            dirichlet_values = resolved_values.get(field, dirichlet_values)
-        return CompiledFiniteElementProblem(
-            form,
-            discretization,
-            constraint=constraint,
-            dirichlet_values=dirichlet_values,
-            execution_policy=execution_policy,
-        )
-    if constraint is not None or dirichlet_values is not None:
-        raise ValueError(
-            "Mixed forms require field-keyed constraints and Dirichlet values."
-        )
-    resolved_constraints = {} if constraints is None else dict(constraints)
-    resolved_values = (
-        {} if dirichlet_values_by_field is None else dict(dirichlet_values_by_field)
+) -> CompiledFiniteElementProblem:
+    return CompiledFiniteElementProblem(
+        form,
+        discretization,
+        constraint=constraint,
+        dirichlet_values=dirichlet_values,
+        constraints=constraints,
+        dirichlet_values_by_field=dirichlet_values_by_field,
+        execution_policy=execution_policy,
     )
-    unknown_constraints = set(resolved_constraints) - set(form.field_names)
-    unknown_values = set(resolved_values) - set(form.field_names)
-    if unknown_constraints or unknown_values:
-        raise ValueError("Mixed constraint/value mappings contain unknown fields.")
-    subproblems = []
-    for field in form.field_names:
-        field_terms = tuple(
-            term
-            for term in form.terms
-            if term.field_name == field
-            and not (
-                isinstance(term, CellResidualTerm)
-                and any(input_field != field for input_field in term.input_fields)
-            )
-        )
-        if not field_terms:
-            field_terms = (
-                SourceTerm(
-                    field,
-                    0.0,
-                    term_id=f"__mixed_zero__:{field}",
-                ),
-            )
-        subform = WeakForm(
-            f"{form.form_id}:{field}",
-            field,
-            field_terms,
-        )
-        subproblems.append(
-            CompiledFiniteElementProblem(
-                subform,
-                discretization,
-                constraint=resolved_constraints.get(field),
-                dirichlet_values=resolved_values.get(field),
-                execution_policy=execution_policy,
-            )
-        )
-    return CompiledMixedFiniteElementProblem(form, discretization, subproblems)
 
 
 __all__ = [
-    "BoundaryLoadTerm",
-    "CellBilinearTerm",
-    "CellEnergyTerm",
-    "CellResidualTerm",
+    "BoundaryLoadAction",
+    "CellBilinearAction",
+    "CellEnergyAction",
+    "CellResidualAction",
     "CompiledFiniteElementProblem",
-    "CompiledMixedFiniteElementProblem",
-    "DiffusionTerm",
-    "FiniteElementFunctional",
+    "DiffusionAction",
+    "ExteriorFacetAction",
+    "FiniteElementAction",
     "FiniteElementExecutionContext",
     "FiniteElementExecutionPolicy",
-    "InteriorFacetTerm",
-    "MassTerm",
-    "SourceTerm",
-    "WeakForm",
+    "FiniteElementForm",
+    "FiniteElementFunctional",
+    "InteriorFacetAction",
+    "MassAction",
+    "PreparedOperatorAction",
+    "SIPGBoundaryCondition",
+    "SIPGFacetAction",
+    "SIPGPenaltyPolicy",
+    "SourceAction",
     "coefficient",
     "compile_finite_element_problem",
 ]

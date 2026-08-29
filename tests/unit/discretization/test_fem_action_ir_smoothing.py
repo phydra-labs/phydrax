@@ -17,27 +17,32 @@ def _tri_mesh():
     return phx.discretization.CellMesh.from_triangles(vertices, cells)
 
 
-def test_weak_form_lowers_to_typed_ir_and_worksets():
+def test_finite_element_form_lowers_to_typed_actions_and_worksets():
     mesh = _tri_mesh()
     field = phx.discretization.FiniteElementFieldSpec(
         "u", phx.discretization.lagrange_element("triangle", 1)
     )
     discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
-    form = phx.equations.WeakForm(
+    form = phx.equations.FiniteElementForm(
         "poisson-ir",
         "u",
-        (phx.equations.DiffusionTerm("u"), phx.equations.SourceTerm("u", 1.0)),
+        (phx.equations.DiffusionAction("u"), phx.equations.SourceAction("u", 1.0)),
     )
 
-    action_ir = phx.equations.fem.lower_weak_form(form, discretization)
+    action_ir = phx.equations.fem.lower_finite_element_form(form, discretization)
     workset_program = phx.equations.fem.compile_workset_program(
         action_ir, form, discretization
     )
+    compiled = phx.equations.compile_finite_element_problem(form, discretization)
     assert action_ir.ir_id
     assert tuple(slot.name for slot in action_ir.slots) == ("u",)
-    assert len(action_ir.terms) == 2
+    assert len(action_ir.actions) == 2
     assert workset_program.program_id
     assert all(workset.entity_indices.size for workset in workset_program.worksets)
+    assert len(workset_program.worksets) == 1
+    assert workset_program.worksets[0].action_indices.size == 2
+    assert compiled._kernel_table.table_id
+    assert compiled._workset_program.program_id == workset_program.program_id
 
 
 def test_high_order_tensor_family_partition_unity_and_sum_factorization():
@@ -169,11 +174,15 @@ def test_time_law_schedule_and_uniform_refinement_are_transactional():
 def test_element_partial_and_p_transfer_operators_are_consistent():
     local_matrix = jnp.asarray([[[2.0, -1.0], [-1.0, 2.0]], [[2.0, -1.0], [-1.0, 2.0]]])
     gathers = jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32)
-    element = phx.equations.fem.ElementTensorOperator(local_matrix, gathers, 3)
+    element = phx.equations.fem.ElementTensorOperator(
+        local_matrix, gathers, gathers, 3, 3
+    )
     value = jnp.asarray([1.0, 2.0, 3.0])
     expected = jnp.asarray([0.0, 4.0, 4.0])
     assert jnp.allclose(element.mv(value), expected)
     assert jnp.allclose(element.diagonal(), jnp.asarray([2.0, 4.0, 2.0]))
+    assert jnp.allclose(element.transpose_mv(value), expected)
+    assert jnp.allclose(element.as_sparse_coordinate().mv(value), expected)
 
     basis = jnp.asarray([[1.0, 0.0], [0.0, 1.0]])
     partial = phx.equations.fem.PartialAssemblyOperator(
@@ -184,6 +193,14 @@ def test_element_partial_and_p_transfer_operators_are_consistent():
         3,
     )
     assert partial.mv(value).shape == value.shape
+    assert jnp.allclose(
+        partial.as_element_tensor().mv(value),
+        partial.mv(value),
+    )
+    assert jnp.allclose(
+        partial.as_sparse_coordinate().mv(value),
+        partial.mv(value),
+    )
 
     coarse = phx.discretization.fem.ReferenceNodalFamily("quadrilateral", 1)
     fine = phx.discretization.fem.ReferenceNodalFamily("quadrilateral", 3)
@@ -193,33 +210,46 @@ def test_element_partial_and_p_transfer_operators_are_consistent():
 
 
 def test_application_model_primitives_are_executable():
-    parameters = phx.equations.fem.J2PlasticityParameters(1.0, 2.0, 0.1, 0.2)
-    response = phx.equations.fem.j2_radial_return(
-        jnp.asarray([0.2, -0.1, -0.1, 0.0, 0.0, 0.0]),
-        jnp.zeros((7,)),
-        parameters,
+    cpfem = phx.applications.crystal_plasticity
+    material = cpfem.CrystalPlasticityModel(
+        (
+            cpfem.CrystalSlipSystem(
+                jnp.asarray([1.0, 0.0, 0.0]),
+                jnp.asarray([0.0, 1.0, 0.0]),
+            ),
+        ),
+        cpfem.CrystalPlasticityParameters(1.0, 2.0, 0.01, 0.1, 0.2, 1.0),
     )
-    fracture = phx.equations.fem.PhaseFieldFractureModel(1.0, 0.1)
-    contact = phx.equations.fem.FrictionlessContactLaw(100.0)
-    traction, tangent = contact.response(jnp.asarray(-0.01), jnp.asarray([1.0, 0.0]))
+    response = material.update(jnp.eye(3), material.initial_state(), 0.1)
+    fracture = phx.applications.fracture.PhaseFieldFractureParameters(1.0, 1.0, 1.0, 0.1)
+    contact = phx.applications.contact.FrictionlessContactLaw(100.0)
+    traction, tangent, active = contact.response(
+        jnp.asarray(-0.01), jnp.asarray([1.0, 0.0])
+    )
 
-    assert response.trial_state.shape == (7,)
+    assert response.state.plastic_deformation.shape == (3, 3)
     assert fracture.degradation(jnp.asarray(0.0)) > 0.0
     assert jnp.allclose(traction, jnp.asarray([1.0, 0.0]))
     assert tangent > 0.0
+    assert active
 
 
-def test_partition_and_adaptive_uniform_loop_have_stable_routes():
+def test_partition_and_local_adaptation_have_stable_routes():
     mesh = _tri_mesh()
     partition = phx.discretization.fem.partition_cells_contiguous(mesh, 2)
-    final_mesh, records = phx.discretization.fem.adaptive_uniform_solve(
-        mesh,
-        lambda current: jnp.asarray(current.blocks[0].cell_count, dtype=float),
-        lambda current, solution: 1.0 / solution,
-        max_levels=2,
-        target_error=0.01,
+    marked = phx.discretization.fem.maximum_mark(
+        jnp.asarray([4.0, 1.0, 1.0, 1.0]),
+        0.25,
+        cell_global_ids=mesh.blocks[0].global_ids,
+    )
+    refined, adaptation, transfer = phx.discretization.fem.refine_triangles_local(
+        mesh, marked
     )
 
     assert set(partition.cell_owner.tolist()) == {0, 1}
-    assert len(records) == 2
-    assert final_mesh.blocks[0].cell_count == 16
+    assert adaptation.parent_cell_ids.shape == (1,)
+    assert transfer.primal.shape == (
+        refined.coordinates.shape[0],
+        mesh.coordinates.shape[0],
+    )
+    assert refined.blocks[0].cell_count == 5

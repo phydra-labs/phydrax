@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ._ir import LocalActionTermIR
+from ._ir import FiniteElementActionIR
 from ._operators import (
     average,
     curl,
@@ -72,7 +72,7 @@ def evaluate_differential_operator(
 
 
 def execute_local_action(
-    term: LocalActionTermIR,
+    action: FiniteElementActionIR,
     kernels: Mapping[str, Callable],
     field_jets: Mapping[str, FieldJet],
     context: object,
@@ -81,12 +81,12 @@ def execute_local_action(
     normals: ArrayLike | None = None,
     other_jets: Mapping[str, FieldJet] | None = None,
 ) -> Array:
-    if not isinstance(term, LocalActionTermIR):
-        raise TypeError("term must be LocalActionTermIR.")
-    if term.kernel_id not in kernels:
-        raise KeyError(f"No local kernel registered for {term.kernel_id!r}.")
+    if not isinstance(action, FiniteElementActionIR):
+        raise TypeError("action must be FiniteElementActionIR.")
+    if action.kernel_id not in kernels:
+        raise KeyError(f"No local kernel registered for {action.kernel_id!r}.")
     evaluated = {}
-    for slot_name, operation in term.operators:
+    for slot_name, operation in action.operators:
         if slot_name not in field_jets:
             raise KeyError(f"No field jet exists for slot {slot_name!r}.")
         other = None if other_jets is None else other_jets.get(slot_name)
@@ -96,7 +96,7 @@ def execute_local_action(
             normal=normals,
             other=other,
         )
-    result = jnp.asarray(kernels[term.kernel_id](evaluated, context))
+    result = jnp.asarray(kernels[action.kernel_id](evaluated, context))
     if not jnp.issubdtype(result.dtype, jnp.inexact):
         result = result.astype(float)
     return result
