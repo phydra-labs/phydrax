@@ -281,6 +281,19 @@ Carlo expectations are declared approximations; they do not make nonlinear
 inference exact. Dense-only paths enforce dimension guards, and covariance inputs
 are never silently repaired.
 
+Integration-native fixed-design Bayesian quadrature binds an analytic
+`GaussianKernelMean` to one normalized Gaussian `ProbabilityTarget` identity.
+`BayesianQuadraturePlan` supports squared-exponential kernels, optionally scaled,
+and applies prepared `phydrax.linalg` conditioning weights to scalar, array,
+field, or PyTree integrands through ordinary `materialize`/`reduce` calls.
+Observation noise and solve regularization remain distinct, child solve evidence
+is retained, and target mismatch, non-finite outputs, failed solves, resource
+overrun, and materially invalid posterior variance fail closed. The reported
+Bayesian posterior standard deviation is model-based uncertainty, **not a
+deterministic or frequentist error bound**. Active acquisition, WSABI,
+unnormalized evidence, arbitrary measures, and arbitrary kernels are explicit
+non-capabilities.
+
 The completed state-space surface also includes SING natural-gradient
 variational smoothing for additive-noise latent SDEs; square-root sequential
 Kalman filtering/smoothing; exact finite-state backward smoothing, Viterbi paths
@@ -924,10 +937,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior
   problems, ensembles for neural-model epistemic variation, scalar or correlated
   Gaussian processes for model discrepancy, linear-functional GPs for operator
-  observations, joint QMC for uncertain inputs, proper likelihoods/scores for
-  observations, and conformal calibration for coverage. Use FITC only after dense
-  scaling is measured.
+  observations, joint QMC for uncertain inputs, fixed-design Bayesian quadrature
+  for a kernel-conditioned normalized Gaussian expectation, proper
+  likelihoods/scores for observations, and conformal calibration for coverage.
+  Bayesian quadrature posterior SD is not a deterministic/frequentist error
+  bound. Use FITC only after dense scaling is measured.
   See [Guides → Uncertainty quantification](guides_uncertainty.md),
+  [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,

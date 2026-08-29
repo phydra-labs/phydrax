@@ -162,6 +162,55 @@ on a nonlinear model.
 
 
 
+### 5b. Reuse fixed Gaussian evaluations with Bayesian quadrature
+
+When the uncertain input is one normalized Gaussian variable and forward solves
+have already been assigned to a fixed design, Bayesian quadrature provides a
+kernel-conditioned expectation through the ordinary integration interface:
+
+```python
+coefficient = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(0.4, 0.05),
+    label="coefficient",
+)
+target = phx.integration.expectation(
+    coefficient,
+    target_id="coefficient-expectation",
+)
+kernel_mean = phx.integration.GaussianKernelMean(
+    target,
+    phx.kernels.SquaredExponentialKernel(length_scale=0.08),
+)
+plan = phx.integration.BayesianQuadraturePlan(
+    kernel_mean,
+    phx.domain.PointSampling(24, design="hammersley"),
+    observation_noise=0.0,
+    solve_regularization=1e-10,
+)
+realization = phx.integration.materialize(target, plan)
+prediction_mean = phx.integration.reduce(
+    coefficient.Function("coefficient")(
+        lambda value: solve_forward(value, forcing=1.0)
+    ),
+    realization,
+)
+```
+
+The fixed realization can reduce scalar, array, field, or PyTree outputs without
+rebuilding the kernel system. `prediction_mean.error_estimate` is the GP
+posterior integral standard deviation, with
+`error_kind="bayesian-posterior-standard-deviation"`. It is **not a
+deterministic or frequentist error bound** and should not be combined with
+ensemble, aleatoric, or conformal uncertainties as though they had the same
+meaning.
+
+Keep observation noise separate from numerical solve regularization. Inspect
+`prediction_mean.diagnostics.solve` before using the result; singular designs,
+non-finite forward outputs, target-identity mismatch, and invalid posterior
+variance fail closed. This initial path does not perform active acquisition and
+does not support unnormalized evidence, non-Gaussian measures, or arbitrary
+kernel algebra.
+
 ## 6. Rank global effects
 
 ```python

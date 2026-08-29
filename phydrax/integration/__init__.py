@@ -21,6 +21,7 @@ from ._atlas import (
     AtlasPatchQuadrature,
     integrate_atlas_scalar,
 )
+from ._bayesian_quadrature import GaussianKernelMean
 from ._batches import (
     IntegrationBatch,
     MappedIntegrationBatch,
@@ -44,6 +45,7 @@ from ._estimates import (
     AdaptiveTriangleDiagnostics,
     AdaptiveTrianglePartition,
     AntitheticDiagnostics,
+    BayesianQuadratureDiagnostics,
     FixedQuadratureDiagnostics,
     IntegrationEstimate,
     IntegrationProvenance,
@@ -92,6 +94,7 @@ from ._plans import (
     AdaptiveQuadraturePlan,
     AdaptiveTrianglePlan,
     AntitheticDesign,
+    BayesianQuadraturePlan,
     CellQuadraturePlan,
     ControlVariateEstimator,
     FixedQuadraturePlan,
@@ -220,6 +223,8 @@ __all__ = [
     "initialize_multilevel",
     "AntitheticDesign",
     "AntitheticDiagnostics",
+    "BayesianQuadratureDiagnostics",
+    "BayesianQuadraturePlan",
     "CellQuadraturePlan",
     "CallerIntegration",
     "ClenshawCurtisRule",
@@ -237,6 +242,7 @@ __all__ = [
     "GaussianCubatureRule",
     "GaussHermiteRule",
     "GaussLegendreRule",
+    "GaussianKernelMean",
     "IIDDesign",
     "InitialPathSampler",
     "LatinHypercubeDesign",

@@ -105,14 +105,24 @@ class ProbabilityTarget(StrictModule):
     """Expectation under a normalized ``ProbabilityDomain``."""
 
     probability: ProbabilityDomain
+    target_id: str = eqx.field(static=True)
     normalized: bool = eqx.field(static=True, default=True)
 
-    def __init__(self, probability: ProbabilityDomain, /):
+    def __init__(
+        self,
+        probability: ProbabilityDomain,
+        /,
+        *,
+        target_id: str | None = None,
+    ):
         if not isinstance(probability, ProbabilityDomain):
             raise TypeError("probability must be a ProbabilityDomain.")
+        identifier = probability.label if target_id is None else str(target_id)
+        if not identifier:
+            raise ValueError("target_id must be non-empty.")
         self.probability = probability
         self.normalized = True
-
+        self.target_id = identifier
 
 class DensityTarget(StrictModule):
     """A density relative to another target's base measure."""
@@ -439,9 +449,14 @@ def mean_over(
     return ComponentTarget(component, axes=axes, normalized=True)
 
 
-def expectation(probability: ProbabilityDomain, /) -> ProbabilityTarget:
-    """Construct an expectation target from a probability domain."""
-    return ProbabilityTarget(probability)
+def expectation(
+    probability: ProbabilityDomain,
+    /,
+    *,
+    target_id: str | None = None,
+) -> ProbabilityTarget:
+    """Construct an expectation target with an optional stable identity."""
+    return ProbabilityTarget(probability, target_id=target_id)
 
 
 def density(

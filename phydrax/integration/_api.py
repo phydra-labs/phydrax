@@ -24,6 +24,11 @@ from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
+from ._bayesian_quadrature import (
+    BayesianQuadraturePlan,
+    integrate_bayesian_quadrature,
+    materialize_bayesian_quadrature,
+)
 from ._adaptive import integrate_adaptive
 from ._adaptive_triangle import integrate_adaptive_triangle
 from ._estimates import IntegrationEstimate
@@ -233,6 +238,8 @@ def _is_domain_sampling_plan(plan: Any, /) -> bool:
 def _requires_random_key(plan: Any, /) -> bool:
     if _is_domain_sampling_plan(plan):
         return True
+    if isinstance(plan, BayesianQuadraturePlan):
+        return design_capabilities(plan.design.design).randomized
     if isinstance(plan, ProductIntegrationPlan):
         return any(_requires_random_key(factor) for factor in plan.plans.values())
     if isinstance(
@@ -248,6 +255,8 @@ def _requires_random_key(plan: Any, /) -> bool:
 
 
 def _is_deterministic_plan(plan: Any, /) -> bool:
+    if isinstance(plan, BayesianQuadraturePlan):
+        return not design_capabilities(plan.design.design).randomized
     if isinstance(plan, ProductIntegrationPlan):
         return all(_is_deterministic_plan(factor) for factor in plan.plans.values())
     if isinstance(
@@ -339,6 +348,13 @@ def materialize(
                 )
             points = component.sample(plan, key=sampling_key)
             batch = materialize_sampled_component(base, points)
+    elif isinstance(plan, BayesianQuadraturePlan):
+        batch = materialize_bayesian_quadrature(
+            target,
+            plan,
+            key=sampling_key,
+            precision=precision_,
+        )
     elif isinstance(plan, FixedQuadraturePlan):
         if isinstance(base, ComponentTarget):
             batch = materialize_fixed_component(base, plan)
@@ -562,6 +578,21 @@ def reduce(
             )
         return finish(
             integrate_fixed_component(
+                integrand,
+                target,
+                realization.batch,
+                key=key,
+                kwargs=kwargs,
+                precision=realization.precision,
+            )
+        )
+    if isinstance(plan, BayesianQuadraturePlan):
+        if not isinstance(target, ProbabilityTarget):
+            raise TypeError(
+                "BayesianQuadraturePlan requires a normalized ProbabilityTarget."
+            )
+        return finish(
+            integrate_bayesian_quadrature(
                 integrand,
                 target,
                 realization.batch,

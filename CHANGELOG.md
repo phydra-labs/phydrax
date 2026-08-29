@@ -9,6 +9,14 @@
   Kalman/RTS inference, active-observation marginal likelihoods, linear-storage
   predictive marginals, precision/status provenance, portable result export,
   dense-parity tests, and dense-versus-state-space scaling benchmarks.
+- Added integration-native fixed-design Bayesian quadrature for normalized scalar
+  Gaussian targets with analytic squared-exponential kernel means, optional
+  kernel scaling, separate observation noise and solve regularization, prepared
+  `phydrax.linalg` conditioning, reusable PyTree/field reductions, posterior-SD
+  diagnostics, dtype-aware variance validity, explicit target/solve/resource
+  failure boundaries, and an analytic Gaussian benchmark against IID and
+  randomized QMC. The posterior SD is explicitly model uncertainty, not a
+  deterministic or frequentist error bound.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
