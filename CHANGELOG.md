@@ -34,6 +34,12 @@
   explicitly selected native-dense or low-level sparse-Ipopt execution,
   independent KKT recertification, typed decisions/layouts/results, and
   non-certifying off-grid defect audits.
+- Hardened direct collocation with canonical typed sparse-Ipopt evidence,
+  callback/conversion counts, exact status mapping, topology-valid warm starts,
+  optional `cyipopt` packaging, exact/limited-memory qualification artifacts,
+  per-interval off-grid evidence, explicit nested h-refinement and primal
+  transfer, controlled-DAE input policies and causal replay, and a fingerprinted
+  eight-family graduation/regression campaign.
 - Added a first-class material-particle discretization with stable physical IDs,
   static active selections, physical mass measures, explicit precision/execution
   policies, periodic pair geometry, budgeted canonical dense neighborhoods,

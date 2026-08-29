@@ -40,11 +40,13 @@ with keyword-only `inputs`. Missing, extra, or incorrectly shaped inputs fail be
 the residual runs. `from_mass_matrix` supports the same input-aware vector-field form;
 the mass matrix itself remains independent of the input in this contract.
 
-The native DAE IVP lifecycle is currently autonomous and rejects an input-aware system
-when constructing `DifferentialAlgebraicProblem`. Controlled DAEs are consumed by
-[`phydrax.control` direct collocation](../control.md#direct-collocation), which evaluates
-the implicit residual at every collocation stage without pretending an input policy has
-been supplied to the IVP solver.
+`DifferentialAlgebraicProblem` binds an `AbstractInputPolicy` whenever the system is
+input-aware. Autonomous problems reject a policy; input-aware problems require one with
+the exact `InputLayout` identity. The policy is evaluated at every consistency candidate,
+implicit stage, residual certification, fixed/adaptive replay point, and continuation
+boundary, so state-dependent policy derivatives enter native Jacobians. Continuations
+retain and verify the policy ID. `HeldInputPolicy` provides state-independent,
+piecewise-constant interval values with an explicit internal-node convention.
 
 Nontrivial state geometry is rejected by the native BDF backend. The current BDF
 formula combines ambient Euclidean states and therefore cannot honestly preserve a
@@ -341,6 +343,10 @@ determine all algebraic rates.
 ---
 
 ::: phydrax.dynamics.DifferentialAlgebraicSystem
+
+---
+
+::: phydrax.dynamics.HeldInputPolicy
 
 ---
 
