@@ -355,6 +355,51 @@ operator on a general curved surface.
 
 ::: phydrax.operators.ambient_surface_hessian_trace
 
+## Implicit level-set interfaces
+
+These operators treat a scalar field \(\phi\) as an implicit interface with
+\(\phi<0\) inside and \(\phi>0\) outside. The regularized Heaviside and delta
+use an explicit compact transition width. `level_set_coarea_density` returns
+\(\delta_\epsilon(\phi)\lVert\nabla_x\phi\rVert\), so an ordinary ambient
+integral can approximate an evolving surface integral without changing the
+compiled domain or sample shape.
+
+Normals, curvature, and normal velocity require a regular zero set with
+\(\lVert\nabla_x\phi\rVert>0\) at the interface. `gradient_floor` prevents
+nonfinite evaluation away from that regular set; it is not a geometric
+certificate. Curvature is the sum of principal curvatures under the
+negative-inside convention.
+
+::: phydrax.operators.regularized_heaviside
+
+---
+
+::: phydrax.operators.regularized_delta
+
+---
+
+::: phydrax.operators.level_set_phase_indicator
+
+---
+
+::: phydrax.operators.level_set_gradient_norm
+
+---
+
+::: phydrax.operators.level_set_normal
+
+---
+
+::: phydrax.operators.level_set_curvature
+
+---
+
+::: phydrax.operators.level_set_normal_velocity
+
+---
+
+::: phydrax.operators.level_set_coarea_density
+
 ## Fractional derivatives
 
 The Caputo field operator uses deterministic Gauss--Jacobi or

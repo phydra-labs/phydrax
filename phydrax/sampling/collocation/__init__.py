@@ -30,6 +30,7 @@ from ._control import (
     ResidualMonitor,
 )
 from ._coreset import CoresetCollocation, CoresetCollocationPolicy
+from ._interface import NarrowBandCollocationPolicy
 from ._separable import (
     HierarchicalAxisCollocation,
     HierarchicalAxisPolicy,
@@ -37,6 +38,7 @@ from ._separable import (
     SeparableCollocationPolicy,
     SeparableCollocationPopulation,
 )
+from ._time_slab import CausalTimeSlabSchedule
 
 
 __all__ = [
@@ -50,6 +52,7 @@ __all__ = [
     "ControlledCollocationPolicy",
     "ControlledCollocationPopulation",
     "CoverageAnchors",
+    "CausalTimeSlabSchedule",
     "CoresetCollocation",
     "CoresetCollocationPolicy",
     "HierarchicalAxisCollocation",
@@ -58,6 +61,7 @@ __all__ = [
     "PeriodicSeparableCollocation",
     "PointwiseSamplingTerm",
     "PolicySupportTier",
+    "NarrowBandCollocationPolicy",
     "R3",
     "RARD",
     "RECOMMENDED_COLLOCATION_DEFAULTS",
