@@ -183,6 +183,11 @@ Triangle and segment geometry expose canonical cell-complex views through their
 simplicial topology objects. `TriangleMesh.discrete_support()` binds this topology to
 the mesh embedding identity.
 
+`phydrax.topology` consumes this canonical carrier directly for compact subcomplexes,
+exact field-qualified homology, filtrations, and persistence. It does not redefine
+entities, incidence, support, or metric cochains. See
+[Guide → Computational topology](guides_computational_topology.md).
+
 ## Finite elements
 
 Finite elements separate the shared computational mesh, reference element,

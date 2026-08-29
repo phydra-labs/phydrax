@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.topology`: compact active subcomplexes and relative pairs,
+  exact prime-field homology with cycle/cocycle representatives, exact rational
+  Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
+  ordinary and induced-relative persistent homology, natural and fixed-capacity
+  diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
+  and exact-nullity validation of metric cochain harmonic kernels.
 - Added a native linear-combinatorial substrate with separate logical decisions
   and objective features, content-addressed plans, deterministic ties, portable
   statuses, and independent certificates. Added exact streamed finite,

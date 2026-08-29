@@ -121,6 +121,7 @@ nav:
     - Guides:
         - Domains and sampling: "guides_domain.md"
         - Discretization: "guides_discretization.md"
+        - Computational topology: "guides_computational_topology.md"
         - Particle methods: "guides_particle_methods.md"
         - Particle-grid splatting: "guides_particle_splatting.md"
         - Smoothed particle hydrodynamics: "guides_sph.md"
@@ -216,6 +217,11 @@ nav:
             - Unstructured finite volume: "api/discretization/unstructured_finite_volume.md"
             - Modal and constrained solvers: "api/discretization/modal_solvers.md"
             - Fixed-capacity AMR: "api/discretization/amr.md"
+        - Computational topology:
+            - Overview: "api/topology/index.md"
+            - Exact homology: "api/topology/homology.md"
+            - Filtrations and persistence: "api/topology/persistence.md"
+            - Hodge integration: "api/topology/hodge.md"
         - Domains:
             - Overview: "api/domain/index.md"
             - Time: "api/domain/time.md"

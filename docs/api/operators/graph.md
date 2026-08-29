@@ -207,11 +207,12 @@ cells.
 
 ### Metric cochain complexes and DEC
 
-`CochainComplexIR` stores a canonical oriented cell complex: sparse signed
-incidences, primal and dual measures, diagonal Hodge stars, boundary masks,
-cell coordinates, and an optional precomputed harmonic subspace. Constructors
-validate chain-complex identities and positive metric data before the object can
-reach compiled execution.
+`CochainComplexIR` is the graph execution view of a canonical
+`phydrax.discretization.CellComplexTopology` and `CochainDiscretization`. It packs
+sparse signed incidences, primal and dual measures, diagonal Hodge stars, boundary
+masks, cell coordinates, and an optional precomputed harmonic subspace into
+`GraphIR`. Constructors validate chain-complex identities and positive metric data
+before the object can reach compiled execution.
 
 The functional DEC operators and their `GraphIR -> GraphIR` wrappers implement
 the exterior derivative, metric codifferential, split/full Hodge Laplacian, and
