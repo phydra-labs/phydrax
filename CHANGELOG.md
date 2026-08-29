@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.topology`: compact active subcomplexes and relative pairs,
+  exact prime-field homology with cycle/cocycle representatives, exact rational
+  Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
+  ordinary and induced-relative persistent homology, natural and fixed-capacity
+  diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
+  and exact-nullity validation of metric cochain harmonic kernels.
 - Added an end-to-end free-boundary SciML substrate: differentiable compact
   Heaviside/delta and coarea calculus; level-set phase, normal, curvature,
   velocity, and Eikonal operators; discontinuity-aware coordinate lifts;

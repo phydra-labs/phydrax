@@ -109,6 +109,22 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
+### Computational topology: exact invariants and filtered fields
+
+`phydrax.topology` consumes the canonical oriented cell complexes above without
+introducing another mesh or graph representation. Compact active layouts, algebraic
+subcomplexes and relative pairs, exact prime-field homology, exact rational Betti
+dimensions, validated lower/upper-star filtrations, and ordinary or induced-relative
+persistent homology retain topology, entity, coefficient, resource, and reduction
+evidence. Natural host diagrams pack explicitly for JAX; frozen pairings expose local
+endpoint derivatives only while the complete filtration order remains valid.
+
+Exact rational dimensions bridge to metric harmonic cochains through independently
+verified rank, orthonormality, residual, and spectral-gap evidence. Solvers still own
+whether a harmonic class is a gauge, compatibility obstruction, or physical
+circulation/flux mode. See
+[Guide → Computational topology](guides_computational_topology.md).
+
 ### Precision is an execution contract
 
 Precision is attached to executable stages, not inferred from one global dtype.

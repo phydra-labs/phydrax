@@ -42,6 +42,10 @@ Most workflows are composing a few primitives:
   particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
   measures, transfers, temporal/stochastic
   composition, and auditable plan/preparation identities.
+- **Computational topology**: compact active subcomplexes, exact field-qualified
+  homology, rational Betti dimensions, validated filtrations, persistent homology,
+  fixed-capacity diagrams, and independently verified topology–Hodge evidence over
+  canonical discretization complexes.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
 - **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
   transformations, metrics, connections, curvature, embedded charts, and

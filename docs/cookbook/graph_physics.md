@@ -880,9 +880,10 @@ Four related terms are intentionally distinct:
 - a **topological PINO** learns a map across cases or complexes with
   `CochainNeuralOperator` and evaluates the same declared cochain residual in
   operator training;
-- persistent-homology or persistence-diagram learning is a different problem.
-  Phydrax can use a precomputed harmonic subspace, but it does not infer
-  persistent homology from an ordinary coordinate PINN.
+- persistent-homology or persistence-diagram learning analyzes a declared finite
+  filtration with `phydrax.topology`. Exact pairing is host preprocessing; packed
+  diagrams and frozen-order endpoint evaluation are JAX consumers. An ordinary
+  coordinate PINN does not implicitly define a cell complex or filtration.
 
 ### A mixed zero-/one-form residual
 
