@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added implicit tensor-modal neural fields with Hermitian real-field projection,
+  explicit modal input scaling and resource bounds, optional positive exponential
+  decay and prepared-basis modulation, masked modal observations, and direct
+  residual training against compiled coefficient-resident spectral dynamics.
 - Added native low-rank adaptation for exact real `Linear` weight paths,
   factor-only `ParameterSubspace` training through `fit_operator` and Optax
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
