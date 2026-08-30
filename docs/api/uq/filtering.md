@@ -387,7 +387,10 @@ storage; it does not materialize a dense query-by-query posterior covariance.
 Unsupported regimes are rejected during preparation: kernel sums/products,
 amplitude wrappers, vector length scales, multidimensional inputs, derivative
 observations, SHO/CARMA models, non-Gaussian likelihoods, and parallel square-root
-execution. Covariances are not projected, clipped, repaired, or given implicit
+execution. Dynamically evaluated positive parameters that cannot produce finite
+representable decay, drift, covariance, and process-factor coefficients fail
+explicitly rather than saturating a transition. Covariances are not projected,
+clipped, repaired, or given implicit
 jitter. A degenerate zero-signal, zero-noise active observation consequently reports
 the canonical filtering failure instead of manufacturing a posterior.
 

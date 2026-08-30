@@ -685,6 +685,21 @@ def fit_state_space_gaussian_process(
         ~jnp.isfinite(components.length_scale) | (components.length_scale <= 0.0),
         "The evaluated length scale must be finite and strictly positive.",
     )
+    coefficients_finite = (
+        jnp.isfinite(components.variance)
+        & (components.variance >= 0.0)
+        & jnp.isfinite(components.decay_rate)
+        & jnp.all(jnp.isfinite(components.drift))
+        & jnp.all(jnp.isfinite(components.stationary))
+        & jnp.all(jnp.isfinite(components.stationary_factor))
+        & jnp.all(jnp.isfinite(components.process_factor))
+    )
+    initial_time = eqx.error_if(
+        initial_time,
+        ~coefficients_finite,
+        "The evaluated Matérn parameters must produce finite representable "
+        "state-space coefficients.",
+    )
     schedule_values = (
         jnp.zeros((plan.schedule_size, 1), dtype=components.drift.dtype)
         .at[plan.train_schedule_indices, 0]

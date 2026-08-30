@@ -676,6 +676,34 @@ def test_preparation_and_fit_reject_unsupported_or_invalid_inputs():
         train_times,
         query_times,
     )
+    subnormal = eqx.tree_at(
+        lambda node: node.kernel.length_scale,
+        plan,
+        jnp.asarray(np.nextafter(0.0, 1.0)),
+    )
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="finite and strictly positive",
+    ):
+        result = phx.uq.fit_state_space_gaussian_process(
+            subnormal,
+            jnp.asarray([0.0, 0.1]),
+        )
+        jax.block_until_ready(result.posterior_mean)
+    unrepresentable = eqx.tree_at(
+        lambda node: node.kernel.length_scale,
+        plan,
+        jnp.asarray(jnp.finfo(plan.schedule_times.dtype).tiny),
+    )
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="finite representable",
+    ):
+        result = phx.uq.fit_state_space_gaussian_process(
+            unrepresentable,
+            jnp.asarray([0.0, 0.1]),
+        )
+        jax.block_until_ready(result.posterior_mean)
     with pytest.raises(ValueError, match="train_values"):
         phx.uq.fit_state_space_gaussian_process(plan, jnp.asarray([0.0]))
     with pytest.raises(ValueError, match="noise_scale"):

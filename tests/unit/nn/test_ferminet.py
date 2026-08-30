@@ -10,6 +10,8 @@ from phydrax.nn.quantum._ferminet import (
     _scaled_determinant_components,
     _scaled_log_determinants,
     _stable_determinant_mixture,
+    _stable_signed_bilinear_product,
+    _stable_signed_product,
 )
 
 
@@ -152,6 +154,57 @@ def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow():
     value, directional = jax.jvp(logdet, (raw_orbitals,), (tangent,))
     assert jnp.all(jnp.isfinite(value))
     assert jnp.allclose(directional[0], 1.0)
+
+
+def test_extreme_log_scale_tangents_remain_representable_and_inactive():
+    value = jnp.asarray(1.0, dtype=jnp.float64)
+    large_tangent = jnp.asarray(1e300, dtype=jnp.float64)
+    negative_scale = jnp.asarray(-1000.0, dtype=jnp.float64)
+    expected = jnp.exp(jnp.log(large_tangent) + negative_scale)
+
+    _, unary_tangent = jax.jvp(
+        lambda scale: _stable_signed_product(value, scale),
+        (negative_scale,),
+        (large_tangent,),
+    )
+    _, bilinear_tangent = jax.jvp(
+        lambda scale: _stable_signed_bilinear_product(value, value, scale),
+        (negative_scale,),
+        (large_tangent,),
+    )
+    _, inactive_unary = jax.jvp(
+        lambda scale: _stable_signed_product(value, scale),
+        (jnp.asarray(1000.0),),
+        (jnp.asarray(0.0),),
+    )
+    _, inactive_bilinear = jax.jvp(
+        lambda scale: _stable_signed_bilinear_product(value, value, scale),
+        (jnp.asarray(1000.0),),
+        (jnp.asarray(0.0),),
+    )
+
+    assert jnp.allclose(unary_tangent, expected, rtol=1e-12, atol=0.0)
+    assert jnp.allclose(bilinear_tangent, expected, rtol=1e-12, atol=0.0)
+    assert inactive_unary == 0.0
+    assert inactive_bilinear == 0.0
+
+
+def test_zero_multiplier_mixed_derivative_stays_in_signed_log_domain():
+    log_scale = jnp.asarray(-1000.0, dtype=jnp.float64)
+    large_tangent = jnp.asarray(1e300, dtype=jnp.float64)
+    zero = jnp.asarray(0.0, dtype=jnp.float64)
+
+    def left_direction(right):
+        return jax.jvp(
+            lambda left: _stable_signed_bilinear_product(left, right, log_scale),
+            (zero,),
+            (large_tangent,),
+        )[1]
+
+    mixed_derivative = jax.grad(left_direction)(zero)
+    expected = jnp.exp(jnp.log(large_tangent) + log_scale)
+
+    assert jnp.allclose(mixed_derivative, expected, rtol=1e-12, atol=0.0)
 
 
 def test_singular_determinant_term_retains_mixture_derivative():

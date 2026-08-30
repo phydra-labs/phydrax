@@ -461,12 +461,21 @@ def _smoothing_factor(
         ),
         axis=-2,
     )
-    joint_factor = gaussian_factor_from_covariance(
-        joint_covariance,
-        rank_tolerance=_covariance_assembly_roundoff(joint_covariance),
-        factor_id="rts-joint-factor",
-    )
-    joint_root = _qr_lower_factor(joint_factor.factor)
+
+    def factor_one(covariance: Array, /) -> Array:
+        return gaussian_factor_from_covariance(
+            covariance,
+            rank_tolerance=_covariance_assembly_roundoff(covariance),
+            factor_id="rts-joint-factor",
+        ).factor
+
+    if joint_covariance.ndim == 2:
+        joint_factor = factor_one(joint_covariance)
+    else:
+        event_size = joint_covariance.shape[-1]
+        flattened = joint_covariance.reshape((-1, event_size, event_size))
+        joint_factor = jax.vmap(factor_one)(flattened).reshape(joint_covariance.shape)
+    joint_root = _qr_lower_factor(joint_factor)
     conditional_root = joint_root[..., state_size:, state_size:]
     gain = current_next @ _psd_pseudoinverse(predicted.covariance)
     transported_root = gain @ next_smoothed.factor
