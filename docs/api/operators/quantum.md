@@ -63,6 +63,10 @@ brackets.
 
 ### Continuum molecular electrons
 
+The exact small-system contract is
+`phydrax.operators.ELECTRONIC_MAX_ELECTRONS == 4`; all electronic construction
+and sampling entry points reject larger systems.
+
 ::: phydrax.operators.ElectronicKineticPolicy
 
 ::: phydrax.operators.ElectronicCoulombHamiltonian

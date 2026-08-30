@@ -16,7 +16,7 @@
   polynomial singular-term determinant derivatives, coefficient-aware
   nonzero-product mixture shifts with coefficient- and singularity-reactivation
   fallbacks, a positive physical decay floor, and determinant mixtures
-  differentiable at zero coefficients.
+  differentiable at zero coefficients, under an explicit four-electron ceiling.
   Electronic VMC
   folds local statuses into validity and reuses persistent chains, matrix-free
   score/Gram stochastic reconfiguration, training lifecycle, linear solves,

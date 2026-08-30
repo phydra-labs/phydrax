@@ -2,9 +2,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 from phydrax.nn.quantum._ferminet import (
+    _polynomial_determinant,
     _scaled_determinant_components,
     _scaled_log_determinants,
     _stable_determinant_mixture,
@@ -253,6 +255,37 @@ def test_inactive_huge_coefficient_does_not_hide_tiny_active_product():
     assert jnp.allclose(log_abs, jnp.log(jnp.asarray(1e-300)))
     assert jnp.isposinf(gradient[0])
     assert jnp.allclose(gradient[1], 1.0)
+
+
+def test_polynomial_determinant_ceiling_parity_and_above_ceiling_rejection():
+    size = phx.operators.ELECTRONIC_MAX_ELECTRONS
+    assert size == 4
+    perturbation_values = [
+        [0.0, 1.0, -0.5, 0.25],
+        [-0.75, 0.0, 0.5, -0.25],
+        [0.5, -0.5, 0.0, 0.75],
+        [-0.25, 0.25, -0.75, 0.0],
+    ]
+    for dtype, tolerance in (
+        (jnp.float32, 2e-6),
+        (jnp.float64, 1e-12),
+    ):
+        identity = jnp.eye(size, dtype=dtype)
+        perturbation = jnp.asarray(perturbation_values, dtype=dtype)
+        near_identity = identity + 1e-4 * perturbation
+        assert jnp.allclose(_polynomial_determinant(identity), 1.0)
+        assert jnp.allclose(
+            _polynomial_determinant(near_identity),
+            jnp.linalg.det(near_identity),
+            rtol=tolerance,
+            atol=tolerance,
+        )
+
+    nuclei = _structure([[0.0, 0.0, 0.0]], name="electron-ceiling")
+    with pytest.raises(ValueError, match="between one and 4"):
+        phx.nn.quantum.FermiNet(nuclei, size + 1, 3, key=jr.key(90))
+    with pytest.raises(ValueError, match="between one and 4"):
+        phx.operators.ElectronicCoulombHamiltonian(nuclei, size + 1)
 
 
 def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():

@@ -56,6 +56,11 @@ def _structure(case: MolecularCase):
 
 
 def _problem(case: MolecularCase, seed: int):
+    if not 1 <= case.electron_count <= phx.operators.ELECTRONIC_MAX_ELECTRONS:
+        raise ValueError(
+            "Electronic benchmark cases must stay within the exact small-system "
+            "electron ceiling."
+        )
     nuclei = _structure(case)
     model = phx.nn.quantum.FermiNet(
         nuclei,
@@ -210,6 +215,7 @@ def main():
             "python": platform.python_version(),
             "platform": platform.platform(),
             "finite_nonperiodic": True,
+            "maximum_electrons": phx.operators.ELECTRONIC_MAX_ELECTRONS,
             "born_oppenheimer": True,
             "relativistic": False,
             "stochastic_trace": False,

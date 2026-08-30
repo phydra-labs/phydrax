@@ -21,7 +21,7 @@ from ..._precision import real_precision_dtype_name
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure
-from ...operators.quantum import LogAmplitude
+from ...operators.quantum import ELECTRONIC_MAX_ELECTRONS, LogAmplitude
 from ..parameters import PositiveTransform
 
 
@@ -333,8 +333,11 @@ class FermiNet(StrictModule):
         layers = int(layer_count)
         determinants = int(determinant_count)
         minimum_decay = float(minimum_envelope_decay)
-        if electrons <= 0:
-            raise ValueError("electron_count must be positive.")
+        if electrons <= 0 or electrons > ELECTRONIC_MAX_ELECTRONS:
+            raise ValueError(
+                "FermiNet electron_count must be between one and "
+                f"{ELECTRONIC_MAX_ELECTRONS}."
+            )
         if spin_up < 0 or spin_up > electrons:
             raise ValueError("spin_up_count must lie between zero and electron_count.")
         if hidden <= 0 or pair_hidden <= 0 or layers <= 0 or determinants <= 0:

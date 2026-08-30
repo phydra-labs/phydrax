@@ -200,6 +200,11 @@ than regularized. Periodic, relativistic, and stochastic-trace Hamiltonians are
 unsupported. A finite correlated-chain energy is not automatically reported as a
 variational upper bound.
 
+The current end-to-end exact electronic contract supports one through four
+electrons (`phx.operators.ELECTRONIC_MAX_ELECTRONS`). Larger systems are rejected
+rather than routed through an unqualified determinant implementation; this H/He/H₂
+campaign is a small-system capability, not an unrestricted molecular claim.
+
 `tools/electronic_vmc_benchmarks.py` defines the fixed multi-seed H/He/H₂ campaign,
 including predeclared statistical and chemical gates, ESS/R-hat, timing, parameter
 counts, summaries, and provenance.

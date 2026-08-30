@@ -31,6 +31,7 @@ from ._local import (
 
 
 ElectronicTraceMethod: TypeAlias = Literal["exact", "chunked-exact"]
+ELECTRONIC_MAX_ELECTRONS = 4
 
 _BOHR_PER_ANGSTROM = 1.8897261254578281
 _HARTREE_PER_ELECTRONVOLT = 0.03674932217565499
@@ -227,8 +228,11 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
             )
         _require_atomic_reference(nuclei.scale)
         count = int(electron_count)
-        if count <= 0:
-            raise ValueError("electron_count must be positive.")
+        if count <= 0 or count > ELECTRONIC_MAX_ELECTRONS:
+            raise ValueError(
+                "electron_count must be between one and "
+                f"{ELECTRONIC_MAX_ELECTRONS} for exact electronic VMC."
+            )
         policy = ElectronicKineticPolicy() if kinetic is None else kinetic
         if not isinstance(policy, ElectronicKineticPolicy):
             raise TypeError("kinetic must be an ElectronicKineticPolicy or None.")
@@ -519,8 +523,11 @@ def harmonic_mean_electron_proposal(
     _require_atomic_reference(nuclei.scale)
     count = int(electron_count)
     step = float(step_size)
-    if count <= 0:
-        raise ValueError("electron_count must be positive.")
+    if count <= 0 or count > ELECTRONIC_MAX_ELECTRONS:
+        raise ValueError(
+            "electron_count must be between one and "
+            f"{ELECTRONIC_MAX_ELECTRONS} for exact electronic VMC."
+        )
     if not np.isfinite(step) or step <= 0.0:
         raise ValueError("step_size must be finite and positive.")
     return _HarmonicMeanElectronProposal(nuclei, count, step)
@@ -549,8 +556,15 @@ def electronic_initial_walkers(
     electrons = int(electron_count)
     walkers = int(walker_count)
     spread_value = float(spread)
-    if electrons <= 0 or walkers <= 0:
-        raise ValueError("electron_count and walker_count must be positive.")
+    if (
+        electrons <= 0
+        or electrons > ELECTRONIC_MAX_ELECTRONS
+        or walkers <= 0
+    ):
+        raise ValueError(
+            "electron_count must be within the exact-electronic ceiling and "
+            "walker_count must be positive."
+        )
     if not np.isfinite(spread_value) or spread_value <= 0.0:
         raise ValueError("spread must be finite and positive.")
     active = np.asarray(nuclei.active_mask, dtype=bool)
@@ -571,6 +585,7 @@ def electronic_initial_walkers(
 
 
 __all__ = [
+    "ELECTRONIC_MAX_ELECTRONS",
     "ElectronicCoulombHamiltonian",
     "ElectronicKineticPolicy",
     "ElectronicTraceMethod",

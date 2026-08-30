@@ -981,8 +981,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   finite-molecule Coulomb VMC share persistent MCMC, matrix-free score/Gram SR,
   statuses, diagnostics, and checkpoints. The continuum path includes exact or
   chunked-exact coordinate traces, state-corrected electronic proposals, and a
-  full-determinant FermiNet; it excludes periodic/relativistic electrons and
-  stochastic traces. Complex residual penalties remain real and nonnegative.
+  full-determinant FermiNet under a conservative four-electron ceiling; it
+  excludes larger, periodic, or relativistic electron systems and stochastic
+  traces. Complex residual penalties remain real and nonnegative.
   See [Guides → Quantum operators and dynamics](guides_quantum.md),
   [Cookbook → Variational Monte Carlo](cookbook/quantum_vmc.md), and
   [Cookbook → Open-system amplitude damping](cookbook/quantum_open_system.md).

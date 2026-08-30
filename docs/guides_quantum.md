@@ -333,6 +333,12 @@ electron/nucleus, or active nucleus/nucleus pair returns
 `SINGULAR_CONFIGURATION` and a NaN value. Distances are never clipped. Cell or
 periodic metadata is rejected, and relativistic terms are not inferred.
 
+The exact electronic/FermiNet capability is deliberately a small-system contract:
+`ELECTRONIC_MAX_ELECTRONS == 4`. Hamiltonians, walkers, proposals, FermiNet
+construction, and benchmark cases reject larger electron counts. This ceiling
+bounds the polynomial determinant used to preserve derivatives at singular terms;
+the API does not claim unrestricted molecular scaling.
+
 `ElectronicKineticPolicy` offers `exact` and `chunked-exact` coordinate Hessian
 traces. Both evaluate all `3 * electron_count` coordinate second derivatives;
 chunking limits simultaneous derivative actions rather than changing the

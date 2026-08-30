@@ -26,6 +26,11 @@ returns `phydrax.operators.LogAmplitude` for
 one configuration or a leading
 batch. Same-spin exchanges are antisymmetric.
 
+The exact continuum-electron path is limited to
+`phydrax.operators.ELECTRONIC_MAX_ELECTRONS == 4`. `FermiNet` rejects larger
+systems; this conservative ceiling bounds the polynomial determinant required for
+honest singular-term derivatives across supported dtypes.
+
 ::: phydrax.nn.quantum.FermiNet
     options:
         members:

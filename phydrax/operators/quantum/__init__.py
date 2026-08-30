@@ -38,6 +38,7 @@ from ._discrete import (
     ConnectedConfigurations,
 )
 from ._electronic import (
+    ELECTRONIC_MAX_ELECTRONS,
     ElectronicCoulombHamiltonian,
     ElectronicKineticPolicy,
     ElectronicTraceMethod,
@@ -123,6 +124,7 @@ __all__ = [
     "density_expectation",
     "density_fidelity",
     "density_from_factor",
+    "ELECTRONIC_MAX_ELECTRONS",
     "ElectronicCoulombHamiltonian",
     "ElectronicKineticPolicy",
     "ElectronicTraceMethod",
