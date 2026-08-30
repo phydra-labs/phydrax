@@ -253,6 +253,12 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._fem_multirate import (
+    conservative_multirate_flux,
+    DGInterfaceFluxResult,
+    DGMultirateTracePlan,
+    DGTraceHistory,
+)
 from ._fermionic_gaussian import (
     damped_fermionic_mode,
     FermionicGaussianProblem,
@@ -1012,6 +1018,10 @@ __all__ = [
     "DAEAttemptHistory",
     "DAEAttemptStatus",
     "DAEContinuation",
+    "conservative_multirate_flux",
+    "DGInterfaceFluxResult",
+    "DGMultirateTracePlan",
+    "DGTraceHistory",
     "DAEFailureMode",
     "DAERegularityEvidence",
     "DAERegularityFailureMode",

@@ -9,6 +9,7 @@ from . import (
     crystal_plasticity,
     fracture,
     free_boundary,
+    incompressible_flow,
     phase_field,
     solid_mechanics,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "crystal_plasticity",
     "fracture",
     "free_boundary",
+    "incompressible_flow",
     "phase_field",
     "solid_mechanics",
 ]
