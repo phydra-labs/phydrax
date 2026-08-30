@@ -60,8 +60,21 @@ def _dense_gp(kernel, train_times, train_values, query_times, noise_scale):
     policy = phx.linalg.LinearSolvePolicy(phx.linalg.DenseCholesky())
 
     def solve(right_hand_side):
+        operator = phx.linalg.DenseLinearOperator(
+            covariance,
+            properties=phx.linalg.OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                positive_semidefinite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "construction",
+                    "positive_semidefinite": "construction",
+                },
+            ),
+        )
         return phx.linalg.solve(
-            phx.linalg.LinearSystem(phx.linalg.DenseLinearOperator(covariance)),
+            phx.linalg.LinearSystem(operator),
             right_hand_side,
             policy=policy,
         ).value

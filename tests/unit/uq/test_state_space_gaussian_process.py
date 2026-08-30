@@ -222,6 +222,59 @@ def test_widely_separated_schedule_matches_dense_without_van_loan_overflow(kerne
     assert jnp.allclose(result.posterior_variance, dense[2], rtol=2e-7, atol=2e-7)
 
 
+def test_benchmark_scale_smoother_accepts_only_joint_covariance_roundoff():
+    size = 64
+    kernel = phx.kernels.ScaleKernel(
+        phx.kernels.Matern52Kernel(length_scale=0.37),
+        1.6,
+    )
+    increments = 0.2 + jnp.square(jnp.linspace(0.1, 1.0, size))
+    train_times = jnp.cumsum(increments)
+    train_times = train_times / train_times[-1]
+    train_values = (
+        jnp.sin(7.0 * train_times)
+        + 0.2 * jnp.cos(19.0 * train_times)
+        + 0.05 * train_times
+    )
+    query_times = jnp.linspace(-0.2, 1.2, 65)
+    noise_scale = jnp.asarray(0.035)
+    plan = phx.uq.compile_state_space_kernel(
+        kernel,
+        train_times[::-1],
+        query_times[::-1],
+        max_schedule_size=size + query_times.size,
+    )
+    result = phx.uq.fit_state_space_gaussian_process(
+        plan,
+        train_values[::-1],
+        noise_scale=noise_scale,
+    )
+    dense = _dense_gp(
+        kernel,
+        train_times,
+        train_values,
+        query_times,
+        jnp.ones(train_times.shape, dtype=bool),
+        noise_scale,
+    )
+
+    assert bool(result.successful)
+    assert jnp.all(result.smoother_result.valid)
+    assert jnp.allclose(
+        result.log_marginal_likelihood,
+        dense[0],
+        rtol=2e-7,
+        atol=2e-7,
+    )
+    assert jnp.allclose(result.posterior_mean[::-1], dense[1], rtol=2e-7, atol=2e-7)
+    assert jnp.allclose(
+        result.posterior_variance[::-1],
+        dense[2],
+        rtol=2e-7,
+        atol=2e-7,
+    )
+
+
 def test_large_time_origin_with_sub_ulp_length_scale_matches_dense_gp():
     origin = jnp.asarray(1.0e12)
     kernel = phx.kernels.Matern32Kernel(length_scale=1.0e-6)

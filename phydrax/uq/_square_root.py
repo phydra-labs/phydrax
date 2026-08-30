@@ -35,6 +35,21 @@ def _covariance(factor: Array, /) -> Array:
     return factor @ _adjoint(factor)
 
 
+def _covariance_assembly_roundoff(covariance: Array, /) -> Array:
+    """Bound backward error from assembling an algebraically PSD block matrix."""
+    real_dtype = jnp.real(covariance).dtype
+    precision = jnp.finfo(real_dtype)
+    operation_bound = jnp.asarray(
+        4 * covariance.shape[-1],
+        dtype=real_dtype,
+    )
+    scale = jnp.maximum(
+        jnp.max(jnp.abs(covariance)),
+        jnp.asarray(precision.tiny, dtype=real_dtype),
+    )
+    return operation_bound * jnp.asarray(precision.eps, dtype=real_dtype) * scale
+
+
 def _qr_lower_factor(columns: Array, /) -> Array:
     """Compress covariance columns without forming their Gram matrix."""
     _, upper = jnp.linalg.qr(_adjoint(columns), mode="reduced")
@@ -448,6 +463,7 @@ def _smoothing_factor(
     )
     joint_factor = gaussian_factor_from_covariance(
         joint_covariance,
+        rank_tolerance=_covariance_assembly_roundoff(joint_covariance),
         factor_id="rts-joint-factor",
     )
     joint_root = _qr_lower_factor(joint_factor.factor)

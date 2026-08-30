@@ -360,11 +360,16 @@ filter and matching square-root RTS smoother with zero covariance regularization
 External timestamps and schedule identity are preserved, while internal inference
 subtracts the earliest schedule time. The stationary prior therefore begins at
 internal time `-length_scale`, avoiding both a zero-process-root derivative and
-large-origin subtraction loss. Interval process covariance uses bounded Van Loan
-evaluation only for normalized short gaps and the stationary identity
-`P∞ - Φ P∞ Φᵀ` for long gaps, so large extrapolation intervals do not evaluate the
-exponentially growing auxiliary block. The RTS recursion is one reverse
-`jax.lax.scan`, not a schedule-sized unrolled graph.
+large-origin subtraction loss. Matérn derivative coordinates are normalized by the
+kernel decay rate; closed-form dimensionless Jordan transitions therefore remain
+finite even for tiny length scales and long gaps. Interval process covariance uses
+bounded Van Loan evaluation only for normalized short gaps and the stationary
+identity `P∞ - Φ P∞ Φᵀ` for long gaps, so large extrapolation intervals do not
+evaluate the exponentially growing auxiliary block. The RTS recursion is one reverse
+`jax.lax.scan`, not a schedule-sized unrolled graph. Its algebraically positive
+semidefinite joint block uses a scale-aware floating-point assembly bound only to
+classify backward-error-sized negative eigenvalues as numerical null directions.
+The covariance is not modified and no regularization is added.
 
 `posterior_mean` and `posterior_variance` are latent query marginals;
 `predictive_variance` adds the declared observation variance. The result also
