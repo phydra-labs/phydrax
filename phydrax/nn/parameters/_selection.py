@@ -127,6 +127,31 @@ class ParameterSubspace(StrictModule):
             [path for path in available if path in selected],
         )
 
+    def validate_root(self, tree: PyTree[Any], /) -> None:
+        """Require the exact root tree used to construct this parameter subspace."""
+        equal = eqx.tree_equal(self.reconstruct(self.initial), tree)
+        matched = equal if isinstance(equal, bool) else bool(jax.device_get(equal))
+        if not matched:
+            raise ValueError(
+                "ParameterSubspace does not describe the supplied root PyTree."
+            )
+
+    def rebase(
+        self,
+        tree: PyTree[Any],
+        /,
+        *,
+        exact_dtype: bool = True,
+    ) -> ParameterSubspace:
+        """Apply the same exact leaf paths to a compatible updated root tree."""
+        rebased = type(self).from_leaf_paths(tree, self.leaf_paths)
+        if rebased.leaf_shapes != self.leaf_shapes:
+            raise ValueError("Rebased parameter leaves changed shape.")
+        if exact_dtype and rebased.leaf_dtypes != self.leaf_dtypes:
+            raise ValueError("Rebased parameter leaves changed dtype.")
+        return rebased
+
+
     def pack(self, selected: PyTree[Any] | None = None, /) -> Array:
         """Flatten a selected parameter position in deterministic leaf order."""
         position = self.initial if selected is None else selected

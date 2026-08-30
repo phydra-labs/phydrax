@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added native low-rank adaptation for exact real `Linear` weight paths,
+  factor-only `ParameterSubspace` training through `fit_operator` and Optax
+  `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
+  deployment merging, and checksum-validated adapter artifacts bound to the
+  complete base model content and structure.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
