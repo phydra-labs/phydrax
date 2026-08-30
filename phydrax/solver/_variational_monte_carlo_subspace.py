@@ -24,6 +24,7 @@ from .._sampling import (
     sample_markov,
 )
 from .._strict import StrictModule
+from .._trainable import partition_trainable
 from ..linalg import (
     ArraySpace,
     EmpiricalGramLinearOperator,
@@ -164,10 +165,11 @@ def _resolve_modes(
 
 
 def _default_parameter_subspace(model: Any, /) -> ParameterSubspace | None:
-    leaves = jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_inexact_array))
-    if not leaves:
+    trainable, _non_trainable = partition_trainable(model)
+    paths = ParameterSubspace.array_leaf_paths(trainable)
+    if not paths:
         return None
-    return ParameterSubspace(model, eqx.is_inexact_array)
+    return ParameterSubspace.from_leaf_paths(model, paths)
 
 
 def _mixture_components(

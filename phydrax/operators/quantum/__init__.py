@@ -36,8 +36,19 @@ from ._discrete import (
     AbstractDiscreteQuantumOperator,
     CallableDiscreteQuantumOperator,
     ConnectedConfigurations,
-    local_estimate,
-    LocalEstimate,
+)
+from ._electronic import (
+    ElectronicCoulombHamiltonian,
+    ElectronicKineticPolicy,
+    ElectronicTraceMethod,
+    electronic_initial_walkers,
+    harmonic_mean_electron_proposal,
+)
+from ._local import (
+    AbstractLocalQuantumOperator,
+    evaluate_local_operator,
+    LocalOperatorEstimate,
+    LocalOperatorStatus,
 )
 from ._dynamics import (
     HamiltonianAction,
@@ -100,6 +111,7 @@ from ._symmetry import FiniteSignedPermutationSymmetry, SymmetryProjectedAmplitu
 
 
 __all__ = [
+    "AbstractLocalQuantumOperator",
     "AbstractDiscreteQuantumOperator",
     "AmplitudeRatio",
     "HamiltonianAction",
@@ -111,16 +123,22 @@ __all__ = [
     "density_expectation",
     "density_fidelity",
     "density_from_factor",
+    "ElectronicCoulombHamiltonian",
+    "ElectronicKineticPolicy",
+    "ElectronicTraceMethod",
+    "electronic_initial_walkers",
+    "evaluate_local_operator",
     "FiniteSignedPermutationSymmetry",
     "embed_operator",
     "heisenberg_residual",
     "hermiticity_residual",
     "lindblad_dissipator",
-    "LocalEstimate",
+    "LocalOperatorEstimate",
+    "LocalOperatorStatus",
     "LogAmplitude",
     "lindblad_residual",
     "amplitude_ratio",
-    "local_estimate",
+    "harmonic_mean_electron_proposal",
     "quantum_bracket",
     "observable_variance",
     "purity",

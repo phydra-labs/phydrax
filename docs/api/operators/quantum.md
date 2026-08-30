@@ -37,7 +37,7 @@ brackets.
 
 ::: phydrax.operators.trace_distance
 
-## Variational amplitudes and connected operators
+## Variational amplitudes and local operators
 
 ::: phydrax.operators.LogAmplitude
 
@@ -47,15 +47,29 @@ brackets.
 
 ::: phydrax.operators.amplitude_ratio
 
+::: phydrax.operators.AbstractLocalQuantumOperator
+
+::: phydrax.operators.LocalOperatorEstimate
+
+::: phydrax.operators.LocalOperatorStatus
+
+::: phydrax.operators.evaluate_local_operator
+
 ::: phydrax.operators.ConnectedConfigurations
 
 ::: phydrax.operators.AbstractDiscreteQuantumOperator
 
 ::: phydrax.operators.CallableDiscreteQuantumOperator
 
-::: phydrax.operators.LocalEstimate
+### Continuum molecular electrons
 
-::: phydrax.operators.local_estimate
+::: phydrax.operators.ElectronicKineticPolicy
+
+::: phydrax.operators.ElectronicCoulombHamiltonian
+
+::: phydrax.operators.electronic_initial_walkers
+
+::: phydrax.operators.harmonic_mean_electron_proposal
 
 ### Finite symmetry sectors
 

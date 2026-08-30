@@ -291,57 +291,81 @@ to numerical error.
 This path is separate from matrix-free VMC/TDVP and from residual-only
 Schrödinger conditions.
 
-## Discrete variational Monte Carlo
+## Local-operator variational Monte Carlo
 
-Finite-configuration VMC is separate from `DomainFunction` residual learning. A user
-amplitude model maps one discrete configuration to `LogAmplitude(log_abs, phase)`;
-the sampler targets the real log density `2 * log_abs`, while the phase remains
-available to connected local observables.
+Finite-configuration and continuum-electron VMC share one local-operator contract.
+An amplitude maps one configuration to `LogAmplitude(log_abs, phase)`, and the
+sampler targets the real log density `2 * log_abs`. Every
+`AbstractLocalQuantumOperator` returns `LocalOperatorEstimate`: local value,
+validity, portable status, operator-specific work count, configuration shape,
+operator identity, compute dtype, and method identity.
 
-`AbstractDiscreteQuantumOperator` fixes the local-estimator convention
+For `AbstractDiscreteQuantumOperator`, the unchanged connected-configuration
+algorithm evaluates
 
 $$
 E_{\mathrm{loc}}(x)=\sum_{x'}H_{x,x'}\frac{\psi(x')}{\psi(x)}.
 $$
 
-`connections(x)` returns fixed-capacity connected configurations, `H[x, x']`
-matrix elements, and a validity mask. A downstream fermionic operator is responsible
-for including its ordering signs in those matrix elements. Padded slots are ignored;
-active invalid ratios or nonfinite elements invalidate the estimator.
+`connections(x)` returns fixed-capacity connected configurations, matrix elements,
+and a validity mask. Fermionic ordering signs remain the discrete operator's
+responsibility. Padded slots are ignored; an active invalid amplitude ratio or
+nonfinite matrix element fails closed. `work_count` is the active connection count.
 
-`VariationalMonteCarloProblem` combines the amplitude model, connected operator,
-fixed `MetropolisHastings` kernel, initial chains, and explicit complex-parameter
-mode. `solve_variational_monte_carlo` preserves chain state across updates, but
-refreshes stored target values after every parameter change. It constructs centered
-score geometry through `EmpiricalGramLinearOperator` and solves the damped SR system
-through the ordinary `phydrax.linalg` runtime.
+`ElectronicCoulombHamiltonian` implements the nonrelativistic Born--Oppenheimer
+molecular Hamiltonian in three dimensions,
 
-The parameter modes are mathematically distinct:
+$$
+H=-\frac12\sum_i\nabla_i^2
+  +\sum_{i<j}\frac1{r_{ij}}
+  -\sum_{iA}\frac{Z_A}{r_{iA}}
+  +\sum_{A<B}\frac{Z_A Z_B}{R_{AB}}.
+$$
 
-- `real`: real trainable coordinates; complex score outputs are represented by real
-  and imaginary feature channels;
-- `holomorphic`: complex coordinates with a declared holomorphic amplitude;
-- `nonholomorphic`: complex model parameters split into independent real coordinates.
+Nuclei and unit conversion come from `AtomicStructure`. Electron configurations
+have shape `(electron_count, 3)`. Active pair masks exclude only exact self pairs;
+an exact coincident electron/electron, electron/nucleus, or active nucleus/nucleus
+pair returns `SINGULAR_CONFIGURATION` and a NaN value. Distances are never clipped.
+Cell or periodic metadata is rejected, and relativistic terms are not inferred.
 
-`FiniteSignedPermutationSymmetry` defines an immutable finite group of site
-permutations and sign actions together with a unit-modulus one-dimensional character.
-Construction validates identity, uniqueness, closure, and the character
-representation law. `SymmetryProjectedAmplitude` evaluates every group image and
-forms the stable character-weighted amplitude projection without materializing a
-state vector. Translation, reflection, global spin-flip, parity, and momentum sectors
-can therefore wrap a user model without changing the sampler or VMC solver.
+`ElectronicKineticPolicy` offers `exact` and `chunked-exact` coordinate Hessian
+traces. Both evaluate all `3 * electron_count` coordinate second derivatives;
+chunking limits simultaneous derivative actions rather than changing the
+mathematics or claiming dimension-independent cost. Stochastic trace estimation is
+not supported.
 
-`solve_variational_tdvp` reuses this exact sampling and geometry substrate for
-fixed-step real- or imaginary-time evolution. Holomorphic coordinates solve the
-complex Dirac--Frenkel force directly; real and non-holomorphic coordinates use the
-corresponding real/imaginary covariance projections. TDVP records the entire parameter,
-energy, variance, acceptance, velocity, and linear-solve trajectory without claiming
-adaptive time-discretization or exact unitarity.
+`phydrax.nn.quantum.FermiNet` supplies a canonical `LogAmplitude` for this
+Hamiltonian. It uses shared one- and two-electron streams, a static leading
+spin-up/trailing spin-down partition, full generalized Slater determinants, stable
+signed log-domain determinant combination, and strictly positive envelope decay
+parameters. Same-spin coordinate exchange is antisymmetric. The full generalized
+determinant does not impose a standalone spatial sign rule on an opposite-spin
+exchange.
 
-Samples are correlated. `markov_chain_measure` sets `independent=False`, so integration
-does not manufacture an IID standard error. Training diagnostics record energy,
-variance, imaginary mean residue, acceptance, metric solve status, and update norm.
-A separate frozen-model chain run produces the final estimate.
+`electronic_initial_walkers` draws replayable finite-molecule chains around active
+nuclei. `harmonic_mean_electron_proposal` scales each electron's Gaussian move by
+the harmonic mean of its electron--nucleus distances. The proposal is
+state-dependent, so its `log_prob` implements both directions and the existing
+`MetropolisHastings` kernel applies the exact proposal-density correction.
+
+`VariationalMonteCarloProblem` combines the amplitude, any local operator, fixed
+`MetropolisHastings` kernel, initial chains, and explicit complex-parameter mode.
+`solve_variational_monte_carlo` preserves chain state, refreshes stored target
+values after parameter updates, and uses the shared training lifecycle. It builds
+the score as a `JacobianLinearOperator`, the centered stochastic-reconfiguration
+metric as `EmpiricalGramLinearOperator`, and solves through `phydrax.linalg`; it
+does not materialize a sample-by-parameter Jacobian.
+
+The parameter modes are `real`, `holomorphic`, and `nonholomorphic` (independent
+real coordinates for complex parameters). `FiniteSignedPermutationSymmetry` and
+`SymmetryProjectedAmplitude` remain available for finite discrete sectors.
+`solve_variational_tdvp` reuses the local-operator VMC estimate and geometry for
+fixed-step real- or imaginary-time evolution.
+
+Samples are correlated. `markov_chain_measure` marks them non-IID, and the final
+frozen-model chain can record ESS and rank-normalized R-hat diagnostics. A finite
+energy estimate is not labeled a variational upper bound unless the estimator and
+trial-domain conditions have been established separately.
 
 See the [VMC cookbook](cookbook/quantum_vmc.md) and
 [solver API](api/solver/variational_monte_carlo.md).

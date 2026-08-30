@@ -24,6 +24,8 @@ from .._sampling import (
     sample_markov,
 )
 from .._strict import StrictModule
+from .._trainable import partition_trainable
+from .._training import TrainingController, TrainingProgress
 from ..integration import integrate, markov_chain_measure
 from ..linalg import (
     ArraySpace,
@@ -38,10 +40,10 @@ from ..linalg import (
 )
 from ..nn.parameters import ParameterSubspace
 from ..operators.quantum import (
-    AbstractDiscreteQuantumOperator,
+    AbstractLocalQuantumOperator,
     ComplexParameterMode,
-    local_estimate,
-    LocalEstimate,
+    evaluate_local_operator,
+    LocalOperatorEstimate,
     LogAmplitude,
     sampling_log_weight,
 )
@@ -139,11 +141,17 @@ def _surrogate(amplitude: LogAmplitude, /) -> Array:
     return amplitude.log_abs + amplitude.phase / safe_phase
 
 
+def _default_parameter_subspace(model: Any, /) -> ParameterSubspace:
+    trainable, _non_trainable = partition_trainable(model)
+    paths = ParameterSubspace.array_leaf_paths(trainable)
+    return ParameterSubspace.from_leaf_paths(model, paths)
+
+
 class VariationalMonteCarloProblem(StrictModule):
-    """Amplitude model, connected operator, sampler, and selected parameter space."""
+    """Amplitude model, local operator, sampler, and selected parameter space."""
 
     model: Any
-    operator: AbstractDiscreteQuantumOperator
+    operator: AbstractLocalQuantumOperator
     kernel: MetropolisHastings
     initial_configurations: Array
     parameter_subspace: ParameterSubspace
@@ -155,7 +163,7 @@ class VariationalMonteCarloProblem(StrictModule):
     def __init__(
         self,
         model: Any,
-        operator: AbstractDiscreteQuantumOperator,
+        operator: AbstractLocalQuantumOperator,
         kernel: MetropolisHastings,
         initial_configurations: Array,
         /,
@@ -166,8 +174,8 @@ class VariationalMonteCarloProblem(StrictModule):
     ):
         if not callable(model):
             raise TypeError("model must be callable.")
-        if not isinstance(operator, AbstractDiscreteQuantumOperator):
-            raise TypeError("operator must implement AbstractDiscreteQuantumOperator.")
+        if not isinstance(operator, AbstractLocalQuantumOperator):
+            raise TypeError("operator must implement AbstractLocalQuantumOperator.")
         if not isinstance(kernel, MetropolisHastings):
             raise TypeError("kernel must be a MetropolisHastings instance.")
         configs = jnp.asarray(initial_configurations)
@@ -188,7 +196,7 @@ class VariationalMonteCarloProblem(StrictModule):
                 "The exemplar initial configuration must have nonzero amplitude."
             )
         subspace = (
-            ParameterSubspace(model, eqx.is_inexact_array)
+            _default_parameter_subspace(model)
             if parameter_subspace is None
             else parameter_subspace
         )
@@ -381,7 +389,7 @@ class VariationalMonteCarloEstimate(StrictModule):
     active_samples: Array
     valid: Array
     status: Array
-    local: LocalEstimate
+    local: LocalOperatorEstimate
     chain_diagnostics: MCMCDiagnostics | None
 
     @property
@@ -427,7 +435,7 @@ def _estimate_from_samples(
     compute_chain_diagnostics: bool,
 ) -> VariationalMonteCarloEstimate:
     configurations = jnp.asarray(samples.samples)
-    local = local_estimate(model, problem.operator, configurations)
+    local = evaluate_local_operator(model, problem.operator, configurations)
     target = markov_chain_measure(samples)
     energy_result = integrate(local.value, target)
     energy = _extract_scalar(energy_result.value)
@@ -798,7 +806,7 @@ def solve_variational_monte_carlo(
     key: Key[Array, ""] | None = None,
     state: VariationalMonteCarloState | None = None,
 ) -> VariationalMonteCarloResult:
-    """Optimize a discrete amplitude model with persistent-chain SR updates."""
+    """Optimize a local-operator amplitude model with persistent-chain SR updates."""
     if not isinstance(problem, VariationalMonteCarloProblem):
         raise TypeError("problem must be a VariationalMonteCarloProblem.")
     if not isinstance(policy, VariationalMonteCarloPolicy):
@@ -823,6 +831,11 @@ def solve_variational_monte_carlo(
     update_norms: list[Array] = []
     statuses: list[Array] = []
     linear_results: list[LinearSolveResult] = []
+    control = TrainingController(
+        total_steps=int(current.iteration) + policy.num_iterations,
+        key=resolved_key,
+        progress=TrainingProgress(update_step=int(current.iteration)),
+    )
 
     for _ in range(policy.num_iterations):
         iteration = int(current.iteration)
@@ -907,6 +920,7 @@ def solve_variational_monte_carlo(
             root_key=resolved_key,
         )
 
+        control.complete_update(iteration + 1)
     final_key = jr.fold_in(resolved_key, 0xF1A1)
     final_estimate, _final_samples = evaluate_variational_monte_carlo(
         problem,

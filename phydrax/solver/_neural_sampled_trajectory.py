@@ -22,7 +22,10 @@ from ..linalg import (
     NullspacePolicy,
     solve,
 )
-from ..operators.quantum import AbstractDiscreteQuantumOperator, local_estimate
+from ..operators.quantum import (
+    AbstractDiscreteQuantumOperator,
+    evaluate_local_operator,
+)
 from ._variational_monte_carlo import (
     _model_log_target,
     _score_geometry,
@@ -380,7 +383,7 @@ def _connected_rate_statistics(
     local_rates = []
     local_valid = []
     for operator in problem.collapse_operators:
-        estimate = local_estimate(model, operator, samples.samples)
+        estimate = evaluate_local_operator(model, operator, samples.samples)
         local_rates.append(jnp.abs(estimate.value) ** 2)
         local_valid.append(estimate.valid)
     values = jnp.stack(local_rates, axis=-1)
@@ -538,7 +541,7 @@ def solve_connected_vmc_neural_trajectory(
                 )
             )
         else:
-            local_generator = local_estimate(
+            local_generator = evaluate_local_operator(
                 current.model,
                 problem.vmc_problem.operator,
                 samples.samples,
