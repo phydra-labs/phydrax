@@ -131,6 +131,40 @@ def test_sparse_two_by_two_large_decay_determinant_remains_nonzero():
     assert jnp.allclose(log_abs[0], -2000.0)
 
 
+def test_zero_dynamic_orbital_entry_retains_exact_logdet_gradient():
+    log_envelope = jnp.zeros((1, 2, 2), dtype=jnp.float64)
+
+    def logdet(entry):
+        raw_orbitals = jnp.asarray(
+            [[[1.0, 0.0], [1.0, 1.0]]], dtype=jnp.float64
+        ).at[0, 0, 1].set(entry)
+        return _scaled_log_determinants(raw_orbitals, log_envelope)[1][0]
+
+    assert jnp.allclose(jax.grad(logdet)(jnp.asarray(0.0)), -1.0)
+
+
+def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow():
+    subnormal = jnp.asarray(1e-320, dtype=jnp.float64)
+    raw_orbitals = jnp.asarray(
+        [[[subnormal, 0.0], [0.0, 1.0]]], dtype=jnp.float64
+    )
+    log_envelope = jnp.asarray(
+        [[[736.0, 0.0], [0.0, 0.0]]], dtype=jnp.float64
+    )
+    tangent = jnp.asarray(
+        [[[subnormal, 0.0], [0.0, 0.0]]], dtype=jnp.float64
+    )
+
+    def logdet(values):
+        return _scaled_log_determinants(values, log_envelope)[1]
+
+    value, directional = jax.jvp(
+        logdet, (raw_orbitals,), (tangent,)
+    )
+    assert jnp.all(jnp.isfinite(value))
+    assert jnp.allclose(directional[0], 1.0)
+
+
 def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H-large-decay")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=1)

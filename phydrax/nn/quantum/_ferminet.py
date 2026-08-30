@@ -25,10 +25,9 @@ from ...operators.quantum import LogAmplitude
 from ..parameters import PositiveTransform
 
 
-def _scaled_log_determinants(
+def _scaled_determinant_factors(
     raw_orbitals: Array, log_envelope: Array, /
-) -> tuple[Array, Array]:
-    """Evaluate envelope-weighted determinants without materializing tiny entries."""
+) -> tuple[Array, Array, Array, Array]:
     if (
         raw_orbitals.shape != log_envelope.shape
         or raw_orbitals.ndim != 3
@@ -64,13 +63,26 @@ def _scaled_log_determinants(
             0.0,
         )
     )
-    scaled_exponent = jnp.where(
-        raw_nonzero,
-        log_envelope - row_shift[:, :, None] - column_shift[:, None, :],
-        0.0,
+    scaled_log_magnitude = (
+        combined_log_magnitude
+        - row_shift[:, :, None]
+        - column_shift[:, None, :]
     )
     scaled_orbitals = jnp.where(
-        raw_nonzero, raw_orbitals * jnp.exp(scaled_exponent), 0.0
+        raw_nonzero,
+        jnp.sign(raw_orbitals) * jnp.exp(scaled_log_magnitude),
+        0.0,
+    )
+    return scaled_orbitals, row_shift, column_shift, raw_nonzero
+
+
+@jax.custom_jvp
+def _scaled_log_determinants(
+    raw_orbitals: Array, log_envelope: Array, /
+) -> tuple[Array, Array]:
+    """Evaluate stable determinants with exact nonsingular logdet tangents."""
+    scaled_orbitals, row_shift, column_shift, _raw_nonzero = (
+        _scaled_determinant_factors(raw_orbitals, log_envelope)
     )
     determinant_sign, scaled_log_abs = jax.vmap(jnp.linalg.slogdet)(
         scaled_orbitals
@@ -81,6 +93,65 @@ def _scaled_log_determinants(
         + jnp.sum(column_shift, axis=-1)
     )
     return determinant_sign, determinant_log_abs
+
+
+@_scaled_log_determinants.defjvp
+def _scaled_log_determinants_jvp(primals, tangents):
+    raw_orbitals, log_envelope = primals
+    raw_tangent, log_envelope_tangent = tangents
+    determinant_sign, determinant_log_abs = _scaled_log_determinants(
+        raw_orbitals, log_envelope
+    )
+    scaled_orbitals, row_shift, column_shift, _raw_nonzero = (
+        _scaled_determinant_factors(raw_orbitals, log_envelope)
+    )
+
+    def scaled_logdet(matrix):
+        return jnp.linalg.slogdet(matrix)[1]
+
+    inverse_transpose = jax.vmap(jax.grad(scaled_logdet))(scaled_orbitals)
+    inverse_nonzero = inverse_transpose != 0.0
+    safe_inverse_magnitude = jnp.where(
+        inverse_nonzero,
+        jnp.abs(inverse_transpose),
+        jnp.ones((), inverse_transpose.dtype),
+    )
+    raw_gradient_log_abs = (
+        jnp.log(safe_inverse_magnitude)
+        + log_envelope
+        - row_shift[:, :, None]
+        - column_shift[:, None, :]
+    )
+    raw_gradient = jnp.where(
+        inverse_nonzero,
+        jnp.sign(inverse_transpose) * jnp.exp(raw_gradient_log_abs),
+        0.0,
+    )
+    raw_nonzero = raw_orbitals != 0.0
+    safe_raw_orbitals = jnp.where(raw_nonzero, raw_orbitals, 1.0)
+    nonzero_raw_contribution = (
+        inverse_transpose
+        * scaled_orbitals
+        * (raw_tangent / safe_raw_orbitals)
+    )
+    zero_raw_contribution = raw_gradient * raw_tangent
+    raw_contribution = jnp.where(
+        raw_nonzero, nonzero_raw_contribution, zero_raw_contribution
+    )
+    log_envelope_contribution = (
+        inverse_transpose * scaled_orbitals * log_envelope_tangent
+    )
+    log_abs_tangent = jnp.sum(
+        raw_contribution + log_envelope_contribution,
+        axis=(-2, -1),
+    )
+    return (
+        determinant_sign,
+        determinant_log_abs,
+    ), (
+        jnp.zeros_like(determinant_sign),
+        log_abs_tangent,
+    )
 
 
 class _FermiNetConfiguration(StrictModule, NonTrainableState):
