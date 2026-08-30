@@ -122,6 +122,7 @@ from ._semigroup import (
     SemigroupReduction,
     SinkhornDistributionalSemigroupObjective,
 )
+from ._spectral_residual import SpectralPDEResidualLoss
 from ._stochastic_transition import (
     direct_operator_horizon_nll,
     marginal_operator_rollout,
@@ -178,6 +179,7 @@ __all__ = [
     "AbstractOperatorLossTerm",
     "CochainResidualInput",
     "CochainResidualLoss",
+    "SpectralPDEResidualLoss",
     "AbstractOperatorOutputTransform",
     "ConservationProjection",
     "HardConstraintTransform",

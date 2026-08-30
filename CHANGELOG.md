@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added all-coordinate tensor spectral PDE residual compilation with explicit
+  full-closure versus retained-projection semantics, polynomial closure
+  dealiasing, exactness and resource evidence, physical quadrature norms,
+  external hard-condition contracts, and targetless operator fitting through
+  `SpectralPDEResidualLoss`.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

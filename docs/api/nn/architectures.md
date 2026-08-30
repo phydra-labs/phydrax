@@ -2622,7 +2622,10 @@ that choice is recorded in the plan fingerprint guarding prepared inputs.
 `WeakOperatorLoss` evaluates residual moments against one or more test
 functions. `CochainResidualLoss` scatters typed prediction/source samples onto
 their canonical cell complex, evaluates a `CochainResidualProgram`, and applies
-a segmented Hodge-aware reduction. Every generic term declares
+a segmented Hodge-aware reduction. `SpectralPDEResidualLoss` projects physical
+predictions onto one fixed tensor spectral trial space and evaluates an
+all-coordinate `CompiledSpectralResidual`; unlike `operator_spectral_loss`, it
+does not require solution targets. Every generic term declares
 `space="physical"` or `"execution"`; physical is the default.
 `OperatorLossContext` carries paired predictions, batches, and targets for both
 spaces. `OperatorOutputPipeline` applies exact hard-constraint and conservation
@@ -2654,6 +2657,10 @@ and explicit or previously fitted output scaling.
 ---
 
 ::: phydrax.nn.operator.training.CochainResidualLoss
+
+---
+
+::: phydrax.nn.operator.training.SpectralPDEResidualLoss
 ---
 
 ::: phydrax.nn.operator.training.HardConstraintTransform
