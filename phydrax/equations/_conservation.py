@@ -17,6 +17,7 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization.fem._generic import FiniteElementDiscretization
 from ..discretization.finite_difference import (
     PreparedSBPConservationDynamics,
     SBPFluxDifferencingMethodPlan,
@@ -69,6 +70,10 @@ from ._hyperbolic_systems import (
     ShallowWaterSystem,
 )
 from ._multiphase import TwoMaterialVOFSystem
+from .fem._conservation import (
+    DGSEMConservationMethodPlan,
+    PreparedDGSEMConservationDynamics,
+)
 
 
 class ConservationProblemIR(StrictModule):
@@ -157,7 +162,7 @@ class ConservationProblemIR(StrictModule):
 
 
 class CompiledConservationProblem(StrictModule):
-    """Executable structured finite-volume residual with complete provenance."""
+    """Executable conservation semidiscretization with complete provenance."""
 
     problem: ConservationProblemIR
     discretization: (
@@ -167,6 +172,7 @@ class CompiledConservationProblem(StrictModule):
         | UnstructuredFiniteVolumeDiscretization
         | TensorSpectralDiscretization
         | TensorSBPDiscretization
+        | FiniteElementDiscretization
     )
     method: (
         FiniteVolumeMethodPlan
@@ -174,6 +180,7 @@ class CompiledConservationProblem(StrictModule):
         | UnstructuredFiniteVolumeMethodPlan
         | SpectralConservationMethodPlan
         | SBPFluxDifferencingMethodPlan
+        | DGSEMConservationMethodPlan
     )
     dynamics: (
         PreparedFiniteVolumeDynamics
@@ -181,6 +188,7 @@ class CompiledConservationProblem(StrictModule):
         | PreparedUnstructuredFiniteVolumeDynamics
         | PreparedSpectralConservationDynamics
         | PreparedSBPConservationDynamics
+        | PreparedDGSEMConservationDynamics
     )
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
@@ -195,6 +203,7 @@ class CompiledConservationProblem(StrictModule):
             | UnstructuredFiniteVolumeDiscretization
             | TensorSpectralDiscretization
             | TensorSBPDiscretization
+            | FiniteElementDiscretization
         ),
         method: (
             FiniteVolumeMethodPlan
@@ -202,6 +211,7 @@ class CompiledConservationProblem(StrictModule):
             | UnstructuredFiniteVolumeMethodPlan
             | SpectralConservationMethodPlan
             | SBPFluxDifferencingMethodPlan
+            | DGSEMConservationMethodPlan
         ),
         dynamics: (
             PreparedFiniteVolumeDynamics
@@ -209,16 +219,22 @@ class CompiledConservationProblem(StrictModule):
             | PreparedUnstructuredFiniteVolumeDynamics
             | PreparedSpectralConservationDynamics
             | PreparedSBPConservationDynamics
+            | PreparedDGSEMConservationDynamics
         ),
         /,
     ):
-        state_space_name = (
-            discretization.modal_space.name
-            if isinstance(discretization, TensorSpectralDiscretization)
-            else discretization.state_space.name
-            if isinstance(discretization, TensorSBPDiscretization)
-            else discretization.cell_space.name
-        )
+        if isinstance(discretization, TensorSpectralDiscretization):
+            state_space_name = discretization.modal_space.name
+        elif isinstance(discretization, TensorSBPDiscretization):
+            state_space_name = discretization.state_space.name
+        elif isinstance(discretization, FiniteElementDiscretization):
+            if len(discretization.field_spaces) != 1:
+                raise ValueError(
+                    "Finite-element conservation requires exactly one conserved field."
+                )
+            state_space_name = discretization.field_spaces[0].name
+        else:
+            state_space_name = discretization.cell_space.name
         if problem.field_name != state_space_name:
             raise ValueError(
                 "Conserved field name must match the prepared spatial state space."
@@ -280,6 +296,20 @@ class CompiledConservationProblem(StrictModule):
                 "Global spectral conservation has no interface face-flux array."
             )
         return self.dynamics.face_fluxes(time, state, args)
+
+    def weak_residual(self, time: Array, state: Array, args: Any = None, /) -> Array:
+        if not isinstance(self.dynamics, PreparedDGSEMConservationDynamics):
+            raise TypeError(
+                "A dual-valued weak residual is specific to finite-element DGSEM."
+            )
+        return self.dynamics.weak_residual(time, state, args)
+
+    def mass_inverted_rate(self, time: Array, state: Array, args: Any = None, /) -> Array:
+        if not isinstance(self.dynamics, PreparedDGSEMConservationDynamics):
+            raise TypeError(
+                "An explicit FE mass solve is specific to finite-element DGSEM."
+            )
+        return self.dynamics.mass_inverted_rate(time, state, args)
 
     def residual_with_diagnostics(
         self,
@@ -390,6 +420,7 @@ def compile_conservation_problem(
         | UnstructuredFiniteVolumeDiscretization
         | TensorSpectralDiscretization
         | TensorSBPDiscretization
+        | FiniteElementDiscretization
     ),
     method: (
         FiniteVolumeMethodPlan
@@ -397,6 +428,7 @@ def compile_conservation_problem(
         | UnstructuredFiniteVolumeMethodPlan
         | SpectralConservationMethodPlan
         | SBPFluxDifferencingMethodPlan
+        | DGSEMConservationMethodPlan
     ),
     /,
     *,
@@ -410,11 +442,44 @@ def compile_conservation_problem(
     if not isinstance(problem, ConservationProblemIR):
         raise TypeError("problem must be a ConservationProblemIR.")
     _validate_entropy_pair(problem, entropy_pair)
+    if isinstance(discretization, FiniteElementDiscretization):
+        if not isinstance(method, DGSEMConservationMethodPlan):
+            raise TypeError(
+                "Finite-element DGSEM geometry requires DGSEMConservationMethodPlan."
+            )
+        if not isinstance(problem.system, EulerSystem):
+            raise TypeError(
+                "Initial finite-element DGSEM conservation supports inviscid "
+                "EulerSystem only."
+            )
+        if problem.boundaries is not None:
+            raise ValueError(
+                "Periodic finite-element DGSEM conservation requires boundaries=None."
+            )
+        if any(
+            value is not None for value in (capacity, bathymetry, precision, coupling)
+        ):
+            raise ValueError(
+                "Finite-element DGSEM does not accept finite-volume capacity, "
+                "bathymetry, precision, or coupling options."
+            )
+        certificate = method.compatibility
+        if (certificate is None) != (entropy_pair is None):
+            raise ValueError(
+                "DGSEM entropy_pair and flux compatibility certificate must be "
+                "supplied together."
+            )
+        dynamics = PreparedDGSEMConservationDynamics(
+            problem.system,
+            discretization,
+            method,
+            source=problem.source,
+            entropy_pair=entropy_pair,
+        )
+        return CompiledConservationProblem(problem, discretization, method, dynamics)
     if isinstance(discretization, TensorSBPDiscretization):
         if not isinstance(method, SBPFluxDifferencingMethodPlan):
-            raise TypeError(
-                "Tensor SBP geometry requires SBPFluxDifferencingMethodPlan."
-            )
+            raise TypeError("Tensor SBP geometry requires SBPFluxDifferencingMethodPlan.")
         if not isinstance(problem.system, EulerSystem):
             raise TypeError(
                 "Initial SBP flux differencing supports inviscid EulerSystem only."

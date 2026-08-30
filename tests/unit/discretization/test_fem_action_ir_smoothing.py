@@ -39,8 +39,8 @@ def test_finite_element_form_lowers_to_typed_actions_and_worksets():
     assert len(action_ir.actions) == 2
     assert workset_program.program_id
     assert all(workset.entity_indices.size for workset in workset_program.worksets)
-    assert len(workset_program.worksets) == 1
-    assert workset_program.worksets[0].action_indices.size == 2
+    assert len(workset_program.worksets) == 2
+    assert sum(workset.action_indices.size for workset in workset_program.worksets) == 2
     assert compiled._kernel_table.table_id
     assert compiled._workset_program.program_id == workset_program.program_id
 
@@ -54,8 +54,7 @@ def test_high_order_tensor_family_partition_unity_and_sum_factorization():
     values, gradients = element.tabulate(points)
     tabulation = phx.discretization.fem.TensorProductTabulation(
         family,
-        jnp.asarray([0.2, 0.7]),
-        jnp.asarray([0.3, 0.8]),
+        (jnp.asarray([0.2, 0.7]), jnp.asarray([0.3, 0.8])),
     )
     plan = phx.discretization.fem.SumFactorizationPlan(tabulation)
     coefficients = jnp.arange(16.0).reshape((4, 4))

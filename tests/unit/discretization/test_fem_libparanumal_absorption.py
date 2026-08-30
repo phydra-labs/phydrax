@@ -26,7 +26,7 @@ def test_exact_diagonal_matches_sparse_diffusion():
     diagonal = compiled.exact_diagonal()
     matrix = compiled.to_scipy_csr().toarray()
 
-    assert diagonal.method == "sparse-coordinate"
+    assert diagonal.method == "workset"
     assert jnp.allclose(diagonal.diagonal, jnp.diag(jnp.asarray(matrix)))
 
 

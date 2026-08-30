@@ -1297,7 +1297,7 @@ residual `DomainFunction` at the query coordinates. Ordinary PhydraX
 differential operators therefore remain the single derivative implementation.
 For direct inspection:
 
-```python
+```text
 context = phx.nn.operator.adapters.bind_operator_context(model, fine_physics_batch)
 u_for_this_source = context.domain_function(geom, "x")
 laplacian_u = phx.operators.laplacian(u_for_this_source, var="x")
@@ -1312,7 +1312,7 @@ For smooth tensor-product problems, the physical operator prediction can be
 projected once into a global trial space and differentiated spectrally. The
 training dataset contains parameter functions but no solution targets:
 
-```python
+```text
 space = phx.discretization.TensorSpectralPlan(
     (phx.discretization.FourierBasisPlan(32),),
     axis_names=("x",),
@@ -1481,7 +1481,7 @@ assert fit_result.completed_steps == 1
 For parameter-efficient transfer, adapt explicit native affine sites and pass
 only their factors to the same production fitting control plane:
 
-```python
+```text
 base_model = training_model
 paths = phx.nn.parameters.low_rank_sites(base_model)
 adapted, adaptation = phx.nn.parameters.adapt_low_rank(
@@ -1698,7 +1698,7 @@ thread may call the adapter safely and every read finishes in finite time.
 Encoded operators can evaluate query sets in fixed-capacity chunks without
 re-encoding the source:
 
-```python
+```text
 query_source = phx.nn.operator.training.ArrayOperatorQuerySource(
     measured_batch.query("query"),
     case_shape=measured_batch.case_shape,

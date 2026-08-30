@@ -236,7 +236,7 @@ Every successful adaptive result carries a `DAEContinuation` boundary object wit
 exact accepted BDF history, controller state, and retained nonlinear preparation.
 Pass it to a prepared solve whose first requested time equals that boundary:
 
-```python
+```text
 first = phx.solver.solve_dae(first_prepared)
 second = phx.solver.solve_dae(
     second_prepared,
@@ -309,7 +309,7 @@ evidence, not a numerical rank certificate or an index claim. The compiled objec
 state rate for diagnostics; the solver itself retains matrix-free native derivative
 policies unless configured otherwise.
 
-```python
+```text
 compiled = phx.equations.compile_semidiscrete_dae(
     pde_problem,
     spatial_discretization,

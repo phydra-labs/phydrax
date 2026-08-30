@@ -124,7 +124,7 @@ exactly the base model before optimization. `alpha=None` resolves to
 `alpha=rank`, giving unit effective scaling. RWF, weight transforms, complex
 weights, aliased layers, and already adapted weights fail before model surgery.
 
-```python
+```text
 import jax.random as jr
 import phydrax as phx
 
@@ -158,7 +158,7 @@ optimizers reject explicit subspaces.
 
 Adapter-only artifacts are content-bound to the complete dense base:
 
-```python
+```text
 phx.nn.parameters.save_low_rank_adapter("task.phxadapter", trained_model)
 restored = phx.nn.parameters.read_low_rank_adapter(
     "task.phxadapter",

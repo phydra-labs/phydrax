@@ -9,13 +9,17 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import ArrayLike, PyTree
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
     AbstractLinearOperator,
     AbstractPreconditioner,
+    AbstractPreconditionerBuilder,
+    AdditiveSubspaceCorrectionBuilder,
+    DiagonalLinearOperator,
     PreconditionerProperties,
+    SubspaceCorrectionTerm,
 )
 
 
@@ -56,6 +60,7 @@ class LowOrderAuxiliaryOperatorPlan(StrictModule, NonTrainableState):
                 "kind": "low-order-auxiliary-operator-plan",
                 "interpolation": interpolation.operator_id,
                 "anterpolation": anterpolation.operator_id,
+                "multiplicity_weight": array_tree_fingerprint(weight),
                 "high_space": interpolation.source.space_id,
                 "low_space": interpolation.target.space_id,
             }
@@ -126,7 +131,43 @@ class LowOrderAuxiliaryPreconditioner(AbstractPreconditioner):
         )
 
 
+def low_order_auxiliary_preconditioner_builder(
+    plan: LowOrderAuxiliaryOperatorPlan,
+    low_order_solver: AbstractPreconditioner | AbstractPreconditionerBuilder,
+    /,
+    *,
+    properties: PreconditionerProperties | None = None,
+) -> AdditiveSubspaceCorrectionBuilder:
+    """Build the weighted auxiliary correction on the generic linalg substrate."""
+    if not isinstance(plan, LowOrderAuxiliaryOperatorPlan):
+        raise TypeError("plan must be a LowOrderAuxiliaryOperatorPlan.")
+    if not isinstance(
+        low_order_solver,
+        (AbstractPreconditioner, AbstractPreconditionerBuilder),
+    ):
+        raise TypeError(
+            "low_order_solver must be a preconditioner or preconditioner builder."
+        )
+    high_space = plan.interpolation.source
+    diagonal = high_space.flatten(plan.multiplicity_weight)
+    weighting = DiagonalLinearOperator(
+        diagonal,
+        space=high_space,
+        operator_id=f"low-order-auxiliary-weight/{plan.plan_id}",
+    )
+    term = SubspaceCorrectionTerm(
+        plan.interpolation @ weighting,
+        weighting @ plan.anterpolation,
+        low_order_solver,
+    )
+    return AdditiveSubspaceCorrectionBuilder(
+        (term,),
+        properties=properties,
+    )
+
+
 __all__ = [
     "LowOrderAuxiliaryOperatorPlan",
     "LowOrderAuxiliaryPreconditioner",
+    "low_order_auxiliary_preconditioner_builder",
 ]

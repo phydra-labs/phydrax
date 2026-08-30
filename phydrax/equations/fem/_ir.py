@@ -55,6 +55,7 @@ ActionKind = Literal[
     "linear",
     "functional",
     "material",
+    "pairwise-volume-flux",
 ]
 
 
@@ -175,6 +176,16 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
             raise ValueError("Local action input slots must be unique.")
         if not isinstance(region, RegionIR):
             raise TypeError("region must be RegionIR.")
+        if action_kind not in (
+            "residual",
+            "energy",
+            "bilinear",
+            "linear",
+            "functional",
+            "material",
+            "pairwise-volume-flux",
+        ):
+            raise ValueError("Unknown finite-element action kind.")
         self.action_kind = action_kind
         self.output_slot = output
         self.input_slots = inputs

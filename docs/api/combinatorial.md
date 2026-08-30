@@ -29,7 +29,7 @@ or structure changes.
 import jax.numpy as jnp
 import phydrax as phx
 
-space = phx.combinatorial.CardinalitySpace(size=5, count=2)
+space = phx.combinatorial.CardinalitySpace(5, 2)
 problem = phx.combinatorial.LinearCombinatorialProblem(
     space,
     jnp.asarray([3.0, -1.0, 2.0, 0.0, 4.0]),

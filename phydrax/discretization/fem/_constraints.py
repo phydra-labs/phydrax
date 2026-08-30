@@ -20,7 +20,6 @@ from ...linalg import (
     DenseLinearOperator,
     FunctionLinearOperator,
 )
-from .._cell_complex import PolygonalConnectivity
 from ._generic import FiniteElementDiscretization
 
 
@@ -71,6 +70,7 @@ class FiniteElementDirichletConstraint(StrictModule, NonTrainableState):
 
 def _validate_component_constraints(
     discretization: FiniteElementDiscretization,
+    dof_map,
     mask: np.ndarray,
     /,
 ) -> None:
@@ -96,15 +96,17 @@ def _validate_component_constraints(
             for vertex in cell[1:]:
                 union(anchor, int(vertex))
     component_roots = {root(vertex) for vertex in range(vertex_count)}
-    constrained_roots = {root(int(dof)) for dof in np.flatnonzero(mask[:vertex_count])}
-    if mask.size > vertex_count:
-        connectivity = discretization.mesh.connectivity
-        if not isinstance(connectivity, PolygonalConnectivity):
-            raise TypeError("Higher-order constraints require polygonal connectivity.")
-        for edge in np.flatnonzero(mask[vertex_count:]):
-            constrained_roots.add(
-                root(int(np.asarray(connectivity.edges, dtype=np.int32)[edge, 0]))
-            )
+    constrained_roots = set()
+    for block, routes in zip(
+        discretization.mesh.blocks,
+        dof_map.cell_dofs,
+        strict=True,
+    ):
+        cells = np.asarray(block.vertices, dtype=np.int32)
+        active = np.any(mask[np.asarray(routes, dtype=np.int32)], axis=1)
+        constrained_roots.update(
+            root(int(cells[cell_index, 0])) for cell_index in np.flatnonzero(active)
+        )
     if constrained_roots != component_roots:
         raise ValueError(
             "Dirichlet constraints must anchor every connected mesh component."
@@ -159,7 +161,7 @@ def dirichlet_constraint(
         full_mask[:, selected_components] = node_mask[:, None]
     else:
         raise ValueError("boundary_mask must have global-DOF shape or full field shape.")
-    _validate_component_constraints(discretization, node_mask)
+    _validate_component_constraints(discretization, dof_map, node_mask)
     flattened_mask = full_mask.reshape((-1,))
     constrained = np.flatnonzero(flattened_mask).astype(np.int32)
     free = np.flatnonzero(~flattened_mask).astype(np.int32)

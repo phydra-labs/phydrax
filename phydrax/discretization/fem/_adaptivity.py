@@ -319,30 +319,43 @@ class FiniteElementAdaptationMap(StrictModule, NonTrainableState):
 
 
 class FiniteElementTransferBundle(StrictModule, NonTrainableState):
-    """Primal transfer and its raw-dual/pairing adjoint maps."""
+    """Primal transfer, algebraic dual pullback, and optional Hilbert adjoint."""
 
     primal: Array
     dual_pullback: Array
-    adjoint: Array
+    pairing_adjoint: Array | None
     adaptation_id: str = eqx.field(static=True)
     transfer_id: str = eqx.field(static=True)
 
-    def __init__(self, primal: ArrayLike, adaptation_id: str, /):
+    def __init__(
+        self,
+        primal: ArrayLike,
+        adaptation_id: str,
+        /,
+        *,
+        pairing_adjoint: ArrayLike | None = None,
+    ):
         primal_ = jnp.asarray(primal)
         if primal_.ndim != 2 or not jnp.issubdtype(primal_.dtype, jnp.inexact):
             raise ValueError("Primal adaptation transfer must be one inexact matrix.")
+        adjoint = None if pairing_adjoint is None else jnp.asarray(pairing_adjoint)
+        if adjoint is not None and adjoint.shape != primal_.T.shape:
+            raise ValueError("Pairing adjoint must transpose the primal transfer spaces.")
         adaptation = str(adaptation_id)
         if not adaptation:
             raise ValueError("adaptation_id must be non-empty.")
         self.primal = primal_
         self.dual_pullback = primal_.T
-        self.adjoint = primal_.T
+        self.pairing_adjoint = adjoint
         self.adaptation_id = adaptation
         self.transfer_id = canonical_fingerprint(
             {
                 "kind": "finite-element-transfer-bundle",
                 "adaptation": adaptation,
                 "shape": list(primal_.shape),
+                "pairing_adjoint": None
+                if adjoint is None
+                else array_tree_fingerprint(np.asarray(adjoint)),
             }
         )
 

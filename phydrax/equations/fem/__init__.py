@@ -2,10 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._conservation import (
+    certify_dgsem_flux_compatibility,
+    DGSEMConservationDiagnostics,
+    DGSEMConservationMethodPlan,
+    DGSEMFaceFluxes,
+    DGSEMFluxCompatibilityCertificate,
+    DGSEMPreparationReport,
+    DGSEMStableStepEvidence,
+    PreparedDGSEMConservationDynamics,
+)
 from ._execution import (
     CollocatedTensorProductOperator,
     ElementTensorOperator,
     FiniteElementDiagonalData,
+    FiniteElementMassPolicy,
     FiniteElementPreconditionerData,
     PartialAssemblyOperator,
     TensorProductAction,
@@ -79,12 +90,21 @@ from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
 __all__ = [
+    "certify_dgsem_flux_compatibility",
+    "DGSEMConservationDiagnostics",
+    "DGSEMConservationMethodPlan",
+    "DGSEMFaceFluxes",
+    "DGSEMFluxCompatibilityCertificate",
+    "DGSEMPreparationReport",
+    "DGSEMStableStepEvidence",
+    "PreparedDGSEMConservationDynamics",
     "ElementTensorOperator",
     "CollocatedTensorProductOperator",
     "PartialAssemblyOperator",
     "CoordinateObservation",
     "ActionKind",
     "CellDerivativeBatch",
+    "FiniteElementMassPolicy",
     "DGTraceBatch",
     "CompiledWorkset",
     "HDGPoissonSolution",
