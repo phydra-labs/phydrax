@@ -106,7 +106,7 @@ def normalized_vandermonde(
     /,
 ) -> Array:
     """Evaluate a one-dimensional orthonormal polynomial family."""
-    values = jnp.asarray(points)
+    values = jnp.asarray(points, dtype=float)
     degree_ = _nonnegative_integer(degree, "degree")
     if measure == "uniform":
         vandermonde = standard_vandermonde("legendre", values.reshape((-1,)), degree_)
@@ -114,14 +114,23 @@ def normalized_vandermonde(
             2 * jnp.arange(degree_ + 1, dtype=values.dtype) + 1
         )
     elif measure == "standard-normal":
-        vandermonde = standard_vandermonde("hermite_e", values.reshape((-1,)), degree_)
-        normalization = jnp.sqrt(
-            jnp.asarray(
-                [math.factorial(index) for index in range(degree_ + 1)],
-                dtype=values.dtype,
+        flattened = values.reshape((-1,))
+        modes = [jnp.ones_like(flattened)]
+        if degree_ >= 1:
+            modes.append(flattened)
+        for index in range(1, degree_):
+            previous_scale = jnp.sqrt(
+                jnp.asarray(index, dtype=values.dtype)
             )
-        )
-        normalization = 1.0 / normalization
+            next_scale = jnp.sqrt(
+                jnp.asarray(index + 1, dtype=values.dtype)
+            )
+            modes.append(
+                (flattened * modes[-1] - previous_scale * modes[-2])
+                / next_scale
+            )
+        vandermonde = jnp.stack(tuple(modes), axis=-1)
+        normalization = jnp.asarray(1.0, dtype=values.dtype)
     else:
         raise ValueError(f"Unsupported polynomial-chaos measure {measure!r}.")
     return (vandermonde * normalization).reshape(values.shape + (degree_ + 1,))

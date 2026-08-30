@@ -2586,13 +2586,14 @@ first_order = surrogate.first_order_sobol
 total_order = surrogate.total_order_sobol
 ```
 
-Projection delegates point generation and probability weights to the existing
+Projection preflights point/replicate counts and sample-by-feature basis bytes before
+delegating point generation and probability weights to the existing
 product-integration contract. When model evaluations already exist, fit the same
-basis with `PolynomialChaosRegressionPlan(basis).fit(points, values)`. A square
-design is an exact linear problem; an overdetermined design is least squares.
-Underdetermined, nonfinite, and rank-deficient designs fail without a hidden
-pseudoinverse. Fit results retain solver or integration evidence and can be exported
-with `phx.uq.export_result`.
+basis with `PolynomialChaosRegressionPlan(basis).fit(points, values)`. An unweighted
+square design is an exact linear problem; every weighted or overdetermined design is
+least squares. Underdetermined, nonfinite, and default-policy rank-deficient designs
+fail without a hidden pseudoinverse. Fit results retain solver or integration
+evidence and can be exported with `phx.uq.export_result`.
 
 The coefficient moments and Sobol effects are exact for the fitted orthonormal
 expansion. They do not certify truncation error for a model outside the selected

@@ -20,27 +20,35 @@ from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import ProbabilityDomain, ProductDomain
 from phydrax.integration import (
+    FixedQuadraturePlan,
+    GaussianCubatureRule,
     IntegrationPrecisionPolicy,
+    materialize as materialize_integration,
+    MonteCarloPlan,
+    over,
     ProductIntegrationPlan,
     ProductIntegrationRealization,
-    materialize as materialize_integration,
-    over,
+    QuasiMonteCarloPlan,
+    SparseGridPlan,
 )
+from phydrax.integration._lowering import _fixed_rule_node_count
 from phydrax.linalg import (
     DenseLinearOperator,
     DenseLU,
     DenseQR,
     LeastSquaresProblem,
+    linear_status_message,
     LinearSolvePolicy,
     LinearSystem,
     RankPolicy,
-    linear_status_message,
     solve as solve_linear,
 )
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
-from .._polynomial import PolynomialMultiIndexSet, evaluate_tensor_basis
+from .._numerics import axis_level, smolyak_axis_data, smolyak_terms
+from .._polynomial import evaluate_tensor_basis, PolynomialMultiIndexSet
+from .._sampling import RandomizedQMCDesign
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._distributions import Normal, Uniform
@@ -48,6 +56,7 @@ from ._distributions import Normal, Uniform
 
 _DEFAULT_MAXIMUM_MODEL_EVALUATIONS = 1_000_000
 _DEFAULT_MAXIMUM_SAMPLES = 1_000_000
+_DEFAULT_MAXIMUM_BASIS_BYTES = 256 * 1024**2
 _DEFAULT_MAXIMUM_DESIGN_BYTES = 256 * 1024**2
 _POLYNOMIAL_MODE_DIM = "__phydra_uq_polynomial_mode"
 
@@ -217,6 +226,10 @@ class PolynomialChaosExpansion(StrictModule):
                 )
             if not jnp.issubdtype(array.dtype, jnp.number):
                 raise TypeError("Polynomial-chaos coefficients must be numeric.")
+            if bool(jnp.any(~jnp.isfinite(array))):
+                raise ValueError(
+                    "Polynomial-chaos coefficients must be finite."
+                )
             arrays.append(array)
             specs.append(_OutputLeafSpec(tuple(array.shape[1:]), field_dims))
 
@@ -396,6 +409,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
     integration_plan: ProductIntegrationPlan
     precision: IntegrationPrecisionPolicy
     maximum_model_evaluations: int = eqx.field(static=True)
+    maximum_basis_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -406,6 +420,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         *,
         precision: IntegrationPrecisionPolicy | None = None,
         maximum_model_evaluations: int = _DEFAULT_MAXIMUM_MODEL_EVALUATIONS,
+        maximum_basis_bytes: int = _DEFAULT_MAXIMUM_BASIS_BYTES,
     ):
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
@@ -416,6 +431,9 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
             raise TypeError("precision must be an IntegrationPrecisionPolicy.")
         maximum = _positive_integer(
             maximum_model_evaluations, "maximum_model_evaluations"
+        )
+        maximum_basis = _positive_integer(
+            maximum_basis_bytes, "maximum_basis_bytes"
         )
         covered = tuple(
             label for group in integration_plan.plans for label in group
@@ -429,13 +447,21 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         self.integration_plan = integration_plan
         self.precision = precision_
         self.maximum_model_evaluations = maximum
+        self.maximum_basis_bytes = maximum_basis
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "polynomial-chaos-projection-plan-v1",
                 "basis_id": basis.basis_id,
-                "integration_groups": tuple(integration_plan.plans),
+                "factor_plans": tuple(
+                    {
+                        "labels": labels,
+                        "plan": _content_identity(factor_plan),
+                    }
+                    for labels, factor_plan in integration_plan.plans.items()
+                ),
                 "precision": precision_.policy_id,
                 "maximum_model_evaluations": maximum,
+                "maximum_basis_bytes": maximum_basis,
             }
         )
 
@@ -449,6 +475,27 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         """Evaluate and orthogonally project a deterministic pointwise model."""
         if not callable(model):
             raise TypeError("model must be callable.")
+        preflight_samples, preflight_replicates = _preflight_product_counts(
+            self.integration_plan
+        )
+        preflight_evaluations = preflight_samples * preflight_replicates
+        if preflight_evaluations > self.maximum_model_evaluations:
+            raise ValueError(
+                f"Projection requires at most {preflight_evaluations} model "
+                "evaluations before materialization, exceeding "
+                f"maximum_model_evaluations={self.maximum_model_evaluations}."
+            )
+        preflight_basis_bytes = _basis_storage_bytes(
+            preflight_samples,
+            self.basis.feature_count,
+            self.precision,
+        )
+        if preflight_basis_bytes > self.maximum_basis_bytes:
+            raise ValueError(
+                f"Projection basis evaluation requires at most "
+                f"{preflight_basis_bytes} bytes before materialization, exceeding "
+                f"maximum_basis_bytes={self.maximum_basis_bytes}."
+            )
         domain = ProductDomain(*self.basis.factors)
         target = over(domain.component())
         realization = (
@@ -472,6 +519,14 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
             math.prod(int(batch.weights.named_shape[axis]) for axis in batch.axes)
             for batch in product.batches
         )
+        if len(product.batches) != preflight_replicates:
+            raise RuntimeError(
+                "Product integration replicate count changed after preflight."
+            )
+        if any(count > preflight_samples for count in sample_counts):
+            raise RuntimeError(
+                "Product integration sample count exceeded its preflight bound."
+            )
         total_evaluations = sum(sample_counts)
         if total_evaluations > self.maximum_model_evaluations:
             raise ValueError(
@@ -496,27 +551,55 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
                 )
             if any(bool(jnp.any(~jnp.isfinite(value))) for value in values):
                 raise ValueError("Projection model outputs must be finite.")
+            evaluated_values = tuple(
+                self.precision.evaluation(value) for value in values
+            )
+            if any(
+                bool(jnp.any(~jnp.isfinite(value)))
+                for value in evaluated_values
+            ):
+                raise ValueError(
+                    "Projection model outputs are nonfinite at evaluation precision."
+                )
             basis_values = self.precision.evaluation(self.basis.evaluate(points))
+            if bool(jnp.any(~jnp.isfinite(basis_values))):
+                raise ValueError(
+                    "Polynomial basis values are nonfinite at evaluation precision."
+                )
             accumulation_weights = self.precision.accumulation(weights)
             accumulation_basis = self.precision.accumulation(basis_values)
-            projected_batches.append(
-                tuple(
-                    self.precision.output(
-                        _project_leaf(
-                            accumulation_weights,
-                            accumulation_basis,
-                            self.precision.accumulation(value),
-                        )
-                    )
-                    for value in values
-                )
+            accumulation_values = tuple(
+                self.precision.accumulation(value)
+                for value in evaluated_values
             )
+            if bool(jnp.any(~jnp.isfinite(accumulation_weights))) or bool(
+                jnp.any(~jnp.isfinite(accumulation_basis))
+            ) or any(
+                bool(jnp.any(~jnp.isfinite(value)))
+                for value in accumulation_values
+            ):
+                raise ValueError(
+                    "Projection inputs are nonfinite at accumulation precision."
+                )
+            projected = tuple(
+                _project_leaf(
+                    accumulation_weights,
+                    accumulation_basis,
+                    value,
+                )
+                for value in accumulation_values
+            )
+            if any(bool(jnp.any(~jnp.isfinite(value))) for value in projected):
+                raise ValueError(
+                    "Polynomial projection contraction produced nonfinite coefficients."
+                )
+            projected_batches.append(projected)
             weight_masses.append(float(np.asarray(jnp.sum(accumulation_weights))))
 
         if output_tree is None or output_specs is None:
             raise RuntimeError("Product integration produced no projection batches.")
-        coefficient_leaves = tuple(
-            self.precision.output(
+        accumulated_coefficients = tuple(
+            self.precision.accumulation(
                 jnp.mean(
                     jnp.stack(
                         tuple(batch[index] for batch in projected_batches), axis=0
@@ -526,6 +609,22 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
             )
             for index in range(len(projected_batches[0]))
         )
+        if any(
+            bool(jnp.any(~jnp.isfinite(value)))
+            for value in accumulated_coefficients
+        ):
+            raise ValueError(
+                "Projection replicate reduction produced nonfinite coefficients."
+            )
+        coefficient_leaves = tuple(
+            self.precision.output(value) for value in accumulated_coefficients
+        )
+        if any(
+            bool(jnp.any(~jnp.isfinite(value))) for value in coefficient_leaves
+        ):
+            raise ValueError(
+                "Projection output precision produced nonfinite coefficients."
+            )
         coefficient_tree = _restore_coefficients(
             coefficient_leaves, output_tree, output_specs
         )
@@ -544,6 +643,9 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
                 "deterministic_axes": product.deterministic_axes,
                 "stochastic_axes": product.stochastic_axes,
                 "precision_policy_id": self.precision.policy_id,
+                "preflight_sample_upper_bound": preflight_samples,
+                "preflight_evaluation_upper_bound": preflight_evaluations,
+                "preflight_basis_bytes": preflight_basis_bytes,
             },
             provenance={
                 "method": "product-integration-orthogonal-projection",
@@ -603,8 +705,8 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
             {
                 "kind": "polynomial-chaos-regression-plan-v1",
                 "basis_id": basis.basis_id,
-                "exact_policy": type(exact.method).__name__,
-                "least_squares_policy": type(least_squares.method).__name__,
+                "exact_policy": _content_identity(exact),
+                "least_squares_policy": _content_identity(least_squares),
                 "maximum_samples": maximum_samples_,
                 "maximum_design_bytes": maximum_bytes,
             }
@@ -667,7 +769,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
             if not bool(jnp.any(weights_ > 0.0)):
                 raise ValueError("Regression weights must have positive total weight.")
 
-        exact = sample_count == feature_count
+        exact = sample_count == feature_count and weights_ is None
         operator = DenseLinearOperator(design)
         problem = (
             LinearSystem(operator)
@@ -767,6 +869,98 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
                 "approximation": "nonintrusive-regression",
             },
         )
+
+
+def _content_identity(value: Any, /) -> dict[str, Any]:
+    return {
+        "type": f"{type(value).__module__}.{type(value).__qualname__}",
+        "representation": repr(value),
+        "arrays": array_tree_fingerprint(value),
+    }
+
+
+def _preflight_product_counts(
+    plan: ProductIntegrationPlan, /
+) -> tuple[int, int]:
+    samples_per_replicate = 1
+    replicate_counts: set[int] = set()
+    for labels, factor_plan in plan.plans.items():
+        samples_per_replicate *= _factor_preflight_count(labels, factor_plan)
+        if (
+            isinstance(factor_plan, QuasiMonteCarloPlan)
+            and isinstance(factor_plan.design, RandomizedQMCDesign)
+            and factor_plan.design.num_replicates > 1
+        ):
+            replicate_counts.add(factor_plan.design.num_replicates)
+    if len(replicate_counts) > 1:
+        raise ValueError(
+            "Randomized-QMC product factors must use one replicate count."
+        )
+    replicates = 1 if not replicate_counts else replicate_counts.pop()
+    return samples_per_replicate, replicates
+
+
+def _factor_preflight_count(labels: tuple[str, ...], plan: Any, /) -> int:
+    if isinstance(plan, FixedQuadraturePlan):
+        count = _fixed_rule_node_count(plan.rule)
+        if isinstance(plan.rule, GaussianCubatureRule):
+            if plan.rule.dimension != len(labels):
+                raise ValueError(
+                    "Gaussian cubature dimension must match its product labels."
+                )
+            return count
+        return count ** len(labels)
+    if isinstance(plan, SparseGridPlan):
+        if plan.dimension != len(labels):
+            raise ValueError(
+                "Sparse-grid factor dimension must match its label group."
+            )
+        return _sparse_grid_node_upper_bound(plan)
+    if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
+        return plan.num_samples
+    raise TypeError(
+        f"Unsupported product factor plan {type(plan).__name__!r}."
+    )
+
+
+def _sparse_grid_node_upper_bound(plan: SparseGridPlan, /) -> int:
+    total = 0
+    for term in smolyak_terms(plan.dimension, plan.level, plan.anisotropy):
+        total += math.prod(
+            int(
+                smolyak_axis_data(
+                    rule,
+                    axis_level(term.index, axis),
+                ).nodes.shape[0]
+            )
+            for axis, rule in enumerate(plan.axis_rules)
+        )
+    return total
+
+
+def _basis_storage_bytes(
+    sample_count: int,
+    feature_count: int,
+    precision: IntegrationPrecisionPolicy,
+    /,
+) -> int:
+    source_dtype = jnp.asarray(0.0).dtype
+    evaluation_dtype = (
+        source_dtype
+        if precision.evaluation_dtype is None
+        else jnp.dtype(precision.evaluation_dtype)
+    )
+    accumulation_dtype = (
+        evaluation_dtype
+        if precision.accumulation_dtype is None
+        else jnp.dtype(precision.accumulation_dtype)
+    )
+    itemsize = source_dtype.itemsize
+    if evaluation_dtype != source_dtype:
+        itemsize += evaluation_dtype.itemsize
+    if accumulation_dtype != evaluation_dtype:
+        itemsize += accumulation_dtype.itemsize
+    return int(sample_count * feature_count * itemsize)
 
 
 def _ordered_points(

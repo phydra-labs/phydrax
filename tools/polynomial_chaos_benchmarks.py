@@ -266,11 +266,12 @@ def _run_scenario(
     )
 
     regression_key, qmc_key, mc_key = jr.split(key, 3)
+    started = time.perf_counter()
     regression_samples = _samples(
         scenario, sampler="sobol_scrambled", key=regression_key
     )
     regression_points = _point_matrix(scenario, regression_samples)
-    started = time.perf_counter()
+    jax.block_until_ready(regression_points)
     regression_values = _evaluate_samples(scenario, regression_points)
     regression = phx.uq.PolynomialChaosRegressionPlan(basis).fit(
         regression_points, regression_values
@@ -298,9 +299,10 @@ def _run_scenario(
         ("qmc", "sobol_scrambled", qmc_key),
         ("mc", "uniform", mc_key),
     ):
+        started = time.perf_counter()
         samples = _samples(scenario, sampler=sampler, key=sample_key)
         points = _point_matrix(scenario, samples)
-        started = time.perf_counter()
+        jax.block_until_ready(points)
         values = _evaluate_samples(scenario, points)
         mean = jnp.mean(values)
         variance = jnp.mean(jnp.real((values - mean) * jnp.conj(values - mean)))
