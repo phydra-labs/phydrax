@@ -160,12 +160,22 @@ def _apply_linear_stable_signed_bilinear_product(
 ) -> Array:
     negative, nonzero, _ = _signed_log_components(multiplier)
     combined_log_scale = log_scale + _stable_log_abs(multiplier)
-    nonzero_value = _apply_linear_stable_signed_product(value, combined_log_scale)
-    signed_nonzero_value = jnp.where(negative, -nonzero_value, nonzero_value)
-    zero_multiplier = jnp.where(nonzero, jnp.zeros_like(multiplier), multiplier)
-    zero_linear_value = jnp.where(nonzero, jnp.zeros_like(value), value)
-    scaled_zero_value = _apply_linear_stable_signed_product(zero_linear_value, log_scale)
-    zero_value = zero_multiplier * scaled_zero_value
+    nonzero_value = _apply_linear_stable_signed_product(
+        value, combined_log_scale
+    )
+    signed_nonzero_value = jnp.where(
+        negative, -nonzero_value, nonzero_value
+    )
+    zero_multiplier = jnp.where(
+        nonzero, jnp.zeros_like(multiplier), multiplier
+    )
+    zero_linear_value = jnp.where(
+        nonzero, jnp.zeros_like(value), value
+    )
+    zero_product = zero_multiplier * zero_linear_value
+    zero_value = _apply_linear_stable_signed_product(
+        zero_product, log_scale
+    )
     return jnp.where(nonzero, signed_nonzero_value, zero_value)
 
 
@@ -180,13 +190,22 @@ def _apply_linear_stable_signed_trilinear_product(
     signed_nonzero_right_value = jnp.where(
         right_negative, -nonzero_right_value, nonzero_right_value
     )
-    zero_right = jnp.where(right_nonzero, jnp.zeros_like(right), right)
-    zero_linear_value = jnp.where(right_nonzero, jnp.zeros_like(value), value)
-    scaled_zero_right_value = _apply_linear_stable_signed_bilinear_product(
-        left, zero_linear_value, log_scale
+    zero_right = jnp.where(
+        right_nonzero, jnp.zeros_like(right), right
     )
-    zero_right_value = zero_right * scaled_zero_right_value
-    return jnp.where(right_nonzero, signed_nonzero_right_value, zero_right_value)
+    zero_left = jnp.where(
+        right_nonzero, jnp.zeros_like(left), left
+    )
+    zero_linear_value = jnp.where(
+        right_nonzero, jnp.zeros_like(value), value
+    )
+    zero_product = zero_right * zero_left * zero_linear_value
+    zero_right_value = _apply_linear_stable_signed_product(
+        zero_product, log_scale
+    )
+    return jnp.where(
+        right_nonzero, signed_nonzero_right_value, zero_right_value
+    )
 
 
 @jax.custom_jvp
