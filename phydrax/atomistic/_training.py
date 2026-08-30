@@ -21,7 +21,11 @@ from .._strict import StrictModule
 from .._trainable import combine_trainable, NonTrainableState, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
 from ._graph import realize_atomistic_graph
-from ._potential import AbstractAtomisticPotential, checkpoint_atomistic_potential
+from ._potential import (
+    _with_atomistic_potential_identity,
+    AbstractAtomisticPotential,
+    checkpoint_atomistic_potential,
+)
 from ._types import AtomisticBatch, AtomisticStatus
 
 
@@ -519,6 +523,22 @@ def _tree_finite(tree: Any, /) -> bool:
     )
 
 
+def _synchronize_optimizer_state_identity(
+    optimizer_state: Any,
+    checkpoint: _AtomisticPotential,
+    /,
+) -> Any:
+    """Align optimizer parameter-tree metadata without changing moment leaves."""
+
+    return jax.tree_util.tree_map(
+        lambda node: _with_atomistic_potential_identity(node, checkpoint)
+        if isinstance(node, AbstractAtomisticPotential)
+        else node,
+        optimizer_state,
+        is_leaf=lambda node: isinstance(node, AbstractAtomisticPotential),
+    )
+
+
 def _parameter_loss(
     parameters: Any,
     fixed: Any,
@@ -737,6 +757,7 @@ def fit_atomistic_potential(
             break
 
     current = checkpoint_atomistic_potential(current)
+    optimizer_state = _synchronize_optimizer_state_identity(optimizer_state, current)
     if not validation_history and terminal_status not in (
         AtomisticStatus.NEIGHBOR_OVERFLOW,
         AtomisticStatus.NONFINITE,
