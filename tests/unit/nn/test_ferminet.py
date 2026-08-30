@@ -7,6 +7,7 @@ import phydrax as phx
 from phydrax.nn.quantum._ferminet import (
     _scaled_determinant_components,
     _scaled_log_determinants,
+    _stable_determinant_mixture,
     _stable_signed_product,
 )
 
@@ -191,6 +192,27 @@ def test_singular_determinant_term_retains_mixture_derivative():
     value = mixture_log_abs(jnp.asarray(0.0))
     gradient = jax.grad(mixture_log_abs)(jnp.asarray(0.0))
     assert jnp.allclose(value, 0.0)
+    assert jnp.allclose(gradient, 1.0)
+
+
+def test_zero_large_scale_term_does_not_hide_nonzero_small_scale_term():
+    log_scale = jnp.asarray([0.0, -1000.0], dtype=jnp.float64)
+    coefficients = jnp.ones((2,), dtype=jnp.float64)
+
+    def mixture(nonzero_determinant):
+        determinants = jnp.stack(
+            (jnp.asarray(0.0), nonzero_determinant)
+        )
+        return _stable_determinant_mixture(
+            determinants, log_scale, coefficients
+        )
+
+    log_abs, phase, valid = mixture(jnp.asarray(1.0))
+    gradient = jax.grad(lambda value: mixture(value)[0])(jnp.asarray(1.0))
+    assert valid
+    assert phase == 1.0 + 0.0j
+    assert jnp.isfinite(log_abs)
+    assert jnp.allclose(log_abs, -1000.0)
     assert jnp.allclose(gradient, 1.0)
 
 

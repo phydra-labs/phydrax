@@ -150,6 +150,82 @@ def _scaled_log_determinants(
     return jnp.sign(scaled_determinant), determinant_log_abs
 
 
+def _stable_determinant_mixture(
+    scaled_determinant: Array,
+    determinant_log_scale: Array,
+    coefficients: Array,
+    /,
+) -> tuple[Array, Array, Array]:
+    if (
+        scaled_determinant.ndim != 1
+        or determinant_log_scale.shape != scaled_determinant.shape
+        or coefficients.shape != scaled_determinant.shape
+    ):
+        raise ValueError(
+            "Determinants, log scales, and coefficients must be matching vectors."
+        )
+    determinant_defined = jnp.isfinite(scaled_determinant) & jnp.isfinite(
+        determinant_log_scale
+    )
+    any_defined = jnp.any(determinant_defined)
+    determinant_nonzero = determinant_defined & (scaled_determinant != 0.0)
+    any_nonzero = jnp.any(determinant_nonzero)
+    safe_magnitude = jnp.where(
+        determinant_nonzero, jnp.abs(scaled_determinant), 1.0
+    )
+    physical_log_magnitude = jnp.where(
+        determinant_nonzero,
+        jnp.log(safe_magnitude) + determinant_log_scale,
+        -jnp.inf,
+    )
+    nonzero_shift = jnp.max(physical_log_magnitude)
+    all_zero_shift = jnp.max(
+        jnp.where(determinant_defined, determinant_log_scale, -jnp.inf)
+    )
+    safe_all_zero_shift = jnp.where(any_defined, all_zero_shift, 0.0)
+    determinant_shift = jax.lax.stop_gradient(
+        jnp.where(any_nonzero, nonzero_shift, safe_all_zero_shift)
+    )
+    safe_determinant = jnp.where(
+        determinant_defined, scaled_determinant, 0.0
+    )
+    relative_log_scale = jnp.where(
+        determinant_defined,
+        determinant_log_scale - determinant_shift,
+        0.0,
+    )
+    relative_determinant = _stable_signed_product(
+        safe_determinant, relative_log_scale
+    )
+
+    coefficient_scale = jax.lax.stop_gradient(jnp.max(jnp.abs(coefficients)))
+    coefficient_scale_valid = jnp.isfinite(coefficient_scale) & (
+        coefficient_scale > 0.0
+    )
+    safe_coefficient_scale = jnp.where(
+        coefficient_scale_valid, coefficient_scale, 1.0
+    )
+    scaled_sum = jnp.sum(
+        (coefficients / safe_coefficient_scale) * relative_determinant
+    )
+    nonzero = (
+        any_defined
+        & coefficient_scale_valid
+        & (scaled_sum != 0.0)
+        & jnp.isfinite(scaled_sum)
+    )
+    log_abs = jnp.where(
+        nonzero,
+        jnp.log(safe_coefficient_scale)
+        + determinant_shift
+        + jnp.log(jnp.abs(scaled_sum)),
+        -jnp.inf,
+    )
+    phase = jnp.where(scaled_sum < 0.0, -1.0 + 0.0j, 1.0 + 0.0j)
+    valid = jnp.all(determinant_defined) & jnp.all(jnp.isfinite(coefficients))
+    return log_abs, phase, valid
+
+
 class _FermiNetConfiguration(StrictModule, NonTrainableState):
     spin_labels: Array
     electron_count: int = eqx.field(static=True)
@@ -431,61 +507,12 @@ class FermiNet(StrictModule):
         scaled_determinant, determinant_log_scale = (
             _scaled_determinant_components(raw_orbitals, log_envelope)
         )
-        determinant_defined = jnp.isfinite(scaled_determinant) & jnp.isfinite(
-            determinant_log_scale
+        log_abs, phase, determinant_valid = _stable_determinant_mixture(
+            scaled_determinant,
+            determinant_log_scale,
+            self.determinant_coefficients,
         )
-        any_determinant = jnp.any(determinant_defined)
-        determinant_shift = jax.lax.stop_gradient(
-            jnp.max(
-                jnp.where(
-                    determinant_defined, determinant_log_scale, -jnp.inf
-                )
-            )
-        )
-        safe_determinant_shift = jnp.where(any_determinant, determinant_shift, 0.0)
-        safe_scaled_determinant = jnp.where(
-            determinant_defined, scaled_determinant, 0.0
-        )
-        relative_log_scale = jnp.where(
-            determinant_defined,
-            determinant_log_scale - safe_determinant_shift,
-            0.0,
-        )
-        scaled_determinant = _stable_signed_product(
-            safe_scaled_determinant, relative_log_scale
-        )
-
-        coefficient_scale = jax.lax.stop_gradient(
-            jnp.max(jnp.abs(self.determinant_coefficients))
-        )
-        coefficient_scale_valid = jnp.isfinite(coefficient_scale) & (
-            coefficient_scale > 0.0
-        )
-        safe_coefficient_scale = jnp.where(
-            coefficient_scale_valid, coefficient_scale, 1.0
-        )
-        scaled_sum = jnp.sum(
-            (self.determinant_coefficients / safe_coefficient_scale)
-            * scaled_determinant
-        )
-        nonzero = (
-            any_determinant
-            & coefficient_scale_valid
-            & (scaled_sum != 0.0)
-            & jnp.isfinite(scaled_sum)
-        )
-        log_abs = jnp.where(
-            nonzero,
-            jnp.log(safe_coefficient_scale)
-            + safe_determinant_shift
-            + jnp.log(jnp.abs(scaled_sum)),
-            -jnp.inf,
-        )
-        phase = jnp.where(scaled_sum < 0.0, -1.0 + 0.0j, 1.0 + 0.0j)
         input_valid = jnp.all(jnp.isfinite(electrons))
-        determinant_valid = jnp.all(determinant_defined) & jnp.all(
-            jnp.isfinite(self.determinant_coefficients)
-        )
         return LogAmplitude(log_abs, phase, valid=input_valid & determinant_valid)
 
     def __call__(self, electrons: Array, /) -> LogAmplitude:
