@@ -26,8 +26,8 @@ class _FailedLocalOperator(phx.operators.AbstractLocalQuantumOperator):
         del model
         shape = configurations.shape[:-2]
         return phx.operators.LocalOperatorEstimate(
-            jnp.full(shape, jnp.nan),
-            jnp.zeros(shape, dtype=bool),
+            jnp.zeros(shape),
+            jnp.ones(shape, dtype=bool),
             jnp.full(
                 shape,
                 int(phx.operators.LocalOperatorStatus.SINGULAR_CONFIGURATION),
@@ -208,6 +208,9 @@ def test_failed_local_and_linear_actions_record_without_applying_updates():
     local_result = phx.solver.solve_variational_monte_carlo(
         failed_local, _policy(1), key=jr.key(501)
     )
+    assert jnp.all(local_result.final_estimate.local.valid)
+    assert not jnp.any(local_result.final_estimate.local.successful)
+    assert local_result.final_estimate.active_samples == 0
     assert local_result.status_history[0] == phx.solver.VMC_INVALID_SAMPLES
     assert local_result.completed_iterations == 0
     assert local_result.linear_results == ()

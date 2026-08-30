@@ -117,6 +117,54 @@ def test_determinant_combination_is_log_stable_and_envelopes_decay():
     assert far.log_abs < near.log_abs
 
 
+def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():
+    nuclei = _structure([[0.0, 0.0, 0.0]], name="H-large-decay")
+    network = _network(nuclei, spin_up=1, electrons=1, determinants=1)
+    network = eqx.tree_at(
+        lambda value: (value.orbital_weight, value.orbital_bias),
+        network,
+        (
+            jnp.zeros_like(network.orbital_weight),
+            jnp.ones_like(network.orbital_bias),
+        ),
+    )
+    network = eqx.tree_at(
+        lambda value: value.raw_envelope_decay,
+        network,
+        jnp.full_like(network.raw_envelope_decay, 1000.0),
+    )
+    value = network(jnp.asarray([[1.0, 0.0, 0.0]], dtype=jnp.float64))
+    assert value.valid
+    assert value.nonzero
+    assert jnp.isfinite(value.log_abs)
+    assert value.log_abs < -900.0
+
+
+def test_zero_determinant_coefficient_has_finite_reactivation_gradient():
+    nuclei = _structure([[0.0, 0.0, 0.0]], name="H-zero-coefficient")
+    network = _network(nuclei, spin_up=1, electrons=1, determinants=2)
+    network = eqx.tree_at(
+        lambda value: (value.orbital_weight, value.orbital_bias),
+        network,
+        (
+            jnp.zeros_like(network.orbital_weight),
+            jnp.asarray([[1.0], [2.0]], dtype=jnp.float64),
+        ),
+    )
+    coefficients = jnp.asarray([1.0, 0.0], dtype=jnp.float64)
+    electrons = jnp.asarray([[0.8, 0.0, 0.0]], dtype=jnp.float64)
+
+    def log_amplitude(values):
+        model = eqx.tree_at(
+            lambda value: value.determinant_coefficients, network, values
+        )
+        return model(electrons).log_abs
+
+    gradient = jax.grad(log_amplitude)(coefficients)
+    assert jnp.all(jnp.isfinite(gradient))
+    assert gradient[1] != 0.0
+
+
 def test_parameter_gradients_coordinate_gradients_and_laplacian_are_finite():
     network = _network(
         _structure([[0.0, 0.0, 0.0]], name="He"), spin_up=1, electrons=2

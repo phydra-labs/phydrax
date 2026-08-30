@@ -168,6 +168,42 @@ def test_coincident_singularities_are_invalid_and_never_clipped():
     )
 
 
+def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion():
+    bad_scale = phx.atomistic.AtomisticScaleContract(
+        "angstrom", "electronvolt"
+    )
+    bad_structure = phx.atomistic.AtomicStructure(
+        jnp.asarray([1], dtype=jnp.int32),
+        jnp.zeros((1, 3), dtype=jnp.float64),
+        jnp.ones((1,), dtype=jnp.float64),
+        bad_scale,
+        name="mis-scaled-H",
+    )
+    with pytest.raises(ValueError, match="Bohr.*Hartree|physical conversion"):
+        phx.operators.ElectronicCoulombHamiltonian(bad_structure, 1)
+
+    physical_scale = phx.atomistic.AtomisticScaleContract(
+        "angstrom",
+        "electronvolt",
+        length_to_reference=1.8897261254578281,
+        energy_to_reference=0.03674932217565499,
+    )
+    physical_structure = phx.atomistic.AtomicStructure(
+        jnp.asarray([1], dtype=jnp.int32),
+        jnp.zeros((1, 3), dtype=jnp.float64),
+        jnp.ones((1,), dtype=jnp.float64),
+        physical_scale,
+        name="scaled-H",
+    )
+    estimate = phx.operators.evaluate_local_operator(
+        _Constant(jnp.asarray(0.0)),
+        phx.operators.ElectronicCoulombHamiltonian(physical_structure, 1),
+        jnp.asarray([[[1.0, 0.0, 0.0]]], dtype=jnp.float64),
+    )
+    assert estimate.valid[0]
+    assert jnp.allclose(estimate.value[0], -14.3996454784255, rtol=1e-12)
+
+
 def test_periodic_electronic_systems_and_stochastic_trace_are_explicitly_rejected():
     periodic = _structure(
         [1],

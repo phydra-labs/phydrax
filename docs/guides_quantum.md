@@ -322,11 +322,16 @@ H=-\frac12\sum_i\nabla_i^2
   +\sum_{A<B}\frac{Z_A Z_B}{R_{AB}}.
 $$
 
-Nuclei and unit conversion come from `AtomicStructure`. Electron configurations
-have shape `(electron_count, 3)`. Active pair masks exclude only exact self pairs;
-an exact coincident electron/electron, electron/nucleus, or active nucleus/nucleus
-pair returns `SINGULAR_CONFIGURATION` and a NaN value. Distances are never clipped.
-Cell or periodic metadata is rejected, and relativistic terms are not inferred.
+Nuclei and unit conversion come from `AtomicStructure`. The electronic entry
+points require the scale's reference to be Bohr/Hartree: Bohr and Hartree use
+unit factors, while angstrom/electronvolt require the encoded physical factors
+`1 Å = 1.8897261254578281 Bohr` and
+`1 eV = 0.03674932217565499 Hartree`; arbitrary reference factors are rejected.
+Electron configurations have shape `(electron_count, 3)`. Active pair masks
+exclude only exact self pairs; an exact coincident electron/electron,
+electron/nucleus, or active nucleus/nucleus pair returns
+`SINGULAR_CONFIGURATION` and a NaN value. Distances are never clipped. Cell or
+periodic metadata is rejected, and relativistic terms are not inferred.
 
 `ElectronicKineticPolicy` offers `exact` and `chunked-exact` coordinate Hessian
 traces. Both evaluate all `3 * electron_count` coordinate second derivatives;
@@ -336,8 +341,9 @@ not supported.
 
 `phydrax.nn.quantum.FermiNet` supplies a canonical `LogAmplitude` for this
 Hamiltonian. It uses shared one- and two-electron streams, a static leading
-spin-up/trailing spin-down partition, full generalized Slater determinants, stable
-signed log-domain determinant combination, and strictly positive envelope decay
+spin-up/trailing spin-down partition, full generalized Slater determinants,
+row/column-scaled log envelopes, a stable signed linear determinant mixture that
+retains derivatives at zero coefficients, and strictly positive envelope decay
 parameters. Same-spin coordinate exchange is antisymmetric. The full generalized
 determinant does not impose a standalone spatial sign rule on an opposite-spin
 exchange.

@@ -21,7 +21,7 @@ from ..._precision import real_precision_dtype_name
 from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...atomistic import AtomicStructure
+from ...atomistic import AtomisticScaleContract, AtomicStructure
 from ._amplitude import LogAmplitude
 from ._local import (
     AbstractLocalQuantumOperator,
@@ -31,6 +31,60 @@ from ._local import (
 
 
 ElectronicTraceMethod: TypeAlias = Literal["exact", "chunked-exact"]
+
+_BOHR_PER_ANGSTROM = 1.8897261254578281
+_HARTREE_PER_ELECTRONVOLT = 0.03674932217565499
+_ATOMIC_LENGTH_FACTORS = {
+    "bohr": 1.0,
+    "a0": 1.0,
+    "atomicunitoflength": 1.0,
+    "angstrom": _BOHR_PER_ANGSTROM,
+    "ångström": _BOHR_PER_ANGSTROM,
+    "å": _BOHR_PER_ANGSTROM,
+}
+_ATOMIC_ENERGY_FACTORS = {
+    "hartree": 1.0,
+    "eh": 1.0,
+    "atomicunitofenergy": 1.0,
+    "electronvolt": _HARTREE_PER_ELECTRONVOLT,
+    "ev": _HARTREE_PER_ELECTRONVOLT,
+}
+
+
+def _unit_key(value: str, /) -> str:
+    return (
+        str(value)
+        .strip()
+        .lower()
+        .replace(" ", "")
+        .replace("_", "")
+        .replace("-", "")
+    )
+
+
+def _require_atomic_reference(scale: AtomisticScaleContract, /) -> None:
+    length_key = _unit_key(scale.length_unit)
+    energy_key = _unit_key(scale.energy_unit)
+    if (
+        length_key not in _ATOMIC_LENGTH_FACTORS
+        or energy_key not in _ATOMIC_ENERGY_FACTORS
+    ):
+        raise ValueError(
+            "Electronic Coulomb calculations require units with an explicit "
+            "Bohr/Hartree conversion; supported units are Bohr or angstrom and "
+            "Hartree or electronvolt."
+        )
+    expected_length = _ATOMIC_LENGTH_FACTORS[length_key]
+    expected_energy = _ATOMIC_ENERGY_FACTORS[energy_key]
+    if not math.isclose(
+        scale.length_to_reference, expected_length, rel_tol=5e-12, abs_tol=0.0
+    ) or not math.isclose(
+        scale.energy_to_reference, expected_energy, rel_tol=5e-12, abs_tol=0.0
+    ):
+        raise ValueError(
+            "Electronic scales must map the declared length to Bohr and energy "
+            "to Hartree with the exact physical conversion factors."
+        )
 
 
 class ElectronicKineticPolicy(StrictModule, NonTrainableState):
@@ -171,6 +225,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
                 "ElectronicCoulombHamiltonian supports finite nonperiodic molecules "
                 "and rejects cell or periodic metadata."
             )
+        _require_atomic_reference(nuclei.scale)
         count = int(electron_count)
         if count <= 0:
             raise ValueError("electron_count must be positive.")
@@ -461,6 +516,7 @@ def harmonic_mean_electron_proposal(
         raise TypeError("nuclei must be an AtomicStructure.")
     if nuclei.has_periodic_metadata:
         raise ValueError("Electronic proposals support finite nonperiodic nuclei only.")
+    _require_atomic_reference(nuclei.scale)
     count = int(electron_count)
     step = float(step_size)
     if count <= 0:
@@ -489,6 +545,7 @@ def electronic_initial_walkers(
         raise TypeError("nuclei must be an AtomicStructure.")
     if nuclei.has_periodic_metadata:
         raise ValueError("Electronic walkers support finite nonperiodic nuclei only.")
+    _require_atomic_reference(nuclei.scale)
     electrons = int(electron_count)
     walkers = int(walker_count)
     spread_value = float(spread)

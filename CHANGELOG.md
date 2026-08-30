@@ -7,13 +7,15 @@
   `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
   a clean migration of discrete VMC/TDVP while preserving the connected-action
   algorithm. Added finite nonperiodic Born--Oppenheimer
-  `ElectronicCoulombHamiltonian`, exact and chunked-exact coordinate kinetic
-  traces, singularity statuses without distance clipping, replayable electronic
-  walkers, an exactly corrected state-dependent proposal, and a
-  full-generalized-determinant `phydrax.nn.quantum.FermiNet` with same-spin
-  antisymmetry and positive decaying envelopes. Electronic VMC reuses persistent
-  chains, matrix-free score/Gram stochastic reconfiguration, training lifecycle,
-  linear solves, diagnostics, statuses, and checkpoints. Added H/He/H₂ tests,
+  `ElectronicCoulombHamiltonian`, validated Bohr/Hartree reference conversion,
+  exact and chunked-exact coordinate kinetic traces, singularity statuses without
+  distance clipping, replayable electronic walkers, an exactly corrected
+  state-dependent proposal, and a full-generalized-determinant
+  `phydrax.nn.quantum.FermiNet` with same-spin antisymmetry, scaled log envelopes,
+  and determinant mixtures differentiable at zero coefficients. Electronic VMC
+  folds local statuses into validity and reuses persistent chains, matrix-free
+  score/Gram stochastic reconfiguration, training lifecycle, linear solves,
+  diagnostics, statuses, and checkpoints. Added H/He/H₂ tests,
   documentation, and a fixed multi-seed benchmark campaign with predeclared
   statistical/chemical gates and provenance; periodic, relativistic, and
   stochastic-trace electrons remain unsupported.

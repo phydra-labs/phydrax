@@ -442,7 +442,7 @@ def _estimate_from_samples(
     centered = local.value - energy
     variance_result = integrate(jnp.abs(centered) ** 2, target)
     variance = jnp.real(_extract_scalar(variance_result.value))
-    all_local_valid = jnp.all(local.valid)
+    all_local_valid = jnp.all(local.successful)
     finite = jnp.isfinite(energy) & jnp.isfinite(variance)
     imaginary = jnp.abs(jnp.imag(energy))
     status = jnp.where(
@@ -478,7 +478,7 @@ def _estimate_from_samples(
         imaginary_energy=imaginary,
         variance=variance,
         acceptance_rate=jnp.mean(samples.acceptance_rate),
-        active_samples=jnp.sum(local.valid, dtype=jnp.int32),
+        active_samples=jnp.sum(local.successful, dtype=jnp.int32),
         valid=valid,
         status=status,
         local=local,

@@ -385,7 +385,7 @@ def _connected_rate_statistics(
     for operator in problem.collapse_operators:
         estimate = evaluate_local_operator(model, operator, samples.samples)
         local_rates.append(jnp.abs(estimate.value) ** 2)
-        local_valid.append(estimate.valid)
+        local_valid.append(estimate.successful)
     values = jnp.stack(local_rates, axis=-1)
     valid = jnp.all(jnp.stack(local_valid, axis=-1))
     from ..uq._diagnostics import mcmc_diagnostics
@@ -546,7 +546,7 @@ def solve_connected_vmc_neural_trajectory(
                 problem.vmc_problem.operator,
                 samples.samples,
             )
-            generator_valid = jnp.all(local_generator.valid) & jnp.all(
+            generator_valid = jnp.all(local_generator.successful) & jnp.all(
                 jnp.isfinite(local_generator.value)
             )
             score, metric = _score_geometry(

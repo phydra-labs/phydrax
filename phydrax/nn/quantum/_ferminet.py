@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import jax.scipy.special as jsp_special
 from jaxtyping import Array, Key
 from opt_einsum import contract
 
@@ -282,43 +283,74 @@ class FermiNet(StrictModule):
         raw_orbitals = raw_orbitals + self.orbital_bias[:, None, :]
         decay = self.envelope_decay
         masked_logits = jnp.where(active[None, None, :], self.envelope_logits, -jnp.inf)
-        mixing = jax.nn.softmax(masked_logits, axis=-1)
-        envelope = jnp.sum(
-            mixing[:, :, None, :]
-            * jnp.exp(
-                -decay[:, :, None, :] * electron_nuclear[None, None, :, :]
-            ),
+        log_mixing = jax.nn.log_softmax(masked_logits, axis=-1)
+        log_envelope = jsp_special.logsumexp(
+            log_mixing[:, :, None, :]
+            - decay[:, :, None, :] * electron_nuclear[None, None, :, :],
             axis=-1,
         )
-        orbitals = raw_orbitals * jnp.swapaxes(envelope, 1, 2)
-        determinant_sign, determinant_log_abs = jax.vmap(jnp.linalg.slogdet)(orbitals)
-        coefficient_nonzero = self.determinant_coefficients != 0.0
-        term_log_abs = determinant_log_abs + jnp.where(
-            coefficient_nonzero,
-            jnp.log(jnp.abs(self.determinant_coefficients)),
-            -jnp.inf,
+        log_envelope = jnp.swapaxes(log_envelope, 1, 2)
+
+        row_shift = jax.lax.stop_gradient(jnp.max(log_envelope, axis=-1))
+        row_scaled_log = log_envelope - row_shift[:, :, None]
+        column_shift = jax.lax.stop_gradient(jnp.max(row_scaled_log, axis=-2))
+        scaled_orbitals = raw_orbitals * jnp.exp(
+            row_scaled_log - column_shift[:, None, :]
         )
-        term_sign = determinant_sign * jnp.sign(self.determinant_coefficients)
+        determinant_sign, scaled_determinant_log_abs = jax.vmap(
+            jnp.linalg.slogdet
+        )(scaled_orbitals)
+        determinant_log_abs = (
+            scaled_determinant_log_abs
+            + jnp.sum(row_shift, axis=-1)
+            + jnp.sum(column_shift, axis=-1)
+        )
         determinant_defined = (
             ~jnp.isnan(determinant_log_abs)
             & ~jnp.isposinf(determinant_log_abs)
             & jnp.isfinite(determinant_sign)
         )
-        finite_term = jnp.isfinite(term_log_abs) & jnp.isfinite(term_sign)
-        maximum = jnp.max(jnp.where(finite_term, term_log_abs, -jnp.inf))
-        any_term = jnp.any(finite_term)
-        safe_maximum = jnp.where(any_term, maximum, 0.0)
-        scaled_sum = jnp.sum(
-            jnp.where(
-                finite_term,
-                term_sign * jnp.exp(term_log_abs - safe_maximum),
-                0.0,
+        finite_determinant = jnp.isfinite(determinant_log_abs) & jnp.isfinite(
+            determinant_sign
+        )
+        any_determinant = jnp.any(finite_determinant)
+        determinant_shift = jax.lax.stop_gradient(
+            jnp.max(
+                jnp.where(finite_determinant, determinant_log_abs, -jnp.inf)
             )
         )
-        nonzero = any_term & (scaled_sum != 0.0) & jnp.isfinite(scaled_sum)
+        safe_determinant_shift = jnp.where(any_determinant, determinant_shift, 0.0)
+        scaled_determinant = jnp.where(
+            finite_determinant,
+            determinant_sign
+            * jnp.exp(determinant_log_abs - safe_determinant_shift),
+            0.0,
+        )
+
+        coefficient_scale = jax.lax.stop_gradient(
+            jnp.max(jnp.abs(self.determinant_coefficients))
+        )
+        coefficient_scale_valid = jnp.isfinite(coefficient_scale) & (
+            coefficient_scale > 0.0
+        )
+        safe_coefficient_scale = jnp.where(
+            coefficient_scale_valid, coefficient_scale, 1.0
+        )
+        scaled_sum = jnp.sum(
+            (self.determinant_coefficients / safe_coefficient_scale)
+            * scaled_determinant
+        )
+        nonzero = (
+            any_determinant
+            & coefficient_scale_valid
+            & (scaled_sum != 0.0)
+            & jnp.isfinite(scaled_sum)
+        )
         log_abs = jnp.where(
             nonzero,
-            safe_maximum + jnp.log(jnp.abs(scaled_sum)),
+            jnp.log(safe_coefficient_scale)
+            + safe_determinant_shift
+            + jnp.log(jnp.abs(scaled_sum)),
             -jnp.inf,
         )
         phase = jnp.where(scaled_sum < 0.0, -1.0 + 0.0j, 1.0 + 0.0j)
