@@ -157,7 +157,7 @@ The modes are:
 
 Signed unbiased terms require:
 
-```python
+```text
 solver.solve(..., keep_best=False)
 ```
 

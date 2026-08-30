@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
@@ -41,8 +42,10 @@ class HexahedralConnectivity(StrictModule, NonTrainableState):
     face_edges: Array
     face_edge_signs: Array
     cell_edges: Array
+    cell_edge_signs: Array
     cell_faces: Array
     cell_face_signs: Array
+    cell_face_vertex_permutations: Array
     face_cell_counts: Array
     boundary_vertices: Array
     boundary_edges: Array
@@ -50,74 +53,194 @@ class HexahedralConnectivity(StrictModule, NonTrainableState):
     vertex_count: int = eqx.field(static=True)
     cell_count: int = eqx.field(static=True)
 
+    def cell_edge_permutations(self, width: int, /) -> Array:
+        """Map local edge positions to canonical edge positions."""
+
+        width_ = int(width)
+        if width_ <= 0:
+            raise ValueError("Edge permutation width must be positive.")
+        forward = np.arange(width_, dtype=np.int32)
+        signs = np.asarray(self.cell_edge_signs)
+        permutations = np.where(
+            signs[..., None] > 0.0,
+            forward,
+            forward[::-1],
+        )
+        return jnp.asarray(permutations)
+
+    def cell_face_permutations(self, width_u: int, width_v: int, /) -> Array:
+        """Map local tensor-face positions to canonical flattened positions."""
+
+        permutations = np.asarray(self.cell_face_vertex_permutations)
+        rows = [
+            [
+                _quadrilateral_tensor_permutation(permutation, width_u, width_v)
+                for permutation in cell
+            ]
+            for cell in permutations
+        ]
+        return jnp.asarray(rows, dtype=jnp.int32)
+
+
+def _cycle_permutation(cycle, canonical):
+    permutation = tuple(canonical.index(vertex) for vertex in cycle)
+    if tuple(sorted(permutation)) != (0, 1, 2, 3):
+        raise ValueError("Hex face does not contain its canonical vertices.")
+    steps = tuple(
+        (permutation[(position + 1) % 4] - permutation[position]) % 4
+        for position in range(4)
+    )
+    if steps not in ((1, 1, 1, 1), (3, 3, 3, 3)):
+        raise ValueError("Hex face orientation is inconsistent.")
+    return permutation
+
+
+def _canonical_cycle(cycle):
+    rotations = tuple(tuple(cycle[shift:] + cycle[:shift]) for shift in range(len(cycle)))
+    reversed_cycle = list(reversed(cycle))
+    reflected = tuple(
+        tuple(reversed_cycle[shift:] + reversed_cycle[:shift])
+        for shift in range(len(cycle))
+    )
+    return min(rotations + reflected)
+
 
 def _cycle_sign(cycle, canonical):
-    n = len(cycle)
-    for shift in range(n):
-        if tuple(cycle[shift:] + cycle[:shift]) == canonical:
-            return 1.0
-    reversed_cycle = list(reversed(cycle))
-    for shift in range(n):
-        if tuple(reversed_cycle[shift:] + reversed_cycle[:shift]) == canonical:
-            return -1.0
-    raise ValueError("Hex face orientation is inconsistent.")
+    permutation = _cycle_permutation(cycle, canonical)
+    return 1.0 if (permutation[1] - permutation[0]) % 4 == 1 else -1.0
+
+
+def _quadrilateral_tensor_permutation(
+    vertex_permutation,
+    width_u: int,
+    width_v: int,
+    /,
+):
+    """Map one local C-order tensor grid to canonical face positions."""
+
+    permutation = tuple(int(value) for value in vertex_permutation)
+    _cycle_permutation(list(range(4)), permutation)
+    widths = (int(width_u), int(width_v))
+    if any(width <= 0 for width in widths):
+        raise ValueError("Face permutation widths must be positive.")
+    corners = np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=np.int32)
+    origin = corners[permutation[0]]
+    directions = (
+        corners[permutation[1]] - origin,
+        corners[permutation[3]] - origin,
+    )
+    canonical_widths = (
+        widths[0] if directions[0][0] else widths[1],
+        widths[0] if directions[0][1] else widths[1],
+    )
+    result = np.empty((widths[0] * widths[1],), dtype=np.int32)
+    for local_u in range(widths[0]):
+        for local_v in range(widths[1]):
+            canonical = (
+                origin * (np.asarray(canonical_widths) - 1)
+                + directions[0] * local_u
+                + directions[1] * local_v
+            )
+            result[local_u * widths[1] + local_v] = int(canonical[0]) * canonical_widths[
+                1
+            ] + int(canonical[1])
+    return result
 
 
 def hexahedral_connectivity(
     hexahedra: ArrayLike, vertex_count: int, /
 ) -> HexahedralConnectivity:
+    vertices = int(vertex_count)
     cells = np.asarray(hexahedra, dtype=np.int32)
     if (
-        cells.ndim != 2
+        vertices <= 0
+        or cells.ndim != 2
         or cells.shape[1] != 8
+        or cells.shape[0] == 0
         or np.any(cells < 0)
-        or np.any(cells >= vertex_count)
+        or np.any(cells >= vertices)
     ):
-        raise ValueError("hexahedra must have shape (n,8) with valid vertices.")
-    edge_map = {}
-    edges = []
-    cell_edges = np.empty((len(cells), 12), np.int32)
-    for ci, cell in enumerate(cells):
-        for li, (a, b) in enumerate(_EDGES):
-            pair = (int(cell[a]), int(cell[b]))
+        raise ValueError("hexahedra must have shape (n > 0,8) with valid vertices.")
+    if np.any(np.diff(np.sort(cells, axis=1), axis=1) == 0):
+        raise ValueError("Each hexahedron must reference eight distinct vertices.")
+    if np.unique(np.sort(cells, axis=1), axis=0).shape[0] != cells.shape[0]:
+        raise ValueError("hexahedra cannot contain duplicate cells.")
+
+    edge_keys = sorted(
+        {
+            tuple(sorted((int(cell[start]), int(cell[stop]))))
+            for cell in cells
+            for start, stop in _EDGES
+        }
+    )
+    edge_map = {key: index for index, key in enumerate(edge_keys)}
+    edges = np.asarray(edge_keys, dtype=np.int32)
+    cell_edges = np.empty((len(cells), 12), dtype=np.int32)
+    cell_edge_signs = np.empty((len(cells), 12), dtype=float)
+    for cell_index, cell in enumerate(cells):
+        for local_edge, (start, stop) in enumerate(_EDGES):
+            pair = (int(cell[start]), int(cell[stop]))
             key = tuple(sorted(pair))
-            if key not in edge_map:
-                edge_map[key] = len(edges)
-                edges.append(key)
-            cell_edges[ci, li] = edge_map[key]
-    face_map = {}
-    faces = []
-    face_counts = []
-    cell_faces = np.empty((len(cells), 6), np.int32)
-    cell_signs = np.empty((len(cells), 6), float)
-    for ci, cell in enumerate(cells):
-        for li, template in enumerate(_FACES):
-            cycle = [int(cell[i]) for i in template]
+            cell_edges[cell_index, local_edge] = edge_map[key]
+            cell_edge_signs[cell_index, local_edge] = 1.0 if pair == key else -1.0
+
+    face_cycles = {}
+    face_counts = {}
+    face_incidents = []
+    for cell in cells:
+        cell_incidents = []
+        for template in _FACES:
+            cycle = [int(cell[index]) for index in template]
             key = tuple(sorted(cycle))
-            if key not in face_map:
-                face_map[key] = len(faces)
-                faces.append(tuple(cycle))
-                face_counts.append(0)
-            fi = face_map[key]
-            cell_faces[ci, li] = fi
-            cell_signs[ci, li] = _cycle_sign(cycle, faces[fi])
-            face_counts[fi] += 1
-            if face_counts[fi] > 2:
+            canonical = _canonical_cycle(cycle)
+            if key in face_cycles and face_cycles[key] != canonical:
+                raise ValueError("Shared hexahedral face cycles are incompatible.")
+            face_cycles[key] = canonical
+            face_counts[key] = face_counts.get(key, 0) + 1
+            if face_counts[key] > 2:
                 raise ValueError("Non-manifold hexahedral face.")
-    edges = np.asarray(edges, np.int32)
-    faces = np.asarray(faces, np.int32)
-    counts = np.asarray(face_counts, np.int32)
-    face_edges = np.empty((len(faces), 4), np.int32)
-    face_edge_signs = np.empty((len(faces), 4), float)
-    for fi, face in enumerate(faces):
-        for j in range(4):
-            pair = (int(face[j]), int(face[(j + 1) % 4]))
+            cell_incidents.append((key, cycle))
+        face_incidents.append(cell_incidents)
+
+    face_keys = sorted(face_cycles)
+    face_map = {key: index for index, key in enumerate(face_keys)}
+    faces = np.asarray([face_cycles[key] for key in face_keys], dtype=np.int32)
+    counts = np.asarray([face_counts[key] for key in face_keys], dtype=np.int32)
+    cell_faces = np.empty((len(cells), 6), dtype=np.int32)
+    cell_face_signs = np.empty((len(cells), 6), dtype=float)
+    cell_face_vertex_permutations = np.empty(
+        (len(cells), 6, 4),
+        dtype=np.int32,
+    )
+    incident_signs = [[] for _ in face_keys]
+    for cell_index, incidents in enumerate(face_incidents):
+        for local_face, (key, cycle) in enumerate(incidents):
+            face = face_map[key]
+            canonical = list(face_cycles[key])
+            sign = _cycle_sign(cycle, canonical)
+            cell_faces[cell_index, local_face] = face
+            cell_face_signs[cell_index, local_face] = sign
+            cell_face_vertex_permutations[cell_index, local_face] = _cycle_permutation(
+                cycle, canonical
+            )
+            incident_signs[face].append(sign)
+    if any(len(signs) == 2 and signs[0] == signs[1] for signs in incident_signs):
+        raise ValueError("Shared hexahedral faces must have opposite orientation.")
+
+    face_edges = np.empty((len(faces), 4), dtype=np.int32)
+    face_edge_signs = np.empty((len(faces), 4), dtype=float)
+    for face_index, face in enumerate(faces):
+        for position in range(4):
+            pair = (
+                int(face[position]),
+                int(face[(position + 1) % 4]),
+            )
             key = tuple(sorted(pair))
-            face_edges[fi, j] = edge_map[key]
-            face_edge_signs[fi, j] = 1.0 if pair == key else -1.0
+            face_edges[face_index, position] = edge_map[key]
+            face_edge_signs[face_index, position] = 1.0 if pair == key else -1.0
     boundary_faces = counts == 1
-    boundary_edges = np.zeros(len(edges), bool)
-    boundary_vertices = np.zeros(vertex_count, bool)
+    boundary_edges = np.zeros(len(edges), dtype=bool)
+    boundary_vertices = np.zeros(vertices, dtype=bool)
     if np.any(boundary_faces):
         boundary_edges[np.unique(face_edges[boundary_faces])] = True
         boundary_vertices[np.unique(faces[boundary_faces])] = True
@@ -127,13 +250,15 @@ def hexahedral_connectivity(
         face_edges=jnp.asarray(face_edges),
         face_edge_signs=jnp.asarray(face_edge_signs),
         cell_edges=jnp.asarray(cell_edges),
+        cell_edge_signs=jnp.asarray(cell_edge_signs),
         cell_faces=jnp.asarray(cell_faces),
-        cell_face_signs=jnp.asarray(cell_signs),
+        cell_face_signs=jnp.asarray(cell_face_signs),
+        cell_face_vertex_permutations=jnp.asarray(cell_face_vertex_permutations),
         face_cell_counts=jnp.asarray(counts),
         boundary_vertices=jnp.asarray(boundary_vertices),
         boundary_edges=jnp.asarray(boundary_edges),
         boundary_faces=jnp.asarray(boundary_faces),
-        vertex_count=vertex_count,
+        vertex_count=vertices,
         cell_count=len(cells),
     )
 
@@ -179,6 +304,12 @@ def hexahedral_cell_complex(
         3,
         cids,
         subsets=(EntitySubset("boundary", np.zeros(c.cell_count, bool)),),
+        entity_set_id=canonical_fingerprint(
+            {
+                "kind": "hexahedral-cell-entity-set",
+                "cell_global_ids": np.sort(cids).tolist(),
+            }
+        ),
     )
     ve = OrientedIncidence(
         1,

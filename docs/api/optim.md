@@ -1535,7 +1535,7 @@ Preparation and Clarabel execution remain host operations. Once prepared,
 not make the forward Clarabel solve device-resident. The API provides first-order
 mathematical solution sensitivity only; higher-order differentiation is unsupported.
 
-```python
+```text
 import equinox
 import phydrax
 

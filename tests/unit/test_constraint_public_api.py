@@ -108,6 +108,22 @@ PUBLIC_TERM_API = {
     "evaluate",
     "operator_term_suite",
     "ricci_flat_kahler_term",
+    "CompiledModalResidualTerm",
+    "EigenspaceAction",
+    "FactorizedVariationalEigenspaceResult",
+    "FormDensity",
+    "InvariantSubspaceResidual",
+    "InvariantSubspaceResidualEvaluation",
+    "InvariantSubspaceResidualResult",
+    "ModalObservationTerm",
+    "ModalTimeProvider",
+    "VariationalEigenspace",
+    "VariationalEigenspaceEvaluation",
+    "VariationalEigenspaceResult",
+    "factorized_variational_eigenspace",
+    "free_boundary_term_suite",
+    "implicit_interface_penalty",
+    "implicit_phase_penalty",
 }
 
 LEGACY_TERMS = {

@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._spaces import FieldRepresentation
 
 
 class FiniteElementSpec(StrictModule, NonTrainableState):
@@ -23,6 +24,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
     cell_kind: str = eqx.field(static=True)
     degree: int = eqx.field(static=True)
     conformity: str = eqx.field(static=True)
+    representation: FieldRepresentation = eqx.field(static=True)
     mapping: str = eqx.field(static=True)
     value_shape: tuple[int, ...] = eqx.field(static=True)
     reference_nodes: Array
@@ -41,6 +43,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         /,
         *,
         conformity: str = "H1",
+        representation: FieldRepresentation = "point_value",
         mapping: str = "identity",
         value_shape: tuple[int, ...] = (),
         tabulator: Callable | None = None,
@@ -50,9 +53,21 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         cell = str(cell_kind)
         order = int(degree)
         conformity_ = str(conformity)
+        representation_ = str(representation)
         mapping_ = str(mapping)
         if not family_ or not conformity_ or not mapping_:
             raise ValueError("Finite-element identifiers must be non-empty.")
+        if representation_ not in (
+            "point_value",
+            "cell_average",
+            "cell_integral",
+            "flux_moment",
+            "circulation_moment",
+            "polynomial_moment",
+            "modal_coefficient",
+            "custom",
+        ):
+            raise ValueError("Unknown finite-element coefficient representation.")
         if cell not in ("triangle", "quadrilateral", "tetrahedron", "hexahedron"):
             raise ValueError("Unsupported reference cell kind.")
         if order < 0:
@@ -98,6 +113,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         self.cell_kind = cell
         self.degree = order
         self.conformity = conformity_
+        self.representation = representation_
         self.mapping = mapping_
         self.value_shape = values
         self.reference_nodes = jnp.asarray(nodes)
@@ -111,6 +127,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
                 "cell_kind": cell,
                 "degree": order,
                 "conformity": conformity_,
+                "representation": representation_,
                 "mapping": mapping_,
                 "value_shape": list(values),
                 "reference_nodes": array_tree_fingerprint(nodes),
@@ -409,7 +426,7 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
         from ._high_order import SimplexNodalFamily
 
         return SimplexNodalFamily(cell, order).finite_element()
-    if cell == "quadrilateral" and order >= 1:
+    if cell in ("quadrilateral", "hexahedron") and order >= 1:
         from ._high_order import ReferenceNodalFamily
 
         return ReferenceNodalFamily(cell, order).finite_element()
@@ -423,8 +440,15 @@ def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSp
     cell = str(cell_kind)
     order = int(degree)
     if order >= 1:
-        base = lagrange_element(cell, order)
-        entities = [tuple(() for _ in dimension) for dimension in base.entity_dofs]
+        if cell in ("quadrilateral", "hexahedron"):
+            from ._high_order import ReferenceNodalFamily
+
+            base = ReferenceNodalFamily(cell, order).finite_element()
+        else:
+            base = lagrange_element(cell, order)
+        entities: list[tuple[tuple[int, ...], ...]] = [
+            tuple(() for _ in dimension) for dimension in base.entity_dofs
+        ]
         entities[-1] = (tuple(range(base.local_dof_count)),)
         return FiniteElementSpec(
             "DiscontinuousLagrange",
@@ -433,6 +457,7 @@ def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSp
             base.reference_nodes,
             tuple(entities),
             conformity="L2",
+            representation=base.representation,
             tabulator=base.tabulate,
             tabulator_id=f"discontinuous:{base.element_id}",
         )
@@ -488,6 +513,7 @@ def raviart_thomas_element(cell_kind: str, degree: int = 0, /) -> FiniteElementS
         ((0.5, 0.0), (0.5, 0.5), (0.0, 0.5)),
         (((), (), ()), ((0,), (1,), (2,)), ((),)),
         conformity="Hdiv",
+        representation="flux_moment",
         mapping="contravariant_piola",
         value_shape=(2,),
     )
@@ -503,6 +529,7 @@ def nedelec_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSpec:
         ((0.5, 0.0), (0.5, 0.5), (0.0, 0.5)),
         (((), (), ()), ((0,), (1,), (2,)), ((),)),
         conformity="Hcurl",
+        representation="circulation_moment",
         mapping="covariant_piola",
         value_shape=(2,),
     )

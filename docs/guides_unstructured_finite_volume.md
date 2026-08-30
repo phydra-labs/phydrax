@@ -19,11 +19,21 @@ import phydrax as phx
 
 vertices = jnp.asarray([
     [0.0, 0.0],
+    [0.5, 0.0],
     [1.0, 0.0],
-    [1.0, 1.0],
+    [0.0, 0.5],
+    [0.5, 0.5],
+    [1.0, 0.5],
     [0.0, 1.0],
+    [0.5, 1.0],
+    [1.0, 1.0],
 ])
-quadrilaterals = jnp.asarray([[0, 1, 2, 3]])
+quadrilaterals = jnp.asarray([
+    [0, 1, 4, 3],
+    [1, 2, 5, 4],
+    [3, 4, 7, 6],
+    [4, 5, 8, 7],
+])
 
 system = phx.equations.EulerSystem(2)
 mesh_plan = phx.discretization.UnstructuredFiniteVolumePlan(
@@ -87,7 +97,7 @@ lengths normalize coordinates, deterministic breadth-first stencils provide cell
 averages, and weighted column-scaled SVD produces fixed-capacity factors.
 
 ```python
-polynomial = phx.discretization.CellPolynomialReconstructionPlan(2).prepare(fv)
+polynomial = phx.discretization.CellPolynomialReconstructionPlan(1).prepare(fv)
 method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
     polynomial,
     phx.discretization.RusanovFluxPlan(),

@@ -435,7 +435,7 @@ method. Failed process covariances, nonfinite expectations, indefinite informati
 and exhausted backtracking remain visible status values; no covariance jitter,
 eigenvalue clipping, or factor repair is implicit.
 
-```python
+```text
 state = phx.uq.initialize_sing(
     latent_sde_problem,
     expectation_method="cubature",
@@ -2177,6 +2177,11 @@ diagonal-plus-low-rank approximation of the prior. It retains `O(n m + m^2)`
 factor storage and is not a stochastic-minibatch method.
 
 ```python
+observations = jnp.sin(2.0 * jnp.pi * observation_points[:, 0])
+physical_observation_mean = jnp.zeros_like(observations)
+query_points = jnp.linspace(0.0, 1.0, 33)[:, None]
+bounded_query_points = query_points
+
 actions = phx.uq.BlockSparseGaussianProcessActionPolicy.from_random(
     jr.key(13),
     observation_points.shape[0],
@@ -2215,7 +2220,7 @@ Three action policies are native:
 
 For inferred actions, reconstruct the policy from the current parameter PyTree:
 
-```python
+```text
 term = phx.uq.ComputationAwareGaussianProcessELBO(
     model,
     lambda parameters: parameters["source"] * basis,

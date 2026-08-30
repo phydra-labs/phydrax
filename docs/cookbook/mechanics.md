@@ -52,7 +52,7 @@ solver = phx.solver.FunctionalSolver(
 
 trained = solver.solve(
     num_iter=16,
-    optim=optax.sgd(1.5),
+    optim=optax.sgd(3.0),
     seed=0,
     jit=True,
     keep_best=True,

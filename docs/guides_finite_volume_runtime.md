@@ -11,6 +11,8 @@ explicitly qualified per feature rather than being implied by the core API.
 adds an `AbstractTransportClosure`:
 
 ```python
+import phydrax as phx
+
 material = phx.equations.IdealGasMaterial(
     1.4,
     287.0,
