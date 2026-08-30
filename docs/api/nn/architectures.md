@@ -19,8 +19,9 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
 
 `FermiNet` is a finite, nonperiodic molecular amplitude with a static spin
 partition, rotation-invariant one/two-electron distance streams, full generalized
-determinants, positive decaying envelopes, and stable signed log-domain output.
-It returns `phydrax.operators.LogAmplitude` for one configuration or a leading
+determinants, sparsity-aware scaled log envelopes with a positive physical decay
+floor, and stable signed linear determinant combination. It returns
+`phydrax.operators.LogAmplitude` for one configuration or a leading
 batch. Same-spin exchanges are antisymmetric.
 
 ::: phydrax.nn.quantum.FermiNet

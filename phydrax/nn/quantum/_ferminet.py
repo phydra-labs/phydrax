@@ -25,6 +25,64 @@ from ...operators.quantum import LogAmplitude
 from ..parameters import PositiveTransform
 
 
+def _scaled_log_determinants(
+    raw_orbitals: Array, log_envelope: Array, /
+) -> tuple[Array, Array]:
+    """Evaluate envelope-weighted determinants without materializing tiny entries."""
+    if (
+        raw_orbitals.shape != log_envelope.shape
+        or raw_orbitals.ndim != 3
+        or raw_orbitals.shape[-2] != raw_orbitals.shape[-1]
+    ):
+        raise ValueError(
+            "raw_orbitals and log_envelope must be matching determinant batches "
+            "of square matrices."
+        )
+    raw_nonzero = raw_orbitals != 0.0
+    safe_raw_magnitude = jnp.where(
+        raw_nonzero, jnp.abs(raw_orbitals), jnp.ones((), raw_orbitals.dtype)
+    )
+    combined_log_magnitude = jnp.where(
+        raw_nonzero,
+        jnp.log(safe_raw_magnitude) + log_envelope,
+        -jnp.inf,
+    )
+    row_has_entry = jnp.any(raw_nonzero, axis=-1)
+    row_shift = jax.lax.stop_gradient(
+        jnp.where(
+            row_has_entry,
+            jnp.max(combined_log_magnitude, axis=-1),
+            0.0,
+        )
+    )
+    row_scaled_log_magnitude = combined_log_magnitude - row_shift[:, :, None]
+    column_has_entry = jnp.any(raw_nonzero, axis=-2)
+    column_shift = jax.lax.stop_gradient(
+        jnp.where(
+            column_has_entry,
+            jnp.max(row_scaled_log_magnitude, axis=-2),
+            0.0,
+        )
+    )
+    scaled_exponent = jnp.where(
+        raw_nonzero,
+        log_envelope - row_shift[:, :, None] - column_shift[:, None, :],
+        0.0,
+    )
+    scaled_orbitals = jnp.where(
+        raw_nonzero, raw_orbitals * jnp.exp(scaled_exponent), 0.0
+    )
+    determinant_sign, scaled_log_abs = jax.vmap(jnp.linalg.slogdet)(
+        scaled_orbitals
+    )
+    determinant_log_abs = (
+        scaled_log_abs
+        + jnp.sum(row_shift, axis=-1)
+        + jnp.sum(column_shift, axis=-1)
+    )
+    return determinant_sign, determinant_log_abs
+
+
 class _FermiNetConfiguration(StrictModule, NonTrainableState):
     spin_labels: Array
     electron_count: int = eqx.field(static=True)
@@ -35,6 +93,7 @@ class _FermiNetConfiguration(StrictModule, NonTrainableState):
     layer_count: int = eqx.field(static=True)
     determinant_count: int = eqx.field(static=True)
     compute_dtype: str = eqx.field(static=True)
+    minimum_envelope_decay: float = eqx.field(static=True)
 
 
 class _FermiNetLayer(StrictModule):
@@ -76,6 +135,7 @@ class FermiNet(StrictModule):
         layer_count: int = 4,
         determinant_count: int = 16,
         compute_dtype: Any = "float64",
+        minimum_envelope_decay: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         if not isinstance(nuclei, AtomicStructure):
@@ -88,6 +148,7 @@ class FermiNet(StrictModule):
         pair_hidden = int(pair_features)
         layers = int(layer_count)
         determinants = int(determinant_count)
+        minimum_decay = float(minimum_envelope_decay)
         if electrons <= 0:
             raise ValueError("electron_count must be positive.")
         if spin_up < 0 or spin_up > electrons:
@@ -97,7 +158,12 @@ class FermiNet(StrictModule):
                 "hidden_features, pair_features, layer_count, and "
                 "determinant_count must be positive."
             )
+        if not math.isfinite(minimum_decay) or minimum_decay <= 0.0:
+            raise ValueError("minimum_envelope_decay must be finite and positive.")
         dtype = real_precision_dtype_name(compute_dtype)
+        minimum_decay = max(
+            minimum_decay, float(jnp.finfo(jnp.dtype(dtype)).tiny)
+        )
         atom_capacity = int(nuclei.atomic_numbers.shape[0])
         one_input = 2 * atom_capacity + 2
         pair_input = 2
@@ -164,6 +230,7 @@ class FermiNet(StrictModule):
             layer_count=layers,
             determinant_count=determinants,
             compute_dtype=dtype,
+            minimum_envelope_decay=minimum_decay,
         )
         self.network_id = canonical_fingerprint(
             {
@@ -177,6 +244,7 @@ class FermiNet(StrictModule):
                 "layer_count": layers,
                 "determinant_count": determinants,
                 "compute_dtype": dtype,
+                "minimum_envelope_decay": minimum_decay,
                 "determinant_mode": "full-generalized",
             }
         )
@@ -188,7 +256,9 @@ class FermiNet(StrictModule):
     @property
     def envelope_decay(self) -> Array:
         """Strictly positive physical decay parameters for every envelope."""
-        return PositiveTransform()(self.raw_envelope_decay)
+        return PositiveTransform(self.configuration.minimum_envelope_decay)(
+            self.raw_envelope_decay
+        )
 
     def _distances(self, electrons: Array, /) -> tuple[Array, Array]:
         dtype = jnp.dtype(self.configuration.compute_dtype)
@@ -291,19 +361,8 @@ class FermiNet(StrictModule):
         )
         log_envelope = jnp.swapaxes(log_envelope, 1, 2)
 
-        row_shift = jax.lax.stop_gradient(jnp.max(log_envelope, axis=-1))
-        row_scaled_log = log_envelope - row_shift[:, :, None]
-        column_shift = jax.lax.stop_gradient(jnp.max(row_scaled_log, axis=-2))
-        scaled_orbitals = raw_orbitals * jnp.exp(
-            row_scaled_log - column_shift[:, None, :]
-        )
-        determinant_sign, scaled_determinant_log_abs = jax.vmap(
-            jnp.linalg.slogdet
-        )(scaled_orbitals)
-        determinant_log_abs = (
-            scaled_determinant_log_abs
-            + jnp.sum(row_shift, axis=-1)
-            + jnp.sum(column_shift, axis=-1)
+        determinant_sign, determinant_log_abs = _scaled_log_determinants(
+            raw_orbitals, log_envelope
         )
         determinant_defined = (
             ~jnp.isnan(determinant_log_abs)

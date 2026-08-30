@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from phydrax.nn.quantum._ferminet import _scaled_log_determinants
 
 
 def _structure(positions, *, name="molecule"):
@@ -117,6 +118,19 @@ def test_determinant_combination_is_log_stable_and_envelopes_decay():
     assert far.log_abs < near.log_abs
 
 
+def test_sparse_two_by_two_large_decay_determinant_remains_nonzero():
+    raw_orbitals = jnp.asarray(
+        [[[1.0, 0.0], [0.0, 1.0]]], dtype=jnp.float64
+    )
+    log_envelope = jnp.asarray(
+        [[[-1000.0, -1.0], [-1.0, -1000.0]]], dtype=jnp.float64
+    )
+    sign, log_abs = _scaled_log_determinants(raw_orbitals, log_envelope)
+    assert sign[0] == 1.0
+    assert jnp.isfinite(log_abs[0])
+    assert jnp.allclose(log_abs[0], -2000.0)
+
+
 def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():
     nuclei = _structure([[0.0, 0.0, 0.0]], name="H-large-decay")
     network = _network(nuclei, spin_up=1, electrons=1, determinants=1)
@@ -138,6 +152,32 @@ def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():
     assert value.nonzero
     assert jnp.isfinite(value.log_abs)
     assert value.log_abs < -900.0
+
+
+def test_envelope_decay_floor_survives_softplus_underflow_and_normalizes_tail():
+    nuclei = _structure([[0.0, 0.0, 0.0]], name="H-decay-floor")
+    network = _network(nuclei, spin_up=1, electrons=1, determinants=1)
+    network = eqx.tree_at(
+        lambda value: (value.orbital_weight, value.orbital_bias),
+        network,
+        (
+            jnp.zeros_like(network.orbital_weight),
+            jnp.ones_like(network.orbital_bias),
+        ),
+    )
+    network = eqx.tree_at(
+        lambda value: value.raw_envelope_decay,
+        network,
+        jnp.full_like(network.raw_envelope_decay, -1e6),
+    )
+    assert jnp.all(
+        network.envelope_decay >= network.configuration.minimum_envelope_decay
+    )
+    near = network(jnp.asarray([[1.0, 0.0, 0.0]], dtype=jnp.float64))
+    far = network(jnp.asarray([[1e7, 0.0, 0.0]], dtype=jnp.float64))
+    assert near.nonzero
+    assert far.nonzero
+    assert far.log_abs < near.log_abs
 
 
 def test_zero_determinant_coefficient_has_finite_reactivation_gradient():

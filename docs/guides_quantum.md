@@ -342,9 +342,10 @@ not supported.
 `phydrax.nn.quantum.FermiNet` supplies a canonical `LogAmplitude` for this
 Hamiltonian. It uses shared one- and two-electron streams, a static leading
 spin-up/trailing spin-down partition, full generalized Slater determinants,
-row/column-scaled log envelopes, a stable signed linear determinant mixture that
-retains derivatives at zero coefficients, and strictly positive envelope decay
-parameters. Same-spin coordinate exchange is antisymmetric. The full generalized
+row/column-scaled log envelopes chosen from the combined nonzero orbital
+magnitudes, a stable signed linear determinant mixture that retains derivatives
+at zero coefficients, and envelope decays with a strictly positive configurable
+physical floor. Same-spin coordinate exchange is antisymmetric. The full generalized
 determinant does not impose a standalone spatial sign rule on an opposite-spin
 exchange.
 
