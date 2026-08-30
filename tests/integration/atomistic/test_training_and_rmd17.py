@@ -470,5 +470,5 @@ def test_training_hashes_parameter_state_only_for_returned_checkpoints(monkeypat
             force_weight=0.0,
         ),
     )
-    assert result.completed_steps == 3
+    assert int(result.progress.update_step) == 3
     assert calls == 2
