@@ -110,6 +110,10 @@ Projection applies evaluation, accumulation, replicate reduction, and output
 precision in that order and rejects nonfinite values at every boundary. Plan
 identities include complete quadrature/design and native solver-policy content.
 
+Sparse product projection honors each declared `axis_rules` entry:
+`"gauss-hermite"` consumes a standard-normal reference factor with unit-mass
+weights, while `"clenshaw-curtis"` uses the bounded uniform canonical map.
+Mismatched measures fail before sparse-rule materialization.
 
 ::: phydrax.uq.PolynomialMultiIndexSet
 

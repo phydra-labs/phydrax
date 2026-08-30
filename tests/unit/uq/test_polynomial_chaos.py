@@ -136,6 +136,63 @@ def test_high_degree_normalized_hermite_modes_do_not_form_factorials():
     assert jnp.all(jnp.isfinite(values))
 
 
+def test_sparse_gauss_hermite_product_honors_reference_measure_and_level():
+    factor = phx.domain.ProbabilityDomain(phx.uq.Normal(2.0, 3.0), label="x")
+    basis = phx.uq.PolynomialChaosBasis(factor, 2)
+    plan = phx.uq.PolynomialChaosProjectionPlan(
+        basis,
+        phx.integration.ProductIntegrationPlan(
+            {
+                "x": phx.integration.SparseGridPlan(
+                    1,
+                    2,
+                    axis_rules="gauss-hermite",
+                )
+            }
+        ),
+    )
+
+    result = plan.fit(lambda value: ((value - 2.0) / 3.0) ** 2)
+
+    assert result.model_evaluations == 3
+    assert jnp.allclose(result.expansion.mean, 1.0)
+    assert jnp.allclose(result.expansion.variance, 2.0)
+
+
+def test_sparse_gauss_hermite_rejects_uniform_before_rule_materialization(
+    monkeypatch,
+):
+    factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
+    basis = phx.uq.PolynomialChaosBasis(factor, 0)
+    integration_plan = phx.integration.ProductIntegrationPlan(
+        {
+            "x": phx.integration.SparseGridPlan(
+                1,
+                2,
+                axis_rules="gauss-hermite",
+            )
+        }
+    )
+    materialized = False
+
+    def forbidden_rule(*args, **kwargs):
+        del args, kwargs
+        nonlocal materialized
+        materialized = True
+        raise AssertionError("Sparse rule materialized before measure validation.")
+
+    monkeypatch.setattr(
+        "phydrax.integration._product._smolyak_rule",
+        forbidden_rule,
+    )
+    with pytest.raises(ValueError, match="standard-normal"):
+        phx.uq.PolynomialChaosProjectionPlan(
+            basis,
+            integration_plan,
+        ).fit(lambda value: value)
+    assert not materialized
+
+
 def test_regression_recovers_exact_span_and_reports_out_of_span_residual():
     basis = _basis(2)
     uniform = jnp.linspace(2.1, 5.9, 5)
@@ -366,6 +423,41 @@ def test_plan_identities_include_full_quadrature_and_solver_policies():
 
     assert low_order.plan_id != high_order.plan_id
     assert first_regression.plan_id != second_regression.plan_id
+
+
+def test_huge_sparse_plan_preflight_saturates_before_lower_set_materialization(
+    monkeypatch,
+):
+    factor = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="x")
+    basis = phx.uq.PolynomialChaosBasis(factor, 0)
+    integration_plan = phx.integration.ProductIntegrationPlan(
+        {
+            "x": phx.integration.SparseGridPlan(
+                1,
+                10**12,
+                axis_rules="gauss-hermite",
+            )
+        }
+    )
+    materialized = False
+
+    def forbidden_materialization(*args, **kwargs):
+        del args, kwargs
+        nonlocal materialized
+        materialized = True
+        raise AssertionError("Huge sparse plan reached product materialization.")
+
+    monkeypatch.setattr(
+        "phydrax.uq._polynomial_chaos.materialize_integration",
+        forbidden_materialization,
+    )
+    with pytest.raises(ValueError, match="maximum_model_evaluations"):
+        phx.uq.PolynomialChaosProjectionPlan(
+            basis,
+            integration_plan,
+            maximum_model_evaluations=64,
+        ).fit(lambda value: value)
+    assert not materialized
 
 
 def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed(
