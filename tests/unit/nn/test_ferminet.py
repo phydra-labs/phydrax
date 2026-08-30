@@ -161,6 +161,8 @@ def test_extreme_log_scale_tangents_remain_representable_and_inactive():
     large_tangent = jnp.asarray(1e300, dtype=jnp.float64)
     negative_scale = jnp.asarray(-1000.0, dtype=jnp.float64)
     expected = jnp.exp(jnp.log(large_tangent) + negative_scale)
+    zero = jnp.asarray(0.0, dtype=jnp.float64)
+    positive_scale = jnp.asarray(1000.0, dtype=jnp.float64)
 
     _, unary_tangent = jax.jvp(
         lambda scale: _stable_signed_product(value, scale),
@@ -182,11 +184,29 @@ def test_extreme_log_scale_tangents_remain_representable_and_inactive():
         (jnp.asarray(1000.0),),
         (jnp.asarray(0.0),),
     )
+    _, zero_unary_scale_tangent = jax.jvp(
+        lambda scale: _stable_signed_product(zero, scale),
+        (positive_scale,),
+        (value,),
+    )
+    _, zero_bilinear_scale_tangent = jax.jvp(
+        lambda scale: _stable_signed_bilinear_product(value, zero, scale),
+        (positive_scale,),
+        (value,),
+    )
+    _, zero_bilinear_value_tangent = jax.jvp(
+        lambda left: _stable_signed_bilinear_product(left, zero, positive_scale),
+        (value,),
+        (value,),
+    )
 
     assert jnp.allclose(unary_tangent, expected, rtol=1e-12, atol=0.0)
     assert jnp.allclose(bilinear_tangent, expected, rtol=1e-12, atol=0.0)
     assert inactive_unary == 0.0
     assert inactive_bilinear == 0.0
+    assert zero_unary_scale_tangent == 0.0
+    assert zero_bilinear_scale_tangent == 0.0
+    assert zero_bilinear_value_tangent == 0.0
 
 
 def test_zero_multiplier_mixed_derivative_stays_in_signed_log_domain():

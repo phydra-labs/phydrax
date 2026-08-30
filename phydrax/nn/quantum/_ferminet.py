@@ -155,28 +155,71 @@ def _stable_signed_bilinear_product_primal(
     return jnp.where(nonzero, signed_value, jnp.zeros_like(left))
 
 
+@jax.custom_jvp
+def _zero_multiplier_linear_product(
+    multiplier: Array,
+    value: Array,
+    log_scale: Array,
+    /,
+) -> Array:
+    """Represent an exact-zero product while retaining its cross derivative."""
+    return jnp.zeros_like(value)
+
+
+@_zero_multiplier_linear_product.defjvp
+def _zero_multiplier_linear_product_jvp(primals, tangents):
+    _, value, log_scale = primals
+    multiplier_tangent, _, _ = tangents
+    primal = jnp.zeros_like(value)
+    tangent = _apply_linear_stable_signed_bilinear_product(
+        value,
+        multiplier_tangent,
+        log_scale,
+    )
+    return primal, tangent
+
+
 def _apply_linear_stable_signed_bilinear_product(
     multiplier: Array, value: Array, log_scale: Array, /
 ) -> Array:
     negative, nonzero, _ = _signed_log_components(multiplier)
     combined_log_scale = log_scale + _stable_log_abs(multiplier)
-    nonzero_value = _apply_linear_stable_signed_product(
-        value, combined_log_scale
-    )
-    signed_nonzero_value = jnp.where(
-        negative, -nonzero_value, nonzero_value
-    )
-    zero_multiplier = jnp.where(
-        nonzero, jnp.zeros_like(multiplier), multiplier
-    )
-    zero_linear_value = jnp.where(
-        nonzero, jnp.zeros_like(value), value
-    )
-    zero_product = zero_multiplier * zero_linear_value
-    zero_value = _apply_linear_stable_signed_product(
-        zero_product, log_scale
+    nonzero_value = _apply_linear_stable_signed_product(value, combined_log_scale)
+    signed_nonzero_value = jnp.where(negative, -nonzero_value, nonzero_value)
+    zero_multiplier = jnp.where(nonzero, jnp.zeros_like(multiplier), multiplier)
+    zero_linear_value = jnp.where(nonzero, jnp.zeros_like(value), value)
+    zero_value = _zero_multiplier_linear_product(
+        zero_multiplier,
+        zero_linear_value,
+        log_scale,
     )
     return jnp.where(nonzero, signed_nonzero_value, zero_value)
+
+
+@jax.custom_jvp
+def _zero_multiplier_trilinear_product(
+    multiplier: Array,
+    left: Array,
+    value: Array,
+    log_scale: Array,
+    /,
+) -> Array:
+    """Represent one exact-zero factor while retaining higher cross derivatives."""
+    return jnp.zeros_like(value)
+
+
+@_zero_multiplier_trilinear_product.defjvp
+def _zero_multiplier_trilinear_product_jvp(primals, tangents):
+    _, left, value, log_scale = primals
+    multiplier_tangent, _, _, _ = tangents
+    primal = jnp.zeros_like(value)
+    tangent = _apply_linear_stable_signed_trilinear_product(
+        left,
+        value,
+        multiplier_tangent,
+        log_scale,
+    )
+    return primal, tangent
 
 
 def _apply_linear_stable_signed_trilinear_product(
@@ -190,22 +233,16 @@ def _apply_linear_stable_signed_trilinear_product(
     signed_nonzero_right_value = jnp.where(
         right_negative, -nonzero_right_value, nonzero_right_value
     )
-    zero_right = jnp.where(
-        right_nonzero, jnp.zeros_like(right), right
+    zero_right = jnp.where(right_nonzero, jnp.zeros_like(right), right)
+    zero_left = jnp.where(right_nonzero, jnp.zeros_like(left), left)
+    zero_linear_value = jnp.where(right_nonzero, jnp.zeros_like(value), value)
+    zero_right_value = _zero_multiplier_trilinear_product(
+        zero_right,
+        zero_left,
+        zero_linear_value,
+        log_scale,
     )
-    zero_left = jnp.where(
-        right_nonzero, jnp.zeros_like(left), left
-    )
-    zero_linear_value = jnp.where(
-        right_nonzero, jnp.zeros_like(value), value
-    )
-    zero_product = zero_right * zero_left * zero_linear_value
-    zero_right_value = _apply_linear_stable_signed_product(
-        zero_product, log_scale
-    )
-    return jnp.where(
-        right_nonzero, signed_nonzero_right_value, zero_right_value
-    )
+    return jnp.where(right_nonzero, signed_nonzero_right_value, zero_right_value)
 
 
 @jax.custom_jvp
