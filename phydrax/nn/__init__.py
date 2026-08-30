@@ -5,7 +5,7 @@ Ownership is explicit:
 - :mod:`phydrax.nn.atomistic` contains finite-molecule equivariant potentials.
 - :mod:`phydrax.nn.models` contains pointwise and structured finite-dimensional models.
 - :mod:`phydrax.nn.layers` contains reusable tensor-to-tensor layers.
-- :mod:`phydrax.nn.parameters` contains physical parameter transforms and selections.
+- :mod:`phydrax.nn.parameters` contains transforms, subspaces, and adaptations.
 - :mod:`phydrax.nn.operator` contains operator data, engines, adapters, and runtime policy.
 """
 

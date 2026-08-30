@@ -21,7 +21,7 @@ from .._utils import (
     _identity,
     SizeLike,
 )
-from ..parameters import AbstractParameterTransform
+from ..parameters import AbstractParameterTransform, LowRankUpdate
 
 
 _key = DOC_KEY0
@@ -46,10 +46,12 @@ class Linear(_AbstractBaseModel):
     $$
 
     A shape-preserving `weight_transform` may map raw trainable weights to
-    physically constrained effective weights at evaluation time.
+    physically constrained effective weights at evaluation time. A
+    `LowRankUpdate` instead applies a frozen-base adaptation without
+    materializing its dense update.
     """
 
-    weight: Array  # In RWF mode, this stores V (unscaled weights)
+    weight: Array | LowRankUpdate  # In RWF mode, this stores V (unscaled weights)
     bias: Array | None
     activation: Callable
     weight_transform: AbstractParameterTransform | None
@@ -175,18 +177,25 @@ class Linear(_AbstractBaseModel):
                 leading_shape = x_arr.shape
                 x_flat = x_arr.reshape(leading_shape + (1,))
 
-        # Map raw weights into their physical parameter space when requested.
-        w = (
-            self.weight
-            if self.weight_transform is None
-            else self.weight_transform(self.weight)
-        )
-        # Support both vector input (in,) and batched input (..., in).
-        # Weight is shaped (out, in); contract over the last dim of x.
-        x_flat = contract("oi,...i->...o", w, x_flat)
-        if self.random_weight_factorization and self.rwf_log_scales is not None:
-            # Equivalent to (diag(exp(s)) @ (weight @ x)) = exp(s) * (weight @ x)
-            x_flat = jnp.exp(self.rwf_log_scales) * x_flat
+        if isinstance(self.weight, LowRankUpdate):
+            if self.weight_transform is not None or self.random_weight_factorization:
+                raise ValueError(
+                    "Low-rank weights are incompatible with weight transforms and RWF."
+                )
+            x_flat = self.weight.apply(x_flat)
+        else:
+            # Map raw weights into their physical parameter space when requested.
+            w = (
+                self.weight
+                if self.weight_transform is None
+                else self.weight_transform(self.weight)
+            )
+            # Support both vector input (in,) and batched input (..., in).
+            # Weight is shaped (out, in); contract over the last dim of x.
+            x_flat = contract("oi,...i->...o", w, x_flat)
+            if self.random_weight_factorization and self.rwf_log_scales is not None:
+                # Equivalent to (diag(exp(s)) @ (weight @ x)) = exp(s) * (weight @ x)
+                x_flat = jnp.exp(self.rwf_log_scales) * x_flat
         if self.bias is not None:
             x_flat = x_flat + self.bias
 

@@ -219,6 +219,16 @@ factorization, stability, and orthogonality maps live in
 are constructed on demand. The same package owns explicit model-PyTree
 selection through `ParameterSubspace`.
 
+Exact native `Linear` paths can instead carry factorized low-rank updates over
+a shared dense base. The factor-only `ParameterSubspace` is the complete
+gradient and optimizer-state boundary for `fit_operator` and Optax
+`FunctionalSolver` runs; merging returns an ordinary dense deployment model,
+while adapter-only archives verify the complete base content before loading.
+The checked transfer campaign improves its frozen baseline with 53 selected
+parameters versus 197 for full fine-tuning, and the resource campaign reduces
+Adam state from 4,194,308 to 131,076 bytes with merged/factorized disagreement
+below \(7\times10^{-15}\).
+
 ### Native ML: fitted array models, not mutable estimators
 
 `phydrax.ml` covers preprocessing and composition; linear, generalized-linear,

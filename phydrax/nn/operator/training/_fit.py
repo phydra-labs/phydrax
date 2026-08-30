@@ -34,6 +34,11 @@ from ...._training import (
 from ..._keys import split_eval_key
 from ..._loss import model_loss_labels, model_loss_values
 from ...layers._dropout import inference_mode
+from ...parameters import ParameterSubspace
+from ...parameters._low_rank import (
+    contains_low_rank_updates,
+    validate_low_rank_subspace,
+)
 from ..capabilities import OperatorTrainingEvidence
 from ..data import OperatorBatch, OperatorTargetBatch
 from ..engine import AbstractOperatorModel
@@ -397,6 +402,7 @@ def fit_operator(
     optimizer_id: str | None = None,
     evaluation_parameters: EvaluationParametersFn | None = None,
     evaluation_parameters_id: str | None = None,
+    parameter_subspace: ParameterSubspace | None = None,
     learning_rate: float = 1e-3,
     epochs: int = 1,
     steps: int | None = None,
@@ -429,11 +435,27 @@ def fit_operator(
 
     ``evaluation_parameters`` maps ``(optimizer_state, training_parameters)`` to
     the parameter view used for validation, best-model selection, and returned
-    execution models. Checkpointed fits require ``evaluation_parameters_id`` so
-    resume cannot silently change that lifecycle contract.
+    execution models. ``parameter_subspace`` restricts differentiation and
+    optimizer state to exact model leaves. Checkpointed fits require
+    ``evaluation_parameters_id`` so resume cannot silently change that lifecycle
+    contract.
     """
     if not isinstance(model, AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
+    if parameter_subspace is None:
+        parameter_paths: tuple[str, ...] | None = None
+        if contains_low_rank_updates(model):
+            raise ValueError(
+                "Low-rank operator fitting requires an explicit parameter_subspace."
+            )
+    else:
+        if not isinstance(parameter_subspace, ParameterSubspace):
+            raise TypeError(
+                "parameter_subspace must be a ParameterSubspace or None."
+            )
+        parameter_subspace.validate_root(model)
+        validate_low_rank_subspace(model, parameter_subspace)
+        parameter_paths = parameter_subspace.leaf_paths
     if int(epochs) < 0:
         raise ValueError("epochs must be non-negative.")
     if steps is not None and int(steps) < 0:
@@ -561,6 +583,36 @@ def fit_operator(
     model = resolved_dtype.cast_model(model)
     if sharding_policy is not None:
         model = replicate_operator_model(model, sharding_policy)
+    if parameter_paths is None:
+        effective_parameter_shapes: tuple[tuple[int, ...], ...] = ()
+        effective_parameter_dtypes: tuple[str, ...] = ()
+        effective_parameter_dimension = None
+    else:
+        assert parameter_subspace is not None
+        effective_subspace = parameter_subspace.rebase(model, exact_dtype=False)
+        validate_low_rank_subspace(model, effective_subspace)
+        effective_parameter_shapes = effective_subspace.leaf_shapes
+        effective_parameter_dtypes = effective_subspace.leaf_dtypes
+        effective_parameter_dimension = effective_subspace.total_dimension
+
+    def partition_fit_model(current_model):
+        if parameter_paths is None:
+            return partition_trainable(current_model)
+        current_subspace = ParameterSubspace.from_leaf_paths(
+            current_model,
+            parameter_paths,
+        )
+        if current_subspace.leaf_shapes != effective_parameter_shapes:
+            raise ValueError("Operator fit parameter-subspace shapes changed.")
+        if current_subspace.leaf_dtypes != effective_parameter_dtypes:
+            raise ValueError("Operator fit parameter-subspace dtypes changed.")
+        validate_low_rank_subspace(current_model, current_subspace)
+        return current_subspace.initial, current_subspace.frozen
+
+    def reconstruct_fit_model(current_parameters, current_fixed):
+        if parameter_paths is None:
+            return combine_trainable(current_parameters, current_fixed)
+        return eqx.combine(current_parameters, current_fixed)
 
     if normalization == "fit":
         if not isinstance(train, OperatorDataset):
@@ -738,14 +790,14 @@ def fit_operator(
             jr.key(seed),
         )
 
-    parameters, fixed = partition_trainable(model)
+    parameters, fixed = partition_fit_model(model)
     optimizer_state = optimizer.init(parameters)
     evaluated_parameters = resolve_evaluation_parameters(
         evaluation_parameters,
         optimizer_state,
         parameters,
     )
-    evaluation_model = combine_trainable(evaluated_parameters, fixed)
+    evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     gradient_accumulator = _tree_zeros(parameters)
     accumulated_cases = 0.0
     accumulated_microsteps = 0
@@ -828,7 +880,7 @@ def fit_operator(
         loss_scale_state_,
     ):
         def objective(candidate):
-            current_model = combine_trainable(candidate, fixed)
+            current_model = reconstruct_fit_model(candidate, fixed)
             total, components = loss_components(
                 current_model,
                 batch,
@@ -980,6 +1032,16 @@ def fit_operator(
         "include_model_losses": bool(include_model_losses),
         "optimizer_id": resolved_optimizer_id,
         "gradient_accumulation": int(gradient_accumulation),
+        "parameter_subspace": (
+            None
+            if parameter_paths is None
+            else {
+                "paths": list(parameter_paths),
+                "shapes": [list(shape) for shape in effective_parameter_shapes],
+                "dtypes": list(effective_parameter_dtypes),
+                "total_dimension": effective_parameter_dimension,
+            }
+        ),
         "normalization": (
             None if resolved_normalization is None else resolved_normalization.to_dict()
         ),
@@ -1073,13 +1135,13 @@ def fit_operator(
         accumulated_metrics = [float(value) for value in metadata["accumulated_metrics"]]
         prior_training_seconds = float(metadata["training_seconds"])
         resumed_from_step = progress.update_step
-        parameters, fixed = partition_trainable(model)
+        parameters, fixed = partition_fit_model(model)
         evaluated_parameters = resolve_evaluation_parameters(
             evaluation_parameters,
             optimizer_state,
             parameters,
         )
-        evaluation_model = combine_trainable(evaluated_parameters, fixed)
+        evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     else:
         initial_metrics = evaluate(evaluation_model, raw_train_loader, 0)
         if raw_validation_loader is not None:
@@ -1308,7 +1370,7 @@ def fit_operator(
                         )
                     parameters = candidate_parameters
                     optimizer_state = candidate_optimizer_state
-                    model = combine_trainable(parameters, fixed)
+                    model = reconstruct_fit_model(parameters, fixed)
                     update_step = control.progress.update_step + 1
                     control.complete_update(update_step)
                     metrics = {
@@ -1351,7 +1413,7 @@ def fit_operator(
                             optimizer_state,
                             parameters,
                         )
-                        evaluation_model = combine_trainable(
+                        evaluation_model = reconstruct_fit_model(
                             evaluated_parameters,
                             fixed,
                         )
@@ -1402,7 +1464,7 @@ def fit_operator(
         optimizer_state,
         parameters,
     )
-    evaluation_model = combine_trainable(evaluated_parameters, fixed)
+    evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     if (
         raw_validation_loader is not None
         and validation_config is not None

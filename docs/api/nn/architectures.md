@@ -2582,6 +2582,14 @@ output pipeline. `OperatorFitResult.execution_model` and
 and all callable schedules require stable identities for exact-resume
 compatibility.
 
+`parameter_subspace=` restricts differentiation, gradient accumulation, and
+optimizer state to exact selected model leaves. The subspace is validated
+against the caller model, then rebased after parameter-dtype casting and model
+replication. Its effective paths, shapes, dtypes, and total dimension are part
+of the exact-resume fit contract. Low-rank adapted models require
+`low_rank_parameter_subspace(model)`; omitting it or selecting anything other
+than every adapter factor fails before optimizer initialization.
+
 Operator fit checkpoints use a versioned semantic fit schema rather than the
 concrete shape of the batch used to construct the fit. On resume, PhydraX
 validates manifest fields, format version, state checksum, loader content and
