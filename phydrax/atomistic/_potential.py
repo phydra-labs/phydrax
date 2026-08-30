@@ -81,6 +81,21 @@ def checkpoint_atomistic_potential(
     return checkpoint
 
 
+def _with_atomistic_potential_identity(
+    potential: _AtomisticPotentialT,
+    identity_source: AbstractAtomisticPotential,
+    /,
+) -> _AtomisticPotentialT:
+    """Copy a potential-shaped tree with checkpoint identity from another tree."""
+
+    synchronized = cast(_AtomisticPotentialT, copy.copy(potential))
+    object.__setattr__(
+        synchronized, "parameter_state_id", identity_source.parameter_state_id
+    )
+    object.__setattr__(synchronized, "potential_id", identity_source.potential_id)
+    return synchronized
+
+
 def initialize_atomistic_potential_identity(
     potential: AbstractAtomisticPotential, /
 ) -> tuple[str, str]:
