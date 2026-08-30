@@ -145,7 +145,7 @@ def test_sparse_gauss_hermite_product_honors_reference_measure_and_level():
             {
                 "x": phx.integration.SparseGridPlan(
                     1,
-                    2,
+                    3,
                     axis_rules="gauss-hermite",
                 )
             }
