@@ -119,6 +119,17 @@ contracts. See LICENSES/SPINEAX-MIT.txt.
 
 Research and design acknowledgments
 
+The spectral-residual operator-learning design study considered ASK-Berkeley's
+Neural-Spectral-Methods repository at commit
+090e7a173f27734dbae5ec479a410ca1748981af, Copyright (c) 2023
+ASK-Berkeley, licensed under the MIT License, together with Du, Chalapathi, and
+Krishnapriyan, “Neural Spectral Methods: Self-supervised learning in the
+spectral domain,” ICLR 2024. Phydrax independently implements residual
+compilation, closure policies, physical measures, condition contracts,
+operator-loss integration, evidence, and tests against its native spectral and
+PDE IR substrates; no upstream source, fixtures, generated data, or runtime
+dependency is copied or redistributed.
+
 The low-rank adaptation design study considered Davis Yoshida's Lorax at commit
 1ebd0efa6c467974357bb9f73fe4a4967b487622, Copyright (c) 2023
 davisyoshida, licensed under the MIT License, together with Hu et al.,

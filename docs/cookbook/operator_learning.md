@@ -1306,6 +1306,56 @@ laplacian_u = phx.operators.laplacian(u_for_this_source, var="x")
 Each loss first reduces coordinates for one physical case and then averages
 cases. This avoids changing the objective merely by changing points per case.
 
+### Targetless spectral PDE residuals
+
+For smooth tensor-product problems, the physical operator prediction can be
+projected once into a global trial space and differentiated spectrally. The
+training dataset contains parameter functions but no solution targets:
+
+```python
+space = phx.discretization.TensorSpectralPlan(
+    (phx.discretization.FourierBasisPlan(32),),
+    axis_names=("x",),
+    field_name="u",
+).prepare(jnp.asarray([[0.0], [1.0]]))
+method = phx.discretization.PseudospectralMethodPlan(
+    dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
+)
+compiled_residual = phx.equations.compile_spectral_residual(
+    problem,
+    space,
+    method,
+    scope="full",
+)
+physics_loss = phx.nn.operator.training.SpectralPDEResidualLoss(
+    "spectral_pde",
+    compiled_residual,
+    {"u": "output"},
+    {"forcing": "forcing_samples"},
+)
+result = phx.nn.operator.training.fit_operator(
+    model,
+    targetless_dataset,
+    loss_terms=(physics_loss,),
+    normalization=None,
+    batch_size=16,
+    steps=2_000,
+)
+```
+
+Prediction fields and functional parameter inputs must use the compiler's
+complete fixed tensor grid. Coordinates are reduced before cases, and the loss
+fingerprint includes the PDE, spaces, realization, field/input bindings,
+equation scales, scope, and exactness policy. Targetless fitting requires
+explicit physical scaling; it cannot infer output normalization from absent
+solution targets.
+
+This route is distinct from `operator_spectral_loss`, which compares sampled
+predictions and targets after an FFT. `SpectralPDEResidualLoss` constructs the
+governing equation through modal differential operators. For problems carrying
+initial or boundary conditions, apply an `OperatorOutputPipeline` and compile
+with `condition_handling="external"`.
+
 ## Operator field classification
 
 Declare statistical output semantics with the JSON-safe

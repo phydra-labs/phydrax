@@ -28,6 +28,15 @@
   campaign artifacts, and performance evidence.
 - Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
   while preserving the existing array-valued SSPRK contract.
+- Added all-coordinate tensor spectral PDE residual compilation with explicit
+  full-closure versus retained-projection semantics, polynomial closure
+  dealiasing, exactness and resource evidence, physical quadrature norms,
+  external hard-condition contracts, and targetless operator fitting through
+  `SpectralPDEResidualLoss`.
+- Added implicit tensor-modal neural fields with Hermitian real-field projection,
+  explicit modal input scaling and resource bounds, optional positive exponential
+  decay and prepared-basis modulation, masked modal observations, and direct
+  residual training against compiled coefficient-resident spectral dynamics.
 - Added native low-rank adaptation for exact real `Linear` weight paths,
   factor-only `ParameterSubspace` training through `fit_operator` and Optax
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
