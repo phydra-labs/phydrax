@@ -20,8 +20,12 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import combine_trainable, NonTrainableState, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
+from ..nn.atomistic._nequip import NequIPPotential
 from ..nn.atomistic._painn import PaiNNPotential
 from ._types import AtomisticBatch, AtomisticStatus
+
+_AtomisticPotential = PaiNNPotential | NequIPPotential
+_ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
 
 
 class AtomisticTrainingProblem(StrictModule, NonTrainableState):
@@ -260,8 +264,8 @@ class AtomisticTrainingNormalization(StrictModule, NonTrainableState):
 class AtomisticTrainingResult(StrictModule, NonTrainableState):
     """Complete continuation, best/final model, histories, and terminal status."""
 
-    potential: PaiNNPotential
-    best_potential: PaiNNPotential
+    potential: _AtomisticPotential
+    best_potential: _AtomisticPotential
     optimizer_state: Any
     key: Array
     normalization: AtomisticTrainingNormalization
@@ -281,7 +285,7 @@ class AtomisticTrainingResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
     @property
-    def final_potential(self) -> PaiNNPotential:
+    def final_potential(self) -> _AtomisticPotential:
         return self.potential
 
     @property
@@ -408,7 +412,7 @@ def _normalization(
 
 
 def _loss(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     batch: AtomisticBatch,
     energy_target: Array | None,
     force_target: Array | None,
@@ -460,7 +464,7 @@ def _loss(
 
 
 def _training_loss(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
     normalization: AtomisticTrainingNormalization,
     policy: AtomisticTrainingPolicy,
@@ -479,7 +483,7 @@ def _training_loss(
 
 
 def _validation_loss(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
     normalization: AtomisticTrainingNormalization,
     policy: AtomisticTrainingPolicy,
@@ -509,7 +513,7 @@ def _tree_finite(tree: Any, /) -> bool:
 
 
 def fit_atomistic_potential(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
     policy: AtomisticTrainingPolicy,
     /,
@@ -518,10 +522,10 @@ def fit_atomistic_potential(
     callbacks: Sequence[TrainingCallback] = (),
     continuation: AtomisticTrainingResult | None = None,
 ) -> AtomisticTrainingResult:
-    """Fit one PaiNN energy potential with typed energy/force supervision."""
+    """Fit one finite-molecule energy potential with typed supervision."""
 
-    if not isinstance(potential, PaiNNPotential):
-        raise TypeError("potential must be a PaiNNPotential.")
+    if not isinstance(potential, _ATOMISTIC_POTENTIAL_TYPES):
+        raise TypeError("potential must be a PaiNNPotential or NequIPPotential.")
     if not isinstance(problem, AtomisticTrainingProblem):
         raise TypeError("problem must be an AtomisticTrainingProblem.")
     if not isinstance(policy, AtomisticTrainingPolicy):

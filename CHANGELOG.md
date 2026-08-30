@@ -28,6 +28,17 @@
   tool require explicit data provenance. Periodic execution, stress, long-range
   electrostatics, direct-force heads, ASE integration, and molecular-dynamics
   stability claims remain outside this capability.
+- Added resource-planned `O3TensorProductPlan`/`O3TensorProduct` layers and a
+  drop-in `phydrax.nn.atomistic.NequIPPotential`. Independently derived
+  Cartesian Clebsch–Gordan maps cover legal scalar/pseudoscalar,
+  vector/pseudovector, and symmetric-traceless tensor/pseudotensor paths through
+  degree two with per-instruction radial weights, masked finite-molecule
+  aggregation, species-conditioned self connections, parity-safe gates, and the
+  existing conservative prediction/training contracts. The rMD17 campaign now
+  records matched PaiNN-versus-NequIP seeds, errors, equivariance defects,
+  timing, memory, parameters, neighborhood work, gates, summaries, and
+  provenance. High-degree irreps, MACE/symmetric contraction, periodic systems,
+  stress, long range, and molecular-dynamics claims remain out of scope.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

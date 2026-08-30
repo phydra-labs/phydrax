@@ -1,4 +1,4 @@
-# Train a finite-molecule PaiNN potential
+# Train a finite-molecule PaiNN or low-degree NequIP potential
 
 This recipe starts from a local rMD17 NPZ. It never downloads data and never
 assumes units from array shape. The archive must contain nuclear charges,
@@ -50,6 +50,28 @@ potential = phx.nn.atomistic.PaiNNPotential(
     key=jr.key(10),
 )
 ```
+
+To use degree-zero-through-two Cartesian NequIP without changing the graph,
+prediction, training, or result path, replace only the model construction:
+
+```python
+potential = phx.nn.atomistic.NequIPPotential(
+    scale,
+    cutoff=5.0,
+    maximum_neighbors=32,
+    maximum_dense_atoms=atom_capacity,
+    feature_count=32,
+    interaction_count=3,
+    radial_basis_count=20,
+    key=jr.key(10),
+)
+```
+
+NequIP resolves and resource-checks its legal tensor-product instructions before
+allocating layer coefficients and radial outputs. Its radial map has one output
+for every multiplicity weight on every legal instruction. It remains a finite,
+nonperiodic research model with degree at most two; this recipe does not imply
+high-degree irreps, MACE-style contraction, stress, or periodic support.
 
 Construct a typed joint problem. The default fitted scales use only training
 energy and forces. The validation values are used for model selection, not

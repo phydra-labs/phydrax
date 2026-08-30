@@ -39,12 +39,12 @@ zero is reserved for inactive padding, and inactive entries must be zero.
 mass. All cases in one batch must have the same exact scale identity.
 
 Cell and periodic-axis arrays can be preserved for provenance while parsing or
-moving data. `PaiNNPotential` rejects any such metadata. It never interprets a
-periodic structure as a free-space molecule.
+moving data. `PaiNNPotential` and `NequIPPotential` reject any such metadata.
+Neither interprets a periodic structure as a free-space molecule.
 
 ## Case-isolated graphs and resource contracts
 
-PaiNN uses a directed dense candidate topology per case. No candidate joins two
+PaiNN and NequIP use the same directed dense candidate topology per case. No candidate joins two
 molecules. Runtime displacement, distance, unit direction, node/edge masks, and
 neighbor counts are stored in a canonical `GraphIR`. Coincident atoms have zero
 direction rather than a nonfinite normalization.
@@ -98,6 +98,46 @@ potential = phx.nn.atomistic.PaiNNPotential(
 prediction = phx.atomistic.energy_and_forces(potential, batch)
 ```
 
+## Low-degree Cartesian NequIP interactions
+
+`NequIPPotential` is a drop-in alternative under the same `AtomicStructure`,
+`AtomisticBatch`, `energy_and_forces`, and `fit_atomistic_potential` contracts.
+It embeds species into invariant scalar channels, forms scalar, vector, and
+symmetric-traceless rank-two edge features, and applies weighted Cartesian O(3)
+tensor products. Receiver aggregation, species-conditioned equivariant self
+connections, and parity-safe gates update the node state. Only invariant scalar
+channels enter the masked per-atom energy readout.
+
+```python
+nequip = phx.nn.atomistic.NequIPPotential(
+    scale,
+    cutoff=5.0,
+    maximum_neighbors=16,
+    maximum_dense_atoms=32,
+    feature_count=32,
+    interaction_count=3,
+    radial_basis_count=20,
+    key=jr.key(2),
+)
+nequip_prediction = phx.atomistic.energy_and_forces(nequip, batch)
+```
+
+`O3TensorProductPlan` resolves every legal degree/parity instruction, the
+canonical fully connected `uvw` multiplicity weights, component normalization,
+parameter count, coefficient storage, scalar contraction work, resource limits,
+and a content ID before `O3TensorProduct` prepares coefficients or weights.
+Radial networks emit one coefficient for every actual tensor-product
+instruction weight rather than one scalar per output block. Padded nodes and
+edges are masked at embedding, edge-feature, message, aggregation, and readout
+boundaries.
+
+This implementation is independently derived in the existing Cartesian
+scalar/pseudoscalar, vector/pseudovector, and symmetric-traceless
+tensor/pseudotensor convention. Its declared scope is degrees zero through two
+on finite nonperiodic molecules. It is not an arbitrary irreps API and makes no
+claim for higher degrees, MACE or symmetric contraction, periodic stress,
+long-range electrostatics, or molecular-dynamics stability.
+
 The force is defined only as the negative position gradient of the same scalar
 total-energy closure. Dense candidate indices and their topology identity stay
 frozen during that derivative; the smooth cutoff controls interaction support.
@@ -113,8 +153,9 @@ recorded in prediction provenance.
 
 ## Energy, force, or joint training
 
-Training is domain-specific; it does not add a generic trainer. An
-`AtomisticTrainingProblem` pairs native batches with optional molecular energies
+Training is domain-specific; it does not add a generic trainer.
+`PaiNNPotential` and `NequIPPotential` use the same
+`AtomisticTrainingProblem`, which pairs native batches with optional molecular energies
 and/or Cartesian force components. Masks explicitly select labeled cases and
 components. The energy loss is mean squared error per atom. The force loss is
 mean squared error per selected Cartesian component. Their weights are separate.
@@ -173,8 +214,10 @@ fingerprints the exact dataset, seed, and index arrays. The default sizes are
 energy/force arrays.
 
 The developer benchmark tool `tools/atomistic_rmd17_benchmarks.py` accepts a
-local NPZ or an explicit URL plus mandatory SHA-256. It records the source and
-split identities, multiple seeds, errors, equivariance defects, timings, host
-memory, model parameters, candidate-neighborhood work, fixed gates, summaries,
-and environment provenance. It prints an artifact only when run; no data or
-benchmark result is bundled with PhydraX.
+local NPZ or an explicit URL plus mandatory SHA-256. For every seed it uses the
+same split, optimizer/loss policy, cutoff, capacity, feature width, interaction
+count, and radial basis for PaiNN and NequIP. It records errors, equivariance
+defects, compile/steady timings, host memory, model parameters, dense-candidate
+and active-neighborhood work, predeclared gates, per-model and paired summaries,
+tensor-product plan evidence, and environment provenance. It prints an artifact
+only when run; no data or benchmark result is bundled with PhydraX.

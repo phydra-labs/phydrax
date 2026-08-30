@@ -177,6 +177,7 @@ class PaiNNPotential(StrictModule):
     scale: AtomisticScaleContract
     precision: AtomisticPrecisionPolicy
     potential_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -274,6 +275,7 @@ class PaiNNPotential(StrictModule):
                 "maximum_atomic_number": maximum_z,
             }
         )
+        self.method_id = "negative-position-gradient-of-total-painn-energy"
 
     def _validate_batch(self, batch: AtomisticBatch, /) -> None:
         if not isinstance(batch, AtomisticBatch):

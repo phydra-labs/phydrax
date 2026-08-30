@@ -15,7 +15,7 @@ from phydrax.atomistic import (
     load_rmd17_npz,
     split_rmd17,
 )
-from phydrax.nn.atomistic import PaiNNPotential
+from phydrax.nn.atomistic import NequIPPotential, PaiNNPotential
 
 
 SCALE = AtomisticScaleContract("angstrom", "electronvolt")
@@ -231,3 +231,59 @@ def test_rmd17_parser_rejects_nonfinite_or_unsupported_local_data(tmp_path):
     )
     with pytest.raises(ValueError, match="finite"):
         load_rmd17_npz(path)
+
+
+def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
+    sample_count = 5
+    coordinates = np.asarray(
+        [
+            [[0.0, 0.0, 0.0], [0.65 + 0.1 * index, 0.0, 0.0]]
+            for index in range(sample_count)
+        ]
+    )
+    path = tmp_path / "rmd17_synthetic_nequip.npz"
+    np.savez(
+        path,
+        nuclear_charges=np.asarray([1, 1]),
+        coords=coordinates,
+        energies=np.zeros((sample_count,)),
+        forces=np.zeros_like(coordinates),
+    )
+    dataset = load_rmd17_npz(
+        path, scale=AtomisticScaleContract("angstrom", "electronvolt")
+    )
+    batch, _, _ = dataset.take(np.arange(sample_count))
+
+    def potential(key):
+        return NequIPPotential(
+            dataset.scale,
+            cutoff=2.0,
+            maximum_neighbors=1,
+            maximum_dense_atoms=2,
+            feature_count=2,
+            interaction_count=1,
+            radial_basis_count=3,
+            key=key,
+        )
+
+    teacher = energy_and_forces(potential(jr.key(301)), batch)
+    result = fit_atomistic_potential(
+        potential(jr.key(302)),
+        AtomisticTrainingProblem(
+            batch,
+            training_energy=teacher.energy,
+            training_forces=teacher.forces,
+        ),
+        AtomisticTrainingPolicy(
+            maximum_steps=2,
+            learning_rate=1e-3,
+            energy_weight=1.0,
+            force_weight=1.0,
+        ),
+        key=jr.key(303),
+    )
+    assert isinstance(result.final_potential, NequIPPotential)
+    assert result.training_loss_history.shape == (2,)
+    prediction = energy_and_forces(result.best_potential, batch)
+    assert bool(jnp.all(prediction.valid))
+    assert prediction.energy.shape == (sample_count,)

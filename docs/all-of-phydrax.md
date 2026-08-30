@@ -117,22 +117,28 @@ substrates for scale-identified finite molecules. `AtomicStructure` and
 length/energy identity. Case-isolated dense candidate graphs expose
 displacement, distance, direction, masks, and neighbor work under mandatory
 atom-count and neighbor-capacity guards; overflow invalidates the result without
-edge truncation. `phydrax.nn.atomistic.PaiNNPotential` combines invariant scalar
-features, equivariant Cartesian vector features, a smooth radial basis/cutoff,
-masked messages, and an invariant per-atom energy sum. Forces are only the
-negative position derivative of that scalar energy with frozen candidate
-topology. Prediction evidence includes validity/status, scale and precision
-identity, graph provenance, and net-force/net-torque defects.
+edge truncation. `phydrax.nn.atomistic.PaiNNPotential` provides invariant
+scalar/equivariant vector interactions. The drop-in `NequIPPotential` adds
+species-conditioned self connections, parity-safe gates, degree-zero-through-two
+edge features, and independently derived Cartesian O(3) tensor products whose
+legal instructions, radial parameter count, work, resource limits, and identity
+are planned before allocation. Both models mask padded nodes and edges, use a
+smooth cutoff, and sum invariant per-atom energy. Forces are only the negative
+position derivative of that scalar energy with frozen candidate topology.
+Prediction evidence includes validity/status, scale and precision identity,
+graph provenance, and net-force/net-torque defects.
 
 Domain-specific training accepts energy-only, force-only, or joint supervision,
 fits loss normalization from the training split only, and reuses the shared key,
 callback, selection, patience, and deterministic-continuation lifecycle. The
 offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
-indices. This is a finite nonperiodic molecular research capability: preserved
-cell or periodic metadata is rejected by PaiNN, and there is no stress,
-long-range electrostatics, direct-force head, ASE integration, or molecular-
-dynamics stability claim. See [Guide → Atomistic learning](guides_atomistic.md),
-[Cookbook → Finite-molecule PaiNN](cookbook/atomistic.md), and
+indices; the campaign tool compares matched PaiNN and NequIP runs across seeds.
+This is a finite nonperiodic molecular research capability: preserved cell or
+periodic metadata is rejected by both models, and the NequIP scope stops at
+degree two. There is no high-degree irreps or MACE claim, stress, long-range
+electrostatics, direct-force head, ASE integration, or molecular-dynamics
+stability claim. See [Guide → Atomistic learning](guides_atomistic.md),
+[Cookbook → Finite-molecule atomistic potentials](cookbook/atomistic.md), and
 [API → Atomistic molecular learning](api/atomistic.md).
 
 ### Computational topology: exact invariants and filtered fields
