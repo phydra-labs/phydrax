@@ -97,9 +97,17 @@ energy/dissipation ledgers, and native SSPRK integration. Structured
 particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
-route moments, and fast/deterministic/compensated reductions. See
+route moments, and fast/deterministic/compensated reductions. DEM adds stable
+contact history, accepted-step work/energy ledgers, cached and fused
+neighborhoods, rolling/adhesive/plastic/thermal laws, SO(2)/SO(3) bodies,
+clumps, triangle/convex/implicit geometry, bonds/topology events, certified
+sensitivity modes, and conservative unresolved/resolved CFD coupling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
+[Guide → Discrete element method](guides_discrete_element_method.md),
+[Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
+[Guide → Differentiable DEM](guides_differentiable_dem.md), and
+[Guide → CFD-DEM coupling](guides_cfd_dem.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
 [Guide → Weakly compressible SPH](guides_wcsph.md),
 [Guide → SPH boundaries](guides_sph_boundaries.md), and

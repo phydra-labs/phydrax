@@ -24,7 +24,12 @@ from .._atlas import (
 )
 from .._capabilities import GeometryCapability
 from .._certificate import exact_signed_distance_certificate, FieldCertificate
-from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._contracts import (
+    ContactCurvatureResult,
+    GeometryKernel,
+    GeometryKind,
+    GeometrySource,
+)
 from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureComponent
 from .._sampling import (
     complete_sampling_result,
@@ -51,7 +56,10 @@ _ANALYTIC_CAPABILITIES = frozenset(
     }
 )
 _RADIAL_CAPABILITIES = _ANALYTIC_CAPABILITIES | frozenset(
-    {GeometryCapability.CUBATURE_ATLAS}
+    {
+        GeometryCapability.CONTACT_CURVATURE,
+        GeometryCapability.CUBATURE_ATLAS,
+    }
 )
 
 
@@ -243,6 +251,18 @@ class _CircleKernel(GeometryKernel):
         norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
         return direction / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
 
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
+        points_ = _check_points(points, 2)
+        _, radius = self._parameters(state)
+        curvature = jnp.broadcast_to((1.0 / radius)[None, None], (points_.shape[0], 1))
+        valid = jnp.broadcast_to(
+            jnp.isfinite(radius) & (radius > 0.0), (points_.shape[0],)
+        )
+        margin = jnp.broadcast_to(radius, (points_.shape[0],))
+        return ContactCurvatureResult(curvature, valid, margin)
+
     def bounds(self, state: DesignState, /) -> Array:
         center, radius = self._parameters(state)
         return jnp.stack((center - radius, center + radius))
@@ -409,6 +429,18 @@ class _SphereKernel(GeometryKernel):
         direction = points_ - center
         norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
         return direction / jnp.maximum(norm, jnp.finfo(points_.dtype).eps)
+
+    def contact_curvature(
+        self, state: DesignState, points: Array, /
+    ) -> ContactCurvatureResult:
+        points_ = _check_points(points, 3)
+        _, radius = self._parameters(state)
+        curvature = jnp.broadcast_to((1.0 / radius)[None, None], (points_.shape[0], 2))
+        valid = jnp.broadcast_to(
+            jnp.isfinite(radius) & (radius > 0.0), (points_.shape[0],)
+        )
+        margin = jnp.broadcast_to(radius, (points_.shape[0],))
+        return ContactCurvatureResult(curvature, valid, margin)
 
     def bounds(self, state: DesignState, /) -> Array:
         center, radius = self._parameters(state)

@@ -70,6 +70,10 @@
 ::: phydrax.discretization.PaddingDealiasingPlan
 
 ---
+::: phydrax.discretization.PolynomialClosureDealiasingPlan
+
+---
+
 
 ::: phydrax.discretization.ModalFilterPlan
 
@@ -84,6 +88,18 @@
 ---
 
 ::: phydrax.equations.CompiledSpectralDynamics
+
+---
+
+::: phydrax.equations.compile_spectral_residual
+
+---
+
+::: phydrax.equations.CompiledSpectralResidual
+
+---
+
+::: phydrax.equations.SpectralResidualCompilationReport
 
 ## Conservation and entropy
 

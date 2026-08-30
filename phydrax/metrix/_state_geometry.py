@@ -122,12 +122,9 @@ class AbstractStateGeometry(StrictModule):
         weight: ArrayLike,
         /,
     ) -> Array:
-        """Interpolate on the state space along the local retraction from left."""
-        left_array = jnp.asarray(left)
-        right_array = jnp.asarray(right)
-        _same_shape(right_array, left_array, "Interpolation endpoint")
-        local = self.inverse_retract(left_array, right_array)
-        return self.retract(left_array, jnp.asarray(weight) * local)
+        local = self.inverse_retract(left, right)
+        scaled = jax.tree.map(lambda leaf: jnp.asarray(weight) * leaf, local)
+        return self.retract(left, scaled)
 
 
 class LocalRetraction(StrictModule):

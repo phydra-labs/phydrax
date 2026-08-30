@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import abc
-from math import ceil
+from math import ceil, prod
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -19,7 +19,7 @@ from ..._trainable import NonTrainableState
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
 
 
-DealiasingKind: TypeAlias = Literal["none", "padding", "filter"]
+DealiasingKind: TypeAlias = Literal["none", "padding", "closure", "filter"]
 
 
 class DealiasingReport(StrictModule, NonTrainableState):
@@ -191,6 +191,104 @@ class PaddingDealiasingPlan(AbstractDealiasingPlan):
         )
 
 
+class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
+    """Represent the complete finite polynomial closure before residual reduction."""
+
+    maximum_polynomial_degree: int = eqx.field(static=True)
+    maximum_evaluation_modes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        maximum_polynomial_degree: int = 2,
+        /,
+        *,
+        maximum_evaluation_modes: int = 16_777_216,
+    ):
+        degree = int(maximum_polynomial_degree)
+        maximum = int(maximum_evaluation_modes)
+        if degree < 2:
+            raise ValueError(
+                "Polynomial closure requires polynomial degree at least two."
+            )
+        if maximum <= 0:
+            raise ValueError("maximum_evaluation_modes must be positive.")
+        self.maximum_polynomial_degree = degree
+        self.maximum_evaluation_modes = maximum
+        self.kind = "closure"
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "polynomial-closure-spectral-dealiasing",
+                "maximum_polynomial_degree": degree,
+                "maximum_evaluation_modes": maximum,
+            }
+        )
+
+    def prepare(
+        self,
+        discretization: TensorSpectralDiscretization,
+        /,
+        *,
+        required_polynomial_degree: int | None,
+    ) -> "PreparedDealiasingPlan":
+        if required_polynomial_degree is None:
+            raise ValueError(
+                "Finite polynomial closure cannot certify a nonpolynomial "
+                "spectral expression."
+            )
+        required = int(required_polynomial_degree)
+        if required > self.maximum_polynomial_degree:
+            raise ValueError(
+                "Compiled polynomial degree exceeds the closure dealiasing contract."
+            )
+        if any(axis.family == "sine" for axis in discretization.axes):
+            raise ValueError(
+                "A sine basis is not closed under polynomial multiplication."
+            )
+        from ._constraints import ConstrainedBasisPlan
+
+        if any(
+            isinstance(axis.plan, ConstrainedBasisPlan) for axis in discretization.axes
+        ):
+            raise ValueError(
+                "Polynomial closure requires nested unconstrained modal coordinates."
+            )
+        target = tuple(
+            max(size, required * (size - 1) + 1) for size in discretization.modal_shape
+        )
+        if prod(target) > self.maximum_evaluation_modes:
+            raise ValueError(
+                "Polynomial closure exceeds maximum_evaluation_modes before "
+                "spectral preparation."
+            )
+        basis_plans = tuple(
+            axis.plan.resized(count)
+            for axis, count in zip(discretization.axes, target, strict=True)
+        )
+        closure_plan = TensorSpectralPlan(
+            basis_plans,
+            axis_names=discretization.plan.axis_names,
+            field_name=discretization.plan.field_name,
+            precision=discretization.plan.precision,
+        )
+        bounds = jnp.stack(tuple(axis.bounds for axis in discretization.axes), axis=1)
+        closure = closure_plan.prepare(
+            bounds,
+            numeric_version=discretization.numeric_version,
+        )
+        return PreparedDealiasingPlan(
+            self,
+            discretization,
+            closure,
+            report=DealiasingReport(
+                kind="closure",
+                retained_shape=discretization.modal_shape,
+                evaluation_shape=target,
+                maximum_polynomial_degree=required,
+                exact=True,
+            ),
+        )
+
+
 class ModalFilterPlan(AbstractDealiasingPlan):
     """Approximate axis-separable modal cutoff for general nonlinearities."""
 
@@ -355,5 +453,6 @@ __all__ = [
     "ModalFilterPlan",
     "NoDealiasingPlan",
     "PaddingDealiasingPlan",
+    "PolynomialClosureDealiasingPlan",
     "PreparedDealiasingPlan",
 ]
