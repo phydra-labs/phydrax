@@ -319,16 +319,12 @@ def _clebsch_gordan(
         coefficients = contract("kij,iab,qbj->kaq", tensor_basis, epsilon, tensor_basis)
         return _component_normalize(coefficients)
     if (left_degree, right_degree, output_degree) == (2, 1, 2):
-        coefficients = -contract(
-            "kij,iab,qbj->kqa", tensor_basis, epsilon, tensor_basis
-        )
+        coefficients = -contract("kij,iab,qbj->kqa", tensor_basis, epsilon, tensor_basis)
         return _component_normalize(coefficients)
     if (left_degree, right_degree, output_degree) == (2, 2, 0):
         return jnp.eye(5, dtype=dtype)[None, :, :] / sqrt(5.0)
     if (left_degree, right_degree, output_degree) == (2, 2, 1):
-        coefficients = contract(
-            "iab,pac,qcb->ipq", epsilon, tensor_basis, tensor_basis
-        )
+        coefficients = contract("iab,pac,qcb->ipq", epsilon, tensor_basis, tensor_basis)
         return _component_normalize(coefficients)
     if (left_degree, right_degree, output_degree) == (2, 2, 2):
         coefficients = 0.5 * (
@@ -383,8 +379,7 @@ class O3TensorProduct(StrictModule):
                     float(instruction.left_multiplicity * instruction.right_multiplicity)
                 )
                 pieces.append(
-                    scale
-                    * jr.normal(path_key, (instruction.weight_count,), dtype=dtype_)
+                    scale * jr.normal(path_key, (instruction.weight_count,), dtype=dtype_)
                 )
             weight = jnp.concatenate(pieces)
         else:
@@ -423,10 +418,14 @@ class O3TensorProduct(StrictModule):
         if int(right_.shape[-1]) != self.plan.right_representation.packed_size:
             raise ValueError("Right values do not match the planned O(3) layout.")
         if left_.shape[:-1] != right_.shape[:-1]:
-            raise ValueError("O(3) tensor-product inputs must have identical leading axes.")
+            raise ValueError(
+                "O(3) tensor-product inputs must have identical leading axes."
+            )
         if path_weights is None:
             if self.weight is None:
-                raise ValueError("Externally weighted O(3) tensor product needs path weights.")
+                raise ValueError(
+                    "Externally weighted O(3) tensor product needs path weights."
+                )
             weights = self.weight
         else:
             if self.weight is not None:

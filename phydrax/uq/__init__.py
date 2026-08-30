@@ -307,14 +307,6 @@ from ._gp_scalar import (
     SparseGaussianProcessDiscrepancy,
     SparseGaussianProcessFactor,
 )
-from ._state_space_gp import (
-    compile_state_space_kernel,
-    fit_state_space_gaussian_process,
-    state_space_gaussian_process_status_name,
-    STATE_SPACE_GP_SMOOTHER_FAILURE,
-    StateSpaceGaussianProcessPlan,
-    StateSpaceGaussianProcessResult,
-)
 from ._guided_particle import (
     AbstractParticleProposal,
     AuxiliaryResamplingPolicy,
@@ -524,6 +516,14 @@ from ._particle_parameter_score import (
     ParameterizedParticleGenealogicalScoreResult,
 )
 from ._pathfinder import fit_pathfinder, PathfinderResult
+from ._polynomial_chaos import (
+    PolynomialChaosBasis,
+    PolynomialChaosExpansion,
+    PolynomialChaosFitResult,
+    PolynomialChaosProjectionPlan,
+    PolynomialChaosRegressionPlan,
+    PolynomialMultiIndexSet,
+)
 from ._posterior import (
     AbstractBijector,
     ExpBijector,
@@ -594,14 +594,6 @@ from ._process_validation import (
     ProcessValidationSplit,
     trajectory_score_diagnostics,
     TrajectoryScoreDiagnostics,
-)
-from ._polynomial_chaos import (
-    PolynomialChaosBasis,
-    PolynomialChaosExpansion,
-    PolynomialChaosFitResult,
-    PolynomialChaosProjectionPlan,
-    PolynomialChaosRegressionPlan,
-    PolynomialMultiIndexSet,
 )
 from ._propagation import propagate, RandomSampleBatch, sample_joint
 from ._quantum_tomography import (
@@ -727,6 +719,14 @@ from ._state_space_estimation import (
     StateSpaceMAPWorkflowResult,
     StateSpaceSampler,
     StateSpaceSamplingWorkflowResult,
+)
+from ._state_space_gp import (
+    compile_state_space_kernel,
+    fit_state_space_gaussian_process,
+    state_space_gaussian_process_status_name,
+    STATE_SPACE_GP_SMOOTHER_FAILURE,
+    StateSpaceGaussianProcessPlan,
+    StateSpaceGaussianProcessResult,
 )
 from ._state_space_inference import (
     EXACT_STATE_SPACE_DEGENERATE_LIKELIHOOD,

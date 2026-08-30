@@ -48,18 +48,14 @@ class PolynomialMultiIndexSet(StrictModule, NonTrainableState):
         dimension_ = _positive_integer(dimension, "dimension")
         degree_ = _nonnegative_integer(degree, "degree")
         maximum = _positive_integer(maximum_features, "maximum_features")
-        maximum_bytes = _positive_integer(
-            maximum_storage_bytes, "maximum_storage_bytes"
-        )
+        maximum_bytes = _positive_integer(maximum_storage_bytes, "maximum_storage_bytes")
         feature_count = math.comb(dimension_ + degree_, degree_)
         if feature_count > maximum:
             raise ValueError(
                 f"Total-degree polynomial chaos requires {feature_count} features, "
                 f"exceeding maximum_features={maximum}."
             )
-        storage_bytes = (
-            feature_count * dimension_ * np.dtype(np.int32).itemsize
-        )
+        storage_bytes = feature_count * dimension_ * np.dtype(np.int32).itemsize
         if storage_bytes > maximum_bytes:
             raise ValueError(
                 "Total-degree multiindex data exceeds maximum_storage_bytes."
@@ -74,9 +70,7 @@ class PolynomialMultiIndexSet(StrictModule, NonTrainableState):
                 for coordinate in coordinates:
                     index[coordinate] += 1
                 rows.append(index)
-        indices = np.asarray(rows, dtype=np.int32).reshape(
-            (feature_count, dimension_)
-        )
+        indices = np.asarray(rows, dtype=np.int32).reshape((feature_count, dimension_))
         if int(indices.nbytes) != storage_bytes:
             raise RuntimeError(
                 "Polynomial multiindex storage accounting is inconsistent."
@@ -110,24 +104,17 @@ def normalized_vandermonde(
     degree_ = _nonnegative_integer(degree, "degree")
     if measure == "uniform":
         vandermonde = standard_vandermonde("legendre", values.reshape((-1,)), degree_)
-        normalization = jnp.sqrt(
-            2 * jnp.arange(degree_ + 1, dtype=values.dtype) + 1
-        )
+        normalization = jnp.sqrt(2 * jnp.arange(degree_ + 1, dtype=values.dtype) + 1)
     elif measure == "standard-normal":
         flattened = values.reshape((-1,))
         modes = [jnp.ones_like(flattened)]
         if degree_ >= 1:
             modes.append(flattened)
         for index in range(1, degree_):
-            previous_scale = jnp.sqrt(
-                jnp.asarray(index, dtype=values.dtype)
-            )
-            next_scale = jnp.sqrt(
-                jnp.asarray(index + 1, dtype=values.dtype)
-            )
+            previous_scale = jnp.sqrt(jnp.asarray(index, dtype=values.dtype))
+            next_scale = jnp.sqrt(jnp.asarray(index + 1, dtype=values.dtype))
             modes.append(
-                (flattened * modes[-1] - previous_scale * modes[-2])
-                / next_scale
+                (flattened * modes[-1] - previous_scale * modes[-2]) / next_scale
             )
         vandermonde = jnp.stack(tuple(modes), axis=-1)
         normalization = jnp.asarray(1.0, dtype=values.dtype)
@@ -145,9 +132,7 @@ def evaluate_tensor_basis(
     """Evaluate tensor modes in multiindex order using named factor semantics."""
     points = jnp.asarray(reference_points)
     if points.ndim < 1 or points.shape[-1] != multiindices.dimension:
-        raise ValueError(
-            "reference_points must end with the multiindex-set dimension."
-        )
+        raise ValueError("reference_points must end with the multiindex-set dimension.")
     if len(measures) != multiindices.dimension:
         raise ValueError("One polynomial measure is required per reference coordinate.")
 

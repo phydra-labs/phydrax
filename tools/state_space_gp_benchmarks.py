@@ -198,7 +198,9 @@ def _source_provenance():
         "git_revision": revision,
         "working_tree_clean": not bool(diff),
         "working_tree_diff_sha256": hashlib.sha256(diff).hexdigest(),
-        "benchmark_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "benchmark_source_sha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
     }
 
 
@@ -216,9 +218,7 @@ def run_state_space_gp_benchmarks(
     if repeat_count <= 0:
         raise ValueError("repeats must be positive.")
 
-    kernel = phx.kernels.ScaleKernel(
-        phx.kernels.Matern52Kernel(length_scale=0.37), 1.6
-    )
+    kernel = phx.kernels.ScaleKernel(phx.kernels.Matern52Kernel(length_scale=0.37), 1.6)
     noise_scale = jnp.asarray(0.035)
     query_times = jnp.linspace(-0.2, 1.2, 65)
     records = []
@@ -243,9 +243,7 @@ def run_state_space_gp_benchmarks(
                 kernel, times, values, queries, noise
             )
         )
-        state_space_function = eqx.filter_jit(
-            phx.uq.fit_state_space_gaussian_process
-        )
+        state_space_function = eqx.filter_jit(phx.uq.fit_state_space_gaussian_process)
         dense_compiled, dense_compile_seconds = _compile(
             dense_function,
             train_times,
@@ -295,9 +293,7 @@ def run_state_space_gp_benchmarks(
                 dense_retained_bytes=dense_bytes,
                 state_space_retained_bytes=state_bytes,
                 log_marginal_likelihood_absolute_error=float(
-                    jnp.abs(
-                        state_space_result.log_marginal_likelihood - dense_likelihood
-                    )
+                    jnp.abs(state_space_result.log_marginal_likelihood - dense_likelihood)
                 ),
                 posterior_mean_maximum_absolute_error=float(
                     jnp.max(jnp.abs(state_mean - dense_mean))
@@ -311,9 +307,7 @@ def run_state_space_gp_benchmarks(
                 ),
                 schedule_id=state_space_result.schedule_id,
                 method_id=state_space_result.method_id,
-                precision_evidence_id=(
-                    state_space_result.precision_evidence.evidence_id
-                ),
+                precision_evidence_id=(state_space_result.precision_evidence.evidence_id),
                 valid=bool(state_space_result.successful),
             )
         )

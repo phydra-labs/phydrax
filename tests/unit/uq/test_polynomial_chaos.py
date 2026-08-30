@@ -14,12 +14,8 @@ from tools import polynomial_chaos_benchmarks as pce_benchmarks
 
 
 def _factors():
-    uniform = phx.domain.ProbabilityDomain(
-        phx.uq.Uniform(2.0, 6.0), label="conductivity"
-    )
-    normal = phx.domain.ProbabilityDomain(
-        phx.uq.Normal(-1.5, 2.5), label="forcing"
-    )
+    uniform = phx.domain.ProbabilityDomain(phx.uq.Uniform(2.0, 6.0), label="conductivity")
+    normal = phx.domain.ProbabilityDomain(phx.uq.Normal(-1.5, 2.5), label="forcing")
     return uniform, normal
 
 
@@ -270,9 +266,7 @@ def test_pytree_and_field_outputs_preserve_structure_and_physical_axes():
         jnp.asarray([-4.0, -1.0, 3.0]),
         indexing="ij",
     )
-    points = jnp.stack(
-        (first.reshape((-1,)), second.reshape((-1,))), axis=-1
-    )
+    points = jnp.stack((first.reshape((-1,)), second.reshape((-1,))), axis=-1)
     scalar = points[:, 0] + points[:, 1]
     field_data = jnp.stack((scalar, points[:, 0] - points[:, 1]), axis=-1)
     outputs = {
@@ -283,12 +277,8 @@ def test_pytree_and_field_outputs_preserve_structure_and_physical_axes():
     predicted = fit.expansion(jnp.asarray([3.25, -0.75]))
     aligned = fit.expansion(
         {
-            "conductivity": cx.Field(
-                jnp.asarray([3.25, 4.5]), dims=("draw",)
-            ),
-            "forcing": cx.Field(
-                jnp.asarray([-0.75, 0.25]), dims=("draw",)
-            ),
+            "conductivity": cx.Field(jnp.asarray([3.25, 4.5]), dims=("draw",)),
+            "forcing": cx.Field(jnp.asarray([-0.75, 0.25]), dims=("draw",)),
         }
     )
 
@@ -397,9 +387,7 @@ def test_explicit_native_svd_policy_can_select_rank_deficient_pseudoinverse():
 
 
 def test_unsupported_or_nonindependent_laws_are_rejected_during_basis_construction():
-    lognormal = phx.domain.ProbabilityDomain(
-        phx.uq.LogNormal(0.0, 0.5), label="positive"
-    )
+    lognormal = phx.domain.ProbabilityDomain(phx.uq.LogNormal(0.0, 0.5), label="positive")
     first, second = _factors()
 
     with pytest.raises(TypeError, match="Uniform.*Normal"):
@@ -497,9 +485,9 @@ def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed(
             jnp.ones((6, 2)), jnp.ones((6,))
         )
     with pytest.raises(ValueError, match="maximum_design_bytes"):
-        phx.uq.PolynomialChaosRegressionPlan(
-            basis, maximum_design_bytes=8
-        ).fit(jnp.ones((6, 2)), jnp.ones((6,)))
+        phx.uq.PolynomialChaosRegressionPlan(basis, maximum_design_bytes=8).fit(
+            jnp.ones((6, 2)), jnp.ones((6,))
+        )
 
 
 def test_projection_honors_evaluation_accumulation_and_output_precision():
@@ -511,9 +499,9 @@ def test_projection_honors_evaluation_accumulation_and_output_precision():
         output_dtype=jnp.float64,
     )
     source_value = jnp.asarray(1.0 + 2.0**-30, dtype=jnp.float64)
-    result = _projection_plan(
-        basis, order=2, precision=precision
-    ).fit(lambda conductivity, forcing: source_value)
+    result = _projection_plan(basis, order=2, precision=precision).fit(
+        lambda conductivity, forcing: source_value
+    )
     expected = jnp.asarray(source_value, dtype=jnp.float32).astype(jnp.float64)
 
     assert result.expansion.coefficients.dtype == jnp.float64
@@ -533,17 +521,11 @@ def test_projection_honors_evaluation_accumulation_and_output_precision():
         output_dtype=jnp.float32,
     )
     with pytest.raises(ValueError, match="output precision"):
-        _projection_plan(
-            basis, order=2, precision=narrow_output
-        ).fit(
-            lambda conductivity, forcing: jnp.asarray(
-                1.0e40, dtype=jnp.float64
-            )
+        _projection_plan(basis, order=2, precision=narrow_output).fit(
+            lambda conductivity, forcing: jnp.asarray(1.0e40, dtype=jnp.float64)
         )
     with pytest.raises(ValueError, match="coefficients must be finite"):
-        phx.uq.PolynomialChaosExpansion(
-            basis, jnp.asarray([jnp.inf])
-        )
+        phx.uq.PolynomialChaosExpansion(basis, jnp.asarray([jnp.inf]))
 
 
 def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch):
@@ -630,13 +612,9 @@ def test_benchmark_times_and_blocks_design_materialization_symmetrically(
         return original_samples(*args, **kwargs)
 
     monkeypatch.setattr(pce_benchmarks.time, "perf_counter", clock)
-    monkeypatch.setattr(
-        pce_benchmarks, "_projection_plan", checked_projection_plan
-    )
+    monkeypatch.setattr(pce_benchmarks, "_projection_plan", checked_projection_plan)
     monkeypatch.setattr(pce_benchmarks, "_samples", checked_samples)
-    monkeypatch.setattr(
-        pce_benchmarks.jax, "block_until_ready", checked_block
-    )
+    monkeypatch.setattr(pce_benchmarks.jax, "block_until_ready", checked_block)
 
     records = pce_benchmarks._run_scenario(scenario, jr.key(0))
 
@@ -652,9 +630,7 @@ def test_benchmark_times_and_blocks_design_materialization_symmetrically(
 
 def test_polynomial_chaos_fit_result_is_portably_exported(tmp_path):
     basis = _basis(1)
-    points = jnp.asarray(
-        [[2.0, -2.0], [3.0, -1.0], [5.0, 0.0], [6.0, 1.0]]
-    )
+    points = jnp.asarray([[2.0, -2.0], [3.0, -1.0], [5.0, 0.0], [6.0, 1.0]])
     result = phx.uq.PolynomialChaosRegressionPlan(basis).fit(
         points, points[:, 0] + points[:, 1]
     )

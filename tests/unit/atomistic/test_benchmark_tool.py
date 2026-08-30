@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+
 from tools.atomistic_rmd17_benchmarks import _json_safe
 
 

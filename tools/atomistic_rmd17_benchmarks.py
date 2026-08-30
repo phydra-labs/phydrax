@@ -49,9 +49,7 @@ def _parser() -> argparse.ArgumentParser:
         "--sha256", help="Required SHA-256 for --url and optional verification for --npz."
     )
     parser.add_argument("--doi", help="Dataset DOI recorded verbatim in provenance.")
-    parser.add_argument(
-        "--cache-dir", type=Path, default=Path(".cache/phydrax/rmd17")
-    )
+    parser.add_argument("--cache-dir", type=Path, default=Path(".cache/phydrax/rmd17"))
     parser.add_argument("--seeds", type=int, nargs="+", default=(0, 1, 2))
     parser.add_argument("--train-size", type=int, default=950)
     parser.add_argument("--validation-size", type=int, default=50)
@@ -91,7 +89,9 @@ def _resolved_source(arguments: argparse.Namespace, /) -> tuple[Path, str]:
             raise FileNotFoundError(source)
     else:
         if expected is None:
-            raise ValueError("--url requires --sha256; unverified benchmark fetches are forbidden.")
+            raise ValueError(
+                "--url requires --sha256; unverified benchmark fetches are forbidden."
+            )
         arguments.cache_dir.mkdir(parents=True, exist_ok=True)
         source = (arguments.cache_dir / f"{expected}.npz").resolve()
         if not source.exists():
@@ -120,7 +120,11 @@ def _json_safe(value: Any, /) -> Any:
     if isinstance(value, (float, np.floating)):
         number = float(value)
         if not np.isfinite(number):
-            label = "nan" if np.isnan(number) else ("positive_infinity" if number > 0 else "negative_infinity")
+            label = (
+                "nan"
+                if np.isnan(number)
+                else ("positive_infinity" if number > 0 else "negative_infinity")
+            )
             return {"kind": "nonfinite", "value": label}
         return number
     if isinstance(value, dict):
@@ -176,7 +180,9 @@ def _rotation_evidence(potential, batch):
     observed = phx.atomistic.energy_and_forces(potential, rotated)
     force_reference = reference.forces @ rotation.T
     return {
-        "energy_rotation_defect": float(jnp.max(jnp.abs(observed.energy - reference.energy))),
+        "energy_rotation_defect": float(
+            jnp.max(jnp.abs(observed.energy - reference.energy))
+        ),
         "force_rotation_defect": float(
             jnp.max(jnp.abs(observed.forces - force_reference))
         ),
@@ -192,9 +198,7 @@ def _prediction_metrics(prediction, target_energy, target_forces, atom_mask):
     return {
         "energy_mae_per_atom": float(jnp.mean(jnp.abs(energy_residual))),
         "energy_rmse_per_atom": float(jnp.sqrt(jnp.mean(energy_residual**2))),
-        "force_component_mae": float(
-            jnp.sum(jnp.abs(force_residual)) / component_count
-        ),
+        "force_component_mae": float(jnp.sum(jnp.abs(force_residual)) / component_count),
         "force_component_rmse": float(
             jnp.sqrt(jnp.sum(force_residual**2) / component_count)
         ),
@@ -207,9 +211,7 @@ def _prediction_metrics(prediction, target_energy, target_forces, atom_mask):
 
 
 def _gates(metrics):
-    checks = {
-        name: metrics[name] <= threshold for name, threshold in RMD17_GATES.items()
-    }
+    checks = {name: metrics[name] <= threshold for name, threshold in RMD17_GATES.items()}
     checks["all_predictions_valid"] = metrics["all_predictions_valid"]
     checks["no_neighbor_overflow"] = metrics["neighbor_overflow_count"] == 0
     checks["training_success"] = metrics["training_success"]
@@ -423,13 +425,11 @@ def _summary(records):
     for model_name in MODEL_NAMES:
         model_summaries[model_name] = {
             "all_gates_passed": all(
-                record["models"][model_name]["gates"]["passed"]
-                for record in records
+                record["models"][model_name]["gates"]["passed"] for record in records
             ),
             "aggregates": {
                 name: _aggregate(
-                    record["models"][model_name]["metrics"][name]
-                    for record in records
+                    record["models"][model_name]["metrics"][name] for record in records
                 )
                 for name in metric_names
             },

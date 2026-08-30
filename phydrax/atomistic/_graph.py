@@ -77,12 +77,8 @@ def realize_atomistic_graph(
     atom_capacity = batch.atom_capacity
     case_count = batch.case_count
     edge_capacity = atom_capacity * (atom_capacity - 1)
-    local_senders = np.repeat(
-        np.arange(atom_capacity, dtype=np.int32), atom_capacity - 1
-    )
-    local_offsets = np.tile(
-        np.arange(atom_capacity - 1, dtype=np.int32), atom_capacity
-    )
+    local_senders = np.repeat(np.arange(atom_capacity, dtype=np.int32), atom_capacity - 1)
+    local_offsets = np.tile(np.arange(atom_capacity - 1, dtype=np.int32), atom_capacity)
     local_receivers = local_offsets + (local_offsets >= local_senders)
     case_offsets = np.repeat(
         np.arange(case_count, dtype=np.int32) * atom_capacity, edge_capacity
@@ -93,9 +89,7 @@ def realize_atomistic_graph(
     receivers = jnp.asarray(
         np.tile(local_receivers, case_count) + case_offsets, dtype=jnp.int32
     )
-    edge_cases = jnp.repeat(
-        jnp.arange(case_count, dtype=jnp.int32), edge_capacity
-    )
+    edge_cases = jnp.repeat(jnp.arange(case_count, dtype=jnp.int32), edge_capacity)
     coordinate = batch.positions if positions is None else jnp.asarray(positions)
     if coordinate.shape != batch.positions.shape:
         raise ValueError("positions must have the batch position shape.")
@@ -113,14 +107,18 @@ def realize_atomistic_graph(
     safe_distance = jnp.where(distance > 0.0, distance, 1.0)
     direction = displacement / safe_distance[:, None]
     edge_mask = endpoint_mask & (distance < jnp.asarray(cutoff_value, coordinate.dtype))
-    neighbor_counts = jnp.zeros(
-        (case_count * atom_capacity,), dtype=jnp.int32
-    ).at[receivers].add(edge_mask.astype(jnp.int32))
+    neighbor_counts = (
+        jnp.zeros((case_count * atom_capacity,), dtype=jnp.int32)
+        .at[receivers]
+        .add(edge_mask.astype(jnp.int32))
+    )
     neighbor_counts = neighbor_counts.reshape((case_count, atom_capacity))
     maximum_neighbor_count = jnp.max(neighbor_counts, axis=1)
     overflow = maximum_neighbor_count > neighbor_limit
-    active_edges = jnp.zeros((case_count,), dtype=jnp.int32).at[edge_cases].add(
-        edge_mask.astype(jnp.int32)
+    active_edges = (
+        jnp.zeros((case_count,), dtype=jnp.int32)
+        .at[edge_cases]
+        .add(edge_mask.astype(jnp.int32))
     )
     graph = GraphIR(
         nodes={

@@ -24,13 +24,13 @@ from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
+from ._adaptive import integrate_adaptive
+from ._adaptive_triangle import integrate_adaptive_triangle
 from ._bayesian_quadrature import (
     BayesianQuadraturePlan,
     integrate_bayesian_quadrature,
     materialize_bayesian_quadrature,
 )
-from ._adaptive import integrate_adaptive
-from ._adaptive_triangle import integrate_adaptive_triangle
 from ._estimates import IntegrationEstimate
 from ._external import (
     integrate_discrete_measure,

@@ -12,9 +12,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
 
 
-_AtomisticPotentialT = TypeVar(
-    "_AtomisticPotentialT", bound="AbstractAtomisticPotential"
-)
+_AtomisticPotentialT = TypeVar("_AtomisticPotentialT", bound="AbstractAtomisticPotential")
 
 
 class AbstractAtomisticPotential(StrictModule):

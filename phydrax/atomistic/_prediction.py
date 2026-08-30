@@ -16,11 +16,12 @@ from .._trainable import NonTrainableState
 from ..nn.atomistic._nequip import NequIPPotential
 from ..nn.atomistic._painn import PaiNNPotential
 from ._types import (
+    AtomicStructure,
     AtomisticBatch,
     AtomisticScaleContract,
     AtomisticStatus,
-    AtomicStructure,
 )
+
 
 _AtomisticPotential = PaiNNPotential | NequIPPotential
 _ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
@@ -149,9 +150,7 @@ def energy_and_forces(
     ).astype(jnp.int32)
     nan = jnp.asarray(jnp.nan, dtype=energy.dtype)
     energy = jnp.where(valid, energy, nan)
-    atom_energy = jnp.where(
-        valid[:, None], jnp.where(mask, atom_energy, 0.0), nan
-    )
+    atom_energy = jnp.where(valid[:, None], jnp.where(mask, atom_energy, 0.0), nan)
     forces = jnp.where(
         valid[:, None, None],
         jnp.where(mask[:, :, None], forces, 0.0),
@@ -161,12 +160,12 @@ def energy_and_forces(
     net_force = jnp.sum(diagnostic_forces, axis=1)
     torque_dtype = jnp.dtype(potential.precision.reduction_dtype)
     mass = jnp.where(mask, batch.masses, 0.0).astype(torque_dtype)
-    torque_positions = jnp.where(
-        mask[:, :, None], batch.positions, 0.0
-    ).astype(torque_dtype)
-    center = contract("ba,bad->bd", mass, torque_positions) / jnp.sum(
-        mass, axis=1
-    )[:, None]
+    torque_positions = jnp.where(mask[:, :, None], batch.positions, 0.0).astype(
+        torque_dtype
+    )
+    center = (
+        contract("ba,bad->bd", mass, torque_positions) / jnp.sum(mass, axis=1)[:, None]
+    )
     lever = torque_positions - center[:, None, :]
     torque_force = diagnostic_forces.astype(torque_dtype)
     net_torque = jnp.sum(jnp.cross(lever, torque_force), axis=1).astype(

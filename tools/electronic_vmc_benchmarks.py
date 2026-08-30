@@ -154,7 +154,9 @@ def _run(case: MolecularCase, seed: int, *, compilation_expected: bool):
         "tail_ess": tail_ess,
         "rhat": rhat,
         "acceptance": float(estimate.acceptance_rate),
-        "compile_and_runtime_seconds" if compilation_expected else "runtime_seconds": elapsed,
+        "compile_and_runtime_seconds"
+        if compilation_expected
+        else "runtime_seconds": elapsed,
         "parameter_count": problem.parameter_subspace.total_dimension,
         "status": phx.solver.vmc_status_name(estimate.status),
         "gates": {
@@ -169,13 +171,18 @@ def _run(case: MolecularCase, seed: int, *, compilation_expected: bool):
             "operator_id": problem.operator.operator_id,
             "operator_method": estimate.local.method_id,
             "operator_compute_dtype": estimate.local.compute_dtype,
-            "operator_coordinate_work_per_sample": int(jnp.max(estimate.local.work_count)),
+            "operator_coordinate_work_per_sample": int(
+                jnp.max(estimate.local.work_count)
+            ),
             "network_id": problem.model.network_id,
             "problem_id": problem.problem_id,
             "scale_id": problem.operator.nuclei.scale.scale_id,
             "proposal_id": problem.kernel.proposal.proposal_id,
             "kernel_id": problem.kernel.kernel_id,
-            "trace_cost_claim": "exact coordinate second derivatives; linear in coordinate count times derivative-action cost",
+            "trace_cost_claim": (
+                "exact coordinate second derivatives; linear in coordinate count "
+                "times derivative-action cost"
+            ),
         },
     }
 
@@ -184,9 +191,7 @@ def main():
     records = []
     for case in CASES:
         for seed_index, seed in enumerate(SEEDS):
-            records.append(
-                _run(case, seed, compilation_expected=seed_index == 0)
-            )
+            records.append(_run(case, seed, compilation_expected=seed_index == 0))
     summaries = []
     for case in CASES:
         selected = [record for record in records if record["case"] == case.name]
@@ -219,7 +224,10 @@ def main():
             "born_oppenheimer": True,
             "relativistic": False,
             "stochastic_trace": False,
-            "energy_interpretation": "finite-sample VMC estimate; upper-bound language requires separately established estimator conditions",
+            "energy_interpretation": (
+                "finite-sample VMC estimate; upper-bound language requires "
+                "separately established estimator conditions"
+            ),
         },
     }
     print(json.dumps(payload, indent=2, sort_keys=True))

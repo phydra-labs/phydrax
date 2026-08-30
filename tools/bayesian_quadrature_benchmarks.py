@@ -61,9 +61,7 @@ def _record(
         "analytic_value": float(analytic),
         "absolute_error": abs(value - analytic),
         "reported_error": (
-            None
-            if estimate.error_estimate is None
-            else float(estimate.error_estimate)
+            None if estimate.error_estimate is None else float(estimate.error_estimate)
         ),
         "error_kind": estimate.error_kind,
         "status": int(estimate.status),
@@ -118,8 +116,7 @@ def _gate(records: list[dict[str, Any]], budgets: tuple[int, ...], /) -> dict[st
                 "scenario": scenario,
                 "criterion": "BQ reports posterior standard deviation",
                 "passed": (
-                    bq["error_kind"]
-                    == "bayesian-posterior-standard-deviation"
+                    bq["error_kind"] == "bayesian-posterior-standard-deviation"
                     and bq["reported_error"] is not None
                     and math.isfinite(bq["reported_error"])
                 ),
@@ -157,9 +154,7 @@ def run_bayesian_quadrature_benchmarks(
         raise ValueError("repeats must be positive.")
 
     location, scale = 0.35, 1.2
-    probability = phx.domain.ProbabilityDomain(
-        phx.uq.Normal(location, scale), label="z"
-    )
+    probability = phx.domain.ProbabilityDomain(phx.uq.Normal(location, scale), label="z")
     target = phx.integration.expectation(
         probability, target_id="benchmark-gaussian-expectation"
     )

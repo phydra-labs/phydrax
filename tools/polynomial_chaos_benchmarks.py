@@ -106,13 +106,7 @@ def _gaussian_polynomial() -> _Scenario:
     def model(x_value, y_value):
         first = (x_value - 1.0) / 2.0
         second = (y_value + 0.5) / 1.5
-        return (
-            1.0
-            + 2.0 * first
-            - 0.5 * second
-            + 0.75 * (first**2 - 1.0)
-            + first * second
-        )
+        return 1.0 + 2.0 * first - 0.5 * second + 0.75 * (first**2 - 1.0) + first * second
 
     return _Scenario(
         "exact-gaussian-polynomial",
@@ -127,9 +121,7 @@ def _gaussian_polynomial() -> _Scenario:
 
 
 def _solver_model(first, second):
-    matrix = jnp.asarray(
-        [[2.0 + 0.2 * first, 0.25], [0.25, 1.5 + 0.1 * second]]
-    )
+    matrix = jnp.asarray([[2.0 + 0.2 * first, 0.25], [0.25, 1.5 + 0.1 * second]])
     right_hand_side = jnp.asarray([1.0 + 0.1 * second, 2.0 - 0.1 * first])
     result = phx.linalg.solve(
         phx.linalg.LinearSystem(phx.linalg.DenseLinearOperator(matrix)),
@@ -183,9 +175,7 @@ def _projection_plan(scenario: _Scenario, basis: phx.uq.PolynomialChaosBasis):
 
 
 def _samples(scenario: _Scenario, *, sampler: str, key):
-    distributions = {
-        factor.label: factor.distribution for factor in scenario.factors
-    }
+    distributions = {factor.label: factor.distribution for factor in scenario.factors}
     return phx.uq.sample_joint(
         distributions,
         num_samples=scenario.budget,
@@ -239,9 +229,7 @@ def _record(
     )
 
 
-def _run_scenario(
-    scenario: _Scenario, key
-) -> tuple[PolynomialChaosBenchmarkRecord, ...]:
+def _run_scenario(scenario: _Scenario, key) -> tuple[PolynomialChaosBenchmarkRecord, ...]:
     basis = phx.uq.PolynomialChaosBasis(scenario.factors, scenario.degree)
 
     projection_counter = _ModelCounter(scenario.model)
@@ -267,9 +255,7 @@ def _run_scenario(
 
     regression_key, qmc_key, mc_key = jr.split(key, 3)
     started = time.perf_counter()
-    regression_samples = _samples(
-        scenario, sampler="sobol_scrambled", key=regression_key
-    )
+    regression_samples = _samples(scenario, sampler="sobol_scrambled", key=regression_key)
     regression_points = _point_matrix(scenario, regression_samples)
     jax.block_until_ready(regression_points)
     regression_values = _evaluate_samples(scenario, regression_points)

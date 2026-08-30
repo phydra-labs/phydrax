@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 
 from phydrax.atomistic import (
+    AtomicStructure,
     AtomisticBatch,
     AtomisticScaleContract,
     AtomisticStatus,
-    AtomicStructure,
     energy_and_forces,
 )
 from phydrax.nn.atomistic import NequIPPotential
@@ -41,9 +41,7 @@ def test_energy_is_rigid_motion_invariant_and_force_is_equivariant():
     model = _model()
     structure = _structure()
     reference = energy_and_forces(model, structure)
-    rotation = jnp.asarray(
-        [[0.36, -0.48, 0.80], [0.80, 0.60, 0.00], [-0.48, 0.64, 0.60]]
-    )
+    rotation = jnp.asarray([[0.36, -0.48, 0.80], [0.80, 0.60, 0.00], [-0.48, 0.64, 0.60]])
     transformed = AtomicStructure(
         structure.atomic_numbers,
         structure.positions @ rotation.T + jnp.asarray([2.0, -3.0, 1.0]),
@@ -194,9 +192,7 @@ def test_jit_position_vjp_and_second_parameter_derivative_are_finite():
 
     gradient = jax.grad(embedding_energy)
     first = gradient(model.embedding)
-    second = jax.jvp(
-        gradient, (model.embedding,), (jnp.ones_like(model.embedding),)
-    )[1]
+    second = jax.jvp(gradient, (model.embedding,), (jnp.ones_like(model.embedding),))[1]
     assert bool(jnp.all(jnp.isfinite(first)))
     assert bool(jnp.all(jnp.isfinite(second)))
 

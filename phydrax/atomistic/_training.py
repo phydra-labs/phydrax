@@ -18,7 +18,7 @@ from jaxtyping import Array, ArrayLike, Key
 from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import NonTrainableState, combine_trainable, partition_trainable
+from .._trainable import combine_trainable, NonTrainableState, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
 from ..nn.atomistic._nequip import NequIPPotential
 from ..nn.atomistic._painn import PaiNNPotential
@@ -26,9 +26,9 @@ from ..nn.atomistic._state import checkpoint_atomistic_potential
 from ._graph import realize_atomistic_graph
 from ._types import AtomisticBatch, AtomisticStatus
 
+
 _AtomisticPotential = PaiNNPotential | NequIPPotential
 _ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
-
 
 
 class AtomisticTrainingProblem(StrictModule, NonTrainableState):
@@ -217,7 +217,9 @@ class AtomisticTrainingPolicy(StrictModule, NonTrainableState):
             or force_w < 0.0
             or energy_w + force_w <= 0.0
         ):
-            raise ValueError("Loss weights must be finite, non-negative, and not both zero.")
+            raise ValueError(
+                "Loss weights must be finite, non-negative, and not both zero."
+            )
         for name, value in (("energy_scale", energy_s), ("force_scale", force_s)):
             if value is not None and (not math.isfinite(value) or value <= 0.0):
                 raise ValueError(f"{name} must be finite and positive when provided.")
@@ -433,6 +435,7 @@ def _loss(
 ) -> tuple[Array, tuple[Array, Array]]:
     need_forces = force_target is not None and policy.force_weight > 0.0
     if need_forces:
+
         def energy_closure(position: Array) -> tuple[Array, tuple[Array, Array]]:
             energy, _, graph = potential._energy_unchecked(batch, position)
             return jnp.sum(energy), (energy, graph.overflow)
@@ -443,9 +446,7 @@ def _loss(
         predicted_energy, overflow = auxiliary
         predicted_forces = -position_gradient
     else:
-        predicted_energy, _, graph = potential._energy_unchecked(
-            batch, batch.positions
-        )
+        predicted_energy, _, graph = potential._energy_unchecked(batch, batch.positions)
         overflow = graph.overflow
         predicted_forces = None
     zero = jnp.asarray(0.0, dtype=predicted_energy.dtype)
@@ -460,7 +461,9 @@ def _loss(
     force_loss = zero
     if force_target is not None and policy.force_weight > 0.0:
         if predicted_forces is None:
-            raise RuntimeError("Force loss requested without a conservative force evaluation.")
+            raise RuntimeError(
+                "Force loss requested without a conservative force evaluation."
+            )
         residual = (predicted_forces - force_target) / normalization.force_component_scale
         mask = jnp.asarray(force_mask, dtype=bool)
         residual = jnp.where(mask, residual, 0.0)
@@ -560,13 +563,11 @@ def _same_potential_configuration(
         left.scale.scale_id == right.scale.scale_id
         and left.precision.policy_id == right.precision.policy_id
         and left_configuration.cutoff == right_configuration.cutoff
-        and left_configuration.maximum_neighbors
-        == right_configuration.maximum_neighbors
+        and left_configuration.maximum_neighbors == right_configuration.maximum_neighbors
         and left_configuration.maximum_dense_atoms
         == right_configuration.maximum_dense_atoms
         and left_configuration.feature_count == right_configuration.feature_count
-        and left_configuration.interaction_count
-        == right_configuration.interaction_count
+        and left_configuration.interaction_count == right_configuration.interaction_count
         and left_configuration.radial_basis_count
         == right_configuration.radial_basis_count
         and left_configuration.maximum_atomic_number
@@ -578,8 +579,7 @@ def _same_potential_configuration(
         return (
             left_configuration.maximum_tensor_product_parameters
             == right_configuration.maximum_tensor_product_parameters
-            and left_configuration.maximum_degree
-            == right_configuration.maximum_degree
+            and left_configuration.maximum_degree == right_configuration.maximum_degree
             and left_configuration.tensor_product_plan_ids
             == right_configuration.tensor_product_plan_ids
         )
@@ -635,7 +635,9 @@ def fit_atomistic_potential(
                 "configuration as the supplied potential."
             )
         if continuation.problem_id != problem.problem_id:
-            raise ValueError("Continuation result belongs to a different training problem.")
+            raise ValueError(
+                "Continuation result belongs to a different training problem."
+            )
         if continuation.continuation_id != policy.continuation_id:
             raise ValueError(
                 "Continuation policy changed optimizer, loss, or selection semantics."
@@ -653,9 +655,7 @@ def fit_atomistic_potential(
         training_history = np.asarray(continuation.training_loss_history).tolist()
         energy_history = np.asarray(continuation.energy_loss_history).tolist()
         force_history = np.asarray(continuation.force_loss_history).tolist()
-        validation_history = np.asarray(
-            continuation.validation_loss_history
-        ).tolist()
+        validation_history = np.asarray(continuation.validation_loss_history).tolist()
         validation_steps = np.asarray(continuation.validation_steps).tolist()
     control = TrainingController(
         total_steps=policy.maximum_steps,
@@ -666,9 +666,7 @@ def fit_atomistic_potential(
     if continuation is not None:
         control.best_payload = continuation.best_potential
     control.emit("start")
-    training_overflow = _batch_neighbor_overflow(
-        current, problem.training_batch
-    )
+    training_overflow = _batch_neighbor_overflow(current, problem.training_batch)
     validation_overflow = (
         False
         if problem.validation_batch is None
@@ -685,9 +683,7 @@ def fit_atomistic_potential(
         else:
             termination = "validation_neighbor_overflow"
     elif continuation is None:
-        initial_loss = _validation_loss(
-            current, problem, normalization, policy
-        )
+        initial_loss = _validation_loss(current, problem, normalization, policy)
         initial_value = float(np.asarray(initial_loss))
         validation_history.append(initial_value)
         validation_steps.append(0)
@@ -750,9 +746,7 @@ def fit_atomistic_potential(
             break
         validate = step % policy.validation_every == 0 or step == policy.maximum_steps
         if validate:
-            selected_loss = _validation_loss(
-                current, problem, normalization, policy
-            )
+            selected_loss = _validation_loss(current, problem, normalization, policy)
             selected_value = float(np.asarray(selected_loss))
             validation_history.append(selected_value)
             validation_steps.append(step)
@@ -774,21 +768,16 @@ def fit_atomistic_potential(
             break
 
     current = checkpoint_atomistic_potential(current)
-    if (
-        not validation_history
-        and terminal_status
-        not in (AtomisticStatus.NEIGHBOR_OVERFLOW, AtomisticStatus.NONFINITE)
+    if not validation_history and terminal_status not in (
+        AtomisticStatus.NEIGHBOR_OVERFLOW,
+        AtomisticStatus.NONFINITE,
     ):
-        selected_loss = _validation_loss(
-            current, problem, normalization, policy
-        )
+        selected_loss = _validation_loss(current, problem, normalization, policy)
         selected_value = float(np.asarray(selected_loss))
         validation_history.append(selected_value)
         validation_steps.append(control.progress.update_step)
         if math.isfinite(selected_value):
-            control.select(
-                selected_value, current, step=control.progress.update_step
-            )
+            control.select(selected_value, current, step=control.progress.update_step)
         else:
             terminal_status = AtomisticStatus.NONFINITE
             termination = "nonfinite_selection_loss"

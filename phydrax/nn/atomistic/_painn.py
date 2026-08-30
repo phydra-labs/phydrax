@@ -20,10 +20,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
 from ...atomistic._types import (
+    AtomicStructure,
     AtomisticBatch,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
-    AtomicStructure,
 )
 from ..layers import Linear
 from ..parameters import IdentityTransform
@@ -119,9 +119,7 @@ class _PaiNNInteraction(StrictModule):
             key=keys[7],
         )
 
-    def atomwise_update(
-        self, scalar: Array, vector: Array, /
-    ) -> tuple[Array, Array]:
+    def atomwise_update(self, scalar: Array, vector: Array, /) -> tuple[Array, Array]:
         """Apply the norm-conditioned canonical three-head PaiNN atomwise update."""
 
         vector_u = self.vector_u(vector)
@@ -137,9 +135,7 @@ class _PaiNNInteraction(StrictModule):
         update = self.update_out(
             self.update_in(jnp.concatenate((scalar, vector_norm), axis=-1))
         )
-        scalar_scalar, scalar_vector, vector_vector = jnp.split(
-            update, 3, axis=-1
-        )
+        scalar_scalar, scalar_vector, vector_vector = jnp.split(update, 3, axis=-1)
         return (
             scalar + scalar_scalar + scalar_vector * invariant,
             vector + vector_vector[:, None, :] * vector_u,
@@ -173,16 +169,12 @@ class _PaiNNInteraction(StrictModule):
             jnp.asarray(ir.edges["direction"], dtype=scalar.dtype),
             0.0,
         )
-        sender_vector = jnp.where(
-            edge_mask[:, :, None], vector[ir.senders], 0.0
-        )
+        sender_vector = jnp.where(edge_mask[:, :, None], vector[ir.senders], 0.0)
         vector_message = (
             vector_coefficient[:, None, :] * sender_vector
             + direction_coefficient[:, None, :] * direction[:, :, None]
         )
-        scalar_delta = jnp.zeros_like(scalar).at[ir.receivers].add(
-            scalar_coefficient
-        )
+        scalar_delta = jnp.zeros_like(scalar).at[ir.receivers].add(scalar_coefficient)
         vector_delta = jnp.zeros_like(vector).at[ir.receivers].add(vector_message)
         scalar, vector = self.atomwise_update(
             scalar + scalar_delta, vector + vector_delta
@@ -239,9 +231,13 @@ class PaiNNPotential(AbstractAtomisticPotential):
         if not math.isfinite(cutoff_value) or cutoff_value <= 0.0:
             raise ValueError("cutoff must be finite and positive.")
         if neighbor_limit < 0 or dense_limit <= 0:
-            raise ValueError("Neighbor capacity must be non-negative and dense guard positive.")
+            raise ValueError(
+                "Neighbor capacity must be non-negative and dense guard positive."
+            )
         if features <= 0 or interactions <= 0 or radial_count <= 0:
-            raise ValueError("PaiNN feature, interaction, and radial counts must be positive.")
+            raise ValueError(
+                "PaiNN feature, interaction, and radial counts must be positive."
+            )
         if maximum_z <= 0:
             raise ValueError("maximum_atomic_number must be positive.")
         precision_ = AtomisticPrecisionPolicy() if precision is None else precision
@@ -326,7 +322,9 @@ class PaiNNPotential(AbstractAtomisticPotential):
         if not isinstance(batch, AtomisticBatch):
             raise TypeError("batch must be an AtomisticBatch.")
         if batch.scale.scale_id != self.scale.scale_id:
-            raise ValueError("Potential and structure must share one exact scale contract.")
+            raise ValueError(
+                "Potential and structure must share one exact scale contract."
+            )
         if batch.positions.dtype != jnp.dtype(self.precision.coordinate_dtype):
             raise ValueError(
                 "Batch coordinate dtype does not match the PaiNN precision contract."
@@ -383,16 +381,16 @@ class PaiNNPotential(AbstractAtomisticPotential):
         distance = jnp.asarray(graph.graph.edges["distance"])[:, 0]
         radial, cutoff_weight = self._radial_basis(distance)
         for interaction in self.interactions:
-            scalar, vector = interaction(
-                scalar, vector, graph, radial, cutoff_weight
-            )
+            scalar, vector = interaction(scalar, vector, graph, radial, cutoff_weight)
             scalar = scalar * atom_mask[:, None]
             vector = vector * atom_mask[:, None, None]
         atom_energy = self.readout_energy(self.readout_hidden(scalar))
         atom_energy = atom_energy * atom_mask.astype(atom_energy.dtype)
-        total_energy = jnp.zeros(
-            (batch.case_count,), dtype=self.precision.reduction_dtype
-        ).at[batch.atom_cases].add(atom_energy.astype(self.precision.reduction_dtype))
+        total_energy = (
+            jnp.zeros((batch.case_count,), dtype=self.precision.reduction_dtype)
+            .at[batch.atom_cases]
+            .add(atom_energy.astype(self.precision.reduction_dtype))
+        )
         return (
             total_energy.astype(self.precision.output_dtype),
             atom_energy.reshape((batch.case_count, batch.atom_capacity)).astype(

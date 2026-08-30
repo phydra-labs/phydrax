@@ -20,17 +20,13 @@ def _problem(
 ):
     location = jnp.asarray(0.3, dtype=dtype)
     scale = jnp.asarray(1.1, dtype=dtype)
-    probability = phx.domain.ProbabilityDomain(
-        phx.uq.Normal(location, scale), label="z"
-    )
+    probability = phx.domain.ProbabilityDomain(phx.uq.Normal(location, scale), label="z")
     target = phx.integration.expectation(probability, target_id=target_id)
     kernel = phx.kernels.SquaredExponentialKernel(
         length_scale=jnp.asarray(length_scale, dtype=dtype)
     )
     if kernel_scale is not None:
-        kernel = phx.kernels.ScaleKernel(
-            kernel, jnp.asarray(kernel_scale, dtype=dtype)
-        )
+        kernel = phx.kernels.ScaleKernel(kernel, jnp.asarray(kernel_scale, dtype=dtype))
     kernel_mean = phx.integration.GaussianKernelMean(target, kernel)
     plan = phx.integration.BayesianQuadraturePlan(
         kernel_mean,
@@ -41,15 +37,13 @@ def _problem(
     return probability, target, kernel_mean, plan
 
 
-
-
 def test_gaussian_kernel_mean_matches_analytic_scalar_formulas():
     _, _, kernel_mean, _ = _problem(length_scale=0.7, solve_regularization=0.0)
     points = jnp.asarray([-1.0, 0.25, 1.5], dtype=jnp.float64)
     variance = jnp.asarray(1.1**2, dtype=points.dtype)
     denominator = 0.7**2 + variance
-    expected = 0.7 / jnp.sqrt(denominator) * jnp.exp(
-        -0.5 * (points - 0.3) ** 2 / denominator
+    expected = (
+        0.7 / jnp.sqrt(denominator) * jnp.exp(-0.5 * (points - 0.3) ** 2 / denominator)
     )
     expected_double = 0.7 / jnp.sqrt(0.7**2 + 2.0 * variance)
 
@@ -231,9 +225,7 @@ def test_singular_design_fails_closed_with_child_solve_status():
 
 def test_target_identity_mismatch_is_rejected_before_integrand_evaluation():
     _, _, kernel_mean, _ = _problem(target_id="first")
-    other_probability = phx.domain.ProbabilityDomain(
-        phx.uq.Normal(0.3, 1.1), label="z"
-    )
+    other_probability = phx.domain.ProbabilityDomain(phx.uq.Normal(0.3, 1.1), label="z")
     other = phx.integration.expectation(other_probability, target_id="second")
     mismatched = phx.integration.BayesianQuadraturePlan(
         kernel_mean, phx.domain.PointSampling(4, design="hammersley")
@@ -265,9 +257,7 @@ def test_unsupported_target_kernel_and_dimension_fail_closed():
     with pytest.raises(ValueError, match="dimension does not match"):
         phx.integration.GaussianKernelMean(
             target,
-            phx.kernels.SquaredExponentialKernel(
-                length_scale=jnp.asarray([1.0, 2.0])
-            ),
+            phx.kernels.SquaredExponentialKernel(length_scale=jnp.asarray([1.0, 2.0])),
         )
     kernel_mean = phx.integration.GaussianKernelMean(target, squared_exponential)
     with pytest.raises(ValueError, match="expected dimension 1"):
@@ -390,9 +380,7 @@ def test_kernel_and_domain_function_execute_in_evaluation_dtype():
     assert kernel_mean._double_mean(jnp.dtype("float32")).dtype == jnp.float32
 
     dtype_probe = probability.Function("z")(
-        lambda z: jnp.ones_like(z)
-        if z.dtype == jnp.float32
-        else jnp.zeros_like(z)
+        lambda z: jnp.ones_like(z) if z.dtype == jnp.float32 else jnp.zeros_like(z)
     )
     probe = phx.integration.reduce(dtype_probe, realization)
     constant = phx.integration.reduce(jnp.asarray(1.0), realization)
@@ -413,8 +401,7 @@ def test_variance_envelope_uses_actual_arithmetic_precision():
         jnp.abs(batch.kernel_double_mean.astype(jnp.float64)),
         jnp.abs(
             jnp.sum(
-                batch.kernel_mean.astype(jnp.float64)
-                * batch.weights.astype(jnp.float64)
+                batch.kernel_mean.astype(jnp.float64) * batch.weights.astype(jnp.float64)
             )
         ),
     )
@@ -456,9 +443,7 @@ def test_analytic_means_remain_finite_for_huge_legal_scales():
     assert jnp.isfinite(single_mean) & (single_mean > 0.0)
     assert single_mean == pytest.approx(1.0e-200, rel=1e-12, abs=0.0)
     assert jnp.isfinite(double_mean) & (double_mean > 0.0)
-    assert double_mean == pytest.approx(
-        2.0**-0.5 * 1.0e-200, rel=1e-12, abs=0.0
-    )
+    assert double_mean == pytest.approx(2.0**-0.5 * 1.0e-200, rel=1e-12, abs=0.0)
 
 
 def test_only_preflighted_dense_lu_solve_route_is_accepted():
@@ -557,13 +542,10 @@ def test_mixed_float32_factorization_controls_variance_roundoff_envelope():
         jnp.abs(batch.kernel_double_mean),
         jnp.abs(contraction),
     )
-    minimum = (
-        jnp.finfo(jnp.float32).eps * (8 * batch.weights.size + 16) * variance_scale
-    )
+    minimum = jnp.finfo(jnp.float32).eps * (8 * batch.weights.size + 16) * variance_scale
 
     assert (
-        batch.solve_result.provenance.effective_precision.factorization_dtype
-        == "float32"
+        batch.solve_result.provenance.effective_precision.factorization_dtype == "float32"
     )
     assert batch.variance_roundoff_envelope >= minimum
 

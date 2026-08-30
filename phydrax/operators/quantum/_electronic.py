@@ -21,7 +21,7 @@ from ..._precision import real_precision_dtype_name
 from ..._sampling import AbstractProposal
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...atomistic import AtomisticScaleContract, AtomicStructure
+from ...atomistic import AtomicStructure, AtomisticScaleContract
 from ._amplitude import LogAmplitude
 from ._local import (
     AbstractLocalQuantumOperator,
@@ -53,14 +53,7 @@ _ATOMIC_ENERGY_FACTORS = {
 
 
 def _unit_key(value: str, /) -> str:
-    return (
-        str(value)
-        .strip()
-        .lower()
-        .replace(" ", "")
-        .replace("_", "")
-        .replace("-", "")
-    )
+    return str(value).strip().lower().replace(" ", "").replace("_", "").replace("-", "")
 
 
 def _require_atomic_reference(scale: AtomisticScaleContract, /) -> None:
@@ -142,7 +135,9 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         def log_components(coordinates):
             amplitude = model(coordinates.reshape(shape))
             if not isinstance(amplitude, LogAmplitude):
-                raise TypeError("The electronic amplitude model must return LogAmplitude.")
+                raise TypeError(
+                    "The electronic amplitude model must return LogAmplitude."
+                )
             if amplitude.log_abs.shape != ():
                 raise ValueError(
                     "The electronic amplitude model must return one scalar amplitude."
@@ -188,9 +183,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         configuration: Array,
         /,
     ) -> tuple[Array, Array]:
-        trace, gradient, amplitude_valid = self._trace_and_gradient(
-            model, configuration
-        )
+        trace, gradient, amplitude_valid = self._trace_and_gradient(model, configuration)
         laplacian_ratio = trace + contract("d,d->", gradient, gradient)
         return -0.5 * laplacian_ratio, amplitude_valid
 
@@ -293,13 +286,9 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
             nuclei_mask[None, :],
             (self.electron_count, int(nuclei_mask.shape[0])),
         )
-        electron_nuclear_squared_distance = jnp.sum(
-            electron_nuclear_delta**2, axis=-1
-        )
+        electron_nuclear_squared_distance = jnp.sum(electron_nuclear_delta**2, axis=-1)
         electron_nuclear_distance = jnp.sqrt(
-            jnp.where(
-                electron_nuclear_mask, electron_nuclear_squared_distance, 1.0
-            )
+            jnp.where(electron_nuclear_mask, electron_nuclear_squared_distance, 1.0)
         )
         electron_nuclear_singular = jnp.any(
             electron_nuclear_mask & (electron_nuclear_distance == 0.0)
@@ -345,18 +334,12 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
             )
         )
 
-        length_factor = jnp.asarray(
-            self.nuclei.scale.length_to_reference, dtype=dtype
+        length_factor = jnp.asarray(self.nuclei.scale.length_to_reference, dtype=dtype)
+        energy_factor = jnp.asarray(self.nuclei.scale.energy_to_reference, dtype=dtype)
+        potential = (electron_electron + electron_nuclear + nuclear_nuclear) / (
+            length_factor * energy_factor
         )
-        energy_factor = jnp.asarray(
-            self.nuclei.scale.energy_to_reference, dtype=dtype
-        )
-        potential = (
-            electron_electron + electron_nuclear + nuclear_nuclear
-        ) / (length_factor * energy_factor)
-        singular = (
-            electron_singular | electron_nuclear_singular | nuclear_singular
-        )
+        singular = electron_singular | electron_nuclear_singular | nuclear_singular
         return potential, singular
 
     def _estimate_one(
@@ -469,8 +452,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         coordinate = jnp.asarray(current)
         if coordinate.shape != (self.electron_count, 3):
             raise ValueError(
-                "Electron proposal positions must have shape "
-                f"({self.electron_count}, 3)."
+                f"Electron proposal positions must have shape ({self.electron_count}, 3)."
             )
         standard_deviation, valid = self._standard_deviation(coordinate)
         noise = jr.normal(key, coordinate.shape, dtype=coordinate.dtype)
@@ -480,13 +462,12 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
     def log_prob(self, proposed: Array, current: Array, /) -> Array:
         proposed_coordinate = jnp.asarray(proposed)
         current_coordinate = jnp.asarray(current)
-        if (
-            proposed_coordinate.shape != (self.electron_count, 3)
-            or current_coordinate.shape != (self.electron_count, 3)
-        ):
+        if proposed_coordinate.shape != (
+            self.electron_count,
+            3,
+        ) or current_coordinate.shape != (self.electron_count, 3):
             raise ValueError(
-                "Electron proposal positions must have shape "
-                f"({self.electron_count}, 3)."
+                f"Electron proposal positions must have shape ({self.electron_count}, 3)."
             )
         standard_deviation, valid = self._standard_deviation(current_coordinate)
         safe_standard_deviation = jnp.where(valid, standard_deviation, 1.0)
@@ -495,9 +476,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
         ) / safe_standard_deviation[:, None]
         log_probability = -0.5 * (
             jnp.sum(standardized**2)
-            + 3.0
-            * self.electron_count
-            * jnp.log(jnp.asarray(2.0 * jnp.pi))
+            + 3.0 * self.electron_count * jnp.log(jnp.asarray(2.0 * jnp.pi))
             + 6.0 * jnp.sum(jnp.log(safe_standard_deviation))
         )
         return jnp.where(jnp.all(valid), log_probability, -jnp.inf)
@@ -556,11 +535,7 @@ def electronic_initial_walkers(
     electrons = int(electron_count)
     walkers = int(walker_count)
     spread_value = float(spread)
-    if (
-        electrons <= 0
-        or electrons > ELECTRONIC_MAX_ELECTRONS
-        or walkers <= 0
-    ):
+    if electrons <= 0 or electrons > ELECTRONIC_MAX_ELECTRONS or walkers <= 0:
         raise ValueError(
             "electron_count must be within the exact-electronic ceiling and "
             "walker_count must be positive."

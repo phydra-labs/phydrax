@@ -65,6 +65,7 @@ class FixedQuadratureDiagnostics(StrictModule):
     target_mass: Array | None
     rule: str = eqx.field(static=True)
 
+
 class BayesianQuadratureDiagnostics(StrictModule):
     """Posterior-integral and delegated linear-solve evidence."""
 
@@ -79,7 +80,6 @@ class BayesianQuadratureDiagnostics(StrictModule):
     solve: Any
     target_id: str = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
-
 
 
 class AdaptiveQuadratureDiagnostics(StrictModule):

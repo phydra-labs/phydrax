@@ -483,9 +483,7 @@ def _square_root_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRe
         factor_id="rts-filtered-factor",
     )
     base_valid = (
-        result.valid.reshape((case_count, num_steps))
-        & active
-        & filtered_factors.valid
+        result.valid.reshape((case_count, num_steps)) & active & filtered_factors.valid
     )
 
     def step(carry, inputs):
@@ -519,9 +517,9 @@ def _square_root_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRe
             next_transition,
             next_factor,
         )
-        proposed_mean = current_mean + (
-            gain @ (next_mean - next_predicted_mean)[..., None]
-        )[..., 0]
+        proposed_mean = (
+            current_mean + (gain @ (next_mean - next_predicted_mean)[..., None])[..., 0]
+        )
         factor_valid = (
             current_factor_valid
             & filtered_factor.valid
@@ -579,12 +577,8 @@ def _square_root_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRe
     gains = jnp.swapaxes(gains, 0, 1)
     return KalmanSmootherResult(
         means=means.reshape(case_shape + (num_steps,) + result.state_shape),
-        covariances=covariances.reshape(
-            case_shape + (num_steps, state_size, state_size)
-        ),
-        gains=gains.reshape(
-            case_shape + (max(num_steps - 1, 0), state_size, state_size)
-        ),
+        covariances=covariances.reshape(case_shape + (num_steps, state_size, state_size)),
+        gains=gains.reshape(case_shape + (max(num_steps - 1, 0), state_size, state_size)),
         valid=valid.reshape(case_shape + (num_steps,)),
         filter_result=result,
         execution_method="sequential",

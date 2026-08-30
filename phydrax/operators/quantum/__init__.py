@@ -37,25 +37,19 @@ from ._discrete import (
     CallableDiscreteQuantumOperator,
     ConnectedConfigurations,
 )
-from ._electronic import (
-    ELECTRONIC_MAX_ELECTRONS,
-    ElectronicCoulombHamiltonian,
-    ElectronicKineticPolicy,
-    ElectronicTraceMethod,
-    electronic_initial_walkers,
-    harmonic_mean_electron_proposal,
-)
-from ._local import (
-    AbstractLocalQuantumOperator,
-    evaluate_local_operator,
-    LocalOperatorEstimate,
-    LocalOperatorStatus,
-)
 from ._dynamics import (
     HamiltonianAction,
     heisenberg_residual,
     schrodinger_residual,
     von_neumann_residual,
+)
+from ._electronic import (
+    electronic_initial_walkers,
+    ELECTRONIC_MAX_ELECTRONS,
+    ElectronicCoulombHamiltonian,
+    ElectronicKineticPolicy,
+    ElectronicTraceMethod,
+    harmonic_mean_electron_proposal,
 )
 from ._fock import (
     BosonicFockSpace,
@@ -69,6 +63,12 @@ from ._information import (
     state_fidelity,
     trace_distance,
     von_neumann_entropy,
+)
+from ._local import (
+    AbstractLocalQuantumOperator,
+    evaluate_local_operator,
+    LocalOperatorEstimate,
+    LocalOperatorStatus,
 )
 from ._nonmarkovianity import (
     analyze_dynamical_map_series,

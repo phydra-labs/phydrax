@@ -63,8 +63,8 @@ from ._sing import SINGResult
 from ._smc import TemperedSMCResult
 from ._state_space_amortized import AmortizedStateSpaceVariationalResult
 from ._state_space_buffered import BufferedStateSpaceVariationalResult
-from ._state_space_variational import StateSpaceVariationalResult
 from ._state_space_gp import StateSpaceGaussianProcessResult
+from ._state_space_variational import StateSpaceVariationalResult
 from ._variational import VariationalResult
 
 

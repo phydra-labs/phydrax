@@ -8,9 +8,9 @@ from typing import Any
 
 import coordax as cx
 import equinox as eqx
-from jax import core as jax_core
 import jax.numpy as jnp
 import opt_einsum as oe
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import PointBatch, PointSampling, SampleLayout
@@ -21,8 +21,8 @@ from .._frozendict import frozendict
 from .._sampling import design_name
 from .._strict import StrictModule
 from ..linalg import (
-    DenseLU,
     DenseLinearOperator,
+    DenseLU,
     FailurePolicy,
     LinearSolvePolicy,
     LinearSolveResult,
@@ -82,8 +82,7 @@ class GaussianKernelMean(StrictModule):
             )
         base = kernel.kernel if isinstance(kernel, ScaleKernel) else kernel
         if not isinstance(base, SquaredExponentialKernel) or (
-            isinstance(kernel, ScaleKernel)
-            and isinstance(kernel.kernel, ScaleKernel)
+            isinstance(kernel, ScaleKernel) and isinstance(kernel.kernel, ScaleKernel)
         ):
             raise TypeError(
                 "GaussianKernelMean supports SquaredExponentialKernel, optionally "
@@ -155,9 +154,7 @@ class GaussianKernelMean(StrictModule):
         )
         left_magnitude = jnp.abs(left)
         right_magnitude = jnp.abs(right)
-        same_sign_difference = (
-            sign * (left_magnitude - right_magnitude) / reference_scale
-        )
+        same_sign_difference = sign * (left_magnitude - right_magnitude) / reference_scale
         opposite_sign_difference = sign * (
             left_magnitude / reference_scale + right_magnitude / reference_scale
         )
@@ -169,7 +166,6 @@ class GaussianKernelMean(StrictModule):
             )
             / normalized_scale
         )
-
 
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         """Evaluate the supported kernel without changing the operand dtype."""
@@ -189,15 +185,11 @@ class GaussianKernelMean(StrictModule):
     def mean(self, points: ArrayLike, /) -> Array:
         """Evaluate ∫ k(x, z) dP(z) at a point design."""
         values = self._design(points, "kernel-mean points")
-        length_scale, location, normal_scale, amplitude = self._parameters(
-            values.dtype
-        )
+        length_scale, location, normal_scale, amplitude = self._parameters(values.dtype)
         reference_scale = jnp.maximum(length_scale, normal_scale)
         normalized_length = length_scale / reference_scale
         normalized_normal = normal_scale / reference_scale
-        normalized_combined = jnp.sqrt(
-            normalized_length**2 + normalized_normal**2
-        )
+        normalized_combined = jnp.sqrt(normalized_length**2 + normalized_normal**2)
         normalization = jnp.prod(normalized_length / normalized_combined)
         standardized = self._standardized_difference(
             values,
@@ -386,9 +378,8 @@ def materialize_bayesian_quadrature(
     distribution = target.probability.distribution
     if not _is_phydrax_normal(distribution):
         raise TypeError("Bayesian quadrature currently requires a Gaussian target.")
-    binding_mismatch = (
-        (distribution.location != plan.kernel_mean.location[0])
-        | (distribution.scale != plan.kernel_mean.scale[0])
+    binding_mismatch = (distribution.location != plan.kernel_mean.location[0]) | (
+        distribution.scale != plan.kernel_mean.scale[0]
     )
     binding_message = (
         "GaussianKernelMean probability content does not match the integration target."
@@ -408,9 +399,10 @@ def materialize_bayesian_quadrature(
         raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     point_batch = _materialize_points(target, plan, key)
     label = target.probability.label
-    point_values = point_batch.points[label].data + jnp.zeros_like(
+    point_values = (
         point_batch.points[label].data
-    ) * binding_anchor
+        + jnp.zeros_like(point_batch.points[label].data) * binding_anchor
+    )
     evaluation_design = policy.evaluation(point_values)
     solve_design = policy.accumulation(evaluation_design)
     if plan.kernel_mean.dimension != 1:
@@ -463,9 +455,10 @@ def materialize_bayesian_quadrature(
             jnp.dtype(factorization_dtype).itemsize
             < jnp.dtype(solve_design.dtype).itemsize
         )
-        if jnp.dtype(factorization_dtype).itemsize > jnp.dtype(
-            solve_design.dtype
-        ).itemsize:
+        if (
+            jnp.dtype(factorization_dtype).itemsize
+            > jnp.dtype(solve_design.dtype).itemsize
+        ):
             raise ValueError(
                 "Bayesian quadrature DenseLU factorization precision cannot exceed "
                 "the solve dtype; no kernel matrix was allocated."
@@ -512,8 +505,7 @@ def materialize_bayesian_quadrature(
     )
     normalized_kernel_matrix = kernel_matrix / safe_system_scale
     normalized_diagonal_shift = (
-        observation_noise / safe_system_scale
-        + solve_regularization / safe_system_scale
+        observation_noise / safe_system_scale + solve_regularization / safe_system_scale
     )
     system_matrix = normalized_kernel_matrix + normalized_diagonal_shift * jnp.eye(
         solve_design.shape[0], dtype=kernel_matrix.dtype
@@ -635,9 +627,8 @@ def integrate_bayesian_quadrature(
         & jnp.all(jnp.isfinite(value))
     )
     solve_success = batch.solve_result.status == int(LinearSolveStatus.SUCCESS)
-    variance_valid = (
-        jnp.isfinite(batch.posterior_variance)
-        & (batch.posterior_variance >= -batch.variance_roundoff_envelope)
+    variance_valid = jnp.isfinite(batch.posterior_variance) & (
+        batch.posterior_variance >= -batch.variance_roundoff_envelope
     )
     status = jnp.where(
         variance_valid,
@@ -692,8 +683,6 @@ def integrate_bayesian_quadrature(
             batch.points.provenance,
         ),
     )
-
-
 
 
 __all__ = [

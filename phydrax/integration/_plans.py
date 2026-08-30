@@ -19,6 +19,7 @@ from .._sampling import (
     RandomizedQMCDesign,
 )
 from .._strict import StrictModule
+from ._bayesian_quadrature import BayesianQuadraturePlan
 from ._rules import (
     CubatureRule,
     GaussKronrodRule,
@@ -27,7 +28,6 @@ from ._rules import (
     ProbabilityRule,
     ReferenceRule,
 )
-from ._bayesian_quadrature import BayesianQuadraturePlan
 
 
 class StratifiedDesign(StrictModule):
@@ -497,8 +497,6 @@ class ProductIntegrationPlan(StrictModule):
         if any(not key for key in normalized):
             raise ValueError("ProductIntegrationPlan axis groups cannot be empty.")
         self.plans = frozendict(normalized)
-
-
 
 
 IntegrationPlan: TypeAlias = (

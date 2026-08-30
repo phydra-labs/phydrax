@@ -30,12 +30,8 @@ def _stable_signed_product(value: Array, log_scale: Array, /) -> Array:
     """Evaluate ``value * exp(log_scale)`` without a tiny-times-huge product."""
     nonzero = value != 0.0
     safe_magnitude = jnp.where(nonzero, jnp.abs(value), 1.0)
-    combined_log_magnitude = jnp.where(
-        nonzero, jnp.log(safe_magnitude) + log_scale, 0.0
-    )
-    return jnp.where(
-        nonzero, jnp.sign(value) * jnp.exp(combined_log_magnitude), 0.0
-    )
+    combined_log_magnitude = jnp.where(nonzero, jnp.log(safe_magnitude) + log_scale, 0.0)
+    return jnp.where(nonzero, jnp.sign(value) * jnp.exp(combined_log_magnitude), 0.0)
 
 
 @_stable_signed_product.defjvp
@@ -73,12 +69,8 @@ def _stable_signed_bilinear_product_jvp(primals, tangents):
     left, right, log_scale = primals
     left_tangent, right_tangent, log_scale_tangent = tangents
     primal = _stable_signed_bilinear_product(left, right, log_scale)
-    tangent = _stable_signed_bilinear_product(
-        left_tangent, right, log_scale
-    )
-    tangent = tangent + _stable_signed_bilinear_product(
-        left, right_tangent, log_scale
-    )
+    tangent = _stable_signed_bilinear_product(left_tangent, right, log_scale)
+    tangent = tangent + _stable_signed_bilinear_product(left, right_tangent, log_scale)
     tangent = tangent + primal * log_scale_tangent
     return primal, tangent
 
@@ -95,15 +87,18 @@ def _polynomial_determinant(matrix: Array, /) -> Array:
         traces.append(jnp.trace(power))
     elementary = [jnp.ones((), dtype=matrix.dtype)]
     for degree in range(1, size + 1):
-        value = sum(
-            (
-                (-1.0) ** (power_index - 1)
-                * elementary[degree - power_index]
-                * traces[power_index - 1]
-                for power_index in range(1, degree + 1)
-            ),
-            jnp.zeros((), dtype=matrix.dtype),
-        ) / degree
+        value = (
+            sum(
+                (
+                    (-1.0) ** (power_index - 1)
+                    * elementary[degree - power_index]
+                    * traces[power_index - 1]
+                    for power_index in range(1, degree + 1)
+                ),
+                jnp.zeros((), dtype=matrix.dtype),
+            )
+            / degree
+        )
         elementary.append(value)
     return elementary[-1]
 
@@ -146,12 +141,8 @@ def _scaled_determinant_factors(
             0.0,
         )
     )
-    scaled_log_envelope = (
-        log_envelope - row_shift[:, :, None] - column_shift[:, None, :]
-    )
-    scaled_orbitals = _stable_signed_product(
-        raw_orbitals, scaled_log_envelope
-    )
+    scaled_log_envelope = log_envelope - row_shift[:, :, None] - column_shift[:, None, :]
+    scaled_orbitals = _stable_signed_product(raw_orbitals, scaled_log_envelope)
     return scaled_orbitals, row_shift, column_shift
 
 
@@ -162,9 +153,7 @@ def _scaled_determinant_components(
         raw_orbitals, log_envelope
     )
     scaled_determinant = jax.vmap(_polynomial_determinant)(scaled_orbitals)
-    determinant_log_scale = jnp.sum(row_shift, axis=-1) + jnp.sum(
-        column_shift, axis=-1
-    )
+    determinant_log_scale = jnp.sum(row_shift, axis=-1) + jnp.sum(column_shift, axis=-1)
     return scaled_determinant, determinant_log_scale
 
 
@@ -205,17 +194,13 @@ def _stable_determinant_mixture(
     coefficient_defined = jnp.isfinite(coefficients)
     any_defined = jnp.any(determinant_defined)
     determinant_nonzero = determinant_defined & (scaled_determinant != 0.0)
-    active_product = (
-        determinant_nonzero & coefficient_defined & (coefficients != 0.0)
-    )
+    active_product = determinant_nonzero & coefficient_defined & (coefficients != 0.0)
     any_active_product = jnp.any(active_product)
     any_nonzero_determinant = jnp.any(determinant_nonzero)
     safe_determinant_magnitude = jnp.where(
         determinant_nonzero, jnp.abs(scaled_determinant), 1.0
     )
-    safe_coefficient_magnitude = jnp.where(
-        active_product, jnp.abs(coefficients), 1.0
-    )
+    safe_coefficient_magnitude = jnp.where(active_product, jnp.abs(coefficients), 1.0)
     determinant_physical_log = jnp.where(
         determinant_nonzero,
         jnp.log(safe_determinant_magnitude) + determinant_log_scale,
@@ -238,9 +223,7 @@ def _stable_determinant_mixture(
     determinant_shift = jax.lax.stop_gradient(
         jnp.where(any_active_product, product_shift, fallback_shift)
     )
-    safe_determinant = jnp.where(
-        determinant_defined, scaled_determinant, 0.0
-    )
+    safe_determinant = jnp.where(determinant_defined, scaled_determinant, 0.0)
     safe_coefficient = jnp.where(coefficient_defined, coefficients, 0.0)
     relative_log_scale = jnp.where(
         determinant_defined,
@@ -348,9 +331,7 @@ class FermiNet(StrictModule):
         if not math.isfinite(minimum_decay) or minimum_decay <= 0.0:
             raise ValueError("minimum_envelope_decay must be finite and positive.")
         dtype = real_precision_dtype_name(compute_dtype)
-        minimum_decay = max(
-            minimum_decay, float(jnp.finfo(jnp.dtype(dtype)).tiny)
-        )
+        minimum_decay = max(minimum_decay, float(jnp.finfo(jnp.dtype(dtype)).tiny))
         atom_capacity = int(nuclei.atomic_numbers.shape[0])
         one_input = 2 * atom_capacity + 2
         pair_input = 2
@@ -381,9 +362,7 @@ class FermiNet(StrictModule):
         orbital_weight = jr.normal(
             keys[-6], (determinants, hidden, electrons), dtype=dtype
         ) / jnp.sqrt(jnp.asarray(hidden, dtype=dtype))
-        orbital_bias = 0.05 * jr.normal(
-            keys[-5], (determinants, electrons), dtype=dtype
-        )
+        orbital_bias = 0.05 * jr.normal(keys[-5], (determinants, electrons), dtype=dtype)
         inverse_softplus_one = jnp.log(jnp.expm1(jnp.asarray(1.0, dtype=dtype)))
         raw_envelope_decay = inverse_softplus_one + 0.05 * jr.normal(
             keys[-4], (determinants, electrons, atom_capacity), dtype=dtype
@@ -451,19 +430,13 @@ class FermiNet(StrictModule):
         dtype = jnp.dtype(self.configuration.compute_dtype)
         coordinate = jnp.asarray(electrons, dtype=dtype)
         active = self.nuclei.active_mask
-        nuclei = jnp.where(
-            active[:, None], self.nuclei.positions.astype(dtype), 0.0
-        )
-        length_factor = jnp.asarray(
-            self.nuclei.scale.length_to_reference, dtype=dtype
-        )
+        nuclei = jnp.where(active[:, None], self.nuclei.positions.astype(dtype), 0.0)
+        length_factor = jnp.asarray(self.nuclei.scale.length_to_reference, dtype=dtype)
         electron_nuclear_squared = jnp.sum(
             (coordinate[:, None, :] - nuclei[None, :, :]) ** 2, axis=-1
         )
         electron_nuclear = (
-            jnp.sqrt(
-                jnp.where(active[None, :], electron_nuclear_squared, 1.0)
-            )
+            jnp.sqrt(jnp.where(active[None, :], electron_nuclear_squared, 1.0))
             * length_factor
         )
         electron_nuclear = jnp.where(active[None, :], electron_nuclear, 0.0)
@@ -473,8 +446,7 @@ class FermiNet(StrictModule):
             axis=-1,
         )
         electron_pair = (
-            jnp.sqrt(jnp.where(identity, 1.0, electron_pair_squared))
-            * length_factor
+            jnp.sqrt(jnp.where(identity, 1.0, electron_pair_squared)) * length_factor
         )
         electron_pair = jnp.where(identity, 0.0, electron_pair)
         return electron_nuclear, electron_pair
@@ -493,12 +465,14 @@ class FermiNet(StrictModule):
         pair_down_mask = (~identity) & down[None, :]
         pair_up_count = jnp.maximum(jnp.sum(pair_up_mask, axis=-1), 1)
         pair_down_count = jnp.maximum(jnp.sum(pair_down_mask, axis=-1), 1)
-        pair_up = jnp.sum(
-            jnp.where(pair_up_mask[..., None], pair, 0.0), axis=1
-        ) / pair_up_count[:, None]
-        pair_down = jnp.sum(
-            jnp.where(pair_down_mask[..., None], pair, 0.0), axis=1
-        ) / pair_down_count[:, None]
+        pair_up = (
+            jnp.sum(jnp.where(pair_up_mask[..., None], pair, 0.0), axis=1)
+            / pair_up_count[:, None]
+        )
+        pair_down = (
+            jnp.sum(jnp.where(pair_down_mask[..., None], pair, 0.0), axis=1)
+            / pair_down_count[:, None]
+        )
         return jnp.concatenate(
             (
                 one,
@@ -548,8 +522,8 @@ class FermiNet(StrictModule):
         )
         log_envelope = jnp.swapaxes(log_envelope, 1, 2)
 
-        scaled_determinant, determinant_log_scale = (
-            _scaled_determinant_components(raw_orbitals, log_envelope)
+        scaled_determinant, determinant_log_scale = _scaled_determinant_components(
+            raw_orbitals, log_envelope
         )
         log_abs, phase, determinant_valid = _stable_determinant_mixture(
             scaled_determinant,
@@ -562,7 +536,10 @@ class FermiNet(StrictModule):
     def __call__(self, electrons: Array, /) -> LogAmplitude:
         """Evaluate one configuration or an arbitrary leading batch of walkers."""
         coordinate = jnp.asarray(electrons)
-        if coordinate.ndim < 2 or tuple(coordinate.shape[-2:]) != self.configuration_shape:
+        if (
+            coordinate.ndim < 2
+            or tuple(coordinate.shape[-2:]) != self.configuration_shape
+        ):
             raise ValueError(
                 "FermiNet inputs must end in shape "
                 f"{self.configuration_shape}; got {coordinate.shape}."

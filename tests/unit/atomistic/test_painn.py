@@ -7,14 +7,14 @@ import pytest
 from opt_einsum import contract
 
 from phydrax.atomistic import (
+    AtomicStructure,
     AtomisticBatch,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     AtomisticStatus,
-    AtomicStructure,
     energy_and_forces,
 )
-from phydrax.nn.atomistic import PaiNNPotential, checkpoint_atomistic_potential
+from phydrax.nn.atomistic import checkpoint_atomistic_potential, PaiNNPotential
 from phydrax.nn.atomistic._painn import _PaiNNInteraction
 
 
@@ -45,9 +45,7 @@ def test_energy_invariant_force_equivariant_under_rigid_motion():
     model = _model()
     structure = _structure()
     reference = energy_and_forces(model, structure)
-    rotation = jnp.asarray(
-        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
-    )
+    rotation = jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     transformed = AtomicStructure(
         structure.atomic_numbers,
         structure.positions @ rotation.T + jnp.asarray([3.0, -2.0, 1.0]),
@@ -134,9 +132,7 @@ def test_one_two_disconnected_and_coincident_atoms_are_well_defined():
     disconnected = AtomicStructure(
         [1, 8], [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], [1.0, 16.0], SCALE
     )
-    separate = model(one) + model(
-        AtomicStructure([8], [[10.0, 0.0, 0.0]], [16.0], SCALE)
-    )
+    separate = model(one) + model(AtomicStructure([8], [[10.0, 0.0, 0.0]], [16.0], SCALE))
     np.testing.assert_allclose(model(disconnected), separate, rtol=1e-12, atol=1e-12)
 
 
@@ -158,9 +154,7 @@ def test_jit_vjp_and_second_order_parameter_derivative():
 
     gradient = jax.grad(embedding_energy)
     first = gradient(model.embedding)
-    second = jax.jvp(
-        gradient, (model.embedding,), (jnp.ones_like(model.embedding),)
-    )[1]
+    second = jax.jvp(gradient, (model.embedding,), (jnp.ones_like(model.embedding),))[1]
     assert bool(jnp.all(jnp.isfinite(first)))
     assert bool(jnp.all(jnp.isfinite(second)))
 

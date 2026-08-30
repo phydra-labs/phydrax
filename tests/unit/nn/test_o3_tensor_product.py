@@ -49,9 +49,7 @@ def test_vector_vector_decomposes_into_known_zero_one_two_maps():
     features = output.split(product(left, right, jnp.ones((3,), dtype=left.dtype)))
     expected_scalar = contract("i,i->", left, right) / jnp.sqrt(3.0)
     expected_axial = jnp.cross(left, right) / jnp.sqrt(2.0)
-    outer = 0.5 * (
-        contract("i,j->ij", left, right) + contract("i,j->ij", right, left)
-    )
+    outer = 0.5 * (contract("i,j->ij", left, right) + contract("i,j->ij", right, left))
     expected_tensor = outer - jnp.trace(outer) * jnp.eye(3) / 3.0
     np.testing.assert_allclose(features.scalars[0], expected_scalar, rtol=1e-13)
     np.testing.assert_allclose(features.pseudovectors[0], expected_axial, rtol=1e-13)
@@ -106,9 +104,7 @@ def test_all_low_degree_paths_obey_inversion_parity_and_random_so3_equivariance(
 
 
 def test_successive_rotations_batching_and_gradients_preserve_layout():
-    representation = O3Representation(
-        scalars=1, vectors=1, pseudovectors=1, tensors=1
-    )
+    representation = O3Representation(scalars=1, vectors=1, pseudovectors=1, tensors=1)
     edge = O3Representation(scalars=1, vectors=1, tensors=1)
     plan = O3TensorProductPlan(representation, edge, representation)
     product = O3TensorProduct(plan, internal_weights=False, dtype=jnp.float64)
@@ -117,9 +113,7 @@ def test_successive_rotations_batching_and_gradients_preserve_layout():
     weights = jr.normal(jr.key(12), (4, plan.parameter_count), dtype=jnp.float64)
     observed = product(left, right, weights)
     assert observed.shape == (4, representation.packed_size)
-    gradient = jax.grad(lambda value: jnp.sum(product(value, right, weights) ** 2))(
-        left
-    )
+    gradient = jax.grad(lambda value: jnp.sum(product(value, right, weights) ** 2))(left)
     assert gradient.shape == left.shape
     assert bool(jnp.all(jnp.isfinite(gradient)))
 

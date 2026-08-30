@@ -43,17 +43,13 @@ def _dense_gp(kernel, train_times, train_values, query_times, mask, noise_scale)
         (phx.kernels.Matern32Kernel(length_scale=0.7), 2, 2e-6),
         (phx.kernels.Matern52Kernel(length_scale=1.1), 3, 5e-6),
         (
-            phx.kernels.ScaleKernel(
-                phx.kernels.Matern52Kernel(length_scale=0.45), 1.7
-            ),
+            phx.kernels.ScaleKernel(phx.kernels.Matern52Kernel(length_scale=0.45), 1.7),
             3,
             8e-6,
         ),
     ],
 )
-def test_compiled_state_covariance_and_factors_match_matern(
-    kernel, dimension, tolerance
-):
+def test_compiled_state_covariance_and_factors_match_matern(kernel, dimension, tolerance):
     plan = phx.uq.compile_state_space_kernel(
         kernel,
         jnp.asarray([-0.4, 0.2]),
@@ -70,9 +66,7 @@ def test_compiled_state_covariance_and_factors_match_matern(
             @ plan.observation_map.T
         ).reshape(())
 
-    expected = jax.vmap(lambda lag: kernel.pairwise(jnp.asarray([0.0]), lag[None]))(
-        lags
-    )
+    expected = jax.vmap(lambda lag: kernel.pairwise(jnp.asarray([0.0]), lag[None]))(lags)
     actual = jax.vmap(state_covariance)(lags)
 
     assert plan.state_dimension == dimension
@@ -102,9 +96,7 @@ def test_compiled_state_covariance_and_factors_match_matern(
         plan.schedule_times[0],
         problem.step_context(0, 0),
     )
-    first_factor = phx.uq.gaussian_factor_from_covariance(
-        first_parameters.covariance
-    )
+    first_factor = phx.uq.gaussian_factor_from_covariance(first_parameters.covariance)
     assert jnp.any(first_factor.factor != 0.0)
     assert jnp.allclose(
         first_factor.factor @ first_factor.factor.T,
@@ -118,9 +110,7 @@ def test_compiled_state_covariance_and_factors_match_matern(
     "kernel",
     [
         phx.kernels.Matern32Kernel(length_scale=0.6),
-        phx.kernels.ScaleKernel(
-            phx.kernels.Matern52Kernel(length_scale=0.9), 1.4
-        ),
+        phx.kernels.ScaleKernel(phx.kernels.Matern52Kernel(length_scale=0.9), 1.4),
     ],
 )
 def test_likelihood_and_posterior_match_independent_dense_gp(kernel):
@@ -328,9 +318,7 @@ def test_repeated_training_times_are_rejected_but_repeated_queries_are_shared():
 
 
 def test_empty_active_observations_return_stationary_prior_and_zero_likelihood():
-    kernel = phx.kernels.ScaleKernel(
-        phx.kernels.Matern52Kernel(length_scale=0.8), 2.5
-    )
+    kernel = phx.kernels.ScaleKernel(phx.kernels.Matern52Kernel(length_scale=0.8), 2.5)
     train_times = jnp.asarray([0.0, 0.7, 1.2])
     query_times = jnp.asarray([-1.0, 0.4, 2.5])
     plan = phx.uq.compile_state_space_kernel(
@@ -377,15 +365,11 @@ def test_zero_and_tiny_observation_noise_match_dense_algebra(noise_scale):
     assert bool(result.successful)
     assert jnp.allclose(result.log_marginal_likelihood, dense_likelihood, rtol=3e-5)
     assert jnp.allclose(result.posterior_mean, dense_mean, rtol=3e-5, atol=3e-5)
-    assert jnp.allclose(
-        result.posterior_variance, dense_variance, rtol=8e-5, atol=8e-5
-    )
+    assert jnp.allclose(result.posterior_variance, dense_variance, rtol=8e-5, atol=8e-5)
 
 
 def test_degenerate_zero_signal_and_zero_noise_reports_failure_without_repair():
-    kernel = phx.kernels.ScaleKernel(
-        phx.kernels.Matern32Kernel(length_scale=0.7), 0.0
-    )
+    kernel = phx.kernels.ScaleKernel(phx.kernels.Matern32Kernel(length_scale=0.7), 0.0)
     plan = phx.uq.compile_state_space_kernel(
         kernel,
         jnp.asarray([0.0]),
@@ -431,8 +415,12 @@ def test_float32_and_float64_precision_is_retained(x64, expected_dtype, toleranc
 
         assert result.posterior_mean.dtype == expected_dtype
         assert result.posterior_variance.dtype == expected_dtype
-        assert dict(result.precision_evidence.observed)["output"] == expected_dtype.__name__
-        assert jnp.allclose(result.posterior_mean, dense[1], rtol=tolerance, atol=tolerance)
+        assert (
+            dict(result.precision_evidence.observed)["output"] == expected_dtype.__name__
+        )
+        assert jnp.allclose(
+            result.posterior_mean, dense[1], rtol=tolerance, atol=tolerance
+        )
 
 
 def test_mixed_kernel_and_schedule_dtypes_are_rejected_explicitly():
@@ -451,9 +439,7 @@ def test_fit_is_jittable_and_matches_dense_kernel_parameter_gradients():
     train_times = jnp.asarray([-0.3, 0.2, 0.9, 1.5])
     query_times = jnp.asarray([-0.8, 0.5, 2.0])
     plan = phx.uq.compile_state_space_kernel(
-        phx.kernels.ScaleKernel(
-            phx.kernels.Matern32Kernel(length_scale=0.75), 1.3
-        ),
+        phx.kernels.ScaleKernel(phx.kernels.Matern32Kernel(length_scale=0.75), 1.3),
         train_times,
         query_times,
     )
@@ -670,6 +656,8 @@ def test_state_space_gp_result_uses_portable_result_export(tmp_path):
     assert archive.metadata["schedule_id"] == result.schedule_id
     assert archive.metadata["method_id"] == result.method_id
     assert archive.metadata["precision_evidence"]["evidence_id"]
-    assert np.array_equal(archive.array("posterior_times"), np.asarray(result.posterior_times))
+    assert np.array_equal(
+        archive.array("posterior_times"), np.asarray(result.posterior_times)
+    )
     assert np.allclose(archive.array("posterior_mean"), np.asarray(result.posterior_mean))
     assert set(archive.excluded) == {"filter_result", "smoother_result"}

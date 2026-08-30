@@ -124,6 +124,7 @@ class ProbabilityTarget(StrictModule):
         self.normalized = True
         self.target_id = identifier
 
+
 class DensityTarget(StrictModule):
     """A density relative to another target's base measure."""
 

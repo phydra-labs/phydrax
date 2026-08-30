@@ -73,8 +73,6 @@ class NeuralRateEvidence(StrictModule):
         )
 
 
-
-
 class ConnectedVMCNeuralTrajectoryProblem(StrictModule):
     """Connected-operator neural trajectory over a persistent VMC state."""
 
@@ -110,9 +108,7 @@ class ConnectedVMCNeuralTrajectoryProblem(StrictModule):
                 "The no-jump and collapse operators must share configuration shape."
             )
         if not callable(jump_projection) or not callable(projection_residual):
-            raise TypeError(
-                "jump_projection and projection_residual must be callable."
-            )
+            raise TypeError("jump_projection and projection_residual must be callable.")
         identifier = (
             f"{vmc_problem.problem_id}:connected-neural-trajectory"
             if problem_id is None
@@ -176,12 +172,8 @@ def audit_connected_vmc_jump_projection(
     )
     if projected_coordinates.shape != source_coordinates.shape:
         raise ValueError("Jump projection must preserve coordinate shape.")
-    projected_model = problem.vmc_problem.model_from_coordinates(
-        projected_coordinates
-    )
-    residual = problem.projection_residual(
-        channel_, source_model, projected_model
-    )
+    projected_model = problem.vmc_problem.model_from_coordinates(projected_coordinates)
+    residual = problem.projection_residual(channel_, source_model, projected_model)
     return ConnectedVMCJumpProjectionAudit(
         channel_,
         projected_coordinates,
@@ -246,9 +238,7 @@ class ConnectedVMCNeuralTrajectoryPolicy(StrictModule):
         if not isfinite(damping_) or damping_ < 0.0:
             raise ValueError("damping must be finite and non-negative.")
         if not isfinite(rate_tolerance) or rate_tolerance <= 0.0:
-            raise ValueError(
-                "rate_relative_error_tolerance must be finite and positive."
-            )
+            raise ValueError("rate_relative_error_tolerance must be finite and positive.")
         if not isfinite(jump_limit) or not 0.0 < jump_limit <= 0.1:
             raise ValueError(
                 "maximum_jump_probability must be finite and lie in (0, 0.1]."
@@ -262,12 +252,8 @@ class ConnectedVMCNeuralTrajectoryPolicy(StrictModule):
         else:
             velocity_limit = float(maximum_velocity_norm)
             if not isfinite(velocity_limit) or velocity_limit <= 0.0:
-                raise ValueError(
-                    "maximum_velocity_norm must be finite and positive."
-                )
-        if linear_policy is not None and not isinstance(
-            linear_policy, LinearSolvePolicy
-        ):
+                raise ValueError("maximum_velocity_norm must be finite and positive.")
+        if linear_policy is not None and not isinstance(linear_policy, LinearSolvePolicy):
             raise TypeError("linear_policy must be a LinearSolvePolicy or None.")
         if nullspace_policy is not None and not isinstance(
             nullspace_policy, NullspacePolicy
@@ -336,20 +322,14 @@ class ConnectedVMCNeuralTrajectoryResult(StrictModule):
         self.final_state = final_state
         self.parameter_history = jnp.asarray(parameter_history)
         self.rate_history = jnp.asarray(rate_history)
-        self.rate_standard_error_history = jnp.asarray(
-            rate_standard_error_history
-        )
-        self.effective_sample_size_history = jnp.asarray(
-            effective_sample_size_history
-        )
+        self.rate_standard_error_history = jnp.asarray(rate_standard_error_history)
+        self.effective_sample_size_history = jnp.asarray(effective_sample_size_history)
         self.jump_probability_history = jnp.asarray(jump_probability_history)
         self.jump_history = jnp.asarray(jump_history, dtype=bool)
         self.channel_history = jnp.asarray(channel_history, dtype=jnp.int32)
         self.decision_uniform_history = jnp.asarray(decision_uniform_history)
         self.channel_uniform_history = jnp.asarray(channel_uniform_history)
-        self.projection_residual_history = jnp.asarray(
-            projection_residual_history
-        )
+        self.projection_residual_history = jnp.asarray(projection_residual_history)
         self.rate_evidence_valid_history = jnp.asarray(
             rate_evidence_valid_history, dtype=bool
         )
@@ -399,9 +379,7 @@ def _connected_rate_statistics(
     variances = jnp.var(values, axis=(0, 1), ddof=1)
     nominal = jnp.asarray(values.shape[0] * values.shape[1], dtype=float)
     measured_ess = diagnostics.bulk_ess["jump-rates"]
-    effective_sample_size = jnp.where(
-        variances == 0.0, nominal, measured_ess
-    )
+    effective_sample_size = jnp.where(variances == 0.0, nominal, measured_ess)
     standard_errors = jnp.sqrt(
         jnp.maximum(variances, 0.0) / jnp.maximum(effective_sample_size, 1.0)
     )
@@ -423,18 +401,12 @@ def solve_connected_vmc_neural_trajectory(
 ) -> ConnectedVMCNeuralTrajectoryResult:
     """Evolve one sampled neural trajectory from connected VMC operators."""
     if not isinstance(problem, ConnectedVMCNeuralTrajectoryProblem):
-        raise TypeError(
-            "problem must be a ConnectedVMCNeuralTrajectoryProblem."
-        )
+        raise TypeError("problem must be a ConnectedVMCNeuralTrajectoryProblem.")
     if not isinstance(policy, ConnectedVMCNeuralTrajectoryPolicy):
         raise TypeError("policy must be a ConnectedVMCNeuralTrajectoryPolicy.")
     if problem.vmc_problem.initial_configurations.shape[0] < 2:
         raise ValueError("Connected VMC rate evidence requires at least two chains.")
-    current = (
-        problem.vmc_problem.initial_state(key=key)
-        if state is None
-        else state
-    )
+    current = problem.vmc_problem.initial_state(key=key) if state is None else state
     if not isinstance(current, VariationalMonteCarloState):
         raise TypeError("state must be a VariationalMonteCarloState or None.")
     if not jnp.array_equal(jr.key_data(key), jr.key_data(current.root_key)):
@@ -535,10 +507,7 @@ def solve_connected_vmc_neural_trajectory(
                 jnp.all(jnp.isfinite(coordinates))
                 & jnp.isfinite(projection_residual)
                 & (projection_residual >= 0.0)
-                & (
-                    projection_residual
-                    <= policy.projection_residual_tolerance
-                )
+                & (projection_residual <= policy.projection_residual_tolerance)
             )
         else:
             local_generator = evaluate_local_operator(
@@ -577,9 +546,7 @@ def solve_connected_vmc_neural_trajectory(
                     policy.maximum_velocity_norm / jnp.maximum(norm, 1e-30),
                 )
                 velocity = scale * velocity
-            coordinates = (
-                current.parameter_coordinates + policy.step_size * velocity
-            )
+            coordinates = current.parameter_coordinates + policy.step_size * velocity
             model = problem.vmc_problem.model_from_coordinates(coordinates)
             step_valid = (
                 generator_valid
@@ -608,39 +575,25 @@ def solve_connected_vmc_neural_trajectory(
     return ConnectedVMCNeuralTrajectoryResult(
         current,
         jnp.stack(parameter_history),
-        jnp.stack(rate_history)
-        if rate_history
-        else jnp.empty((0, channels)),
-        jnp.stack(rate_error_history)
-        if rate_error_history
-        else jnp.empty((0, channels)),
-        jnp.stack(ess_history)
-        if ess_history
-        else jnp.empty((0, channels)),
+        jnp.stack(rate_history) if rate_history else jnp.empty((0, channels)),
+        jnp.stack(rate_error_history) if rate_error_history else jnp.empty((0, channels)),
+        jnp.stack(ess_history) if ess_history else jnp.empty((0, channels)),
         jnp.stack(jump_probability_history)
         if jump_probability_history
         else jnp.empty((0,)),
-        jnp.stack(jump_history)
-        if jump_history
-        else jnp.empty((0,), dtype=bool),
+        jnp.stack(jump_history) if jump_history else jnp.empty((0,), dtype=bool),
         jnp.stack(channel_history)
         if channel_history
         else jnp.empty((0,), dtype=jnp.int32),
-        jnp.stack(decision_history)
-        if decision_history
-        else jnp.empty((0,)),
+        jnp.stack(decision_history) if decision_history else jnp.empty((0,)),
         jnp.stack(channel_uniform_history)
         if channel_uniform_history
         else jnp.empty((0,)),
-        jnp.stack(projection_history)
-        if projection_history
-        else jnp.empty((0,)),
+        jnp.stack(projection_history) if projection_history else jnp.empty((0,)),
         jnp.stack(rate_valid_history)
         if rate_valid_history
         else jnp.empty((0,), dtype=bool),
-        jnp.stack(status_history)
-        if status_history
-        else jnp.empty((0,), dtype=bool),
+        jnp.stack(status_history) if status_history else jnp.empty((0,), dtype=bool),
         tuple(linear_results),
         completed_steps=completed,
         planned_steps=policy.steps,

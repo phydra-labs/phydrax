@@ -32,8 +32,8 @@ from .._precision import (
 from .._strict import StrictModule
 from ..stochastic import (
     GaussianStatePrior,
-    LinearGaussianParameterization,
     LinearGaussianObservationModel,
+    LinearGaussianParameterization,
     LinearGaussianTransitionKernel,
     ObservationSequence,
     StateSpaceModel,
@@ -184,7 +184,7 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
         drift = jnp.stack(
             (
                 jnp.stack((zero, one)),
-                jnp.stack((-rate**2, -2.0 * rate)),
+                jnp.stack((-(rate**2), -2.0 * rate)),
             )
         )
         stationary = variance * jnp.stack(
@@ -200,9 +200,7 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
             )
         )
         spectral_density = 4.0 * variance * rate**3
-        process_factor = jnp.stack(
-            (zero, jnp.sqrt(spectral_density))
-        ).reshape((2, 1))
+        process_factor = jnp.stack((zero, jnp.sqrt(spectral_density))).reshape((2, 1))
         observation_map = jnp.stack((one, zero)).reshape((1, 2))
         return _KernelStateSpace(
             drift,
@@ -222,7 +220,7 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
             (
                 jnp.stack((zero, one, zero)),
                 jnp.stack((zero, zero, one)),
-                jnp.stack((-rate**3, -3.0 * rate_squared, -3.0 * rate)),
+                jnp.stack((-(rate**3), -3.0 * rate_squared, -3.0 * rate)),
             )
         )
         stationary = variance * jnp.stack(
@@ -246,9 +244,9 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
             )
         )
         spectral_density = (16.0 / 3.0) * variance * rate**5
-        process_factor = jnp.stack(
-            (zero, zero, jnp.sqrt(spectral_density))
-        ).reshape((3, 1))
+        process_factor = jnp.stack((zero, zero, jnp.sqrt(spectral_density))).reshape(
+            (3, 1)
+        )
         observation_map = jnp.stack((one, zero, zero)).reshape((1, 3))
         return _KernelStateSpace(
             drift,
@@ -491,7 +489,10 @@ def compile_state_space_kernel(
         float(np.max(np.abs(np.asarray(jax.device_get(components.stationary))))),
     )
     tolerance = 256.0 * np.finfo(np.asarray(residual_host).dtype).eps * scale_host
-    if not np.all(np.isfinite(residual_host)) or np.max(np.abs(residual_host)) > tolerance:
+    if (
+        not np.all(np.isfinite(residual_host))
+        or np.max(np.abs(residual_host)) > tolerance
+    ):
         raise ValueError(
             "Prepared Matérn coefficients fail the stationary Lyapunov residual check."
         )
@@ -553,9 +554,7 @@ def compile_state_space_kernel(
         approximation_id="exact-mask",
     )
     arguments = _StateSpaceGaussianProcessArguments(
-        observation_variance=jnp.zeros(
-            (schedule.size,), dtype=components.drift.dtype
-        ),
+        observation_variance=jnp.zeros((schedule.size,), dtype=components.drift.dtype),
         drift_matrix=components.drift,
         stationary_covariance=components.stationary,
         process_noise_factor=components.process_factor,
@@ -669,9 +668,11 @@ def fit_state_space_gaussian_process(
         ~jnp.isfinite(components.length_scale) | (components.length_scale <= 0.0),
         "The evaluated length scale must be finite and strictly positive.",
     )
-    schedule_values = jnp.zeros(
-        (plan.schedule_size, 1), dtype=components.drift.dtype
-    ).at[plan.train_schedule_indices, 0].set(values)
+    schedule_values = (
+        jnp.zeros((plan.schedule_size, 1), dtype=components.drift.dtype)
+        .at[plan.train_schedule_indices, 0]
+        .set(values)
+    )
     observation_variance = jnp.full(
         (plan.schedule_size,), noise**2, dtype=components.drift.dtype
     )
@@ -715,9 +716,7 @@ def fit_state_space_gaussian_process(
     )
     query_states = smoothed.means[plan.query_schedule_indices]
     query_covariances = smoothed.covariances[plan.query_schedule_indices]
-    posterior_mean = oe.contract(
-        "qi,ji->q", query_states, components.observation_map
-    )
+    posterior_mean = oe.contract("qi,ji->q", query_states, components.observation_map)
     posterior_variance = oe.contract(
         "ai,qij,aj->q",
         components.observation_map,

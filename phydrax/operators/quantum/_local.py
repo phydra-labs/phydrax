@@ -70,7 +70,9 @@ class LocalOperatorEstimate(StrictModule):
             raise ValueError("configuration_shape must contain positive dimensions.")
         identifiers = (str(operator_id), str(method_id), str(compute_dtype))
         if any(not value for value in identifiers):
-            raise ValueError("operator_id, method_id, and compute_dtype must be non-empty.")
+            raise ValueError(
+                "operator_id, method_id, and compute_dtype must be non-empty."
+            )
         self.value = values
         self.valid = validity
         self.status = statuses
@@ -127,7 +129,9 @@ def evaluate_local_operator(
             f"got {result.value.shape}."
         )
     if result.configuration_shape != operator.configuration_shape:
-        raise ValueError("Local estimate configuration shape does not match its operator.")
+        raise ValueError(
+            "Local estimate configuration shape does not match its operator."
+        )
     if result.operator_id != operator.operator_id:
         raise ValueError("Local estimate operator identity does not match its operator.")
     return result

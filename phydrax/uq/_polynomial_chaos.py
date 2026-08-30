@@ -226,9 +226,7 @@ class PolynomialChaosExpansion(StrictModule):
             if not jnp.issubdtype(array.dtype, jnp.number):
                 raise TypeError("Polynomial-chaos coefficients must be numeric.")
             if bool(jnp.any(~jnp.isfinite(array))):
-                raise ValueError(
-                    "Polynomial-chaos coefficients must be finite."
-                )
+                raise ValueError("Polynomial-chaos coefficients must be finite.")
             arrays.append(array)
             specs.append(_OutputLeafSpec(tuple(array.shape[1:]), field_dims))
 
@@ -336,9 +334,7 @@ class PolynomialChaosExpansion(StrictModule):
             )
             contribution = _coefficient_energy(selected)
             denominator = jnp.where(total > 0.0, total, 1.0)
-            leaves.append(
-                jnp.where(total > 0.0, contribution / denominator, 0.0)
-            )
+            leaves.append(jnp.where(total > 0.0, contribution / denominator, 0.0))
         return _restore_outputs(
             tuple(leaves),
             self.output_tree,
@@ -431,12 +427,8 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         maximum = _positive_integer(
             maximum_model_evaluations, "maximum_model_evaluations"
         )
-        maximum_basis = _positive_integer(
-            maximum_basis_bytes, "maximum_basis_bytes"
-        )
-        covered = tuple(
-            label for group in integration_plan.plans for label in group
-        )
+        maximum_basis = _positive_integer(maximum_basis_bytes, "maximum_basis_bytes")
+        covered = tuple(label for group in integration_plan.plans for label in group)
         if len(covered) != len(set(covered)) or set(covered) != set(basis.labels):
             raise ValueError(
                 "The product integration plan must cover every polynomial-chaos "
@@ -479,9 +471,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
             self.basis.feature_count,
             self.precision,
         )
-        basis_sample_limit = (
-            self.maximum_basis_bytes // basis_bytes_per_sample
-        )
+        basis_sample_limit = self.maximum_basis_bytes // basis_bytes_per_sample
         preflight_limit = min(
             self.maximum_model_evaluations,
             basis_sample_limit,
@@ -563,13 +553,8 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
                 )
             if any(bool(jnp.any(~jnp.isfinite(value))) for value in values):
                 raise ValueError("Projection model outputs must be finite.")
-            evaluated_values = tuple(
-                self.precision.evaluation(value) for value in values
-            )
-            if any(
-                bool(jnp.any(~jnp.isfinite(value)))
-                for value in evaluated_values
-            ):
+            evaluated_values = tuple(self.precision.evaluation(value) for value in values)
+            if any(bool(jnp.any(~jnp.isfinite(value))) for value in evaluated_values):
                 raise ValueError(
                     "Projection model outputs are nonfinite at evaluation precision."
                 )
@@ -581,14 +566,14 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
             accumulation_weights = self.precision.accumulation(weights)
             accumulation_basis = self.precision.accumulation(basis_values)
             accumulation_values = tuple(
-                self.precision.accumulation(value)
-                for value in evaluated_values
+                self.precision.accumulation(value) for value in evaluated_values
             )
-            if bool(jnp.any(~jnp.isfinite(accumulation_weights))) or bool(
-                jnp.any(~jnp.isfinite(accumulation_basis))
-            ) or any(
-                bool(jnp.any(~jnp.isfinite(value)))
-                for value in accumulation_values
+            if (
+                bool(jnp.any(~jnp.isfinite(accumulation_weights)))
+                or bool(jnp.any(~jnp.isfinite(accumulation_basis)))
+                or any(
+                    bool(jnp.any(~jnp.isfinite(value))) for value in accumulation_values
+                )
             ):
                 raise ValueError(
                     "Projection inputs are nonfinite at accumulation precision."
@@ -613,27 +598,20 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         accumulated_coefficients = tuple(
             self.precision.accumulation(
                 jnp.mean(
-                    jnp.stack(
-                        tuple(batch[index] for batch in projected_batches), axis=0
-                    ),
+                    jnp.stack(tuple(batch[index] for batch in projected_batches), axis=0),
                     axis=0,
                 )
             )
             for index in range(len(projected_batches[0]))
         )
-        if any(
-            bool(jnp.any(~jnp.isfinite(value)))
-            for value in accumulated_coefficients
-        ):
+        if any(bool(jnp.any(~jnp.isfinite(value))) for value in accumulated_coefficients):
             raise ValueError(
                 "Projection replicate reduction produced nonfinite coefficients."
             )
         coefficient_leaves = tuple(
             self.precision.output(value) for value in accumulated_coefficients
         )
-        if any(
-            bool(jnp.any(~jnp.isfinite(value))) for value in coefficient_leaves
-        ):
+        if any(bool(jnp.any(~jnp.isfinite(value))) for value in coefficient_leaves):
             raise ValueError(
                 "Projection output precision produced nonfinite coefficients."
             )
@@ -690,13 +668,9 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(basis, PolynomialChaosBasis):
             raise TypeError("basis must be a PolynomialChaosBasis.")
-        exact = (
-            LinearSolvePolicy(DenseLU()) if exact_policy is None else exact_policy
-        )
+        exact = LinearSolvePolicy(DenseLU()) if exact_policy is None else exact_policy
         least_squares = (
-            LinearSolvePolicy(
-                DenseQR(), rank=RankPolicy(require_full_rank=True)
-            )
+            LinearSolvePolicy(DenseQR(), rank=RankPolicy(require_full_rank=True))
             if least_squares_policy is None
             else least_squares_policy
         )
@@ -705,9 +679,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
         if not isinstance(least_squares, LinearSolvePolicy):
             raise TypeError("least_squares_policy must be a LinearSolvePolicy.")
         maximum_samples_ = _positive_integer(maximum_samples, "maximum_samples")
-        maximum_bytes = _positive_integer(
-            maximum_design_bytes, "maximum_design_bytes"
-        )
+        maximum_bytes = _positive_integer(maximum_design_bytes, "maximum_design_bytes")
         self.basis = basis
         self.exact_policy = exact
         self.least_squares_policy = least_squares
@@ -751,9 +723,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
         if bool(jnp.any(~jnp.isfinite(point_array))):
             raise ValueError("Regression samples must be finite.")
         design_dtype = jnp.asarray(point_array, dtype=float).dtype
-        design_bytes = int(
-            sample_count * feature_count * np.dtype(design_dtype).itemsize
-        )
+        design_bytes = int(sample_count * feature_count * np.dtype(design_dtype).itemsize)
         if design_bytes > self.maximum_design_bytes:
             raise ValueError(
                 f"Regression design requires {design_bytes} bytes, exceeding "
@@ -774,9 +744,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
         if weights_ is not None:
             if weights_.shape != (sample_count,):
                 raise ValueError("Regression weights must contain one value per sample.")
-            if bool(jnp.any(~jnp.isfinite(weights_))) or bool(
-                jnp.any(weights_ < 0.0)
-            ):
+            if bool(jnp.any(~jnp.isfinite(weights_))) or bool(jnp.any(weights_ < 0.0)):
                 raise ValueError("Regression weights must be finite and non-negative.")
             if not bool(jnp.any(weights_ > 0.0)):
                 raise ValueError("Regression weights must have positive total weight.")
@@ -907,9 +875,7 @@ def _preflight_product_counts(
         )
     }
     if len(replicate_counts) > 1:
-        raise ValueError(
-            "Randomized-QMC product factors must use one replicate count."
-        )
+        raise ValueError("Randomized-QMC product factors must use one replicate count.")
     replicates = 1 if not replicate_counts else replicate_counts.pop()
     samples_per_replicate = 1
     for labels, factor_plan in plan.plans.items():
@@ -949,15 +915,11 @@ def _factor_preflight_count(
         return result
     if isinstance(plan, SparseGridPlan):
         if plan.dimension != len(labels):
-            raise ValueError(
-                "Sparse-grid factor dimension must match its label group."
-            )
+            raise ValueError("Sparse-grid factor dimension must match its label group.")
         return _sparse_grid_node_upper_bound(plan, limit=limit)
     if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
         return min(plan.num_samples, limit + 1)
-    raise TypeError(
-        f"Unsupported product factor plan {type(plan).__name__!r}."
-    )
+    raise TypeError(f"Unsupported product factor plan {type(plan).__name__!r}.")
 
 
 def _sparse_grid_node_upper_bound(
@@ -1248,15 +1210,12 @@ def _broadcast_field_on_axes(
     if permutation != tuple(range(len(permutation))):
         data = jnp.transpose(data, permutation)
     shape = tuple(
-        sizes[index] if axis in present else 1
-        for index, axis in enumerate(axes)
+        sizes[index] if axis in present else 1 for index, axis in enumerate(axes)
     )
     return jnp.broadcast_to(data.reshape(shape), sizes)
 
 
-def _flatten_product_batch(
-    batch: Any, labels: tuple[str, ...], /
-) -> tuple[Array, Array]:
+def _flatten_product_batch(batch: Any, labels: tuple[str, ...], /) -> tuple[Array, Array]:
     axes = tuple(batch.axes)
     sizes = tuple(int(batch.weights.named_shape[axis]) for axis in axes)
     point_columns = []
@@ -1303,9 +1262,7 @@ def _evaluate_pointwise_model(
 ) -> tuple[tuple[Array, ...], Any, tuple[_OutputLeafSpec, ...]]:
     if points.ndim != 2 or points.shape[0] < 1:
         raise ValueError("Projection requires a nonempty matrix of factor points.")
-    first_coordinates = tuple(
-        points[0, index] for index in range(points.shape[1])
-    )
+    first_coordinates = tuple(points[0, index] for index in range(points.shape[1]))
     first, tree, specs = _output_parts(model(*first_coordinates))
 
     def evaluate_arrays(*coordinates: Array) -> tuple[Array, ...]:

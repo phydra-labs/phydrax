@@ -192,8 +192,7 @@ def _validate_sparse_factor(
         raise ValueError(f"Unsupported sparse-grid axis rule {rule!r}.")
     if not isinstance(factor, ProbabilityDomain):
         raise TypeError(
-            f"Gauss--Hermite sparse-grid axis {label!r} requires a probability "
-            "factor."
+            f"Gauss--Hermite sparse-grid axis {label!r} requires a probability factor."
         )
     if (
         not factor.supports_reference_transform

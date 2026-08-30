@@ -2,7 +2,7 @@
 
 from ._graph import AtomisticGraph, realize_atomistic_graph
 from ._prediction import AtomisticPrediction, AtomisticProvenance, energy_and_forces
-from ._rmd17 import RMD17Dataset, RMD17Split, load_rmd17_npz, split_rmd17
+from ._rmd17 import load_rmd17_npz, RMD17Dataset, RMD17Split, split_rmd17
 from ._training import (
     AtomisticTrainingNormalization,
     AtomisticTrainingPolicy,
@@ -11,11 +11,11 @@ from ._training import (
     fit_atomistic_potential,
 )
 from ._types import (
+    AtomicStructure,
     AtomisticBatch,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     AtomisticStatus,
-    AtomicStructure,
 )
 
 

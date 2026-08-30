@@ -67,9 +67,7 @@ def test_connected_local_estimator_matches_dense_complex_hamiltonian():
     assert local.configuration_shape == operator.configuration_shape
     assert local.operator_id == operator.operator_id
     assert local.method_id == "connected-configurations"
-    assert jnp.all(
-        local.status == int(phx.operators.LocalOperatorStatus.SUCCESS)
-    )
+    assert jnp.all(local.status == int(phx.operators.LocalOperatorStatus.SUCCESS))
     assert jnp.all(local.valid)
     assert jnp.array_equal(local.work_count, jnp.full((4,), 2))
     assert jnp.allclose(local.value, expected)

@@ -21,7 +21,6 @@ from ._atlas import (
     AtlasPatchQuadrature,
     integrate_atlas_scalar,
 )
-from ._bayesian_quadrature import GaussianKernelMean
 from ._batches import (
     IntegrationBatch,
     MappedIntegrationBatch,
@@ -29,6 +28,7 @@ from ._batches import (
     SeparableIntegrationBatch,
     WeightedSampleBatch,
 )
+from ._bayesian_quadrature import GaussianKernelMean
 from ._calabi_yau import (
     integrate_projective_samples,
     projective_measure_target,

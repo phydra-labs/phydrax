@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 
 import phydrax.atomistic._training as atomistic_training
-
 from phydrax.atomistic import (
     AtomisticBatch,
     AtomisticScaleContract,
@@ -76,7 +75,9 @@ def test_energy_force_and_joint_training_have_complete_decreasing_histories(targ
     assert result.training_loss_history.shape == (8,)
     assert result.energy_loss_history.shape == (8,)
     assert result.force_loss_history.shape == (8,)
-    assert float(result.training_loss_history[-1]) < float(result.training_loss_history[0])
+    assert float(result.training_loss_history[-1]) < float(
+        result.training_loss_history[0]
+    )
     assert bool(result.successful)
     if target_kind == "energy":
         np.testing.assert_allclose(result.force_loss_history, 0.0)
@@ -143,7 +144,9 @@ def test_deterministic_continuation_matches_uninterrupted_training_and_selection
     continued_leaves = jax.tree_util.tree_leaves(continued.potential)
     uninterrupted_leaves = jax.tree_util.tree_leaves(uninterrupted.potential)
     for observed, expected in zip(continued_leaves, uninterrupted_leaves, strict=True):
-        if isinstance(observed, jax.Array) and jnp.issubdtype(observed.dtype, jnp.inexact):
+        if isinstance(observed, jax.Array) and jnp.issubdtype(
+            observed.dtype, jnp.inexact
+        ):
             np.testing.assert_allclose(observed, expected, rtol=1e-12, atol=1e-12)
     assert continued.progress.best_step <= continued.progress.update_step
     assert continued.best_potential is not None
@@ -152,9 +155,7 @@ def test_deterministic_continuation_matches_uninterrupted_training_and_selection
 def test_nonfinite_supervision_terminates_with_typed_status():
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(
-        batch, training_energy=energy.at[1].set(jnp.nan)
-    )
+    problem = AtomisticTrainingProblem(batch, training_energy=energy.at[1].set(jnp.nan))
     result = fit_atomistic_potential(
         _potential(jr.key(6)),
         problem,
@@ -288,12 +289,8 @@ def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(tmp
     assert dataset.scale.length_unit == "angstrom"
     assert dataset.scale.energy_unit == "kilocalorie_per_mole"
     assert dataset.sample_count == sample_count
-    split = split_rmd17(
-        dataset, train_size=5, validation_size=3, test_size=4, seed=17
-    )
-    repeated = split_rmd17(
-        dataset, train_size=5, validation_size=3, test_size=4, seed=17
-    )
+    split = split_rmd17(dataset, train_size=5, validation_size=3, test_size=4, seed=17)
+    repeated = split_rmd17(dataset, train_size=5, validation_size=3, test_size=4, seed=17)
     assert split.split_id == repeated.split_id
     train = set(np.asarray(split.train_indices).tolist())
     validation = set(np.asarray(split.validation_indices).tolist())

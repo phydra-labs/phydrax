@@ -50,12 +50,8 @@ def test_h_and_h2_coulomb_values_and_analytic_hydrogen_local_energy():
     assert jnp.allclose(coulomb.value[0], -0.5)
     assert jnp.allclose(exact.value[0], -0.5, rtol=1e-11, atol=1e-11)
 
-    hydrogen_molecule = _structure(
-        [1, 1], [[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], name="H2"
-    )
-    h2_hamiltonian = phx.operators.ElectronicCoulombHamiltonian(
-        hydrogen_molecule, 1
-    )
+    hydrogen_molecule = _structure([1, 1], [[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]], name="H2")
+    h2_hamiltonian = phx.operators.ElectronicCoulombHamiltonian(hydrogen_molecule, 1)
     h2 = phx.operators.evaluate_local_operator(
         _Constant(jnp.asarray(0.0)),
         h2_hamiltonian,
@@ -68,9 +64,7 @@ def test_h_and_h2_coulomb_values_and_analytic_hydrogen_local_energy():
 def test_helium_coulomb_symmetry_translation_and_rotation_invariance():
     helium = _structure([2], [[0.0, 0.0, 0.0]], name="He")
     hamiltonian = phx.operators.ElectronicCoulombHamiltonian(helium, 2)
-    electrons = jnp.asarray(
-        [[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]], dtype=jnp.float64
-    )
+    electrons = jnp.asarray([[[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]], dtype=jnp.float64)
     model = _Constant(jnp.asarray(0.0))
     baseline = phx.operators.evaluate_local_operator(model, hamiltonian, electrons)
     exchanged = phx.operators.evaluate_local_operator(
@@ -79,9 +73,7 @@ def test_helium_coulomb_symmetry_translation_and_rotation_invariance():
     assert jnp.allclose(baseline.value, -3.5)
     assert jnp.allclose(exchanged.value, baseline.value)
 
-    rotation = jnp.asarray(
-        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
-    )
+    rotation = jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     translated_helium = _structure([2], [[2.0, -3.0, 0.5]], name="He-shifted")
     transformed = electrons @ rotation.T + jnp.asarray([2.0, -3.0, 0.5])
     transformed_hamiltonian = phx.operators.ElectronicCoulombHamiltonian(
@@ -109,9 +101,7 @@ def test_exact_and_chunked_kinetic_trace_match_with_jit_vjp_and_gradient():
     )
     coordinate = jnp.asarray([[[1.3, -0.2, 0.4]]], dtype=jnp.float64)
     model = _Hydrogenic(jnp.asarray(0.8))
-    exact_value = jax.jit(phx.operators.evaluate_local_operator)(
-        model, exact, coordinate
-    )
+    exact_value = jax.jit(phx.operators.evaluate_local_operator)(model, exact, coordinate)
     chunked_value = jax.jit(phx.operators.evaluate_local_operator)(
         model, chunked, coordinate
     )
@@ -121,9 +111,11 @@ def test_exact_and_chunked_kinetic_trace_match_with_jit_vjp_and_gradient():
     assert exact_value.method_id != chunked_value.method_id
 
     value, pullback = jax.vjp(
-        lambda alpha: phx.operators.evaluate_local_operator(
-            _Hydrogenic(alpha), exact, coordinate
-        ).value,
+        lambda alpha: (
+            phx.operators.evaluate_local_operator(
+                _Hydrogenic(alpha), exact, coordinate
+            ).value
+        ),
         model.alpha,
     )
     cotangent = pullback(jnp.ones_like(value))[0]
@@ -169,9 +161,7 @@ def test_coincident_singularities_are_invalid_and_never_clipped():
 
 
 def test_electronic_scales_require_explicit_bohr_hartree_reference_conversion():
-    bad_scale = phx.atomistic.AtomisticScaleContract(
-        "angstrom", "electronvolt"
-    )
+    bad_scale = phx.atomistic.AtomisticScaleContract("angstrom", "electronvolt")
     bad_structure = phx.atomistic.AtomicStructure(
         jnp.asarray([1], dtype=jnp.int32),
         jnp.zeros((1, 3), dtype=jnp.float64),
@@ -226,9 +216,7 @@ def test_initial_walkers_and_state_dependent_proposal_are_replayable_and_correct
     assert first.dtype == jnp.float64
     assert jnp.array_equal(first, second)
 
-    proposal = phx.operators.harmonic_mean_electron_proposal(
-        hydrogen, 1, step_size=0.3
-    )
+    proposal = phx.operators.harmonic_mean_electron_proposal(hydrogen, 1, step_size=0.3)
     current = jnp.asarray([[1.0, 0.0, 0.0]])
     proposed = jnp.asarray([[2.0, 0.0, 0.0]])
     forward = proposal.log_prob(proposed, current)

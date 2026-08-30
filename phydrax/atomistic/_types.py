@@ -182,7 +182,9 @@ class AtomicStructure(StrictModule, NonTrainableState):
         if not np.any(active):
             raise ValueError("An atomic structure requires at least one active atom.")
         if np.any(numbers[active] <= 0):
-            raise ValueError("Active atomic numbers must be positive; zero is padding only.")
+            raise ValueError(
+                "Active atomic numbers must be positive; zero is padding only."
+            )
         if np.any(numbers[~active] != 0):
             raise ValueError("Inactive padded atoms must have atomic number zero.")
         if np.any(~np.isfinite(position_host[active])):
@@ -195,7 +197,9 @@ class AtomicStructure(StrictModule, NonTrainableState):
             else np.asarray(particle_ids)
         )
         if ids.shape != numbers.shape or not np.issubdtype(ids.dtype, np.integer):
-            raise TypeError("particle_ids must be an integer vector matching atomic_numbers.")
+            raise TypeError(
+                "particle_ids must be an integer vector matching atomic_numbers."
+            )
         ids = ids.astype(np.int64, copy=False)
         molecule_name = str(name).strip()
         if not molecule_name:
@@ -361,7 +365,9 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         if np.any(np.sum(mask, axis=1) == 0):
             raise ValueError("Every batch case requires at least one active atom.")
         if np.any(numbers[mask] <= 0):
-            raise ValueError("Active atomic numbers must be positive; zero is padding only.")
+            raise ValueError(
+                "Active atomic numbers must be positive; zero is padding only."
+            )
         if np.any(numbers[~mask] != 0):
             raise ValueError("Inactive padded atoms must have atomic number zero.")
         if np.any(~np.isfinite(position_host[mask])):
@@ -464,7 +470,9 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             raise TypeError("structures must be a non-empty sequence of AtomicStructure.")
         scale = values[0].scale
         if any(value.scale.scale_id != scale.scale_id for value in values[1:]):
-            raise ValueError("All structures in a batch must share one exact scale contract.")
+            raise ValueError(
+                "All structures in a batch must share one exact scale contract."
+            )
         maximum = max(value.atom_capacity for value in values)
         capacity = maximum if atom_capacity is None else int(atom_capacity)
         if capacity < maximum:

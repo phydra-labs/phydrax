@@ -120,9 +120,7 @@ def load_rmd17_npz(
         raise ValueError("rMD17 input must be a local .npz archive.")
     precision = real_precision_dtype_name(dtype)
     archive = np.load(source, allow_pickle=False)
-    numbers = _archive_value(
-        archive, ("nuclear_charges", "atomic_numbers", "z", "Z")
-    )
+    numbers = _archive_value(archive, ("nuclear_charges", "atomic_numbers", "z", "Z"))
     positions = _archive_value(archive, ("coords", "positions", "R"))
     energies = _archive_value(archive, ("energies", "energy", "E"))
     forces = _archive_value(archive, ("forces", "force", "F"))

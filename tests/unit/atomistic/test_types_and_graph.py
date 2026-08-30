@@ -4,9 +4,9 @@ import pytest
 
 import phydrax.atomistic._graph as graph_module
 from phydrax.atomistic import (
+    AtomicStructure,
     AtomisticBatch,
     AtomisticScaleContract,
-    AtomicStructure,
     realize_atomistic_graph,
 )
 

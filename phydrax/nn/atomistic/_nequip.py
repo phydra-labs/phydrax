@@ -20,18 +20,16 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
 from ...atomistic._types import (
+    AtomicStructure,
     AtomisticBatch,
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
-    AtomicStructure,
 )
 from ..layers import Linear
-from ..operator.layers import O3TensorProduct, O3TensorProductPlan, o3_gated_activation
+from ..operator.layers import o3_gated_activation, O3TensorProduct, O3TensorProductPlan
 from ..operator.representations import O3Features, O3Representation
 from ..parameters import IdentityTransform
 from ._state import AbstractAtomisticPotential, initialize_atomistic_potential_identity
-
-
 
 
 class _NequIPConfiguration(StrictModule, NonTrainableState):
@@ -90,9 +88,7 @@ class _SpeciesSelfConnection(StrictModule):
         return self.representation.join(
             O3Features(
                 scalars=contract("noi,ni->no", selected[0], features.scalars),
-                pseudoscalars=contract(
-                    "noi,ni->no", selected[1], features.pseudoscalars
-                ),
+                pseudoscalars=contract("noi,ni->no", selected[1], features.pseudoscalars),
                 vectors=contract("noi,nic->noc", selected[2], features.vectors),
                 pseudovectors=contract(
                     "noi,nic->noc", selected[3], features.pseudovectors
@@ -131,9 +127,7 @@ class _NequIPInteraction(StrictModule):
             maximum_parameters=maximum_tensor_product_parameters,
         )
         radial_in_key, radial_out_key, self_key = jr.split(key, 3)
-        self.tensor_product = O3TensorProduct(
-            plan, internal_weights=False, dtype=dtype
-        )
+        self.tensor_product = O3TensorProduct(plan, internal_weights=False, dtype=dtype)
         self.radial_in = Linear(
             in_size=radial_basis_count,
             out_size=representation.scalars,
@@ -174,16 +168,12 @@ class _NequIPInteraction(StrictModule):
         edge_mask = ir.edge_mask.astype(values.dtype)
         path_weights = self.radial_out(self.radial_in(radial))
         path_weights = path_weights * cutoff_envelope[:, None] * edge_mask[:, None]
-        messages = self.tensor_product(
-            values[ir.senders], edge_features, path_weights
-        )
+        messages = self.tensor_product(values[ir.senders], edge_features, path_weights)
         messages = messages * edge_mask[:, None]
         aggregate = jnp.zeros_like(values).at[ir.receivers].add(messages)
         connected = self.self_connection(values, atomic_numbers) + aggregate
         activated = o3_gated_activation(connected, self.representation)
         return activated * node_mask[:, None]
-
-
 
 
 class NequIPPotential(AbstractAtomisticPotential):
@@ -246,9 +236,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         if maximum_z <= 0:
             raise ValueError("maximum_atomic_number must be positive.")
         if tensor_product_limit < 0:
-            raise ValueError(
-                "maximum_tensor_product_parameters must be non-negative."
-            )
+            raise ValueError("maximum_tensor_product_parameters must be non-negative.")
         precision_ = AtomisticPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, AtomisticPrecisionPolicy):
             raise TypeError("precision must be an AtomisticPrecisionPolicy or None.")
@@ -305,8 +293,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         self.readout_hidden = jax.tree_util.tree_map(cast_inexact, readout_hidden)
         self.readout_energy = jax.tree_util.tree_map(cast_inexact, readout_energy)
         plan_ids = tuple(
-            interaction.tensor_product.plan.plan_id
-            for interaction in interaction_modules
+            interaction.tensor_product.plan.plan_id for interaction in interaction_modules
         )
         self.configuration = _NequIPConfiguration(
             radial_frequencies=jnp.arange(1, radial_count + 1, dtype=compute_dtype),
@@ -360,7 +347,9 @@ class NequIPPotential(AbstractAtomisticPotential):
         if not isinstance(batch, AtomisticBatch):
             raise TypeError("batch must be an AtomisticBatch.")
         if batch.scale.scale_id != self.scale.scale_id:
-            raise ValueError("Potential and structure must share one exact scale contract.")
+            raise ValueError(
+                "Potential and structure must share one exact scale contract."
+            )
         if batch.positions.dtype != jnp.dtype(self.precision.coordinate_dtype):
             raise ValueError(
                 "Batch coordinate dtype does not match the NequIP precision contract."
@@ -440,15 +429,11 @@ class NequIPPotential(AbstractAtomisticPotential):
         node_mask = batch.atom_mask.reshape((-1,)).astype(self.precision.compute_dtype)
         node_count = int(numbers.shape[0])
         packed_size = self.configuration.hidden_representation.packed_size
-        values = jnp.zeros(
-            (node_count, packed_size), dtype=self.precision.compute_dtype
-        )
+        values = jnp.zeros((node_count, packed_size), dtype=self.precision.compute_dtype)
         scalar = self.embedding[numbers].astype(self.precision.compute_dtype)
         values = values.at[:, : self.configuration.feature_count].set(scalar)
         values = values * node_mask[:, None]
-        distance = jnp.where(
-            ir.edge_mask, jnp.asarray(ir.edges["distance"])[:, 0], 0.0
-        )
+        distance = jnp.where(ir.edge_mask, jnp.asarray(ir.edges["distance"])[:, 0], 0.0)
         direction = jnp.where(
             ir.edge_mask[:, None], jnp.asarray(ir.edges["direction"]), 0.0
         )
@@ -467,9 +452,11 @@ class NequIPPotential(AbstractAtomisticPotential):
         invariant_scalar = self.configuration.hidden_representation.split(values).scalars
         atom_energy = self.readout_energy(self.readout_hidden(invariant_scalar))
         atom_energy = atom_energy * node_mask.astype(atom_energy.dtype)
-        total_energy = jnp.zeros(
-            (batch.case_count,), dtype=self.precision.reduction_dtype
-        ).at[batch.atom_cases].add(atom_energy.astype(self.precision.reduction_dtype))
+        total_energy = (
+            jnp.zeros((batch.case_count,), dtype=self.precision.reduction_dtype)
+            .at[batch.atom_cases]
+            .add(atom_energy.astype(self.precision.reduction_dtype))
+        )
         return (
             total_energy.astype(self.precision.output_dtype),
             atom_energy.reshape((batch.case_count, batch.atom_capacity)).astype(
