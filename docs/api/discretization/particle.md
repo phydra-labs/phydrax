@@ -72,6 +72,151 @@
 
 ::: phydrax.discretization.particle_graph_view
 
+## Discrete element method
+
+::: phydrax.discretization.ParticlePairKeySpace
+
+---
+
+::: phydrax.discretization.RigidSphereSetPlan
+
+---
+
+::: phydrax.discretization.PreparedRigidSphereSet
+
+---
+
+::: phydrax.discretization.DEMContactModelPlan
+
+---
+
+::: phydrax.discretization.LinearSpringDashpotNormalPlan
+
+---
+
+::: phydrax.discretization.CundallStrackTangentialPlan
+
+---
+
+::: phydrax.discretization.HertzNormalContactPlan
+
+---
+
+::: phydrax.discretization.MindlinTangentialContactPlan
+
+---
+
+::: phydrax.discretization.ImplicitDEMBarrier
+
+---
+
+::: phydrax.discretization.SoftSphereDEMMethodPlan
+
+---
+
+::: phydrax.discretization.PreparedSoftSphereDEMDynamics
+
+---
+
+::: phydrax.equations.DEMMaterialTable
+
+---
+
+::: phydrax.equations.DiscreteElementProblemIR
+
+---
+
+::: phydrax.equations.compile_discrete_element_problem
+
+---
+
+::: phydrax.solver.DEMFixedStepMethod
+
+
+### Energy, qualification, and execution
+
+::: phydrax.discretization.DEMEnergyLedgerState
+
+---
+
+::: phydrax.discretization.DEMStepEnergyLedger
+
+---
+
+::: phydrax.discretization.DEMQualificationProfile
+
+---
+
+::: phydrax.discretization.VerletParticleNeighborhoodPlan
+
+---
+
+::: phydrax.discretization.DEMSensitivityPolicy
+
+### Contact extensions
+
+::: phydrax.discretization.ConstantRollingResistancePlan
+
+---
+
+::: phydrax.discretization.DMTAdhesiveNormalPlan
+
+---
+
+::: phydrax.discretization.ThorntonLinearPlasticNormalPlan
+
+---
+
+::: phydrax.discretization.LumpedContactThermalPlan
+
+### Rigid bodies, shapes, and bonds
+
+::: phydrax.discretization.RigidBodySetPlan
+
+---
+
+::: phydrax.discretization.SphereClumpTemplatePlan
+
+---
+
+::: phydrax.discretization.RigidContactGeometry
+
+---
+
+::: phydrax.discretization.TriangleWallPlan
+
+---
+
+::: phydrax.discretization.FixedBondGraphPlan
+
+---
+
+::: phydrax.discretization.TopologyEventPlan
+
+---
+
+::: phydrax.discretization.ConvexShapePlan
+
+---
+
+::: phydrax.discretization.ImplicitRigidShapePlan
+
+### CFD--DEM
+
+::: phydrax.discretization.ConservativeParticleGridTransferPlan
+
+---
+
+::: phydrax.equations.UnresolvedCFDEMCouplingPlan
+
+---
+
+::: phydrax.equations.ResolvedIBCFDEMCouplingPlan
+
+---
+
+::: phydrax.equations.ThermalCFDEMCouplingPlan
+
 ## SPH kernels and dynamics
 
 ::: phydrax.discretization.AbstractSPHSmoothingKernel

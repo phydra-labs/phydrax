@@ -16,6 +16,7 @@ from .._trainable import NonTrainableState
 from ..discretization.particle import (
     PreparedDFSPH,
     PreparedIISPH,
+    PreparedSoftSphereDEMDynamics,
     PreparedTransportVelocityDynamics,
 )
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
@@ -132,7 +133,48 @@ class DFSPHFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
         )
 
 
+class DEMFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
+    """Fixed-step adapter for prepared soft-sphere DEM dynamics."""
+
+    dynamics: PreparedSoftSphereDEMDynamics
+    method_id: str = eqx.field(static=True)
+
+    def __init__(self, dynamics: PreparedSoftSphereDEMDynamics, /):
+        if not isinstance(dynamics, PreparedSoftSphereDEMDynamics):
+            raise TypeError("dynamics must be PreparedSoftSphereDEMDynamics.")
+        self.dynamics = dynamics
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "dem-fixed-step",
+                "dynamics": dynamics.prepared_id,
+                "integrator": "kick-drift-contact-kick",
+            }
+        )
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        result = self.dynamics.step_detailed(step_index, time, state, step_size, args)
+        return FixedStepResult(
+            result.candidate_state,
+            result.accepted_state,
+            result.successful,
+            result.residual,
+            jnp.asarray(1, dtype=jnp.int32),
+            result.work,
+            jnp.asarray(False),
+            jnp.zeros((), dtype=state.kinematics.position.dtype),
+        )
+
+
 __all__ = [
+    "DEMFixedStepMethod",
     "DFSPHFixedStepMethod",
     "IISPHFixedStepMethod",
     "TransportVelocityFixedStepMethod",

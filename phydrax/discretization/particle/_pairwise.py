@@ -378,6 +378,8 @@ def scatter_pair_sum(
     right = _masked_pair_values(right_values, route_valid)
     if left.shape != right.shape:
         raise ValueError("Left and right pair values must have matching shapes.")
+    if left.shape[0] == 0:
+        return jnp.zeros((int(size),) + left.shape[1:], dtype=left.dtype)
     if accumulation == "fast":
         output_shape = (int(size),) + left.shape[1:]
         result = jnp.zeros(output_shape, dtype=left.dtype)

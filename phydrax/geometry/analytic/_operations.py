@@ -19,7 +19,7 @@ from jaxtyping import Array
 
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
-from .._capabilities import GeometryCapability
+from .._capabilities import ContactCurvatureProvider, GeometryCapability
 from .._certificate import (
     DistanceSemantics,
     FieldCertificate,
@@ -27,7 +27,12 @@ from .._certificate import (
     SignReliability,
     ZeroSetAccuracy,
 )
-from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._contracts import (
+    ContactCurvatureResult,
+    GeometryKernel,
+    GeometryKind,
+    GeometrySource,
+)
 from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureComponent
 from .._sampling import (
     bounded_rejection_sample,
@@ -287,6 +292,14 @@ class _RigidTransformKernel(GeometryKernel):
     def boundary_normal(self, state, points, /):
         rotation, _ = self._parameters(state)
         return self.child.boundary_normal(state, self._local(state, points)) @ rotation.T
+
+    def contact_curvature(self, state, points, /):
+        if not isinstance(self.child, ContactCurvatureProvider):
+            raise TypeError("Transformed child lacks contact-curvature provider.")
+        result = self.child.contact_curvature(state, self._local(state, points))
+        if not isinstance(result, ContactCurvatureResult):
+            raise TypeError("Child curvature query returned an invalid result.")
+        return result
 
     def bounds(self, state, /):
         rotation, translation = self._parameters(state)
