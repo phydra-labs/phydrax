@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -83,6 +84,82 @@ class FacetJet(StrictModule):
         self.measure = measure_
 
 
+class CellDerivativeBatch(StrictModule):
+    """Cell-local coefficients and evaluated values/gradients for one action."""
+
+    local_coefficients: Array
+    value: Array
+    gradient: Array
+
+    def __init__(
+        self,
+        local_coefficients: ArrayLike,
+        basis_values: ArrayLike,
+        physical_gradients: ArrayLike,
+        /,
+    ):
+        coefficients = jnp.asarray(local_coefficients)
+        basis = jnp.asarray(basis_values)
+        gradients = jnp.asarray(physical_gradients)
+        if coefficients.ndim != 2 or gradients.ndim != 4:
+            raise ValueError("Scalar cell derivative staging requires rank-2/4 data.")
+        if (
+            gradients.shape[0] != coefficients.shape[0]
+            or gradients.shape[2] != coefficients.shape[1]
+        ):
+            raise ValueError("Cell derivative staging local layouts are incompatible.")
+        if basis.ndim == 2:
+            value = oe.contract("qi,ei->eq", basis, coefficients)
+        elif basis.ndim == 3 and basis.shape[:1] == coefficients.shape[:1]:
+            value = oe.contract("eqi,ei->eq", basis, coefficients)
+        else:
+            raise ValueError("Cell derivative basis values have an invalid layout.")
+        self.local_coefficients = coefficients
+        self.value = value
+        self.gradient = oe.contract("eqid,ei->eqd", gradients, coefficients)
+
+
+class DGTraceBatch(StrictModule):
+    """Packed plus/minus DG traces computed once for a facet action group."""
+
+    jet: FacetJet
+    plus_local_coefficients: Array
+    minus_local_coefficients: Array
+
+    def __init__(
+        self,
+        plus_local_coefficients: ArrayLike,
+        minus_local_coefficients: ArrayLike,
+        plus_basis_values: ArrayLike,
+        minus_basis_values: ArrayLike,
+        plus_physical_gradients: ArrayLike,
+        minus_physical_gradients: ArrayLike,
+        normal: ArrayLike,
+        measure: ArrayLike,
+        /,
+    ):
+        plus = CellDerivativeBatch(
+            plus_local_coefficients,
+            plus_basis_values,
+            plus_physical_gradients,
+        )
+        minus = CellDerivativeBatch(
+            minus_local_coefficients,
+            minus_basis_values,
+            minus_physical_gradients,
+        )
+        self.jet = FacetJet(
+            plus.value,
+            minus.value,
+            plus.gradient,
+            minus.gradient,
+            normal,
+            measure,
+        )
+        self.plus_local_coefficients = plus.local_coefficients
+        self.minus_local_coefficients = minus.local_coefficients
+
+
 def symmetric_gradient(gradient: ArrayLike, /) -> Array:
     gradient_ = jnp.asarray(gradient)
     if gradient_.shape[-1] != gradient_.shape[-2]:
@@ -149,6 +226,8 @@ def average(plus: ArrayLike, minus: ArrayLike, /) -> Array:
 
 
 __all__ = [
+    "CellDerivativeBatch",
+    "DGTraceBatch",
     "FacetJet",
     "FieldJet",
     "average",

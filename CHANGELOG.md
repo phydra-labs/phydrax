@@ -72,6 +72,10 @@
   timing, memory, parameters, neighborhood work, gates, summaries, and
   provenance. High-degree irreps, MACE/symmetric contraction, periodic systems,
   stress, long range, and molecular-dynamics claims remain out of scope.
+- Added implicit tensor-modal neural fields with Hermitian real-field projection,
+  explicit modal input scaling and resource bounds, optional positive exponential
+  decay and prepared-basis modulation, masked modal observations, and direct
+  residual training against compiled coefficient-resident spectral dynamics.
 - Added native low-rank adaptation for exact real `Linear` weight paths,
   factor-only `ParameterSubspace` training through `fit_operator` and Optax
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
@@ -189,6 +193,13 @@
   marking/refinement/coarsening and transfer data, local DWR indicators, and
   executable phase-field, CPFEM, persistent-pair contact, fracture, and fixed-
   crack XFEM application workflows. Distributed execution remains out of scope.
+- Added accepted linear-solve histories, exact FEM diagonal data, pairing-aware
+  p-transfer roles and p-level planning, collocated tensor-product actions,
+  staged DG traces, explicit quadrature evidence, one-ring patch and low-order
+  auxiliary preconditioners, an incompressible pressure-correction workflow, and
+  conservative multirate DG traces. The execution and preconditioning design is
+  informed by libParanumal and its published high-order solver algorithms while
+  remaining Phydrax-native.
 - Added first-class exact-sampling round-sphere spectral discretizations with
   explicit S2FFT mode layouts, physical area measures, matrix-free
   Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,
