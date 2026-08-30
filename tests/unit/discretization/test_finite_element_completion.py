@@ -147,6 +147,8 @@ def test_domains_rules_and_entity_coefficients_select_exact_cells():
     source = phx.equations.coefficient(
         jnp.asarray([1.0, 2.0, 3.0, 4.0]),
         location="cell",
+        support_id=discretization.support.support_id,
+        entity_set_id=cells.entity_set_id,
     )
     term = phx.equations.SourceAction(
         "u",

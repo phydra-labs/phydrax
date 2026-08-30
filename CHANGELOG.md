@@ -102,6 +102,12 @@
   dealiasing, exactness and resource evidence, physical quadrature norms,
   external hard-condition contracts, and targetless operator fitting through
   `SpectralPDEResidualLoss`.
+- Added native high-order quadrilateral/hexahedral finite elements with explicit
+  nodal representations, GLL reference actions, dense and sum-factorized
+  workset kernels, mapped cell/facet metrics, high-order CG/DG routing,
+  mass-policy-aware rates, tensor SBP and periodic mapped DGSEM conservation,
+  p-multigrid, Schwarz/FDM and auxiliary preconditioning, two-sided mortars,
+  fixed-capacity hp transactions, and backend-neutral distributed ownership.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct

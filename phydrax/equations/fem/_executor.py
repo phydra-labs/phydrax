@@ -13,14 +13,16 @@ from jaxtyping import Array, ArrayLike
 
 from ..._numerics._compensated import compensated_sum
 from ...discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
+from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization.fem import FiniteElementDiscretization, IntegrationDomain
+from ...discretization.fem._high_order import SumFactorizationPlan
+from ...discretization.fem._sbp import MappedTensorMetrics
 from ...linalg import DualSpace
 from .._finite_element_variational import (
     _action_domain,
     _action_rule,
     _interval_rule,
     _reference_rule_data,
-    _ResolvedCoefficient,
     _triangle_rule,
     BoundaryLoadAction,
     CellBilinearAction,
@@ -28,33 +30,57 @@ from .._finite_element_variational import (
     CellResidualAction,
     DiffusionAction,
     ExteriorFacetAction,
+    FiniteElementCoefficient,
     FiniteElementExecutionContext,
     FiniteElementForm,
     InteriorFacetAction,
     MassAction,
+    PairwiseVolumeFluxAction,
     PreparedOperatorAction,
     SIPGFacetAction,
     SourceAction,
 )
 from ._ir import LocalActionIR
 from ._kernels import KernelTable
-from ._operators import FacetJet
+from ._operators import (
+    FacetJet,
+    FiniteElementFacetMetricData,
+    FiniteElementMetricData,
+)
 from ._worksets import WorksetProgram
 
 
 def _coefficient_values(
-    coefficient_: _ResolvedCoefficient,
+    coefficient_: FiniteElementCoefficient,
     points: Array,
     context: FiniteElementExecutionContext,
     /,
     *,
     value_shape: tuple[int, ...] = (),
     entity_indices: ArrayLike | None = None,
+    dof_indices: ArrayLike | None = None,
+    dof_orientations: ArrayLike | None = None,
+    basis_values: ArrayLike | None = None,
+    support_id: str | None = None,
+    entity_set_id: str | None = None,
+    field_space_id: str | None = None,
+    rule_id: str | None = None,
+    side: str | None = None,
 ) -> Array:
     values = coefficient_.evaluate(
         points,
         context,
         entity_indices=entity_indices,
+        dof_indices=dof_indices,
+        basis_values=basis_values,
+        dof_orientations=dof_orientations,
+        support_id=support_id if coefficient_.support_id is not None else None,
+        entity_set_id=(entity_set_id if coefficient_.entity_set_id is not None else None),
+        field_space_id=(
+            field_space_id if coefficient_.field_space_id is not None else None
+        ),
+        rule_id=rule_id if coefficient_.rule_id is not None else None,
+        side=side if coefficient_.side != "none" else None,
     )
     point_shape = points.shape[:-1]
     expected = point_shape + value_shape
@@ -117,10 +143,250 @@ def _scatter_local(
     return residual + grouped.reshape(residual.shape)
 
 
+def _cell_metric(
+    discretization: FiniteElementDiscretization,
+    block_index: int,
+    local_cells: Array,
+    reference,
+    coordinates: Array,
+    /,
+) -> FiniteElementMetricData:
+    coordinate_element = discretization.coordinate_elements[block_index]
+    coordinate_basis, coordinate_gradients = coordinate_element.tabulate(
+        reference.volume_rule.points
+    )
+    coordinate_routes = discretization.coordinate_dofs[block_index][local_cells]
+    cell_coordinates = coordinates[coordinate_routes]
+    return FiniteElementMetricData(
+        coordinate_basis,
+        coordinate_gradients,
+        cell_coordinates,
+        reference.weights,
+    )
+
+
+def _tensor_forward(plan: SumFactorizationPlan, local: Array, /) -> Array:
+    component_shape = local.shape[2:]
+    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    grid = local.reshape(
+        (local.shape[0],) + plan.tabulation.nodal_shape + (component_count,)
+    )
+    packed = jnp.moveaxis(grid, -1, 1)
+    evaluated = plan.interpolate(packed)
+    unpacked = jnp.moveaxis(evaluated, 1, -1)
+    return unpacked.reshape(
+        (local.shape[0],) + plan.tabulation.evaluation_shape + component_shape
+    )
+
+
+def _tensor_transpose(
+    plan: SumFactorizationPlan,
+    values: Array,
+    component_shape: tuple[int, ...],
+    /,
+) -> Array:
+    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    packed = values.reshape(
+        (values.shape[0],) + plan.tabulation.evaluation_shape + (component_count,)
+    )
+    packed = jnp.moveaxis(packed, -1, 1)
+    local = plan.interpolate_transpose(packed)
+    local = jnp.moveaxis(local, 1, -1)
+    return local.reshape(
+        (values.shape[0], int(np.prod(plan.tabulation.nodal_shape, dtype=int)))
+        + component_shape
+    )
+
+
+def _tensor_gradient(plan: SumFactorizationPlan, local: Array, /) -> Array:
+    component_shape = local.shape[2:]
+    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    grid = local.reshape(
+        (local.shape[0],) + plan.tabulation.nodal_shape + (component_count,)
+    )
+    packed = jnp.moveaxis(grid, -1, 1)
+    evaluated = plan.gradient(packed)
+    unpacked = jnp.moveaxis(evaluated, 1, -2)
+    return unpacked.reshape(
+        (local.shape[0],)
+        + plan.tabulation.evaluation_shape
+        + component_shape
+        + (plan.tabulation.dimension,)
+    )
+
+
+def _tensor_gradient_transpose(
+    plan: SumFactorizationPlan,
+    values: Array,
+    component_shape: tuple[int, ...],
+    /,
+) -> Array:
+    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
+    packed = values.reshape(
+        (values.shape[0],)
+        + plan.tabulation.evaluation_shape
+        + (component_count, plan.tabulation.dimension)
+    )
+    packed = jnp.moveaxis(packed, -2, 1)
+    local = plan.gradient_transpose(packed)
+    local = jnp.moveaxis(local, 1, -1)
+    return local.reshape(
+        (values.shape[0], int(np.prod(plan.tabulation.nodal_shape, dtype=int)))
+        + component_shape
+    )
+
+
+def _pairwise_volume_residual(
+    action: PairwiseVolumeFluxAction,
+    local_state: Array,
+    local_cells: Array,
+    reference,
+    metric: FiniteElementMetricData,
+    context: FiniteElementExecutionContext,
+    /,
+) -> Array:
+    if reference.tensor_tabulation is None or reference.tensor_weights_by_axis is None:
+        raise ValueError(
+            "Pairwise volume flux requires collocated tensor reference data."
+        )
+    plan = SumFactorizationPlan(reference.tensor_tabulation)
+    if plan.tabulation.nodal_shape != plan.tabulation.evaluation_shape:
+        raise ValueError("Pairwise volume flux requires collocated nodal axes.")
+    component_shape = local_state.shape[2:]
+    nodal_shape = plan.tabulation.nodal_shape
+    state_grid = local_state.reshape(
+        (local_state.shape[0],) + nodal_shape + component_shape
+    )
+    if isinstance(context.metric_data, MappedTensorMetrics):
+        points_grid = context.metric_data.coordinates[local_cells]
+        cofactor_grid = context.metric_data.contravariant_cofactors[local_cells]
+    else:
+        points_grid = metric.physical_points.reshape(
+            (local_state.shape[0]) + nodal_shape + (metric.physical_points.shape[-1],)
+        )
+        cofactor_grid = metric.cofactor.reshape(
+            (local_state.shape[0])
+            + nodal_shape
+            + (plan.tabulation.dimension, metric.physical_points.shape[-1])
+        )
+    weight_grid = reference.tensor_weights_by_axis[0]
+    for axis_weights in reference.tensor_weights_by_axis[1:]:
+        weight_grid = jnp.multiply.outer(weight_grid, axis_weights)
+    residual = jnp.zeros_like(state_grid)
+    for axis in range(plan.tabulation.dimension):
+        source_axis = 1 + axis
+        pair_axis = plan.tabulation.dimension
+        line_state = jnp.moveaxis(state_grid, source_axis, pair_axis)
+        line_points = jnp.moveaxis(points_grid, source_axis, pair_axis)
+        line_cofactor = jnp.moveaxis(cofactor_grid[..., axis, :], source_axis, pair_axis)
+        line_weights = jnp.moveaxis(weight_grid, axis, -1)
+        left = jnp.expand_dims(line_state, pair_axis + 1)
+        right = jnp.expand_dims(line_state, pair_axis)
+        left_points = jnp.expand_dims(line_points, pair_axis + 1)
+        right_points = jnp.expand_dims(line_points, pair_axis)
+        physical_flux = jnp.asarray(
+            action.kernel(left, right, left_points, right_points, context)
+        )
+        expected = (
+            left.shape[:pair_axis]
+            + (
+                nodal_shape[axis],
+                nodal_shape[axis],
+            )
+            + component_shape
+            + (metric.physical_points.shape[-1],)
+        )
+        if physical_flux.shape != expected:
+            raise ValueError(
+                "Pairwise volume flux must return paired values with a trailing "
+                "physical-coordinate axis."
+            )
+        metric_pair = 0.5 * (
+            jnp.expand_dims(line_cofactor, pair_axis + 1)
+            + jnp.expand_dims(line_cofactor, pair_axis)
+        )
+        metric_pair = metric_pair.reshape(
+            metric_pair.shape[:-1]
+            + (1,) * len(component_shape)
+            + (metric_pair.shape[-1],)
+        )
+        contravariant_flux = jnp.sum(metric_pair * physical_flux, axis=-1)
+        derivative = plan.tabulation.gradient_factors[axis]
+        derivative_shape = (
+            (1,) * pair_axis + derivative.shape + (1,) * len(component_shape)
+        )
+        differentiated = jnp.sum(
+            derivative.reshape(derivative_shape) * contravariant_flux,
+            axis=pair_axis + 1,
+        )
+        weights_shape = (1,) + line_weights.shape + (1,) * len(component_shape)
+        line_residual = 2.0 * line_weights.reshape(weights_shape) * differentiated
+        residual = residual + jnp.moveaxis(line_residual, pair_axis, source_axis)
+    return residual.reshape(local_state.shape)
+
+
+def _cell_coefficient_values(
+    coefficient_: FiniteElementCoefficient,
+    discretization: FiniteElementDiscretization,
+    block_index: int,
+    workset,
+    gathers: dict[str, Array],
+    physical_points: Array,
+    reference_points: Array,
+    context: FiniteElementExecutionContext,
+    entity_indices: Array,
+    /,
+    *,
+    value_shape: tuple[int, ...] = (),
+) -> Array:
+    dof_indices = None
+    coefficient_basis = None
+    coefficient_orientations = None
+    field_space_id = coefficient_.field_space_id
+    if coefficient_.location == "dof":
+        coefficient_field = None
+        for field_name in gathers:
+            field_index = discretization._field_index(field_name)
+            candidate_id = discretization.field_spaces[field_index].field_space_id
+            if candidate_id == field_space_id:
+                coefficient_field = field_name
+                coefficient_element = discretization.elements[field_index][block_index]
+                coefficient_basis = coefficient_element.tabulate(reference_points)[0]
+                break
+        if coefficient_field is None:
+            raise ValueError(
+                "DOF coefficient field is not gathered by the compiled workset."
+            )
+        dof_indices = gathers[coefficient_field]
+        coefficient_field_index = discretization._field_index(coefficient_field)
+        cell_start = sum(
+            block.cell_count for block in discretization.mesh.blocks[:block_index]
+        )
+        local_cells = jnp.asarray(entity_indices, dtype=jnp.int32) - cell_start
+        coefficient_orientations = discretization.dof_maps[
+            coefficient_field_index
+        ].orientations[block_index][local_cells]
+    return _coefficient_values(
+        coefficient_,
+        physical_points,
+        context,
+        value_shape=value_shape,
+        entity_indices=entity_indices,
+        dof_indices=dof_indices,
+        basis_values=coefficient_basis,
+        dof_orientations=coefficient_orientations,
+        support_id=workset.signature.support_id,
+        entity_set_id=workset.signature.entity_set_id,
+        field_space_id=field_space_id,
+        rule_id=workset.signature.rule_id,
+        side="none",
+    )
+
+
 def _workset_domain(
     action,
     discretization: FiniteElementDiscretization,
-    entity_indices: Array,
+    entity_indices: ArrayLike | tuple[int, ...],
     /,
 ) -> IntegrationDomain:
     domain = _action_domain(action, discretization)
@@ -153,7 +419,7 @@ def _full_residual(
     context: FiniteElementExecutionContext,
     /,
 ) -> Array | tuple[Array, ...]:
-    states = (state,) if len(form.field_names) == 1 else tuple(state)
+    states = state if isinstance(state, tuple) else (state,)
     if len(states) != len(form.field_names):
         raise ValueError("Finite-element state blocks must match form fields.")
     state_by_field = dict(zip(form.field_names, states, strict=True))
@@ -211,13 +477,26 @@ def _full_residual(
                 )
                 continue
             if isinstance(action, BoundaryLoadAction):
-                residual_by_field[output_field] = output_residual - _boundary_load(
-                    discretization,
-                    output_field_index,
-                    action,
-                    domain,
-                    context,
+                load = (
+                    _prepared_tensor_boundary_load(
+                        discretization,
+                        output_field_index,
+                        output_state,
+                        action,
+                        workset,
+                        context,
+                        accumulation,
+                    )
+                    if workset.reference is not None
+                    else _boundary_load(
+                        discretization,
+                        output_field_index,
+                        action,
+                        domain,
+                        context,
+                    )
                 )
+                residual_by_field[output_field] = output_residual - load
                 continue
             if isinstance(action, ExteriorFacetAction):
                 residual_by_field[output_field] = (
@@ -227,6 +506,7 @@ def _full_residual(
                         output_field_index,
                         output_state,
                         action,
+                        workset,
                         domain,
                         context,
                         accumulation,
@@ -241,6 +521,7 @@ def _full_residual(
                         output_field_index,
                         output_state,
                         action,
+                        workset,
                         domain,
                         context,
                         accumulation,
@@ -249,12 +530,53 @@ def _full_residual(
                 continue
             rule = _action_rule(action, block.name, block.cell_kind)
             rule_data = _reference_rule_data(rule)
-            output_geometry = discretization.evaluate_block_geometry(
-                output_field,
-                block_index,
-                context.runtime.coordinates,
-                rule_data.points,
-                rule_data.weights,
+            reference = workset.reference
+            if reference is None:
+                output_geometry = discretization.evaluate_block_geometry(
+                    output_field,
+                    block_index,
+                    context.runtime.coordinates,
+                    rule_data.points,
+                    rule_data.weights,
+                )
+                physical_points = output_geometry.physical_points[local_cells]
+                physical_gradients = output_geometry.physical_gradients[local_cells]
+                physical_weights = output_geometry.physical_weights[local_cells]
+                basis_values = output_geometry.basis_values
+                if basis_values.ndim > 2:
+                    basis_values = basis_values[local_cells]
+                metric = None
+            else:
+                metric = _cell_metric(
+                    discretization,
+                    block_index,
+                    local_cells,
+                    reference,
+                    context.runtime.coordinates,
+                )
+                physical_points = metric.physical_points
+                factorized_without_test_gradients = workset.signature.local_kernel in (
+                    "sum_factorized",
+                    "collocated",
+                ) and isinstance(
+                    action,
+                    (
+                        DiffusionAction,
+                        MassAction,
+                        SourceAction,
+                        CellEnergyAction,
+                        PairwiseVolumeFluxAction,
+                    ),
+                )
+                physical_gradients = (
+                    None
+                    if factorized_without_test_gradients
+                    else metric.physical_gradients(reference.basis_gradients)
+                )
+                physical_weights = metric.weighted_measure
+                basis_values = reference.basis_values
+            reference_points = (
+                rule_data.points if reference is None else reference.volume_rule.points
             )
             dofs = gathers[output_field]
             local_state = output_state[dofs]
@@ -263,72 +585,164 @@ def _full_residual(
                 output_orientation.shape
                 + (1,) * (local_state.ndim - output_orientation.ndim)
             )
-            physical_points = output_geometry.physical_points[local_cells]
-            physical_gradients = output_geometry.physical_gradients[local_cells]
-            physical_weights = output_geometry.physical_weights[local_cells]
-            basis_values = output_geometry.basis_values
-            if basis_values.ndim > 2:
-                basis_values = basis_values[local_cells]
-            if isinstance(action, DiffusionAction):
-                field_gradient = oe.contract(
-                    "cqid,ci...->cqd...",
-                    physical_gradients,
+            if isinstance(action, PairwiseVolumeFluxAction):
+                if reference is None or metric is None:
+                    raise ValueError(
+                        "Pairwise volume flux requires a prepared tensor reference."
+                    )
+                local = _pairwise_volume_residual(
+                    action,
                     local_state,
-                )
-                values = _coefficient_values(
-                    action.diffusivity,
-                    physical_points,
+                    local_cells,
+                    reference,
+                    metric,
                     context,
-                    entity_indices=work_cells,
                 )
-                local = oe.contract(
-                    "cq,cq,cqid,cqd...->ci...",
-                    physical_weights,
-                    values,
-                    physical_gradients,
-                    field_gradient,
+            elif isinstance(action, DiffusionAction):
+                values = _cell_coefficient_values(
+                    action.diffusivity,
+                    discretization,
+                    block_index,
+                    workset,
+                    gathers,
+                    physical_points,
+                    reference_points,
+                    context,
+                    work_cells,
                 )
+                if (
+                    workset.signature.local_kernel in ("sum_factorized", "collocated")
+                    and reference is not None
+                    and reference.tensor_tabulation is not None
+                    and metric is not None
+                ):
+                    plan = SumFactorizationPlan(reference.tensor_tabulation)
+                    component_shape = local_state.shape[2:]
+                    reference_gradient = _tensor_gradient(plan, local_state)
+                    qshape = plan.tabulation.evaluation_shape
+                    weighted_metric = metric.weighted_metric.reshape(
+                        (local_state.shape[0],)
+                        + qshape
+                        + (1,) * len(component_shape)
+                        + (plan.tabulation.dimension, plan.tabulation.dimension)
+                    )
+                    flux = oe.contract(
+                        "...ab,...b->...a", weighted_metric, reference_gradient
+                    )
+                    coefficient_grid = values.reshape(
+                        (local_state.shape[0],)
+                        + qshape
+                        + (1,) * (len(component_shape) + 1)
+                    )
+                    local = _tensor_gradient_transpose(
+                        plan,
+                        coefficient_grid * flux,
+                        component_shape,
+                    )
+                else:
+                    field_gradient = oe.contract(
+                        "cqid,ci...->cqd...",
+                        physical_gradients,
+                        local_state,
+                    )
+                    local = oe.contract(
+                        "cq,cq,cqid,cqd...->ci...",
+                        physical_weights,
+                        values,
+                        physical_gradients,
+                        field_gradient,
+                    )
             elif isinstance(action, MassAction):
                 if basis_values.ndim != 2:
                     raise ValueError(
                         "Built-in mass terms require a scalar reference basis."
                     )
-                field_value = oe.contract(
-                    "qi,ci...->cq...",
-                    basis_values,
-                    local_state,
-                )
-                values = _coefficient_values(
+                values = _cell_coefficient_values(
                     action.coefficient,
+                    discretization,
+                    block_index,
+                    workset,
+                    gathers,
                     physical_points,
+                    reference_points,
                     context,
-                    entity_indices=work_cells,
+                    work_cells,
                 )
-                local = oe.contract(
-                    "cq,cq,qi,cq...->ci...",
-                    physical_weights,
-                    values,
-                    basis_values,
-                    field_value,
-                )
+                if (
+                    workset.signature.local_kernel in ("sum_factorized", "collocated")
+                    and reference is not None
+                    and reference.tensor_tabulation is not None
+                    and metric is not None
+                ):
+                    plan = SumFactorizationPlan(reference.tensor_tabulation)
+                    component_shape = local_state.shape[2:]
+                    qshape = plan.tabulation.evaluation_shape
+                    field_value = _tensor_forward(plan, local_state)
+                    weight = (metric.weighted_measure * values).reshape(
+                        (local_state.shape[0],) + qshape + (1,) * len(component_shape)
+                    )
+                    local = _tensor_transpose(
+                        plan,
+                        weight * field_value,
+                        component_shape,
+                    )
+                else:
+                    field_value = oe.contract(
+                        "qi,ci...->cq...",
+                        basis_values,
+                        local_state,
+                    )
+                    local = oe.contract(
+                        "cq,cq,qi,cq...->ci...",
+                        physical_weights,
+                        values,
+                        basis_values,
+                        field_value,
+                    )
             elif isinstance(action, SourceAction):
                 if basis_values.ndim != 2:
                     raise ValueError(
                         "Built-in source terms require a scalar reference basis."
                     )
-                values = _coefficient_values(
+                component_shape = output_state.shape[1:]
+                values = _cell_coefficient_values(
                     action.source,
+                    discretization,
+                    block_index,
+                    workset,
+                    gathers,
                     physical_points,
+                    reference_points,
                     context,
-                    entity_indices=work_cells,
-                    value_shape=output_state.shape[1:],
+                    work_cells,
+                    value_shape=component_shape,
                 )
-                local = -oe.contract(
-                    "cq,cq...,qi->ci...",
-                    physical_weights,
-                    values,
-                    basis_values,
-                )
+                if (
+                    workset.signature.local_kernel in ("sum_factorized", "collocated")
+                    and reference is not None
+                    and reference.tensor_tabulation is not None
+                    and metric is not None
+                ):
+                    plan = SumFactorizationPlan(reference.tensor_tabulation)
+                    qshape = plan.tabulation.evaluation_shape
+                    weight = metric.weighted_measure.reshape(
+                        (local_state.shape[0],) + qshape + (1,) * len(component_shape)
+                    )
+                    values_grid = values.reshape(
+                        (local_state.shape[0],) + qshape + component_shape
+                    )
+                    local = -_tensor_transpose(
+                        plan,
+                        weight * values_grid,
+                        component_shape,
+                    )
+                else:
+                    local = -oe.contract(
+                        "cq,cq...,qi->ci...",
+                        physical_weights,
+                        values,
+                        basis_values,
+                    )
             elif isinstance(action, CellResidualAction):
                 input_values = []
                 input_gradients = []
@@ -402,52 +816,99 @@ def _full_residual(
                         "per selected cell and output-field DOF."
                     )
             elif isinstance(action, CellEnergyAction):
-
-                def energy(
-                    local_coefficients,
-                    basis_values_=basis_values,
-                    physical_gradients_=physical_gradients,
-                    physical_points_=physical_points,
-                    physical_weights_=physical_weights,
-                    term_=action,
-                    context_=context,
+                if (
+                    workset.signature.local_kernel in ("sum_factorized", "collocated")
+                    and reference is not None
+                    and reference.tensor_tabulation is not None
+                    and metric is not None
                 ):
-                    if basis_values_.ndim == 2:
-                        values_ = oe.contract(
-                            "qi,ci...->cq...",
-                            basis_values_,
-                            local_coefficients,
-                        )
-                        gradients_ = oe.contract(
-                            "cqid,ci...->cqd...",
-                            physical_gradients_,
-                            local_coefficients,
-                        )
-                    else:
-                        values_ = oe.contract(
-                            "cqiv,ci->cqv",
-                            basis_values_,
-                            local_coefficients,
-                        )
-                        gradients_ = oe.contract(
-                            "cqivd,ci->cqvd",
-                            physical_gradients_,
-                            local_coefficients,
-                        )
-                    density = jnp.asarray(
-                        term_.density(
-                            values_,
-                            gradients_,
-                            physical_points_,
-                            context_,
+                    plan = SumFactorizationPlan(reference.tensor_tabulation)
+                    qshape = plan.tabulation.evaluation_shape
+                    component_shape = local_state.shape[2:]
+                    inverse_jacobian = metric.inverse_jacobian.reshape(
+                        (local_state.shape[0],)
+                        + qshape
+                        + (1,) * len(component_shape)
+                        + (
+                            plan.tabulation.dimension,
+                            metric.physical_points.shape[-1],
                         )
                     )
-                    if density.shape != physical_weights_.shape:
-                        raise ValueError(
-                            "Cell energy density must return one scalar per "
-                            "selected quadrature point."
+
+                    def energy(local_coefficients):
+                        values_grid = _tensor_forward(plan, local_coefficients)
+                        reference_gradient = _tensor_gradient(plan, local_coefficients)
+                        physical_gradient = oe.contract(
+                            "...r,...rd->...d",
+                            reference_gradient,
+                            inverse_jacobian,
                         )
-                    return jnp.sum(density * physical_weights_)
+                        physical_gradient = jnp.moveaxis(
+                            physical_gradient,
+                            -1,
+                            1 + plan.tabulation.dimension,
+                        )
+                        values_ = values_grid.reshape(
+                            (local_state.shape[0], -1) + component_shape
+                        )
+                        gradients_ = physical_gradient.reshape(
+                            (local_state.shape[0], -1, metric.physical_points.shape[-1])
+                            + component_shape
+                        )
+                        density = jnp.asarray(
+                            action.density(
+                                values_,
+                                gradients_,
+                                physical_points,
+                                context,
+                            )
+                        )
+                        if density.shape != physical_weights.shape:
+                            raise ValueError(
+                                "Cell energy density must return one scalar per "
+                                "selected quadrature point."
+                            )
+                        return jnp.sum(density * physical_weights)
+
+                else:
+
+                    def energy(local_coefficients):
+                        if basis_values.ndim == 2:
+                            values_ = oe.contract(
+                                "qi,ci...->cq...",
+                                basis_values,
+                                local_coefficients,
+                            )
+                            gradients_ = oe.contract(
+                                "cqid,ci...->cqd...",
+                                physical_gradients,
+                                local_coefficients,
+                            )
+                        else:
+                            values_ = oe.contract(
+                                "cqiv,ci->cqv",
+                                basis_values,
+                                local_coefficients,
+                            )
+                            gradients_ = oe.contract(
+                                "cqivd,ci->cqvd",
+                                physical_gradients,
+                                local_coefficients,
+                            )
+                        density = jnp.asarray(
+                            action.density(
+                                values_,
+                                gradients_,
+                                physical_points,
+                                context,
+                            )
+                        )
+                        if density.shape != physical_weights.shape:
+                            raise ValueError(
+                                "Cell energy density must return one scalar per "
+                                "selected quadrature point."
+                            )
+                        return jnp.sum(density * physical_weights)
 
                 local = jax.grad(energy)(local_state)
             elif isinstance(action, CellBilinearAction):
@@ -477,6 +938,13 @@ def _full_residual(
                 )
             else:
                 raise TypeError("Unsupported finite-element term.")
+            local = jnp.where(
+                jnp.asarray(workset.valid).reshape(
+                    (local.shape[0],) + (1,) * (local.ndim - 1)
+                ),
+                local,
+                0.0,
+            )
             local = local * output_orientation.reshape(
                 output_orientation.shape + (1,) * (local.ndim - output_orientation.ndim)
             )
@@ -526,6 +994,354 @@ def _polygon_side_points(
                 (jnp.zeros_like(local_parameter), 1.0 - local_parameter), axis=-1
             )
     raise ValueError("SIPG supports triangle Pk or quadrilateral Qk facets.")
+
+
+def _canonicalize_facet(values: Array, permutations: Array, /) -> Array:
+    return jax.vmap(
+        lambda value, permutation: jnp.zeros_like(value).at[permutation].set(value)
+    )(values, permutations)
+
+
+def _localize_facet(values: Array, permutations: Array, /) -> Array:
+    return jax.vmap(lambda value, permutation: value[permutation])(values, permutations)
+
+
+def _facet_point_permutations(
+    connectivity,
+    workset,
+    cells: Array,
+    local_facet: int,
+    facet_reference,
+    /,
+    *,
+    neighbour: bool,
+) -> Array:
+    count = cells.shape[0]
+    if neighbour and workset.neighbour_trace_permutations.shape[1] != 0:
+        supplied = workset.neighbour_trace_permutations
+        if supplied.shape[1] != facet_reference.points.shape[0]:
+            raise ValueError(
+                "Compiled neighbour trace permutation width does not match the rule."
+            )
+        if isinstance(connectivity, HexahedralConnectivity):
+            points = np.asarray(facet_reference.points)
+            normal = np.asarray(facet_reference.normals[0])
+            tangential_axes = tuple(
+                axis for axis in range(points.shape[1]) if abs(normal[axis]) < 0.5
+            )
+            if len(tangential_axes) != 2:
+                raise ValueError("Hexahedral facet must have two tangential axes.")
+            widths = tuple(
+                np.unique(np.round(points[:, axis], decimals=14)).size
+                for axis in tangential_axes
+            )
+            owner_to_canonical = jnp.asarray(
+                connectivity.cell_face_permutations(*widths)
+            )[
+                workset.owner_cells,
+                workset.owner_local_entities,
+            ]
+        else:
+            identity = jnp.arange(facet_reference.points.shape[0], dtype=jnp.int32)
+            owner_to_canonical = jnp.where(
+                (workset.owner_permutations > 0)[:, None],
+                identity[None],
+                identity[::-1][None],
+            )
+        inverse_supplied = jax.vmap(
+            lambda permutation: (
+                jnp.zeros_like(permutation)
+                .at[permutation]
+                .set(jnp.arange(permutation.shape[0], dtype=jnp.int32))
+            )
+        )(supplied)
+        return jnp.take_along_axis(owner_to_canonical, inverse_supplied, axis=1)
+    if isinstance(connectivity, HexahedralConnectivity):
+        points = np.asarray(facet_reference.points)
+        normal = np.asarray(facet_reference.normals[0])
+        tangential_axes = tuple(
+            axis for axis in range(points.shape[1]) if abs(normal[axis]) < 0.5
+        )
+        if len(tangential_axes) != 2:
+            raise ValueError("Hexahedral facet must have two tangential axes.")
+        widths = tuple(
+            np.unique(np.round(points[:, axis], decimals=14)).size
+            for axis in tangential_axes
+        )
+        routes = connectivity.cell_face_permutations(*widths)
+        return jnp.asarray(routes)[cells, int(local_facet)]
+    raw = workset.neighbour_permutations if neighbour else workset.owner_permutations
+    if raw.ndim == 1:
+        identity = jnp.arange(facet_reference.points.shape[0], dtype=jnp.int32)
+        reverse = identity[::-1]
+        return jnp.where((raw > 0)[:, None], identity[None], reverse[None])
+    return jnp.broadcast_to(
+        jnp.arange(facet_reference.points.shape[0], dtype=jnp.int32),
+        (count, facet_reference.points.shape[0]),
+    )
+
+
+def _certified_facet_geometry(
+    metrics: MappedTensorMetrics,
+    reference,
+    facet,
+    cells: Array,
+    /,
+) -> tuple[Array, Array]:
+    reference_nodes = np.asarray(reference.element.reference_nodes)
+    dimension = reference_nodes.shape[1]
+    normal = np.asarray(facet.normals[0])
+    axis = int(np.argmax(np.abs(normal)))
+    side = 0 if normal[axis] < 0.0 else 1
+    nodal_shape = tuple(
+        np.unique(reference_nodes[:, coordinate_axis]).size
+        for coordinate_axis in range(dimension)
+    )
+    reference_grid = reference_nodes.reshape(nodal_shape + (dimension,))
+    face_nodes = np.take(
+        reference_grid,
+        0 if side == 0 else -1,
+        axis=axis,
+    ).reshape((-1, dimension))
+    facet_points = np.asarray(facet.points)
+    if face_nodes.shape != facet_points.shape:
+        raise ValueError(
+            "Certified facet metrics require the collocated nodal trace rule."
+        )
+    distances = np.max(np.abs(facet_points[:, None, :] - face_nodes[None, :, :]), axis=-1)
+    permutation = np.argmin(distances, axis=1).astype(np.int32)
+    if (
+        np.max(np.min(distances, axis=1), initial=0.0) > 1.0e-12
+        or np.unique(permutation).size != permutation.size
+    ):
+        raise ValueError(
+            "Certified facet metric nodes do not match the prepared trace nodes."
+        )
+    physical_points = metrics.face_coordinates[axis][cells, side].reshape(
+        (cells.shape[0], -1, dimension)
+    )
+    scaled_normal = metrics.face_scaled_normals[axis][cells, side].reshape(
+        (cells.shape[0], -1, dimension)
+    )
+    indices = jnp.asarray(permutation, dtype=jnp.int32)
+    return (
+        jnp.take(physical_points, indices, axis=1),
+        jnp.take(scaled_normal, indices, axis=1),
+    )
+
+
+def _prepared_facet_side(
+    discretization: FiniteElementDiscretization,
+    field_index: int,
+    state: Array | None,
+    workset,
+    cells: Array,
+    local_facet: int,
+    context: FiniteElementExecutionContext,
+    /,
+    *,
+    neighbour: bool,
+):
+    if len(discretization.mesh.blocks) != 1:
+        raise ValueError(
+            "Prepared tensor facets currently require one homogeneous block."
+        )
+    reference = workset.reference
+    if reference is None:
+        raise ValueError("Prepared facet execution requires a prepared reference.")
+    facet = reference.facets[int(local_facet)]
+    if isinstance(context.metric_data, MappedTensorMetrics):
+        physical_points, scaled_normal = _certified_facet_geometry(
+            context.metric_data,
+            reference,
+            facet,
+            cells,
+        )
+        surface_jacobian = jnp.linalg.norm(scaled_normal, axis=-1)
+        normal = scaled_normal / surface_jacobian[..., None]
+        physical_weights = surface_jacobian * facet.weights[None, :]
+    else:
+        coordinate_element = discretization.coordinate_elements[0]
+        coordinate_basis, coordinate_gradients = coordinate_element.tabulate(facet.points)
+        coordinate_routes = discretization.coordinate_dofs[0][cells]
+        metric = FiniteElementMetricData(
+            coordinate_basis,
+            coordinate_gradients,
+            context.runtime.coordinates[coordinate_routes],
+            facet.weights,
+        )
+        facet_metric = FiniteElementFacetMetricData(
+            metric,
+            facet.normals,
+            facet.weights,
+        )
+        physical_points = facet_metric.physical_points
+        physical_weights = facet_metric.physical_weights
+        normal = facet_metric.normal
+    dof_map = discretization.dof_maps[field_index]
+    dofs = dof_map.cell_dofs[0][cells]
+    orientation = dof_map.orientations[0][cells]
+    if state is None:
+        trace = None
+    else:
+        local_state = state[dofs] * orientation.reshape(
+            orientation.shape + (1,) * (state[dofs].ndim - orientation.ndim)
+        )
+        trace = oe.contract("qi,ei...->eq...", facet.basis_values, local_state)
+    permutations = _facet_point_permutations(
+        discretization.mesh.connectivity,
+        workset,
+        cells,
+        local_facet,
+        facet,
+        neighbour=neighbour,
+    )
+    return (
+        facet,
+        dofs,
+        orientation,
+        permutations,
+        None if trace is None else _canonicalize_facet(trace, permutations),
+        _canonicalize_facet(physical_points, permutations),
+        _canonicalize_facet(physical_weights, permutations),
+        _canonicalize_facet(normal, permutations),
+    )
+
+
+def _prepared_tensor_facet_residual(
+    discretization: FiniteElementDiscretization,
+    field_index: int,
+    state: Array,
+    action: InteriorFacetAction | ExteriorFacetAction,
+    workset,
+    context: FiniteElementExecutionContext,
+    accumulation: str,
+    /,
+) -> Array:
+    reference = workset.reference
+    if reference is None:
+        raise ValueError("Prepared tensor facet execution requires a reference.")
+    owners = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
+    neighbours = jnp.maximum(jnp.asarray(workset.neighbour_cells, dtype=jnp.int32), 0)
+    owner_local = jnp.asarray(workset.owner_local_entities, dtype=jnp.int32)
+    neighbour_local = jnp.asarray(workset.neighbour_local_entities, dtype=jnp.int32)
+    valid = jnp.asarray(workset.valid)
+    count = owners.shape[0]
+    point_count = reference.facets[0].points.shape[0]
+    component_shape = state.shape[1:]
+    trace_shape = (count, point_count) + component_shape
+    plus_value = jnp.zeros(trace_shape, dtype=state.dtype)
+    minus_value = jnp.zeros(trace_shape, dtype=state.dtype)
+    physical_points = jnp.zeros(
+        (count, point_count, context.runtime.coordinates.shape[-1]),
+        dtype=context.runtime.coordinates.dtype,
+    )
+    physical_weights = jnp.zeros(
+        (count, point_count), dtype=context.runtime.coordinates.dtype
+    )
+    normal = jnp.zeros_like(physical_points)
+    plus_sides = []
+    minus_sides = []
+    for local_facet in range(len(reference.facets)):
+        plus = _prepared_facet_side(
+            discretization,
+            field_index,
+            state,
+            workset,
+            owners,
+            local_facet,
+            context,
+            neighbour=False,
+        )
+        active = valid & (owner_local == local_facet)
+        value_mask = active.reshape((count, 1) + (1,) * len(component_shape))
+        point_mask = active[:, None, None]
+        scalar_mask = active[:, None]
+        plus_value = jnp.where(value_mask, plus[4], plus_value)
+        physical_points = jnp.where(point_mask, plus[5], physical_points)
+        physical_weights = jnp.where(scalar_mask, plus[6], physical_weights)
+        normal = jnp.where(point_mask, plus[7], normal)
+        plus_sides.append(plus)
+        if isinstance(action, InteriorFacetAction):
+            minus = _prepared_facet_side(
+                discretization,
+                field_index,
+                state,
+                workset,
+                neighbours,
+                local_facet,
+                context,
+                neighbour=True,
+            )
+            minus_active = valid & (neighbour_local == local_facet)
+            minus_mask = minus_active.reshape((count, 1) + (1,) * len(component_shape))
+            minus_value = jnp.where(minus_mask, minus[4], minus_value)
+            minus_sides.append(minus)
+    if isinstance(action, InteriorFacetAction):
+        plus_flux, minus_flux = action.kernel(
+            plus_value,
+            minus_value,
+            physical_points,
+            physical_weights,
+            normal,
+            context,
+        )
+        plus_flux = jnp.asarray(plus_flux)
+        minus_flux = jnp.asarray(minus_flux)
+        if plus_flux.shape != trace_shape or minus_flux.shape != trace_shape:
+            raise ValueError(
+                "Interior facet kernel must return both canonical trace shapes."
+            )
+    else:
+        plus_flux = jnp.asarray(
+            action.kernel(
+                plus_value,
+                physical_points,
+                physical_weights,
+                normal,
+                context,
+            )
+        )
+        if plus_flux.shape != trace_shape:
+            raise ValueError("Exterior facet kernel must return the trace shape.")
+        minus_flux = None
+    weighted_plus = (
+        physical_weights.reshape((count, point_count) + (1,) * len(component_shape))
+        * plus_flux
+    )
+    result = jnp.zeros_like(state)
+    for local_facet, plus in enumerate(plus_sides):
+        active = valid & (owner_local == local_facet)
+        local_flux = _localize_facet(weighted_plus, plus[3])
+        local = oe.contract("qi,eq...->ei...", plus[0].basis_values, local_flux)
+        local = jnp.where(
+            active.reshape((count, 1) + (1,) * len(component_shape)),
+            local,
+            0.0,
+        )
+        local = local * plus[2].reshape(
+            plus[2].shape + (1,) * (local.ndim - plus[2].ndim)
+        )
+        result = _scatter_local(result, plus[1], local, accumulation)
+    if minus_flux is not None:
+        weighted_minus = (
+            physical_weights.reshape((count, point_count) + (1,) * len(component_shape))
+            * minus_flux
+        )
+        for local_facet, minus in enumerate(minus_sides):
+            active = valid & (neighbour_local == local_facet)
+            local_flux = _localize_facet(weighted_minus, minus[3])
+            local = oe.contract("qi,eq...->ei...", minus[0].basis_values, local_flux)
+            local = jnp.where(
+                active.reshape((count, 1) + (1,) * len(component_shape)),
+                local,
+                0.0,
+            )
+            local = local * minus[2].reshape(
+                minus[2].shape + (1,) * (local.ndim - minus[2].ndim)
+            )
+            result = _scatter_local(result, minus[1], local, accumulation)
+    return result
 
 
 def _sipg_facet_residual(
@@ -605,11 +1421,23 @@ def _sipg_facet_residual(
     )
     cell_measure = cell_geometry.measure
     plus_height = 2.0 * cell_measure[owners] / facet_measure
+    diffusivity_entities = (
+        facets if action.diffusivity.entity_set_id == domain.entity_set_id else owners
+    )
+    diffusivity_entity_set = (
+        domain.entity_set_id
+        if action.diffusivity.entity_set_id == domain.entity_set_id
+        else discretization.cell_domain.entity_set_id
+    )
     plus_diffusivity = _coefficient_values(
         action.diffusivity,
         physical_points,
         context,
-        entity_indices=owners,
+        entity_indices=diffusivity_entities,
+        support_id=domain.support_id,
+        entity_set_id=diffusivity_entity_set,
+        rule_id=action.diffusivity.rule_id,
+        side="plus",
     )
     plus_diffusivity = eqx.error_if(
         plus_diffusivity,
@@ -650,7 +1478,15 @@ def _sipg_facet_residual(
             action.diffusivity,
             physical_points,
             context,
-            entity_indices=safe_neighbours,
+            entity_indices=(
+                facets
+                if action.diffusivity.entity_set_id == domain.entity_set_id
+                else safe_neighbours
+            ),
+            support_id=domain.support_id,
+            entity_set_id=diffusivity_entity_set,
+            rule_id=action.diffusivity.rule_id,
+            side="minus",
         )
         minus_diffusivity = eqx.error_if(
             minus_diffusivity,
@@ -756,6 +1592,10 @@ def _sipg_facet_residual(
         physical_points,
         context,
         entity_indices=facets,
+        support_id=domain.support_id,
+        entity_set_id=domain.entity_set_id,
+        rule_id=boundary.value.rule_id,
+        side="plus",
     )
     penalty = (
         action.penalty_policy
@@ -776,6 +1616,10 @@ def _sipg_facet_residual(
             physical_points,
             context,
             entity_indices=facets,
+            support_id=domain.support_id,
+            entity_set_id=domain.entity_set_id,
+            rule_id=boundary.robin_coefficient.rule_id,
+            side="plus",
         )
         robin = eqx.error_if(
             robin,
@@ -977,11 +1821,22 @@ def _exterior_facet_residual(
     field_index: int,
     state: Array,
     action: ExteriorFacetAction,
+    workset,
     domain: IntegrationDomain,
     context: FiniteElementExecutionContext,
     accumulation: str,
     /,
 ) -> Array:
+    if workset.reference is not None:
+        return _prepared_tensor_facet_residual(
+            discretization,
+            field_index,
+            state,
+            action,
+            workset,
+            context,
+            accumulation,
+        )
     connectivity = discretization.mesh.connectivity
     dof_map = discretization.dof_maps[field_index]
     if (
@@ -1062,11 +1917,22 @@ def _interior_facet_residual(
     field_index: int,
     state: Array,
     action: InteriorFacetAction,
+    workset,
     domain: IntegrationDomain,
     context: FiniteElementExecutionContext,
     accumulation: str,
     /,
 ) -> Array:
+    if workset.reference is not None:
+        return _prepared_tensor_facet_residual(
+            discretization,
+            field_index,
+            state,
+            action,
+            workset,
+            context,
+            accumulation,
+        )
     connectivity = discretization.mesh.connectivity
     facets = jnp.asarray(domain.entity_indices, dtype=jnp.int32)
     owners = jnp.asarray(domain.owner_cells, dtype=jnp.int32)
@@ -1195,6 +2061,80 @@ def _interior_facet_residual(
     return _scatter_local(result, minus_dofs, minus_residual, accumulation)
 
 
+def _prepared_tensor_boundary_load(
+    discretization: FiniteElementDiscretization,
+    field_index: int,
+    state: Array,
+    action: BoundaryLoadAction,
+    workset,
+    context: FiniteElementExecutionContext,
+    accumulation: str,
+    /,
+) -> Array:
+    reference = workset.reference
+    if reference is None:
+        raise ValueError("Prepared tensor boundary load requires a reference.")
+    owners = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
+    owner_local = jnp.asarray(workset.owner_local_entities, dtype=jnp.int32)
+    valid = jnp.asarray(workset.valid)
+    count = owners.shape[0]
+    point_count = reference.facets[0].points.shape[0]
+    component_shape = state.shape[1:]
+    physical_points = jnp.zeros(
+        (count, point_count, context.runtime.coordinates.shape[-1]),
+        dtype=context.runtime.coordinates.dtype,
+    )
+    physical_weights = jnp.zeros(
+        (count, point_count), dtype=context.runtime.coordinates.dtype
+    )
+    sides = []
+    for local_facet in range(len(reference.facets)):
+        side = _prepared_facet_side(
+            discretization,
+            field_index,
+            None,
+            workset,
+            owners,
+            local_facet,
+            context,
+            neighbour=False,
+        )
+        active = valid & (owner_local == local_facet)
+        physical_points = jnp.where(active[:, None, None], side[5], physical_points)
+        physical_weights = jnp.where(active[:, None], side[6], physical_weights)
+        sides.append(side)
+    values = _coefficient_values(
+        action.load,
+        physical_points,
+        context,
+        entity_indices=workset.entity_indices,
+        value_shape=component_shape,
+        support_id=workset.signature.support_id,
+        entity_set_id=workset.signature.entity_set_id,
+        rule_id=action.load.rule_id,
+        side="plus",
+    )
+    weighted = (
+        physical_weights.reshape((count, point_count) + (1,) * len(component_shape))
+        * values
+    )
+    result = jnp.zeros_like(state)
+    for local_facet, side in enumerate(sides):
+        active = valid & (owner_local == local_facet)
+        local_values = _localize_facet(weighted, side[3])
+        local = oe.contract("qi,eq...->ei...", side[0].basis_values, local_values)
+        local = jnp.where(
+            active.reshape((count, 1) + (1,) * len(component_shape)),
+            local,
+            0.0,
+        )
+        local = local * side[2].reshape(
+            side[2].shape + (1,) * (local.ndim - side[2].ndim)
+        )
+        result = _scatter_local(result, side[1], local, accumulation)
+    return result
+
+
 def _boundary_load(
     discretization: FiniteElementDiscretization,
     field_index: int,
@@ -1280,6 +2220,10 @@ def _boundary_load(
             context,
             entity_indices=facet_indices,
             value_shape=component_shape,
+            support_id=domain.support_id,
+            entity_set_id=domain.entity_set_id,
+            rule_id=action.load.rule_id,
+            side="plus",
         )
         local = oe.contract(
             "eq,eq...,qi->ei...",
@@ -1297,11 +2241,11 @@ def execute_finite_element_residual(
     form: FiniteElementForm,
     kernel_table: KernelTable,
     discretization: FiniteElementDiscretization,
-    state: Array,
+    state: Array | tuple[Array, ...],
     accumulation: str,
     context: FiniteElementExecutionContext,
     /,
-) -> Array:
+) -> Array | tuple[Array, ...]:
     if (
         not isinstance(action_ir, LocalActionIR)
         or not isinstance(workset_program, WorksetProgram)
@@ -1313,6 +2257,28 @@ def execute_finite_element_residual(
         raise ValueError(
             "Finite-element IR, workset program, and kernel table are incompatible."
         )
+    for workset in workset_program.worksets:
+        signature = workset.signature
+        for action_index in workset.action_index_values:
+            binding = kernel_table.binding(action_ir.actions[action_index].kernel_id)
+            strategy_matches = binding.local_kernel == signature.local_kernel or (
+                binding.local_kernel.startswith("mixed[")
+                and signature.local_kernel in binding.local_kernel[6:-1].split(",")
+            )
+            if (
+                not strategy_matches
+                or signature.prepared_reference_id not in binding.reference_ids
+                or signature.element_id not in binding.element_ids
+                or signature.coordinate_element_id not in binding.coordinate_element_ids
+                or signature.representation not in binding.representations
+                or signature.mapping not in binding.mappings
+                or signature.coefficient_layout_ids != binding.coefficient_layout_ids
+                or signature.precision_id != binding.precision_id
+                or signature.ir_semantics_id != binding.ir_semantics_id
+            ):
+                raise ValueError(
+                    "A workset signature does not match its compiled kernel binding."
+                )
     return _full_residual(
         form,
         discretization,

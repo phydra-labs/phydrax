@@ -27,6 +27,7 @@ from .._polynomial._gaussian_cubature import (
     GaussianCubatureFamily,
 )
 from .._polynomial._orthogonal import (
+    legendre_rule_data,
     OrthogonalRuleData,
     standard_normal_hermite_rule_data,
 )
@@ -173,8 +174,36 @@ class GaussLegendreRule(StrictModule):
         gauss_legendre_data(order_)
         self.order = order_
 
+    @property
+    def exact_degree(self) -> int:
+        return 2 * self.order - 1
+
     def data(self) -> QuadratureRuleData:
         return gauss_legendre_data(self.order)
+
+
+class GaussLobattoLegendreRule(StrictModule):
+    """Order-``n`` Gauss--Lobatto--Legendre quadrature on ``[-1, 1]``."""
+
+    order: int = eqx.field(static=True)
+
+    def __init__(self, order: int = 8):
+        order_ = int(order)
+        legendre_rule_data(order_, "lobatto")
+        self.order = order_
+
+    @property
+    def exact_degree(self) -> int:
+        return 2 * self.order - 3
+
+    def data(self) -> QuadratureRuleData:
+        data = legendre_rule_data(self.order, "lobatto")
+        return QuadratureRuleData(
+            data.nodes,
+            data.weights,
+            None,
+            data.exact_degree,
+        )
 
 
 class GaussHermiteRule(StrictModule):
@@ -243,7 +272,11 @@ class TanhSinhRule(StrictModule):
 
 
 IntervalRule: TypeAlias = (
-    GaussLegendreRule | GaussKronrodRule | ClenshawCurtisRule | TanhSinhRule
+    GaussLegendreRule
+    | GaussLobattoLegendreRule
+    | GaussKronrodRule
+    | ClenshawCurtisRule
+    | TanhSinhRule
 )
 ProbabilityRule: TypeAlias = GaussHermiteRule | GaussianCubatureRule
 
@@ -260,6 +293,8 @@ def probability_rule_data(
 
 def interval_rule_data(rule: IntervalRule, /) -> QuadratureRuleData:
     if isinstance(rule, GaussLegendreRule):
+        return rule.data()
+    if isinstance(rule, GaussLobattoLegendreRule):
         return rule.data()
     if isinstance(rule, GaussKronrodRule):
         return rule.data()
@@ -415,6 +450,7 @@ __all__ = [
     "GaussianCubatureRule",
     "GaussHermiteRule",
     "GaussLegendreRule",
+    "GaussLobattoLegendreRule",
     "IntervalRule",
     "ProbabilityRule",
     "ReferenceCellData",

@@ -4,6 +4,8 @@ Phydrax separates a spectral basis, its physical evaluation support, modal degre
 freedom, nonlinear realization, and temporal method. Tensor spectral objects are global
 products rather than spectral elements. Spherical spaces instead bind exact S2FFT
 sampling theorems to a round-sphere support; neither path invents element topology.
+Local high-order tensor elements, mapped geometry, CG/DG coupling, and DGSEM
+live in the finite-element compiler; see [Spectral elements](guides_spectral_elements.md).
 
 ## Spaces and representations
 
@@ -13,6 +15,9 @@ physical bounds, quadrature, transforms, and exact field-space identities:
 ```python
 import jax.numpy as jnp
 import phydrax as phx
+import jax.random as jr
+
+key = jr.key(0)
 
 space = phx.discretization.TensorSpectralPlan(
     (phx.discretization.FourierBasisPlan(128),),
@@ -58,8 +63,8 @@ sphere = phx.discretization.SphericalSpectralPlan(
 values = jnp.cos(sphere.transform.theta)[:, None] * jnp.ones(
     (1, sphere.transform.phi.size)
 )
-coefficients = sphere.project(values)
-reconstructed = sphere.reconstruct(coefficients)
+sphere_coefficients = sphere.project(values)
+reconstructed = sphere.reconstruct(sphere_coefficients)
 laplacian_values = sphere.laplacian(values)
 ```
 
@@ -127,7 +132,7 @@ the prepared transform; it never identifies point values with modal coefficients
 Train the field against the existing coefficient-resident PDE compiler rather than
 reimplementing spectral derivatives or nonlinear products:
 
-```python
+```text
 physics = phx.terms.CompiledModalResidualTerm(
     compiled,
     function_name="u_hat",
@@ -167,7 +172,7 @@ declared resource budget.
 Nonlinear pseudospectral compilation requires an explicit policy. Quadratic Fourier
 products normally use 3/2 overresolution; cubic products require 2× overresolution.
 
-```python
+```text
 method = phx.discretization.PseudospectralMethodPlan(
     dealiasing=phx.discretization.PaddingDealiasingPlan(
         maximum_polynomial_degree=2,
@@ -188,7 +193,7 @@ it never reports exact nonlinear projection.
 
 The prepared method also owns direct nonlinear actions for modal solver callbacks:
 
-```python
+```text
 prepared_method = method.prepare(
     space,
     required_polynomial_degree=2,
@@ -212,7 +217,7 @@ one axis of a tensor spectral trial space. It evaluates selected
 nonlinear realization, without differentiating a neural model with respect to
 query coordinates:
 
-```python
+```text
 method = phx.discretization.PseudospectralMethodPlan(
     dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
 )
@@ -269,7 +274,7 @@ matrix-free operators.
 A spectral conservation method differentiates projected physical fluxes and therefore
 preserves the zero Fourier mode up to roundoff:
 
-```python
+```text
 method = phx.discretization.SpectralConservationMethodPlan(
     phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.ModalFilterPlan(2 / 3),
@@ -312,7 +317,7 @@ space = phx.discretization.TensorSpectralPlan(
     axis_names=("x", "y"),
     field_name="velocity",
 ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
-problem = phx.equations.IncompressibleFlowProblem(2, viscosity=1e-3)
+problem = phx.equations.IncompressibleFlowProblem(2, 1e-3)
 method = phx.discretization.PseudospectralMethodPlan(
     dealiasing=phx.discretization.PaddingDealiasingPlan(2),
 )
@@ -334,7 +339,7 @@ semidirect-product action, including reflected translations.
 Wall-bounded channel flow uses a Fourier x Chebyshev x Fourier tensor plan and a
 separate constrained Stokes preparation:
 
-```python
+```text
 problem = phx.equations.IncompressibleFlowProblem(3, viscosity=1e-3)
 constraint = phx.discretization.ChannelMeanConstraint(
     "pressure_gradient", (1.0, 0.0)
@@ -431,7 +436,7 @@ operator is diagonal. The method uses stable phi-function series at zero and sma
 arguments. `matrix_phi3_action` extends the shared matrix-function substrate; ETDRK
 does not carry a private matrix-function convention.
 
-```python
+```text
 method = phx.solver.ETDRKMethod(4)
 solution = phx.solver.solve_etdrk(
     method,

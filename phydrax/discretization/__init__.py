@@ -319,6 +319,7 @@ from .finite_difference import (
     write_fd_checkpoint,
 )
 from .finite_volume import (
+    AbstractArbitraryNormalNumericalFluxPlan,
     AbstractFaceReconstructionPlan,
     AbstractFiniteVolumeBoundary,
     AbstractNumericalFluxPlan,
@@ -1159,6 +1160,7 @@ __all__ = [
     "AbstractFaceReconstructionPlan",
     "AbstractFiniteVolumeBoundary",
     "ALEBoundaryContext",
+    "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",
     "AbstractSlopeLimiter",

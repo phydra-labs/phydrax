@@ -209,3 +209,17 @@ rmanak/FD, GFDFlow, mGFD, and fdtdx. Phydrax does not copy, translate, bundle, l
 or import their solver source, generated tables, runtime types, templates, fixtures,
 or executables. GPL/CC projects remain outside the distribution; neutral adapters
 accept data schemas only.
+
+High-order and spectral finite elements
+The spectral-element design study considered Nek5000, nekRS, Neko, Nekbone,
+gslib, NekCEM, nekStab, Nektar++, ITHACA-SEM, SOD2D, HORSES2D, pySEMTools,
+StableSpectralElements.jl, ReproduceEntropyStableDSEM, SELF, SPECFEM, AxiSEM,
+specnm, TSPEED, Semtex, and the historical NEKTAR-3D sources. Phydrax's
+reference-element identities, quadrature contracts, tensor execution, mapped
+geometry, gather/scatter, mortar, SBP, entropy, multigrid, distributed-workset,
+and solver integrations are independent implementations against Phydrax's
+existing finite-element, linear-algebra, precision, differentiation, and
+provenance contracts. No source code, generated kernels, numerical tables,
+fixtures, serialized artifacts, runtime types, or executables from those
+projects are copied, translated, bundled, linked, imported, or redistributed.
+Copyleft and unclear-license projects remain design references only.

@@ -576,7 +576,7 @@ Use `MomentPenalty` for deterministic per-step plans, fixed realizations, or
 caller-supplied realizations. It rejects resampled stochastic plans. Use
 `RandomizedMomentPenalty` when a moment is resampled during optimization:
 
-```python
+```text
 term = phx.terms.RandomizedMomentPenalty(
     condition,
     phx.integration.per_step(

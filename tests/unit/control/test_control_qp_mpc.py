@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -302,7 +301,7 @@ def test_compiler_rejects_indefinite_joint_stage_costs(control_cost, cross):
     )
 
     with pytest.raises(
-        eqx.EquinoxRuntimeError,
+        ValueError,
         match="joint stage costs must be positive semidefinite",
     ):
         phx.control.solve_linear_quadratic_control(specification)

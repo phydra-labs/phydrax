@@ -50,7 +50,7 @@ construction evidence or an explicit witness; finite samples do not mint proofs.
 Exact specifications and prepared products expose the same commutator, symmetrized
 Jordan product, and associator. The associator retains both bracket trees:
 
-```python
+```text
 octonion = phx.metrix.algebra.OctonionAlgebraSpec()
 product = octonion.prepare_product(backend="sparse")
 associator = product.associator(left, middle, right)

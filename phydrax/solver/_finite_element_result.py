@@ -20,64 +20,50 @@ from ..equations import FiniteElementExecutionPolicy
 
 
 class FiniteElementRunConfiguration(StrictModule, NonTrainableState):
-    representation: str = eqx.field(static=True)
+    realization: str = eqx.field(static=True)
+    local_kernel: str = eqx.field(static=True)
     accumulation: str = eqx.field(static=True)
     nonlinear_method: str = eqx.field(static=True)
     linear_method: str = eqx.field(static=True)
-    schema_version: int = eqx.field(static=True)
     configuration_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         /,
         *,
-        representation: str = "matrix-free",
+        realization: str = "matrix_free",
+        local_kernel: str = "auto",
         accumulation: str = "fast",
         nonlinear_method: str = "newton-krylov",
         linear_method: str = "auto",
-        schema_version: int = 1,
     ):
-        representation_ = str(representation)
-        accumulation_ = str(accumulation)
+        policy = FiniteElementExecutionPolicy(
+            realization=realization,
+            local_kernel=local_kernel,
+            accumulation=accumulation,
+        )
         nonlinear = str(nonlinear_method)
         linear = str(linear_method)
-        version = int(schema_version)
-        if representation_ not in (
-            "matrix-free",
-            "element-tensor",
-            "partial",
-            "sparse",
-        ):
-            raise ValueError("Unknown finite-element representation.")
-        if accumulation_ not in ("fast", "deterministic", "compensated"):
-            raise ValueError("Unknown finite-element accumulation mode.")
-        if not nonlinear or not linear or version != 1:
+        if not nonlinear or not linear:
             raise ValueError("Finite-element run configuration is invalid.")
-        self.representation = representation_
-        self.accumulation = accumulation_
+        self.realization = policy.realization
+        self.local_kernel = policy.local_kernel
+        self.accumulation = policy.accumulation
         self.nonlinear_method = nonlinear
         self.linear_method = linear
-        self.schema_version = version
         self.configuration_id = canonical_fingerprint(
             {
                 "kind": "finite-element-run-configuration",
-                "representation": representation_,
-                "accumulation": accumulation_,
+                "execution_policy": policy.policy_id,
                 "nonlinear_method": nonlinear,
                 "linear_method": linear,
-                "schema_version": version,
             }
         )
 
     def execution_policy(self, /) -> FiniteElementExecutionPolicy:
-        realization = {
-            "matrix-free": "matrix-free",
-            "element-tensor": "element-tensor",
-            "partial": "partial",
-            "sparse": "sparse",
-        }[self.representation]
         return FiniteElementExecutionPolicy(
-            realization=realization,
+            realization=self.realization,
+            local_kernel=self.local_kernel,
             accumulation=self.accumulation,
         )
 
@@ -216,7 +202,12 @@ def write_finite_element_result(path: str | Path, result: FiniteElementResult, /
         "conservation_defect": np.asarray(result.diagnostics.conservation_defect),
         "energy_defect": np.asarray(result.diagnostics.energy_defect),
     }
-    np.savez(Path(path), metadata=np.asarray(json.dumps(metadata)), **arrays)
+    np.savez(
+        Path(path),
+        metadata=np.asarray(json.dumps(metadata)),
+        allow_pickle=False,
+        **arrays,
+    )
 
 
 def read_finite_element_result(path: str | Path, /) -> FiniteElementResult:

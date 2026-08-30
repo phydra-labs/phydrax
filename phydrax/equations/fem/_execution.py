@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 import equinox as eqx
@@ -325,6 +326,22 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
 TensorProductAction = Literal["mass", "diffusion"]
 
 
+class FiniteElementMassPolicy(StrictModule, NonTrainableState):
+    """Exact, nodally collocated, or row-sum-lumped finite-element mass."""
+
+    kind: str = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(self, kind: str = "exact", /):
+        kind_ = str(kind)
+        if kind_ not in ("exact", "collocated_diagonal", "lumped"):
+            raise ValueError("Unknown finite-element mass policy.")
+        self.kind = kind_
+        self.policy_id = canonical_fingerprint(
+            {"kind": "finite-element-mass-policy", "mass_kind": kind_}
+        )
+
+
 class FiniteElementDiagonalData(StrictModule, NonTrainableState):
     """Exact coordinate diagonal with explicit construction provenance."""
 
@@ -441,20 +458,15 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         data = jnp.asarray(quadrature_data)
         routes = jnp.asarray(gathers, dtype=jnp.int32)
         size = int(global_size)
-        nodal_shape = (
-            plan.tabulation.basis_x.shape[1],
-            plan.tabulation.basis_y.shape[1],
-        )
-        quadrature_shape = (
-            plan.tabulation.basis_x.shape[0],
-            plan.tabulation.basis_y.shape[0],
-        )
-        if routes.ndim != 2 or routes.shape[1] != nodal_shape[0] * nodal_shape[1]:
+        nodal_shape = plan.tabulation.nodal_shape
+        quadrature_shape = plan.tabulation.evaluation_shape
+        dimension = plan.tabulation.dimension
+        if routes.ndim != 2 or routes.shape[1] != int(jnp.prod(jnp.asarray(nodal_shape))):
             raise ValueError("Tensor-product gathers do not match nodal axes.")
         expected = (
             (routes.shape[0],) + quadrature_shape
             if kind == "mass"
-            else (routes.shape[0],) + quadrature_shape + (2, 2)
+            else (routes.shape[0],) + quadrature_shape + (dimension, dimension)
         )
         if data.shape != expected:
             raise ValueError("Tensor-product quadrature data have incompatible shape.")
@@ -496,10 +508,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         value_ = jnp.asarray(value)
         if value_.shape != (self.global_size,):
             raise ValueError("Tensor-product input shape is incompatible.")
-        nodal_shape = (
-            self.plan.tabulation.basis_x.shape[1],
-            self.plan.tabulation.basis_y.shape[1],
-        )
+        nodal_shape = self.plan.tabulation.nodal_shape
         local = value_[self.gathers].reshape((self.gathers.shape[0],) + nodal_shape)
         if self.action_kind == "mass":
             quadrature = self.plan.interpolate(local)
@@ -508,7 +517,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
             )
         else:
             gradient = self.plan.gradient(local)
-            flux = oe.contract("epqab,epqb->epqa", self.quadrature_data, gradient)
+            flux = oe.contract("...ab,...b->...a", self.quadrature_data, gradient)
             local_output = self.plan.gradient_transpose(flux)
         contribution = local_output.reshape(self.gathers.shape)
         contribution = jnp.where(self.valid[:, None], contribution, 0.0)
@@ -537,7 +546,7 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
 class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
     """Collocated quad/hex mass-diffusion action with packed metric entries."""
 
-    derivative: Array
+    derivatives: tuple[Array, ...]
     weighted_metric: Array
     weighted_mass: Array
     gathers: Array
@@ -549,7 +558,7 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        derivative: ArrayLike,
+        derivative: ArrayLike | Sequence[ArrayLike],
         weighted_metric: ArrayLike,
         weighted_mass: ArrayLike,
         gathers: ArrayLike,
@@ -558,28 +567,35 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
         *,
         valid: ArrayLike | None = None,
     ):
-        derivative_ = jnp.asarray(derivative)
         metric = jnp.asarray(weighted_metric)
         mass = jnp.asarray(weighted_mass)
         routes = jnp.asarray(gathers, dtype=jnp.int32)
         size = int(global_size)
-        if derivative_.ndim != 2 or derivative_.shape[0] != derivative_.shape[1]:
-            raise ValueError("Collocated derivative must be one square matrix.")
-        points = int(derivative_.shape[0])
         if metric.ndim == 4 and metric.shape[-1] == 3:
             dimension = 2
-            expected_grid = (points, points)
         elif metric.ndim == 5 and metric.shape[-1] == 6:
             dimension = 3
-            expected_grid = (points, points, points)
         else:
             raise ValueError("Collocated metric must pack 2-D or 3-D symmetric entries.")
-        if metric.shape[1:-1] != expected_grid or mass.shape != metric.shape[:-1]:
+        expected_grid = tuple(int(value) for value in metric.shape[1:-1])
+        if isinstance(derivative, Sequence):
+            derivatives = tuple(jnp.asarray(value) for value in derivative)
+        else:
+            derivative_ = jnp.asarray(derivative)
+            derivatives = (derivative_,) * dimension
+        if len(derivatives) != dimension or any(
+            value.ndim != 2
+            or value.shape[0] != value.shape[1]
+            or value.shape[0] != expected_grid[axis]
+            for axis, value in enumerate(derivatives)
+        ):
+            raise ValueError(
+                "Collocated derivatives must be square and match each tensor axis."
+            )
+        if mass.shape != metric.shape[:-1]:
             raise ValueError("Collocated metric/mass grids are incompatible.")
-        if routes.shape != (metric.shape[0], points**dimension):
+        if routes.shape != (metric.shape[0], int(jnp.prod(jnp.asarray(expected_grid)))):
             raise ValueError("Collocated gathers do not match tensor grid size.")
-        if size <= 0 or bool(jnp.any((routes < 0) | (routes >= size))):
-            raise ValueError("Collocated tensor routes/global size are invalid.")
         valid_ = (
             jnp.ones((routes.shape[0],), dtype=bool)
             if valid is None
@@ -587,7 +603,7 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
         )
         if valid_.shape != (routes.shape[0],):
             raise ValueError("Collocated validity must match element count.")
-        self.derivative = derivative_
+        self.derivatives = derivatives
         self.weighted_metric = metric
         self.weighted_mass = mass
         self.gathers = routes
@@ -606,7 +622,7 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             {
                 "kind": "collocated-tensor-product-operator",
                 "dimension": dimension,
-                "points": points,
+                "points": expected_grid,
                 "elements": int(routes.shape[0]),
                 "global_size": size,
             }
@@ -616,12 +632,13 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
         value_ = jnp.asarray(value)
         if value_.shape != (self.global_size,):
             raise ValueError("Collocated tensor input shape is incompatible.")
-        points = self.derivative.shape[0]
         local = value_[self.gathers]
         if self.dimension == 2:
-            q = local.reshape((-1, points, points))
-            qx = oe.contract("ia,eaj->eij", self.derivative, q)
-            qy = oe.contract("ja,eia->eij", self.derivative, q)
+            nx, ny = self.weighted_mass.shape[1:]
+            dx, dy = self.derivatives
+            q = local.reshape((-1, nx, ny))
+            qx = oe.contract("ia,eaj->eij", dx, q)
+            qy = oe.contract("ja,eia->eij", dy, q)
             g00, g01, g11 = (
                 self.weighted_metric[..., 0],
                 self.weighted_metric[..., 1],
@@ -630,15 +647,17 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             flux_x = g00 * qx + g01 * qy
             flux_y = g01 * qx + g11 * qy
             output = (
-                oe.contract("ia,eij->eaj", self.derivative, flux_x)
-                + oe.contract("ja,eij->eia", self.derivative, flux_y)
+                oe.contract("ia,eij->eaj", dx, flux_x)
+                + oe.contract("ja,eij->eia", dy, flux_y)
                 + self.weighted_mass * q
             )
         else:
-            q = local.reshape((-1, points, points, points))
-            qx = oe.contract("ia,eajk->eijk", self.derivative, q)
-            qy = oe.contract("ja,eiak->eijk", self.derivative, q)
-            qz = oe.contract("ka,eija->eijk", self.derivative, q)
+            nx, ny, nz = self.weighted_mass.shape[1:]
+            dx, dy, dz = self.derivatives
+            q = local.reshape((-1, nx, ny, nz))
+            qx = oe.contract("ia,eajk->eijk", dx, q)
+            qy = oe.contract("ja,eiak->eijk", dy, q)
+            qz = oe.contract("ka,eija->eijk", dz, q)
             g00, g01, g02, g11, g12, g22 = tuple(
                 self.weighted_metric[..., index] for index in range(6)
             )
@@ -646,9 +665,9 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             flux_y = g01 * qx + g11 * qy + g12 * qz
             flux_z = g02 * qx + g12 * qy + g22 * qz
             output = (
-                oe.contract("ia,eijk->eajk", self.derivative, flux_x)
-                + oe.contract("ja,eijk->eiak", self.derivative, flux_y)
-                + oe.contract("ka,eijk->eija", self.derivative, flux_z)
+                oe.contract("ia,eijk->eajk", dx, flux_x)
+                + oe.contract("ja,eijk->eiak", dy, flux_y)
+                + oe.contract("ka,eijk->eija", dz, flux_z)
                 + self.weighted_mass * q
             )
         contribution = output.reshape(self.gathers.shape)
@@ -678,6 +697,7 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
 __all__ = [
     "CollocatedTensorProductOperator",
     "FiniteElementDiagonalData",
+    "FiniteElementMassPolicy",
     "ElementTensorOperator",
     "FiniteElementPreconditionerData",
     "PartialAssemblyOperator",

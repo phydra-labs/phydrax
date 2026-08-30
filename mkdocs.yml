@@ -145,6 +145,7 @@ nav:
         - Transport and adaptive SPH: "guides_transport_adaptive_sph.md"
         - Multiphase and incompressible SPH: "guides_multiphase_incompressible_sph.md"
         - Finite elements: "guides_finite_elements.md"
+        - Spectral elements: "guides_spectral_elements.md"
         - Finite-element applications: "guides_fem_applications.md"
         - FEM solver acceleration: "guides_fem_solver_acceleration.md"
         - Incompressible and multirate workflows: "guides_incompressible_multirate.md"

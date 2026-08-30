@@ -19,7 +19,7 @@ Sphere orientation is intentionally absent: it cannot affect isotropic sphere co
 
 ## Problem construction
 
-```python
+```text
 particles = phx.discretization.ParticleSetPlan(
     particle_ids,
     masses,
@@ -63,7 +63,7 @@ compiled = phx.equations.compile_discrete_element_problem(
 
 Initialize cached forces before constructing the fixed-step problem:
 
-```python
+```text
 state = compiled.initialize_state(0.0, position, velocity)
 problem = phx.solver.FixedStepProblem(
     phx.solver.DEMFixedStepMethod(compiled.dynamics),
