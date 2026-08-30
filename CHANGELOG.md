@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added implicit tensor-modal neural fields with Hermitian real-field projection,
+  explicit modal input scaling and resource bounds, optional positive exponential
+  decay and prepared-basis modulation, masked modal observations, and direct
+  residual training against compiled coefficient-resident spectral dynamics.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
