@@ -232,6 +232,37 @@ def test_widely_separated_schedule_matches_dense_without_van_loan_overflow(kerne
     assert jnp.allclose(result.posterior_variance, dense[2], rtol=2e-7, atol=2e-7)
 
 
+def test_large_time_origin_with_sub_ulp_length_scale_matches_dense_gp():
+    origin = jnp.asarray(1.0e12)
+    kernel = phx.kernels.Matern32Kernel(length_scale=1.0e-6)
+    train_times = origin + jnp.asarray([0.0, 0.25, 0.75])
+    train_values = jnp.asarray([0.3, -0.4, 0.2])
+    query_times = origin + jnp.asarray([-0.5, 0.25, 1.0])
+    noise_scale = jnp.asarray(0.04)
+    plan = phx.uq.compile_state_space_kernel(kernel, train_times, query_times)
+    result = phx.uq.fit_state_space_gaussian_process(
+        plan,
+        train_values,
+        noise_scale=noise_scale,
+    )
+    dense = _dense_gp(
+        kernel,
+        train_times,
+        train_values,
+        query_times,
+        jnp.ones(train_times.shape, dtype=bool),
+        noise_scale,
+    )
+
+    assert plan.initial_time == -kernel.length_scale
+    assert plan.inference_times[0] == 0.0
+    assert jnp.array_equal(result.posterior_times, query_times)
+    assert bool(result.successful)
+    assert jnp.allclose(result.log_marginal_likelihood, dense[0], rtol=2e-8, atol=2e-8)
+    assert jnp.allclose(result.posterior_mean, dense[1], rtol=2e-8, atol=2e-8)
+    assert jnp.allclose(result.posterior_variance, dense[2], rtol=2e-8, atol=2e-8)
+
+
 def test_schedule_is_stable_sorted_masked_and_invertible():
     train_times = jnp.asarray([3.0, -1.0, 0.5, 2.0])
     query_times = jnp.asarray([2.0, -2.0, 2.0, 4.0, 0.25])
@@ -510,17 +541,24 @@ def test_mutated_kernel_reports_evaluated_identity_and_exported_parameters(tmp_p
     assert archive.array("evaluated_length_scale") == 0.9
 
 
-def test_smoother_invalidity_has_a_non_success_gp_status():
+def test_requested_query_invalidity_has_a_non_success_gp_status():
     from phydrax.uq._state_space_gp import _state_space_gp_status
 
-    status = _state_space_gp_status(
+    filter_status = jnp.asarray([phx.uq.KALMAN_SUCCESS], dtype=jnp.int32)
+    failure = _state_space_gp_status(
         jnp.asarray(True),
-        jnp.asarray([phx.uq.KALMAN_SUCCESS], dtype=jnp.int32),
+        filter_status,
         jnp.asarray([True, False]),
     )
+    success = _state_space_gp_status(
+        jnp.asarray(True),
+        filter_status,
+        jnp.asarray([True]),
+    )
 
-    assert int(status) == phx.uq.STATE_SPACE_GP_SMOOTHER_FAILURE
-    assert phx.uq.state_space_gaussian_process_status_name(int(status)) == (
+    assert int(failure) == phx.uq.STATE_SPACE_GP_SMOOTHER_FAILURE
+    assert int(success) == phx.uq.KALMAN_SUCCESS
+    assert phx.uq.state_space_gaussian_process_status_name(int(failure)) == (
         "smoother_failure"
     )
 

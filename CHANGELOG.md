@@ -4,9 +4,10 @@
 
 ### Added
 - Added exact scalar temporal Matérn-3/2 and Matérn-5/2 Gaussian processes
-  through content-addressed continuous state-space compilation, stable irregular
-  train/query schedules, exact missing/query masks, bounded stationary long-gap
-  discretization, sequential square-root filtering and reverse-scan RTS smoothing,
+  through content-addressed continuous state-space compilation, origin-shifted
+  stable irregular train/query schedules, exact missing/query masks, bounded
+  stationary long-gap discretization, sequential square-root filtering and
+  reverse-scan RTS smoothing,
   dense-parity parameter gradients, active-observation marginal likelihoods,
   linear-storage predictive marginals, explicit compute precision,
   prepared/evaluated identity and failure provenance, portable result export,

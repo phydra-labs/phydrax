@@ -685,8 +685,10 @@ marginals.
 
 The kernel's `ScaleKernel.scale` is covariance variance, whereas `noise_scale` is
 observation standard deviation. Kernel and schedule dtypes must agree. A transformed
-fit recomputes the stationary prior, interval covariance, and dynamically earlier
-initial time from the evaluated kernel. Concrete results distinguish prepared and
+fit recomputes the stationary prior and interval covariance from the evaluated
+kernel on an origin-shifted internal schedule whose prior time is
+`-length_scale`. External timestamps remain unchanged. Concrete results distinguish
+prepared and
 evaluated content IDs; traced results export the exact evaluated parameter arrays
 when a host hash cannot be formed. Recompile when a new plan-level content identity
 is required. The linear-storage result deliberately returns marginal variances rather
