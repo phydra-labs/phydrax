@@ -176,9 +176,6 @@ class _NequIPInteraction(StrictModule):
         )
         messages = messages * edge_mask[:, None]
         aggregate = jnp.zeros_like(values).at[ir.receivers].add(messages)
-        neighbor_count = graph.neighbor_counts.reshape((-1,)).astype(values.dtype)
-        normalization = jnp.sqrt(jnp.maximum(neighbor_count, 1.0))
-        aggregate = aggregate / normalization[:, None]
         connected = self.self_connection(values, atomic_numbers) + aggregate
         activated = o3_gated_activation(connected, self.representation)
         return activated * node_mask[:, None]
@@ -402,6 +399,9 @@ class NequIPPotential(StrictModule):
         /,
     ) -> tuple[Array, Array, AtomisticGraph]:
         coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
+        if coordinate.shape != batch.positions.shape:
+            raise ValueError("positions must have the batch position shape.")
+        coordinate = jnp.where(batch.atom_mask[:, :, None], coordinate, 0.0)
         graph = realize_atomistic_graph(
             batch,
             cutoff=self.configuration.cutoff,
@@ -427,9 +427,14 @@ class NequIPPotential(StrictModule):
         scalar = self.embedding[numbers].astype(self.precision.compute_dtype)
         values = values.at[:, : self.configuration.feature_count].set(scalar)
         values = values * node_mask[:, None]
-        distance = jnp.asarray(ir.edges["distance"])[:, 0]
+        distance = jnp.where(
+            ir.edge_mask, jnp.asarray(ir.edges["distance"])[:, 0], 0.0
+        )
+        direction = jnp.where(
+            ir.edge_mask[:, None], jnp.asarray(ir.edges["direction"]), 0.0
+        )
         radial, cutoff_envelope = self._radial_basis(distance)
-        edge_features = self._edge_features(ir.edges["direction"], ir.edge_mask)
+        edge_features = self._edge_features(direction, ir.edge_mask)
         for interaction in self.interactions:
             values = interaction(
                 values,

@@ -287,3 +287,69 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
     prediction = energy_and_forces(result.best_potential, batch)
     assert bool(jnp.all(prediction.valid))
     assert prediction.energy.shape == (sample_count,)
+
+
+@pytest.mark.parametrize("continuation_family", ["painn", "nequip"])
+def test_training_rejects_cross_family_continuation(continuation_family):
+    batch = _batch()
+    energy, _ = _targets(batch)
+    problem = AtomisticTrainingProblem(batch, training_energy=energy)
+
+    def nequip(key):
+        return NequIPPotential(
+            SCALE,
+            cutoff=2.0,
+            maximum_neighbors=1,
+            maximum_dense_atoms=2,
+            feature_count=2,
+            interaction_count=1,
+            radial_basis_count=3,
+            key=key,
+        )
+
+    if continuation_family == "painn":
+        resumed = _potential(jr.key(401))
+        supplied = nequip(jr.key(402))
+    else:
+        resumed = nequip(jr.key(403))
+        supplied = _potential(jr.key(404))
+    continuation = fit_atomistic_potential(
+        resumed,
+        problem,
+        AtomisticTrainingPolicy(maximum_steps=0, force_weight=0.0),
+    )
+    with pytest.raises(ValueError, match="same concrete family"):
+        fit_atomistic_potential(
+            supplied,
+            problem,
+            AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+            continuation=continuation,
+        )
+
+
+def test_training_rejects_same_family_continuation_with_changed_configuration():
+    batch = _batch()
+    energy, _ = _targets(batch)
+    problem = AtomisticTrainingProblem(batch, training_energy=energy)
+    continuation = fit_atomistic_potential(
+        _potential(jr.key(405)),
+        problem,
+        AtomisticTrainingPolicy(maximum_steps=0, force_weight=0.0),
+    )
+    changed = PaiNNPotential(
+        SCALE,
+        cutoff=1.5,
+        maximum_neighbors=1,
+        maximum_dense_atoms=2,
+        feature_count=6,
+        interaction_count=1,
+        radial_basis_count=4,
+        key=jr.key(405),
+    )
+    with pytest.raises(ValueError, match="configuration"):
+        fit_atomistic_potential(
+            changed,
+            problem,
+            AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+            continuation=continuation,
+        )

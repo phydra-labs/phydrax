@@ -512,6 +512,45 @@ def _tree_finite(tree: Any, /) -> bool:
     )
 
 
+def _same_potential_configuration(
+    left: _AtomisticPotential,
+    right: _AtomisticPotential,
+    /,
+) -> bool:
+    if type(left) is not type(right):
+        return False
+    left_configuration = left.configuration
+    right_configuration = right.configuration
+    shared = (
+        left.scale.scale_id == right.scale.scale_id
+        and left.precision.policy_id == right.precision.policy_id
+        and left_configuration.cutoff == right_configuration.cutoff
+        and left_configuration.maximum_neighbors
+        == right_configuration.maximum_neighbors
+        and left_configuration.maximum_dense_atoms
+        == right_configuration.maximum_dense_atoms
+        and left_configuration.feature_count == right_configuration.feature_count
+        and left_configuration.interaction_count
+        == right_configuration.interaction_count
+        and left_configuration.radial_basis_count
+        == right_configuration.radial_basis_count
+        and left_configuration.maximum_atomic_number
+        == right_configuration.maximum_atomic_number
+    )
+    if not shared:
+        return False
+    if isinstance(left, NequIPPotential) and isinstance(right, NequIPPotential):
+        return (
+            left_configuration.maximum_tensor_product_parameters
+            == right_configuration.maximum_tensor_product_parameters
+            and left_configuration.maximum_degree
+            == right_configuration.maximum_degree
+            and left_configuration.tensor_product_plan_ids
+            == right_configuration.tensor_product_plan_ids
+        )
+    return True
+
+
 def fit_atomistic_potential(
     potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
@@ -555,6 +594,11 @@ def fit_atomistic_potential(
     else:
         if not isinstance(continuation, AtomisticTrainingResult):
             raise TypeError("continuation must be an AtomisticTrainingResult or None.")
+        if not _same_potential_configuration(potential, continuation.potential):
+            raise ValueError(
+                "Continuation potential must have the same concrete family and "
+                "configuration as the supplied potential."
+            )
         if continuation.problem_id != problem.problem_id:
             raise ValueError("Continuation result belongs to a different training problem.")
         if continuation.continuation_id != policy.continuation_id:

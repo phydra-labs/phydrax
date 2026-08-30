@@ -76,6 +76,26 @@ def test_conservative_force_matches_energy_finite_difference():
     np.testing.assert_allclose(prediction.net_torque, 0.0, atol=3e-9)
 
 
+def test_three_atom_energy_is_continuous_when_one_edge_crosses_cutoff():
+    model = _model(interaction_count=1)
+
+    def energy(distance):
+        structure = AtomicStructure(
+            [1, 6, 8],
+            [[0.0, 0.0, 0.0], [0.7, 0.2, 0.0], [distance, 0.0, 0.0]],
+            [1.0, 12.0, 16.0],
+            SCALE,
+        )
+        return model(structure)
+
+    step = 1e-7
+    below = energy(2.5 - step)
+    at = energy(2.5)
+    above = energy(2.5 + step)
+    assert abs(float(below - at)) < 1e-5
+    assert abs(float(above - at)) < 1e-5
+
+
 def test_atom_and_species_permutation_preserves_energy_and_permutes_force():
     model = _model()
     structure = _structure()
@@ -113,6 +133,35 @@ def test_padding_is_masked_and_neighbor_overflow_fails_closed_without_truncation
     assert bool(jnp.isnan(overflow.energy[0]))
     with pytest.raises(Exception, match="overflow"):
         overflow_model(water)
+
+
+def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps():
+    model = _model()
+    reference = AtomicStructure(
+        [1, 8], [[0.0, 0.0, 0.0], [0.8, 0.1, 0.0]], [1.0, 16.0], SCALE
+    )
+    padded = AtomicStructure(
+        [1, 8, 0, 0],
+        [
+            [0.0, 0.0, 0.0],
+            [0.8, 0.1, 0.0],
+            [np.nan, np.nan, np.nan],
+            [np.inf, -np.inf, np.inf],
+        ],
+        [1.0, 16.0, 0.0, 0.0],
+        SCALE,
+        active_mask=[True, True, False, False],
+    )
+    observed = energy_and_forces(model, padded)
+    expected = energy_and_forces(model, reference)
+    assert bool(observed.valid[0])
+    assert bool(jnp.all(jnp.isfinite(observed.energy)))
+    assert bool(jnp.all(jnp.isfinite(observed.forces)))
+    np.testing.assert_allclose(observed.energy, expected.energy, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        observed.forces[0, :2], expected.forces[0], rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(observed.forces[0, 2:], 0.0, atol=0.0)
 
 
 def test_radial_modulation_has_one_output_per_actual_tensor_product_weight():
