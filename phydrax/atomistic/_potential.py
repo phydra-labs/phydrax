@@ -27,6 +27,18 @@ class AbstractAtomisticPotential(StrictModule):
     method_id: AbstractAttribute[str]
 
     @abstractmethod
+    def _validate_batch(self, batch: Any, /) -> None:
+        """Validate one atomic batch against this model's execution contract."""
+
+        raise NotImplementedError
+
+    @abstractmethod
+    def _energy_unchecked(self, batch: Any, positions: Any, /) -> tuple[Any, Any, Any]:
+        """Evaluate batch energies and graph evidence after public validation."""
+
+        raise NotImplementedError
+
+    @abstractmethod
     def parameter_state_tree(self, /) -> Any:
         """Return exactly the trainable arrays defining numerical predictions."""
 
