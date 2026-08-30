@@ -12,4 +12,4 @@ Ownership is explicit:
 from . import activations, layers, models, operator, parameters
 
 
-__all__ = ["activations", "atomistic", "layers", "models", "operator", "parameters"]
+__all__ = ["activations", "layers", "models", "operator", "parameters"]

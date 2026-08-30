@@ -15,7 +15,7 @@ from jaxtyping import Array, Key
 from opt_einsum import contract
 
 from ..._doc import DOC_KEY0
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
@@ -109,10 +109,36 @@ class _PaiNNInteraction(StrictModule):
         )
         self.update_out = Linear(
             in_size=feature_count,
-            out_size=2 * feature_count,
+            out_size=3 * feature_count,
             rwf=False,
             weight_transform=identity,
             key=keys[7],
+        )
+
+    def atomwise_update(
+        self, scalar: Array, vector: Array, /
+    ) -> tuple[Array, Array]:
+        """Apply the norm-conditioned canonical three-head PaiNN atomwise update."""
+
+        vector_u = self.vector_u(vector)
+        vector_v = self.vector_v(vector)
+        squared_norm = contract("ndf,ndf->nf", vector_v, vector_v)
+        tiny = jnp.asarray(jnp.finfo(vector.dtype).tiny, dtype=vector.dtype)
+        vector_norm = jnp.where(
+            squared_norm > 0.0,
+            jnp.sqrt(jnp.maximum(squared_norm, tiny)),
+            0.0,
+        )
+        invariant = contract("ndf,ndf->nf", vector_u, vector_v)
+        update = self.update_out(
+            self.update_in(jnp.concatenate((scalar, vector_norm), axis=-1))
+        )
+        scalar_scalar, scalar_vector, vector_vector = jnp.split(
+            update, 3, axis=-1
+        )
+        return (
+            scalar + scalar_scalar + scalar_vector * invariant,
+            vector + vector_vector[:, None, :] * vector_u,
         )
 
     def __call__(
@@ -121,44 +147,78 @@ class _PaiNNInteraction(StrictModule):
         vector: Array,
         graph: AtomisticGraph,
         radial: Array,
+        cutoff_weight: Array,
         /,
     ) -> tuple[Array, Array]:
         ir = graph.graph
         if ir.senders is None or ir.receivers is None or ir.edge_mask is None:
             raise ValueError("PaiNN requires an explicit masked edge relation.")
         feature_count = int(scalar.shape[-1])
-        edge_weight = ir.edge_mask.astype(scalar.dtype)[:, None]
-        filtered = self.filter_out(self.filter_in(radial))
-        message = self.message_out(self.message_in(scalar[ir.senders])) * filtered
+        edge_mask = ir.edge_mask[:, None]
+        safe_radial = jnp.where(edge_mask, radial, 0.0)
+        safe_cutoff = jnp.where(edge_mask, cutoff_weight, 0.0)
+        filtered = self.filter_out(self.filter_in(safe_radial)) * safe_cutoff
+        sender_scalar = jnp.where(edge_mask, scalar[ir.senders], 0.0)
+        message = self.message_out(self.message_in(sender_scalar)) * filtered
+        message = jnp.where(edge_mask, message, 0.0)
         scalar_coefficient, vector_coefficient, direction_coefficient = jnp.split(
             message, 3, axis=-1
         )
-        direction = jnp.asarray(ir.edges["direction"], dtype=scalar.dtype)
+        direction = jnp.where(
+            edge_mask,
+            jnp.asarray(ir.edges["direction"], dtype=scalar.dtype),
+            0.0,
+        )
+        sender_vector = jnp.where(
+            edge_mask[:, :, None], vector[ir.senders], 0.0
+        )
         vector_message = (
-            vector_coefficient[:, None, :] * vector[ir.senders]
+            vector_coefficient[:, None, :] * sender_vector
             + direction_coefficient[:, None, :] * direction[:, :, None]
         )
         scalar_delta = jnp.zeros_like(scalar).at[ir.receivers].add(
-            scalar_coefficient * edge_weight
+            scalar_coefficient
         )
-        vector_delta = jnp.zeros_like(vector).at[ir.receivers].add(
-            vector_message * edge_weight[:, None, :]
+        vector_delta = jnp.zeros_like(vector).at[ir.receivers].add(vector_message)
+        scalar, vector = self.atomwise_update(
+            scalar + scalar_delta, vector + vector_delta
         )
-        scalar = scalar + scalar_delta
-        vector = vector + vector_delta
-
-        vector_u = self.vector_u(vector)
-        vector_v = self.vector_v(vector)
-        invariant = contract("ndf,ndf->nf", vector_u, vector_v)
-        update = self.update_out(
-            self.update_in(jnp.concatenate((scalar, invariant), axis=-1))
-        )
-        scalar_update, vector_gate = jnp.split(update, 2, axis=-1)
-        scalar = scalar + scalar_update
-        vector = vector + vector_gate[:, None, :] * vector_u
         if int(scalar.shape[-1]) != feature_count:
             raise RuntimeError("PaiNN interaction changed its scalar feature width.")
         return scalar, vector
+
+def _painn_parameter_state_id(potential: "PaiNNPotential", /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "painn-parameter-state",
+            "arrays": array_tree_fingerprint(
+                {
+                    "embedding": potential.embedding,
+                    "interactions": potential.interactions,
+                    "readout_hidden": potential.readout_hidden,
+                    "readout_energy": potential.readout_energy,
+                }
+            ),
+        }
+    )
+
+
+def refresh_painn_parameter_state(
+    potential: "PaiNNPotential", /
+) -> "PaiNNPotential":
+    """Refresh evaluated-state provenance after a host-side parameter update."""
+
+    state_id = _painn_parameter_state_id(potential)
+    potential_id = canonical_fingerprint(
+        {
+            "kind": "evaluated-painn-potential",
+            "architecture": potential.architecture_id,
+            "parameter_state": state_id,
+        }
+    )
+    object.__setattr__(potential, "parameter_state_id", state_id)
+    object.__setattr__(potential, "potential_id", potential_id)
+    return potential
 
 
 class PaiNNPotential(StrictModule):
@@ -176,6 +236,8 @@ class PaiNNPotential(StrictModule):
     configuration: _PaiNNConfiguration
     scale: AtomisticScaleContract
     precision: AtomisticPrecisionPolicy
+    architecture_id: str = eqx.field(static=True)
+    parameter_state_id: str = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
 
     def __init__(
@@ -260,9 +322,9 @@ class PaiNNPotential(StrictModule):
         )
         self.scale = scale
         self.precision = precision_
-        self.potential_id = canonical_fingerprint(
+        self.architecture_id = canonical_fingerprint(
             {
-                "kind": "painn-potential",
+                "kind": "painn-architecture",
                 "scale": scale.scale_id,
                 "precision": precision_.policy_id,
                 "cutoff": cutoff_value,
@@ -272,6 +334,14 @@ class PaiNNPotential(StrictModule):
                 "interaction_count": interactions,
                 "radial_basis_count": radial_count,
                 "maximum_atomic_number": maximum_z,
+            }
+        )
+        self.parameter_state_id = _painn_parameter_state_id(self)
+        self.potential_id = canonical_fingerprint(
+            {
+                "kind": "evaluated-painn-potential",
+                "architecture": self.architecture_id,
+                "parameter_state": self.parameter_state_id,
             }
         )
 
@@ -290,7 +360,7 @@ class PaiNNPotential(StrictModule):
                 "preserved cell or periodic metadata."
             )
 
-    def _radial_basis(self, distance: Array, /) -> Array:
+    def _radial_basis(self, distance: Array, /) -> tuple[Array, Array]:
         dtype = jnp.dtype(self.precision.compute_dtype)
         radius = jnp.asarray(distance, dtype=dtype)
         cutoff = jnp.asarray(self.configuration.cutoff, dtype=dtype)
@@ -304,7 +374,7 @@ class PaiNNPotential(StrictModule):
             0.5 * (jnp.cos(jnp.pi * scaled) + 1.0),
             0.0,
         )
-        return basis * envelope[:, None]
+        return basis, envelope[:, None]
 
     def _energy_unchecked(
         self,
@@ -334,9 +404,11 @@ class PaiNNPotential(StrictModule):
         )
         scalar = scalar * atom_mask[:, None]
         distance = jnp.asarray(graph.graph.edges["distance"])[:, 0]
-        radial = self._radial_basis(distance)
+        radial, cutoff_weight = self._radial_basis(distance)
         for interaction in self.interactions:
-            scalar, vector = interaction(scalar, vector, graph, radial)
+            scalar, vector = interaction(
+                scalar, vector, graph, radial, cutoff_weight
+            )
             scalar = scalar * atom_mask[:, None]
             vector = vector * atom_mask[:, None, None]
         atom_energy = self.readout_energy(self.readout_hidden(scalar))

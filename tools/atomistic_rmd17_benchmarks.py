@@ -115,6 +115,20 @@ def _fingerprint(value: Any, /) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _json_safe(value: Any, /) -> Any:
+    if isinstance(value, (float, np.floating)):
+        number = float(value)
+        if not np.isfinite(number):
+            label = "nan" if np.isnan(number) else ("positive_infinity" if number > 0 else "negative_infinity")
+            return {"kind": "nonfinite", "value": label}
+        return number
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _tree_bytes(tree: Any, /) -> int:
     return sum(
         int(leaf.size * leaf.dtype.itemsize)
@@ -386,7 +400,14 @@ def main() -> None:
             "network_fetch_used": arguments.url is not None,
         },
     }
-    print(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
+    print(
+        json.dumps(
+            _json_safe(payload),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+    )
 
 
 if __name__ == "__main__":

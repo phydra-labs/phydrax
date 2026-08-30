@@ -108,8 +108,10 @@ provenance. Net force and torque diagnose numerical equivariance defects; they
 are not silently projected to zero.
 
 `AtomisticPrecisionPolicy` separately declares coordinate, interaction,
-reduction, and output dtypes. Scale identity and precision identity are both
-recorded in prediction provenance.
+reduction, and output dtypes. Prediction provenance records scale and precision,
+the architecture identity, and a content fingerprint of the exact evaluated
+parameter state. Training refreshes that state identity for both final and
+selected-best potentials.
 
 ## Energy, force, or joint training
 

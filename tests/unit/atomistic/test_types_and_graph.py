@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import phydrax.atomistic._graph as graph_module
 from phydrax.atomistic import (
     AtomisticBatch,
     AtomisticScaleContract,
@@ -109,13 +110,19 @@ def test_neighborhood_overflow_is_reported_without_truncation():
     assert int(jnp.sum(graph.graph.edge_mask)) == 6
 
 
-def test_dense_graph_requires_explicit_atom_resource_guard():
+def test_dense_graph_guards_before_candidate_allocation(monkeypatch):
     structure = AtomicStructure(
         [1, 1], [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [1.0, 1.0], SCALE
     )
+    batch = AtomisticBatch.from_structure(structure)
+
+    def forbidden_allocation(*args, **kwargs):
+        raise AssertionError("candidate allocation happened before the guard")
+
+    monkeypatch.setattr(graph_module.np, "repeat", forbidden_allocation)
     with pytest.raises(ValueError, match="resource guard"):
         realize_atomistic_graph(
-            AtomisticBatch.from_structure(structure),
+            batch,
             cutoff=2.0,
             maximum_neighbors=1,
             maximum_dense_atoms=1,
@@ -128,3 +135,17 @@ def test_scale_mismatch_prevents_batch_construction():
     second = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], second_scale)
     with pytest.raises(ValueError, match="scale"):
         AtomisticBatch.from_structures((first, second))
+
+
+def test_with_positions_preserves_topology_and_refreshes_content_identity():
+    batch = AtomisticBatch.from_structure(
+        AtomicStructure(
+            [1, 1],
+            [[0.0, 0.0, 0.0], [0.8, 0.0, 0.0]],
+            [1.0, 1.0],
+            SCALE,
+        )
+    )
+    moved = batch.with_positions(batch.positions + 0.25)
+    assert moved.candidate_topology_id == batch.candidate_topology_id
+    assert moved.batch_id != batch.batch_id

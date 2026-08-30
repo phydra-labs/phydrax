@@ -25,6 +25,8 @@ from ._types import (
 class AtomisticProvenance(StrictModule, NonTrainableState):
     """Identity and mathematical guarantees of one energy/force evaluation."""
 
+    architecture_id: str = eqx.field(static=True)
+    parameter_state_id: str = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
     candidate_topology_id: str = eqx.field(static=True)
@@ -38,6 +40,8 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
     provenance_id: str = eqx.field(static=True)
 
     def __init__(self, potential: PaiNNPotential, batch: AtomisticBatch, /):
+        self.architecture_id = potential.architecture_id
+        self.parameter_state_id = potential.parameter_state_id
         self.potential_id = potential.potential_id
         self.batch_id = batch.batch_id
         self.candidate_topology_id = batch.candidate_topology_id
@@ -51,6 +55,8 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
         self.provenance_id = canonical_fingerprint(
             {
                 "kind": "atomistic-prediction-provenance",
+                "architecture": potential.architecture_id,
+                "parameter_state": potential.parameter_state_id,
                 "potential": potential.potential_id,
                 "batch": batch.batch_id,
                 "candidate_topology": batch.candidate_topology_id,
@@ -113,7 +119,7 @@ def energy_and_forces(
         batch.positions
     )
     energy, atom_energy, overflow, maximum_neighbor_count = auxiliary
-    forces = -gradient
+    forces = (-gradient).astype(potential.precision.output_dtype)
     mask = batch.atom_mask
     forces = forces * mask[:, :, None]
     finite_energy = jnp.isfinite(energy)
@@ -146,8 +152,12 @@ def energy_and_forces(
     center = contract("ba,bad->bd", mass, batch.positions) / jnp.sum(
         mass, axis=1
     )[:, None]
-    lever = batch.positions - center[:, None, :]
-    net_torque = jnp.sum(jnp.cross(lever, diagnostic_forces), axis=1)
+    lever = (batch.positions - center[:, None, :]).astype(
+        potential.precision.output_dtype
+    )
+    net_torque = jnp.sum(jnp.cross(lever, diagnostic_forces), axis=1).astype(
+        potential.precision.output_dtype
+    )
     return AtomisticPrediction(
         energy=energy,
         forces=forces,

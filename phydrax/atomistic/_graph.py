@@ -74,6 +74,28 @@ def realize_atomistic_graph(
             f"Dense atomistic graph capacity {batch.atom_capacity} exceeds the explicit "
             f"maximum_dense_atoms={dense_limit} resource guard."
         )
+    atom_capacity = batch.atom_capacity
+    case_count = batch.case_count
+    edge_capacity = atom_capacity * (atom_capacity - 1)
+    local_senders = np.repeat(
+        np.arange(atom_capacity, dtype=np.int32), atom_capacity - 1
+    )
+    local_offsets = np.tile(
+        np.arange(atom_capacity - 1, dtype=np.int32), atom_capacity
+    )
+    local_receivers = local_offsets + (local_offsets >= local_senders)
+    case_offsets = np.repeat(
+        np.arange(case_count, dtype=np.int32) * atom_capacity, edge_capacity
+    )
+    senders = jnp.asarray(
+        np.tile(local_senders, case_count) + case_offsets, dtype=jnp.int32
+    )
+    receivers = jnp.asarray(
+        np.tile(local_receivers, case_count) + case_offsets, dtype=jnp.int32
+    )
+    edge_cases = jnp.repeat(
+        jnp.arange(case_count, dtype=jnp.int32), edge_capacity
+    )
     coordinate = batch.positions if positions is None else jnp.asarray(positions)
     if coordinate.shape != batch.positions.shape:
         raise ValueError("positions must have the batch position shape.")
@@ -81,27 +103,25 @@ def realize_atomistic_graph(
     flat_numbers = batch.atomic_numbers.reshape((-1,))
     flat_masses = batch.masses.reshape((-1,))
     flat_mask = batch.atom_mask.reshape((-1,))
-    displacement = flat_position[batch.receivers] - flat_position[batch.senders]
+    endpoint_mask = flat_mask[senders] & flat_mask[receivers]
+    raw_displacement = flat_position[receivers] - flat_position[senders]
+    displacement = jnp.where(endpoint_mask[:, None], raw_displacement, 0.0)
     squared_distance = jnp.sum(displacement * displacement, axis=-1)
     tiny = jnp.asarray(jnp.finfo(coordinate.dtype).tiny, dtype=coordinate.dtype)
     positive_distance = jnp.sqrt(jnp.maximum(squared_distance, tiny))
     distance = jnp.where(squared_distance > 0.0, positive_distance, 0.0)
     safe_distance = jnp.where(distance > 0.0, distance, 1.0)
     direction = displacement / safe_distance[:, None]
-    endpoint_mask = flat_mask[batch.senders] & flat_mask[batch.receivers]
     edge_mask = endpoint_mask & (distance < jnp.asarray(cutoff_value, coordinate.dtype))
     neighbor_counts = jnp.zeros(
-        (batch.case_count * batch.atom_capacity,), dtype=jnp.int32
-    ).at[batch.receivers].add(edge_mask.astype(jnp.int32))
-    neighbor_counts = neighbor_counts.reshape(
-        (batch.case_count, batch.atom_capacity)
-    )
+        (case_count * atom_capacity,), dtype=jnp.int32
+    ).at[receivers].add(edge_mask.astype(jnp.int32))
+    neighbor_counts = neighbor_counts.reshape((case_count, atom_capacity))
     maximum_neighbor_count = jnp.max(neighbor_counts, axis=1)
     overflow = maximum_neighbor_count > neighbor_limit
-    active_edges = jnp.zeros((batch.case_count,), dtype=jnp.int32).at[
-        batch.edge_cases
-    ].add(edge_mask.astype(jnp.int32))
-    edge_capacity = batch.atom_capacity * (batch.atom_capacity - 1)
+    active_edges = jnp.zeros((case_count,), dtype=jnp.int32).at[edge_cases].add(
+        edge_mask.astype(jnp.int32)
+    )
     graph = GraphIR(
         nodes={
             "atomic_numbers": flat_numbers,
@@ -112,20 +132,20 @@ def realize_atomistic_graph(
             "displacement": displacement,
             "distance": distance[:, None],
             "direction": direction,
-            "case_index": batch.edge_cases,
+            "case_index": edge_cases,
         },
-        senders=batch.senders,
-        receivers=batch.receivers,
+        senders=senders,
+        receivers=receivers,
         globals={
             "active_edge_count": active_edges,
             "maximum_neighbor_count": maximum_neighbor_count,
             "overflow": overflow,
         },
-        n_node=jnp.full((batch.case_count,), batch.atom_capacity, dtype=jnp.int32),
-        n_edge=jnp.full((batch.case_count,), edge_capacity, dtype=jnp.int32),
+        n_node=jnp.full((case_count,), atom_capacity, dtype=jnp.int32),
+        n_edge=jnp.full((case_count,), edge_capacity, dtype=jnp.int32),
         node_mask=flat_mask,
         edge_mask=edge_mask,
-        graph_mask=jnp.ones((batch.case_count,), dtype=bool),
+        graph_mask=jnp.ones((case_count,), dtype=bool),
     )
     graph_id = canonical_fingerprint(
         {

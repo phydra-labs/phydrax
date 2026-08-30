@@ -18,9 +18,13 @@ from jaxtyping import Array, ArrayLike, Key
 from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
-from .._trainable import combine_trainable, NonTrainableState, partition_trainable
+from .._trainable import NonTrainableState, combine_trainable, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
-from ..nn.atomistic._painn import PaiNNPotential
+from ..nn.atomistic._painn import (
+    PaiNNPotential,
+    refresh_painn_parameter_state,
+)
+from ._graph import realize_atomistic_graph
 from ._types import AtomisticBatch, AtomisticStatus
 
 
@@ -145,6 +149,12 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
                         "validation_forces": None
                         if valid_forces is None
                         else np.asarray(valid_forces),
+                        "validation_energy_mask": None
+                        if valid_energy_mask is None
+                        else np.asarray(valid_energy_mask),
+                        "validation_force_mask": None
+                        if valid_force_mask is None
+                        else np.asarray(valid_force_mask),
                     }
                 ),
             }
@@ -442,18 +452,16 @@ def _loss(
         residual = (predicted_energy - energy_target) / count
         residual = residual / normalization.energy_per_atom_scale
         mask = jnp.asarray(energy_mask, dtype=bool)
-        energy_loss = jnp.sum(jnp.where(mask, residual * residual, 0.0)) / jnp.sum(
-            mask
-        )
+        residual = jnp.where(mask, residual, 0.0)
+        energy_loss = jnp.sum(residual * residual) / jnp.sum(mask)
     force_loss = zero
     if force_target is not None and policy.force_weight > 0.0:
         if predicted_forces is None:
             raise RuntimeError("Force loss requested without a conservative force evaluation.")
         residual = (predicted_forces - force_target) / normalization.force_component_scale
         mask = jnp.asarray(force_mask, dtype=bool)
-        force_loss = jnp.sum(jnp.where(mask, residual * residual, 0.0)) / jnp.sum(
-            mask
-        )
+        residual = jnp.where(mask, residual, 0.0)
+        force_loss = jnp.sum(residual * residual) / jnp.sum(mask)
     total = policy.energy_weight * energy_loss + policy.force_weight * force_loss
     total = jnp.where(jnp.any(overflow), jnp.asarray(jnp.nan, total.dtype), total)
     return total, (energy_loss, force_loss)
@@ -508,6 +516,34 @@ def _tree_finite(tree: Any, /) -> bool:
     )
 
 
+def _parameter_loss(
+    parameters: Any,
+    fixed: Any,
+    problem: AtomisticTrainingProblem,
+    normalization: AtomisticTrainingNormalization,
+    policy: AtomisticTrainingPolicy,
+    /,
+) -> tuple[Array, tuple[Array, Array]]:
+    candidate = combine_trainable(parameters, fixed)
+    return _training_loss(candidate, problem, normalization, policy)
+
+
+def _batch_neighbor_overflow(
+    potential: PaiNNPotential, batch: AtomisticBatch, /
+) -> bool:
+    graph = realize_atomistic_graph(
+        batch,
+        cutoff=potential.configuration.cutoff,
+        maximum_neighbors=potential.configuration.maximum_neighbors,
+        maximum_dense_atoms=potential.configuration.maximum_dense_atoms,
+    )
+    return bool(np.asarray(jnp.any(graph.overflow)))
+
+
+def _fingerprint_history(values: Sequence[float], /) -> list[float | None]:
+    return [float(value) if math.isfinite(float(value)) else None for value in values]
+
+
 def fit_atomistic_potential(
     potential: PaiNNPotential,
     problem: AtomisticTrainingProblem,
@@ -554,9 +590,13 @@ def fit_atomistic_potential(
         if continuation.problem_id != problem.problem_id:
             raise ValueError("Continuation result belongs to a different training problem.")
         if continuation.continuation_id != policy.continuation_id:
-            raise ValueError("Continuation policy changed optimizer, loss, or selection semantics.")
+            raise ValueError(
+                "Continuation policy changed optimizer, loss, or selection semantics."
+            )
         if continuation.normalization.normalization_id != normalization.normalization_id:
-            raise ValueError("Continuation normalization no longer matches the training split.")
+            raise ValueError(
+                "Continuation normalization no longer matches the training split."
+            )
         if continuation.progress.update_step > policy.maximum_steps:
             raise ValueError("Continuation step exceeds the requested training ceiling.")
         current = continuation.potential
@@ -566,7 +606,9 @@ def fit_atomistic_potential(
         training_history = np.asarray(continuation.training_loss_history).tolist()
         energy_history = np.asarray(continuation.energy_loss_history).tolist()
         force_history = np.asarray(continuation.force_loss_history).tolist()
-        validation_history = np.asarray(continuation.validation_loss_history).tolist()
+        validation_history = np.asarray(
+            continuation.validation_loss_history
+        ).tolist()
         validation_steps = np.asarray(continuation.validation_steps).tolist()
     control = TrainingController(
         total_steps=policy.maximum_steps,
@@ -577,23 +619,57 @@ def fit_atomistic_potential(
     if continuation is not None:
         control.best_payload = continuation.best_potential
     control.emit("start")
+    training_overflow = _batch_neighbor_overflow(
+        current, problem.training_batch
+    )
+    validation_overflow = (
+        False
+        if problem.validation_batch is None
+        else _batch_neighbor_overflow(current, problem.validation_batch)
+    )
     terminal_status = AtomisticStatus.SUCCESS
     termination = "maximum_steps"
-    if control.stop_requested:
+    if training_overflow or validation_overflow:
+        terminal_status = AtomisticStatus.NEIGHBOR_OVERFLOW
+        if training_overflow and validation_overflow:
+            termination = "training_and_validation_neighbor_overflow"
+        elif training_overflow:
+            termination = "training_neighbor_overflow"
+        else:
+            termination = "validation_neighbor_overflow"
+    elif continuation is None:
+        initial_loss = _validation_loss(
+            current, problem, normalization, policy
+        )
+        initial_value = float(np.asarray(initial_loss))
+        validation_history.append(initial_value)
+        validation_steps.append(0)
+        if math.isfinite(initial_value):
+            current = refresh_painn_parameter_state(current)
+            control.select(
+                initial_value,
+                current,
+                step=0,
+                min_delta=policy.min_delta,
+                patience=policy.patience,
+            )
+            control.emit("validation", metrics={"loss": initial_loss})
+        else:
+            terminal_status = AtomisticStatus.NONFINITE
+            termination = "nonfinite_initial_loss"
+    if terminal_status == AtomisticStatus.SUCCESS and control.stop_requested:
         terminal_status = AtomisticStatus.STOPPED_EARLY
         termination = "callback_stop_before_first_update"
+
     for step in range(progress.update_step + 1, policy.maximum_steps + 1):
-        if control.stop_requested:
+        if terminal_status != AtomisticStatus.SUCCESS or control.stop_requested:
             break
         trainable, fixed = partition_trainable(current)
-
-        def parameter_loss(parameters: Any) -> tuple[Array, tuple[Array, Array]]:
-            candidate = combine_trainable(parameters, fixed)
-            return _training_loss(candidate, problem, normalization, policy)
-
         (loss_value, _), gradients = jax.value_and_grad(
-            parameter_loss, has_aux=True
-        )(trainable)
+            _parameter_loss,
+            argnums=0,
+            has_aux=True,
+        )(trainable, fixed, problem, normalization, policy)
         if not bool(np.asarray(jnp.isfinite(loss_value))) or not _tree_finite(gradients):
             training_history.append(float("nan"))
             energy_history.append(float("nan"))
@@ -638,6 +714,7 @@ def fit_atomistic_potential(
                 terminal_status = AtomisticStatus.NONFINITE
                 termination = "nonfinite_validation_loss"
                 break
+            current = refresh_painn_parameter_state(current)
             control.select(
                 selected_value,
                 current,
@@ -650,27 +727,39 @@ def fit_atomistic_potential(
             terminal_status = AtomisticStatus.STOPPED_EARLY
             termination = "selection_or_callback_stop"
             break
-    if not validation_history:
-        selected_loss = _validation_loss(current, problem, normalization, policy)
+
+    current = refresh_painn_parameter_state(current)
+    if (
+        not validation_history
+        and terminal_status
+        not in (AtomisticStatus.NEIGHBOR_OVERFLOW, AtomisticStatus.NONFINITE)
+    ):
+        selected_loss = _validation_loss(
+            current, problem, normalization, policy
+        )
         selected_value = float(np.asarray(selected_loss))
         validation_history.append(selected_value)
         validation_steps.append(control.progress.update_step)
         if math.isfinite(selected_value):
-            control.select(selected_value, current, step=control.progress.update_step)
+            control.select(
+                selected_value, current, step=control.progress.update_step
+            )
         else:
             terminal_status = AtomisticStatus.NONFINITE
-            termination = "nonfinite_initial_loss"
-    final_loss = (
-        training_history[-1]
-        if training_history
-        else validation_history[-1]
-    )
+            termination = "nonfinite_selection_loss"
+    if training_history:
+        final_loss = training_history[-1]
+    elif validation_history:
+        final_loss = validation_history[-1]
+    else:
+        final_loss = float("nan")
     best_loss = (
         float(control.progress.best_value)
         if control.progress.best_value is not None
         else float("nan")
     )
     best_potential = control.selected(current) if policy.select_best else current
+    best_potential = refresh_painn_parameter_state(best_potential)
     control.emit("stop", metrics={"final_loss": final_loss, "best_loss": best_loss})
     result_id = canonical_fingerprint(
         {
@@ -678,11 +767,12 @@ def fit_atomistic_potential(
             "problem": problem.problem_id,
             "policy": policy.policy_id,
             "potential": current.potential_id,
+            "best_potential": best_potential.potential_id,
             "normalization": normalization.normalization_id,
             "updates": control.progress.update_step,
             "status": int(terminal_status),
-            "training_history": training_history,
-            "validation_history": validation_history,
+            "training_history": _fingerprint_history(training_history),
+            "validation_history": _fingerprint_history(validation_history),
         }
     )
     dtype = problem.training_batch.positions.dtype

@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
+from opt_einsum import contract
 
 from phydrax.atomistic import (
     AtomisticBatch,
@@ -14,12 +15,13 @@ from phydrax.atomistic import (
     energy_and_forces,
 )
 from phydrax.nn.atomistic import PaiNNPotential
+from phydrax.nn.atomistic._painn import _PaiNNInteraction
 
 
 SCALE = AtomisticScaleContract("angstrom", "electronvolt")
 
 
-def _model(*, maximum_neighbors=3, precision=None):
+def _model(*, maximum_neighbors=3, precision=None, seed=7):
     return PaiNNPotential(
         SCALE,
         cutoff=2.5,
@@ -29,7 +31,7 @@ def _model(*, maximum_neighbors=3, precision=None):
         interaction_count=2,
         radial_basis_count=6,
         precision=precision,
-        key=jr.key(7),
+        key=jr.key(seed),
     )
 
 
@@ -104,6 +106,13 @@ def test_smooth_cutoff_has_zero_force_at_boundary():
     )
     prediction = energy_and_forces(model, structure)
     np.testing.assert_allclose(prediction.forces, 0.0, atol=1e-10)
+    radial, envelope = model._radial_basis(jnp.asarray([2.5]))
+    biased_filter = model.interactions[0].filter_out(
+        model.interactions[0].filter_in(radial)
+    )
+    assert float(jnp.linalg.norm(biased_filter)) > 0.0
+    np.testing.assert_allclose(envelope, 0.0, atol=0.0)
+    np.testing.assert_allclose(biased_filter * envelope, 0.0, atol=0.0)
     below = model(
         AtomicStructure(
             [1, 1], [[0.0, 0.0, 0.0], [2.5 - 1e-5, 0.0, 0.0]], [1.0, 1.0], SCALE
@@ -200,3 +209,68 @@ def test_neighbor_overflow_returns_invalid_typed_prediction_and_direct_energy_fa
     assert bool(jnp.isnan(prediction.energy[0]))
     with pytest.raises(Exception, match="overflow"):
         model(structure)
+
+
+def test_atomwise_update_is_canonical_norm_conditioned_three_head_equation():
+    interaction = _PaiNNInteraction(4, 3, jr.key(21))
+    scalar = jr.normal(jr.key(22), (3, 4))
+    vector = jr.normal(jr.key(23), (3, 3, 4))
+    observed_scalar, observed_vector = interaction.atomwise_update(scalar, vector)
+    vector_u = interaction.vector_u(vector)
+    vector_v = interaction.vector_v(vector)
+    squared_norm = contract("ndf,ndf->nf", vector_v, vector_v)
+    tiny = jnp.asarray(jnp.finfo(vector.dtype).tiny, dtype=vector.dtype)
+    vector_norm = jnp.where(
+        squared_norm > 0.0,
+        jnp.sqrt(jnp.maximum(squared_norm, tiny)),
+        0.0,
+    )
+    invariant = contract("ndf,ndf->nf", vector_u, vector_v)
+    heads = interaction.update_out(
+        interaction.update_in(jnp.concatenate((scalar, vector_norm), axis=-1))
+    )
+    scalar_scalar, scalar_vector, vector_vector = jnp.split(heads, 3, axis=-1)
+    expected_scalar = scalar + scalar_scalar + scalar_vector * invariant
+    expected_vector = vector + vector_vector[:, None, :] * vector_u
+    np.testing.assert_allclose(observed_scalar, expected_scalar, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(observed_vector, expected_vector, rtol=1e-12, atol=1e-12)
+
+
+def test_nonfinite_padding_geometry_is_inert_before_neural_messages():
+    structure = AtomicStructure(
+        [1, 1, 0],
+        [[0.0, 0.0, 0.0], [0.8, 0.0, 0.0], [np.nan, np.nan, np.nan]],
+        [1.0, 1.0, 0.0],
+        SCALE,
+        active_mask=[True, True, False],
+    )
+    prediction = energy_and_forces(_model(), structure)
+    assert bool(prediction.valid[0])
+    assert bool(jnp.all(jnp.isfinite(prediction.energy)))
+    assert bool(jnp.all(jnp.isfinite(prediction.forces)))
+    np.testing.assert_allclose(prediction.forces[0, 2], 0.0)
+
+
+def test_parameter_state_provenance_distinguishes_same_architecture_models():
+    first = _model(seed=31)
+    second = _model(seed=32)
+    assert first.architecture_id == second.architecture_id
+    assert first.parameter_state_id != second.parameter_state_id
+    assert first.potential_id != second.potential_id
+    provenance = energy_and_forces(first, _structure()).provenance
+    assert provenance.architecture_id == first.architecture_id
+    assert provenance.parameter_state_id == first.parameter_state_id
+
+
+def test_force_is_cast_to_output_dtype_when_coordinate_dtype_differs():
+    precision = AtomisticPrecisionPolicy(
+        coordinate_dtype="float64",
+        compute_dtype="float32",
+        reduction_dtype="float64",
+        output_dtype="float32",
+    )
+    prediction = energy_and_forces(_model(precision=precision), _structure())
+    assert prediction.energy.dtype == jnp.float32
+    assert prediction.forces.dtype == jnp.float32
+    assert prediction.net_force.dtype == jnp.float32
+    assert prediction.net_torque.dtype == jnp.float32

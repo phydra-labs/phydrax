@@ -34,11 +34,11 @@ def _batch():
     )
 
 
-def _potential(key):
+def _potential(key, *, maximum_neighbors=1):
     return PaiNNPotential(
         SCALE,
         cutoff=2.0,
-        maximum_neighbors=1,
+        maximum_neighbors=maximum_neighbors,
         maximum_dense_atoms=2,
         feature_count=6,
         interaction_count=1,
@@ -161,7 +161,8 @@ def test_nonfinite_supervision_terminates_with_typed_status():
     assert int(result.status) == int(AtomisticStatus.NONFINITE)
     assert not bool(result.successful)
     assert "nonfinite" in result.termination
-    assert result.training_loss_history.shape == (1,)
+    assert result.training_loss_history.shape == (0,)
+    np.testing.assert_array_equal(result.validation_steps, [0])
 
 
 def test_callbacks_receive_start_update_validation_and_stop_events():
@@ -179,7 +180,91 @@ def test_callbacks_receive_start_update_validation_and_stop_events():
         AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
         callbacks=(callback,),
     )
-    assert events == ["start", "update", "validation", "stop"]
+    assert events == ["start", "validation", "update", "validation", "stop"]
+
+
+def test_validation_masks_are_part_of_continuation_identity():
+    batch = _batch()
+    energy, _ = _targets(batch)
+    first_problem = AtomisticTrainingProblem(
+        batch,
+        training_energy=energy,
+        validation_batch=batch,
+        validation_energy=energy,
+        validation_energy_mask=[True, True, False],
+    )
+    changed_problem = AtomisticTrainingProblem(
+        batch,
+        training_energy=energy,
+        validation_batch=batch,
+        validation_energy=energy,
+        validation_energy_mask=[True, False, True],
+    )
+    assert first_problem.problem_id != changed_problem.problem_id
+    first = fit_atomistic_potential(
+        _potential(jr.key(41)),
+        first_problem,
+        AtomisticTrainingPolicy(maximum_steps=0, force_weight=0.0),
+    )
+    with pytest.raises(ValueError, match="different training problem"):
+        fit_atomistic_potential(
+            _potential(jr.key(41)),
+            changed_problem,
+            AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+            continuation=first,
+        )
+
+
+def test_masked_nonfinite_targets_are_inert_before_residual_squaring():
+    batch = _batch()
+    energy, forces = _targets(batch)
+    energy = energy.at[1].set(jnp.nan)
+    force_mask = jnp.ones_like(forces, dtype=bool).at[2, 1, 2].set(False)
+    forces = forces.at[2, 1, 2].set(jnp.nan)
+    problem = AtomisticTrainingProblem(
+        batch,
+        training_energy=energy,
+        training_forces=forces,
+        training_energy_mask=[True, False, True],
+        training_force_mask=force_mask,
+    )
+    result = fit_atomistic_potential(
+        _potential(jr.key(42)),
+        problem,
+        AtomisticTrainingPolicy(maximum_steps=1),
+    )
+    assert int(result.status) == int(AtomisticStatus.SUCCESS)
+    assert bool(jnp.all(jnp.isfinite(result.training_loss_history)))
+
+
+def test_training_reports_neighbor_overflow_without_nonfinite_conflation():
+    batch = _batch()
+    energy, _ = _targets(batch)
+    result = fit_atomistic_potential(
+        _potential(jr.key(43), maximum_neighbors=0),
+        AtomisticTrainingProblem(batch, training_energy=energy),
+        AtomisticTrainingPolicy(maximum_steps=2, force_weight=0.0),
+    )
+    assert int(result.status) == int(AtomisticStatus.NEIGHBOR_OVERFLOW)
+    assert "neighbor_overflow" in result.termination
+    assert result.training_loss_history.shape == (0,)
+
+
+def test_initial_model_is_selected_at_step_zero_and_trained_state_is_refingerprinted():
+    batch = _batch()
+    energy, _ = _targets(batch)
+    initial = _potential(jr.key(44))
+    initial_parameter_state = initial.parameter_state_id
+    result = fit_atomistic_potential(
+        initial,
+        AtomisticTrainingProblem(batch, training_energy=energy),
+        AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
+    )
+    assert int(result.validation_steps[0]) == 0
+    assert result.progress.best_step in (0, 1)
+    assert float(result.best_loss) <= float(result.validation_loss_history[0])
+    assert result.potential.parameter_state_id != initial_parameter_state
+    assert result.potential.potential_id != initial.potential_id
 
 
 def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(tmp_path):

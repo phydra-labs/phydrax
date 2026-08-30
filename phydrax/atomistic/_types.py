@@ -265,6 +265,38 @@ class AtomicStructure(StrictModule, NonTrainableState):
         return int(np.count_nonzero(np.asarray(self.active_mask)))
 
 
+def _atomistic_batch_id(
+    *,
+    scale_id: str,
+    topology_id: str,
+    structure_ids: tuple[str, ...],
+    atomic_numbers: Any,
+    positions: Any,
+    masses: Any,
+    mask: Any,
+    cells: Any,
+    periodic_axes: Any,
+) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "atomistic-batch",
+            "scale": scale_id,
+            "topology": topology_id,
+            "structure_ids": list(structure_ids),
+            "arrays": array_tree_fingerprint(
+                {
+                    "atomic_numbers": atomic_numbers,
+                    "positions": positions,
+                    "masses": masses,
+                    "mask": mask,
+                    "cells": cells,
+                    "periodic_axes": periodic_axes,
+                }
+            ),
+        }
+    )
+
+
 class AtomisticBatch(StrictModule, NonTrainableState):
     """Case-isolated fixed-capacity batch of finite molecular structures."""
 
@@ -277,9 +309,6 @@ class AtomisticBatch(StrictModule, NonTrainableState):
     scale: AtomisticScaleContract
     cells: Array | None
     periodic_axes: Array | None
-    senders: Array
-    receivers: Array
-    edge_cases: Array
     atom_cases: Array
     structure_ids: tuple[str, ...] = eqx.field(static=True)
     axis_names: tuple[str, str, str] = eqx.field(static=True)
@@ -385,26 +414,12 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             ).prepare(numeric_version=numeric_version)
             for index in range(case_count)
         )
-        local_sender, local_receiver = np.where(
-            ~np.eye(atom_capacity, dtype=bool)
-        )
-        senders = np.concatenate(
-            [local_sender + index * atom_capacity for index in range(case_count)]
-        ).astype(np.int32, copy=False)
-        receivers = np.concatenate(
-            [local_receiver + index * atom_capacity for index in range(case_count)]
-        ).astype(np.int32, copy=False)
-        edge_cases = np.repeat(
-            np.arange(case_count, dtype=np.int32), atom_capacity * (atom_capacity - 1)
-        )
         atom_cases = np.repeat(np.arange(case_count, dtype=np.int32), atom_capacity)
         topology_id = canonical_fingerprint(
             {
                 "kind": "dense-directed-atomistic-candidates",
                 "case_count": case_count,
                 "atom_capacity": atom_capacity,
-                "senders": array_tree_fingerprint(senders),
-                "receivers": array_tree_fingerprint(receivers),
                 "structure_particles": [value.prepared_id for value in particles],
             }
         )
@@ -419,31 +434,21 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         self.periodic_axes = (
             None if periodic_host is None else jnp.asarray(periodic_host, dtype=bool)
         )
-        self.senders = jnp.asarray(senders, dtype=jnp.int32)
-        self.receivers = jnp.asarray(receivers, dtype=jnp.int32)
-        self.edge_cases = jnp.asarray(edge_cases, dtype=jnp.int32)
         self.atom_cases = jnp.asarray(atom_cases, dtype=jnp.int32)
         self.structure_ids = ids_host
         self.axis_names = ("case", "atom", "cartesian")
         self.has_periodic_metadata = cell_host is not None or periodic_host is not None
         self.candidate_topology_id = topology_id
-        self.batch_id = canonical_fingerprint(
-            {
-                "kind": "atomistic-batch",
-                "scale": scale.scale_id,
-                "topology": topology_id,
-                "structure_ids": list(ids_host),
-                "arrays": array_tree_fingerprint(
-                    {
-                        "atomic_numbers": numbers,
-                        "positions": position_host,
-                        "masses": mass_host,
-                        "mask": mask,
-                        "cells": cell_host,
-                        "periodic_axes": periodic_host,
-                    }
-                ),
-            }
+        self.batch_id = _atomistic_batch_id(
+            scale_id=scale.scale_id,
+            topology_id=topology_id,
+            structure_ids=ids_host,
+            atomic_numbers=numbers,
+            positions=position_host,
+            masses=mass_host,
+            mask=mask,
+            cells=cell_host,
+            periodic_axes=periodic_host,
         )
 
     @classmethod
@@ -517,10 +522,29 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         return jnp.sum(self.atom_mask, axis=1, dtype=jnp.int32)
 
     def with_positions(self, positions: ArrayLike, /) -> "AtomisticBatch":
-        value = jnp.asarray(positions)
+        value = jnp.asarray(positions, dtype=self.positions.dtype)
         if value.shape != self.positions.shape:
             raise ValueError("Replacement positions must have the batch position shape.")
-        return eqx.tree_at(lambda batch: batch.positions, self, value)
+        host = np.asarray(value)
+        active = np.asarray(self.atom_mask, dtype=bool)
+        if np.any(~np.isfinite(host[active])):
+            raise ValueError("Replacement active atom positions must be finite.")
+        updated = eqx.tree_at(lambda batch: batch.positions, self, value)
+        batch_id = _atomistic_batch_id(
+            scale_id=self.scale.scale_id,
+            topology_id=self.candidate_topology_id,
+            structure_ids=self.structure_ids,
+            atomic_numbers=np.asarray(self.atomic_numbers),
+            positions=host,
+            masses=np.asarray(self.masses),
+            mask=active,
+            cells=None if self.cells is None else np.asarray(self.cells),
+            periodic_axes=(
+                None if self.periodic_axes is None else np.asarray(self.periodic_axes)
+            ),
+        )
+        object.__setattr__(updated, "batch_id", batch_id)
+        return updated
 
 
 __all__ = [
