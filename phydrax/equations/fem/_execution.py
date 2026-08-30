@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
@@ -324,6 +325,56 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
 TensorProductAction = Literal["mass", "diffusion"]
 
 
+class FiniteElementDiagonalData(StrictModule, NonTrainableState):
+    """Exact coordinate diagonal with explicit construction provenance."""
+
+    diagonal: object
+    zero_mask: object
+    negative_mask: object
+    method: str = eqx.field(static=True)
+    operator_id: str = eqx.field(static=True)
+    numeric_version: Array
+    diagonal_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        diagonal: object,
+        method: str,
+        operator_id: str,
+        /,
+        *,
+        numeric_version: ArrayLike = 0,
+    ):
+        method_ = str(method)
+        operator = str(operator_id)
+        version = jnp.asarray(numeric_version, dtype=jnp.int32)
+        if method_ not in ("sparse-coordinate", "workset", "coordinate-linearization"):
+            raise ValueError("Unknown finite-element diagonal construction method.")
+        if not operator or version.shape != () or version < 0:
+            raise ValueError("Diagonal operator identity/version are invalid.")
+        leaves = jax.tree.leaves(diagonal)
+        if not leaves or any(
+            not jnp.issubdtype(jnp.asarray(value).dtype, jnp.inexact) for value in leaves
+        ):
+            raise TypeError("Finite-element diagonal must contain inexact arrays.")
+        self.diagonal = diagonal
+        self.zero_mask = jax.tree.map(lambda value: jnp.asarray(value) == 0, diagonal)
+        self.negative_mask = jax.tree.map(
+            lambda value: jnp.real(jnp.asarray(value)) < 0, diagonal
+        )
+        self.method = method_
+        self.operator_id = operator
+        self.numeric_version = version
+        self.diagonal_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-diagonal-data",
+                "method": method_,
+                "operator": operator,
+                "shape": [list(jnp.asarray(value).shape) for value in leaves],
+            }
+        )
+
+
 class FiniteElementPreconditionerData(StrictModule, NonTrainableState):
     """Prepared diagonal/block/workset evidence for generic preconditioner builders."""
 
@@ -483,7 +534,150 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         )
 
 
+class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
+    """Collocated quad/hex mass-diffusion action with packed metric entries."""
+
+    derivative: Array
+    weighted_metric: Array
+    weighted_mass: Array
+    gathers: Array
+    valid: Array
+    dimension: int = eqx.field(static=True)
+    global_size: int = eqx.field(static=True)
+    properties: OperatorProperties
+    operator_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        derivative: ArrayLike,
+        weighted_metric: ArrayLike,
+        weighted_mass: ArrayLike,
+        gathers: ArrayLike,
+        global_size: int,
+        /,
+        *,
+        valid: ArrayLike | None = None,
+    ):
+        derivative_ = jnp.asarray(derivative)
+        metric = jnp.asarray(weighted_metric)
+        mass = jnp.asarray(weighted_mass)
+        routes = jnp.asarray(gathers, dtype=jnp.int32)
+        size = int(global_size)
+        if derivative_.ndim != 2 or derivative_.shape[0] != derivative_.shape[1]:
+            raise ValueError("Collocated derivative must be one square matrix.")
+        points = int(derivative_.shape[0])
+        if metric.ndim == 4 and metric.shape[-1] == 3:
+            dimension = 2
+            expected_grid = (points, points)
+        elif metric.ndim == 5 and metric.shape[-1] == 6:
+            dimension = 3
+            expected_grid = (points, points, points)
+        else:
+            raise ValueError("Collocated metric must pack 2-D or 3-D symmetric entries.")
+        if metric.shape[1:-1] != expected_grid or mass.shape != metric.shape[:-1]:
+            raise ValueError("Collocated metric/mass grids are incompatible.")
+        if routes.shape != (metric.shape[0], points**dimension):
+            raise ValueError("Collocated gathers do not match tensor grid size.")
+        if size <= 0 or bool(jnp.any((routes < 0) | (routes >= size))):
+            raise ValueError("Collocated tensor routes/global size are invalid.")
+        valid_ = (
+            jnp.ones((routes.shape[0],), dtype=bool)
+            if valid is None
+            else jnp.asarray(valid, dtype=bool)
+        )
+        if valid_.shape != (routes.shape[0],):
+            raise ValueError("Collocated validity must match element count.")
+        self.derivative = derivative_
+        self.weighted_metric = metric
+        self.weighted_mass = mass
+        self.gathers = routes
+        self.valid = valid_
+        self.dimension = dimension
+        self.global_size = size
+        self.properties = OperatorProperties(
+            self_adjoint=True,
+            positive_semidefinite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_semidefinite": "construction",
+            },
+        )
+        self.operator_id = canonical_fingerprint(
+            {
+                "kind": "collocated-tensor-product-operator",
+                "dimension": dimension,
+                "points": points,
+                "elements": int(routes.shape[0]),
+                "global_size": size,
+            }
+        )
+
+    def mv(self, value: ArrayLike, /) -> Array:
+        value_ = jnp.asarray(value)
+        if value_.shape != (self.global_size,):
+            raise ValueError("Collocated tensor input shape is incompatible.")
+        points = self.derivative.shape[0]
+        local = value_[self.gathers]
+        if self.dimension == 2:
+            q = local.reshape((-1, points, points))
+            qx = oe.contract("ia,eaj->eij", self.derivative, q)
+            qy = oe.contract("ja,eia->eij", self.derivative, q)
+            g00, g01, g11 = (
+                self.weighted_metric[..., 0],
+                self.weighted_metric[..., 1],
+                self.weighted_metric[..., 2],
+            )
+            flux_x = g00 * qx + g01 * qy
+            flux_y = g01 * qx + g11 * qy
+            output = (
+                oe.contract("ia,eij->eaj", self.derivative, flux_x)
+                + oe.contract("ja,eij->eia", self.derivative, flux_y)
+                + self.weighted_mass * q
+            )
+        else:
+            q = local.reshape((-1, points, points, points))
+            qx = oe.contract("ia,eajk->eijk", self.derivative, q)
+            qy = oe.contract("ja,eiak->eijk", self.derivative, q)
+            qz = oe.contract("ka,eija->eijk", self.derivative, q)
+            g00, g01, g02, g11, g12, g22 = tuple(
+                self.weighted_metric[..., index] for index in range(6)
+            )
+            flux_x = g00 * qx + g01 * qy + g02 * qz
+            flux_y = g01 * qx + g11 * qy + g12 * qz
+            flux_z = g02 * qx + g12 * qy + g22 * qz
+            output = (
+                oe.contract("ia,eijk->eajk", self.derivative, flux_x)
+                + oe.contract("ja,eijk->eiak", self.derivative, flux_y)
+                + oe.contract("ka,eijk->eija", self.derivative, flux_z)
+                + self.weighted_mass * q
+            )
+        contribution = output.reshape(self.gathers.shape)
+        contribution = jnp.where(self.valid[:, None], contribution, 0.0)
+        return (
+            jnp.zeros((self.global_size,), dtype=contribution.dtype)
+            .at[self.gathers]
+            .add(contribution)
+        )
+
+    def transpose_mv(self, value: ArrayLike, /) -> Array:
+        return self.mv(value)
+
+    def as_linear_operator(self, /) -> FunctionLinearOperator:
+        space = ArraySpace((self.global_size,), dtype=self.weighted_metric.dtype)
+        return FunctionLinearOperator(
+            self.mv,
+            source=space,
+            target=space,
+            transpose_action=self.transpose_mv,
+            properties=self.properties,
+            operator_id=self.operator_id,
+            closure_convert=False,
+        )
+
+
 __all__ = [
+    "CollocatedTensorProductOperator",
+    "FiniteElementDiagonalData",
     "ElementTensorOperator",
     "FiniteElementPreconditionerData",
     "PartialAssemblyOperator",
