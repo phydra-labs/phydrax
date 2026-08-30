@@ -343,9 +343,10 @@ not supported.
 Hamiltonian. It uses shared one- and two-electron streams, a static leading
 spin-up/trailing spin-down partition, full generalized Slater determinants,
 row/column-scaled log envelopes chosen from the combined nonzero orbital
-magnitudes, an analytic nonsingular log-determinant tangent that preserves
-dynamic zero-entry and subnormal derivatives, a stable signed linear determinant
-mixture that retains derivatives at zero coefficients, and envelope decays with a
+magnitudes, a recursive signed-log product with higher-order-correct zero and
+subnormal tangents, polynomial scaled determinants whose singular terms retain
+mixture derivatives, a stable signed linear determinant mixture that retains
+derivatives at zero coefficients, and envelope decays with a
 strictly positive configurable physical floor. Same-spin coordinate exchange is
 antisymmetric. The full generalized determinant does not impose a standalone
 spatial sign rule on an opposite-spin exchange.

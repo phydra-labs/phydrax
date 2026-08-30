@@ -12,9 +12,10 @@
   distance clipping, replayable electronic walkers, an exactly corrected
   state-dependent proposal, and a full-generalized-determinant
   `phydrax.nn.quantum.FermiNet` with same-spin antisymmetry, sparsity-aware
-  scaled log envelopes, analytic zero-entry/subnormal log-determinant tangents,
-  a positive physical decay floor, and determinant mixtures differentiable at
-  zero coefficients. Electronic VMC
+  scaled log envelopes, higher-order-correct zero/subnormal signed products,
+  polynomial singular-term determinant derivatives, a positive physical decay
+  floor, and determinant mixtures differentiable at zero coefficients.
+  Electronic VMC
   folds local statuses into validity and reuses persistent chains, matrix-free
   score/Gram stochastic reconfiguration, training lifecycle, linear solves,
   diagnostics, statuses, and checkpoints. Added H/He/H₂ tests,

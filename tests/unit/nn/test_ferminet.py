@@ -4,7 +4,11 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.nn.quantum._ferminet import _scaled_log_determinants
+from phydrax.nn.quantum._ferminet import (
+    _scaled_determinant_components,
+    _scaled_log_determinants,
+    _stable_signed_product,
+)
 
 
 def _structure(positions, *, name="molecule"):
@@ -141,6 +145,9 @@ def test_zero_dynamic_orbital_entry_retains_exact_logdet_gradient():
         return _scaled_log_determinants(raw_orbitals, log_envelope)[1][0]
 
     assert jnp.allclose(jax.grad(logdet)(jnp.asarray(0.0)), -1.0)
+    assert jnp.allclose(
+        jax.grad(jax.grad(logdet))(jnp.asarray(0.0)), -1.0
+    )
 
 
 def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow():
@@ -163,6 +170,28 @@ def test_subnormal_orbital_value_and_relative_jvp_do_not_overflow():
     )
     assert jnp.all(jnp.isfinite(value))
     assert jnp.allclose(directional[0], 1.0)
+
+
+def test_singular_determinant_term_retains_mixture_derivative():
+    log_envelope = jnp.zeros((2, 2, 2), dtype=jnp.float64)
+
+    def mixture_log_abs(entry):
+        singular = jnp.asarray(
+            [[0.0, 0.0], [0.0, 1.0]], dtype=jnp.float64
+        ).at[0, 0].set(entry)
+        constant = jnp.eye(2, dtype=jnp.float64)
+        raw_orbitals = jnp.stack((singular, constant))
+        determinant, log_scale = _scaled_determinant_components(
+            raw_orbitals, log_envelope
+        )
+        shift = jax.lax.stop_gradient(jnp.max(log_scale))
+        scaled = _stable_signed_product(determinant, log_scale - shift)
+        return shift + jnp.log(jnp.abs(jnp.sum(scaled)))
+
+    value = mixture_log_abs(jnp.asarray(0.0))
+    gradient = jax.grad(mixture_log_abs)(jnp.asarray(0.0))
+    assert jnp.allclose(value, 0.0)
+    assert jnp.allclose(gradient, 1.0)
 
 
 def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():

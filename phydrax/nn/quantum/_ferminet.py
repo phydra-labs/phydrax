@@ -25,9 +25,57 @@ from ...operators.quantum import LogAmplitude
 from ..parameters import PositiveTransform
 
 
+@jax.custom_jvp
+def _stable_signed_product(value: Array, log_scale: Array, /) -> Array:
+    """Evaluate ``value * exp(log_scale)`` without a tiny-times-huge product."""
+    nonzero = value != 0.0
+    safe_magnitude = jnp.where(nonzero, jnp.abs(value), 1.0)
+    combined_log_magnitude = jnp.where(
+        nonzero, jnp.log(safe_magnitude) + log_scale, 0.0
+    )
+    return jnp.where(
+        nonzero, jnp.sign(value) * jnp.exp(combined_log_magnitude), 0.0
+    )
+
+
+@_stable_signed_product.defjvp
+def _stable_signed_product_jvp(primals, tangents):
+    value, log_scale = primals
+    value_tangent, log_scale_tangent = tangents
+    primal = _stable_signed_product(value, log_scale)
+    tangent = _stable_signed_product(value_tangent, log_scale)
+    tangent = tangent + primal * log_scale_tangent
+    return primal, tangent
+
+
+def _polynomial_determinant(matrix: Array, /) -> Array:
+    """Determinant from Newton identities, including derivatives at singularity."""
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError("matrix must be square.")
+    size = int(matrix.shape[0])
+    power = jnp.eye(size, dtype=matrix.dtype)
+    traces = []
+    for _ in range(size):
+        power = contract("ij,jk->ik", power, matrix)
+        traces.append(jnp.trace(power))
+    elementary = [jnp.ones((), dtype=matrix.dtype)]
+    for degree in range(1, size + 1):
+        value = sum(
+            (
+                (-1.0) ** (power_index - 1)
+                * elementary[degree - power_index]
+                * traces[power_index - 1]
+                for power_index in range(1, degree + 1)
+            ),
+            jnp.zeros((), dtype=matrix.dtype),
+        ) / degree
+        elementary.append(value)
+    return elementary[-1]
+
+
 def _scaled_determinant_factors(
     raw_orbitals: Array, log_envelope: Array, /
-) -> tuple[Array, Array, Array, Array]:
+) -> tuple[Array, Array, Array]:
     if (
         raw_orbitals.shape != log_envelope.shape
         or raw_orbitals.ndim != 3
@@ -63,95 +111,43 @@ def _scaled_determinant_factors(
             0.0,
         )
     )
-    scaled_log_magnitude = (
-        combined_log_magnitude
-        - row_shift[:, :, None]
-        - column_shift[:, None, :]
+    scaled_log_envelope = (
+        log_envelope - row_shift[:, :, None] - column_shift[:, None, :]
     )
-    scaled_orbitals = jnp.where(
-        raw_nonzero,
-        jnp.sign(raw_orbitals) * jnp.exp(scaled_log_magnitude),
-        0.0,
+    scaled_orbitals = _stable_signed_product(
+        raw_orbitals, scaled_log_envelope
     )
-    return scaled_orbitals, row_shift, column_shift, raw_nonzero
+    return scaled_orbitals, row_shift, column_shift
 
 
-@jax.custom_jvp
+def _scaled_determinant_components(
+    raw_orbitals: Array, log_envelope: Array, /
+) -> tuple[Array, Array]:
+    scaled_orbitals, row_shift, column_shift = _scaled_determinant_factors(
+        raw_orbitals, log_envelope
+    )
+    scaled_determinant = jax.vmap(_polynomial_determinant)(scaled_orbitals)
+    determinant_log_scale = jnp.sum(row_shift, axis=-1) + jnp.sum(
+        column_shift, axis=-1
+    )
+    return scaled_determinant, determinant_log_scale
+
+
 def _scaled_log_determinants(
     raw_orbitals: Array, log_envelope: Array, /
 ) -> tuple[Array, Array]:
-    """Evaluate stable determinants with exact nonsingular logdet tangents."""
-    scaled_orbitals, row_shift, column_shift, _raw_nonzero = (
-        _scaled_determinant_factors(raw_orbitals, log_envelope)
-    )
-    determinant_sign, scaled_log_abs = jax.vmap(jnp.linalg.slogdet)(
-        scaled_orbitals
-    )
-    determinant_log_abs = (
-        scaled_log_abs
-        + jnp.sum(row_shift, axis=-1)
-        + jnp.sum(column_shift, axis=-1)
-    )
-    return determinant_sign, determinant_log_abs
-
-
-@_scaled_log_determinants.defjvp
-def _scaled_log_determinants_jvp(primals, tangents):
-    raw_orbitals, log_envelope = primals
-    raw_tangent, log_envelope_tangent = tangents
-    determinant_sign, determinant_log_abs = _scaled_log_determinants(
+    """Evaluate stable determinant signs and log magnitudes."""
+    scaled_determinant, determinant_log_scale = _scaled_determinant_components(
         raw_orbitals, log_envelope
     )
-    scaled_orbitals, row_shift, column_shift, _raw_nonzero = (
-        _scaled_determinant_factors(raw_orbitals, log_envelope)
+    nonzero = scaled_determinant != 0.0
+    safe_magnitude = jnp.where(nonzero, jnp.abs(scaled_determinant), 1.0)
+    determinant_log_abs = jnp.where(
+        nonzero,
+        jnp.log(safe_magnitude) + determinant_log_scale,
+        -jnp.inf,
     )
-
-    def scaled_logdet(matrix):
-        return jnp.linalg.slogdet(matrix)[1]
-
-    inverse_transpose = jax.vmap(jax.grad(scaled_logdet))(scaled_orbitals)
-    inverse_nonzero = inverse_transpose != 0.0
-    safe_inverse_magnitude = jnp.where(
-        inverse_nonzero,
-        jnp.abs(inverse_transpose),
-        jnp.ones((), inverse_transpose.dtype),
-    )
-    raw_gradient_log_abs = (
-        jnp.log(safe_inverse_magnitude)
-        + log_envelope
-        - row_shift[:, :, None]
-        - column_shift[:, None, :]
-    )
-    raw_gradient = jnp.where(
-        inverse_nonzero,
-        jnp.sign(inverse_transpose) * jnp.exp(raw_gradient_log_abs),
-        0.0,
-    )
-    raw_nonzero = raw_orbitals != 0.0
-    safe_raw_orbitals = jnp.where(raw_nonzero, raw_orbitals, 1.0)
-    nonzero_raw_contribution = (
-        inverse_transpose
-        * scaled_orbitals
-        * (raw_tangent / safe_raw_orbitals)
-    )
-    zero_raw_contribution = raw_gradient * raw_tangent
-    raw_contribution = jnp.where(
-        raw_nonzero, nonzero_raw_contribution, zero_raw_contribution
-    )
-    log_envelope_contribution = (
-        inverse_transpose * scaled_orbitals * log_envelope_tangent
-    )
-    log_abs_tangent = jnp.sum(
-        raw_contribution + log_envelope_contribution,
-        axis=(-2, -1),
-    )
-    return (
-        determinant_sign,
-        determinant_log_abs,
-    ), (
-        jnp.zeros_like(determinant_sign),
-        log_abs_tangent,
-    )
+    return jnp.sign(scaled_determinant), determinant_log_abs
 
 
 class _FermiNetConfiguration(StrictModule, NonTrainableState):
@@ -432,29 +428,31 @@ class FermiNet(StrictModule):
         )
         log_envelope = jnp.swapaxes(log_envelope, 1, 2)
 
-        determinant_sign, determinant_log_abs = _scaled_log_determinants(
-            raw_orbitals, log_envelope
+        scaled_determinant, determinant_log_scale = (
+            _scaled_determinant_components(raw_orbitals, log_envelope)
         )
-        determinant_defined = (
-            ~jnp.isnan(determinant_log_abs)
-            & ~jnp.isposinf(determinant_log_abs)
-            & jnp.isfinite(determinant_sign)
+        determinant_defined = jnp.isfinite(scaled_determinant) & jnp.isfinite(
+            determinant_log_scale
         )
-        finite_determinant = jnp.isfinite(determinant_log_abs) & jnp.isfinite(
-            determinant_sign
-        )
-        any_determinant = jnp.any(finite_determinant)
+        any_determinant = jnp.any(determinant_defined)
         determinant_shift = jax.lax.stop_gradient(
             jnp.max(
-                jnp.where(finite_determinant, determinant_log_abs, -jnp.inf)
+                jnp.where(
+                    determinant_defined, determinant_log_scale, -jnp.inf
+                )
             )
         )
         safe_determinant_shift = jnp.where(any_determinant, determinant_shift, 0.0)
-        scaled_determinant = jnp.where(
-            finite_determinant,
-            determinant_sign
-            * jnp.exp(determinant_log_abs - safe_determinant_shift),
+        safe_scaled_determinant = jnp.where(
+            determinant_defined, scaled_determinant, 0.0
+        )
+        relative_log_scale = jnp.where(
+            determinant_defined,
+            determinant_log_scale - safe_determinant_shift,
             0.0,
+        )
+        scaled_determinant = _stable_signed_product(
+            safe_scaled_determinant, relative_log_scale
         )
 
         coefficient_scale = jax.lax.stop_gradient(
