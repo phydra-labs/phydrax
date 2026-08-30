@@ -6,7 +6,7 @@
 - Added labeled nonintrusive polynomial chaos for independent scalar Uniform and
   Normal inputs: preflight-guarded graded total-degree multiindices and
   sample-by-feature projection storage, stable normalized Legendre/Hermite tensor
-  bases, content-addressed product-integration projection, diagnosed native
+  bases, content-addressed measure-honoring product-integration projection, diagnosed
   exact/least-squares regression with complete solver-policy identity, immutable
   array/Field/PyTree expansions, coefficient moments and first/total Sobol effects,
   portable fit evidence, and a matched-model-call benchmark campaign.

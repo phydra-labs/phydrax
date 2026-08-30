@@ -46,7 +46,6 @@ from phydrax.linalg import (
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
-from .._numerics import axis_level, smolyak_axis_data, smolyak_terms
 from .._polynomial import evaluate_tensor_basis, PolynomialMultiIndexSet
 from .._sampling import RandomizedQMCDesign
 from .._strict import StrictModule
@@ -475,8 +474,21 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         """Evaluate and orthogonally project a deterministic pointwise model."""
         if not callable(model):
             raise TypeError("model must be callable.")
+        basis_bytes_per_sample = _basis_storage_bytes(
+            1,
+            self.basis.feature_count,
+            self.precision,
+        )
+        basis_sample_limit = (
+            self.maximum_basis_bytes // basis_bytes_per_sample
+        )
+        preflight_limit = min(
+            self.maximum_model_evaluations,
+            basis_sample_limit,
+        )
         preflight_samples, preflight_replicates = _preflight_product_counts(
-            self.integration_plan
+            self.integration_plan,
+            limit=preflight_limit,
         )
         preflight_evaluations = preflight_samples * preflight_replicates
         if preflight_evaluations > self.maximum_model_evaluations:
@@ -880,27 +892,49 @@ def _content_identity(value: Any, /) -> dict[str, Any]:
 
 
 def _preflight_product_counts(
-    plan: ProductIntegrationPlan, /
+    plan: ProductIntegrationPlan,
+    /,
+    *,
+    limit: int,
 ) -> tuple[int, int]:
-    samples_per_replicate = 1
-    replicate_counts: set[int] = set()
-    for labels, factor_plan in plan.plans.items():
-        samples_per_replicate *= _factor_preflight_count(labels, factor_plan)
+    replicate_counts = {
+        factor_plan.design.num_replicates
+        for factor_plan in plan.plans.values()
         if (
             isinstance(factor_plan, QuasiMonteCarloPlan)
             and isinstance(factor_plan.design, RandomizedQMCDesign)
             and factor_plan.design.num_replicates > 1
-        ):
-            replicate_counts.add(factor_plan.design.num_replicates)
+        )
+    }
     if len(replicate_counts) > 1:
         raise ValueError(
             "Randomized-QMC product factors must use one replicate count."
         )
     replicates = 1 if not replicate_counts else replicate_counts.pop()
+    samples_per_replicate = 1
+    for labels, factor_plan in plan.plans.items():
+        factor_count = _factor_preflight_count(
+            labels,
+            factor_plan,
+            limit=limit,
+        )
+        samples_per_replicate = _saturating_product(
+            samples_per_replicate,
+            factor_count,
+            limit,
+        )
+        if samples_per_replicate > limit:
+            break
     return samples_per_replicate, replicates
 
 
-def _factor_preflight_count(labels: tuple[str, ...], plan: Any, /) -> int:
+def _factor_preflight_count(
+    labels: tuple[str, ...],
+    plan: Any,
+    /,
+    *,
+    limit: int,
+) -> int:
     if isinstance(plan, FixedQuadraturePlan):
         count = _fixed_rule_node_count(plan.rule)
         if isinstance(plan.rule, GaussianCubatureRule):
@@ -908,34 +942,91 @@ def _factor_preflight_count(labels: tuple[str, ...], plan: Any, /) -> int:
                 raise ValueError(
                     "Gaussian cubature dimension must match its product labels."
                 )
-            return count
-        return count ** len(labels)
+            return min(count, limit + 1)
+        result = 1
+        for _ in labels:
+            result = _saturating_product(result, count, limit)
+        return result
     if isinstance(plan, SparseGridPlan):
         if plan.dimension != len(labels):
             raise ValueError(
                 "Sparse-grid factor dimension must match its label group."
             )
-        return _sparse_grid_node_upper_bound(plan)
+        return _sparse_grid_node_upper_bound(plan, limit=limit)
     if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
-        return plan.num_samples
+        return min(plan.num_samples, limit + 1)
     raise TypeError(
         f"Unsupported product factor plan {type(plan).__name__!r}."
     )
 
 
-def _sparse_grid_node_upper_bound(plan: SparseGridPlan, /) -> int:
-    total = 0
-    for term in smolyak_terms(plan.dimension, plan.level, plan.anisotropy):
-        total += math.prod(
-            int(
-                smolyak_axis_data(
-                    rule,
-                    axis_level(term.index, axis),
-                ).nodes.shape[0]
-            )
-            for axis, rule in enumerate(plan.axis_rules)
+def _sparse_grid_node_upper_bound(
+    plan: SparseGridPlan,
+    /,
+    *,
+    limit: int,
+) -> int:
+    maximum_levels = []
+    for weight in plan.anisotropy:
+        numerator, denominator = weight.as_integer_ratio()
+        maximum_level = (plan.level * denominator) // numerator
+        if maximum_level > limit:
+            return limit + 1
+        maximum_levels.append(maximum_level)
+    axis_counts = tuple(
+        _sparse_axis_node_upper_bound(rule, level, limit=limit)
+        for rule, level in zip(
+            plan.axis_rules,
+            maximum_levels,
+            strict=True,
         )
-    return total
+    )
+    if plan.dimension == 1:
+        return axis_counts[0]
+    term_count = 1
+    tensor_count = 1
+    for maximum_level, axis_count in zip(
+        maximum_levels,
+        axis_counts,
+        strict=True,
+    ):
+        term_count = _saturating_product(
+            term_count,
+            maximum_level + 1,
+            limit,
+        )
+        tensor_count = _saturating_product(
+            tensor_count,
+            axis_count,
+            limit,
+        )
+    return _saturating_product(term_count, tensor_count, limit)
+
+
+def _sparse_axis_node_upper_bound(
+    rule: str,
+    level: int,
+    /,
+    *,
+    limit: int,
+) -> int:
+    if rule == "gauss-hermite":
+        return min(level + 1, limit + 1)
+    if rule == "clenshaw-curtis":
+        if level == 0:
+            return 1
+        if level >= max(1, (limit + 1).bit_length()):
+            return limit + 1
+        return min((1 << level) + 1, limit + 1)
+    raise ValueError(f"Unsupported sparse-grid axis rule {rule!r}.")
+
+
+def _saturating_product(left: int, right: int, limit: int, /) -> int:
+    if left > limit or right > limit:
+        return limit + 1
+    if right != 0 and left > limit // right:
+        return limit + 1
+    return left * right
 
 
 def _basis_storage_bytes(
