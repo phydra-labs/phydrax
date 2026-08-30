@@ -339,3 +339,155 @@ def test_randomized_point_design_requires_key_and_replays_with_same_key():
     assert jnp.array_equal(
         first.batch.points.points["z"].data, second.batch.points.points["z"].data
     )
+
+
+def test_matching_target_id_cannot_mask_different_gaussian_content():
+    _, _, kernel_mean, _ = _problem(target_id="shared")
+    probability = phx.domain.ProbabilityDomain(
+        phx.uq.Normal(5.0, 2.0),
+        label="z",
+    )
+    target = phx.integration.expectation(probability, target_id="shared")
+    plan = phx.integration.BayesianQuadraturePlan(
+        kernel_mean,
+        phx.domain.PointSampling(4, design="hammersley"),
+    )
+
+    with pytest.raises(ValueError, match="probability content"):
+        phx.integration.materialize(target, plan)
+
+
+def test_finite_inputs_with_overflowing_weighted_contraction_fail_closed():
+    _, target, _, plan = _problem(count=4)
+    realization = phx.integration.materialize(target, plan)
+    huge = jnp.asarray(
+        jnp.finfo(realization.batch.weights.dtype).max,
+        dtype=realization.batch.weights.dtype,
+    )
+    overflowing = eqx.tree_at(
+        lambda value: value.batch.weights,
+        realization,
+        jnp.full_like(realization.batch.weights, huge),
+    )
+    estimate = phx.integration.reduce(jnp.asarray(2.0), overflowing)
+
+    assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
+    assert jnp.isnan(estimate.value.data)
+
+
+def test_kernel_and_domain_function_execute_in_evaluation_dtype():
+    probability, target, kernel_mean, plan = _problem(count=7)
+    precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float32",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+        output_dtype="float64",
+    )
+    realization = phx.integration.materialize(target, plan, precision=precision)
+    points32 = realization.batch.points.points["z"].data.astype(jnp.float32)
+    assert kernel_mean.matrix(points32, points32).dtype == jnp.float32
+    assert kernel_mean.mean(points32).dtype == jnp.float32
+    assert kernel_mean._double_mean(jnp.dtype("float32")).dtype == jnp.float32
+
+    dtype_probe = probability.Function("z")(
+        lambda z: jnp.ones_like(z)
+        if z.dtype == jnp.float32
+        else jnp.zeros_like(z)
+    )
+    probe = phx.integration.reduce(dtype_probe, realization)
+    constant = phx.integration.reduce(jnp.asarray(1.0), realization)
+    assert jnp.allclose(probe.value.data, constant.value.data)
+
+
+def test_variance_envelope_uses_actual_arithmetic_precision():
+    _, target, _, plan = _problem(count=8)
+    precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float32",
+        accumulation_dtype="float32",
+        decision_dtype="float64",
+        output_dtype="float64",
+    )
+    realization = phx.integration.materialize(target, plan, precision=precision)
+    batch = realization.batch
+    variance_scale = jnp.maximum(
+        jnp.abs(batch.kernel_double_mean.astype(jnp.float64)),
+        jnp.abs(
+            jnp.sum(
+                batch.kernel_mean.astype(jnp.float64)
+                * batch.weights.astype(jnp.float64)
+            )
+        ),
+    )
+    expected_minimum = (
+        jnp.finfo(jnp.float32).eps * (8 * batch.weights.size + 16) * variance_scale
+    )
+
+    assert batch.posterior_variance.dtype == jnp.float64
+    assert batch.variance_roundoff_envelope.dtype == jnp.float64
+    assert batch.variance_roundoff_envelope >= expected_minimum
+
+
+def test_analytic_means_remain_finite_for_huge_legal_scales():
+    broad_kernel_probability = phx.domain.ProbabilityDomain(
+        phx.uq.Normal(0.0, 1.0), label="z"
+    )
+    broad_kernel_target = phx.integration.expectation(
+        broad_kernel_probability, target_id="broad-kernel"
+    )
+    broad_kernel = phx.integration.GaussianKernelMean(
+        broad_kernel_target,
+        phx.kernels.SquaredExponentialKernel(length_scale=1.0e200),
+    )
+    assert broad_kernel.mean(jnp.asarray([0.0]))[0] == pytest.approx(1.0)
+    assert broad_kernel.double_mean() == pytest.approx(1.0)
+
+    broad_normal_probability = phx.domain.ProbabilityDomain(
+        phx.uq.Normal(0.0, 1.0e200), label="z"
+    )
+    broad_normal_target = phx.integration.expectation(
+        broad_normal_probability, target_id="broad-normal"
+    )
+    broad_normal = phx.integration.GaussianKernelMean(
+        broad_normal_target,
+        phx.kernels.SquaredExponentialKernel(length_scale=1.0),
+    )
+    single_mean = broad_normal.mean(jnp.asarray([0.0]))[0]
+    double_mean = broad_normal.double_mean()
+    assert jnp.isfinite(single_mean) & (single_mean > 0.0)
+    assert single_mean == pytest.approx(1.0e-200, rel=1e-12, abs=0.0)
+    assert jnp.isfinite(double_mean) & (double_mean > 0.0)
+    assert double_mean == pytest.approx(
+        2.0**-0.5 * 1.0e-200, rel=1e-12, abs=0.0
+    )
+
+
+def test_only_preflighted_dense_lu_solve_route_is_accepted():
+    _, _, kernel_mean, _ = _problem(count=4)
+    with pytest.raises(TypeError, match="only a DenseLU"):
+        phx.integration.BayesianQuadraturePlan(
+            kernel_mean,
+            phx.domain.PointSampling(4, design="hammersley"),
+            solve_policy=phx.linalg.LinearSolvePolicy(
+                phx.linalg.DenseCholesky(),
+                failure=phx.linalg.FailurePolicy("status"),
+            ),
+        )
+
+
+def test_tiny_kernel_amplitude_is_solved_in_relative_scale():
+    probability, target, _, plan = _problem(
+        count=4,
+        kernel_scale=1.0e-20,
+        observation_noise=0.0,
+        solve_regularization=0.0,
+    )
+    estimate = phx.integration.integrate(
+        probability.Function("z")(lambda z: z**2),
+        target,
+        plan,
+    )
+
+    assert estimate.successful
+    assert estimate.diagnostics.solve.successful
+    assert jnp.isfinite(estimate.value.data)
+    assert jnp.isfinite(estimate.error_estimate)

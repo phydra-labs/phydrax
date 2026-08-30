@@ -8,6 +8,7 @@ from typing import Any
 
 import coordax as cx
 import equinox as eqx
+from jax import core as jax_core
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
@@ -59,8 +60,9 @@ class GaussianKernelMean(StrictModule):
 
     kernel: SquaredExponentialKernel | ScaleKernel
     location: Array
-    variance: Array
+    scale: Array
     target_id: str = eqx.field(static=True)
+    probability_label: str = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
 
     def __init__(
@@ -97,8 +99,9 @@ class GaussianKernelMean(StrictModule):
             )
         self.kernel = kernel
         self.location = jnp.reshape(distribution.location, (dimension,))
-        self.variance = jnp.reshape(distribution.variance, (dimension,))
+        self.scale = jnp.reshape(distribution.scale, (dimension,))
         self.target_id = target.target_id
+        self.probability_label = target.probability.label
         self.dimension = dimension
 
     def _parameters(self, dtype: Any, /) -> tuple[Array, Array, Array, Array]:
@@ -114,37 +117,71 @@ class GaussianKernelMean(StrictModule):
         return (
             length_scale,
             jnp.asarray(self.location, dtype=dtype),
-            jnp.asarray(self.variance, dtype=dtype),
+            jnp.asarray(self.scale, dtype=dtype),
             amplitude,
         )
 
-    def mean(self, points: ArrayLike, /) -> Array:
-        """Evaluate ∫ k(x, z) dP(z) at a point design."""
-        values = jnp.asarray(points, dtype=float)
-        values = eqx.error_if(
-            values,
-            jnp.any(~jnp.isfinite(values)),
-            "Kernel-mean points must contain only finite values.",
-        )
+    def _design(self, points: ArrayLike, name: str, /) -> Array:
+        values = jnp.asarray(points)
+        if not jnp.issubdtype(values.dtype, jnp.inexact):
+            values = values.astype(float)
         if self.dimension == 1 and values.ndim == 1:
             values = values[:, None]
         if values.ndim != 2 or values.shape[1] != self.dimension:
             raise ValueError(
-                "Kernel-mean points must have shape (num_points, dimension); "
+                f"{name} must have shape (num_points, dimension); "
                 f"expected dimension {self.dimension}, got {values.shape}."
             )
-        length_scale, location, variance, amplitude = self._parameters(values.dtype)
-        denominator = length_scale * length_scale + variance
-        normalization = jnp.prod(length_scale / jnp.sqrt(denominator))
-        exponent = -0.5 * jnp.sum((values - location) ** 2 / denominator, axis=1)
+        return eqx.error_if(
+            values,
+            jnp.any(~jnp.isfinite(values)),
+            f"{name} must contain only finite values.",
+        )
+
+    def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
+        """Evaluate the supported kernel without changing the operand dtype."""
+        left_values = self._design(left, "left kernel points")
+        right_values = self._design(right, "right kernel points")
+        if left_values.dtype != right_values.dtype:
+            raise ValueError("Kernel point designs must have equal dtypes.")
+        length_scale, _, _, amplitude = self._parameters(left_values.dtype)
+        standardized = (
+            left_values[:, None, :] - right_values[None, :, :]
+        ) / length_scale
+        return amplitude * jnp.exp(-0.5 * jnp.sum(standardized**2, axis=-1))
+
+    def mean(self, points: ArrayLike, /) -> Array:
+        """Evaluate ∫ k(x, z) dP(z) at a point design."""
+        values = self._design(points, "kernel-mean points")
+        length_scale, location, normal_scale, amplitude = self._parameters(
+            values.dtype
+        )
+        reference_scale = jnp.maximum(length_scale, normal_scale)
+        normalized_length = length_scale / reference_scale
+        normalized_normal = normal_scale / reference_scale
+        normalized_combined = jnp.sqrt(
+            normalized_length**2 + normalized_normal**2
+        )
+        normalization = jnp.prod(normalized_length / normalized_combined)
+        inverse_combined = jnp.reciprocal(reference_scale) / normalized_combined
+        standardized = values * inverse_combined - location * inverse_combined
+        exponent = -0.5 * jnp.sum(standardized**2, axis=1)
         return amplitude * normalization * jnp.exp(exponent)
+
+    def _double_mean(self, dtype: Any, /) -> Array:
+        length_scale, _, normal_scale, amplitude = self._parameters(dtype)
+        reference_scale = jnp.maximum(length_scale, normal_scale)
+        normalized_length = length_scale / reference_scale
+        normalized_normal = normal_scale / reference_scale
+        normalization = jnp.prod(
+            normalized_length
+            / jnp.sqrt(normalized_length**2 + 2.0 * normalized_normal**2)
+        )
+        return amplitude * normalization
 
     def double_mean(self, /) -> Array:
         """Evaluate ∬ k(x, z) dP(x) dP(z)."""
-        dtype = jnp.result_type(self.location, self.variance)
-        length_scale, _, variance, amplitude = self._parameters(dtype)
-        denominator = length_scale * length_scale + 2.0 * variance
-        return amplitude * jnp.prod(length_scale / jnp.sqrt(denominator))
+        return self._double_mean(jnp.result_type(self.location, self.scale))
 
     def __call__(self, points: ArrayLike, /) -> Array:
         return self.mean(points)
@@ -214,6 +251,19 @@ class BayesianQuadraturePlan(StrictModule):
         )
         if not isinstance(policy, LinearSolvePolicy):
             raise TypeError("solve_policy must be a LinearSolvePolicy or None.")
+        if not isinstance(policy.method, DenseLU):
+            raise TypeError(
+                "Bayesian quadrature currently accepts only a DenseLU solve policy."
+            )
+        if (
+            policy.preconditioning is not None
+            or policy.recycling is not None
+            or policy.rank.relative_cutoff is not None
+        ):
+            raise ValueError(
+                "Bayesian quadrature DenseLU does not accept preconditioning, "
+                "recycling, or a rank cutoff."
+            )
         if policy.failure.mode != "status":
             raise ValueError(
                 "Bayesian quadrature requires solve failure='status' to retain child "
@@ -289,47 +339,102 @@ def materialize_bayesian_quadrature(
         raise ValueError(
             "GaussianKernelMean target identity does not match the integration target."
         )
-    if not _is_phydrax_normal(target.probability.distribution):
+    if target.probability.label != plan.kernel_mean.probability_label:
+        raise ValueError(
+            "GaussianKernelMean probability label does not match the integration target."
+        )
+    distribution = target.probability.distribution
+    if not _is_phydrax_normal(distribution):
         raise TypeError("Bayesian quadrature currently requires a Gaussian target.")
+    binding_mismatch = (
+        (distribution.location != plan.kernel_mean.location[0])
+        | (distribution.scale != plan.kernel_mean.scale[0])
+    )
+    binding_message = (
+        "GaussianKernelMean probability content does not match the integration target."
+    )
+    if isinstance(binding_mismatch, jax_core.Tracer):
+        binding_anchor = eqx.error_if(
+            jnp.asarray(distribution.location),
+            binding_mismatch,
+            binding_message,
+        )
+    elif bool(binding_mismatch):
+        raise ValueError(binding_message)
+    else:
+        binding_anchor = jnp.asarray(distribution.location)
     policy = IntegrationPrecisionPolicy() if precision is None else precision
     if not isinstance(policy, IntegrationPrecisionPolicy):
         raise TypeError("precision must be an IntegrationPrecisionPolicy.")
     point_batch = _materialize_points(target, plan, key)
     label = target.probability.label
-    point_values = point_batch.points[label].data
-    design = policy.accumulation(policy.evaluation(point_values))
+    point_values = point_batch.points[label].data + jnp.zeros_like(
+        point_batch.points[label].data
+    ) * binding_anchor
+    evaluation_design = policy.evaluation(point_values)
+    solve_design = policy.accumulation(evaluation_design)
     if plan.kernel_mean.dimension != 1:
         raise ValueError(
             "Kernel-mean dimension does not match the scalar target dimension."
         )
-    if isinstance(plan.solve_policy.method, DenseLU):
-        kernel_matrix_bytes = (
-            design.shape[0] * design.shape[0] * jnp.dtype(design.dtype).itemsize
+    solve_itemsize = jnp.dtype(solve_design.dtype).itemsize
+    linear_precision = plan.solve_policy.precision
+    factorization_dtype = (
+        solve_design.dtype
+        if linear_precision is None or linear_precision.factorization_dtype is None
+        else jnp.dtype(linear_precision.factorization_dtype)
+    )
+    supported_solve_dtypes = (jnp.dtype(jnp.float32), jnp.dtype(jnp.float64))
+    if (
+        jnp.dtype(solve_design.dtype) not in supported_solve_dtypes
+        or jnp.dtype(factorization_dtype) not in supported_solve_dtypes
+    ):
+        raise TypeError(
+            "Bayesian quadrature DenseLU requires float32 or float64 solve and "
+            "factorization dtypes; no kernel matrix was allocated."
         )
-        resources = plan.solve_policy.resources
-        if (
-            kernel_matrix_bytes > resources.factorization_bytes
-            or kernel_matrix_bytes > resources.workspace_bytes
-        ):
-            raise ValueError(
-                "Bayesian quadrature kernel system exceeds the dense solve resource "
-                "budget; no kernel matrix was allocated."
-            )
+    entries = solve_design.shape[0] * solve_design.shape[0]
+    factorization_bytes = entries * jnp.dtype(factorization_dtype).itemsize
+    gram_workspace_bytes = 2 * entries * solve_itemsize
+    resources = plan.solve_policy.resources
+    if (
+        factorization_bytes > resources.factorization_bytes
+        or gram_workspace_bytes > resources.workspace_bytes
+    ):
+        raise ValueError(
+            "Bayesian quadrature kernel system exceeds the dense solve resource "
+            "budget; no kernel matrix was allocated."
+        )
     kernel_matrix = policy.accumulation(
-        policy.evaluation(plan.kernel_mean.kernel.matrix(design, design))
+        plan.kernel_mean.matrix(evaluation_design, evaluation_design)
     )
-    kernel_mean = policy.accumulation(
-        policy.evaluation(plan.kernel_mean.mean(design))
-    )
+    kernel_mean = policy.accumulation(plan.kernel_mean.mean(evaluation_design))
     kernel_double_mean = policy.accumulation(
-        policy.evaluation(plan.kernel_mean.double_mean())
+        plan.kernel_mean._double_mean(evaluation_design.dtype)
     )
-    diagonal_shift = policy.accumulation(
-        plan.observation_noise + plan.solve_regularization
+    observation_noise = policy.accumulation(plan.observation_noise)
+    solve_regularization = policy.accumulation(plan.solve_regularization)
+    kernel_amplitude = policy.accumulation(
+        plan.kernel_mean._parameters(evaluation_design.dtype)[3]
     )
-    system_matrix = kernel_matrix + diagonal_shift * jnp.eye(
-        design.shape[0], dtype=kernel_matrix.dtype
+    system_scale = jnp.maximum(
+        jnp.abs(kernel_amplitude),
+        jnp.maximum(jnp.abs(observation_noise), jnp.abs(solve_regularization)),
     )
+    safe_system_scale = jnp.where(
+        system_scale > 0.0,
+        system_scale,
+        jnp.asarray(1.0, dtype=system_scale.dtype),
+    )
+    normalized_kernel_matrix = kernel_matrix / safe_system_scale
+    normalized_diagonal_shift = (
+        observation_noise / safe_system_scale
+        + solve_regularization / safe_system_scale
+    )
+    system_matrix = normalized_kernel_matrix + normalized_diagonal_shift * jnp.eye(
+        solve_design.shape[0], dtype=kernel_matrix.dtype
+    )
+    normalized_kernel_mean = kernel_mean / safe_system_scale
     prepared = prepare(
         LinearSystem(
             DenseLinearOperator(system_matrix),
@@ -337,15 +442,26 @@ def materialize_bayesian_quadrature(
         ),
         plan.solve_policy,
     )
-    solve_result = solve(prepared, kernel_mean)
+    solve_result = solve(prepared, normalized_kernel_mean)
     weights = policy.accumulation(solve_result.value)
-    contracted = oe.contract("i,i->", kernel_mean, weights)
-    posterior_variance = policy.decision(kernel_double_mean - contracted)
-    scale = jnp.abs(kernel_double_mean) + jnp.abs(contracted) + 1.0
-    envelope = policy.decision(
-        jnp.finfo(posterior_variance.dtype).eps
-        * (8 * design.shape[0] + 16)
-        * scale
+    decision_kernel_mean = policy.decision(kernel_mean)
+    decision_weights = policy.decision(weights)
+    decision_double_mean = policy.decision(kernel_double_mean)
+    contracted = oe.contract("i,i->", decision_kernel_mean, decision_weights)
+    posterior_variance = decision_double_mean - contracted
+    arithmetic_epsilon = max(
+        jnp.finfo(evaluation_design.dtype).eps,
+        jnp.finfo(kernel_mean.dtype).eps,
+        jnp.finfo(posterior_variance.dtype).eps,
+    )
+    variance_scale = jnp.maximum(
+        jnp.maximum(jnp.abs(decision_double_mean), jnp.abs(contracted)),
+        jnp.asarray(jnp.finfo(posterior_variance.dtype).tiny),
+    )
+    envelope = (
+        jnp.asarray(arithmetic_epsilon, dtype=posterior_variance.dtype)
+        * (8 * solve_design.shape[0] + 16)
+        * variance_scale
     )
     return BayesianQuadratureBatch(
         point_batch,
@@ -354,10 +470,43 @@ def materialize_bayesian_quadrature(
         kernel_double_mean,
         posterior_variance,
         envelope,
-        policy.accumulation(plan.observation_noise),
-        policy.accumulation(plan.solve_regularization),
+        observation_noise,
+        solve_regularization,
         solve_result,
         kernel_id=plan.kernel_mean.kernel.kernel_id,
+    )
+
+
+def _evaluation_batch(
+    batch: PointIntegrationBatch,
+    target: ProbabilityTarget,
+    policy: IntegrationPrecisionPolicy,
+    /,
+) -> PointIntegrationBatch:
+    label = target.probability.label
+    source_points = batch.points
+    source_field = source_points[label]
+    points = PointBatch(
+        frozendict(
+            {
+                label: cx.Field(
+                    policy.evaluation(source_field.data),
+                    dims=source_field.dims,
+                )
+            }
+        ),
+        source_points.structure,
+        metadata=source_points.metadata,
+    )
+    return PointIntegrationBatch(
+        points,
+        batch.weights,
+        axes=batch.axes,
+        mask=batch.mask,
+        target_mass=batch.target_mass,
+        stratum_indices=batch.stratum_indices,
+        num_strata=batch.num_strata,
+        provenance=batch.provenance,
     )
 
 
@@ -380,21 +529,26 @@ def integrate_bayesian_quadrature(
     from ._monte_carlo import _sample_values
 
     callback_kwargs = {} if kwargs is None else kwargs
+    evaluation_batch = _evaluation_batch(batch.points, target, policy)
     values, factors, normalizer, _, output_dims = _sample_values(
         integrand,
         target,
-        batch.points,
+        evaluation_batch,
         key=key,
         kwargs=callback_kwargs,
         precision=policy,
     )
     if normalizer is None:
         raise RuntimeError("Bayesian quadrature requires a normalized target.")
-    finite_integrand = jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(factors))
     weighted_values = values * factors.reshape(
         (factors.shape[0],) + (1,) * (values.ndim - 1)
     )
     value = oe.contract("i,i...->...", batch.weights, weighted_values)
+    finite_reduction = (
+        jnp.all(jnp.isfinite(values))
+        & jnp.all(jnp.isfinite(factors))
+        & jnp.all(jnp.isfinite(value))
+    )
     solve_success = batch.solve_result.status == int(LinearSolveStatus.SUCCESS)
     variance_valid = (
         jnp.isfinite(batch.posterior_variance)
@@ -411,7 +565,7 @@ def integrate_bayesian_quadrature(
         int(IntegrationStatus.LINEAR_SOLVE_FAILED),
     )
     status = jnp.where(
-        finite_integrand,
+        finite_reduction,
         status,
         int(IntegrationStatus.NONFINITE_INTEGRAND),
     )

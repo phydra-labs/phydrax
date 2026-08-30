@@ -270,7 +270,8 @@ inference exact. Dense-only paths enforce dimension guards, and covariance input
 are never silently repaired.
 
 Integration-native fixed-design Bayesian quadrature binds an analytic
-`GaussianKernelMean` to one normalized Gaussian `ProbabilityTarget` identity.
+`GaussianKernelMean` to one normalized Gaussian target identity and its exact
+probability label/location/scale content.
 `BayesianQuadraturePlan` supports squared-exponential kernels, optionally scaled,
 and applies prepared `phydrax.linalg` conditioning weights to scalar, array,
 field, or PyTree integrands through ordinary `materialize`/`reduce` calls.

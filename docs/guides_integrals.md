@@ -402,10 +402,11 @@ mean = phx.integration.reduce(
 ```
 
 Materialization evaluates the analytic Gaussian kernel mean and kernel double
-mean, prepares the dense `phydrax.linalg` solve, and retains the solve result.
-Reduction applies the resulting weights to scalar, array, `coordax.Field`, or
-PyTree integrands using the ordinary integration API. Reusing the realization
-shares exactly the same points, kernel system, and weights.
+mean in the requested evaluation dtype, prepares the normalized dense-LU
+`phydrax.linalg` solve, and retains the solve result. Reduction casts
+`DomainFunction` points before invoking the integrand and applies the resulting
+weights to scalar, array, `coordax.Field`, or PyTree outputs. Reusing the
+realization shares exactly the same points, kernel system, and weights.
 
 `observation_noise` is part of the GP observation model.
 `solve_regularization` is a separate numerical diagonal shift; neither is
@@ -422,8 +423,9 @@ uncertainty only under the declared GP prior, kernel hyperparameters,
 observation noise, and fixed design. It must not be used as a stopping
 certificate without an external calibration argument.
 
-The kernel mean is bound to the target's stable `target_id`; mismatched targets
-are rejected before integrand evaluation. Unsupported density targets,
+The kernel mean is bound to the target's stable `target_id`, probability label,
+and Gaussian location/scale content; every part must match before reduction.
+Only the preflighted `DenseLU` route is accepted. Unsupported density targets,
 non-Gaussian measures, kernel sums/products, active acquisition, WSABI, and
 unnormalized evidence are outside this capability rather than approximated by
 a fallback.
