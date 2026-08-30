@@ -702,7 +702,7 @@ class HOFNO(AbstractOperatorModel):
         key: EvalKey,
     ) -> Array:
         if self._scan_enabled and self._scan_static is not None:
-            dynamic = stack_scan_dynamics(self.blocks)
+            dynamic = stack_scan_dynamics(self.blocks, self._scan_static)
             if dynamic is not None:
                 sites = jnp.arange(len(self.blocks), dtype=jnp.uint32)
                 return scan_apply_with_data(

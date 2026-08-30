@@ -66,7 +66,28 @@ from ._local_elimination import (
     FiniteElementLocalEliminationPlan,
     LocalEliminationResult,
 )
-from ._multigrid import PTransferData, quadrilateral_p_transfer
+from ._low_order_auxiliary import (
+    LowOrderAuxiliaryOperatorPlan,
+    LowOrderAuxiliaryPreconditioner,
+)
+from ._multigrid import (
+    finite_element_p_transfer,
+    FiniteElementPTransfer,
+    PTransferData,
+    PTransferRole,
+    quadrilateral_p_transfer,
+)
+from ._p_multigrid import (
+    finite_element_p_multigrid_plan,
+    FiniteElementPMultigridPlan,
+    FiniteElementPMultigridPolicy,
+    PDegreeCoarsening,
+)
+from ._patch_preconditioning import (
+    FiniteElementPatchPlan,
+    FiniteElementPatchPreconditioner,
+    one_ring_patch_plan,
+)
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import (
     discontinuous_element,
@@ -103,12 +124,24 @@ __all__ = [
     "local_diagonal",
     "FiniteElementTransferRole",
     "coarsen_triangles_local",
+    "LowOrderAuxiliaryOperatorPlan",
+    "LowOrderAuxiliaryPreconditioner",
     "dorfler_mark",
     "local_dual_weighted_residual",
     "maximum_mark",
     "refine_triangles_local",
+    "finite_element_p_transfer",
+    "FiniteElementPTransfer",
     "PTransferData",
+    "PTransferRole",
     "quadrilateral_p_transfer",
+    "finite_element_p_multigrid_plan",
+    "FiniteElementPMultigridPlan",
+    "FiniteElementPMultigridPolicy",
+    "PDegreeCoarsening",
+    "FiniteElementPatchPlan",
+    "FiniteElementPatchPreconditioner",
+    "one_ring_patch_plan",
     "refine_triangles_uniform",
     "affine_dof_constraint",
     "dual_weighted_residual_estimate",
