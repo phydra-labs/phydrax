@@ -52,9 +52,7 @@ def _signed_log_components(value: Array, /) -> tuple[Array, Array, Array]:
     bits = jax.lax.bitcast_convert_type(value, unsigned_dtype)
     sign_shift = jnp.asarray(total_bits - 1, dtype=unsigned_dtype)
     fraction_shift = jnp.asarray(fraction_bits, dtype=unsigned_dtype)
-    magnitude_mask = jnp.asarray(
-        (1 << (total_bits - 1)) - 1, dtype=unsigned_dtype
-    )
+    magnitude_mask = jnp.asarray((1 << (total_bits - 1)) - 1, dtype=unsigned_dtype)
     fraction_mask = jnp.asarray((1 << fraction_bits) - 1, dtype=unsigned_dtype)
     exponent_mask = jnp.asarray((1 << exponent_bits) - 1, dtype=unsigned_dtype)
     negative = (bits >> sign_shift) != 0
@@ -70,36 +68,24 @@ def _signed_log_components(value: Array, /) -> tuple[Array, Array, Array]:
         + jnp.asarray(subnormal_offset, dtype=dtype) * log_two
     )
     normal_log = (
-        jnp.log1p(
-            fraction.astype(dtype)
-            / jnp.asarray(1 << fraction_bits, dtype=dtype)
-        )
-        + (exponent.astype(dtype) - jnp.asarray(exponent_bias, dtype=dtype))
-        * log_two
+        jnp.log1p(fraction.astype(dtype) / jnp.asarray(1 << fraction_bits, dtype=dtype))
+        + (exponent.astype(dtype) - jnp.asarray(exponent_bias, dtype=dtype)) * log_two
     )
     finite_log = jnp.where(exponent == 0, subnormal_log, normal_log)
     special_log = jnp.log(jnp.abs(value))
-    log_magnitude = jnp.where(
-        exponent == exponent_mask, special_log, finite_log
-    )
+    log_magnitude = jnp.where(exponent == exponent_mask, special_log, finite_log)
     return negative, nonzero, log_magnitude
 
 
-def _stable_signed_product_primal(
-    value: Array, log_scale: Array, /
-) -> Array:
+def _stable_signed_product_primal(value: Array, log_scale: Array, /) -> Array:
     negative, nonzero, log_magnitude = _signed_log_components(value)
-    combined_log_magnitude = jnp.where(
-        nonzero, log_magnitude + log_scale, 0.0
-    )
+    combined_log_magnitude = jnp.where(nonzero, log_magnitude + log_scale, 0.0)
     scaled_magnitude = jnp.exp(combined_log_magnitude)
     signed_value = jnp.where(negative, -scaled_magnitude, scaled_magnitude)
     return jnp.where(nonzero, signed_value, jnp.zeros_like(value))
 
 
-def _apply_linear_stable_signed_product(
-    value: Array, log_scale: Array, /
-) -> Array:
+def _apply_linear_stable_signed_product(value: Array, log_scale: Array, /) -> Array:
     def inverse_scale(argument):
         return _stable_signed_product_primal(argument, -log_scale)
 
@@ -143,9 +129,7 @@ def _stable_log_abs_jvp(primals, tangents):
     primal = _stable_log_abs(value)
     negative, nonzero, _ = _signed_log_components(value)
     reciprocal_log_scale = jnp.where(nonzero, -primal, 0.0)
-    tangent = _apply_linear_stable_signed_product(
-        value_tangent, reciprocal_log_scale
-    )
+    tangent = _apply_linear_stable_signed_product(value_tangent, reciprocal_log_scale)
     signed_tangent = jnp.where(negative, -tangent, tangent)
     return primal, jnp.where(nonzero, signed_tangent, 0.0)
 
@@ -153,12 +137,8 @@ def _stable_log_abs_jvp(primals, tangents):
 def _stable_signed_bilinear_product_primal(
     left: Array, right: Array, log_scale: Array, /
 ) -> Array:
-    left_negative, left_nonzero, left_log_magnitude = _signed_log_components(
-        left
-    )
-    right_negative, right_nonzero, right_log_magnitude = _signed_log_components(
-        right
-    )
+    left_negative, left_nonzero, left_log_magnitude = _signed_log_components(left)
+    right_negative, right_nonzero, right_log_magnitude = _signed_log_components(right)
     nonzero = left_nonzero & right_nonzero
     combined_log_magnitude = jnp.where(
         nonzero,
@@ -177,15 +157,9 @@ def _apply_linear_stable_signed_bilinear_product(
 ) -> Array:
     negative, nonzero, _ = _signed_log_components(multiplier)
     combined_log_scale = log_scale + _stable_log_abs(multiplier)
-    nonzero_value = _apply_linear_stable_signed_product(
-        value, combined_log_scale
-    )
-    signed_nonzero_value = jnp.where(
-        negative, -nonzero_value, nonzero_value
-    )
-    zero_multiplier = jnp.where(
-        nonzero, jnp.zeros_like(multiplier), multiplier
-    )
+    nonzero_value = _apply_linear_stable_signed_product(value, combined_log_scale)
+    signed_nonzero_value = jnp.where(negative, -nonzero_value, nonzero_value)
+    zero_multiplier = jnp.where(nonzero, jnp.zeros_like(multiplier), multiplier)
     zero_value = _stable_signed_product(zero_multiplier, log_scale) * value
     return jnp.where(nonzero, signed_nonzero_value, zero_value)
 
@@ -276,9 +250,7 @@ def _scaled_determinant_factors(
             0.0,
         )
     )
-    scaled_log_envelope = (
-        log_envelope - row_shift[:, :, None] - column_shift[:, None, :]
-    )
+    scaled_log_envelope = log_envelope - row_shift[:, :, None] - column_shift[:, None, :]
     scaled_orbitals = _stable_signed_product(raw_orbitals, scaled_log_envelope)
     return scaled_orbitals, row_shift, column_shift
 
@@ -329,17 +301,15 @@ def _stable_determinant_mixture(
         determinant_log_scale
     )
     coefficient_defined = jnp.isfinite(coefficients)
-    _, determinant_bit_nonzero, determinant_log_magnitude = (
-        _signed_log_components(scaled_determinant)
+    _, determinant_bit_nonzero, determinant_log_magnitude = _signed_log_components(
+        scaled_determinant
     )
-    _, coefficient_bit_nonzero, coefficient_log_magnitude = (
-        _signed_log_components(coefficients)
+    _, coefficient_bit_nonzero, coefficient_log_magnitude = _signed_log_components(
+        coefficients
     )
     any_defined = jnp.any(determinant_defined)
     determinant_nonzero = determinant_defined & determinant_bit_nonzero
-    active_product = (
-        determinant_nonzero & coefficient_defined & coefficient_bit_nonzero
-    )
+    active_product = determinant_nonzero & coefficient_defined & coefficient_bit_nonzero
     any_active_product = jnp.any(active_product)
     any_nonzero_determinant = jnp.any(determinant_nonzero)
     determinant_physical_log = jnp.where(
@@ -375,9 +345,7 @@ def _stable_determinant_mixture(
         safe_coefficient, safe_determinant, relative_log_scale
     )
     scaled_sum = jnp.sum(scaled_terms)
-    scaled_sum_negative, scaled_sum_nonzero, _ = _signed_log_components(
-        scaled_sum
-    )
+    scaled_sum_negative, scaled_sum_nonzero, _ = _signed_log_components(scaled_sum)
     nonzero = (
         any_defined
         & jnp.all(coefficient_defined)
@@ -389,9 +357,7 @@ def _stable_determinant_mixture(
         determinant_shift + _stable_log_abs(scaled_sum),
         -jnp.inf,
     )
-    phase = jnp.where(
-        scaled_sum_negative, -1.0 + 0.0j, 1.0 + 0.0j
-    )
+    phase = jnp.where(scaled_sum_negative, -1.0 + 0.0j, 1.0 + 0.0j)
     valid = jnp.all(determinant_defined) & jnp.all(coefficient_defined)
     return log_abs, phase, valid
 
