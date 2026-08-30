@@ -35,7 +35,7 @@ def test_structure_preserves_particles_masks_ids_masses_and_scale():
     ("numbers", "mask", "message"),
     [
         ([0, 1], [True, True], "positive"),
-        ([1, 6], [True, False], "padding"),
+        ([1, 6], [True, False], "padded"),
     ],
 )
 def test_atomic_number_zero_is_padding_only(numbers, mask, message):

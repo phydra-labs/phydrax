@@ -475,7 +475,16 @@ class O3TensorProduct(StrictModule):
                 output_blocks[instruction.output_block] + contribution
             )
         return jnp.concatenate(
-            [block.reshape(leading + (-1,)) for block in output_blocks], axis=-1
+            [
+                block.reshape(leading + (count * block_type.dimension,))
+                for block, count, block_type in zip(
+                    output_blocks,
+                    output_counts,
+                    _BLOCKS,
+                    strict=True,
+                )
+            ],
+            axis=-1,
         )
 
 

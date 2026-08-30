@@ -14,6 +14,16 @@ class _Hydrogenic(eqx.Module):
         return phx.operators.LogAmplitude(-self.alpha * radius)
 
 
+class _TwoScaleHydrogenic(eqx.Module):
+    alpha: jax.Array
+
+    def __call__(self, electrons):
+        radius = jnp.sqrt(jnp.sum(electrons[0] ** 2))
+        return phx.operators.LogAmplitude(
+            -self.alpha[0] * radius - self.alpha[1] * radius**2
+        )
+
+
 class _FailedLocalOperator(phx.operators.AbstractLocalQuantumOperator):
     configuration_shape: tuple[int, int] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
@@ -201,15 +211,20 @@ def test_failed_local_and_linear_actions_record_without_applying_updates():
     assert local_result.completed_iterations == 0
     assert local_result.linear_results == ()
 
-    resources = phx.linalg.SolveResourcePolicy(
-        factorization_bytes=0,
-        workspace_bytes=0,
-        krylov_basis_bytes=0,
-        preconditioner_bytes=0,
-        recycling_state_bytes=0,
+    failed_linear = phx.solver.VariationalMonteCarloProblem(
+        _TwoScaleHydrogenic(jnp.asarray([0.8, 0.01], dtype=jnp.float64)),
+        baseline.operator,
+        baseline.kernel,
+        baseline.initial_configurations,
+        problem_id="limited-linear-electronic-vmc",
     )
     linear_policy = phx.linalg.LinearSolvePolicy(
-        phx.linalg.DenseCholesky(), resources=resources
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(
+            relative=0.0,
+            absolute=0.0,
+            max_steps=1,
+        ),
     )
     policy = phx.solver.VariationalMonteCarloPolicy(
         num_iterations=1,
@@ -221,7 +236,7 @@ def test_failed_local_and_linear_actions_record_without_applying_updates():
         linear_policy=linear_policy,
     )
     linear_result = phx.solver.solve_variational_monte_carlo(
-        baseline, policy, key=jr.key(502)
+        failed_linear, policy, key=jr.key(502)
     )
     assert linear_result.status_history[0] == phx.solver.VMC_LINEAR_FAILURE
     assert linear_result.completed_iterations == 0

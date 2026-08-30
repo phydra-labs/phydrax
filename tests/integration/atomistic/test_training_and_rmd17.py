@@ -61,7 +61,10 @@ def _assert_trees_bitwise_equal(observed, expected):
     for observed_leaf, expected_leaf in zip(
         observed_leaves, expected_leaves, strict=True
     ):
-        np.testing.assert_array_equal(observed_leaf, expected_leaf)
+        if isinstance(observed_leaf, jax.Array):
+            assert bool(jnp.array_equal(observed_leaf, expected_leaf))
+        else:
+            assert observed_leaf == expected_leaf
 
 
 def _assert_optimizer_state_matches_checkpoint(result):
@@ -71,17 +74,14 @@ def _assert_optimizer_state_matches_checkpoint(result):
     optimizer_leaves = jax.tree_util.tree_leaves(
         result.optimizer_state, is_leaf=is_potential
     )
-    optimizer_potentials = tuple(
-        leaf for leaf in optimizer_leaves if is_potential(leaf)
-    )
+    optimizer_potentials = tuple(leaf for leaf in optimizer_leaves if is_potential(leaf))
     assert optimizer_potentials
     trainable, _ = atomistic_training.partition_trainable(result.potential)
     expected_structure = jax.tree_util.tree_structure(trainable)
     for optimizer_potential in optimizer_potentials:
         assert jax.tree_util.tree_structure(optimizer_potential) == expected_structure
         assert (
-            optimizer_potential.parameter_state_id
-            == result.potential.parameter_state_id
+            optimizer_potential.parameter_state_id == result.potential.parameter_state_id
         )
         assert optimizer_potential.potential_id == result.potential.potential_id
 
@@ -182,8 +182,7 @@ def test_deterministic_continuation_matches_uninterrupted_training_and_selection
         uninterrupted.best_potential.parameter_state_id
     )
     assert (
-        continued.best_potential.potential_id
-        == uninterrupted.best_potential.potential_id
+        continued.best_potential.potential_id == uninterrupted.best_potential.potential_id
     )
     assert continued.problem_id == uninterrupted.problem_id
     assert continued.policy_id == uninterrupted.policy_id

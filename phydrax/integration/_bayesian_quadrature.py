@@ -28,6 +28,7 @@ from ..linalg import (
     LinearSolveResult,
     LinearSolveStatus,
     LinearSystem,
+    MixedPrecisionPolicy,
     prepare,
     solve,
 )
@@ -411,6 +412,20 @@ def materialize_bayesian_quadrature(
         )
     solve_itemsize = jnp.dtype(solve_design.dtype).itemsize
     linear_precision = plan.solve_policy.precision
+    effective_solve_policy = plan.solve_policy
+    if linear_precision is None:
+        linear_precision = MixedPrecisionPolicy(
+            operator_dtype=solve_design.dtype,
+            factorization_dtype=solve_design.dtype,
+            residual_dtype=solve_design.dtype,
+            accumulation_dtype=solve_design.dtype,
+        )
+        effective_solve_policy = eqx.tree_at(
+            lambda selected: selected.precision,
+            plan.solve_policy,
+            linear_precision,
+            is_leaf=lambda value: value is None,
+        )
     factorization_dtype = (
         solve_design.dtype
         if linear_precision is None or linear_precision.factorization_dtype is None
@@ -473,7 +488,7 @@ def materialize_bayesian_quadrature(
             )
     factorization_bytes = entries * jnp.dtype(factorization_dtype).itemsize
     gram_workspace_bytes = 2 * entries * solve_itemsize
-    resources = plan.solve_policy.resources
+    resources = effective_solve_policy.resources
     if (
         factorization_bytes > resources.factorization_bytes
         or gram_workspace_bytes > resources.workspace_bytes
@@ -516,7 +531,7 @@ def materialize_bayesian_quadrature(
             DenseLinearOperator(system_matrix),
             problem_id=f"bayesian-quadrature:{target.target_id}",
         ),
-        plan.solve_policy,
+        effective_solve_policy,
     )
     solve_result = solve(prepared, normalized_kernel_mean)
     weights = policy.accumulation(solve_result.value)
@@ -621,11 +636,8 @@ def integrate_bayesian_quadrature(
         (factors.shape[0],) + (1,) * (values.ndim - 1)
     )
     value = oe.contract("i,i...->...", batch.weights, weighted_values)
-    finite_reduction = (
-        jnp.all(jnp.isfinite(values))
-        & jnp.all(jnp.isfinite(factors))
-        & jnp.all(jnp.isfinite(value))
-    )
+    finite_inputs = jnp.all(jnp.isfinite(values)) & jnp.all(jnp.isfinite(factors))
+    finite_value = jnp.all(jnp.isfinite(value))
     solve_success = batch.solve_result.status == int(LinearSolveStatus.SUCCESS)
     variance_valid = jnp.isfinite(batch.posterior_variance) & (
         batch.posterior_variance >= -batch.variance_roundoff_envelope
@@ -636,12 +648,17 @@ def integrate_bayesian_quadrature(
         int(IntegrationStatus.INVALID_POSTERIOR_VARIANCE),
     )
     status = jnp.where(
+        finite_value,
+        status,
+        int(IntegrationStatus.NONFINITE_INTEGRAND),
+    )
+    status = jnp.where(
         solve_success,
         status,
         int(IntegrationStatus.LINEAR_SOLVE_FAILED),
     )
     status = jnp.where(
-        finite_reduction,
+        finite_inputs,
         status,
         int(IntegrationStatus.NONFINITE_INTEGRAND),
     )

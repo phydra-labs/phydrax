@@ -564,8 +564,8 @@ def test_expansion_is_jittable_differentiable_and_preserves_coefficient_precisio
     expansion = phx.uq.PolynomialChaosExpansion(basis, coefficients)
     point = jnp.asarray([1.25], dtype=jnp.float64)
 
-    value = jax.jit(expansion)(point)
-    derivative = jax.jit(jax.grad(lambda scalar: expansion(scalar[None])))(point)
+    value = jax.jit(lambda coordinates: expansion(coordinates))(point)
+    derivative = jax.jit(jax.grad(lambda scalar: expansion(scalar[None])))(point[0])
 
     assert value.dtype == jnp.float64
     assert derivative.dtype == jnp.float64

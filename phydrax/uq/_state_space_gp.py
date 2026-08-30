@@ -181,25 +181,15 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
 
     if isinstance(base, Matern32Kernel):
         rate = jnp.sqrt(jnp.asarray(3.0, dtype=dtype)) / length_scale
-        drift = jnp.stack(
+        drift = rate * jnp.stack(
             (
                 jnp.stack((zero, one)),
-                jnp.stack((-(rate**2), -2.0 * rate)),
+                jnp.stack((-one, -2.0 * one)),
             )
         )
-        stationary = variance * jnp.stack(
-            (
-                jnp.stack((one, zero)),
-                jnp.stack((zero, rate**2)),
-            )
-        )
-        stationary_factor = amplitude * jnp.stack(
-            (
-                jnp.stack((one, zero)),
-                jnp.stack((zero, rate)),
-            )
-        )
-        spectral_density = 4.0 * variance * rate**3
+        stationary = variance * jnp.eye(2, dtype=dtype)
+        stationary_factor = amplitude * jnp.eye(2, dtype=dtype)
+        spectral_density = 4.0 * variance * rate
         process_factor = jnp.stack((zero, jnp.sqrt(spectral_density))).reshape((2, 1))
         observation_map = jnp.stack((one, zero)).reshape((1, 2))
         return _KernelStateSpace(
@@ -215,35 +205,28 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
 
     if isinstance(base, Matern52Kernel):
         rate = jnp.sqrt(jnp.asarray(5.0, dtype=dtype)) / length_scale
-        rate_squared = rate**2
-        drift = jnp.stack(
+        drift = rate * jnp.stack(
             (
                 jnp.stack((zero, one, zero)),
                 jnp.stack((zero, zero, one)),
-                jnp.stack((-(rate**3), -3.0 * rate_squared, -3.0 * rate)),
+                jnp.stack((-one, -3.0 * one, -3.0 * one)),
             )
         )
         stationary = variance * jnp.stack(
             (
-                jnp.stack((one, zero, -rate_squared / 3.0)),
-                jnp.stack((zero, rate_squared / 3.0, zero)),
-                jnp.stack((-rate_squared / 3.0, zero, rate_squared**2)),
+                jnp.stack((one, zero, -one / 3.0)),
+                jnp.stack((zero, one / 3.0, zero)),
+                jnp.stack((-one / 3.0, zero, one)),
             )
         )
         stationary_factor = amplitude * jnp.stack(
             (
                 jnp.stack((one, zero, zero)),
-                jnp.stack((zero, rate / jnp.sqrt(3.0), zero)),
-                jnp.stack(
-                    (
-                        -rate_squared / 3.0,
-                        zero,
-                        2.0 * jnp.sqrt(2.0) * rate_squared / 3.0,
-                    )
-                ),
+                jnp.stack((zero, one / jnp.sqrt(3.0), zero)),
+                jnp.stack((-one / 3.0, zero, 2.0 * jnp.sqrt(2.0) / 3.0)),
             )
         )
-        spectral_density = (16.0 / 3.0) * variance * rate**5
+        spectral_density = (16.0 / 3.0) * variance * rate
         process_factor = jnp.stack((zero, zero, jnp.sqrt(spectral_density))).reshape(
             (3, 1)
         )
@@ -265,9 +248,42 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
     )
 
 
+def _matern_transition(normalized_duration: Array, state_size: int, /) -> Array:
+    dtype = normalized_duration.dtype
+    cutoff = -jnp.log(jnp.asarray(jnp.finfo(dtype).tiny, dtype=dtype))
+
+    def evaluate(value: Array, /) -> Array:
+        identity = jnp.eye(state_size, dtype=dtype)
+        if state_size == 2:
+            nilpotent = jnp.asarray(((1.0, 1.0), (-1.0, -1.0)), dtype=dtype)
+            polynomial = identity + value * nilpotent
+        else:
+            nilpotent = jnp.asarray(
+                ((1.0, 1.0, 0.0), (0.0, 1.0, 1.0), (-1.0, -3.0, -2.0)),
+                dtype=dtype,
+            )
+            nilpotent_squared = jnp.asarray(
+                ((1.0, 2.0, 1.0), (-1.0, -2.0, -1.0), (1.0, 2.0, 1.0)),
+                dtype=dtype,
+            )
+            polynomial = identity + value * nilpotent + 0.5 * value**2 * nilpotent_squared
+        return jnp.exp(-value) * polynomial
+
+    return jax.lax.cond(
+        normalized_duration < cutoff,
+        evaluate,
+        lambda _: jnp.zeros((state_size, state_size), dtype=dtype),
+        normalized_duration,
+    )
+
+
 def _transition_matrix(start: Array, end: Array, context: Any, /) -> Array:
-    duration = end - start
-    return jax.scipy.linalg.expm(context.args.drift_matrix * duration)
+    arguments = context.args
+    normalized_duration = arguments.decay_rate * (end - start)
+    return _matern_transition(
+        normalized_duration,
+        arguments.drift_matrix.shape[0],
+    )
 
 
 def _small_interval_covariance(
@@ -289,12 +305,14 @@ def _small_interval_covariance(
 
 
 def _stationary_interval_covariance(
-    duration: Array,
-    drift: Array,
+    normalized_duration: Array,
     stationary: Array,
     /,
 ) -> Array:
-    transition = jax.scipy.linalg.expm(drift * duration)
+    transition = _matern_transition(
+        normalized_duration,
+        stationary.shape[0],
+    )
     covariance = stationary - transition @ stationary @ transition.T
     return 0.5 * (covariance + covariance.T)
 
@@ -311,8 +329,7 @@ def _transition_covariance(start: Array, end: Array, context: Any, /) -> Array:
             arguments.process_noise_factor,
         ),
         lambda value: _stationary_interval_covariance(
-            value,
-            arguments.drift_matrix,
+            arguments.decay_rate * value,
             arguments.stationary_covariance,
         ),
         duration,
