@@ -21,6 +21,10 @@ explicit.
 
 ## PaiNN energy and conservative-force prediction
 
+::: phydrax.nn.atomistic.AbstractAtomisticPotential
+
+::: phydrax.nn.atomistic.checkpoint_atomistic_potential
+
 ::: phydrax.nn.atomistic.PaiNNPotential
 
 ::: phydrax.atomistic.AtomisticPrediction

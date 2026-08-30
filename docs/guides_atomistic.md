@@ -113,6 +113,20 @@ the architecture identity, and a content fingerprint of the exact evaluated
 parameter state. Training refreshes that state identity for both final and
 selected-best potentials.
 
+`PaiNNPotential(...)` and `fit_atomistic_potential(...)` return checkpointed
+models. An external Equinox or Optax tree update changes numeric parameters but
+necessarily preserves static metadata; it is unsupported for provenance-bearing
+prediction until explicitly checkpointed:
+
+```python
+updated = phx.nn.atomistic.checkpoint_atomistic_potential(updated)
+prediction = phx.atomistic.energy_and_forces(updated, batch)
+```
+
+The immutable checkpoint operation returns a new potential and is shared by the
+abstract atomistic-potential contract so additional equivariant architectures
+use the same provenance boundary.
+
 ## Energy, force, or joint training
 
 Training is domain-specific; it does not add a generic trainer. An

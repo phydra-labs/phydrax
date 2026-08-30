@@ -1,6 +1,11 @@
 """O(3)-equivariant finite-molecule energy potentials."""
 
 from ._painn import PaiNNPotential
+from ._state import AbstractAtomisticPotential, checkpoint_atomistic_potential
 
 
-__all__ = ["PaiNNPotential"]
+__all__ = [
+    "AbstractAtomisticPotential",
+    "PaiNNPotential",
+    "checkpoint_atomistic_potential",
+]

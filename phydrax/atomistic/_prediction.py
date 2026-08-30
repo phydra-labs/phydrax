@@ -94,7 +94,14 @@ def energy_and_forces(
     structure: AtomicStructure | AtomisticBatch,
     /,
 ) -> AtomisticPrediction:
-    """Evaluate energy once and derive forces as its negative position gradient."""
+    """Evaluate energy once and derive forces as its negative position gradient.
+
+    Provenance is supported for constructor-created models, native training
+    results, and models returned by
+    ``phydrax.nn.atomistic.checkpoint_atomistic_potential``. External Equinox or
+    Optax tree updates must be checkpointed before prediction; otherwise their
+    preserved static identity is intentionally not a valid provenance claim.
+    """
 
     if not isinstance(potential, PaiNNPotential):
         raise TypeError("potential must be a PaiNNPotential.")
@@ -148,14 +155,15 @@ def energy_and_forces(
     )
     diagnostic_forces = jnp.where(mask[:, :, None], forces, 0.0)
     net_force = jnp.sum(diagnostic_forces, axis=1)
-    mass = jnp.where(mask, batch.masses, 0.0)
-    center = contract("ba,bad->bd", mass, batch.positions) / jnp.sum(
+    torque_dtype = jnp.dtype(potential.precision.reduction_dtype)
+    mass = jnp.where(mask, batch.masses, 0.0).astype(torque_dtype)
+    torque_positions = batch.positions.astype(torque_dtype)
+    center = contract("ba,bad->bd", mass, torque_positions) / jnp.sum(
         mass, axis=1
     )[:, None]
-    lever = (batch.positions - center[:, None, :]).astype(
-        potential.precision.output_dtype
-    )
-    net_torque = jnp.sum(jnp.cross(lever, diagnostic_forces), axis=1).astype(
+    lever = torque_positions - center[:, None, :]
+    torque_force = diagnostic_forces.astype(torque_dtype)
+    net_torque = jnp.sum(jnp.cross(lever, torque_force), axis=1).astype(
         potential.precision.output_dtype
     )
     return AtomisticPrediction(

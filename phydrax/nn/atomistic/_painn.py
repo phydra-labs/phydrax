@@ -15,7 +15,7 @@ from jaxtyping import Array, Key
 from opt_einsum import contract
 
 from ..._doc import DOC_KEY0
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
@@ -27,6 +27,10 @@ from ...atomistic._types import (
 )
 from ..layers import Linear
 from ..parameters import IdentityTransform
+from ._state import (
+    AbstractAtomisticPotential,
+    initialize_atomistic_potential_identity,
+)
 
 
 class _PaiNNConfiguration(StrictModule, NonTrainableState):
@@ -187,41 +191,8 @@ class _PaiNNInteraction(StrictModule):
             raise RuntimeError("PaiNN interaction changed its scalar feature width.")
         return scalar, vector
 
-def _painn_parameter_state_id(potential: "PaiNNPotential", /) -> str:
-    return canonical_fingerprint(
-        {
-            "kind": "painn-parameter-state",
-            "arrays": array_tree_fingerprint(
-                {
-                    "embedding": potential.embedding,
-                    "interactions": potential.interactions,
-                    "readout_hidden": potential.readout_hidden,
-                    "readout_energy": potential.readout_energy,
-                }
-            ),
-        }
-    )
 
-
-def refresh_painn_parameter_state(
-    potential: "PaiNNPotential", /
-) -> "PaiNNPotential":
-    """Refresh evaluated-state provenance after a host-side parameter update."""
-
-    state_id = _painn_parameter_state_id(potential)
-    potential_id = canonical_fingerprint(
-        {
-            "kind": "evaluated-painn-potential",
-            "architecture": potential.architecture_id,
-            "parameter_state": state_id,
-        }
-    )
-    object.__setattr__(potential, "parameter_state_id", state_id)
-    object.__setattr__(potential, "potential_id", potential_id)
-    return potential
-
-
-class PaiNNPotential(StrictModule):
+class PaiNNPotential(AbstractAtomisticPotential):
     """Finite nonperiodic molecular PaiNN scalar energy potential.
 
     The candidate topology is fixed by ``AtomisticBatch``. Geometry only changes
@@ -336,14 +307,18 @@ class PaiNNPotential(StrictModule):
                 "maximum_atomic_number": maximum_z,
             }
         )
-        self.parameter_state_id = _painn_parameter_state_id(self)
-        self.potential_id = canonical_fingerprint(
-            {
-                "kind": "evaluated-painn-potential",
-                "architecture": self.architecture_id,
-                "parameter_state": self.parameter_state_id,
-            }
-        )
+        (
+            self.parameter_state_id,
+            self.potential_id,
+        ) = initialize_atomistic_potential_identity(self)
+
+    def parameter_state_tree(self, /) -> Any:
+        return {
+            "embedding": self.embedding,
+            "interactions": self.interactions,
+            "readout_hidden": self.readout_hidden,
+            "readout_energy": self.readout_energy,
+        }
 
     def _validate_batch(self, batch: AtomisticBatch, /) -> None:
         if not isinstance(batch, AtomisticBatch):
