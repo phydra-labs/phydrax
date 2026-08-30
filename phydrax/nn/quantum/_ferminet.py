@@ -183,7 +183,10 @@ def _apply_linear_stable_signed_bilinear_product(
     signed_nonzero_value = jnp.where(
         negative, -nonzero_value, nonzero_value
     )
-    zero_value = _stable_signed_product(multiplier, log_scale) * value
+    zero_multiplier = jnp.where(
+        nonzero, jnp.zeros_like(multiplier), multiplier
+    )
+    zero_value = _stable_signed_product(zero_multiplier, log_scale) * value
     return jnp.where(nonzero, signed_nonzero_value, zero_value)
 
 
