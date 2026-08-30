@@ -15,6 +15,31 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
       to use a scan-over-depth execution path when topology is compatible.
     - `scan=True` is primarily a compile-time optimization for deeper repeated blocks.
 
+## Continuum-electron amplitudes
+
+`FermiNet` is a finite, nonperiodic molecular amplitude with a static spin
+partition, rotation-invariant one/two-electron distance streams, full generalized
+determinants, sparsity-aware scaled log envelopes with higher-order-correct
+signed-log products and polynomial singular-term derivatives, a positive
+physical decay floor, and stable signed linear determinant combination. It
+returns `phydrax.operators.LogAmplitude` for
+one configuration or a leading
+batch. Same-spin exchanges are antisymmetric.
+
+The exact continuum-electron path is limited to
+`phydrax.operators.ELECTRONIC_MAX_ELECTRONS == 4`. `FermiNet` rejects larger
+systems; this conservative ceiling bounds the polynomial determinant required for
+honest singular-term derivatives across supported dtypes.
+
+::: phydrax.nn.quantum.FermiNet
+    options:
+        members:
+            - __init__
+            - __call__
+            - envelope_decay
+
+---
+
 ::: phydrax.nn.models.MLP
     options:
         members:

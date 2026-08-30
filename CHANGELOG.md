@@ -3,6 +3,27 @@
 ## Unreleased
 
 ### Added
+- Generalized matrix-free quantum local actions through
+  `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
+  a clean migration of discrete VMC/TDVP while preserving the connected-action
+  algorithm. Added finite nonperiodic Born--Oppenheimer
+  `ElectronicCoulombHamiltonian`, validated Bohr/Hartree reference conversion,
+  exact and chunked-exact coordinate kinetic traces, singularity statuses without
+  distance clipping, replayable electronic walkers, an exactly corrected
+  state-dependent proposal, and a full-generalized-determinant
+  `phydrax.nn.quantum.FermiNet` with same-spin antisymmetry, sparsity-aware
+  scaled log envelopes, higher-order-correct zero/subnormal signed products,
+  polynomial singular-term determinant derivatives, coefficient-aware
+  nonzero-product mixture shifts with coefficient- and singularity-reactivation
+  fallbacks, a positive physical decay floor, and determinant mixtures
+  differentiable at zero coefficients, under an explicit four-electron ceiling.
+  Electronic VMC
+  folds local statuses into validity and reuses persistent chains, matrix-free
+  score/Gram stochastic reconfiguration, training lifecycle, linear solves,
+  diagnostics, statuses, and checkpoints. Added H/He/H₂ tests,
+  documentation, and a fixed multi-seed benchmark campaign with predeclared
+  statistical/chemical gates and provenance; periodic, relativistic, and
+  stochastic-trace electrons remain unsupported.
 - Added exact scalar temporal Matérn-3/2 and Matérn-5/2 Gaussian processes
   through content-addressed continuous state-space compilation, origin-shifted
   stable irregular train/query schedules, exact missing/query masks, bounded

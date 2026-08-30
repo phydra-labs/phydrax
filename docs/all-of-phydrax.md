@@ -1009,11 +1009,17 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
-- **Quantum systems and dynamics**: construct composite states, local operators,
-  reduced densities, information measures, matrix commutators, and closed- or
-  open-system residuals. Complex residual penalties remain real and nonnegative.
+- **Quantum systems and dynamics**: construct composite states, generalized local
+  operators, reduced densities, information measures, matrix commutators, and
+  closed- or open-system residuals. Connected discrete VMC and nonrelativistic
+  finite-molecule Coulomb VMC share persistent MCMC, matrix-free score/Gram SR,
+  statuses, diagnostics, and checkpoints. The continuum path includes exact or
+  chunked-exact coordinate traces, state-corrected electronic proposals, and a
+  full-determinant FermiNet under a conservative four-electron ceiling; it
+  excludes larger, periodic, or relativistic electron systems and stochastic
+  traces. Complex residual penalties remain real and nonnegative.
   See [Guides → Quantum operators and dynamics](guides_quantum.md),
-  [Cookbook → Composite systems and a Bell state](cookbook/quantum_composite.md), and
+  [Cookbook → Variational Monte Carlo](cookbook/quantum_vmc.md), and
   [Cookbook → Open-system amplitude damping](cookbook/quantum_open_system.md).
 - **Ritz/energy minimization**: use an explicit integral source with the
   appropriate term, with essential boundary conditions enforced in the ansatz.

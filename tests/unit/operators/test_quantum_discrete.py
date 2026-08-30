@@ -49,7 +49,7 @@ def test_connected_local_estimator_matches_dense_complex_hamiltonian():
         jnp.log(jnp.abs(amplitudes)), amplitudes / jnp.abs(amplitudes)
     )
     operator = _ising_operator()
-    local = phx.operators.local_estimate(model, operator, configurations)
+    local = phx.operators.evaluate_local_operator(model, operator, configurations)
 
     coupling = 0.7
     field = 0.4
@@ -62,8 +62,16 @@ def test_connected_local_estimator_matches_dense_complex_hamiltonian():
         dense = dense.at[index, index ^ 1].set(-field)
     expected = dense @ amplitudes / amplitudes
 
+    assert isinstance(local, phx.operators.LocalOperatorEstimate)
+    assert isinstance(operator, phx.operators.AbstractLocalQuantumOperator)
+    assert local.configuration_shape == operator.configuration_shape
+    assert local.operator_id == operator.operator_id
+    assert local.method_id == "connected-configurations"
+    assert jnp.all(
+        local.status == int(phx.operators.LocalOperatorStatus.SUCCESS)
+    )
     assert jnp.all(local.valid)
-    assert jnp.array_equal(local.active_connections, jnp.full((4,), 2))
+    assert jnp.array_equal(local.work_count, jnp.full((4,), 2))
     assert jnp.allclose(local.value, expected)
 
 
@@ -92,15 +100,17 @@ def test_padded_connections_do_not_change_local_estimate():
         configuration_shape=(2,),
         operator_id="padded",
     )
-    local = phx.operators.local_estimate(model, operator, configurations)
+    local = phx.operators.evaluate_local_operator(model, operator, configurations)
 
     assert jnp.all(local.valid)
     assert jnp.allclose(local.value, 1.0)
-    assert jnp.array_equal(local.active_connections, jnp.ones((4,), dtype=jnp.int32))
+    assert jnp.array_equal(local.work_count, jnp.ones((4,), dtype=jnp.int32))
     gradient = eqx.filter_grad(
         lambda amplitude: jnp.real(
             jnp.sum(
-                phx.operators.local_estimate(amplitude, operator, configurations).value
+                phx.operators.evaluate_local_operator(
+                    amplitude, operator, configurations
+                ).value
             )
         )
     )(model)
@@ -114,7 +124,9 @@ def test_zero_current_amplitude_invalidates_local_estimator():
         jnp.asarray([-jnp.inf, 0.0, 0.0, 0.0]),
         jnp.ones((4,), dtype=complex),
     )
-    local = phx.operators.local_estimate(model, _ising_operator(), configurations)
+    local = phx.operators.evaluate_local_operator(
+        model, _ising_operator(), configurations
+    )
 
     assert not local.valid[0]
     assert jnp.isnan(local.value[0])
