@@ -20,28 +20,14 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState, combine_trainable, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
-from ..nn.atomistic._nequip import (
-    NequIPPotential,
-    refresh_nequip_parameter_state,
-)
-from ..nn.atomistic._painn import (
-    PaiNNPotential,
-    refresh_painn_parameter_state,
-)
+from ..nn.atomistic._nequip import NequIPPotential
+from ..nn.atomistic._painn import PaiNNPotential
+from ..nn.atomistic._state import checkpoint_atomistic_potential
 from ._graph import realize_atomistic_graph
 from ._types import AtomisticBatch, AtomisticStatus
 
 _AtomisticPotential = PaiNNPotential | NequIPPotential
 _ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
-
-
-def _refresh_potential_parameter_state(
-    potential: _AtomisticPotential, /
-) -> _AtomisticPotential:
-    if isinstance(potential, PaiNNPotential):
-        return refresh_painn_parameter_state(potential)
-    return refresh_nequip_parameter_state(potential)
-
 
 
 
@@ -706,7 +692,7 @@ def fit_atomistic_potential(
         validation_history.append(initial_value)
         validation_steps.append(0)
         if math.isfinite(initial_value):
-            current = _refresh_potential_parameter_state(current)
+            current = checkpoint_atomistic_potential(current)
             control.select(
                 initial_value,
                 current,
@@ -775,7 +761,7 @@ def fit_atomistic_potential(
                 terminal_status = AtomisticStatus.NONFINITE
                 termination = "nonfinite_validation_loss"
                 break
-            current = _refresh_potential_parameter_state(current)
+            current = checkpoint_atomistic_potential(current)
             control.select(
                 selected_value,
                 current,
@@ -789,7 +775,7 @@ def fit_atomistic_potential(
             termination = "selection_or_callback_stop"
             break
 
-    current = _refresh_potential_parameter_state(current)
+    current = checkpoint_atomistic_potential(current)
     if (
         not validation_history
         and terminal_status
@@ -820,7 +806,7 @@ def fit_atomistic_potential(
         else float("nan")
     )
     best_potential = control.selected(current) if policy.select_best else current
-    best_potential = _refresh_potential_parameter_state(best_potential)
+    best_potential = checkpoint_atomistic_potential(best_potential)
     control.emit("stop", metrics={"final_loss": final_loss, "best_loss": best_loss})
     result_id = canonical_fingerprint(
         {

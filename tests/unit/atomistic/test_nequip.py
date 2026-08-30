@@ -157,6 +157,8 @@ def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps(
     assert bool(observed.valid[0])
     assert bool(jnp.all(jnp.isfinite(observed.energy)))
     assert bool(jnp.all(jnp.isfinite(observed.forces)))
+    assert bool(jnp.all(jnp.isfinite(observed.net_force)))
+    assert bool(jnp.all(jnp.isfinite(observed.net_torque)))
     np.testing.assert_allclose(observed.energy, expected.energy, rtol=1e-12, atol=1e-12)
     np.testing.assert_allclose(
         observed.forces[0, :2], expected.forces[0], rtol=1e-12, atol=1e-12

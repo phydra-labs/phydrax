@@ -15,7 +15,7 @@ from jaxtyping import Array, Key
 from opt_einsum import contract
 
 from ..._doc import DOC_KEY0
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
@@ -29,6 +29,9 @@ from ..layers import Linear
 from ..operator.layers import O3TensorProduct, O3TensorProductPlan, o3_gated_activation
 from ..operator.representations import O3Features, O3Representation
 from ..parameters import IdentityTransform
+from ._state import AbstractAtomisticPotential, initialize_atomistic_potential_identity
+
+
 
 
 class _NequIPConfiguration(StrictModule, NonTrainableState):
@@ -181,41 +184,9 @@ class _NequIPInteraction(StrictModule):
         return activated * node_mask[:, None]
 
 
-def _nequip_parameter_state_id(potential: "NequIPPotential", /) -> str:
-    return canonical_fingerprint(
-        {
-            "kind": "nequip-parameter-state",
-            "arrays": array_tree_fingerprint(
-                {
-                    "embedding": potential.embedding,
-                    "interactions": potential.interactions,
-                    "readout_hidden": potential.readout_hidden,
-                    "readout_energy": potential.readout_energy,
-                }
-            ),
-        }
-    )
 
 
-def refresh_nequip_parameter_state(
-    potential: "NequIPPotential", /
-) -> "NequIPPotential":
-    """Refresh evaluated-state provenance after a host-side parameter update."""
-
-    state_id = _nequip_parameter_state_id(potential)
-    potential_id = canonical_fingerprint(
-        {
-            "kind": "evaluated-nequip-potential",
-            "architecture": potential.architecture_id,
-            "parameter_state": state_id,
-        }
-    )
-    object.__setattr__(potential, "parameter_state_id", state_id)
-    object.__setattr__(potential, "potential_id", potential_id)
-    return potential
-
-
-class NequIPPotential(StrictModule):
+class NequIPPotential(AbstractAtomisticPotential):
     """Low-degree finite nonperiodic NequIP scalar energy potential.
 
     This is a Cartesian O(3) implementation with degrees zero through two. It
@@ -371,15 +342,19 @@ class NequIPPotential(StrictModule):
                 "tensor_product_plans": plan_ids,
             }
         )
-        self.parameter_state_id = _nequip_parameter_state_id(self)
-        self.potential_id = canonical_fingerprint(
-            {
-                "kind": "evaluated-nequip-potential",
-                "architecture": self.architecture_id,
-                "parameter_state": self.parameter_state_id,
-            }
-        )
         self.method_id = "negative-position-gradient-of-total-nequip-energy"
+        (
+            self.parameter_state_id,
+            self.potential_id,
+        ) = initialize_atomistic_potential_identity(self)
+
+    def parameter_state_tree(self, /) -> Any:
+        return {
+            "embedding": self.embedding,
+            "interactions": self.interactions,
+            "readout_hidden": self.readout_hidden,
+            "readout_energy": self.readout_energy,
+        }
 
     def _validate_batch(self, batch: AtomisticBatch, /) -> None:
         if not isinstance(batch, AtomisticBatch):

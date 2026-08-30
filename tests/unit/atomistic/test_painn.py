@@ -14,7 +14,7 @@ from phydrax.atomistic import (
     AtomicStructure,
     energy_and_forces,
 )
-from phydrax.nn.atomistic import PaiNNPotential
+from phydrax.nn.atomistic import PaiNNPotential, checkpoint_atomistic_potential
 from phydrax.nn.atomistic._painn import _PaiNNInteraction
 
 
@@ -273,4 +273,41 @@ def test_force_is_cast_to_output_dtype_when_coordinate_dtype_differs():
     assert prediction.energy.dtype == jnp.float32
     assert prediction.forces.dtype == jnp.float32
     assert prediction.net_force.dtype == jnp.float32
+    assert prediction.net_torque.dtype == jnp.float32
+
+
+def test_external_parameter_updates_require_immutable_public_checkpoint():
+    original = _model(seed=51)
+    updated = eqx.tree_at(
+        lambda potential: potential.embedding,
+        original,
+        original.embedding + 0.125,
+    )
+    assert updated.parameter_state_id == original.parameter_state_id
+    checkpointed = checkpoint_atomistic_potential(updated)
+    assert checkpointed is not updated
+    assert updated.parameter_state_id == original.parameter_state_id
+    assert checkpointed.parameter_state_id != updated.parameter_state_id
+    prediction = energy_and_forces(checkpointed, _structure())
+    assert prediction.provenance.parameter_state_id == checkpointed.parameter_state_id
+
+
+def test_torque_uses_reduction_precision_before_output_cast_for_huge_coordinates():
+    precision = AtomisticPrecisionPolicy(
+        coordinate_dtype="float64",
+        compute_dtype="float32",
+        reduction_dtype="float64",
+        output_dtype="float32",
+    )
+    structure = AtomicStructure(
+        [1],
+        [[1e30, -1e30, 1e30]],
+        [1.0],
+        SCALE,
+        coordinate_dtype="float64",
+    )
+    prediction = energy_and_forces(_model(precision=precision), structure)
+    np.testing.assert_allclose(prediction.forces, 0.0, atol=0.0)
+    np.testing.assert_allclose(prediction.net_torque, 0.0, atol=0.0)
+    assert bool(jnp.all(jnp.isfinite(prediction.net_torque)))
     assert prediction.net_torque.dtype == jnp.float32
