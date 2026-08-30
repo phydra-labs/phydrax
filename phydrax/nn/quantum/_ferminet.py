@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy.special as jsp_special
-from jax.custom_transpose import custom_transpose
 from jaxtyping import Array, Key
 from opt_einsum import contract
 
@@ -98,22 +97,21 @@ def _stable_signed_product_primal(
     return jnp.where(nonzero, signed_value, jnp.zeros_like(value))
 
 
-@custom_transpose
-def _linear_stable_signed_product(log_scale: Array, value: Array, /) -> Array:
-    return _stable_signed_product_primal(value, log_scale)
-
-
-@_linear_stable_signed_product.def_transpose
-def _linear_stable_signed_product_transpose(
-    log_scale: Array, cotangent: Array, /
-) -> Array:
-    return _stable_signed_product(cotangent, log_scale)
-
-
 def _apply_linear_stable_signed_product(
     value: Array, log_scale: Array, /
 ) -> Array:
-    return _linear_stable_signed_product(jax.typeof(value), log_scale, value)
+    def inverse_scale(argument):
+        return _stable_signed_product_primal(argument, -log_scale)
+
+    def solve(_inverse_scale, right_hand_side):
+        return _stable_signed_product_primal(right_hand_side, log_scale)
+
+    return jax.lax.custom_linear_solve(
+        inverse_scale,
+        value,
+        solve,
+        symmetric=True,
+    )
 
 
 @jax.custom_jvp
@@ -174,32 +172,19 @@ def _stable_signed_bilinear_product_primal(
     return jnp.where(nonzero, signed_value, jnp.zeros_like(left))
 
 
-@custom_transpose
-def _linear_stable_signed_bilinear_product(
-    residuals: tuple[Array, Array], value: Array, /
-) -> Array:
-    multiplier, log_scale = residuals
-    return _stable_signed_bilinear_product_primal(
-        multiplier, value, log_scale
-    )
-
-
-@_linear_stable_signed_bilinear_product.def_transpose
-def _linear_stable_signed_bilinear_product_transpose(
-    residuals: tuple[Array, Array], cotangent: Array, /
-) -> Array:
-    multiplier, log_scale = residuals
-    return _stable_signed_bilinear_product(
-        multiplier, cotangent, log_scale
-    )
-
-
 def _apply_linear_stable_signed_bilinear_product(
     multiplier: Array, value: Array, log_scale: Array, /
 ) -> Array:
-    return _linear_stable_signed_bilinear_product(
-        jax.typeof(value), (multiplier, log_scale), value
+    negative, nonzero, _ = _signed_log_components(multiplier)
+    combined_log_scale = log_scale + _stable_log_abs(multiplier)
+    nonzero_value = _apply_linear_stable_signed_product(
+        value, combined_log_scale
     )
+    signed_nonzero_value = jnp.where(
+        negative, -nonzero_value, nonzero_value
+    )
+    zero_value = _stable_signed_product(multiplier, log_scale) * value
+    return jnp.where(nonzero, signed_nonzero_value, zero_value)
 
 
 @jax.custom_jvp
