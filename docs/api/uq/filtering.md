@@ -357,12 +357,14 @@ gp = phx.uq.fit_state_space_gaussian_process(
 times must use one identical compute dtype; mixed plans are rejected rather than
 silently rounded. Execution is always the canonical sequential square-root Kalman
 filter and matching square-root RTS smoother with zero covariance regularization.
-The stationary prior begins one dynamically evaluated length scale before the
-earliest schedule state, avoiding a zero-process-root derivative. Interval process
-covariance uses bounded Van Loan evaluation only for normalized short gaps and the
-stationary identity `P∞ - Φ P∞ Φᵀ` for long gaps, so large extrapolation intervals
-do not evaluate the exponentially growing auxiliary block. The RTS recursion is one
-reverse `jax.lax.scan`, not a schedule-sized unrolled graph.
+External timestamps and schedule identity are preserved, while internal inference
+subtracts the earliest schedule time. The stationary prior therefore begins at
+internal time `-length_scale`, avoiding both a zero-process-root derivative and
+large-origin subtraction loss. Interval process covariance uses bounded Van Loan
+evaluation only for normalized short gaps and the stationary identity
+`P∞ - Φ P∞ Φᵀ` for long gaps, so large extrapolation intervals do not evaluate the
+exponentially growing auxiliary block. The RTS recursion is one reverse
+`jax.lax.scan`, not a schedule-sized unrolled graph.
 
 `posterior_mean` and `posterior_variance` are latent query marginals;
 `predictive_variance` adds the declared observation variance. The result also
@@ -371,8 +373,9 @@ filter/smoother histories, validity/status, kernel/schedule/method IDs, and prec
 evidence. A concrete transformed fit records both prepared and evaluated kernel
 content IDs. Under JAX tracing, where a host content hash is unavailable, the
 evaluated ID is `None` and the exact evaluated length scale and covariance scale
-remain exported arrays. Smoother invalidity has its own non-success GP status. The
-complete result exports through `export_result`.
+remain exported arrays. Invalidity at a requested query has its own non-success GP
+status; invalid unrequested smoother states do not redefine the query result.
+The complete result exports through `export_result`.
 
 The returned query contract is marginal and therefore remains linear in schedule
 storage; it does not materialize a dense query-by-query posterior covariance.

@@ -76,6 +76,7 @@ class StateSpaceGaussianProcessPlan(StrictModule):
     kernel: AbstractPositiveDefiniteKernel
     initial_time: Array
     schedule_times: Array
+    inference_times: Array
     train_schedule_indices: Array
     query_schedule_indices: Array
     train_sort_indices: Array
@@ -351,15 +352,15 @@ def state_space_gaussian_process_status_name(value: int, /) -> str:
 def _state_space_gp_status(
     filter_success: Array,
     filter_status: Array,
-    smoother_valid: Array,
+    requested_valid: Array,
     /,
 ) -> Array:
-    smoother_success = jnp.all(smoother_valid)
+    requested_success = jnp.all(requested_valid)
     return jnp.where(
         ~filter_success,
         jnp.max(filter_status),
         jnp.where(
-            ~smoother_success,
+            ~requested_success,
             STATE_SPACE_GP_SMOOTHER_FAILURE,
             KALMAN_SUCCESS,
         ),
@@ -475,13 +476,8 @@ def compile_state_space_kernel(
             "Kernel coefficients and schedule times must use one identical compute "
             "dtype; construct both under the same JAX precision context."
         )
-    initial_time = schedule[0] - components.length_scale
-    initial_host = np.asarray(jax.device_get(initial_time))
-    if not np.isfinite(initial_host) or not bool(initial_host < schedule_host[0]):
-        raise ValueError(
-            "The first schedule time must admit a finite representable stationary "
-            "initial time one length scale earlier."
-        )
+    inference_schedule = schedule - schedule[0]
+    initial_time = -components.length_scale
     process_noise = components.process_factor @ components.process_factor.T
     lyapunov = (
         components.drift @ components.stationary
@@ -547,7 +543,7 @@ def compile_state_space_kernel(
         },
     )
     observations = ObservationSequence(
-        schedule,
+        inference_schedule,
         jnp.zeros((schedule.size, 1), dtype=components.drift.dtype),
         observation_axes=("value",),
         observation_mask=schedule_mask[:, None],
@@ -582,6 +578,7 @@ def compile_state_space_kernel(
         kernel=kernel,
         initial_time=initial_time,
         schedule_times=schedule,
+        inference_times=inference_schedule,
         train_schedule_indices=train_schedule,
         query_schedule_indices=query_schedule,
         train_sort_indices=train_sort,
@@ -667,14 +664,10 @@ def fit_state_space_gaussian_process(
             "The evaluated kernel dtype must match the plan compute dtype; recompile "
             "the plan under the intended JAX precision context."
         )
-    initial_time = plan.schedule_times[0] - components.length_scale
     initial_time = eqx.error_if(
-        initial_time,
-        ~jnp.isfinite(components.length_scale)
-        | (components.length_scale <= 0.0)
-        | ~jnp.isfinite(initial_time)
-        | (initial_time >= plan.schedule_times[0]),
-        "The evaluated length scale must define a finite representable initial time.",
+        -components.length_scale,
+        ~jnp.isfinite(components.length_scale) | (components.length_scale <= 0.0),
+        "The evaluated length scale must be finite and strictly positive.",
     )
     schedule_values = jnp.zeros(
         (plan.schedule_size, 1), dtype=components.drift.dtype
@@ -733,12 +726,12 @@ def fit_state_space_gaussian_process(
     )
     query_valid = smoothed.valid[plan.query_schedule_indices]
     filter_success = jnp.all(filtered.successful)
-    smoother_success = jnp.all(smoothed.valid)
-    valid = filter_success & smoother_success
+    query_success = jnp.all(query_valid)
+    valid = filter_success & query_success
     status = _state_space_gp_status(
         filter_success,
         filtered.status,
-        smoothed.valid,
+        query_valid,
     )
 
     return StateSpaceGaussianProcessResult(

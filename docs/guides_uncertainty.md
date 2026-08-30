@@ -435,8 +435,10 @@ orders, and uses exact observation masks for missing or query-only positions.
 Training timestamps must be unique; repeated query timestamps and train-query
 overlaps share a latent state. Filtering is sequential square-root and smoothing is
 one reverse scan, so state history and marginal query output use linear schedule
-storage. Stationary long-gap covariance remains bounded, and the dynamically earlier
-stationary prior keeps kernel gradients away from a zero process root. The result
+storage. Internal inference shifts the earliest external time to zero, so even a
+sub-ULP length scale at a large absolute time origin has a representable stationary
+initial interval. Stationary long-gap covariance remains bounded, and that earlier
+prior keeps kernel gradients away from a zero process root. The result
 contains latent and observation-predictive marginals, the active-observation log
 marginal likelihood, status/masks, prepared and evaluated identity, exact evaluated
 parameters, method provenance, and precision evidence.
