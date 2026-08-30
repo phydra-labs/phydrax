@@ -84,24 +84,32 @@
 `PolynomialChaosBasis` binds an ordered tuple of independent scalar
 `ProbabilityDomain` factors to a graded total-degree orthonormal basis. `Uniform`
 factors use normalized Legendre polynomials after their exact affine reference
-transform; `Normal` factors use normalized probabilists' Hermite polynomials after
-standardization. Degree zero is a valid constant basis. Multiindex count and storage
-guards fail before allocating an oversized feature table.
+transform; `Normal` factors use a stable normalized probabilists' Hermite recurrence
+after standardization, without materializing factorials. Degree zero is a valid
+constant basis. Multiindex count and storage guards fail before allocating an
+oversized feature table.
 
 Projection and regression are separate nonintrusive contracts:
 
-- `PolynomialChaosProjectionPlan` materializes the supplied
-  `ProductIntegrationPlan` and projects model values against every basis mode.
-- `PolynomialChaosRegressionPlan` uses a native exact linear system for a square
-  design and a diagnosed native least-squares problem for an overdetermined design.
-  The default policies require full rank. A deficient design or nonfinite samples
-  fail rather than selecting an undeclared pseudoinverse.
+- `PolynomialChaosProjectionPlan` preflights product point/replicate counts and
+  sample-by-feature basis bytes before materializing the supplied
+  `ProductIntegrationPlan`, then projects model values against every basis mode.
+- `PolynomialChaosRegressionPlan` uses a native exact linear system for an
+  unweighted square design and a diagnosed native least-squares problem for every
+  weighted or overdetermined design. The default policies require full rank. A
+  deficient design or nonfinite samples fail rather than selecting an undeclared
+  pseudoinverse.
 
 Both plans support array, `coordax.Field`, and PyTree outputs. The resulting immutable
 `PolynomialChaosExpansion` remains callable under JIT and differentiation; every
 coefficient leaf retains its physical output shape instead of flattening that shape
 into the polynomial-mode axis. These APIs do **not** implement intrusive stochastic
 Galerkin equations.
+
+Projection applies evaluation, accumulation, replicate reduction, and output
+precision in that order and rejects nonfinite values at every boundary. Plan
+identities include complete quadrature/design and native solver-policy content.
+
 
 ::: phydrax.uq.PolynomialMultiIndexSet
 

@@ -4,11 +4,12 @@
 
 ### Added
 - Added labeled nonintrusive polynomial chaos for independent scalar Uniform and
-  Normal inputs: guarded graded total-degree multiindices, normalized
-  Legendre/Hermite tensor bases, product-integration projection, diagnosed native
-  exact/least-squares regression, immutable array/Field/PyTree expansions,
-  coefficient moments and first/total Sobol effects, portable fit evidence, and a
-  matched-model-call benchmark campaign.
+  Normal inputs: preflight-guarded graded total-degree multiindices and
+  sample-by-feature projection storage, stable normalized Legendre/Hermite tensor
+  bases, content-addressed product-integration projection, diagnosed native
+  exact/least-squares regression with complete solver-policy identity, immutable
+  array/Field/PyTree expansions, coefficient moments and first/total Sobol effects,
+  portable fit evidence, and a matched-model-call benchmark campaign.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

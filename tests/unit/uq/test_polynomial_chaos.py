@@ -5,10 +5,12 @@
 import coordax as cx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
 import pytest
 
 import phydrax as phx
+from tools import polynomial_chaos_benchmarks as pce_benchmarks
 
 
 def _factors():
@@ -125,6 +127,15 @@ def test_basis_is_orthonormal_for_nonstandard_uniform_and_normal_laws():
     assert jnp.allclose(point[:3], jnp.asarray([1.0, 0.0, 0.0]))
 
 
+def test_high_degree_normalized_hermite_modes_do_not_form_factorials():
+    factor = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="x")
+    basis = phx.uq.PolynomialChaosBasis(factor, 171)
+    values = basis.evaluate({"x": jnp.asarray([0.0, 0.5])})
+
+    assert values.shape == (2, 172)
+    assert jnp.all(jnp.isfinite(values))
+
+
 def test_regression_recovers_exact_span_and_reports_out_of_span_residual():
     basis = _basis(2)
     uniform = jnp.linspace(2.1, 5.9, 5)
@@ -146,6 +157,26 @@ def test_regression_recovers_exact_span_and_reports_out_of_span_residual():
     assert jnp.allclose(exact.expansion.coefficients, expected, rtol=2e-10, atol=2e-10)
     assert jnp.allclose(exact.residual_norm, 0.0, atol=2e-10)
     assert float(misspecified.residual_norm) > 1e-4
+
+
+def test_weighted_square_regression_uses_least_squares_and_honors_rank():
+    factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
+    basis = phx.uq.PolynomialChaosBasis(factor, 2)
+    points = jnp.asarray([[-1.0], [0.0], [1.0]])
+    expected = jnp.asarray([1.0, -0.25, 0.5])
+    values = basis.evaluate(points) @ expected
+    plan = phx.uq.PolynomialChaosRegressionPlan(basis)
+
+    weighted = plan.fit(points, values, weights=jnp.ones((3,)))
+
+    assert weighted.method == "regression-least-squares"
+    assert jnp.allclose(weighted.expansion.coefficients, expected)
+    with pytest.raises(ValueError, match="solve failed"):
+        plan.fit(
+            points,
+            values,
+            weights=jnp.asarray([1.0, 1.0, 0.0]),
+        )
 
 
 def test_projection_and_regression_match_for_an_exact_mixed_span():
@@ -320,17 +351,55 @@ def test_unsupported_or_nonindependent_laws_are_rejected_during_basis_constructi
         phx.uq.PolynomialChaosBasis((first, phx.domain.ProductDomain(first, second)), 2)
 
 
-def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed():
+def test_plan_identities_include_full_quadrature_and_solver_policies():
+    basis = _basis(2)
+    low_order = _projection_plan(basis, order=3)
+    high_order = _projection_plan(basis, order=5)
+    undamped = phx.linalg.LinearSolvePolicy(phx.linalg.DenseSVD(damping=0.0))
+    damped = phx.linalg.LinearSolvePolicy(phx.linalg.DenseSVD(damping=0.5))
+    first_regression = phx.uq.PolynomialChaosRegressionPlan(
+        basis, least_squares_policy=undamped
+    )
+    second_regression = phx.uq.PolynomialChaosRegressionPlan(
+        basis, least_squares_policy=damped
+    )
+
+    assert low_order.plan_id != high_order.plan_id
+    assert first_regression.plan_id != second_regression.plan_id
+
+
+def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed(
+    monkeypatch,
+):
     with pytest.raises(ValueError, match="maximum_features"):
         phx.uq.PolynomialMultiIndexSet(8, 8, maximum_features=100)
     with pytest.raises(ValueError, match="maximum_storage_bytes"):
         phx.uq.PolynomialMultiIndexSet(4, 4, maximum_storage_bytes=8)
 
+    materialized = False
+
+    def forbidden_materialization(*args, **kwargs):
+        del args, kwargs
+        nonlocal materialized
+        materialized = True
+        raise AssertionError("Projection guard ran after materialization.")
+
+    monkeypatch.setattr(
+        "phydrax.uq._polynomial_chaos.materialize_integration",
+        forbidden_materialization,
+    )
     basis = _basis(2)
     with pytest.raises(ValueError, match="maximum_model_evaluations"):
         _projection_plan(basis, order=3, maximum_model_evaluations=8).fit(
             lambda x, z: x + z
         )
+    with pytest.raises(ValueError, match="maximum_basis_bytes"):
+        _projection_plan(
+            basis,
+            order=3,
+            maximum_basis_bytes=400,
+        ).fit(lambda x, z: x + z)
+    assert not materialized
     with pytest.raises(ValueError, match="maximum_samples"):
         phx.uq.PolynomialChaosRegressionPlan(basis, maximum_samples=5).fit(
             jnp.ones((6, 2)), jnp.ones((6,))
@@ -342,19 +411,76 @@ def test_feature_storage_evaluation_and_design_capacity_guards_fail_closed():
 
 
 def test_projection_honors_evaluation_accumulation_and_output_precision():
-    basis = _basis(2)
+    basis = _basis(0)
     precision = phx.integration.IntegrationPrecisionPolicy(
         evaluation_dtype=jnp.float32,
         accumulation_dtype=jnp.float64,
         decision_dtype=jnp.float64,
         output_dtype=jnp.float64,
     )
+    source_value = jnp.asarray(1.0 + 2.0**-30, dtype=jnp.float64)
     result = _projection_plan(
-        basis, order=4, precision=precision
-    ).fit(lambda conductivity, forcing: conductivity * forcing)
+        basis, order=2, precision=precision
+    ).fit(lambda conductivity, forcing: source_value)
+    expected = jnp.asarray(source_value, dtype=jnp.float32).astype(jnp.float64)
 
     assert result.expansion.coefficients.dtype == jnp.float64
+    assert jnp.allclose(
+        result.expansion.coefficients[0],
+        expected,
+        rtol=0.0,
+        atol=1e-14,
+    )
+    assert jnp.abs(result.expansion.coefficients[0] - source_value) > 1e-12
     assert result.evidence["precision_policy_id"] == precision.policy_id
+
+    narrow_output = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype=jnp.float64,
+        accumulation_dtype=jnp.float64,
+        decision_dtype=jnp.float64,
+        output_dtype=jnp.float32,
+    )
+    with pytest.raises(ValueError, match="output precision"):
+        _projection_plan(
+            basis, order=2, precision=narrow_output
+        ).fit(
+            lambda conductivity, forcing: jnp.asarray(
+                1.0e40, dtype=jnp.float64
+            )
+        )
+    with pytest.raises(ValueError, match="coefficients must be finite"):
+        phx.uq.PolynomialChaosExpansion(
+            basis, jnp.asarray([jnp.inf])
+        )
+
+
+def test_projection_rejects_nonfinite_accumulation_contractions(monkeypatch):
+    factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
+    basis = phx.uq.PolynomialChaosBasis(factor, 1)
+    plan = phx.uq.PolynomialChaosProjectionPlan(
+        basis,
+        phx.integration.ProductIntegrationPlan(
+            {
+                "x": phx.integration.FixedQuadraturePlan(
+                    phx.integration.GaussLegendreRule(3)
+                )
+            }
+        ),
+    )
+
+    def nonfinite_contraction(weights, basis_values, values):
+        del weights
+        return jnp.full(
+            (basis_values.shape[1],) + values.shape[1:],
+            jnp.inf,
+        )
+
+    monkeypatch.setattr(
+        "phydrax.uq._polynomial_chaos._project_leaf",
+        nonfinite_contraction,
+    )
+    with pytest.raises(ValueError, match="contraction"):
+        plan.fit(lambda value: value)
 
 
 def test_expansion_is_jittable_differentiable_and_preserves_coefficient_precision():
@@ -371,6 +497,65 @@ def test_expansion_is_jittable_differentiable_and_preserves_coefficient_precisio
     assert derivative.dtype == jnp.float64
     assert jnp.all(jnp.isfinite(derivative))
     assert jnp.allclose(value, expansion(point))
+
+
+def test_benchmark_times_and_blocks_design_materialization_symmetrically(
+    monkeypatch,
+):
+    factor = phx.domain.ProbabilityDomain(phx.uq.Uniform(-1.0, 1.0), label="x")
+    scenario = pce_benchmarks._Scenario(
+        "timing-contract",
+        (factor,),
+        0,
+        2,
+        lambda value: value,
+        0.0,
+        1.0 / 3.0,
+        "analytic",
+    )
+    clock_calls = 0
+    original_projection_plan = pce_benchmarks._projection_plan
+    original_samples = pce_benchmarks._samples
+
+    block_clocks = []
+    original_block = pce_benchmarks.jax.block_until_ready
+
+    def checked_block(value):
+        block_clocks.append(clock_calls)
+        return original_block(value)
+
+    def clock():
+        nonlocal clock_calls
+        clock_calls += 1
+        return float(clock_calls)
+
+    def checked_projection_plan(*args, **kwargs):
+        assert clock_calls == 1
+        return original_projection_plan(*args, **kwargs)
+
+    def checked_samples(*args, **kwargs):
+        assert clock_calls in (3, 5, 7)
+        return original_samples(*args, **kwargs)
+
+    monkeypatch.setattr(pce_benchmarks.time, "perf_counter", clock)
+    monkeypatch.setattr(
+        pce_benchmarks, "_projection_plan", checked_projection_plan
+    )
+    monkeypatch.setattr(pce_benchmarks, "_samples", checked_samples)
+    monkeypatch.setattr(
+        pce_benchmarks.jax, "block_until_ready", checked_block
+    )
+
+    records = pce_benchmarks._run_scenario(scenario, jr.key(0))
+
+    assert tuple(record.method for record in records) == (
+        "projection-pce",
+        "regression-pce",
+        "qmc",
+        "mc",
+    )
+    assert all(record.elapsed_seconds == 1.0 for record in records)
+    assert set(block_clocks) == {1, 3, 5, 7}
 
 
 def test_polynomial_chaos_fit_result_is_portably_exported(tmp_path):
