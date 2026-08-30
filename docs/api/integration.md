@@ -72,8 +72,10 @@ construction or materialization. Failed solves, non-finite integrands or final
 contractions, and posterior variance outside a dtype-aware roundoff envelope
 produce explicit non-success statuses; no positive posterior-variance floor is
 applied. Kernel and integrand operands are cast before evaluation, and variance
-decisions retain the least precise arithmetic epsilon. `max_points` and the
-delegated linear-solve resource policy guard allocations before execution. This is a
+decisions include evaluation, accumulation, decision, and effective factorization
+roundoff. Dense-LU operator, residual, and linear-accumulation dtypes must match
+the integration accumulation dtype. `max_points` and the delegated linear-solve
+resource policy guard allocations before execution. This is a
 fixed-design capability only: active acquisition, WSABI, unnormalized evidence,
 and arbitrary measures or kernels are not implemented.
 

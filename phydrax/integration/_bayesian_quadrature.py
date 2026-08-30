@@ -138,6 +138,39 @@ class GaussianKernelMean(StrictModule):
             f"{name} must contain only finite values.",
         )
 
+    @staticmethod
+    def _standardized_difference(
+        left: Array,
+        right: Array,
+        reference_scale: Array,
+        normalized_scale: Array,
+        /,
+    ) -> Array:
+        left_negative = jnp.signbit(left)
+        same_sign = left_negative == jnp.signbit(right)
+        sign = jnp.where(
+            left_negative,
+            jnp.asarray(-1.0, dtype=left.dtype),
+            jnp.asarray(1.0, dtype=left.dtype),
+        )
+        left_magnitude = jnp.abs(left)
+        right_magnitude = jnp.abs(right)
+        same_sign_difference = (
+            sign * (left_magnitude - right_magnitude) / reference_scale
+        )
+        opposite_sign_difference = sign * (
+            left_magnitude / reference_scale + right_magnitude / reference_scale
+        )
+        return (
+            jnp.where(
+                same_sign,
+                same_sign_difference,
+                opposite_sign_difference,
+            )
+            / normalized_scale
+        )
+
+
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         """Evaluate the supported kernel without changing the operand dtype."""
         left_values = self._design(left, "left kernel points")
@@ -145,9 +178,12 @@ class GaussianKernelMean(StrictModule):
         if left_values.dtype != right_values.dtype:
             raise ValueError("Kernel point designs must have equal dtypes.")
         length_scale, _, _, amplitude = self._parameters(left_values.dtype)
-        standardized = (
-            left_values[:, None, :] - right_values[None, :, :]
-        ) / length_scale
+        standardized = self._standardized_difference(
+            left_values[:, None, :],
+            right_values[None, :, :],
+            length_scale,
+            jnp.ones_like(length_scale),
+        )
         return amplitude * jnp.exp(-0.5 * jnp.sum(standardized**2, axis=-1))
 
     def mean(self, points: ArrayLike, /) -> Array:
@@ -163,8 +199,12 @@ class GaussianKernelMean(StrictModule):
             normalized_length**2 + normalized_normal**2
         )
         normalization = jnp.prod(normalized_length / normalized_combined)
-        inverse_combined = jnp.reciprocal(reference_scale) / normalized_combined
-        standardized = values * inverse_combined - location * inverse_combined
+        standardized = self._standardized_difference(
+            values,
+            location,
+            reference_scale,
+            normalized_combined,
+        )
         exponent = -0.5 * jnp.sum(standardized**2, axis=1)
         return amplitude * normalization * jnp.exp(exponent)
 
@@ -394,6 +434,50 @@ def materialize_bayesian_quadrature(
             "factorization dtypes; no kernel matrix was allocated."
         )
     entries = solve_design.shape[0] * solve_design.shape[0]
+    if linear_precision is not None:
+        stage_dtypes = (
+            ("operator_dtype", linear_precision.operator_dtype),
+            ("residual_dtype", linear_precision.residual_dtype),
+            ("accumulation_dtype", linear_precision.accumulation_dtype),
+        )
+        mismatched_stages = tuple(
+            name
+            for name, dtype in stage_dtypes
+            if dtype is not None and jnp.dtype(dtype) != jnp.dtype(solve_design.dtype)
+        )
+        if mismatched_stages:
+            raise ValueError(
+                "Bayesian quadrature DenseLU precision stages "
+                f"{mismatched_stages!r} must match integration accumulation dtype "
+                f"{solve_design.dtype}; no kernel matrix was allocated."
+            )
+        if (
+            linear_precision.preconditioner_dtype is not None
+            or linear_precision.krylov_dtype is not None
+        ):
+            raise ValueError(
+                "Bayesian quadrature DenseLU has no preconditioner or Krylov "
+                "precision stage; no kernel matrix was allocated."
+            )
+        lower_factorization = (
+            jnp.dtype(factorization_dtype).itemsize
+            < jnp.dtype(solve_design.dtype).itemsize
+        )
+        if jnp.dtype(factorization_dtype).itemsize > jnp.dtype(
+            solve_design.dtype
+        ).itemsize:
+            raise ValueError(
+                "Bayesian quadrature DenseLU factorization precision cannot exceed "
+                "the solve dtype; no kernel matrix was allocated."
+            )
+        if (
+            linear_precision.maximum_refinement_steps > 0
+            or linear_precision.condition_limit is not None
+        ) and not lower_factorization:
+            raise ValueError(
+                "Bayesian quadrature DenseLU refinement requires a lower "
+                "factorization dtype; no kernel matrix was allocated."
+            )
     factorization_bytes = entries * jnp.dtype(factorization_dtype).itemsize
     gram_workspace_bytes = 2 * entries * solve_itemsize
     resources = plan.solve_policy.resources
@@ -453,6 +537,7 @@ def materialize_bayesian_quadrature(
         jnp.finfo(evaluation_design.dtype).eps,
         jnp.finfo(kernel_mean.dtype).eps,
         jnp.finfo(posterior_variance.dtype).eps,
+        jnp.finfo(jnp.dtype(factorization_dtype)).eps,
     )
     variance_scale = jnp.maximum(
         jnp.maximum(jnp.abs(decision_double_mean), jnp.abs(contracted)),

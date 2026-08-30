@@ -491,3 +491,108 @@ def test_tiny_kernel_amplitude_is_solved_in_relative_scale():
     assert estimate.diagnostics.solve.successful
     assert jnp.isfinite(estimate.value.data)
     assert jnp.isfinite(estimate.error_estimate)
+
+
+def test_standardized_differences_handle_huge_opposite_and_equal_points():
+    probability = phx.domain.ProbabilityDomain(
+        phx.uq.Normal(1.0e308, 1.0e-200),
+        label="z",
+    )
+    target = phx.integration.expectation(probability, target_id="extreme-location")
+    kernel_mean = phx.integration.GaussianKernelMean(
+        target,
+        phx.kernels.SquaredExponentialKernel(length_scale=1.0e-200),
+    )
+    location = jnp.asarray([1.0e308])
+    at_location = kernel_mean.mean(location)[0]
+    expected = 2.0**-0.5
+    assert jnp.isfinite(at_location)
+    assert at_location == pytest.approx(expected)
+
+    next_point = jnp.nextafter(location, jnp.asarray([jnp.inf]))
+    assert jnp.isfinite(kernel_mean.mean(next_point)[0])
+
+    opposite_points = jnp.asarray([1.0e308, -1.0e308])
+    matrix = kernel_mean.matrix(opposite_points, opposite_points)
+    assert jnp.all(jnp.isfinite(matrix))
+    assert jnp.array_equal(jnp.diag(matrix), jnp.ones((2,)))
+    assert matrix[0, 1] == 0.0
+    assert matrix[1, 0] == 0.0
+
+
+def test_mixed_float32_factorization_controls_variance_roundoff_envelope():
+    _, target, kernel_mean, _ = _problem(
+        count=4,
+        observation_noise=0.5,
+        solve_regularization=0.0,
+    )
+    solve_policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.DenseLU(),
+        failure=phx.linalg.FailurePolicy("status"),
+        precision=phx.linalg.MixedPrecisionPolicy(
+            factorization_dtype="float32",
+            maximum_refinement_steps=1,
+        ),
+    )
+    plan = phx.integration.BayesianQuadraturePlan(
+        kernel_mean,
+        phx.domain.PointSampling(4, design="hammersley"),
+        observation_noise=0.5,
+        solve_policy=solve_policy,
+    )
+    integration_precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float64",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+        output_dtype="float64",
+    )
+    realization = phx.integration.materialize(
+        target,
+        plan,
+        precision=integration_precision,
+    )
+    batch = realization.batch
+    contraction = jnp.sum(batch.kernel_mean * batch.weights)
+    variance_scale = jnp.maximum(
+        jnp.abs(batch.kernel_double_mean),
+        jnp.abs(contraction),
+    )
+    minimum = (
+        jnp.finfo(jnp.float32).eps * (8 * batch.weights.size + 16) * variance_scale
+    )
+
+    assert (
+        batch.solve_result.provenance.effective_precision.factorization_dtype
+        == "float32"
+    )
+    assert batch.variance_roundoff_envelope >= minimum
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["operator_dtype", "residual_dtype", "accumulation_dtype"],
+)
+def test_dense_lu_precision_stage_mismatch_fails_before_gram_allocation(stage):
+    _, target, kernel_mean, _ = _problem(count=4)
+    mixed_precision = phx.linalg.MixedPrecisionPolicy(**{stage: "float32"})
+    plan = phx.integration.BayesianQuadraturePlan(
+        kernel_mean,
+        phx.domain.PointSampling(4, design="hammersley"),
+        solve_policy=phx.linalg.LinearSolvePolicy(
+            phx.linalg.DenseLU(),
+            failure=phx.linalg.FailurePolicy("status"),
+            precision=mixed_precision,
+        ),
+    )
+    integration_precision = phx.integration.IntegrationPrecisionPolicy(
+        evaluation_dtype="float64",
+        accumulation_dtype="float64",
+        decision_dtype="float64",
+    )
+
+    with pytest.raises(ValueError, match="no kernel matrix was allocated"):
+        phx.integration.materialize(
+            target,
+            plan,
+            precision=integration_precision,
+        )

@@ -425,10 +425,12 @@ certificate without an external calibration argument.
 
 The kernel mean is bound to the target's stable `target_id`, probability label,
 and Gaussian location/scale content; every part must match before reduction.
-Only the preflighted `DenseLU` route is accepted. Unsupported density targets,
-non-Gaussian measures, kernel sums/products, active acquisition, WSABI, and
-unnormalized evidence are outside this capability rather than approximated by
-a fallback.
+Only the preflighted `DenseLU` route is accepted. Its operator, residual, and
+linear-accumulation dtypes must match integration accumulation; a lower
+factorization dtype remains explicit and contributes to the posterior-variance
+roundoff envelope. Unsupported density targets, non-Gaussian measures, kernel
+sums/products, active acquisition, WSABI, and unnormalized evidence are outside
+this capability rather than approximated by a fallback.
 
 ## Monte Carlo and variance reduction
 
