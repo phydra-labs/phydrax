@@ -692,7 +692,6 @@ def fit_atomistic_potential(
         validation_history.append(initial_value)
         validation_steps.append(0)
         if math.isfinite(initial_value):
-            current = checkpoint_atomistic_potential(current)
             control.select(
                 initial_value,
                 current,
@@ -761,7 +760,6 @@ def fit_atomistic_potential(
                 terminal_status = AtomisticStatus.NONFINITE
                 termination = "nonfinite_validation_loss"
                 break
-            current = checkpoint_atomistic_potential(current)
             control.select(
                 selected_value,
                 current,
