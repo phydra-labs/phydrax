@@ -1,0 +1,14 @@
+{
+  "mode_count": 12,
+  "closure_count": 23,
+  "poisson_residual_energy": 2.4110801837972294e-26,
+  "poisson_gradient_norm": 4.0984646772530815e-10,
+  "mixed_basis_residual_energy": 7.758367774001352e-30,
+  "retained_high_mode_energy": 7.541113876980838e-31,
+  "full_high_mode_energy": 0.1250000000000001,
+  "expected_full_high_mode_energy": 0.125,
+  "first_jit_ms": 93.34637504070997,
+  "steady_ms": 0.019474991131573915,
+  "finite": true,
+  "passed": true
+}

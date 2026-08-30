@@ -185,6 +185,13 @@ from ._spectral_compile import (
     CompiledSpectralDynamics,
     SpectralStateLayout,
 )
+from ._spectral_residual import (
+    compile_spectral_residual,
+    CompiledSpectralResidual,
+    SpectralConditionHandling,
+    SpectralResidualCompilationReport,
+    SpectralResidualScope,
+)
 from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
@@ -310,6 +317,7 @@ __all__ = [
     "CompiledDiscreteResidual",
     "CompiledIncompressibleSpectralDynamics",
     "CompiledSpectralDynamics",
+    "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
     "ConstitutiveResponse",
@@ -349,6 +357,9 @@ __all__ = [
     "SemidiscreteDAEStructuralReport",
     "DiscreteStateLayout",
     "SpectralStateLayout",
+    "SpectralConditionHandling",
+    "SpectralResidualCompilationReport",
+    "SpectralResidualScope",
     "FiniteDifferenceCompilationPolicy",
     "CompressibleNavierStokesSystem",
     "ConstantTransport",
@@ -493,6 +504,7 @@ __all__ = [
     "PreparedFDBoundaryPair",
     "compile_semidiscrete_pde",
     "compile_spectral_pde",
+    "compile_spectral_residual",
     "compile_stencil_dynamics",
     "infer_expression_type",
     "make_pde_operator",

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added all-coordinate tensor spectral PDE residual compilation with explicit
+  full-closure versus retained-projection semantics, polynomial closure
+  dealiasing, exactness and resource evidence, physical quadrature norms,
+  external hard-condition contracts, and targetless operator fitting through
+  `SpectralPDEResidualLoss`.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct

@@ -204,6 +204,49 @@ This is the representation-safe path for nonlinear callbacks passed to spectral 
 constructors. Their initial state, reaction result, and state-shaped noise amplitudes
 are modal; project initial physical data and reconstruct physical observables.
 
+## All-coordinate spectral PDE residuals
+
+`compile_spectral_residual` treats every declared coordinate, including time, as
+one axis of a tensor spectral trial space. It evaluates selected
+`PDEEquation.residual` expressions through modal derivatives and the prepared
+nonlinear realization, without differentiating a neural model with respect to
+query coordinates:
+
+```python
+method = phx.discretization.PseudospectralMethodPlan(
+    dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
+)
+residual = phx.equations.compile_spectral_residual(
+    problem,
+    space,
+    method,
+    scope="full",
+)
+state = residual.project_state(predicted_values)
+loss = residual.residual_energy(state, parameter_values)
+```
+
+`PolynomialClosureDealiasingPlan` differs from ordinary padding. Padding
+overresolves enough to protect the retained Galerkin projection from aliases.
+Polynomial closure represents the complete finite product bandwidth before the
+residual is measured. `scope="retained"` deliberately measures only the
+trial-space projection; `scope="full"` measures the prepared closure-space
+residual. `SpectralResidualCompilationReport` records the two modal shapes,
+polynomial degree, exactness, condition policy, and resource size.
+
+The residual norm uses the prepared physical quadrature rather than assuming
+that raw coefficient storage is orthonormal. A nonpolynomial field expression
+has no finite exact closure: select `ModalFilterPlan` and
+`require_exact=False` to request an explicitly approximate objective.
+Nonlinear sine and constrained-basis closure, masked grids, per-case geometry,
+and fields on different coordinate subsets are rejected.
+
+Boundary and initial conditions are never silently omitted. Problems carrying
+conditions compile only after the caller selects
+`condition_handling="external"` and supplies a hard physical
+`OperatorOutputPipeline`, or after those conditions have already been encoded
+by the chosen basis.
+
 For Fourier spaces, `SpatialNoiseBasis.from_spectrum` first constructs real
 weighted-orthonormal Laplacian modes and then projects them into full complex
 storage. Its complex modal columns preserve conjugate symmetry under real Wiener
