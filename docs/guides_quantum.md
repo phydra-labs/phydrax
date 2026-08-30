@@ -345,8 +345,9 @@ spin-up/trailing spin-down partition, full generalized Slater determinants,
 row/column-scaled log envelopes chosen from the combined nonzero orbital
 magnitudes, a recursive signed-log product with higher-order-correct zero and
 subnormal tangents, polynomial scaled determinants whose singular terms retain
-mixture derivatives, a signed linear determinant mixture shifted by nonzero
-physical magnitudes with an analytic all-zero fallback, and envelope decays with a
+mixture derivatives, a signed linear determinant mixture shifted by actual
+nonzero coefficient–determinant product magnitudes with coefficient- and
+singularity-reactivation fallbacks, and envelope decays with a
 strictly positive configurable physical floor. Same-spin coordinate exchange is
 antisymmetric. The full generalized determinant does not impose a standalone
 spatial sign rule on an opposite-spin exchange.

@@ -8,7 +8,6 @@ from phydrax.nn.quantum._ferminet import (
     _scaled_determinant_components,
     _scaled_log_determinants,
     _stable_determinant_mixture,
-    _stable_signed_product,
 )
 
 
@@ -185,9 +184,11 @@ def test_singular_determinant_term_retains_mixture_derivative():
         determinant, log_scale = _scaled_determinant_components(
             raw_orbitals, log_envelope
         )
-        shift = jax.lax.stop_gradient(jnp.max(log_scale))
-        scaled = _stable_signed_product(determinant, log_scale - shift)
-        return shift + jnp.log(jnp.abs(jnp.sum(scaled)))
+        return _stable_determinant_mixture(
+            determinant,
+            log_scale,
+            jnp.ones((2,), dtype=jnp.float64),
+        )[0]
 
     value = mixture_log_abs(jnp.asarray(0.0))
     gradient = jax.grad(mixture_log_abs)(jnp.asarray(0.0))
@@ -214,6 +215,44 @@ def test_zero_large_scale_term_does_not_hide_nonzero_small_scale_term():
     assert jnp.isfinite(log_abs)
     assert jnp.allclose(log_abs, -1000.0)
     assert jnp.allclose(gradient, 1.0)
+
+
+def test_zero_coefficient_large_scale_term_does_not_set_mixture_shift():
+    determinants = jnp.ones((2,), dtype=jnp.float64)
+    log_scale = jnp.asarray([0.0, -1000.0], dtype=jnp.float64)
+
+    def mixture(coefficients):
+        return _stable_determinant_mixture(
+            determinants, log_scale, coefficients
+        )
+
+    coefficients = jnp.asarray([0.0, 1.0], dtype=jnp.float64)
+    log_abs, phase, valid = mixture(coefficients)
+    gradient = jax.grad(lambda values: mixture(values)[0])(coefficients)
+    assert valid
+    assert phase == 1.0 + 0.0j
+    assert jnp.allclose(log_abs, -1000.0)
+    assert jnp.isposinf(gradient[0])
+    assert jnp.allclose(gradient[1], 1.0)
+
+
+def test_inactive_huge_coefficient_does_not_hide_tiny_active_product():
+    coefficients = jnp.asarray([1e300, 1e-300], dtype=jnp.float64)
+    log_scale = jnp.zeros((2,), dtype=jnp.float64)
+
+    def mixture(determinants):
+        return _stable_determinant_mixture(
+            determinants, log_scale, coefficients
+        )
+
+    determinants = jnp.asarray([0.0, 1.0], dtype=jnp.float64)
+    log_abs, phase, valid = mixture(determinants)
+    gradient = jax.grad(lambda values: mixture(values)[0])(determinants)
+    assert valid
+    assert phase == 1.0 + 0.0j
+    assert jnp.allclose(log_abs, jnp.log(jnp.asarray(1e-300)))
+    assert jnp.isposinf(gradient[0])
+    assert jnp.allclose(gradient[1], 1.0)
 
 
 def test_large_decay_at_distant_configuration_remains_a_nonzero_log_amplitude():

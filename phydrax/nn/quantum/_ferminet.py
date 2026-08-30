@@ -48,6 +48,41 @@ def _stable_signed_product_jvp(primals, tangents):
     return primal, tangent
 
 
+@jax.custom_jvp
+def _stable_signed_bilinear_product(
+    left: Array, right: Array, log_scale: Array, /
+) -> Array:
+    """Evaluate ``left * right * exp(log_scale)`` in a signed log domain."""
+    nonzero = (left != 0.0) & (right != 0.0)
+    safe_left = jnp.where(nonzero, jnp.abs(left), 1.0)
+    safe_right = jnp.where(nonzero, jnp.abs(right), 1.0)
+    combined_log_magnitude = jnp.where(
+        nonzero,
+        jnp.log(safe_left) + jnp.log(safe_right) + log_scale,
+        0.0,
+    )
+    return jnp.where(
+        nonzero,
+        jnp.sign(left) * jnp.sign(right) * jnp.exp(combined_log_magnitude),
+        0.0,
+    )
+
+
+@_stable_signed_bilinear_product.defjvp
+def _stable_signed_bilinear_product_jvp(primals, tangents):
+    left, right, log_scale = primals
+    left_tangent, right_tangent, log_scale_tangent = tangents
+    primal = _stable_signed_bilinear_product(left, right, log_scale)
+    tangent = _stable_signed_bilinear_product(
+        left_tangent, right, log_scale
+    )
+    tangent = tangent + _stable_signed_bilinear_product(
+        left, right_tangent, log_scale
+    )
+    tangent = tangent + primal * log_scale_tangent
+    return primal, tangent
+
+
 def _polynomial_determinant(matrix: Array, /) -> Array:
     """Determinant from Newton identities, including derivatives at singularity."""
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
@@ -167,62 +202,68 @@ def _stable_determinant_mixture(
     determinant_defined = jnp.isfinite(scaled_determinant) & jnp.isfinite(
         determinant_log_scale
     )
+    coefficient_defined = jnp.isfinite(coefficients)
     any_defined = jnp.any(determinant_defined)
     determinant_nonzero = determinant_defined & (scaled_determinant != 0.0)
-    any_nonzero = jnp.any(determinant_nonzero)
-    safe_magnitude = jnp.where(
+    active_product = (
+        determinant_nonzero & coefficient_defined & (coefficients != 0.0)
+    )
+    any_active_product = jnp.any(active_product)
+    any_nonzero_determinant = jnp.any(determinant_nonzero)
+    safe_determinant_magnitude = jnp.where(
         determinant_nonzero, jnp.abs(scaled_determinant), 1.0
     )
-    physical_log_magnitude = jnp.where(
+    safe_coefficient_magnitude = jnp.where(
+        active_product, jnp.abs(coefficients), 1.0
+    )
+    determinant_physical_log = jnp.where(
         determinant_nonzero,
-        jnp.log(safe_magnitude) + determinant_log_scale,
+        jnp.log(safe_determinant_magnitude) + determinant_log_scale,
         -jnp.inf,
     )
-    nonzero_shift = jnp.max(physical_log_magnitude)
-    all_zero_shift = jnp.max(
+    active_product_log = jnp.where(
+        active_product,
+        jnp.log(safe_coefficient_magnitude) + determinant_physical_log,
+        -jnp.inf,
+    )
+    product_shift = jnp.max(active_product_log)
+    zero_coefficient_shift = jnp.max(determinant_physical_log)
+    singular_shift = jnp.max(
         jnp.where(determinant_defined, determinant_log_scale, -jnp.inf)
     )
-    safe_all_zero_shift = jnp.where(any_defined, all_zero_shift, 0.0)
+    safe_singular_shift = jnp.where(any_defined, singular_shift, 0.0)
+    fallback_shift = jnp.where(
+        any_nonzero_determinant, zero_coefficient_shift, safe_singular_shift
+    )
     determinant_shift = jax.lax.stop_gradient(
-        jnp.where(any_nonzero, nonzero_shift, safe_all_zero_shift)
+        jnp.where(any_active_product, product_shift, fallback_shift)
     )
     safe_determinant = jnp.where(
         determinant_defined, scaled_determinant, 0.0
     )
+    safe_coefficient = jnp.where(coefficient_defined, coefficients, 0.0)
     relative_log_scale = jnp.where(
         determinant_defined,
         determinant_log_scale - determinant_shift,
         0.0,
     )
-    relative_determinant = _stable_signed_product(
-        safe_determinant, relative_log_scale
+    scaled_terms = _stable_signed_bilinear_product(
+        safe_coefficient, safe_determinant, relative_log_scale
     )
-
-    coefficient_scale = jax.lax.stop_gradient(jnp.max(jnp.abs(coefficients)))
-    coefficient_scale_valid = jnp.isfinite(coefficient_scale) & (
-        coefficient_scale > 0.0
-    )
-    safe_coefficient_scale = jnp.where(
-        coefficient_scale_valid, coefficient_scale, 1.0
-    )
-    scaled_sum = jnp.sum(
-        (coefficients / safe_coefficient_scale) * relative_determinant
-    )
+    scaled_sum = jnp.sum(scaled_terms)
     nonzero = (
         any_defined
-        & coefficient_scale_valid
+        & jnp.all(coefficient_defined)
         & (scaled_sum != 0.0)
         & jnp.isfinite(scaled_sum)
     )
     log_abs = jnp.where(
         nonzero,
-        jnp.log(safe_coefficient_scale)
-        + determinant_shift
-        + jnp.log(jnp.abs(scaled_sum)),
+        determinant_shift + jnp.log(jnp.abs(scaled_sum)),
         -jnp.inf,
     )
     phase = jnp.where(scaled_sum < 0.0, -1.0 + 0.0j, 1.0 + 0.0j)
-    valid = jnp.all(determinant_defined) & jnp.all(jnp.isfinite(coefficients))
+    valid = jnp.all(determinant_defined) & jnp.all(coefficient_defined)
     return log_abs, phase, valid
 
 

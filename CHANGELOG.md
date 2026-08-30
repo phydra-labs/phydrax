@@ -13,9 +13,10 @@
   state-dependent proposal, and a full-generalized-determinant
   `phydrax.nn.quantum.FermiNet` with same-spin antisymmetry, sparsity-aware
   scaled log envelopes, higher-order-correct zero/subnormal signed products,
-  polynomial singular-term determinant derivatives, nonzero-magnitude mixture
-  shifts with an analytic all-zero fallback, a positive physical decay floor,
-  and determinant mixtures differentiable at zero coefficients.
+  polynomial singular-term determinant derivatives, coefficient-aware
+  nonzero-product mixture shifts with coefficient- and singularity-reactivation
+  fallbacks, a positive physical decay floor, and determinant mixtures
+  differentiable at zero coefficients.
   Electronic VMC
   folds local statuses into validity and reuses persistent chains, matrix-free
   score/Gram stochastic reconfiguration, training lifecycle, linear solves,
