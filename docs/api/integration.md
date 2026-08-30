@@ -33,10 +33,10 @@ measures, and composed space/time/stochastic reductions.
 
 Bayesian quadrature conditions a zero-mean Gaussian-process prior at one fixed
 `PointSampling` design. Initial analytic support is deliberately narrow:
-a normalized scalar `ProbabilityTarget` backed by `phydrax.uq.Normal`, and a
-`SquaredExponentialKernel` optionally wrapped once in `ScaleKernel`. The
-`GaussianKernelMean` is bound to the target identity; reuse with another target
-is rejected before allocating or evaluating the integrand.
+a normalized scalar `ProbabilityTarget` backed by `phydrax.uq.Normal`, and
+a `SquaredExponentialKernel` optionally wrapped once in `ScaleKernel`. The
+`GaussianKernelMean` is bound to the target identity, probability label, and
+Gaussian location/scale content; reuse with a different measure is rejected.
 
 ```python
 import phydrax as phx
@@ -65,13 +65,15 @@ standard deviation is model-based uncertainty under the selected kernel,
 observation-noise model, and fixed design. **It is not a deterministic or
 frequentist error bound.** Observation noise changes the GP conditioning model;
 `solve_regularization` is separate numerical regularization, and diagnostics
-retain both values plus the complete child `phydrax.linalg` solve result.
+retain both values plus the complete child `phydrax.linalg` dense-LU solve result.
 
-Unsupported targets and kernel algebra fail during construction or
-materialization. Failed solves, non-finite integrands, and posterior variance
-outside a dtype-aware roundoff envelope produce explicit non-success statuses;
-no positive posterior-variance floor is applied. `max_points` and the delegated
-linear-solve resource policy guard allocations before execution. This is a
+Unsupported targets, kernel algebra, and non-`DenseLU` solve routes fail during
+construction or materialization. Failed solves, non-finite integrands or final
+contractions, and posterior variance outside a dtype-aware roundoff envelope
+produce explicit non-success statuses; no positive posterior-variance floor is
+applied. Kernel and integrand operands are cast before evaluation, and variance
+decisions retain the least precise arithmetic epsilon. `max_points` and the
+delegated linear-solve resource policy guard allocations before execution. This is a
 fixed-design capability only: active acquisition, WSABI, unnormalized evidence,
 and arbitrary measures or kernels are not implemented.
 
