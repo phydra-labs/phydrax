@@ -2546,6 +2546,55 @@ prediction = phx.uq.propagate(
 `propagate` records non-finite realizations in `PredictiveField.valid`, or raises with
 `valid_policy="raise"`. Chunked and unchunked evaluation preserve the same samples.
 
+### Nonintrusive polynomial-chaos expansions
+
+Use polynomial chaos when the uncertain inputs are independent scalar `Uniform`
+or `Normal` laws and repeated evaluation of a low- or moderate-dimensional
+observable justifies a finite global polynomial surrogate:
+
+```python
+diffusivity = phx.domain.ProbabilityDomain(
+    phx.uq.Uniform(0.05, 0.15), label="diffusivity"
+)
+source = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(1.0, 0.1), label="source"
+)
+basis = phx.uq.PolynomialChaosBasis((diffusivity, source), 3)
+
+quadrature = phx.integration.ProductIntegrationPlan(
+    {
+        "diffusivity": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussLegendreRule(5)
+        ),
+        "source": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussHermiteRule(5)
+        ),
+    }
+)
+fit = phx.uq.PolynomialChaosProjectionPlan(basis, quadrature).fit(
+    lambda diffusivity, source: forward(diffusivity, source)
+)
+surrogate = fit.expansion
+
+mean = surrogate.mean
+variance = surrogate.variance
+first_order = surrogate.first_order_sobol
+total_order = surrogate.total_order_sobol
+```
+
+Projection delegates point generation and probability weights to the existing
+product-integration contract. When model evaluations already exist, fit the same
+basis with `PolynomialChaosRegressionPlan(basis).fit(points, values)`. A square
+design is an exact linear problem; an overdetermined design is least squares.
+Underdetermined, nonfinite, and rank-deficient designs fail without a hidden
+pseudoinverse. Fit results retain solver or integration evidence and can be exported
+with `phx.uq.export_result`.
+
+The coefficient moments and Sobol effects are exact for the fitted orthonormal
+expansion. They do not certify truncation error for a model outside the selected
+span. LogNormal, Gamma, Beta, correlated inputs, adaptive/compressed bases, and
+intrusive stochastic Galerkin systems are intentionally outside this contract.
+
 ### Reusable sparse parameter surrogates
 
 For repeatedly evaluated low- or moderate-effective-dimensional observables,

@@ -593,6 +593,14 @@ from ._process_validation import (
     trajectory_score_diagnostics,
     TrajectoryScoreDiagnostics,
 )
+from ._polynomial_chaos import (
+    PolynomialChaosBasis,
+    PolynomialChaosExpansion,
+    PolynomialChaosFitResult,
+    PolynomialChaosProjectionPlan,
+    PolynomialChaosRegressionPlan,
+    PolynomialMultiIndexSet,
+)
 from ._propagation import propagate, RandomSampleBatch, sample_joint
 from ._quantum_tomography import (
     QuantumPOVM,
@@ -1271,6 +1279,12 @@ __all__ = [
     "LinearizedVarianceEstimate",
     "propagate_linearized",
     "propagate_linearized_map",
+    "PolynomialChaosBasis",
+    "PolynomialChaosExpansion",
+    "PolynomialChaosFitResult",
+    "PolynomialChaosProjectionPlan",
+    "PolynomialChaosRegressionPlan",
+    "PolynomialMultiIndexSet",
     "GaussianPriorWhitening",
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",
