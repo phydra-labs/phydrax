@@ -898,7 +898,7 @@ def _execute_explicit_fno(
     key: EvalKey,
 ) -> Array:
     if model._scan_enabled and model._scan_static is not None:
-        dynamic = stack_scan_dynamics(model.blocks)
+        dynamic = stack_scan_dynamics(model.blocks, model._scan_static)
         if dynamic is not None:
             sites = jnp.arange(len(model.blocks), dtype=jnp.uint32)
             return scan_apply_with_data(

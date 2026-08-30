@@ -401,7 +401,7 @@ class FeynmaNN(_AbstractBaseModel):
                 _FeynBlockStep(block=b, activation=a)
                 for b, a in zip(self.blocks[1:], self.activs[1:], strict=True)
             )
-            dynamic = stack_scan_dynamics(repeated_steps)
+            dynamic = stack_scan_dynamics(repeated_steps, self._scan_static)
             if dynamic is not None:
                 z = self.activs[0](self.blocks[0](z))
                 z = scan_apply(

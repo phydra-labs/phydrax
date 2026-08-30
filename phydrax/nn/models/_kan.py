@@ -425,7 +425,7 @@ class KAN(_AbstractBaseModel):
         out = None
         if self._scan_enabled and self._scan_static is not None:
             repeated_layers = self.layers[1:-1]
-            dynamic = stack_scan_dynamics(repeated_layers)
+            dynamic = stack_scan_dynamics(repeated_layers, self._scan_static)
             if dynamic is not None:
                 y = self.layers[0](y)
                 y = scan_apply(

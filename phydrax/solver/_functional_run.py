@@ -24,6 +24,9 @@ class FunctionalSolveConfig:
 
     num_iter: int
     evaluation_parameters: EvaluationParametersFn | None = None
+    parameter_paths: tuple[str, ...] | None = None
+    parameter_shapes: tuple[tuple[int, ...], ...] = ()
+    parameter_dtypes: tuple[str, ...] = ()
     seed: int = 0
     jit: bool = True
     keep_best: bool = True
@@ -51,6 +54,18 @@ class FunctionalSolveConfig:
             self.precision, FunctionalPrecisionPolicy
         ):
             raise TypeError("precision must be a FunctionalPrecisionPolicy or None.")
+        if self.parameter_paths is None:
+            if self.parameter_shapes or self.parameter_dtypes:
+                raise ValueError(
+                    "Parameter shapes and dtypes require parameter_paths."
+                )
+        elif (
+            len(self.parameter_paths) != len(self.parameter_shapes)
+            or len(self.parameter_paths) != len(self.parameter_dtypes)
+        ):
+            raise ValueError(
+                "Parameter paths, shapes, and dtypes must have equal lengths."
+            )
         object.__setattr__(self, "num_iter", iterations)
         object.__setattr__(self, "log_every", log_every)
         object.__setattr__(self, "tensorboard_flush_every", flush_every)
