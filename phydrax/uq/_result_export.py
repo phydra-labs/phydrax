@@ -408,6 +408,8 @@ def _adapt_result(result, arrays, fields, trees):
             ("train_mask", result.train_mask),
             ("schedule_times", result.schedule_times),
             ("schedule_observation_mask", result.schedule_observation_mask),
+            ("evaluated_length_scale", result.evaluated_length_scale),
+            ("evaluated_scale", result.evaluated_scale),
             (
                 "incremental_log_likelihood",
                 result.filter_result.incremental_log_likelihood,
@@ -419,6 +421,7 @@ def _adapt_result(result, arrays, fields, trees):
             "state_dimension": result.state_dimension,
             "kernel_id": result.kernel_id,
             "kernel_content_id": result.kernel_content_id,
+            "prepared_kernel_content_id": result.prepared_kernel_content_id,
             "schedule_id": result.schedule_id,
             "method_id": result.method_id,
             "repeated_time_policy": result.repeated_time_policy,

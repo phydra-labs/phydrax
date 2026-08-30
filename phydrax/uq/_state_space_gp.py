@@ -32,14 +32,21 @@ from .._precision import (
 from .._strict import StrictModule
 from ..stochastic import (
     GaussianStatePrior,
-    LinearGaussianDynamics,
+    LinearGaussianParameterization,
     LinearGaussianObservationModel,
     LinearGaussianTransitionKernel,
     ObservationSequence,
     StateSpaceModel,
     StateSpaceProblem,
 )
-from ._kalman import kalman_filter, KalmanFilterResult, KalmanSmootherResult, rts_smoother
+from ._kalman import (
+    kalman_filter,
+    kalman_status_name,
+    KALMAN_SUCCESS,
+    KalmanFilterResult,
+    KalmanSmootherResult,
+    rts_smoother,
+)
 
 
 _STATE_SPACE_GP_METHOD_ID = "exact-matern-sequential-square-root-kalman-rts"
@@ -47,10 +54,15 @@ _REPEATED_TIME_POLICY = (
     "training times must be unique; repeated query times and train-query overlaps "
     "share one latent schedule state"
 )
+STATE_SPACE_GP_SMOOTHER_FAILURE = 3
 
 
 class _StateSpaceGaussianProcessArguments(StrictModule):
     observation_variance: Array
+    drift_matrix: Array
+    stationary_covariance: Array
+    process_noise_factor: Array
+    decay_rate: Array
 
 
 class StateSpaceGaussianProcessPlan(StrictModule):
@@ -62,6 +74,7 @@ class StateSpaceGaussianProcessPlan(StrictModule):
     """
 
     kernel: AbstractPositiveDefiniteKernel
+    initial_time: Array
     schedule_times: Array
     train_schedule_indices: Array
     query_schedule_indices: Array
@@ -79,6 +92,7 @@ class StateSpaceGaussianProcessPlan(StrictModule):
     observation_map: Array
     lyapunov_residual: Array
     _problem_template: StateSpaceProblem
+    compute_dtype: str = eqx.field(static=True)
     state_dimension: int = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
     kernel_content_id: str = eqx.field(static=True)
@@ -119,12 +133,15 @@ class StateSpaceGaussianProcessResult(StrictModule):
     train_mask: Array
     schedule_times: Array
     schedule_observation_mask: Array
+    evaluated_length_scale: Array
+    evaluated_scale: Array
     filter_result: KalmanFilterResult
     smoother_result: KalmanSmootherResult
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
     state_dimension: int = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
-    kernel_content_id: str = eqx.field(static=True)
+    kernel_content_id: str | None = eqx.field(static=True)
+    prepared_kernel_content_id: str = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
     repeated_time_policy: str = eqx.field(static=True)
@@ -141,6 +158,9 @@ class _KernelStateSpace(NamedTuple):
     stationary_factor: Array
     process_factor: Array
     observation_map: Array
+    length_scale: Array
+    variance: Array
+    decay_rate: Array
 
 
 def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelStateSpace:
@@ -189,6 +209,9 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
             stationary_factor,
             process_factor,
             observation_map,
+            length_scale,
+            variance,
+            rate,
         )
 
     if isinstance(base, Matern52Kernel):
@@ -232,12 +255,115 @@ def _kernel_state_space(kernel: AbstractPositiveDefiniteKernel, /) -> _KernelSta
             stationary_factor,
             process_factor,
             observation_map,
+            length_scale,
+            variance,
+            rate,
         )
 
     raise TypeError(
         "State-space GP compilation supports Matern32Kernel and Matern52Kernel, "
         "directly or as the child of one ScaleKernel."
     )
+
+
+def _transition_matrix(start: Array, end: Array, context: Any, /) -> Array:
+    duration = end - start
+    return jax.scipy.linalg.expm(context.args.drift_matrix * duration)
+
+
+def _small_interval_covariance(
+    duration: Array,
+    drift: Array,
+    process_factor: Array,
+    /,
+) -> Array:
+    size = drift.shape[0]
+    covariance_rate = process_factor @ process_factor.T
+    block = jnp.zeros((2 * size, 2 * size), dtype=drift.dtype)
+    block = block.at[:size, :size].set(drift)
+    block = block.at[:size, size:].set(covariance_rate)
+    block = block.at[size:, size:].set(-drift.T)
+    exponential = jax.scipy.linalg.expm(block * duration)
+    transition = exponential[:size, :size]
+    covariance = exponential[:size, size:] @ transition.T
+    return 0.5 * (covariance + covariance.T)
+
+
+def _stationary_interval_covariance(
+    duration: Array,
+    drift: Array,
+    stationary: Array,
+    /,
+) -> Array:
+    transition = jax.scipy.linalg.expm(drift * duration)
+    covariance = stationary - transition @ stationary @ transition.T
+    return 0.5 * (covariance + covariance.T)
+
+
+def _transition_covariance(start: Array, end: Array, context: Any, /) -> Array:
+    duration = end - start
+    arguments = context.args
+    normalized_duration = arguments.decay_rate * duration
+    return jax.lax.cond(
+        normalized_duration <= jnp.asarray(4.0, dtype=duration.dtype),
+        lambda value: _small_interval_covariance(
+            value,
+            arguments.drift_matrix,
+            arguments.process_noise_factor,
+        ),
+        lambda value: _stationary_interval_covariance(
+            value,
+            arguments.drift_matrix,
+            arguments.stationary_covariance,
+        ),
+        duration,
+    )
+
+
+def _kernel_content_id(kernel: AbstractPositiveDefiniteKernel, /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "state-space-gp-kernel",
+            "kernel_id": kernel.kernel_id,
+            "content": array_tree_fingerprint(kernel),
+        }
+    )
+
+
+def _evaluated_kernel_content_id(
+    kernel: AbstractPositiveDefiniteKernel,
+    /,
+) -> str | None:
+    leaves = tuple(leaf for leaf in jax.tree.leaves(kernel) if eqx.is_array(leaf))
+    if any(isinstance(leaf, jax.core.Tracer) for leaf in leaves):
+        return None
+    return _kernel_content_id(kernel)
+
+
+def state_space_gaussian_process_status_name(value: int, /) -> str:
+    """Return the public GP-level status name for one result code."""
+    code = int(value)
+    if code == STATE_SPACE_GP_SMOOTHER_FAILURE:
+        return "smoother_failure"
+    return kalman_status_name(code)
+
+
+def _state_space_gp_status(
+    filter_success: Array,
+    filter_status: Array,
+    smoother_valid: Array,
+    /,
+) -> Array:
+    smoother_success = jnp.all(smoother_valid)
+    return jnp.where(
+        ~filter_success,
+        jnp.max(filter_status),
+        jnp.where(
+            ~smoother_success,
+            STATE_SPACE_GP_SMOOTHER_FAILURE,
+            KALMAN_SUCCESS,
+        ),
+    ).astype(jnp.int32)
 
 
 def _observation_covariance(time: Array, context: Any, /) -> Array:
@@ -344,6 +470,18 @@ def compile_state_space_kernel(
     schedule_mask = jnp.asarray(schedule_mask_host, dtype=bool)
 
     components = _kernel_state_space(kernel)
+    if schedule.dtype != components.drift.dtype:
+        raise TypeError(
+            "Kernel coefficients and schedule times must use one identical compute "
+            "dtype; construct both under the same JAX precision context."
+        )
+    initial_time = schedule[0] - components.length_scale
+    initial_host = np.asarray(jax.device_get(initial_time))
+    if not np.isfinite(initial_host) or not bool(initial_host < schedule_host[0]):
+        raise ValueError(
+            "The first schedule time must admit a finite representable stationary "
+            "initial time one length scale earlier."
+        )
     process_noise = components.process_factor @ components.process_factor.T
     lyapunov = (
         components.drift @ components.stationary
@@ -362,13 +500,7 @@ def compile_state_space_kernel(
             "Prepared Matérn coefficients fail the stationary Lyapunov residual check."
         )
 
-    kernel_content_id = canonical_fingerprint(
-        {
-            "kind": "state-space-gp-kernel",
-            "kernel_id": kernel.kernel_id,
-            "content": array_tree_fingerprint(kernel),
-        }
-    )
+    kernel_content_id = _kernel_content_id(kernel)
     schedule_id = canonical_fingerprint(
         {
             "kind": "state-space-gp-schedule",
@@ -384,18 +516,17 @@ def compile_state_space_kernel(
         jnp.zeros((state_dimension,), dtype=components.drift.dtype),
         components.stationary,
         state_shape=(state_dimension,),
-        prior_id=f"state-space-gp-prior:{kernel_content_id}",
+        prior_id="state-space-gp-stationary-prior",
     )
     transition = LinearGaussianTransitionKernel(
-        LinearGaussianDynamics(
-            components.drift,
-            components.process_factor,
+        LinearGaussianParameterization(
+            _transition_matrix,
+            _transition_covariance,
             state_shape=(state_dimension,),
-            dynamics_id=f"state-space-gp-dynamics:{kernel_content_id}",
-            process_id=f"state-space-gp-process:{kernel_content_id}",
-            approximation_id="exact-matern-lti",
+            parameterization_id="state-space-gp-stationary-interval",
+            resolved_method="hybrid-van-loan/stationary-covariance",
         ),
-        process_id=f"state-space-gp-process:{kernel_content_id}",
+        process_id="state-space-gp-matern-process",
         approximation_id="exact-matern-lti",
     )
     observation = LinearGaussianObservationModel(
@@ -409,11 +540,9 @@ def compile_state_space_kernel(
         prior,
         transition,
         observation,
-        model_id=f"state-space-gp-model:{kernel_content_id}",
-        parameter_id=kernel_content_id,
+        model_id="state-space-gp-model",
         metadata={
             "kernel_id": kernel.kernel_id,
-            "kernel_content_id": kernel_content_id,
             "method_id": _STATE_SPACE_GP_METHOD_ID,
         },
     )
@@ -428,13 +557,19 @@ def compile_state_space_kernel(
         approximation_id="exact-mask",
     )
     arguments = _StateSpaceGaussianProcessArguments(
-        jnp.zeros((schedule.size,), dtype=components.drift.dtype)
+        observation_variance=jnp.zeros(
+            (schedule.size,), dtype=components.drift.dtype
+        ),
+        drift_matrix=components.drift,
+        stationary_covariance=components.stationary,
+        process_noise_factor=components.process_factor,
+        decay_rate=components.decay_rate,
     )
     problem = StateSpaceProblem(
         model,
         observations,
-        initial_time=schedule[0],
-        problem_id=f"state-space-gp-problem:{kernel_content_id}:{schedule_id}",
+        initial_time=initial_time,
+        problem_id=f"state-space-gp-problem:{schedule_id}",
         args=arguments,
     )
     problem = eqx.tree_at(
@@ -445,6 +580,7 @@ def compile_state_space_kernel(
 
     return StateSpaceGaussianProcessPlan(
         kernel=kernel,
+        initial_time=initial_time,
         schedule_times=schedule,
         train_schedule_indices=train_schedule,
         query_schedule_indices=query_schedule,
@@ -462,6 +598,7 @@ def compile_state_space_kernel(
         observation_map=components.observation_map,
         lyapunov_residual=lyapunov,
         _problem_template=problem,
+        compute_dtype=components.drift.dtype.name,
         state_dimension=state_dimension,
         kernel_id=kernel.kernel_id,
         kernel_content_id=kernel_content_id,
@@ -525,31 +662,49 @@ def fit_state_space_gaussian_process(
     )
 
     components = _kernel_state_space(plan.kernel)
+    if components.drift.dtype.name != plan.compute_dtype:
+        raise TypeError(
+            "The evaluated kernel dtype must match the plan compute dtype; recompile "
+            "the plan under the intended JAX precision context."
+        )
+    initial_time = plan.schedule_times[0] - components.length_scale
+    initial_time = eqx.error_if(
+        initial_time,
+        ~jnp.isfinite(components.length_scale)
+        | (components.length_scale <= 0.0)
+        | ~jnp.isfinite(initial_time)
+        | (initial_time >= plan.schedule_times[0]),
+        "The evaluated length scale must define a finite representable initial time.",
+    )
     schedule_values = jnp.zeros(
         (plan.schedule_size, 1), dtype=components.drift.dtype
     ).at[plan.train_schedule_indices, 0].set(values)
     observation_variance = jnp.full(
         (plan.schedule_size,), noise**2, dtype=components.drift.dtype
     )
-    arguments = _StateSpaceGaussianProcessArguments(observation_variance)
+    arguments = _StateSpaceGaussianProcessArguments(
+        observation_variance=observation_variance,
+        drift_matrix=components.drift,
+        stationary_covariance=components.stationary,
+        process_noise_factor=components.process_factor,
+        decay_rate=components.decay_rate,
+    )
     problem = eqx.tree_at(
         lambda node: (
             node.model.prior.covariance,
             node.model.prior.factor,
-            node.model.transition.parameterization.drift_matrix,
-            node.model.transition.parameterization.dispersion,
             node.model.observation.matrix,
             node.observations.values,
+            node.initial_time,
             node.args,
         ),
         plan._problem_template,
         (
             components.stationary,
             components.stationary_factor,
-            components.drift,
-            components.process_factor,
             components.observation_map,
             schedule_values,
+            initial_time,
             arguments,
         ),
     )
@@ -577,8 +732,14 @@ def fit_state_space_gaussian_process(
         components.observation_map,
     )
     query_valid = smoothed.valid[plan.query_schedule_indices]
-    valid = jnp.all(filtered.successful) & jnp.all(query_valid)
-    status = jnp.max(filtered.status)
+    filter_success = jnp.all(filtered.successful)
+    smoother_success = jnp.all(smoothed.valid)
+    valid = filter_success & smoother_success
+    status = _state_space_gp_status(
+        filter_success,
+        filtered.status,
+        smoothed.valid,
+    )
 
     return StateSpaceGaussianProcessResult(
         posterior_times=plan.schedule_times[plan.query_schedule_indices],
@@ -594,12 +755,15 @@ def fit_state_space_gaussian_process(
         train_mask=plan.train_mask,
         schedule_times=plan.schedule_times,
         schedule_observation_mask=plan.schedule_observation_mask,
+        evaluated_length_scale=components.length_scale,
+        evaluated_scale=components.variance,
         filter_result=filtered,
         smoother_result=smoothed,
         precision_evidence=_precision_evidence(posterior_mean.dtype),
         state_dimension=plan.state_dimension,
         kernel_id=plan.kernel_id,
-        kernel_content_id=plan.kernel_content_id,
+        kernel_content_id=_evaluated_kernel_content_id(plan.kernel),
+        prepared_kernel_content_id=plan.kernel_content_id,
         schedule_id=plan.schedule_id,
         method_id=plan.method_id,
         repeated_time_policy=plan.repeated_time_policy,
@@ -607,8 +771,10 @@ def fit_state_space_gaussian_process(
 
 
 __all__ = [
+    "STATE_SPACE_GP_SMOOTHER_FAILURE",
     "StateSpaceGaussianProcessPlan",
     "StateSpaceGaussianProcessResult",
     "compile_state_space_kernel",
     "fit_state_space_gaussian_process",
+    "state_space_gaussian_process_status_name",
 ]

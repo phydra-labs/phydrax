@@ -96,6 +96,22 @@ def test_compiled_state_covariance_and_factors_match_matern(
         + plan.process_noise
     )
     assert jnp.allclose(reconstructed_residual, plan.lyapunov_residual)
+    problem = plan._problem_template
+    first_parameters = problem.model.transition.parameters(
+        problem.initial_time,
+        plan.schedule_times[0],
+        problem.step_context(0, 0),
+    )
+    first_factor = phx.uq.gaussian_factor_from_covariance(
+        first_parameters.covariance
+    )
+    assert jnp.any(first_factor.factor != 0.0)
+    assert jnp.allclose(
+        first_factor.factor @ first_factor.factor.T,
+        first_parameters.covariance,
+        rtol=tolerance,
+        atol=tolerance,
+    )
 
 
 @pytest.mark.parametrize(
@@ -178,6 +194,42 @@ def test_likelihood_and_posterior_match_independent_dense_gp(kernel):
     assert result.kernel_content_id
     assert result.schedule_id
     assert result.precision_evidence.evidence_id
+
+
+@pytest.mark.parametrize(
+    "kernel",
+    [
+        phx.kernels.Matern32Kernel(length_scale=0.2),
+        phx.kernels.Matern52Kernel(length_scale=0.2),
+    ],
+)
+def test_widely_separated_schedule_matches_dense_without_van_loan_overflow(kernel):
+    train_times = jnp.asarray([0.0, 12.0, 25.0])
+    train_values = jnp.asarray([0.3, -0.7, 0.2])
+    query_times = jnp.asarray([-8.0, 6.0, 18.0, 40.0])
+    noise_scale = jnp.asarray(0.05)
+    mask = jnp.ones(train_times.shape, dtype=bool)
+    plan = phx.uq.compile_state_space_kernel(kernel, train_times, query_times)
+    result = phx.uq.fit_state_space_gaussian_process(
+        plan,
+        train_values,
+        noise_scale=noise_scale,
+    )
+    dense = _dense_gp(
+        kernel,
+        train_times,
+        train_values,
+        query_times,
+        mask,
+        noise_scale,
+    )
+
+    assert bool(result.successful)
+    assert jnp.all(jnp.isfinite(result.posterior_mean))
+    assert jnp.all(jnp.isfinite(result.posterior_variance))
+    assert jnp.allclose(result.log_marginal_likelihood, dense[0], rtol=2e-7, atol=2e-7)
+    assert jnp.allclose(result.posterior_mean, dense[1], rtol=2e-7, atol=2e-7)
+    assert jnp.allclose(result.posterior_variance, dense[2], rtol=2e-7, atol=2e-7)
 
 
 def test_schedule_is_stable_sorted_masked_and_invertible():
@@ -352,13 +404,27 @@ def test_float32_and_float64_precision_is_retained(x64, expected_dtype, toleranc
         assert jnp.allclose(result.posterior_mean, dense[1], rtol=tolerance, atol=tolerance)
 
 
-def test_fit_is_jittable_and_differentiable_in_kernel_parameters():
+def test_mixed_kernel_and_schedule_dtypes_are_rejected_explicitly():
+    with jax.enable_x64(False):
+        kernel = phx.kernels.Matern32Kernel(length_scale=0.5)
+    with jax.enable_x64(True):
+        with pytest.raises(TypeError, match="one identical compute dtype"):
+            phx.uq.compile_state_space_kernel(
+                kernel,
+                jnp.asarray([0.0, 1.0], dtype=jnp.float64),
+                jnp.asarray([0.5], dtype=jnp.float64),
+            )
+
+
+def test_fit_is_jittable_and_matches_dense_kernel_parameter_gradients():
+    train_times = jnp.asarray([-0.3, 0.2, 0.9, 1.5])
+    query_times = jnp.asarray([-0.8, 0.5, 2.0])
     plan = phx.uq.compile_state_space_kernel(
         phx.kernels.ScaleKernel(
             phx.kernels.Matern32Kernel(length_scale=0.75), 1.3
         ),
-        jnp.asarray([-0.3, 0.2, 0.9, 1.5]),
-        jnp.asarray([-0.8, 0.5, 2.0]),
+        train_times,
+        query_times,
     )
     values = jnp.asarray([0.4, -0.1, 0.7, 0.2])
     compiled = eqx.filter_jit(phx.uq.fit_state_space_gaussian_process)(
@@ -367,8 +433,8 @@ def test_fit_is_jittable_and_differentiable_in_kernel_parameters():
         noise_scale=0.06,
     )
 
-    def objective(length_scale, scale):
-        candidate = eqx.tree_at(
+    def candidate(length_scale, scale):
+        return eqx.tree_at(
             lambda node: (
                 node.kernel.kernel.length_scale,
                 node.kernel.scale,
@@ -376,23 +442,116 @@ def test_fit_is_jittable_and_differentiable_in_kernel_parameters():
             plan,
             (length_scale, scale),
         )
+
+    def state_space_objective(length_scale, scale):
         return phx.uq.fit_state_space_gaussian_process(
-            candidate,
+            candidate(length_scale, scale),
             values,
             noise_scale=0.06,
         ).log_marginal_likelihood
 
-    gradient = jax.grad(objective, argnums=(0, 1))(
-        plan.kernel.kernel.length_scale,
-        plan.kernel.scale,
-    )
+    def dense_objective(length_scale, scale):
+        return _dense_gp(
+            candidate(length_scale, scale).kernel,
+            train_times,
+            values,
+            query_times,
+            jnp.ones(train_times.shape, dtype=bool),
+            jnp.asarray(0.06),
+        )[0]
+
+    arguments = (plan.kernel.kernel.length_scale, plan.kernel.scale)
+    gradient = jax.grad(state_space_objective, argnums=(0, 1))(*arguments)
+    dense_gradient = jax.grad(dense_objective, argnums=(0, 1))(*arguments)
 
     assert bool(compiled.successful)
     assert compiled.posterior_mean.shape == (3,)
-    assert jnp.isfinite(gradient[0])
-    assert jnp.isfinite(gradient[1])
-    assert jnp.abs(gradient[0]) > 0.0
-    assert jnp.abs(gradient[1]) > 0.0
+    assert jnp.all(jnp.isfinite(jnp.stack(gradient)))
+    assert jnp.allclose(
+        jnp.stack(gradient),
+        jnp.stack(dense_gradient),
+        rtol=2e-5,
+        atol=2e-5,
+    )
+
+
+def test_mutated_kernel_reports_evaluated_identity_and_exported_parameters(tmp_path):
+    train_times = jnp.asarray([0.0, 0.4, 1.0])
+    query_times = jnp.asarray([-0.3, 0.7, 1.6])
+    plan = phx.uq.compile_state_space_kernel(
+        phx.kernels.Matern52Kernel(length_scale=0.5),
+        train_times,
+        query_times,
+    )
+    mutated = eqx.tree_at(
+        lambda node: node.kernel.length_scale,
+        plan,
+        jnp.asarray(0.9),
+    )
+    result = phx.uq.fit_state_space_gaussian_process(
+        mutated,
+        jnp.asarray([0.2, -0.1, 0.4]),
+        noise_scale=0.03,
+    )
+    expected = phx.uq.compile_state_space_kernel(
+        mutated.kernel,
+        train_times,
+        query_times,
+    )
+
+    assert result.kernel_content_id == expected.kernel_content_id
+    assert result.kernel_content_id != plan.kernel_content_id
+    assert result.prepared_kernel_content_id == plan.kernel_content_id
+    assert result.evaluated_length_scale == 0.9
+    path = phx.uq.export_result(result, tmp_path / "mutated-state-space-gp")
+    archive = phx.uq.read_result_archive(path)
+    assert archive.metadata["kernel_content_id"] == expected.kernel_content_id
+    assert archive.metadata["prepared_kernel_content_id"] == plan.kernel_content_id
+    assert archive.array("evaluated_length_scale") == 0.9
+
+
+def test_smoother_invalidity_has_a_non_success_gp_status():
+    from phydrax.uq._state_space_gp import _state_space_gp_status
+
+    status = _state_space_gp_status(
+        jnp.asarray(True),
+        jnp.asarray([phx.uq.KALMAN_SUCCESS], dtype=jnp.int32),
+        jnp.asarray([True, False]),
+    )
+
+    assert int(status) == phx.uq.STATE_SPACE_GP_SMOOTHER_FAILURE
+    assert phx.uq.state_space_gaussian_process_status_name(int(status)) == (
+        "smoother_failure"
+    )
+
+
+def test_benchmark_storage_counts_complete_unique_retained_arrays():
+    from tools.state_space_gp_benchmarks import _retained_storage
+
+    shared = jnp.ones((3,))
+    other = jnp.ones((2, 2), dtype=jnp.float32)
+    elements, bytes_ = _retained_storage((shared, {"alias": shared, "other": other}))
+    assert elements == shared.size + other.size
+    assert bytes_ == shared.nbytes + other.nbytes
+
+    plan = phx.uq.compile_state_space_kernel(
+        phx.kernels.Matern32Kernel(length_scale=0.6),
+        jnp.asarray([0.0, 0.5, 1.0]),
+        jnp.asarray([-0.2, 0.8, 1.4]),
+    )
+    result = phx.uq.fit_state_space_gaussian_process(
+        plan,
+        jnp.asarray([0.1, -0.2, 0.3]),
+        noise_scale=0.04,
+    )
+    retained_elements, retained_bytes = _retained_storage(result)
+    old_partial_count = (
+        result.smoother_result.means.size
+        + result.smoother_result.covariances.size
+        + plan.schedule_size * plan.state_dimension**2
+    )
+    assert retained_elements > old_partial_count
+    assert retained_bytes > old_partial_count * result.posterior_mean.dtype.itemsize
 
 
 def test_preparation_and_fit_reject_unsupported_or_invalid_inputs():
@@ -467,6 +626,9 @@ def test_state_space_gp_result_uses_portable_result_export(tmp_path):
 
     assert archive.kind == "state_space_gaussian_process"
     assert archive.metadata["kernel_content_id"] == result.kernel_content_id
+    assert archive.metadata["prepared_kernel_content_id"] == plan.kernel_content_id
+    assert archive.array("evaluated_length_scale") == 0.8
+    assert archive.array("evaluated_scale") == 1.0
     assert archive.metadata["schedule_id"] == result.schedule_id
     assert archive.metadata["method_id"] == result.method_id
     assert archive.metadata["precision_evidence"]["evidence_id"]

@@ -777,10 +777,14 @@ positions. Inspect `successful`, `status`, and `query_valid` before using the
 marginals.
 
 The kernel's `ScaleKernel.scale` is covariance variance, whereas `noise_scale` is
-observation standard deviation. Recompile after changing kernel parameters so the
-plan's content identity and resolved coefficients describe the evaluated kernel.
-The linear-storage result deliberately returns marginal variances rather than a
-dense forecast covariance. Use the dense scalar GP when a complete joint query
+observation standard deviation. Kernel and schedule dtypes must agree. A transformed
+fit recomputes the stationary prior, interval covariance, and dynamically earlier
+initial time from the evaluated kernel. Concrete results distinguish prepared and
+evaluated content IDs; traced results export the exact evaluated parameter arrays
+when a host hash cannot be formed. Recompile when a new plan-level content identity
+is required. The linear-storage result deliberately returns marginal variances rather
+than a dense forecast covariance.
+Use the dense scalar GP when a complete joint query
 covariance, unsupported kernel algebra, multidimensional input, derivative
 observation, or non-Gaussian likelihood is required.
 

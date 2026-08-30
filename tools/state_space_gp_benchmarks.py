@@ -36,14 +36,15 @@ class StateSpaceGaussianProcessBenchmarkRecord:
     state_space_compile_seconds: float
     dense_execution_seconds: float
     state_space_execution_seconds: float
-    dense_factor_elements: int
-    state_space_factor_elements: int
-    dense_factor_bytes: int
-    state_space_factor_bytes: int
+    dense_retained_elements: int
+    state_space_retained_elements: int
+    dense_retained_bytes: int
+    state_space_retained_bytes: int
     log_marginal_likelihood_absolute_error: float
     posterior_mean_maximum_absolute_error: float
     posterior_variance_maximum_absolute_error: float
-    kernel_content_id: str
+    evaluated_kernel_content_id: str | None
+    prepared_kernel_content_id: str
     schedule_id: str
     method_id: str
     precision_evidence_id: str
@@ -98,14 +99,17 @@ def _execution_seconds(function, *arguments, repeats, **keywords):
     return value, float(median(samples))
 
 
-def _storage_elements(result, /) -> int:
-    dimension = result.state_dimension
-    schedule_size = int(result.schedule_times.size)
-    return int(
-        result.smoother_result.means.size
-        + result.smoother_result.covariances.size
-        + schedule_size * dimension * dimension
-    )
+def _retained_storage(value, /) -> tuple[int, int]:
+    """Count each retained JAX array object once, including all nested results."""
+    identities: set[int] = set()
+    elements = 0
+    bytes_ = 0
+    for leaf in jax.tree.leaves(value):
+        if isinstance(leaf, jax.Array) and id(leaf) not in identities:
+            identities.add(id(leaf))
+            elements += int(leaf.size)
+            bytes_ += int(leaf.size) * int(leaf.dtype.itemsize)
+    return elements, bytes_
 
 
 def _scaling_slope(sizes, values):
@@ -126,10 +130,10 @@ def _summaries(records):
             sizes, [record.state_space_execution_seconds for record in records]
         ),
         "dense_storage_scaling_exponent": _scaling_slope(
-            sizes, [record.dense_factor_elements for record in records]
+            sizes, [record.dense_retained_elements for record in records]
         ),
         "state_space_storage_scaling_exponent": _scaling_slope(
-            sizes, [record.state_space_factor_elements for record in records]
+            sizes, [record.state_space_retained_elements for record in records]
         ),
         "maximum_log_marginal_likelihood_absolute_error": max(
             record.log_marginal_likelihood_absolute_error for record in records
@@ -140,8 +144,8 @@ def _summaries(records):
         "maximum_posterior_variance_absolute_error": max(
             record.posterior_variance_maximum_absolute_error for record in records
         ),
-        "largest_dense_factor_bytes": records[-1].dense_factor_bytes,
-        "largest_state_space_factor_bytes": records[-1].state_space_factor_bytes,
+        "largest_dense_retained_bytes": records[-1].dense_retained_bytes,
+        "largest_state_space_retained_bytes": records[-1].state_space_retained_bytes,
         "all_valid": all(record.valid for record in records),
     }
 
@@ -168,8 +172,8 @@ def _gate(summary):
             summary["state_space_execution_scaling_exponent"] <= 1.5
         ),
         "largest_state_space_storage_below_dense": (
-            summary["largest_state_space_factor_bytes"]
-            < summary["largest_dense_factor_bytes"]
+            summary["largest_state_space_retained_bytes"]
+            < summary["largest_dense_retained_bytes"]
         ),
     }
     return {"checks": checks, "passed": all(checks.values())}
@@ -273,8 +277,8 @@ def run_state_space_gp_benchmarks(
         dense_factor, dense_likelihood, dense_mean, dense_variance = dense_result
         state_mean = state_space_result.posterior_mean[::-1]
         state_variance = state_space_result.posterior_variance[::-1]
-        state_elements = _storage_elements(state_space_result)
-        itemsize = int(dense_factor.dtype.itemsize)
+        dense_elements, dense_bytes = _retained_storage(dense_result)
+        state_elements, state_bytes = _retained_storage(state_space_result)
         records.append(
             StateSpaceGaussianProcessBenchmarkRecord(
                 kernel=kernel.kernel_id,
@@ -286,10 +290,10 @@ def run_state_space_gp_benchmarks(
                 state_space_compile_seconds=state_space_compile_seconds,
                 dense_execution_seconds=dense_execution_seconds,
                 state_space_execution_seconds=state_space_execution_seconds,
-                dense_factor_elements=int(dense_factor.size),
-                state_space_factor_elements=state_elements,
-                dense_factor_bytes=int(dense_factor.size) * itemsize,
-                state_space_factor_bytes=state_elements * itemsize,
+                dense_retained_elements=dense_elements,
+                state_space_retained_elements=state_elements,
+                dense_retained_bytes=dense_bytes,
+                state_space_retained_bytes=state_bytes,
                 log_marginal_likelihood_absolute_error=float(
                     jnp.abs(
                         state_space_result.log_marginal_likelihood - dense_likelihood
@@ -301,7 +305,10 @@ def run_state_space_gp_benchmarks(
                 posterior_variance_maximum_absolute_error=float(
                     jnp.max(jnp.abs(state_variance - dense_variance))
                 ),
-                kernel_content_id=state_space_result.kernel_content_id,
+                evaluated_kernel_content_id=state_space_result.kernel_content_id,
+                prepared_kernel_content_id=(
+                    state_space_result.prepared_kernel_content_id
+                ),
                 schedule_id=state_space_result.schedule_id,
                 method_id=state_space_result.method_id,
                 precision_evidence_id=(
@@ -321,8 +328,8 @@ def run_state_space_gp_benchmarks(
             "noise_scale": float(noise_scale),
             "timing_statistic": "median wall-clock seconds after explicit compilation",
             "storage_contract": (
-                "dense Cholesky factor versus state-space smoothed moments, "
-                "covariances, and transition factors"
+                "complete unique retained JAX array objects for each returned "
+                "dense/state-space result; repeated PyTree aliases count once"
             ),
         },
         "environment": {
