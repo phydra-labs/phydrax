@@ -234,10 +234,13 @@ Scalar temporal Matérn-3/2 and Matérn-5/2 kernels also compile to exact
 two- or three-state continuous linear Gaussian models. One stable sorted schedule
 shares train/query overlaps and repeated queries, while real observation masks
 represent query-only and missing training positions. Sequential square-root
-Kalman/RTS execution returns linear-storage query marginals, the exact
-active-observation log marginal likelihood, status/masks, kernel and schedule
-content IDs, method provenance, and precision evidence. Repeated training times,
-unsupported kernel algebra, multidimensional inputs, derivative observations,
+Kalman filtering and reverse-scan RTS smoothing return linear-storage query
+marginals and the exact active-observation log marginal likelihood. Hybrid
+short-gap/stationary long-gap process covariance stays bounded on wide irregular
+schedules; a dynamically earlier stationary prior avoids zero-root parameter
+gradients. Results retain status/masks, prepared/evaluated kernel and schedule
+identity, method provenance, evaluated parameters, and precision evidence.
+Repeated training times, mixed compute dtypes, unsupported kernel algebra,
 SHO/CARMA, non-Gaussian likelihoods, and parallel execution are rejected rather
 than approximated; no large-noise sentinel or covariance repair is used.
 

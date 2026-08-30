@@ -353,14 +353,26 @@ gp = phx.uq.fit_state_space_gaussian_process(
 )
 ```
 
-`noise_scale` is an observation standard deviation. Execution is always the
-canonical sequential square-root Kalman filter and matching square-root RTS
-smoother with zero covariance regularization. `posterior_mean` and
-`posterior_variance` are latent query marginals; `predictive_variance` adds the
-declared observation variance. The result also retains the exact active-observation
-log marginal likelihood, active count, masks, filter/smoother histories,
-validity/status, kernel/schedule/method IDs, and precision evidence. It exports
-through `export_result`.
+`noise_scale` is an observation standard deviation. Kernel coefficients and schedule
+times must use one identical compute dtype; mixed plans are rejected rather than
+silently rounded. Execution is always the canonical sequential square-root Kalman
+filter and matching square-root RTS smoother with zero covariance regularization.
+The stationary prior begins one dynamically evaluated length scale before the
+earliest schedule state, avoiding a zero-process-root derivative. Interval process
+covariance uses bounded Van Loan evaluation only for normalized short gaps and the
+stationary identity `P∞ - Φ P∞ Φᵀ` for long gaps, so large extrapolation intervals
+do not evaluate the exponentially growing auxiliary block. The RTS recursion is one
+reverse `jax.lax.scan`, not a schedule-sized unrolled graph.
+
+`posterior_mean` and `posterior_variance` are latent query marginals;
+`predictive_variance` adds the declared observation variance. The result also
+retains the exact active-observation log marginal likelihood, active count, masks,
+filter/smoother histories, validity/status, kernel/schedule/method IDs, and precision
+evidence. A concrete transformed fit records both prepared and evaluated kernel
+content IDs. Under JAX tracing, where a host content hash is unavailable, the
+evaluated ID is `None` and the exact evaluated length scale and covariance scale
+remain exported arrays. Smoother invalidity has its own non-success GP status. The
+complete result exports through `export_result`.
 
 The returned query contract is marginal and therefore remains linear in schedule
 storage; it does not materialize a dense query-by-query posterior covariance.
@@ -372,9 +384,10 @@ jitter. A degenerate zero-signal, zero-noise active observation consequently rep
 the canonical filtering failure instead of manufacturing a posterior.
 
 `tools/state_space_gp_benchmarks.py` compares this path with independent dense GP
-algebra over increasing schedules. Its report retains per-size accuracy, factor
-storage, compilation and steady execution times, scaling summaries, an admission
-gate, environment details, and source provenance.
+algebra over increasing schedules. Its report retains per-size accuracy, complete
+unique retained-array storage for both returned results, compilation and steady
+execution times, scaling summaries, an admission gate, environment details, and
+source provenance. Repeated PyTree aliases count once.
 
 ::: phydrax.uq.StateSpaceGaussianProcessPlan
 
@@ -389,6 +402,14 @@ gate, environment details, and source provenance.
 ---
 
 ::: phydrax.uq.fit_state_space_gaussian_process
+
+---
+
+::: phydrax.uq.state_space_gaussian_process_status_name
+
+---
+
+::: phydrax.uq.STATE_SPACE_GP_SMOOTHER_FAILURE
 
 ## Nonlinear Gaussian moment transforms
 

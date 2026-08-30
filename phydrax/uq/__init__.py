@@ -310,6 +310,8 @@ from ._gp_scalar import (
 from ._state_space_gp import (
     compile_state_space_kernel,
     fit_state_space_gaussian_process,
+    state_space_gaussian_process_status_name,
+    STATE_SPACE_GP_SMOOTHER_FAILURE,
     StateSpaceGaussianProcessPlan,
     StateSpaceGaussianProcessResult,
 )
@@ -1422,6 +1424,8 @@ __all__ = [
     "StateSpaceGaussianProcessResult",
     "compile_state_space_kernel",
     "fit_state_space_gaussian_process",
+    "STATE_SPACE_GP_SMOOTHER_FAILURE",
+    "state_space_gaussian_process_status_name",
     "DiscrepancyIdentifiabilityReport",
     "DiscrepancyIdentifiabilityThresholds",
     "discrepancy_identifiability_report",
