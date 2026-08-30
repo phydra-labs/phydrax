@@ -13,8 +13,7 @@ from opt_einsum import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..nn.atomistic._nequip import NequIPPotential
-from ..nn.atomistic._painn import PaiNNPotential
+from ._potential import AbstractAtomisticPotential
 from ._types import (
     AtomicStructure,
     AtomisticBatch,
@@ -23,8 +22,7 @@ from ._types import (
 )
 
 
-_AtomisticPotential = PaiNNPotential | NequIPPotential
-_ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
+_AtomisticPotential = AbstractAtomisticPotential
 
 
 class AtomisticProvenance(StrictModule, NonTrainableState):
@@ -103,13 +101,13 @@ def energy_and_forces(
 
     Provenance is supported for constructor-created models, native training
     results, and models returned by
-    ``phydrax.nn.atomistic.checkpoint_atomistic_potential``. External Equinox or
+    ``phydrax.atomistic.checkpoint_atomistic_potential``. External Equinox or
     Optax tree updates must be checkpointed before prediction; otherwise their
     preserved static identity is intentionally not a valid provenance claim.
     """
 
-    if not isinstance(potential, _ATOMISTIC_POTENTIAL_TYPES):
-        raise TypeError("potential must be a PaiNNPotential or NequIPPotential.")
+    if not isinstance(potential, AbstractAtomisticPotential):
+        raise TypeError("potential must implement AbstractAtomisticPotential.")
     if isinstance(structure, AtomicStructure):
         batch = AtomisticBatch.from_structure(structure)
     elif isinstance(structure, AtomisticBatch):

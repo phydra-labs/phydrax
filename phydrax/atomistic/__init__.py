@@ -1,6 +1,7 @@
 """Finite nonperiodic molecular structures, predictions, data, and training."""
 
 from ._graph import AtomisticGraph, realize_atomistic_graph
+from ._potential import AbstractAtomisticPotential, checkpoint_atomistic_potential
 from ._prediction import AtomisticPrediction, AtomisticProvenance, energy_and_forces
 from ._rmd17 import load_rmd17_npz, RMD17Dataset, RMD17Split, split_rmd17
 from ._training import (
@@ -20,6 +21,7 @@ from ._types import (
 
 
 __all__ = [
+    "AbstractAtomisticPotential",
     "AtomicStructure",
     "AtomisticBatch",
     "AtomisticGraph",
@@ -35,6 +37,7 @@ __all__ = [
     "RMD17Dataset",
     "RMD17Split",
     "energy_and_forces",
+    "checkpoint_atomistic_potential",
     "fit_atomistic_potential",
     "load_rmd17_npz",
     "realize_atomistic_graph",

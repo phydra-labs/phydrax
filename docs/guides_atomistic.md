@@ -159,7 +159,7 @@ necessarily preserves static metadata; it is unsupported for provenance-bearing
 prediction until explicitly checkpointed:
 
 ```python
-updated = phx.nn.atomistic.checkpoint_atomistic_potential(updated)
+updated = phx.atomistic.checkpoint_atomistic_potential(updated)
 prediction = phx.atomistic.energy_and_forces(updated, batch)
 ```
 

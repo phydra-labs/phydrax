@@ -21,9 +21,9 @@ capacity, validity, and provenance explicit.
 
 ## PaiNN and low-degree NequIP energy prediction
 
-::: phydrax.nn.atomistic.AbstractAtomisticPotential
+::: phydrax.atomistic.AbstractAtomisticPotential
 
-::: phydrax.nn.atomistic.checkpoint_atomistic_potential
+::: phydrax.atomistic.checkpoint_atomistic_potential
 
 ::: phydrax.nn.atomistic.PaiNNPotential
 

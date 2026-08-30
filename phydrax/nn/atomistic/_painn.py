@@ -19,6 +19,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
+from ...atomistic._potential import (
+    AbstractAtomisticPotential,
+    initialize_atomistic_potential_identity,
+)
 from ...atomistic._types import (
     AtomicStructure,
     AtomisticBatch,
@@ -27,10 +31,6 @@ from ...atomistic._types import (
 )
 from ..layers import Linear
 from ..parameters import IdentityTransform
-from ._state import (
-    AbstractAtomisticPotential,
-    initialize_atomistic_potential_identity,
-)
 
 
 class _PaiNNConfiguration(StrictModule, NonTrainableState):

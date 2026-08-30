@@ -12,9 +12,10 @@ from phydrax.atomistic import (
     AtomisticPrecisionPolicy,
     AtomisticScaleContract,
     AtomisticStatus,
+    checkpoint_atomistic_potential,
     energy_and_forces,
 )
-from phydrax.nn.atomistic import checkpoint_atomistic_potential, PaiNNPotential
+from phydrax.nn.atomistic import PaiNNPotential
 from phydrax.nn.atomistic._painn import _PaiNNInteraction
 
 

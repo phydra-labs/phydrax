@@ -8,8 +8,8 @@ import copy
 from abc import abstractmethod
 from typing import Any, cast, TypeVar
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._strict import AbstractAttribute, StrictModule
 
 
 _AtomisticPotentialT = TypeVar("_AtomisticPotentialT", bound="AbstractAtomisticPotential")
@@ -18,9 +18,13 @@ _AtomisticPotentialT = TypeVar("_AtomisticPotentialT", bound="AbstractAtomisticP
 class AbstractAtomisticPotential(StrictModule):
     """Atomistic energy model with checkpointable parameter-state provenance."""
 
+    configuration: AbstractAttribute[Any]
+    scale: AbstractAttribute[Any]
+    precision: AbstractAttribute[Any]
     architecture_id: AbstractAttribute[str]
     parameter_state_id: AbstractAttribute[str]
     potential_id: AbstractAttribute[str]
+    method_id: AbstractAttribute[str]
 
     @abstractmethod
     def parameter_state_tree(self, /) -> Any:

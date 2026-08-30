@@ -19,6 +19,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
+from ...atomistic._potential import (
+    AbstractAtomisticPotential,
+    initialize_atomistic_potential_identity,
+)
 from ...atomistic._types import (
     AtomicStructure,
     AtomisticBatch,
@@ -29,7 +33,6 @@ from ..layers import Linear
 from ..operator.layers import o3_gated_activation, O3TensorProduct, O3TensorProductPlan
 from ..operator.representations import O3Features, O3Representation
 from ..parameters import IdentityTransform
-from ._state import AbstractAtomisticPotential, initialize_atomistic_potential_identity
 
 
 class _NequIPConfiguration(StrictModule, NonTrainableState):

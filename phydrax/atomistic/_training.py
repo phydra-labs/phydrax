@@ -20,15 +20,12 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import combine_trainable, NonTrainableState, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
-from ..nn.atomistic._nequip import NequIPPotential
-from ..nn.atomistic._painn import PaiNNPotential
-from ..nn.atomistic._state import checkpoint_atomistic_potential
 from ._graph import realize_atomistic_graph
+from ._potential import AbstractAtomisticPotential, checkpoint_atomistic_potential
 from ._types import AtomisticBatch, AtomisticStatus
 
 
-_AtomisticPotential = PaiNNPotential | NequIPPotential
-_ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
+_AtomisticPotential = AbstractAtomisticPotential
 
 
 class AtomisticTrainingProblem(StrictModule, NonTrainableState):
@@ -555,35 +552,7 @@ def _same_potential_configuration(
     right: _AtomisticPotential,
     /,
 ) -> bool:
-    if type(left) is not type(right):
-        return False
-    left_configuration = left.configuration
-    right_configuration = right.configuration
-    shared = (
-        left.scale.scale_id == right.scale.scale_id
-        and left.precision.policy_id == right.precision.policy_id
-        and left_configuration.cutoff == right_configuration.cutoff
-        and left_configuration.maximum_neighbors == right_configuration.maximum_neighbors
-        and left_configuration.maximum_dense_atoms
-        == right_configuration.maximum_dense_atoms
-        and left_configuration.feature_count == right_configuration.feature_count
-        and left_configuration.interaction_count == right_configuration.interaction_count
-        and left_configuration.radial_basis_count
-        == right_configuration.radial_basis_count
-        and left_configuration.maximum_atomic_number
-        == right_configuration.maximum_atomic_number
-    )
-    if not shared:
-        return False
-    if isinstance(left, NequIPPotential) and isinstance(right, NequIPPotential):
-        return (
-            left_configuration.maximum_tensor_product_parameters
-            == right_configuration.maximum_tensor_product_parameters
-            and left_configuration.maximum_degree == right_configuration.maximum_degree
-            and left_configuration.tensor_product_plan_ids
-            == right_configuration.tensor_product_plan_ids
-        )
-    return True
+    return type(left) is type(right) and left.architecture_id == right.architecture_id
 
 
 def fit_atomistic_potential(
@@ -598,8 +567,8 @@ def fit_atomistic_potential(
 ) -> AtomisticTrainingResult:
     """Fit one finite-molecule energy potential with typed supervision."""
 
-    if not isinstance(potential, _ATOMISTIC_POTENTIAL_TYPES):
-        raise TypeError("potential must be a PaiNNPotential or NequIPPotential.")
+    if not isinstance(potential, AbstractAtomisticPotential):
+        raise TypeError("potential must implement AbstractAtomisticPotential.")
     if not isinstance(problem, AtomisticTrainingProblem):
         raise TypeError("problem must be an AtomisticTrainingProblem.")
     if not isinstance(policy, AtomisticTrainingPolicy):
