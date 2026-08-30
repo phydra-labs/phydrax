@@ -462,6 +462,12 @@ and `qp_regularization` are separate requested values; there is no projection, e
 variable, feasibility repair, fallback, or implicit regularization. Nonlinear path
 constraints remain sample-node checks and do not certify feasibility between nodes.
 
+`compile_structured_multiple_shooting` lowers the same objective, boundary,
+continuity, path, and terminal equations to the canonical
+`StructuredNonlinearProgram`. `solve_structured_multiple_shooting` executes an
+explicit structured method and independently re-evaluates every shooting
+residual. This route does not alter the dense SQP contract or silently select it.
+
 ::: phydrax.control.MultipleShootingDecisionLayout
 
 ::: phydrax.control.MultipleShootingLinearization
@@ -473,6 +479,14 @@ constraints remain sample-node checks and do not certify feasibility between nod
 ::: phydrax.control.linearize_multiple_shooting
 
 ::: phydrax.control.solve_multiple_shooting
+
+::: phydrax.control.StructuredMultipleShootingCompilation
+
+::: phydrax.control.StructuredMultipleShootingResult
+
+::: phydrax.control.compile_structured_multiple_shooting
+
+::: phydrax.control.solve_structured_multiple_shooting
 
 ## Direct collocation
 
@@ -491,25 +505,35 @@ decisions and controls are interval decisions, so no unused endpoint-control coo
 is introduced. A variable-duration plan uses one log-duration coordinate and maps the
 static reference mesh affinely into physical time.
 
-The compiler produces both:
+The compiler produces:
 
-- a dense-compatible `MinimizationProblem` for an explicitly selected native method
-  such as `FilterInteriorPoint`, retaining that method's dimension guard; and
-- a `StructuredNonlinearProgram` with exact sparse Jacobian callbacks for
-  `IpoptMinimize.solve_structured`.
+- a dense-compatible `MinimizationProblem` for an explicitly selected ordinary
+  method; and
+- a `StructuredNonlinearProgram`, reusable `StructuredNonlinearTemplate`, and
+  default `PreparedStructuredNonlinearProgram` with exact sparse Jacobian and
+  optional exact sparse Lagrangian-Hessian plans.
 
-No backend is selected from problem size and no sparse-to-dense fallback is used.
-`DirectCollocationDerivativePolicy(hessian="limited-memory")` requests Ipopt's declared
-limited-memory Hessian approximation. `"exact-sparse"` compiles and verifies the
-Lagrangian Hessian and supplies its lower triangle.
+Any `AbstractStructuredNonlinearMethod` can consume the structured route.
+`PrimalDualInteriorPoint(mode="sparse-augmented")` uses the native augmented
+KKT path; `IpoptMinimize` uses low-level sparse Ipopt callbacks. No backend is
+selected from problem size and no backend failure triggers fallback.
 
-`DirectCollocationResult` retains the physical decision, a `ControlTrajectory`, stage
-times, states, rates, and controls, raw dynamics defects, every declared constraint
-block, the normalized optimization result and KKT certificate, sparse topology counts,
-and physical feasibility diagnostics. Collocation constraints are enforced at their
-declared stages. The interior-point audit evaluates additional piecewise-linear states
-and held controls, but `off_grid_certified` remains `False`: neither site set is a
-continuous-time path certificate.
+`refresh_direct_collocation` rebinds fixed-shape numeric arguments while
+retaining transcription and derivative topology. `solve_pooled_direct_collocation`
+solves independent initial decisions through an explicitly sized structured
+task pool. It never partitions an internal `case_shape`, because those cases may
+share optimized parameters.
+
+`DirectCollocationResult` retains the physical decision, a `ControlTrajectory`,
+stage times, states, rates, and controls, raw dynamics defects, every declared
+constraint block, the generic optimization result, optional structured result
+and portable warm start, sparse topology counts, and physical feasibility
+diagnostics. `DirectCollocationOffGridAudit` retains sampled times, raw
+residuals, and per-case/per-interval defect and path-violation arrays rather
+than only global maxima. Collocation constraints are enforced at their declared
+stages. The audit evaluates additional piecewise-linear states and held
+controls, but `certified=False`: neither site set is a continuous-time path
+certificate.
 
 The direct statuses are `DIRECT_COLLOCATION_SUCCESS`,
 `DIRECT_COLLOCATION_OPTIMIZER_FAILED`, `DIRECT_COLLOCATION_NONFINITE`,
@@ -517,6 +541,21 @@ The direct statuses are `DIRECT_COLLOCATION_SUCCESS`,
 `DIRECT_COLLOCATION_RECONSTRUCTION_FAILED`. Backend success is never sufficient:
 scaled KKT evidence, raw physical defects, and raw physical constraint bounds are
 checked independently.
+
+`refine_direct_collocation` bisects an explicit interval selection and transfers only
+the physical primal: states use the declared piecewise-linear interpolation, controls
+preserve the held representation at target stage times, and shared parameters and
+duration transfer identically. Mesh-shaped bounds require an explicit
+`DirectCollocationBoundProvider`. Topology-changing dual multipliers are never reused.
+`solve_refined_direct_collocation` records every selection, transfer, solve, objective
+change, common-grid state/control change, and sampled-defect reduction. Its convergence
+status remains sampled evidence, not a continuous certificate.
+
+`replay_direct_collocation` independently replays one unbatched controlled-DAE result
+through the native DAE consistency and implicit-stage lifecycle. It constructs a
+`HeldInputPolicy`, preserves optimized parameters and duration, and reports node,
+terminal, and algebraic discrepancies in `DirectCollocationReplayEvidence`. Replay
+never rewrites the collocation result status.
 
 ::: phydrax.control.TrajectoryOptimizationContext
 
@@ -550,6 +589,23 @@ checked independently.
 
 ::: phydrax.control.DirectCollocationDiagnostics
 
+::: phydrax.control.DirectCollocationOffGridAudit
+
+::: phydrax.control.DirectCollocationRefinementPolicy
+
+::: phydrax.control.DirectCollocationRefinementSelection
+
+::: phydrax.control.DirectCollocationPrimalTransfer
+
+::: phydrax.control.DirectCollocationRefinementLevel
+
+::: phydrax.control.DirectCollocationRefinementStudy
+
+::: phydrax.control.DirectCollocationReplayPolicy
+
+::: phydrax.control.DirectCollocationReplayEvidence
+
+
 ::: phydrax.control.DirectCollocationResult
 
 ::: phydrax.control.compile_direct_collocation
@@ -559,6 +615,15 @@ checked independently.
 ::: phydrax.control.solve_prepared_direct_collocation
 
 ::: phydrax.control.solve_direct_collocation
+
+::: phydrax.control.select_direct_collocation_intervals
+
+::: phydrax.control.refine_direct_collocation
+
+::: phydrax.control.solve_refined_direct_collocation
+
+::: phydrax.control.replay_direct_collocation
+
 
 ## Exact finite control catalogs
 

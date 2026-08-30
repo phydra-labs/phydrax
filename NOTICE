@@ -108,7 +108,24 @@ The RA34PW2 Rosenbrock-W tableau constants are adapted from PETSc's public TS
 method registry and executed through an independent native JAX matrix-free
 implementation. See LICENSES/PETSC-BSD-2-CLAUSE.txt.
 
+Spineax
+Copyright (c) 2025 John Viljoen
+Licensed under the MIT License.
+The optional `spineax-cudss` provider uses Spineax's public JAX FFI API for
+cuDSS symbolic analysis, numerical factorization/refactorization, multiple-RHS
+solves, inertia queries, and explicit resource release. Phydrax retains its own
+sparse operator, planning, precision, residual-certification, KKT, and result
+contracts. See LICENSES/SPINEAX-MIT.txt.
+
 Research and design acknowledgments
+
+The low-rank adaptation design study considered Davis Yoshida's Lorax at commit
+1ebd0efa6c467974357bb9f73fe4a4967b487622, Copyright (c) 2023
+davisyoshida, licensed under the MIT License, together with Hu et al.,
+“LoRA: Low-Rank Adaptation of Large Language Models” (2021). Phydrax
+independently implements explicit native affine updates, exact parameter
+subspaces, trainer integration, base-bound artifacts, and deployment merging;
+no Lorax or Qax source or runtime dependency is copied or redistributed.
 
 The direct-collocation design study considered csu-hmc/opty at commit
 fdad07d0f0ae149e2eedb479e7a87298fd6722ef, Copyright (c) 2014-2025,
@@ -119,6 +136,14 @@ controlled-DAE contracts, normalized decision layouts, JAX sparse derivatives,
 solver boundaries, certificates, tests, and examples are independent
 implementations; no opty source, generated templates, fixtures, or runtime code
 is copied or redistributed.
+
+The structured nonlinear batching and iteration-pool design study considered
+JAXIPM at commit 3e6d2d29cd890b7a201b037110031ec0d9487df9 and Viljoen,
+Haffner, Tomizuka, and Mehr, “JAXIPM: Batched Nonlinear Programming on the
+GPU.” Phydrax independently implements its structured bound-form IR, ASDEX
+derivatives, KKT strategies, portable warm starts, task identity, certification,
+domain audits, and execution pools; no JAXIPM source or runtime dependency is
+included.
 
 The Markov-chain-cubature design study considered tttc3/MCCube at commit
 d5653d88005ef9a421f14aa0c1e9ee6cfee5cecc, licensed under the Apache License,

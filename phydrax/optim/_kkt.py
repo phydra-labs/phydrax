@@ -9,14 +9,23 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
-import jax.scipy as jsp
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
-from ..linalg import HermitianPrecisionPolicy, HermitianSpectrum
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    HermitianPrecisionPolicy,
+    HermitianSpectrum,
+    LinearSolvePolicy,
+    LinearSystem,
+    prepare as prepare_linear,
+    PreparedLinearSolve,
+    solve as solve_linear,
+)
 
 
 def _spectral_precision(
@@ -41,7 +50,60 @@ def _spectral_precision(
     )
 
 
-KKTForm: TypeAlias = Literal["augmented", "null-space", "range-space"]
+KKTForm: TypeAlias = Literal["dense-augmented"]
+
+
+class KKTRegularizationPolicy(StrictModule):
+    """Primal/dual shifts and bounded inertia-correction work."""
+
+    initial_primal: float = eqx.field(static=True)
+    initial_dual: float = eqx.field(static=True)
+    primal_growth: float = eqx.field(static=True)
+    dual_growth: float = eqx.field(static=True)
+    maximum_primal: float = eqx.field(static=True)
+    maximum_dual: float = eqx.field(static=True)
+    maximum_corrections: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        initial_primal: float = 1e-10,
+        initial_dual: float = 1e-10,
+        primal_growth: float = 10.0,
+        dual_growth: float = 10.0,
+        maximum_primal: float = 1e8,
+        maximum_dual: float = 1e8,
+        maximum_corrections: int = 16,
+    ):
+        values = tuple(
+            float(value)
+            for value in (
+                initial_primal,
+                initial_dual,
+                primal_growth,
+                dual_growth,
+                maximum_primal,
+                maximum_dual,
+            )
+        )
+        corrections = int(maximum_corrections)
+        if any(not isfinite(value) or value <= 0.0 for value in values):
+            raise ValueError("KKT regularization values must be finite and positive.")
+        if values[2] <= 1.0 or values[3] <= 1.0:
+            raise ValueError("KKT regularization growth factors must exceed one.")
+        if values[4] < values[0] or values[5] < values[1]:
+            raise ValueError("Maximum KKT regularization must exceed initial values.")
+        if corrections < 0:
+            raise ValueError("maximum_corrections must be non-negative.")
+        (
+            self.initial_primal,
+            self.initial_dual,
+            self.primal_growth,
+            self.dual_growth,
+            self.maximum_primal,
+            self.maximum_dual,
+        ) = values
+        self.maximum_corrections = corrections
 
 
 class KKTInertia(StrictModule):
@@ -49,6 +111,9 @@ class KKTInertia(StrictModule):
     negative: Array
     zero: Array
     tolerance: Array
+    certified: Array
+    source: str = eqx.field(static=True)
+    zero_reliable: bool = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope = eqx.field(static=True)
 
 
@@ -58,8 +123,8 @@ class KKTPlan(StrictModule):
     constraint_dimension: int = eqx.field(static=True)
     expected_positive: int = eqx.field(static=True)
     expected_negative: int = eqx.field(static=True)
-    regularization: float = eqx.field(static=True)
-    maximum_regularization: float = eqx.field(static=True)
+    expected_zero: int = eqx.field(static=True)
+    regularization: KKTRegularizationPolicy
     plan_id: str = eqx.field(static=True)
 
 
@@ -81,8 +146,7 @@ class KKTFactorization(StrictModule):
 
     plan: KKTPlan
     matrix: Array
-    factor: Array
-    pivots: Array
+    linear: PreparedLinearSolve
     inertia: KKTInertia
     primal_regularization: Array
     dual_regularization: Array
@@ -112,11 +176,14 @@ def kkt_inertia(
     eigenvalues = spectrum.eigenvalues
     threshold = precision_.decision(tolerance)
     return KKTInertia(
-        jnp.sum(eigenvalues > threshold, dtype=jnp.int32),
-        jnp.sum(eigenvalues < -threshold, dtype=jnp.int32),
-        jnp.sum(jnp.abs(eigenvalues) <= threshold, dtype=jnp.int32),
-        threshold,
-        spectrum.precision_evidence,
+        positive=jnp.sum(eigenvalues > threshold, dtype=jnp.int32),
+        negative=jnp.sum(eigenvalues < -threshold, dtype=jnp.int32),
+        zero=jnp.sum(jnp.abs(eigenvalues) <= threshold, dtype=jnp.int32),
+        tolerance=threshold,
+        certified=jnp.all(jnp.isfinite(eigenvalues)),
+        source="dense-hermitian-spectrum",
+        zero_reliable=True,
+        precision_evidence=spectrum.precision_evidence,
     )
 
 
@@ -128,28 +195,28 @@ def plan_kkt(
     jacobian_density: float = 1.0,
     regularization: float = 1e-10,
     maximum_regularization: float = 1e8,
+    regularization_policy: KKTRegularizationPolicy | None = None,
 ) -> KKTPlan:
     primal = int(primal_dimension)
     constraints = int(constraint_dimension)
     density = float(jacobian_density)
-    regularization_ = float(regularization)
-    maximum_ = float(maximum_regularization)
     if primal < 1 or constraints < 0:
         raise ValueError("KKT dimensions are invalid.")
     if not isfinite(density) or not 0.0 <= density <= 1.0:
         raise ValueError("jacobian_density must lie in [0, 1].")
-    if not isfinite(regularization_) or regularization_ <= 0.0:
-        raise ValueError("regularization must be finite and positive.")
-    if not isfinite(maximum_) or maximum_ < regularization_:
-        raise ValueError("maximum_regularization must exceed regularization.")
-    if constraints == 0:
-        form: KKTForm = "augmented"
-    elif constraints < primal // 4 and density > 0.25:
-        form = "range-space"
-    elif constraints > primal // 2:
-        form = "null-space"
-    else:
-        form = "augmented"
+    policy = (
+        KKTRegularizationPolicy(
+            initial_primal=regularization,
+            initial_dual=regularization,
+            maximum_primal=maximum_regularization,
+            maximum_dual=maximum_regularization,
+        )
+        if regularization_policy is None
+        else regularization_policy
+    )
+    if not isinstance(policy, KKTRegularizationPolicy):
+        raise TypeError("regularization_policy must be KKTRegularizationPolicy or None.")
+    form: KKTForm = "dense-augmented"
     plan_id = canonical_fingerprint(
         {
             "kind": "kkt-plan",
@@ -157,6 +224,15 @@ def plan_kkt(
             "primal": primal,
             "constraints": constraints,
             "density": density,
+            "regularization": {
+                "initial_primal": policy.initial_primal,
+                "initial_dual": policy.initial_dual,
+                "primal_growth": policy.primal_growth,
+                "dual_growth": policy.dual_growth,
+                "maximum_primal": policy.maximum_primal,
+                "maximum_dual": policy.maximum_dual,
+                "maximum_corrections": policy.maximum_corrections,
+            },
         }
     )
     return KKTPlan(
@@ -165,8 +241,8 @@ def plan_kkt(
         constraint_dimension=constraints,
         expected_positive=primal,
         expected_negative=constraints,
-        regularization=regularization_,
-        maximum_regularization=maximum_,
+        expected_zero=0,
+        regularization=policy,
         plan_id=plan_id,
     )
 
@@ -205,8 +281,15 @@ def factor_kkt(
         raise ValueError("Hessian shape does not match KKT plan.")
     if jacobian_.shape != (plan.constraint_dimension, plan.primal_dimension):
         raise ValueError("Jacobian shape does not match KKT plan.")
-    primal_regularization = jnp.asarray(plan.regularization, dtype=hessian_.dtype)
-    dual_regularization = jnp.asarray(plan.regularization, dtype=hessian_.dtype)
+    policy = plan.regularization
+    primal_regularization = jnp.asarray(
+        policy.initial_primal,
+        dtype=hessian_.dtype,
+    )
+    dual_regularization = jnp.asarray(
+        policy.initial_dual,
+        dtype=hessian_.dtype,
+    )
     matrix = _augmented_matrix(
         hessian_,
         jacobian_,
@@ -214,21 +297,23 @@ def factor_kkt(
         dual_regularization,
     )
     inertia = kkt_inertia(matrix, precision=precision_)
-    for _ in range(16):
+    for _ in range(policy.maximum_corrections):
         matches = (
-            (inertia.positive == plan.expected_positive)
+            inertia.certified
+            & inertia.zero_reliable
+            & (inertia.positive == plan.expected_positive)
             & (inertia.negative == plan.expected_negative)
-            & (inertia.zero == 0)
+            & (inertia.zero == plan.expected_zero)
         )
         if bool(matches):
             break
         primal_regularization = jnp.minimum(
-            plan.maximum_regularization,
-            10.0 * primal_regularization,
+            policy.maximum_primal,
+            policy.primal_growth * primal_regularization,
         )
         dual_regularization = jnp.minimum(
-            plan.maximum_regularization,
-            10.0 * dual_regularization,
+            policy.maximum_dual,
+            policy.dual_growth * dual_regularization,
         )
         matrix = _augmented_matrix(
             hessian_,
@@ -237,18 +322,23 @@ def factor_kkt(
             dual_regularization,
         )
         inertia = kkt_inertia(matrix, precision=precision_)
-    factor, pivots = jsp.linalg.lu_factor(matrix)
     matches = (
-        (inertia.positive == plan.expected_positive)
+        inertia.certified
+        & inertia.zero_reliable
+        & (inertia.positive == plan.expected_positive)
         & (inertia.negative == plan.expected_negative)
-        & (inertia.zero == 0)
+        & (inertia.zero == plan.expected_zero)
     )
-    finite = jnp.all(jnp.isfinite(factor))
+    linear_problem = LinearSystem(DenseLinearOperator(matrix))
+    linear = prepare_linear(
+        linear_problem,
+        precision_.bind_linear(LinearSolvePolicy(DenseLU())),
+    )
+    finite = jnp.all(jnp.isfinite(matrix))
     return KKTFactorization(
         plan,
         matrix,
-        factor,
-        pivots,
+        linear,
         inertia,
         primal_regularization,
         dual_regularization,
@@ -275,17 +365,19 @@ def solve_factored_kkt(
     if constraint_rhs.shape != (plan.constraint_dimension,):
         raise ValueError("Constraint residual shape does not match KKT plan.")
     rhs = -jnp.concatenate([primal_rhs, constraint_rhs])
-    solution = jsp.linalg.lu_solve(
-        (factorization.factor, factorization.pivots),
-        rhs,
-    )
+    linear_result = solve_linear(factorization.linear, rhs)
+    solution = factorization.precision.direction(linear_result.value)
     primal_step = solution[: plan.primal_dimension]
     dual_step = solution[plan.primal_dimension :]
     residual = factorization.matrix @ solution - rhs
-    finite = factorization.finite & jnp.all(jnp.isfinite(solution))
+    finite = (
+        factorization.finite
+        & linear_result.diagnostics.converged
+        & jnp.all(jnp.isfinite(solution))
+    )
     return KKTSolveResult(
-        factorization.precision.direction(primal_step),
-        factorization.precision.direction(dual_step),
+        primal_step,
+        dual_step,
         factorization.inertia,
         factorization.primal_regularization,
         factorization.dual_regularization,
@@ -325,6 +417,7 @@ __all__ = [
     "KKTForm",
     "KKTInertia",
     "KKTPlan",
+    "KKTRegularizationPolicy",
     "KKTSolveResult",
     "factor_kkt",
     "kkt_inertia",

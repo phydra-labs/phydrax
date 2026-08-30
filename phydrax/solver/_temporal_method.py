@@ -178,7 +178,7 @@ class TemporalSolveEvidence(StrictModule, NonTrainableState):
     adaptive: bool = eqx.field(static=True)
     dense: bool = eqx.field(static=True)
     maximum_steps: int | None = eqx.field(static=True)
-    precision_evidence: PrecisionEvidenceEnvelope | None
+    precision_evidence: PrecisionEvidenceEnvelope | None = eqx.field(static=True)
     state_packing: ComplexStatePackingEvidence | AlgebraStatePackingEvidence | None
 
     def __init__(

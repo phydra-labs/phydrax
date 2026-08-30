@@ -37,6 +37,11 @@ from ._cochain import (
     triangle_mesh_to_cochain_complex,
 )
 from ._cochain_field import CochainField
+from ._cochain_homology import (
+    cochain_harmonic_kernel_certificate,
+    HodgeHomologyReport,
+    validate_hodge_homology,
+)
 from ._cochain_metric import cochain_metric_reduce, CochainMetricReduction
 from ._cochain_ops import (
     cochain_codifferential,
@@ -383,6 +388,9 @@ __all__ = [
     "cochain_complex_from_incidences",
     "cochain_complex_from_simplicial",
     "compute_harmonic_subspace",
+    "HodgeHomologyReport",
+    "cochain_harmonic_kernel_certificate",
+    "validate_hodge_homology",
     "graph_to_cochain_complex",
     "reorient_cochain",
     "reorient_cochain_complex",

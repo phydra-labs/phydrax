@@ -33,6 +33,11 @@ from ..discretization import (
 )
 from ..enforcement import EnforcementProgram
 from ..equations.trefftz import TrialSpaceCertificate
+from ..nn.parameters import ParameterSubspace
+from ..nn.parameters._low_rank import (
+    contains_low_rank_updates,
+    validate_low_rank_subspace,
+)
 from ..optim._kfac._config import KFAC
 from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import AbstractRiemannianOptimizer
@@ -374,6 +379,7 @@ class FunctionalSolver(StrictModule):
         | AbstractRiemannianOptimizer
         | None = None,
         evaluation_parameters: EvaluationParametersFn | None = None,
+        parameter_subspace: ParameterSubspace | None = None,
         seed: int = 0,
         jit: bool = True,
         keep_best: bool = True,
@@ -390,7 +396,8 @@ class FunctionalSolver(StrictModule):
         """Run the training loop and return an updated solver.
 
         The optimization updates trainable inexact-array leaves of `self.functions`.
-        Domains and fixed observed-data state are kept non-trainable.
+        Domains and fixed observed-data state are kept non-trainable. An explicit
+        `parameter_subspace` restricts supported Optax runs to exact selected leaves.
 
         - Standard and extra-argument Optax transformations are accepted.
         - `phydrax.optim.kfac(...)` configurations are accepted and receive frozen
@@ -408,6 +415,8 @@ class FunctionalSolver(StrictModule):
           selection, and the returned solver. Mirror and Riemannian optimizers reject
           ambient evaluation transforms because they need not preserve geometric
           membership.
+        - Explicit parameter subspaces are initially supported only by standard and
+          extra-argument Optax transformations.
 
         During training, each term receives the one-based iteration index as the
         JAX scalar keyword `iter_`, enabling scheduled coefficients.
@@ -437,6 +446,25 @@ class FunctionalSolver(StrictModule):
             raise ValueError("num_iter must be non-negative.")
         if num_iter == 0:
             return self
+        if parameter_subspace is None:
+            parameter_paths: tuple[str, ...] | None = None
+            parameter_shapes: tuple[tuple[int, ...], ...] = ()
+            parameter_dtypes: tuple[str, ...] = ()
+            if contains_low_rank_updates(self.functions):
+                raise ValueError(
+                    "Low-rank FunctionalSolver training requires an explicit "
+                    "parameter_subspace."
+                )
+        else:
+            if not isinstance(parameter_subspace, ParameterSubspace):
+                raise TypeError(
+                    "parameter_subspace must be a ParameterSubspace or None."
+                )
+            parameter_subspace.validate_root(self.functions)
+            validate_low_rank_subspace(self.functions, parameter_subspace)
+            parameter_paths = parameter_subspace.leaf_paths
+            parameter_shapes = parameter_subspace.leaf_shapes
+            parameter_dtypes = parameter_subspace.leaf_dtypes
         if keep_best and _has_signed_randomized_objective(self.terms):
             raise ValueError(
                 "Signed unbiased randomized terms require keep_best=False; "
@@ -450,6 +478,9 @@ class FunctionalSolver(StrictModule):
         config = FunctionalSolveConfig(
             num_iter=num_iter,
             evaluation_parameters=evaluation_parameters,
+            parameter_paths=parameter_paths,
+            parameter_shapes=parameter_shapes,
+            parameter_dtypes=parameter_dtypes,
             seed=seed,
             jit=jit,
             keep_best=keep_best,

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable
-from typing import Any, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -259,11 +259,81 @@ class CallableInputPolicy(AbstractInputPolicy):
         return result
 
 
+class HeldInputPolicy(AbstractInputPolicy):
+    """State-independent interval values on one strictly increasing time grid."""
+
+    times: Array
+    values: Array
+    input_layout: InputLayout
+    node_side: Literal["left", "right"] = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        times: ArrayLike,
+        values: ArrayLike,
+        /,
+        *,
+        input_layout: InputLayout,
+        node_side: Literal["left", "right"] = "left",
+        policy_id: str,
+    ):
+        if not isinstance(input_layout, InputLayout):
+            raise TypeError("input_layout must be an InputLayout.")
+        if node_side not in ("left", "right"):
+            raise ValueError("node_side must be 'left' or 'right'.")
+        times_ = _inexact(times)
+        values_ = _inexact(values)
+        if times_.ndim != 1 or int(times_.size) < 2:
+            raise ValueError("HeldInputPolicy times must contain at least two nodes.")
+        expected = (int(times_.size) - 1,) + input_layout.shape
+        if values_.shape != expected:
+            raise ValueError(
+                f"HeldInputPolicy values must have shape {expected}; got {values_.shape}."
+            )
+        times_ = eqx.error_if(
+            times_,
+            jnp.any(~jnp.isfinite(times_)) | jnp.any(jnp.diff(times_) <= 0.0),
+            "HeldInputPolicy times must be finite and strictly increasing.",
+        )
+        values_ = eqx.error_if(
+            values_,
+            jnp.any(~jnp.isfinite(values_)),
+            "HeldInputPolicy values must be finite.",
+        )
+        self.times = times_
+        self.values = values_
+        self.input_layout = input_layout
+        self.node_side = node_side
+        self.policy_id = _identifier(policy_id, "HeldInputPolicy policy_id")
+
+    def evaluate(
+        self,
+        coordinate: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        del state, args
+        time = jnp.asarray(coordinate, dtype=self.times.dtype)
+        if time.shape != ():
+            raise ValueError("HeldInputPolicy coordinate must be scalar.")
+        time = eqx.error_if(
+            time,
+            ~jnp.isfinite(time) | (time < self.times[0]) | (time > self.times[-1]),
+            "HeldInputPolicy coordinate lies outside its time grid.",
+        )
+        side = "left" if self.node_side == "left" else "right"
+        index = jnp.searchsorted(self.times, time, side=side) - 1
+        return self.values[jnp.clip(index, 0, int(self.values.shape[0]) - 1)]
+
+
 __all__ = [
     "AbstractInputPolicy",
     "AutonomousContinuousVectorField",
     "AutonomousDiscreteTransition",
     "CallableInputPolicy",
+    "HeldInputPolicy",
     "ContinuousSystem",
     "DiscreteSystem",
     "InputContinuousVectorField",

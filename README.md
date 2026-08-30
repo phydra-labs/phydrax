@@ -42,6 +42,10 @@ Most workflows are composing a few primitives:
   particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
   measures, transfers, temporal/stochastic
   composition, and auditable plan/preparation identities.
+- **Computational topology**: compact active subcomplexes, exact field-qualified
+  homology, rational Betti dimensions, validated filtrations, persistent homology,
+  fixed-capacity diagrams, and independently verified topology–Hodge evidence over
+  canonical discretization complexes.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
 - **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
   transformations, metrics, connections, curvature, embedded charts, and
@@ -65,6 +69,10 @@ Most workflows are composing a few primitives:
 - **Optimal transport**: integration measures lower into balanced finite transport
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
+- **Combinatorial optimization**: native exact finite, cardinality, assignment,
+  and DAG path oracles preserve logical decisions, linear objective features,
+  deterministic ties, independent certificates, JIT batching, and explicit
+  blackbox surrogate pullbacks.
 - **Interpolation**: reusable anisotropic Smolyak surrogates preserve labeled
   domains, array-valued outputs, and JAX differentiation.
 - **Positive-definite kernels**: one covariance-safe PyTree algebra serves Gaussian
@@ -330,9 +338,12 @@ dense or structural-sparse prepared linear-control QPs, explicit receding-horizo
 warm-start shifting, and affine stage/terminal SOCP constraints. Direct
 collocation supports fixed or variable duration, shared optimized parameters,
 bound-form trajectory constraints, explicit native-dense or sparse-Ipopt
-selection, KKT recertification, and physical defect audits. Sampled nonlinear
-constraints are not continuous-time certificates; off-grid collocation checks
-remain non-certifying diagnostics; iLQR and multiple shooting accept one
+selection, typed callback/work evidence, KKT recertification, per-interval defect
+audits, nested h-refinement with primal transfer, and controlled-DAE causal
+replay. Native and Ipopt qualification artifacts retain analytic, active-path,
+shared-parameter, stiff, unstable, and nonholonomic cases. Sampled nonlinear
+constraints and off-grid audits are not continuous-time certificates; replay
+does not rewrite collocation status; iLQR and multiple shooting accept one
 physical case; bounded coefficient search is not globally optimal; dense guards
 and solver status are explicit rather than hidden behind fallback or repair. See
 the [control cookbook](docs/cookbook/control.md), [control API](docs/api/control.md),

@@ -117,6 +117,22 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
+### Computational topology: exact invariants and filtered fields
+
+`phydrax.topology` consumes the canonical oriented cell complexes above without
+introducing another mesh or graph representation. Compact active layouts, algebraic
+subcomplexes and relative pairs, exact prime-field homology, exact rational Betti
+dimensions, validated lower/upper-star filtrations, and ordinary or induced-relative
+persistent homology retain topology, entity, coefficient, resource, and reduction
+evidence. Natural host diagrams pack explicitly for JAX; frozen pairings expose local
+endpoint derivatives only while the complete filtration order remains valid.
+
+Exact rational dimensions bridge to metric harmonic cochains through independently
+verified rank, orthonormality, residual, and spectral-gap evidence. Solvers still own
+whether a harmonic class is a gauge, compatibility obstruction, or physical
+circulation/flux mode. See
+[Guide → Computational topology](guides_computational_topology.md).
+
 ### Precision is an execution contract
 
 Precision is attached to executable stages, not inferred from one global dtype.
@@ -178,6 +194,16 @@ factorization, stability, and orthogonality maps live in
 `phydrax.nn.parameters`; raw arrays remain optimizer leaves and physical values
 are constructed on demand. The same package owns explicit model-PyTree
 selection through `ParameterSubspace`.
+
+Exact native `Linear` paths can instead carry factorized low-rank updates over
+a shared dense base. The factor-only `ParameterSubspace` is the complete
+gradient and optimizer-state boundary for `fit_operator` and Optax
+`FunctionalSolver` runs; merging returns an ordinary dense deployment model,
+while adapter-only archives verify the complete base content before loading.
+The checked transfer campaign improves its frozen baseline with 53 selected
+parameters versus 197 for full fine-tuning, and the resource campaign reduces
+Adam state from 4,194,308 to 131,076 bytes with merged/factorized disagreement
+below \(7\times10^{-15}\).
 
 ### Native ML: fitted array models, not mutable estimators
 
@@ -313,6 +339,19 @@ soft order operations, prepared references, spatial/intensity UQ metrics, scalar
 terms, distributional semigroup losses, and deterministic particle transforms reuse
 the native substrate. See [Guides → Optimal transport](guides_transport.md).
 
+### Native combinatorial decisions and learning
+
+`phydrax.combinatorial` separates logical finite decisions from the real feature
+PyTrees dual to linear objective costs. Explicit catalogs, stable fixed-cardinality
+selection, primal-dual Hungarian assignment, and signed-cost DAG shortest paths
+share native JAX batching, deterministic ties, content-sensitive topology,
+portable statuses, and independent feasibility/objective/optimality certificates.
+Hard solves stop gradients by default. `BlackboxInterpolation` adds an explicit
+loss-dependent one-extra-solve surrogate pullback without presenting it as a
+classical solver Jacobian. See
+[API → Native combinatorial optimization](api/combinatorial.md) and the
+[combinatorial learning cookbook](cookbook/combinatorial_learning.md).
+
 ### Dynamical systems, identification, nonlinear analysis, and chaos
 
 `phydrax.dynamics` separates local system laws, pathwise numerical evolution,
@@ -374,13 +413,20 @@ direct collocation, dense or structural-sparse prepared linear-control QPs,
 explicit MPC warm-start shifting, and affine stage/terminal SOCP constraints.
 Direct collocation accepts explicit systems or controlled state-shaped DAEs,
 shared parameter coordinates, fixed or variable duration, exact sparse
-derivatives, and explicitly selected dense-native or sparse-Ipopt optimization.
-Sampled nonlinear path constraints report feasibility only at their declared
-sites and are not continuous-time certificates. iLQR and multiple shooting solve
-one physical case per call. Coefficient search is bounded initialization, not a
-globally optimal solver. Dense algorithms enforce dimension guards; no failed
-solve is hidden by a fallback, projection, covariance repair, or undeclared
-regularization.
+derivatives, and explicitly selected dense-native, sparse-native, or sparse
+Ipopt optimization. Its structured template supports numeric refresh, portable
+primal/dual warm starts, and explicit completion pools for independent initial
+decisions. Typed Ipopt evidence retains callback work, topology, status, and
+warm starts; per-interval sampled defects drive nested h-refinement with
+primal-only transfer; and controlled-DAE replay binds held controls into
+consistency and every implicit stage. Fingerprinted native/Ipopt campaigns
+derive graduation claims. Multiple shooting additionally lowers to the same
+structured nonlinear IR without changing the original dense SQP contract.
+Sampled nonlinear path constraints and off-grid audits are not continuous-time
+certificates, and replay does not rewrite collocation success. Coefficient
+search is bounded initialization, not a globally optimal solver. Dense
+algorithms enforce dimension guards; no failed solve is hidden by fallback,
+projection, covariance repair, or undeclared regularization.
 
 Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC/PSD/exponential/power
 product-cone programs live in `phydrax.optim`. PSD uses scaled upper-column symmetric
@@ -392,13 +438,19 @@ dense, QPax 0.1.4, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods rem
 explicit choices with no automatic fallback or universal differentiability claim.
 
 General nonlinear optimization lives in `phydrax.optim`. Scalar, block-residual,
-proximal-composite, constrained, state/design, stochastic, manifold, and factor
-graph problems share typed termination, status, diagnostics, provenance, and
-PyTree contracts. Native methods include matrix-free Newton--Krylov and
-Steihaug--Toint, dense/subspace dogleg and dogbox, robust-loss GN/LM,
-trust-reflective bounds, variable projection, POUNDERS, projected quasi-Newton,
-augmented Lagrangian, filter/SOC SQP with BFGS/SR1/exact Hessians, and a filter
-interior-point method with restoration and KKT inertia planning. BOBYQA, COBYQA,
+proximal-composite, constrained, state/design, stochastic, manifold, factor
+graph, and structured sparse programs share typed termination, status,
+diagnostics, provenance, and certificate contracts.
+`StructuredNonlinearProgram` separates fixed bound roles and sparse derivative
+topology from refreshable numeric data. Native `PrimalDualInteriorPoint`
+explicitly selects dense filter, matrix-free, or sparse augmented KKT
+execution; structured methods return portable primal/dual warm starts and may
+run input-ordered completion pools. Sparse LDLT through optional
+Spineax/cuDSS remains an explicit provider with reported inertia and resource
+release. Native methods also include Newton--Krylov, Steihaug--Toint,
+dense/subspace dogleg and dogbox, robust-loss GN/LM, trust-reflective bounds,
+variable projection, POUNDERS, projected quasi-Newton, augmented Lagrangian,
+and filter/SOC SQP with BFGS/SR1/exact Hessians. BOBYQA, COBYQA,
 deterministic multistart, and explicitly recertified SciPy/NLopt/Ipopt/Ceres
 boundaries cover black-box and specialist routes. Residual graphs retain block
 sparsity, Schur ordering, manifold retractions, and incremental factor versions.
@@ -635,6 +687,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 
 - **Forward PDE solve (PINN-style)**: interior residual + boundary/initial terms (soft or enforced).
   Start at [Getting started](index.md) and continue with the conditions-and-terms guide.
+- **Neural eigenproblems**: use `VariationalEigenspace` to select the lowest
+  self-adjoint trial subspace, `InvariantSubspaceResidual` to refine the strong
+  equation `A U = B U H`, learned `FunctionSamples` trial spaces for amortized
+  warm starts, or multi-state VMC for discrete quantum amplitudes. Eigenvalues
+  come from the reduced Ritz problem; linear eigen-PINNs do not require a
+  separately trainable scalar eigenvalue.
 - **Integral and nonlocal field learning**: compose deterministic causal,
   spatial, or fractional operators inside ordinary residuals. Use
   `RandomizedMomentPenalty` when a squared moment is resampled rather than
@@ -758,12 +816,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   shooting, direct collocation, or receding-horizon MPC according to the problem
   structure. `TrajectoryOptimizationProblem` adds controlled implicit DAEs,
   bound-form global constraints, shared optimized parameters, and variable
-  duration for direct collocation. Results retain case/control axes, validity and
-  backend status, plus control, discretization, approximation, method, and
-  backend IDs. Nonlinear sampled constraints are not between-sample
-  certificates; direct-collocation off-grid checks are diagnostics, iLQR and
-  multiple shooting are single-case, and bounded search is not globally optimal.
-  Dense paths enforce guards and never hide failure behind a repair or fallback.
+  duration for direct collocation. Per-interval audit evidence supports explicit
+  nested refinement, controlled DAEs can be causally replayed through a held input
+  policy, and structured Ipopt results retain typed work/KKT/warm-start evidence.
+  Results retain case/control axes, validity and backend status, plus control,
+  discretization, approximation, method, and backend IDs. Nonlinear sampled
+  constraints and off-grid audits are not continuous-time certificates; replay
+  is independent evidence; iLQR and multiple shooting are single-case; and
+  bounded search is not globally optimal. Dense paths enforce guards and never
+  hide failure behind repair or fallback.
   See [Control cookbook](cookbook/control.md), [API → Control](api/control.md),
   and [API → Optimization](api/optim.md).
 - **Linear systems, sensitivities, and spectra**: linearize dynamics; solve
@@ -953,6 +1014,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   combinatorial, and fixed-noise noncompact kernels shared by GP and coreset methods.
 - `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
   state-space estimation, sensitivities, and stochastic spectra.
+- `phydrax.combinatorial` for exact native finite, cardinality, assignment, and
+  DAG path oracles, independent certificates, and explicit blackbox surrogate
+  pullbacks.
 - `phydrax.optim` for typed scalar, least-squares, proximal-composite, constrained,
   state/design, and stochastic optimization, differentiable solution maps,
   canonical QPs, and the explicit QPax backend.

@@ -171,21 +171,18 @@ def _unavailable(
         source_revision=None if spec is None else spec.source_revision,
     )
 
+
 _QUASILINEAR_ROOT_SIZE = 512
 _QUASILINEAR_ROOT_STEP = 0.05
 _QUASILINEAR_ROOT_SPACING = 1.0 / _QUASILINEAR_ROOT_SIZE
 
 
 def _periodic_gradient(value):
-    return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (
-        2.0 * _QUASILINEAR_ROOT_SPACING
-    )
+    return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
 
 
 def _periodic_divergence(value):
-    return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (
-        2.0 * _QUASILINEAR_ROOT_SPACING
-    )
+    return (jnp.roll(value, -1) - jnp.roll(value, 1)) / (2.0 * _QUASILINEAR_ROOT_SPACING)
 
 
 def _quasilinear_diffusivity(value):
@@ -718,7 +715,9 @@ def _run_constrained(case_id, implementation):
             filter_globalization=phx.optim.FilterGlobalization(),
             hessian_update="exact",
         ),
-        "phydrax-ipm": phx.optim.FilterInteriorPoint(),
+        "phydrax-ipm": phx.optim.PrimalDualInteriorPoint(
+            mode="dense-filter",
+        ),
         "scipy-trust-constr": phx.optim.SciPyMinimize(
             "trust-constr",
             options={"gtol": 1e-9},

@@ -79,6 +79,29 @@ four-layer model and integration-source choices, see
       `enforce_dirichlet(...)` call accepts the same gate settings. These settings
       do not change derivative conditions.
 
+## Eigen-PINN selection and strong residual refinement
+
+For a self-adjoint eigenproblem, use separate terms for separate mathematical
+roles:
+
+1. `VariationalEigenspace` selects the lowest trial subspace through the block
+   min--max objective.
+2. `InvariantSubspaceResidual` applies the strong operator and minimizes
+   `A U - B U H` with `H` projected from the same trial fields.
+3. A distinct fixed realization evaluates the final Ritz values and relative
+   strong residuals.
+
+Both terms remove scale and trial-basis freedom through their mass matrix. Do
+not add normalization or pairwise orthogonality penalties. Residual-only
+training can converge to any invariant mode or cluster; it is not a low-mode
+selection rule.
+
+When both terms are active in one solver, pass the same `fixed_realization` if
+their matrix entries must use identical quadrature. Staged selection and
+refinement avoids duplicate strong-operator work and is the recommended
+default.
+
+
 ## Typical usage
 
 ```python

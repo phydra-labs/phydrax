@@ -27,6 +27,8 @@ from .._training import (
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
+from ..nn.parameters import ParameterSubspace
+from ..nn.parameters._low_rank import validate_low_rank_subspace
 from ..optim._composite import CompositeLeastSquaresProblem
 from ..optim._iterative import (
     AbstractCompositeLeastSquaresMethod,
@@ -85,6 +87,9 @@ def solve_gradient(
     | optax.GradientTransformationExtraArgs
     | Any = optax.rprop(1e-3),
     evaluation_parameters: EvaluationParametersFn | None = None,
+    parameter_paths: tuple[str, ...] | None = None,
+    parameter_shapes: tuple[tuple[int, ...], ...] = (),
+    parameter_dtypes: tuple[str, ...] = (),
     seed: int = 0,
     jit: bool = True,
     keep_best: bool = True,
@@ -144,6 +149,15 @@ def solve_gradient(
             "optim must be a Phydrax least-squares, iterative, mirror, or "
             "Riemannian optimizer, or an Optax transformation."
         )
+    if (
+        parameter_paths is not None
+        and _opt_standard is None
+        and _opt_linesearch is None
+    ):
+        raise ValueError(
+            "Explicit parameter subspaces are supported only by Optax "
+            "transformations."
+        )
     if precision is not None and not isinstance(precision, FunctionalPrecisionPolicy):
         raise TypeError("precision must be a FunctionalPrecisionPolicy or None.")
     optimizer_label = (
@@ -173,7 +187,26 @@ def solve_gradient(
     )
 
     with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
-        params, non_trainable = partition_trainable(self.functions)
+        if parameter_paths is None:
+            params, non_trainable = partition_trainable(self.functions)
+            explicit_subspace = False
+        else:
+            subspace = ParameterSubspace.from_leaf_paths(
+                self.functions,
+                parameter_paths,
+            )
+            if subspace.leaf_shapes != parameter_shapes:
+                raise ValueError("FunctionalSolver parameter-subspace shapes changed.")
+            if subspace.leaf_dtypes != parameter_dtypes:
+                raise ValueError("FunctionalSolver parameter-subspace dtypes changed.")
+            validate_low_rank_subspace(self.functions, subspace)
+            params, non_trainable = subspace.initial, subspace.frozen
+            explicit_subspace = True
+
+        def reconstruct_functions(current, fixed):
+            if explicit_subspace:
+                return eqx.combine(current, fixed)
+            return combine_trainable(current, fixed)
         preinitialized_opt_state = None
         if _opt_linesearch is not None:
             preinitialized_opt_state = _opt_linesearch.init(params)
@@ -194,14 +227,14 @@ def solve_gradient(
             raise ValueError(
                 "Functional precision currently supports standard Optax transforms only."
             )
-        parameter_dtypes = {
+        trainable_dtypes = {
             leaf.dtype for leaf in jax.tree.leaves(params) if eqx.is_inexact_array(leaf)
         }
-        if precision is not None and len(parameter_dtypes) != 1:
+        if precision is not None and len(trainable_dtypes) != 1:
             raise ValueError(
                 "Functional precision requires one uniform trainable parameter dtype."
             )
-        precision_dtype = None if precision is None else next(iter(parameter_dtypes))
+        precision_dtype = None if precision is None else next(iter(trainable_dtypes))
         log_every_ = int(log_every)
         if log_every_ < 0:
             raise ValueError("log_every must be >= 0.")
@@ -235,13 +268,13 @@ def solve_gradient(
             )
 
         def _loss_wrt_params(params_, non_trainable_, prepared_):
-            functions = combine_trainable(params_, non_trainable_)
+            functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
                 values = evaluate_prepared_objective(prepared_, functions)
             return values.total, values.flat_values
 
         def _term_values_wrt_params(params_, non_trainable_, prepared_):
-            functions = combine_trainable(params_, non_trainable_)
+            functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
                 return evaluate_prepared_objective(
                     prepared_,
@@ -250,7 +283,7 @@ def solve_gradient(
                 ).term_values
 
         def _data_metrics_wrt_terms(params_, non_trainable_, prepared_):
-            functions = combine_trainable(params_, non_trainable_)
+            functions = reconstruct_functions(params_, non_trainable_)
             with _precision_context():
                 return prepared_data_metrics(prepared_, functions)
 
@@ -296,7 +329,7 @@ def solve_gradient(
                     return jnp.concatenate(pieces, axis=0)
 
                 def _scalar_fn(p, _):
-                    functions = combine_trainable(p, non_trainable_)
+                    functions = reconstruct_functions(p, non_trainable_)
                     return evaluate_prepared_scalar_remainder(
                         prepared_,
                         functions,
@@ -548,7 +581,7 @@ def solve_gradient(
                 iter_start = time.perf_counter()
                 subkey = control.split_key()
                 iter_ = jnp.asarray(epoch + 1, dtype=float)
-                functions_snapshot = combine_trainable(params, non_trainable)
+                functions_snapshot = reconstruct_functions(params, non_trainable)
                 refresh_started = time.perf_counter() if profile_adaptive else 0.0
                 objective = objective.refresh(
                     functions_snapshot,
@@ -1244,7 +1277,7 @@ def solve_gradient(
                         opt_state.direction_fallbacks
                     ),
                 }
-        functions = combine_trainable(chosen, non_trainable)
+        functions = reconstruct_functions(chosen, non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         with _precision_context():
             objective = objective.settle(

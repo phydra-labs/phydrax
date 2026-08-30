@@ -64,8 +64,14 @@ dependencies = [
 clarabel = [
     "clarabel==0.11.1",
 ]
+cudss = [
+  "spineax>=0.0.5,<0.1; python_version >= '3.12' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 hdf5 = [
   "h5py>=3.11",
+]
+ipopt = [
+  "cyipopt>=1.7,<2",
 ]
 docs = [
   "hippogriffe==0.2.2",

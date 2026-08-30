@@ -50,6 +50,34 @@ Linear subspace correction and nonlinear Schwarz reuse explicit restriction and
 prolongation ideas, but not one result type: nonlinear local work owns a local
 problem, update status, domain validity, and physical reconstruction.
 
+## Structured nonlinear optimization
+
+Smooth fixed-topology constrained problems lower through one interoperable
+lifecycle:
+
+```text
+physical domain problem
+  -> compile one StructuredNonlinearProgram
+  -> freeze argument, bound-role, and sparse derivative topology
+  -> bind or refresh one numeric instance
+  -> select a structured nonlinear method and KKT strategy
+  -> execute scalar, full-batch, pooled, or continuation work
+  -> construct a structured KKT certificate and portable warm start
+  -> decode and independently audit the physical domain result
+```
+
+The domain compiler owns physical layouts, units, decoding, and audits.
+`phydrax.sparse` owns derivative topology and coefficient execution.
+`phydrax.optim` owns primal-dual, globalization, KKT, and certification
+semantics. `phydrax.linalg` owns factorization providers and residual
+certification. Execution pools own task placement only; lane identity never
+becomes scientific identity.
+
+`PrimalDualInteriorPoint` uses explicit dense-filter, matrix-free, or sparse
+augmented modes. `IpoptMinimize` consumes the same structured program through
+an external host boundary. Neither method is selected automatically and neither
+is a fallback for the other.
+
 ## Solver graduation
 
 New nonlinear methods remain internal until they have a derivation, capability
@@ -344,3 +372,22 @@ poroelastic, and thermoelastic references.
 dimension budget. `LowRankBoundaryCorrectionPlan` prepares a Green/capacitance Schur
 correction with an explicit construction-byte limit. Neither is represented as local
 finite difference.
+
+Control direct collocation compiles local explicit/DAE defects into both a guarded
+dense-native nonlinear program and an exact structured sparse program. The sparse Ipopt
+boundary canonicalizes Jacobian coordinates, supplies one lower-triangular Hessian
+representative, records complete callback work, and independently reconstructs KKT
+evidence. Per-interval off-grid residuals drive nested h-refinement with explicit primal
+transfer and no topology-changing dual transfer. Controlled-DAE replay binds a
+`HeldInputPolicy` into initialization, every implicit stage, residual certification, and
+continuation identity.
+
+The deterministic qualification campaigns are:
+
+```bash
+python tools/run_direct_collocation_qualification.py
+python tools/direct_collocation_ipopt_qualification.py --intervals 16 64
+```
+
+They write fingerprinted artifacts under `benchmarks/` without promoting sampled
+off-grid evidence to a continuous-time certificate.

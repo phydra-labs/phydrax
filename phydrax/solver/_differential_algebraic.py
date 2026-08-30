@@ -24,7 +24,7 @@ from ..discretization import (
     DiscretizationRole,
     RealizedTemporalMesh,
 )
-from ..dynamics import DifferentialAlgebraicSystem, TimeGrid
+from ..dynamics import AbstractInputPolicy, DifferentialAlgebraicSystem, TimeGrid
 from ..nonlinear import (
     AbstractNonlinearMethod,
     implicit_root_result,
@@ -494,6 +494,7 @@ class DifferentialAlgebraicProblem(StrictModule):
     """Implicit initial-value problem with an explicit consistency contract."""
 
     system: DifferentialAlgebraicSystem
+    input_policy: AbstractInputPolicy | None
     initial_state: Array
     initial_state_rate: Array
     args: Any
@@ -510,17 +511,25 @@ class DifferentialAlgebraicProblem(StrictModule):
         *,
         initial_state_rate: ArrayLike | None = None,
         args: Any = None,
+        input_policy: AbstractInputPolicy | None = None,
         initialization: DAEInitializationSpec | None = None,
         discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
     ):
         if not isinstance(system, DifferentialAlgebraicSystem):
             raise TypeError("system must be a DifferentialAlgebraicSystem.")
-        if system.input_layout is not None:
-            raise ValueError(
-                "DifferentialAlgebraicProblem currently requires an autonomous "
-                "system; input-aware DAEs are supported by control direct collocation."
-            )
+        if system.input_layout is None:
+            if input_policy is not None:
+                raise ValueError("An autonomous DAE problem does not accept input_policy.")
+        else:
+            if input_policy is None:
+                raise ValueError("An input-aware DAE problem requires input_policy.")
+            if not isinstance(input_policy, AbstractInputPolicy):
+                raise TypeError("input_policy must be an AbstractInputPolicy or None.")
+            if input_policy.input_layout.layout_id != system.input_layout.layout_id:
+                raise ValueError(
+                    "input_policy layout must exactly match the DAE system input layout."
+                )
         state = _inexact(initial_state)
         state_rate = (
             jnp.zeros_like(state)
@@ -561,6 +570,7 @@ class DifferentialAlgebraicProblem(StrictModule):
             None if discretization_bundle is None else discretization_bundle.bundle_id
         )
         self.system = system
+        self.input_policy = input_policy
         self.initial_state = state
         self.initial_state_rate = state_rate
         self.args = args
@@ -574,6 +584,7 @@ class DifferentialAlgebraicProblem(StrictModule):
                 system.state_shape,
                 np.dtype(state.dtype).str,
                 initial_spec.initialization_id,
+                None if input_policy is None else input_policy.policy_id,
                 bundle_id,
             ),
             "dae-problem",
@@ -587,6 +598,7 @@ def discretized_dae_problem(
     *,
     initial_state_rate: ArrayLike | None = None,
     args: Any = None,
+    input_policy: AbstractInputPolicy | None = None,
     initialization: DAEInitializationSpec | None = None,
     problem_id: str | None = None,
 ) -> DifferentialAlgebraicProblem:
@@ -601,6 +613,7 @@ def discretized_dae_problem(
         initial_state_rate=initial_state_rate,
         args=args,
         initialization=initialization,
+        input_policy=input_policy,
         discretization_bundle=compiled.discretization_bundle,
         problem_id=problem_id,
     )
@@ -1162,6 +1175,7 @@ class DAEContinuation(StrictModule):
     nonlinear_solve: PreparedNonlinearSolve | None
     problem_id: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
+    input_policy_id: str | None = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     state_dtype: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -1186,6 +1200,7 @@ class DAEContinuation(StrictModule):
         nonlinear_solve: PreparedNonlinearSolve | None,
         problem_id: str,
         system_id: str,
+        input_policy_id: str | None,
         method_id: str,
         initialization_id: str,
         nonlinear_method_id: str,
@@ -1214,6 +1229,9 @@ class DAEContinuation(StrictModule):
         self.last_alpha = jnp.asarray(last_alpha)
         self.nonlinear_solve = nonlinear_solve
         self.problem_id = str(problem_id)
+        self.input_policy_id = (
+            None if input_policy_id is None else str(input_policy_id)
+        )
         self.system_id = str(system_id)
         self.state_shape = tuple(states_.shape[1:])
         self.state_dtype = np.dtype(states_.dtype).str
@@ -1255,6 +1273,7 @@ class DifferentialAlgebraicSolution(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
+    input_policy_id: str | None = eqx.field(static=True)
     time_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
@@ -1294,6 +1313,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         system_id: str,
         time_id: str,
         plan_id: str,
+        input_policy_id: str | None,
         prepared_id: str,
         source_discretization_bundle: DiscretizationBundle | None,
         nonlinear_method_id: str,
@@ -1358,6 +1378,9 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.system_id = str(system_id)
         self.time_id = str(time_id)
         self.plan_id = str(plan_id)
+        self.input_policy_id = (
+            None if input_policy_id is None else str(input_policy_id)
+        )
         self.prepared_id = str(prepared_id)
         if source_discretization_bundle is not None and not isinstance(
             source_discretization_bundle,
@@ -1465,6 +1488,7 @@ def prepare_dae(
         problem.initial_state_rate,
         time_grid.times[0],
         args=problem.args,
+        input_policy=problem.input_policy,
         spec=problem.initialization,
         method=resolved_policy.initialization_method,
         termination=resolved_policy.initialization_termination,
@@ -1512,7 +1536,7 @@ def prepare_dae(
         space_id=f"{problem.system.system_id}:implicit-residual",
     )
     stage_problem = NonlinearSystemProblem(
-        ImplicitStageResidual(problem.system),
+        ImplicitStageResidual(problem.system, problem.input_policy),
         state_space=state_space,
         residual_space=residual_space,
         problem_id=f"{problem.system.system_id}:implicit-stage-root",
@@ -1560,6 +1584,7 @@ def initialize_dae(
         state_rate,
         time,
         args=runtime_args,
+        input_policy=problem.input_policy,
         spec=problem.initialization,
         method=resolved_policy.initialization_method,
         termination=resolved_policy.initialization_termination,
@@ -1814,11 +1839,17 @@ def _solve_prepared(
                     target_time,
                     order,
                 )
+            inputs = (
+                None
+                if problem.input_policy is None
+                else problem.input_policy.evaluate(target_time, state, args)
+            )
             scaled = system.scaled_residual(
                 target_time,
                 state,
                 state_rate,
                 args,
+                inputs=inputs,
             )
             residual_norm = _masked_rms(
                 scaled,
@@ -2235,6 +2266,9 @@ def _solve_prepared(
         last_alpha=last_alpha,
         nonlinear_solve=None,
         problem_id=problem.problem_id,
+        input_policy_id=(
+            None if problem.input_policy is None else problem.input_policy.policy_id
+        ),
         system_id=system.system_id,
         method_id=policy.method.method_id,
         initialization_id=problem.initialization.initialization_id,
@@ -2292,6 +2326,9 @@ def _solve_prepared(
         problem_id=problem.problem_id,
         system_id=system.system_id,
         time_id=prepared.time_grid.time_id,
+        input_policy_id=(
+            None if problem.input_policy is None else problem.input_policy.policy_id
+        ),
         plan_id=prepared.plan.plan_id,
         prepared_id=prepared.prepared_id,
         source_discretization_bundle=problem.discretization_bundle,

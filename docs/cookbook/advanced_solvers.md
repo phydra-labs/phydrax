@@ -261,11 +261,15 @@ assert bool(solution.successful)
 assert solution.certificate is not None
 ```
 
-Use `PrimalDualNewtonKrylov` or `PrimalDualPredictorCorrector` when a matrix-free KKT
-solve and explicit primal, multiplier, slack, and complementarity evidence are
-required. Use `ReducedAdjoint`, `ReducedNewtonKrylov`, or `SimultaneousKKT` for
-state/design systems; the reduced methods require an explicit state solver and do
-not differentiate through an opaque iterative history.
+Use `PrimalDualInteriorPoint(mode="matrix-free-centered")` or
+`mode="matrix-free-predictor-corrector"` when a matrix-free KKT solve and
+explicit primal, multiplier, slack, and complementarity evidence are required.
+Use `mode="sparse-augmented"` for a prepared exact-sparse
+`StructuredNonlinearProgram`. Use `ReducedAdjoint`, `ReducedNewtonKrylov`, or
+`SimultaneousKKT` for state/design systems; the reduced methods require an
+explicit state solver and do not differentiate through an opaque iterative
+history. Fixed-topology all-at-once problems can instead use
+`compile_structured_state_design`.
 
 ## 4. Compute paired general eigenvectors and target interior modes
 

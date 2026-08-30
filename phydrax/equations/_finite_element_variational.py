@@ -1763,6 +1763,67 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             else compiled.linearization_operator(state, args)
         )
 
+    def exact_diagonal(
+        self,
+        state: object | None = None,
+        args: object = None,
+        /,
+        *,
+        allow_coordinate_fallback: bool = False,
+        maximum_coordinate_size: int = 4096,
+    ):
+        from .fem import FiniteElementDiagonalData
+
+        raw = (
+            self.affine_operator(args)
+            if state is None
+            else self.operator_function(self.state_space.validate(state), args)
+        )
+        method = "workset"
+        if isinstance(raw, SparseCoordinateOperator) and isinstance(
+            raw.relation, EdgeRelation
+        ):
+            relation = raw.relation
+            on_diagonal = relation.valid & (
+                relation.source_indices == relation.target_indices
+            )
+            diagonal = (
+                jnp.zeros((relation.source_size,), dtype=raw.coefficients.dtype)
+                .at[relation.source_indices]
+                .add(jnp.where(on_diagonal, raw.coefficients, 0.0))
+            )
+            method = "sparse-coordinate"
+        elif raw.capabilities.diagonal_assembly:
+            diagonal = assemble_diagonal(raw)
+        else:
+            if not allow_coordinate_fallback:
+                raise ValueError(
+                    "Exact diagonal lowering is unavailable; explicitly enable the "
+                    "bounded coordinate-linearization fallback."
+                )
+            limit = int(maximum_coordinate_size)
+            if limit < 1 or self.state_space.size > limit:
+                raise ValueError(
+                    "Coordinate diagonal fallback exceeds its explicit dimension cap."
+                )
+            coordinates = jnp.eye(
+                self.state_space.size,
+                dtype=self.state_space.flatten(self.state_space.zeros()).dtype,
+            )
+
+            def column(direction):
+                image = raw.mv(self.state_space.unflatten(direction))
+                return self.residual_space.flatten(image)
+
+            matrix_columns = jax.vmap(column)(coordinates)
+            diagonal = self.state_space.unflatten(jnp.diag(matrix_columns))
+            method = "coordinate-linearization"
+        return FiniteElementDiagonalData(
+            diagonal,
+            method,
+            raw.operator_id,
+        )
+
     def preconditioner_data(
         self,
         state: object | None = None,
@@ -1771,39 +1832,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     ):
         from .fem import FiniteElementPreconditionerData
 
-        raw = (
-            self.affine_operator(args)
-            if state is None
-            else self.operator_function(self.state_space.validate(state), args)
+        diagonal_data = self.exact_diagonal(
+            state,
+            args,
+            allow_coordinate_fallback=False,
         )
-        if isinstance(raw, BlockLinearOperator):
-            diagonal = tuple(
-                (
-                    jnp.zeros(space.structure().shape, dtype=space.structure().dtype)
-                    if raw.blocks[index][index] is None
-                    else assemble_diagonal(raw.blocks[index][index])
-                )
-                for index, space in enumerate(self.state_space.spaces)
-            )
-        else:
-            if isinstance(raw, SparseCoordinateOperator) and isinstance(
-                raw.relation, EdgeRelation
-            ):
-                relation = raw.relation
-                on_diagonal = relation.valid & (
-                    relation.source_indices == relation.target_indices
-                )
-                diagonal = (
-                    jnp.zeros((relation.source_size,), dtype=raw.coefficients.dtype)
-                    .at[relation.source_indices]
-                    .add(jnp.where(on_diagonal, raw.coefficients, 0.0))
-                )
-            else:
-                if not raw.capabilities.diagonal_assembly:
-                    raise ValueError(
-                        "Exact FE preconditioner data require diagonal-capable lowering."
-                    )
-                diagonal = assemble_diagonal(raw)
+        diagonal = diagonal_data.diagonal
         graph = (
             self.block_dependency_graph()
             if len(self.form.field_names) > 1

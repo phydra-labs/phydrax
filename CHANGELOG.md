@@ -28,6 +28,31 @@
   campaign artifacts, and performance evidence.
 - Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
   while preserving the existing array-valued SSPRK contract.
+- Added native low-rank adaptation for exact real `Linear` weight paths,
+  factor-only `ParameterSubspace` training through `fit_operator` and Optax
+  `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
+  deployment merging, and checksum-validated adapter artifacts bound to the
+  complete base model content and structure.
+- Added `phydrax.topology`: compact active subcomplexes and relative pairs,
+  exact prime-field homology with cycle/cocycle representatives, exact rational
+  Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
+  ordinary and induced-relative persistent homology, natural and fixed-capacity
+  diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
+  and exact-nullity validation of metric cochain harmonic kernels.
+- Added a native linear-combinatorial substrate with separate logical decisions
+  and objective features, content-addressed plans, deterministic ties, portable
+  statuses, and independent certificates. Added exact streamed finite,
+  fixed-cardinality, primal-dual Hungarian assignment, and signed-cost DAG path
+  oracles, plus explicit one-extra-solve blackbox surrogate pullbacks.
+- Added a method-neutral structured nonlinear optimization spine with
+  topology/numeric prepare-refresh lifecycles, exact sparse Jacobian and
+  Lagrangian-Hessian reuse, portable primal/dual warm starts, independently
+  certified native and Ipopt results, a unified dense/matrix-free/sparse
+  `PrimalDualInteriorPoint`, truthful provider-backed KKT preparation, fixed-width
+  root and structured-solve pools, generic PyTree/state-design/multiple-shooting
+  compilers, fixed-active sensitivities and continuation, and optional
+  Spineax/cuDSS sparse LDLT with numerical refactorization, reported inertia,
+  and explicit resource release.
 - Added an end-to-end free-boundary SciML substrate: differentiable compact
   Heaviside/delta and coarea calculus; level-set phase, normal, curvature,
   velocity, and Eikonal operators; discontinuity-aware coordinate lifts;
@@ -51,6 +76,11 @@
   without global tensor materialization, and mixture-sampled multi-state VMC
   with overlap/Hamiltonian evidence, span conditioning, Ritz modes, stochastic
   reconfiguration, and explicit failure statuses.
+  Added a self-adjoint strong-form `InvariantSubspaceResidual` for neural trial
+  fields, with projected reduced operators, basis-invariant residual Grams,
+  generalized positive metrics, complex/vector pairings, continuous residual
+  modes, absolute/relative residual evidence, and explicit rejection of
+  collapsed, indefinite, or non-Hermitian trial systems.
 - Added JAX-native direct collocation for explicit controlled systems and
   input-aware state-shaped DAEs, with fixed/nonuniform or optimized-duration
   meshes, backward-Euler and midpoint transcription, interval controls, shared
@@ -59,6 +89,12 @@
   explicitly selected native-dense or low-level sparse-Ipopt execution,
   independent KKT recertification, typed decisions/layouts/results, and
   non-certifying off-grid defect audits.
+- Hardened direct collocation with canonical typed sparse-Ipopt evidence,
+  callback/conversion counts, exact status mapping, topology-valid warm starts,
+  optional `cyipopt` packaging, exact/limited-memory qualification artifacts,
+  per-interval off-grid evidence, explicit nested h-refinement and primal
+  transfer, controlled-DAE input policies and causal replay, and a fingerprinted
+  eight-family graduation/regression campaign.
 - Added a first-class material-particle discretization with stable physical IDs,
   static active selections, physical mass measures, explicit precision/execution
   policies, periodic pair geometry, budgeted canonical dense neighborhoods,
@@ -109,6 +145,13 @@
   marking/refinement/coarsening and transfer data, local DWR indicators, and
   executable phase-field, CPFEM, persistent-pair contact, fracture, and fixed-
   crack XFEM application workflows. Distributed execution remains out of scope.
+- Added accepted linear-solve histories, exact FEM diagonal data, pairing-aware
+  p-transfer roles and p-level planning, collocated tensor-product actions,
+  staged DG traces, explicit quadrature evidence, one-ring patch and low-order
+  auxiliary preconditioners, an incompressible pressure-correction workflow, and
+  conservative multirate DG traces. The execution and preconditioning design is
+  informed by libParanumal and its published high-order solver algorithms while
+  remaining Phydrax-native.
 - Added first-class exact-sampling round-sphere spectral discretizations with
   explicit S2FFT mode layouts, physical area measures, matrix-free
   Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,

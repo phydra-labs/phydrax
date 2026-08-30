@@ -11,12 +11,14 @@ jax.config.update("jax_enable_x64", True)
 
 from . import (
     backends,
+    combinatorial,
     conditions,
     continuation,
     control,
     coresets,
     data_utils,
     discretization,
+    topology,
     domain,
     dynamics,
     enforcement,
@@ -53,6 +55,7 @@ from . import applications
 __all__ = [
     "applications",
     "backends",
+    "combinatorial",
     "conditions",
     "control",
     "continuation",
@@ -60,6 +63,7 @@ __all__ = [
     "terms",
     "data_utils",
     "discretization",
+    "topology",
     "domain",
     "dynamics",
     "equations",

@@ -266,6 +266,38 @@ Ritz modes from the current trial fields.
 
 ::: phydrax.terms.VariationalEigenspaceResult
 
+### Strong-form invariant-subspace PINNs
+
+`InvariantSubspaceResidual` applies a declared strong operator `A` and optional
+positive metric action `B` to every neural trial field exactly once. From
+`K[i,j] = <u_i, A u_j>` and `M[i,j] = <u_i, B u_j>`, it forms the reduced
+operator `H = solve(M, K)` and strong residual fields
+`R = A U - B U H`. Its scalar objective is the basis-invariant residual
+`real(trace(solve(M, G_R)))`, where `G_R` is the residual Gram matrix.
+
+The mass matrix must remain full-rank and positive definite. The residual Gram
+must remain Hermitian positive semidefinite. Neither failure receives an
+implicit normalization penalty or diagonal ridge. A non-self-adjoint projected
+operator is rejected rather than symmetrized into apparent success.
+
+Residual minimization identifies an invariant subspace but does not select
+which part of the spectrum is found. For the lowest self-adjoint modes, train
+with `VariationalEigenspace` first and use `InvariantSubspaceResidual` for
+strong-equation refinement. The one-field case exposes `result.eigenvalue` and
+`result.mode`; block training never requires a separately trainable
+eigenvalue.
+
+::: phydrax.terms.InvariantSubspaceResidual
+
+---
+
+::: phydrax.terms.InvariantSubspaceResidualEvaluation
+
+---
+
+::: phydrax.terms.InvariantSubspaceResidualResult
+
+
 Product-factor models can bypass global Cartesian materialization. Assemble
 mass, gradient, potential, or other separated form terms with
 `FactorizedBilinearTerm`, then call
