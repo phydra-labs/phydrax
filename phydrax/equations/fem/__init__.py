@@ -3,7 +3,9 @@
 #
 
 from ._execution import (
+    CollocatedTensorProductOperator,
     ElementTensorOperator,
+    FiniteElementDiagonalData,
     FiniteElementPreconditionerData,
     PartialAssemblyOperator,
     TensorProductAction,
@@ -40,7 +42,9 @@ from ._observations import (
 )
 from ._operators import (
     average,
+    CellDerivativeBatch,
     curl,
+    DGTraceBatch,
     divergence,
     FacetJet,
     FieldJet,
@@ -65,17 +69,27 @@ from ._proofs import (
     stokes_form,
     upwind_advection_form,
 )
+from ._quadrature import (
+    QuadratureAccuracyKind,
+    QuadratureAccuracyPolicy,
+    QuadratureEvidence,
+    QuadratureRole,
+)
 from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
 __all__ = [
     "ElementTensorOperator",
+    "CollocatedTensorProductOperator",
     "PartialAssemblyOperator",
     "CoordinateObservation",
     "ActionKind",
+    "CellDerivativeBatch",
+    "DGTraceBatch",
     "CompiledWorkset",
     "HDGPoissonSolution",
     "DifferentialOperator",
+    "FiniteElementDiagonalData",
     "FiniteElementPreconditionerData",
     "FiniteElementAuxiliaryEvaluation",
     "FiniteElementAdjointResult",
@@ -98,6 +112,10 @@ __all__ = [
     "WorksetSignature",
     "average",
     "darcy_form",
+    "QuadratureAccuracyKind",
+    "QuadratureAccuracyPolicy",
+    "QuadratureEvidence",
+    "QuadratureRole",
     "linear_elasticity_form",
     "maxwell_form",
     "SIPGBoundaryCondition",

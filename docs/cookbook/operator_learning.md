@@ -1478,6 +1478,46 @@ training_model = fit_result.execution_model
 assert fit_result.completed_steps == 1
 ```
 
+For parameter-efficient transfer, adapt explicit native affine sites and pass
+only their factors to the same production fitting control plane:
+
+```python
+base_model = training_model
+paths = phx.nn.parameters.low_rank_sites(base_model)
+adapted, adaptation = phx.nn.parameters.adapt_low_rank(
+    base_model,
+    {
+        path: phx.nn.parameters.LowRankSpec(rank=8)
+        for path in paths
+    },
+    key=jr.key(12),
+)
+adapter_parameters = phx.nn.parameters.low_rank_parameter_subspace(adapted)
+adapted_fit = phx.nn.operator.training.fit_operator(
+    adapted,
+    split.train,
+    validation=split.validation,
+    parameter_subspace=adapter_parameters,
+    epochs=10,
+    batch_size=16,
+)
+phx.nn.parameters.save_low_rank_adapter(
+    "adapted-task.phxadapter",
+    adapted_fit.execution_model,
+    provenance={"task": "downstream-operator"},
+)
+restored = phx.nn.parameters.read_low_rank_adapter(
+    "adapted-task.phxadapter",
+    base_model,
+)
+deployment_model = phx.nn.parameters.merge_low_rank(restored.model)
+```
+
+The adapter archive contains no base arrays. Loading binds it to the exact base
+model content and static architecture, not merely compatible shapes. Keep the
+factorized model while training or swapping tasks; merge only when ordinary
+dense deployment and zero adapter inference overhead are required.
+
 Pass an `OperatorTask` plus matching `OperatorTrainingEvidence` to bind physical
 dimensions, source/query roles, output fields, and the admissible deployment
 regime. The task contract separates the structural source/query relation
