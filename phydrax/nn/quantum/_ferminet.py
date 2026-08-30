@@ -39,9 +39,12 @@ def _stable_signed_product_jvp(primals, tangents):
     value, log_scale = primals
     value_tangent, log_scale_tangent = tangents
     primal = _stable_signed_product(value, log_scale)
-    tangent = _stable_signed_product(value_tangent, log_scale)
-    tangent = tangent + primal * log_scale_tangent
-    return primal, tangent
+    nonzero = value != 0.0
+    safe_value = jnp.where(nonzero, value, 1.0)
+    relative_tangent = primal * (value_tangent / safe_value)
+    zero_tangent = jnp.exp(log_scale) * value_tangent
+    tangent = jnp.where(nonzero, relative_tangent, zero_tangent)
+    return primal, tangent + primal * log_scale_tangent
 
 
 @jax.custom_jvp
@@ -69,10 +72,26 @@ def _stable_signed_bilinear_product_jvp(primals, tangents):
     left, right, log_scale = primals
     left_tangent, right_tangent, log_scale_tangent = tangents
     primal = _stable_signed_bilinear_product(left, right, log_scale)
-    tangent = _stable_signed_bilinear_product(left_tangent, right, log_scale)
-    tangent = tangent + _stable_signed_bilinear_product(left, right_tangent, log_scale)
-    tangent = tangent + primal * log_scale_tangent
-    return primal, tangent
+    left_nonzero = left != 0.0
+    right_nonzero = right != 0.0
+    safe_left = jnp.where(left_nonzero, left, 1.0)
+    safe_right = jnp.where(right_nonzero, right, 1.0)
+    left_relative_tangent = primal * (left_tangent / safe_left)
+    right_relative_tangent = primal * (right_tangent / safe_right)
+    left_zero_tangent = (
+        _stable_signed_product(right, log_scale) * left_tangent
+    )
+    right_zero_tangent = (
+        _stable_signed_product(left, log_scale) * right_tangent
+    )
+    left_contribution = jnp.where(
+        left_nonzero, left_relative_tangent, left_zero_tangent
+    )
+    right_contribution = jnp.where(
+        right_nonzero, right_relative_tangent, right_zero_tangent
+    )
+    tangent = left_contribution + right_contribution
+    return primal, tangent + primal * log_scale_tangent
 
 
 def _polynomial_determinant(matrix: Array, /) -> Array:
