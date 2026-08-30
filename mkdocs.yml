@@ -104,7 +104,7 @@ nav:
         - Control workflows: "cookbook/control.md"
         - Backward stochastic equations: "cookbook/bsde.md"
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
-        - Finite-molecule PaiNN: "cookbook/atomistic.md"
+        - Finite-molecule PaiNN and NequIP: "cookbook/atomistic.md"
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
         - Inverse spacetime geometry: "cookbook/relativity_inverse.md"
         - Native ML scientific workflow: "cookbook/native_ml.md"

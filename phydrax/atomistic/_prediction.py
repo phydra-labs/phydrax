@@ -13,6 +13,7 @@ from opt_einsum import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..nn.atomistic._nequip import NequIPPotential
 from ..nn.atomistic._painn import PaiNNPotential
 from ._types import (
     AtomisticBatch,
@@ -20,6 +21,9 @@ from ._types import (
     AtomisticStatus,
     AtomicStructure,
 )
+
+_AtomisticPotential = PaiNNPotential | NequIPPotential
+_ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
 
 
 class AtomisticProvenance(StrictModule, NonTrainableState):
@@ -39,7 +43,7 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
     stress_available: bool = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
-    def __init__(self, potential: PaiNNPotential, batch: AtomisticBatch, /):
+    def __init__(self, potential: _AtomisticPotential, batch: AtomisticBatch, /):
         self.architecture_id = potential.architecture_id
         self.parameter_state_id = potential.parameter_state_id
         self.potential_id = potential.potential_id
@@ -47,7 +51,7 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
         self.candidate_topology_id = batch.candidate_topology_id
         self.scale_id = batch.scale.scale_id
         self.precision_id = potential.precision.policy_id
-        self.method_id = "negative-position-gradient-of-total-painn-energy"
+        self.method_id = potential.method_id
         self.conservative_forces = True
         self.frozen_candidate_topology = True
         self.periodic = False
@@ -90,14 +94,14 @@ class AtomisticPrediction(StrictModule, NonTrainableState):
 
 
 def energy_and_forces(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     structure: AtomicStructure | AtomisticBatch,
     /,
 ) -> AtomisticPrediction:
     """Evaluate energy once and derive forces as its negative position gradient."""
 
-    if not isinstance(potential, PaiNNPotential):
-        raise TypeError("potential must be a PaiNNPotential.")
+    if not isinstance(potential, _ATOMISTIC_POTENTIAL_TYPES):
+        raise TypeError("potential must be a PaiNNPotential or NequIPPotential.")
     if isinstance(structure, AtomicStructure):
         batch = AtomisticBatch.from_structure(structure)
     elif isinstance(structure, AtomisticBatch):

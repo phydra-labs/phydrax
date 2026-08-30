@@ -20,12 +20,29 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState, combine_trainable, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
+from ..nn.atomistic._nequip import (
+    NequIPPotential,
+    refresh_nequip_parameter_state,
+)
 from ..nn.atomistic._painn import (
     PaiNNPotential,
     refresh_painn_parameter_state,
 )
 from ._graph import realize_atomistic_graph
 from ._types import AtomisticBatch, AtomisticStatus
+
+_AtomisticPotential = PaiNNPotential | NequIPPotential
+_ATOMISTIC_POTENTIAL_TYPES = (PaiNNPotential, NequIPPotential)
+
+
+def _refresh_potential_parameter_state(
+    potential: _AtomisticPotential, /
+) -> _AtomisticPotential:
+    if isinstance(potential, PaiNNPotential):
+        return refresh_painn_parameter_state(potential)
+    return refresh_nequip_parameter_state(potential)
+
+
 
 
 class AtomisticTrainingProblem(StrictModule, NonTrainableState):
@@ -270,8 +287,8 @@ class AtomisticTrainingNormalization(StrictModule, NonTrainableState):
 class AtomisticTrainingResult(StrictModule, NonTrainableState):
     """Complete continuation, best/final model, histories, and terminal status."""
 
-    potential: PaiNNPotential
-    best_potential: PaiNNPotential
+    potential: _AtomisticPotential
+    best_potential: _AtomisticPotential
     optimizer_state: Any
     key: Array
     normalization: AtomisticTrainingNormalization
@@ -291,7 +308,7 @@ class AtomisticTrainingResult(StrictModule, NonTrainableState):
     result_id: str = eqx.field(static=True)
 
     @property
-    def final_potential(self) -> PaiNNPotential:
+    def final_potential(self) -> _AtomisticPotential:
         return self.potential
 
     @property
@@ -418,7 +435,7 @@ def _normalization(
 
 
 def _loss(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     batch: AtomisticBatch,
     energy_target: Array | None,
     force_target: Array | None,
@@ -468,7 +485,7 @@ def _loss(
 
 
 def _training_loss(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
     normalization: AtomisticTrainingNormalization,
     policy: AtomisticTrainingPolicy,
@@ -487,7 +504,7 @@ def _training_loss(
 
 
 def _validation_loss(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
     normalization: AtomisticTrainingNormalization,
     policy: AtomisticTrainingPolicy,
@@ -529,7 +546,7 @@ def _parameter_loss(
 
 
 def _batch_neighbor_overflow(
-    potential: PaiNNPotential, batch: AtomisticBatch, /
+    potential: _AtomisticPotential, batch: AtomisticBatch, /
 ) -> bool:
     graph = realize_atomistic_graph(
         batch,
@@ -544,8 +561,47 @@ def _fingerprint_history(values: Sequence[float], /) -> list[float | None]:
     return [float(value) if math.isfinite(float(value)) else None for value in values]
 
 
+def _same_potential_configuration(
+    left: _AtomisticPotential,
+    right: _AtomisticPotential,
+    /,
+) -> bool:
+    if type(left) is not type(right):
+        return False
+    left_configuration = left.configuration
+    right_configuration = right.configuration
+    shared = (
+        left.scale.scale_id == right.scale.scale_id
+        and left.precision.policy_id == right.precision.policy_id
+        and left_configuration.cutoff == right_configuration.cutoff
+        and left_configuration.maximum_neighbors
+        == right_configuration.maximum_neighbors
+        and left_configuration.maximum_dense_atoms
+        == right_configuration.maximum_dense_atoms
+        and left_configuration.feature_count == right_configuration.feature_count
+        and left_configuration.interaction_count
+        == right_configuration.interaction_count
+        and left_configuration.radial_basis_count
+        == right_configuration.radial_basis_count
+        and left_configuration.maximum_atomic_number
+        == right_configuration.maximum_atomic_number
+    )
+    if not shared:
+        return False
+    if isinstance(left, NequIPPotential) and isinstance(right, NequIPPotential):
+        return (
+            left_configuration.maximum_tensor_product_parameters
+            == right_configuration.maximum_tensor_product_parameters
+            and left_configuration.maximum_degree
+            == right_configuration.maximum_degree
+            and left_configuration.tensor_product_plan_ids
+            == right_configuration.tensor_product_plan_ids
+        )
+    return True
+
+
 def fit_atomistic_potential(
-    potential: PaiNNPotential,
+    potential: _AtomisticPotential,
     problem: AtomisticTrainingProblem,
     policy: AtomisticTrainingPolicy,
     /,
@@ -554,10 +610,10 @@ def fit_atomistic_potential(
     callbacks: Sequence[TrainingCallback] = (),
     continuation: AtomisticTrainingResult | None = None,
 ) -> AtomisticTrainingResult:
-    """Fit one PaiNN energy potential with typed energy/force supervision."""
+    """Fit one finite-molecule energy potential with typed supervision."""
 
-    if not isinstance(potential, PaiNNPotential):
-        raise TypeError("potential must be a PaiNNPotential.")
+    if not isinstance(potential, _ATOMISTIC_POTENTIAL_TYPES):
+        raise TypeError("potential must be a PaiNNPotential or NequIPPotential.")
     if not isinstance(problem, AtomisticTrainingProblem):
         raise TypeError("problem must be an AtomisticTrainingProblem.")
     if not isinstance(policy, AtomisticTrainingPolicy):
@@ -587,6 +643,11 @@ def fit_atomistic_potential(
     else:
         if not isinstance(continuation, AtomisticTrainingResult):
             raise TypeError("continuation must be an AtomisticTrainingResult or None.")
+        if not _same_potential_configuration(potential, continuation.potential):
+            raise ValueError(
+                "Continuation potential must have the same concrete family and "
+                "configuration as the supplied potential."
+            )
         if continuation.problem_id != problem.problem_id:
             raise ValueError("Continuation result belongs to a different training problem.")
         if continuation.continuation_id != policy.continuation_id:
@@ -645,7 +706,7 @@ def fit_atomistic_potential(
         validation_history.append(initial_value)
         validation_steps.append(0)
         if math.isfinite(initial_value):
-            current = refresh_painn_parameter_state(current)
+            current = _refresh_potential_parameter_state(current)
             control.select(
                 initial_value,
                 current,
@@ -714,7 +775,7 @@ def fit_atomistic_potential(
                 terminal_status = AtomisticStatus.NONFINITE
                 termination = "nonfinite_validation_loss"
                 break
-            current = refresh_painn_parameter_state(current)
+            current = _refresh_potential_parameter_state(current)
             control.select(
                 selected_value,
                 current,
@@ -728,7 +789,7 @@ def fit_atomistic_potential(
             termination = "selection_or_callback_stop"
             break
 
-    current = refresh_painn_parameter_state(current)
+    current = _refresh_potential_parameter_state(current)
     if (
         not validation_history
         and terminal_status
@@ -759,7 +820,7 @@ def fit_atomistic_potential(
         else float("nan")
     )
     best_potential = control.selected(current) if policy.select_best else current
-    best_potential = refresh_painn_parameter_state(best_potential)
+    best_potential = _refresh_potential_parameter_state(best_potential)
     control.emit("stop", metrics={"final_loss": final_loss, "best_loss": best_loss})
     result_id = canonical_fingerprint(
         {

@@ -32,13 +32,14 @@ RMD17_GATES = {
     "maximum_net_force": 1e-7,
     "maximum_net_torque": 1e-7,
 }
+MODEL_NAMES = ("painn", "nequip")
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Fingerprint and benchmark finite-molecule PaiNN training on one local or "
-            "checksum-verified cached rMD17 NPZ."
+            "Run a matched finite-molecule PaiNN-versus-NequIP campaign on one "
+            "local or checksum-verified cached rMD17 NPZ."
         )
     )
     source = parser.add_mutually_exclusive_group(required=True)
@@ -62,7 +63,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--cutoff", type=float, default=5.0)
     parser.add_argument("--maximum-neighbors", type=int, required=True)
     parser.add_argument("--maximum-dense-atoms", type=int, required=True)
-    parser.add_argument("--features", type=int, default=128)
+    parser.add_argument("--features", type=int, default=32)
     parser.add_argument("--interactions", type=int, default=3)
     parser.add_argument("--radial-basis", type=int, default=20)
     parser.add_argument("--timing-repeats", type=int, default=10)
@@ -137,7 +138,7 @@ def _tree_bytes(tree: Any, /) -> int:
     )
 
 
-def _parameter_count(potential: phx.nn.atomistic.PaiNNPotential, /) -> int:
+def _parameter_count(potential, /) -> int:
     trainable, _ = partition_trainable(potential)
     return sum(
         int(leaf.size)
@@ -215,43 +216,36 @@ def _gates(metrics):
     return {"checks": checks, "passed": all(checks.values())}
 
 
-def _run_seed(dataset, arguments, seed):
-    split = phx.atomistic.split_rmd17(
-        dataset,
-        train_size=arguments.train_size,
-        validation_size=arguments.validation_size,
-        test_size=arguments.test_size,
-        seed=seed,
-    )
-    train_batch, train_energy, train_forces = dataset.take(split.train_indices)
-    validation_batch, validation_energy, validation_forces = dataset.take(
-        split.validation_indices
-    )
-    test_batch, test_energy, test_forces = dataset.take(split.test_indices)
-    model = phx.nn.atomistic.PaiNNPotential(
-        dataset.scale,
-        cutoff=arguments.cutoff,
-        maximum_neighbors=arguments.maximum_neighbors,
-        maximum_dense_atoms=arguments.maximum_dense_atoms,
-        feature_count=arguments.features,
-        interaction_count=arguments.interactions,
-        radial_basis_count=arguments.radial_basis,
-        key=jr.key(seed),
-    )
-    problem = phx.atomistic.AtomisticTrainingProblem(
-        train_batch,
-        training_energy=train_energy,
-        training_forces=train_forces,
-        validation_batch=validation_batch,
-        validation_energy=validation_energy,
-        validation_forces=validation_forces,
-    )
-    policy = phx.atomistic.AtomisticTrainingPolicy(
-        maximum_steps=arguments.steps,
-        learning_rate=arguments.learning_rate,
-        energy_weight=arguments.energy_weight,
-        force_weight=arguments.force_weight,
-    )
+def _potential(model_name, dataset, arguments, seed):
+    common = {
+        "cutoff": arguments.cutoff,
+        "maximum_neighbors": arguments.maximum_neighbors,
+        "maximum_dense_atoms": arguments.maximum_dense_atoms,
+        "feature_count": arguments.features,
+        "interaction_count": arguments.interactions,
+        "radial_basis_count": arguments.radial_basis,
+        "key": jr.key(seed),
+    }
+    if model_name == "painn":
+        return phx.nn.atomistic.PaiNNPotential(dataset.scale, **common)
+    if model_name == "nequip":
+        return phx.nn.atomistic.NequIPPotential(dataset.scale, **common)
+    raise ValueError(f"Unknown atomistic benchmark model {model_name!r}.")
+
+
+def _run_model(
+    model_name,
+    dataset,
+    arguments,
+    seed,
+    problem,
+    policy,
+    test_batch,
+    test_energy,
+    test_forces,
+    neighborhood_work,
+):
+    model = _potential(model_name, dataset, arguments, seed)
     tracemalloc.start()
     training_started = time.perf_counter()
     result = phx.atomistic.fit_atomistic_potential(
@@ -271,9 +265,7 @@ def _run_seed(dataset, arguments, seed):
     for _ in range(arguments.timing_repeats):
         prediction = compiled(potential, test_batch)
         jax.block_until_ready(prediction.energy)
-    steady_seconds = (
-        time.perf_counter() - steady_started
-    ) / arguments.timing_repeats
+    steady_seconds = (time.perf_counter() - steady_started) / arguments.timing_repeats
     metrics = _prediction_metrics(
         prediction, test_energy, test_forces, test_batch.atom_mask
     )
@@ -292,16 +284,105 @@ def _run_seed(dataset, arguments, seed):
             "model_tree_bytes": _tree_bytes(potential),
             "prediction_tree_bytes": _tree_bytes(prediction),
             "parameter_count": _parameter_count(potential),
-            "dense_candidate_directed_edges_per_case": int(
-                test_batch.atom_capacity * (test_batch.atom_capacity - 1)
-            ),
-            "dense_candidate_directed_edges_total": int(
-                test_batch.case_count
-                * test_batch.atom_capacity
-                * (test_batch.atom_capacity - 1)
-            ),
+            **neighborhood_work,
         }
     )
+    model_evidence = {
+        "potential_id": potential.potential_id,
+        "method_id": potential.method_id,
+    }
+    if model_name == "nequip":
+        model_evidence.update(
+            {
+                "maximum_degree": potential.configuration.maximum_degree,
+                "tensor_product_plan_ids": list(
+                    potential.configuration.tensor_product_plan_ids
+                ),
+                "tensor_product_parameter_count_per_interaction": [
+                    interaction.tensor_product.plan.parameter_count
+                    for interaction in potential.interactions
+                ],
+            }
+        )
+    return {
+        "training_result_id": result.result_id,
+        "normalization_id": result.normalization.normalization_id,
+        "model_evidence": model_evidence,
+        "metrics": metrics,
+        "gates": _gates(metrics),
+    }
+
+
+def _run_seed(dataset, arguments, seed):
+    split = phx.atomistic.split_rmd17(
+        dataset,
+        train_size=arguments.train_size,
+        validation_size=arguments.validation_size,
+        test_size=arguments.test_size,
+        seed=seed,
+    )
+    train_batch, train_energy, train_forces = dataset.take(split.train_indices)
+    validation_batch, validation_energy, validation_forces = dataset.take(
+        split.validation_indices
+    )
+    test_batch, test_energy, test_forces = dataset.take(split.test_indices)
+    problem = phx.atomistic.AtomisticTrainingProblem(
+        train_batch,
+        training_energy=train_energy,
+        training_forces=train_forces,
+        validation_batch=validation_batch,
+        validation_energy=validation_energy,
+        validation_forces=validation_forces,
+    )
+    policy = phx.atomistic.AtomisticTrainingPolicy(
+        maximum_steps=arguments.steps,
+        learning_rate=arguments.learning_rate,
+        energy_weight=arguments.energy_weight,
+        force_weight=arguments.force_weight,
+    )
+    graph = phx.atomistic.realize_atomistic_graph(
+        test_batch,
+        cutoff=arguments.cutoff,
+        maximum_neighbors=arguments.maximum_neighbors,
+        maximum_dense_atoms=arguments.maximum_dense_atoms,
+    )
+    candidate_per_case = test_batch.atom_capacity * (test_batch.atom_capacity - 1)
+    active_total = int(jnp.sum(graph.graph.edge_mask))
+    neighborhood_work = {
+        "dense_candidate_directed_edges_per_case": int(candidate_per_case),
+        "dense_candidate_directed_edges_total": int(
+            test_batch.case_count * candidate_per_case
+        ),
+        "active_directed_edges_total": active_total,
+        "mean_active_directed_edges_per_case": active_total / test_batch.case_count,
+    }
+    models = {
+        model_name: _run_model(
+            model_name,
+            dataset,
+            arguments,
+            seed,
+            problem,
+            policy,
+            test_batch,
+            test_energy,
+            test_forces,
+            neighborhood_work,
+        )
+        for model_name in MODEL_NAMES
+    }
+    paired_names = (
+        "energy_mae_per_atom",
+        "force_component_mae",
+        "training_seconds",
+        "steady_prediction_seconds",
+        "peak_tracemalloc_host_bytes",
+        "parameter_count",
+    )
+    paired_delta = {
+        name: models["nequip"]["metrics"][name] - models["painn"]["metrics"][name]
+        for name in paired_names
+    }
     return {
         "seed": seed,
         "split_id": split.split_id,
@@ -310,15 +391,23 @@ def _run_seed(dataset, arguments, seed):
             "validation": int(split.validation_indices.size),
             "test": int(split.test_indices.size),
         },
-        "training_result_id": result.result_id,
-        "normalization_id": result.normalization.normalization_id,
-        "metrics": metrics,
-        "gates": _gates(metrics),
+        "models": models,
+        "paired_nequip_minus_painn": paired_delta,
+    }
+
+
+def _aggregate(values):
+    array = np.asarray(tuple(values), dtype=float)
+    return {
+        "mean": float(np.mean(array)),
+        "standard_deviation": float(np.std(array)),
+        "minimum": float(np.min(array)),
+        "maximum": float(np.max(array)),
     }
 
 
 def _summary(records):
-    names = (
+    metric_names = (
         "energy_mae_per_atom",
         "energy_rmse_per_atom",
         "force_component_mae",
@@ -327,20 +416,34 @@ def _summary(records):
         "force_rotation_defect",
         "training_seconds",
         "steady_prediction_seconds",
+        "peak_tracemalloc_host_bytes",
+        "parameter_count",
     )
-    aggregates = {}
-    for name in names:
-        values = np.asarray([record["metrics"][name] for record in records], dtype=float)
-        aggregates[name] = {
-            "mean": float(np.mean(values)),
-            "standard_deviation": float(np.std(values)),
-            "minimum": float(np.min(values)),
-            "maximum": float(np.max(values)),
+    model_summaries = {}
+    for model_name in MODEL_NAMES:
+        model_summaries[model_name] = {
+            "all_gates_passed": all(
+                record["models"][model_name]["gates"]["passed"]
+                for record in records
+            ),
+            "aggregates": {
+                name: _aggregate(
+                    record["models"][model_name]["metrics"][name]
+                    for record in records
+                )
+                for name in metric_names
+            },
         }
+    paired_names = tuple(records[0]["paired_nequip_minus_painn"])
     return {
         "seed_count": len(records),
-        "all_gates_passed": all(record["gates"]["passed"] for record in records),
-        "aggregates": aggregates,
+        "models": model_summaries,
+        "paired_nequip_minus_painn": {
+            name: _aggregate(
+                record["paired_nequip_minus_painn"][name] for record in records
+            )
+            for name in paired_names
+        },
     }
 
 
@@ -353,14 +456,16 @@ def main() -> None:
         arguments.test_size = min(arguments.test_size, 2)
         arguments.steps = min(arguments.steps, 2)
         arguments.timing_repeats = 1
-        arguments.features = min(arguments.features, 8)
+        arguments.features = min(arguments.features, 2)
         arguments.interactions = min(arguments.interactions, 1)
-        arguments.radial_basis = min(arguments.radial_basis, 4)
+        arguments.radial_basis = min(arguments.radial_basis, 3)
     if arguments.timing_repeats <= 0:
         raise ValueError("--timing-repeats must be positive.")
     source, source_sha256 = _resolved_source(arguments)
     dataset = phx.atomistic.load_rmd17_npz(source)
     configuration = {
+        "campaign": "matched-painn-versus-nequip",
+        "models": list(MODEL_NAMES),
         "dataset_id": dataset.dataset_id,
         "source_sha256": source_sha256,
         "source_url": arguments.url,
@@ -384,7 +489,7 @@ def main() -> None:
     }
     records = [_run_seed(dataset, arguments, seed) for seed in arguments.seeds]
     payload = {
-        "benchmark": "finite-nonperiodic-rmd17-painn",
+        "benchmark": "finite-nonperiodic-rmd17-painn-versus-nequip",
         "fingerprint": _fingerprint(configuration),
         "configuration": configuration,
         "records": records,
@@ -398,6 +503,7 @@ def main() -> None:
             "dataset_energy_unit": dataset.scale.energy_unit,
             "local_npz": str(source),
             "network_fetch_used": arguments.url is not None,
+            "matched_split_training_policy_and_capacity": True,
         },
     }
     print(

@@ -1,9 +1,9 @@
 # Atomistic molecular learning
 
 `phydrax.atomistic` is the finite, nonperiodic molecular data, prediction, and
-training surface. `phydrax.nn.atomistic` owns the PaiNN energy model. The public
-contracts keep atomic identity, units, graph capacity, validity, and provenance
-explicit.
+training surface. `phydrax.nn.atomistic` owns drop-in PaiNN and low-degree
+NequIP energy models. The public contracts keep atomic identity, units, graph
+capacity, validity, and provenance explicit.
 
 ## Structures, batches, and graph realization
 
@@ -19,9 +19,17 @@ explicit.
 
 ::: phydrax.atomistic.realize_atomistic_graph
 
-## PaiNN energy and conservative-force prediction
+## PaiNN and low-degree NequIP energy prediction
 
 ::: phydrax.nn.atomistic.PaiNNPotential
+
+::: phydrax.nn.atomistic.NequIPPotential
+
+The NequIP implementation is a Cartesian O(3) research model restricted to
+degrees zero, one, and two. It uses the same finite-molecule graph, prediction,
+and training contracts as PaiNN. It does not claim periodic cells, stress,
+long-range interactions, molecular dynamics, high-degree irreps, or MACE-style
+symmetric contractions.
 
 ::: phydrax.atomistic.AtomisticPrediction
 
@@ -30,6 +38,12 @@ explicit.
 ::: phydrax.atomistic.AtomisticStatus
 
 ::: phydrax.atomistic.energy_and_forces
+
+## Low-degree O(3) tensor products
+
+::: phydrax.nn.operator.layers.O3TensorProductPlan
+
+::: phydrax.nn.operator.layers.O3TensorProduct
 
 ## Typed training
 

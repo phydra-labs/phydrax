@@ -1368,6 +1368,29 @@ existing lattice callable and costs one model evaluation per group element.
 cross-dimensional embeddings and rejects a projected kernel whose discarded
 relative residual exceeds the configured tolerance.
 
+#### Low-degree Cartesian O(3) tensor products
+
+`O3TensorProductPlan` uses the existing `O3Representation` packing for ordinary
+and pseudo scalars, vectors, and symmetric-traceless rank-two tensors. It
+enumerates legal degree/parity paths through degree two, canonical `uvw`
+multiplicity connections, component normalization, parameter count, contraction
+work, coefficient storage, resource limits, and content identity before
+allocation. `O3TensorProduct` prepares independently derived Cartesian
+Clebsch--Gordan maps and accepts either internal trainable weights or one
+externally supplied weight per planned multiplicity connection.
+
+::: phydrax.nn.operator.layers.O3TensorProductPlan
+
+---
+
+::: phydrax.nn.operator.layers.O3TensorProduct
+
+`phydrax.nn.atomistic.NequIPPotential` uses external radial weights for every
+actual planned instruction. This is continuous O(3) equivariance in three
+dimensions, not the finite lattice-group contract above. Its supported research
+scope is degree at most two and finite nonperiodic molecules; it is neither an
+arbitrary irreps layer nor a high-degree or MACE implementation.
+
 #### Clifford grade fields
 
 `CliffordGradeRepresentation` packs complete exterior grades under one explicit
