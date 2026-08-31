@@ -324,8 +324,10 @@ topology remain static.
   three-dimensional CTU implementation.
 - Mapped fluxes currently use Rusanov or HLL.
 - Periodic Cartesian constrained MHD is executed by
-  `UpwindConstrainedTransportPlan` and `ConstrainedMHDSSPRK3Plan`; physical MHD
-  boundaries, AMR reflux-curl, mapped grids, and distributed CT remain unsupported.
+  `UpwindConstrainedTransportPlan` and `ConstrainedMHDSSPRK3Plan`, then composed with
+  gravity, cooling, or OU forcing through the prepared balance-law transport adapter.
+  Physical MHD boundaries, AMR reflux-curl, mapped grids, and distributed CT remain
+  unsupported.
 - Hard shock-capturing decisions produce branchwise, not globally smooth, sensitivities.
 
 Runtime, material, boundary, positivity, checkpoint, rollout, and sharding contracts are

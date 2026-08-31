@@ -12,6 +12,22 @@
 
 ::: phydrax.solver.FiniteVolumeReplayPolicy
 
+## Transport adapters
+
+::: phydrax.solver.prepare_balance_law_transport
+
+---
+
+::: phydrax.solver.PreparedFiniteVolumeBalanceLawTransport
+
+---
+
+::: phydrax.solver.PreparedConstrainedMHDBalanceLawTransport
+
+---
+
+::: phydrax.solver.BalanceLawSourceView
+
 ## Transactional source processes
 
 ::: phydrax.solver.PreparedBalanceLawRuntime
@@ -56,7 +72,3 @@
 ## Constrained MHD
 
 ::: phydrax.solver.ConstrainedMHDSSPRK3Plan
-
----
-
-::: phydrax.solver.ConstrainedMHDScheduledRolloutPlan
