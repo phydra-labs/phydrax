@@ -45,7 +45,7 @@ term evaluation.
 """
 
 from .._hybrid_sensitivity import HybridSensitivityMode
-from . import maxwell
+from . import advanced, maxwell
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -634,6 +634,17 @@ from ._markov_cubature import (
     PolynomialRecombination,
     solve_markov_cubature,
 )
+from ._material_point_rollout import (
+    MPMGradientKind,
+    MPMGradientReport,
+    MPMReplayEvidence,
+    MPMReplayMode,
+    MPMReplayPolicy,
+    MPMRetainedTrajectory,
+    MPMRetentionMode,
+    MPMRolloutResult,
+    ScheduledMPMRolloutPlan,
+)
 from ._memory import (
     ConvolutionKernel,
     ConvolutionVolterraProblem,
@@ -725,6 +736,13 @@ from ._particle_conversion_sensitivity import (
     ParticleConversionValidityCertificate,
     sharp_particle_conversion_jvp,
     sharp_particle_conversion_vjp,
+)
+from ._particle_epoch import (
+    advance_particle_epoch_segments,
+    ParticleEpochSegmentRecord,
+    ParticleEpochTrajectory,
+    pullback_particle_epoch_transition,
+    segmented_particle_epoch_vjp,
 )
 from ._particle_mesh_gravity import (
     ParticleMeshGravityDiagnostics,
@@ -844,6 +862,19 @@ from ._reactive_cfd_dem import (
     ReactiveFluidFields,
     ReactiveParticleCouplingSchedulePlan,
 )
+from ._reactive_monolithic import (
+    initialize_reactive_monolithic_state,
+    make_reactive_monolithic_stage,
+    prepare_reactive_monolithic_step,
+    PreparedReactiveMonolithicStep,
+    reactive_monolithic_vjp,
+    ReactiveMonolithicPreconditionerEvidence,
+    ReactiveMonolithicPreconditionerMode,
+    ReactiveMonolithicSolverPlan,
+    ReactiveMonolithicState,
+    ReactiveMonolithicStepResult,
+    solve_reactive_monolithic_step,
+)
 from ._reactive_replay import (
     checkpointed_reactive_rollout,
     checkpointed_reactive_vjp,
@@ -931,6 +962,19 @@ from ._spectral_forcing import (
     PreparedSpectralOUForcing,
     SpectralOUForcingDiagnostics,
     SpectralOUForcingPlan,
+)
+from ._spectral_hp_completion import (
+    BDDCFETIDPTracePlan,
+    FrozenHPAdjointSchedule,
+    goal_oriented_eigen_indicators,
+    HPEigenspaceTransfer,
+    HPFASMultigrid,
+    HPNewtonKrylovBuilder,
+    HPNewtonKrylovResult,
+    HPRestrictedSchwarz,
+    MeshVaryingUQAggregator,
+    NonlinearLocalCondensation,
+    RelaxedHPMarking,
 )
 from ._split_differential import (
     split_differential_problem,
@@ -1039,6 +1083,7 @@ from .maxwell import (
 
 
 __all__ = [
+    "advanced",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
     "BalanceLawAdvanceResult",
@@ -1807,4 +1852,40 @@ __all__ = [
     "solve_characteristic_projection",
     "solve_neural_galerkin",
     "trace_characteristics",
+    "ParticleEpochSegmentRecord",
+    "ParticleEpochTrajectory",
+    "PreparedReactiveMonolithicStep",
+    "ReactiveMonolithicPreconditionerEvidence",
+    "ReactiveMonolithicPreconditionerMode",
+    "ReactiveMonolithicSolverPlan",
+    "ReactiveMonolithicState",
+    "ReactiveMonolithicStepResult",
+    "advance_particle_epoch_segments",
+    "initialize_reactive_monolithic_state",
+    "make_reactive_monolithic_stage",
+    "prepare_reactive_monolithic_step",
+    "pullback_particle_epoch_transition",
+    "reactive_monolithic_vjp",
+    "segmented_particle_epoch_vjp",
+    "solve_reactive_monolithic_step",
+    "goal_oriented_eigen_indicators",
+    "BDDCFETIDPTracePlan",
+    "FrozenHPAdjointSchedule",
+    "HPEigenspaceTransfer",
+    "HPFASMultigrid",
+    "HPNewtonKrylovBuilder",
+    "HPNewtonKrylovResult",
+    "HPRestrictedSchwarz",
+    "MeshVaryingUQAggregator",
+    "NonlinearLocalCondensation",
+    "RelaxedHPMarking",
+    "MPMGradientKind",
+    "MPMGradientReport",
+    "MPMReplayEvidence",
+    "MPMReplayMode",
+    "MPMReplayPolicy",
+    "MPMRetentionMode",
+    "MPMRetainedTrajectory",
+    "MPMRolloutResult",
+    "ScheduledMPMRolloutPlan",
 ]

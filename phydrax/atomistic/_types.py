@@ -317,7 +317,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
     structure_ids: tuple[str, ...] = eqx.field(static=True)
     axis_names: tuple[str, str, str] = eqx.field(static=True)
     has_periodic_metadata: bool = eqx.field(static=True)
-    candidate_topology_id: str = eqx.field(static=True)
+    atom_topology_id: str = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
 
     def __init__(
@@ -444,7 +444,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         self.structure_ids = ids_host
         self.axis_names = ("case", "atom", "cartesian")
         self.has_periodic_metadata = cell_host is not None or periodic_host is not None
-        self.candidate_topology_id = topology_id
+        self.atom_topology_id = topology_id
         self.batch_id = _atomistic_batch_id(
             scale_id=scale.scale_id,
             topology_id=topology_id,
@@ -540,7 +540,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         updated = eqx.tree_at(lambda batch: batch.positions, self, value)
         batch_id = _atomistic_batch_id(
             scale_id=self.scale.scale_id,
-            topology_id=self.candidate_topology_id,
+            topology_id=self.atom_topology_id,
             structure_ids=self.structure_ids,
             atomic_numbers=np.asarray(self.atomic_numbers),
             positions=host,

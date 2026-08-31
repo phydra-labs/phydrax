@@ -48,15 +48,18 @@ Most workflows are composing a few primitives:
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
   fixed-topology differentiable geometry.
 - **Discrete structural form-finding**: sparse pin-jointed force-density
-  equilibrium supports full or componentwise coordinate restraints, tension,
-  compression, mixed signs, fixed and shape-dependent loads, mathematical
-  solution derivatives, and force/support/load state-design optimization with
-  physical residual, reaction, status, and provenance evidence.
-- **Finite-molecule atomistic learning**: scale-identified atomic structures and
-  padded case-isolated batches reuse material-particle identities and `GraphIR`;
-  PaiNN scalar/vector interactions produce invariant molecular energies and
-  conservative forces with fail-closed neighborhood capacity, typed diagnostics,
-  local rMD17 parsing, and domain-specific energy/force training.
+  equilibrium supports coordinate and general affine restraints, tension,
+  compression, mixed signs, prepared linear/nonlinear refresh, weighted
+  preconditioning, fixed, self-weight, traction, pressure, and pneumatic loads,
+  batched cases, graph-level evidence, pure design observables, constrained
+  force/support/load optimization, mechanism/self-stress analysis, constitutive
+  tangent stability, and continuation with physical residual, reaction, status,
+  load-component, and provenance evidence.
+- **Atomistic learning and dynamics**: scale-identified atomic structures,
+  position-independent systems, stable-ID molecular topology, classical and learned
+  scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
+  SHAKE/RATTLE, triclinic cells, Ewald/PME, bounded replayable trajectories, and
+  exact checkpoints retain explicit resources, precision, diagnostics, and provenance.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -175,6 +178,7 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
+[material-point-method guide](docs/guides_material_point_method.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -185,14 +189,17 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).
 
-Finite nonperiodic molecular learning lives in `phx.atomistic`, with the
-equivariant energy model in `phx.nn.atomistic`. The implementation covers typed
-atomic structures and batches, resource-guarded dense molecular graphs, PaiNN
-energies, forces derived from one scalar energy, typed energy/force fitting, and
-offline local rMD17 data. It does not claim periodic systems, stress, long-range
-electrostatics, or molecular-dynamics stability. See the
-[atomistic guide](docs/guides_atomistic.md), the
-[atomistic cookbook](docs/cookbook/atomistic.md), and the
+Finite molecular learning and conservative atomistic dynamics live in
+`phx.atomistic`, with equivariant learned energy models in `phx.nn.atomistic`.
+The learning surface retains typed structures, batches, explicit dense graph
+execution, PaiNN/NequIP conservative forces, fitting, and offline rMD17 data.
+The dynamics surface adds complete unit systems, position-independent prepared
+systems, molecular topology, classical and learned potential programs,
+orthorhombic/triclinic neighborhoods, NVE/NVT, constraints, stress, Ewald/PME,
+NPT moves, replay, checkpoints, hybrid composition, ring polymers, and
+semi-grand transitions. See the [atomistic learning guide](docs/guides_atomistic.md),
+the [atomistic dynamics guide](docs/guides_atomistic_dynamics.md), the
+[dynamics cookbook](docs/cookbook/atomistic_dynamics.md), and the
 [atomistic API](docs/api/atomistic.md).
 
 ## Example

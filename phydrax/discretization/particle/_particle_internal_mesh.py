@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import abc
 from enum import StrEnum
 
 import equinox as eqx
@@ -12,9 +13,27 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import StrictModule
+from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
 from ._core import ParticleDiscretization
+
+
+class AbstractParticleInternalMeshPlan(StrictModule, NonTrainableState):
+    mesh_id: AbstractAttribute[str]
+    cell_capacity: AbstractAttribute[int]
+
+    @abc.abstractmethod
+    def prepare(self):
+        raise NotImplementedError
+
+
+class AbstractPreparedParticleInternalMesh(StrictModule, NonTrainableState):
+    prepared_id: AbstractAttribute[str]
+    cell_capacity: AbstractAttribute[int]
+
+    @abc.abstractmethod
+    def metrics(self, outer_scale: ArrayLike, /):
+        raise NotImplementedError
 
 
 class ParticleInternalGeometry(StrEnum):
@@ -34,17 +53,17 @@ class ParticleShellMetrics(StrictModule):
     mesh_id: str = eqx.field(static=True)
 
 
-class RadialShellMeshPlan(StrictModule, NonTrainableState):
+class RadialShellMeshPlan(AbstractParticleInternalMeshPlan):
     geometry: ParticleInternalGeometry = eqx.field(static=True)
     reference_faces: Array
     transverse_measure: float = eqx.field(static=True)
-    shell_count: int = eqx.field(static=True)
+    cell_count: int = eqx.field(static=True)
     mesh_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         geometry: ParticleInternalGeometry,
-        shell_count: int,
+        cell_count: int,
         /,
         *,
         reference_faces: ArrayLike | None = None,
@@ -53,10 +72,10 @@ class RadialShellMeshPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(geometry, ParticleInternalGeometry):
             raise TypeError("geometry must be a ParticleInternalGeometry.")
-        count = int(shell_count)
+        count = int(cell_count)
         transverse = float(transverse_measure)
         if count <= 0 or not np.isfinite(transverse) or transverse <= 0.0:
-            raise ValueError("Shell count and transverse measure must be positive.")
+            raise ValueError("Cell count and transverse measure must be positive.")
         faces = (
             np.linspace(0.0, 1.0, count + 1)
             if reference_faces is None
@@ -81,16 +100,20 @@ class RadialShellMeshPlan(StrictModule, NonTrainableState):
         self.geometry = geometry
         self.reference_faces = jnp.asarray(faces)
         self.transverse_measure = transverse
-        self.shell_count = count
+        self.cell_count = count
         self.mesh_id = generated if mesh_id is None else str(mesh_id)
         if not self.mesh_id:
             raise ValueError("mesh_id must be nonempty.")
+
+    @property
+    def cell_capacity(self) -> int:
+        return self.cell_count
 
     def prepare(self) -> PreparedRadialShellMesh:
         return PreparedRadialShellMesh(self)
 
 
-class PreparedRadialShellMesh(StrictModule, NonTrainableState):
+class PreparedRadialShellMesh(AbstractPreparedParticleInternalMesh):
     plan: RadialShellMeshPlan
     reference_faces: Array
     reference_cells: Array
@@ -118,8 +141,8 @@ class PreparedRadialShellMesh(StrictModule, NonTrainableState):
         )
 
     @property
-    def shell_count(self) -> int:
-        return self.plan.shell_count
+    def cell_capacity(self) -> int:
+        return self.plan.cell_capacity
 
     def metrics(self, outer_scale: ArrayLike, /) -> ParticleShellMetrics:
         scale = jnp.asarray(outer_scale)
@@ -163,7 +186,7 @@ class PreparedRadialShellMesh(StrictModule, NonTrainableState):
 
 class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
     owner_indices: Array
-    mesh: RadialShellMeshPlan
+    mesh: AbstractParticleInternalMeshPlan
     species_count: int = eqx.field(static=True)
     front_count: int = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
@@ -171,7 +194,7 @@ class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         owner_indices: ArrayLike,
-        mesh: RadialShellMeshPlan,
+        mesh: AbstractParticleInternalMeshPlan,
         species_count: int,
         /,
         *,
@@ -189,8 +212,8 @@ class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
             or len(set(int(value) for value in owners)) != owners.size
         ):
             raise ValueError("owner_indices must be unique nonnegative integers.")
-        if not isinstance(mesh, RadialShellMeshPlan):
-            raise TypeError("mesh must be a RadialShellMeshPlan.")
+        if not isinstance(mesh, AbstractParticleInternalMeshPlan):
+            raise TypeError("mesh must be an AbstractParticleInternalMeshPlan.")
         if species <= 0 or fronts < 0:
             raise ValueError(
                 "species_count must be positive and front_count nonnegative."
@@ -219,7 +242,7 @@ class ParticleInternalBatchPlan(StrictModule, NonTrainableState):
 class PreparedParticleInternalBatch(StrictModule, NonTrainableState):
     plan: ParticleInternalBatchPlan
     particles: ParticleDiscretization
-    mesh: PreparedRadialShellMesh
+    mesh: AbstractPreparedParticleInternalMesh
     owner_indices: Array
     active: Array
     prepared_id: str = eqx.field(static=True)
@@ -252,8 +275,8 @@ class PreparedParticleInternalBatch(StrictModule, NonTrainableState):
         return int(self.owner_indices.shape[0])
 
     @property
-    def shell_count(self) -> int:
-        return self.mesh.shell_count
+    def cell_capacity(self) -> int:
+        return self.mesh.cell_capacity
 
     @property
     def species_count(self) -> int:
@@ -281,6 +304,8 @@ class PreparedParticleInternalBatch(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AbstractParticleInternalMeshPlan",
+    "AbstractPreparedParticleInternalMesh",
     "ParticleInternalBatchPlan",
     "ParticleInternalGeometry",
     "ParticleShellMetrics",

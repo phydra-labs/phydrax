@@ -8,6 +8,39 @@
   H1/L2 projectors, explicit stabilization, functional trace constraints,
   matrix-free and sparse execution, fixed-topology geometry differentiation,
   projected reconstruction, mass-matrix DAEs, and generalized eigenproblems.
+- Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
+  globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
+  implicit root derivatives, physical position/velocity residual certification,
+  multiplier warm starts, and fail-closed candidate/accepted transitions. Contact,
+  friction, compliance, motors, dynamic topology, two-dimensional joints, and PBD
+  compatibility remain outside this contract.
+- Added epochal particle-capacity growth with stable structured interaction
+  identities, transactional state migration, fixed-pool insertion and fragmentation
+  retries, segmented replay, and transition pullbacks. Added multidimensional
+  body-frame particle interiors, conservative unstructured transport, local
+  coarse/fine AMR, boundary-face exchange, and native sparse implicit conversion.
+  Added feature-certified superquadric triangle-wall contact with canonical shared
+  feature ownership, wall histories, reactions, wear observables, and explicit
+  feature curvature. Added matrix-free monolithic fluid-particle Newton coupling
+  with momentum, heat, species, reaction, contact/radiative sources, route
+  certificates, block preconditioning, atomic rollback, and implicit sensitivity.
+- Added native atomistic dynamics with complete unit identities,
+  position-independent prepared systems, stable-ID molecular topology and pair
+  exceptions, composable classical/learned scalar-energy programs, dense and
+  triclinic cell/Verlet execution, momentum-form NVE and BAOAB NVT,
+  SHAKE/RATTLE constraints, stress, direct Ewald and B-spline PME, isotropic
+  NPT moves, bounded replayable trajectories, exact checkpoints, hybrid and
+  RESPA composition, Born–Oppenheimer provider boundaries, ring polymers with
+  PILE, and variance-constrained semi-grand transitions. Dense graph resources
+  are now explicit execution-plan identity rather than learned architecture identity.
+- Added fixed-capacity explicit Material Point Method dynamics for plane-strain and
+  three-dimensional Neo-Hookean solids: nodal quadratic B-splines, matched APIC
+  transfer, first-Piola reference-volume forces, transactional USL updates,
+  support-halo and prescribed-velocity boundaries, acoustic/advective/force step
+  evidence, full/step/block replay, final/checkpoint/trajectory retention, and
+  piecewise-versus-frozen gradient reports. Corrected logarithmic Neo-Hookean
+  parameter naming so its volumetric coefficient is Lamé lambda, with an explicit
+  physical shear/bulk constructor.
 - Added bounded and periodic unit-density MAC incompressible dynamics with static
   no-slip wall closure, face-dual velocity coordinates, symmetry-preserving momentum
   transport, conservative explicit viscosity, transform-or-iterative stage
@@ -38,6 +71,11 @@
   prepared balance-law transport contract. Gravity, cooling, and OU forcing now compose
   with face-flux MHD under the same adaptive realization, scheduled replay, rollback,
   component-ownership checks, and portable checkpoint semantics.
+- Added dimension-generic constrained-MHD layouts, primitive PLM/WENO/TENO/MP5
+  reconstruction, HLL-UCT, accepted face/edge integral ledgers, physical boundary
+  policies, dual-energy and CTU support, non-ideal and AMR cochain operators, bounded
+  gravity, exact cooling coordinates, modal forcing, thermochemistry, radiation
+  moments, cosmological workflows, field inference, and structure-preserving closures.
 - Added fixed-rank randomized Nyström preconditioning with auditable sketch and
   refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
   field metrics with rectangular or Gram tangent solves and saved-node audits;
@@ -65,11 +103,15 @@
   reduced-adjoint state/design optimization, sparse physical-radius density
   filtering, SIMP compliance topology optimization, and independent
   reference-discretization reanalysis.
-- Added native sparse force-density form-finding for pin-jointed tension,
-  compression, and mixed-sign structures with componentwise coordinate restraints,
-  fixed and shape-dependent edge/surface loads, prepared numeric refresh,
-  mathematically implicit linear/root derivatives, physical residual and reaction
-  certification, and force/support/load state-design optimization.
+- Added native force-density structural design for tension, compression, and
+  mixed-sign pin-jointed systems with sparse coordinate or orthonormal affine
+  restraints, reciprocal GraphIR conversion, stable external IDs, prepared
+  linear/nonlinear refresh, weighted-Laplacian Newton preconditioning, fixed,
+  line, self-weight, traction, follower-pressure, and pneumatic load laws with a
+  component ledger, mathematical solution derivatives, reduced and structured
+  force/support/load design, pure geometry/force observables, same-topology
+  batches, per-graph evidence, mechanism/self-stress spectra, supplied-rigidity
+  tangent stability, and continuation bridges.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.
@@ -206,6 +248,11 @@
   DG mortar worksets, role-correct h/p transfers, atomic solver transactions,
   adaptive indicators and budgets, hp condensation/multigrid, inherited
   partition ownership, and certified entropy-compatible DGSEM mortars.
+- Completed the single-host spectral-hp stack with native epoch compilation,
+  anisotropic h and geometry-order adaptation, robust viscous/shock/ALE policies,
+  tensor de Rham complexes, simplex/prism/pyramid references, nonlinear hp
+  solvers, CAD/unfitted geometry, frozen-schedule adjoints, semantic caches,
+  high-order output/import adapters, and complete public examples and guidance.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct

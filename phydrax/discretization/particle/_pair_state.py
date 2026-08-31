@@ -19,8 +19,15 @@ from ._core import ParticleDiscretization
 from ._pairwise import ParticlePairRelation
 
 
+INTERACTION_KEY_WIDTH = 5
+PARTICLE_PAIR_INTERACTION = 0
+PARTICLE_WALL_INTERACTION = 1
+CLUMP_COMPONENT_INTERACTION = 2
+IMPLICIT_BARRIER_INTERACTION = 3
+
+
 class ParticlePairKeys(StrictModule, NonTrainableState):
-    """Collision-free stable keys for one realized same-set pair relation."""
+    """Capacity-independent structured identities for one pair relation."""
 
     keys: Array
     valid: Array
@@ -29,7 +36,7 @@ class ParticlePairKeys(StrictModule, NonTrainableState):
 
 
 class ParticlePairKeySpace(StrictModule, NonTrainableState):
-    """Stable triangular ordinals for unordered pairs on one particle support."""
+    """Stable unordered-pair identities built from physical particle IDs."""
 
     sorted_particle_ids: Array
     particle_discretization_id: str = eqx.field(static=True)
@@ -42,12 +49,10 @@ class ParticlePairKeySpace(StrictModule, NonTrainableState):
         if not isinstance(particles, ParticleDiscretization):
             raise TypeError("particles must be a ParticleDiscretization.")
         ids = np.asarray(particles.particle_ids, dtype=np.int64)
-        if np.unique(ids).size != ids.size:
-            raise ValueError("Particle pair key space requires unique stable IDs.")
+        if np.any(ids < 0) or np.unique(ids).size != ids.size:
+            raise ValueError("Particle pair identities require unique nonnegative IDs.")
         capacity = int(ids.size)
         pair_count = capacity * (capacity - 1) // 2
-        if pair_count > np.iinfo(np.int64).max:
-            raise OverflowError("Particle pair key space exceeds int64 capacity.")
         self.sorted_particle_ids = jnp.asarray(np.sort(ids), dtype=jnp.int64)
         self.particle_discretization_id = particles.prepared_id
         self.particle_support_id = particles.support.support_id
@@ -55,11 +60,10 @@ class ParticlePairKeySpace(StrictModule, NonTrainableState):
         self.pair_count = pair_count
         self.key_space_id = canonical_fingerprint(
             {
-                "kind": "particle-pair-key-space",
+                "kind": "particle-pair-identity-space",
                 "particles": particles.prepared_id,
-                "capacity": capacity,
-                "pair_count": pair_count,
-                "sorted_particle_ids": ids[np.argsort(ids)].tolist(),
+                "sorted_particle_ids": np.sort(ids).tolist(),
+                "identity_width": INTERACTION_KEY_WIDTH,
             }
         )
 
@@ -73,31 +77,85 @@ class ParticlePairKeySpace(StrictModule, NonTrainableState):
             or not pairs.unordered
         ):
             raise ValueError(
-                "Pair relation must be unordered on the key space particle support."
+                "Pair relation must be unordered on the identity-space support."
             )
         sorted_ids = self.sorted_particle_ids
         last = self.particle_capacity - 1
-        left_rank_raw = jnp.searchsorted(sorted_ids, pairs.left_particle_ids)
-        right_rank_raw = jnp.searchsorted(sorted_ids, pairs.right_particle_ids)
+        left_id = jnp.minimum(pairs.left_particle_ids, pairs.right_particle_ids)
+        right_id = jnp.maximum(pairs.left_particle_ids, pairs.right_particle_ids)
+        left_rank_raw = jnp.searchsorted(sorted_ids, left_id)
+        right_rank_raw = jnp.searchsorted(sorted_ids, right_id)
         left_rank = jnp.clip(left_rank_raw, 0, last)
         right_rank = jnp.clip(right_rank_raw, 0, last)
         left_match = (left_rank_raw < self.particle_capacity) & (
-            sorted_ids[left_rank] == pairs.left_particle_ids
+            sorted_ids[left_rank] == left_id
         )
         right_match = (right_rank_raw < self.particle_capacity) & (
-            sorted_ids[right_rank] == pairs.right_particle_ids
+            sorted_ids[right_rank] == right_id
         )
-        valid = pairs.valid & left_match & right_match & (left_rank < right_rank)
-        keys = left_rank.astype(jnp.int64) * (
-            2 * self.particle_capacity - left_rank.astype(jnp.int64) - 1
-        ) // 2 + (right_rank.astype(jnp.int64) - left_rank.astype(jnp.int64) - 1)
-        keys = jnp.where(valid, keys, jnp.asarray(-1, dtype=jnp.int64))
+        valid = pairs.valid & left_match & right_match & (left_id < right_id)
+        zeros = jnp.zeros_like(left_id, dtype=jnp.int64)
+        identity = jnp.stack(
+            (
+                jnp.full_like(left_id, PARTICLE_PAIR_INTERACTION, dtype=jnp.int64),
+                left_id.astype(jnp.int64),
+                right_id.astype(jnp.int64),
+                zeros,
+                zeros,
+            ),
+            axis=-1,
+        )
+        identity = jnp.where(valid[:, None], identity, -jnp.ones_like(identity))
         successful = jnp.all(~pairs.valid | valid)
-        return ParticlePairKeys(keys, valid, successful, self.key_space_id)
+        return ParticlePairKeys(identity, valid, successful, self.key_space_id)
+
+
+def particle_wall_interaction_keys(
+    particle_ids: ArrayLike,
+    object_ids: ArrayLike,
+    feature_kinds: ArrayLike,
+    feature_ids: ArrayLike,
+    valid: ArrayLike,
+    /,
+    *,
+    interaction_kind: int = PARTICLE_WALL_INTERACTION,
+) -> Array:
+    """Build stable particle/object/feature identities without packed hashes."""
+
+    particle = jnp.asarray(particle_ids, dtype=jnp.int64)
+    object_ = jnp.asarray(object_ids, dtype=jnp.int64)
+    feature_kind = jnp.asarray(feature_kinds, dtype=jnp.int64)
+    feature = jnp.asarray(feature_ids, dtype=jnp.int64)
+    mask = jnp.asarray(valid, dtype=bool)
+    if (
+        particle.ndim != 1
+        or object_.shape != particle.shape
+        or feature_kind.shape != particle.shape
+        or feature.shape != particle.shape
+        or mask.shape != particle.shape
+    ):
+        raise ValueError("Interaction identity components must share one route shape.")
+    kind = int(interaction_kind)
+    if kind < 0:
+        raise ValueError("interaction_kind must be nonnegative.")
+    identity = jnp.stack(
+        (
+            jnp.full_like(particle, kind),
+            particle,
+            object_,
+            feature_kind,
+            feature,
+        ),
+        axis=-1,
+    )
+    component_valid = jnp.all(identity >= 0, axis=-1)
+    return jnp.where(
+        (mask & component_valid)[:, None], identity, -jnp.ones_like(identity)
+    )
 
 
 class ParticlePairRemap(StrictModule, NonTrainableState):
-    """Deterministic route map from old pair slots to new pair slots."""
+    """Deterministic route map from old interaction slots to new slots."""
 
     source_indices: Array
     continued: Array
@@ -109,16 +167,64 @@ class ParticlePairRemap(StrictModule, NonTrainableState):
 
 
 def _validated_keys(
-    name: str, keys: ArrayLike, valid: ArrayLike, maximum_key: int, /
+    name: str, keys: ArrayLike, valid: ArrayLike, /
 ) -> tuple[Array, Array, Array]:
     keys_ = jnp.asarray(keys)
     valid_ = jnp.asarray(valid, dtype=bool)
-    if keys_.ndim != 1 or valid_.shape != keys_.shape:
-        raise ValueError(f"{name} keys and validity must have shape (pairs,).")
+    if (
+        keys_.ndim != 2
+        or keys_.shape[1] != INTERACTION_KEY_WIDTH
+        or valid_.shape != keys_.shape[:1]
+    ):
+        raise ValueError(f"{name} keys must have shape (routes,{INTERACTION_KEY_WIDTH}).")
     if not jnp.issubdtype(keys_.dtype, jnp.integer):
         raise TypeError(f"{name} keys must be integers.")
-    in_range = (keys_ >= 0) & (keys_ <= maximum_key)
-    return keys_.astype(jnp.int64), valid_, jnp.all(~valid_ | in_range)
+    keys_ = keys_.astype(jnp.int64)
+    in_range = jnp.all(keys_ >= 0, axis=-1)
+    return keys_, valid_, jnp.all(~valid_ | in_range)
+
+
+def _lexicographic_order(keys: Array, valid: Array, /):
+    sentinel = jnp.asarray(np.iinfo(np.int64).max, dtype=jnp.int64)
+    sortable = jnp.where(valid[:, None], keys, sentinel)
+    order = jnp.lexsort(
+        tuple(sortable[:, index] for index in range(INTERACTION_KEY_WIDTH - 1, -1, -1))
+    )
+    return order, sortable[order], sentinel
+
+
+def _lexicographic_less(left: Array, right: Array, /) -> Array:
+    different = left != right
+    first = jnp.argmax(different.astype(jnp.int32))
+    return jnp.any(different) & (left[first] < right[first])
+
+
+def _lexicographic_search(sorted_keys: Array, queries: Array, /) -> Array:
+    capacity = int(sorted_keys.shape[0])
+    if capacity == 0:
+        return jnp.zeros((queries.shape[0],), dtype=jnp.int32)
+    iterations = max(1, capacity.bit_length())
+
+    def search(query):
+        def iteration(_, bounds):
+            lower, upper = bounds
+            middle = (lower + upper) // 2
+            safe_middle = jnp.minimum(middle, capacity - 1)
+            less = _lexicographic_less(sorted_keys[safe_middle], query)
+            active = lower < upper
+            next_lower = jnp.where(active & less, middle + 1, lower)
+            next_upper = jnp.where(active & less, upper, jnp.where(active, middle, upper))
+            return next_lower, next_upper
+
+        lower, _ = jax.lax.fori_loop(
+            0,
+            iterations,
+            iteration,
+            (jnp.asarray(0, dtype=jnp.int32), jnp.asarray(capacity, dtype=jnp.int32)),
+        )
+        return lower
+
+    return jax.vmap(search)(queries)
 
 
 def match_particle_pair_keys(
@@ -127,50 +233,49 @@ def match_particle_pair_keys(
     new_keys: ArrayLike,
     new_valid: ArrayLike,
     /,
-    *,
-    maximum_key: int,
 ) -> ParticlePairRemap:
-    """Match two fixed-capacity key realizations without differentiating routes."""
+    """Match structured identities without differentiating route decisions."""
 
-    maximum = int(maximum_key)
-    if maximum < 0:
-        raise ValueError("maximum_key must be nonnegative.")
-    old, old_mask, old_in_range = _validated_keys(
-        "Old pair", old_keys, old_valid, maximum
-    )
-    new, new_mask, new_in_range = _validated_keys(
-        "New pair", new_keys, new_valid, maximum
-    )
-    old_capacity = old.shape[0]
-    new_capacity = new.shape[0]
-    if old_capacity == 0 or new_capacity == 0:
-        if old_capacity != new_capacity:
-            raise ValueError("Zero-capacity pair remapping requires equal capacities.")
+    old, old_mask, old_in_range = _validated_keys("Old interaction", old_keys, old_valid)
+    new, new_mask, new_in_range = _validated_keys("New interaction", new_keys, new_valid)
+    old_capacity = int(old.shape[0])
+    new_capacity = int(new.shape[0])
+    if new_capacity == 0:
         return ParticlePairRemap(
             jnp.zeros((0,), dtype=jnp.int32),
             jnp.zeros((0,), dtype=bool),
             jnp.zeros((0,), dtype=bool),
+            jnp.sum(old_mask, dtype=jnp.int32),
+            old_in_range & new_in_range,
+            old_capacity,
+            0,
+        )
+    if old_capacity == 0:
+        return ParticlePairRemap(
+            jnp.zeros((new_capacity,), dtype=jnp.int32),
+            jnp.zeros((new_capacity,), dtype=bool),
+            new_mask,
             jnp.zeros((), dtype=jnp.int32),
             old_in_range & new_in_range,
             0,
-            0,
+            new_capacity,
         )
-    sentinel = jnp.asarray(maximum + 1, dtype=jnp.int64)
-    old_sort_keys = jnp.where(old_mask, old, sentinel)
-    old_order = jnp.argsort(old_sort_keys, stable=True)
-    old_sorted = old_sort_keys[old_order]
-    new_sort_keys = jnp.where(new_mask, new, sentinel)
-    new_sorted = jnp.sort(new_sort_keys)
+    old_order, old_sorted, sentinel = _lexicographic_order(old, old_mask)
+    _, new_sorted, _ = _lexicographic_order(new, new_mask)
     duplicate_old = jnp.any(
-        (old_sorted[1:] == old_sorted[:-1]) & (old_sorted[1:] != sentinel)
+        jnp.all(old_sorted[1:] == old_sorted[:-1], axis=-1)
+        & jnp.any(old_sorted[1:] != sentinel, axis=-1)
     )
     duplicate_new = jnp.any(
-        (new_sorted[1:] == new_sorted[:-1]) & (new_sorted[1:] != sentinel)
+        jnp.all(new_sorted[1:] == new_sorted[:-1], axis=-1)
+        & jnp.any(new_sorted[1:] != sentinel, axis=-1)
     )
-    positions = jnp.searchsorted(old_sorted, new, side="left")
+    positions = _lexicographic_search(old_sorted, new)
     safe_positions = jnp.clip(positions, 0, old_capacity - 1)
     continued = (
-        new_mask & (positions < old_capacity) & (old_sorted[safe_positions] == new)
+        new_mask
+        & (positions < old_capacity)
+        & jnp.all(old_sorted[safe_positions] == new, axis=-1)
     )
     source_indices = jnp.where(
         continued, old_order[safe_positions], jnp.asarray(0, dtype=old_order.dtype)
@@ -210,11 +315,17 @@ def remap_particle_pair_values(
         if not eqx.is_array(leaf) or leaf.ndim == 0:
             raise TypeError("Every pair-value leaf must be a nonscalar array.")
         if leaf.shape[0] != remap.old_capacity:
-            raise ValueError("Every pair-value leaf must use the old pair capacity.")
+            raise ValueError("Every pair-value leaf must use the old route capacity.")
 
     def gather(leaf):
-        selected = leaf[remap.source_indices]
         fill = jnp.asarray(fill_value, dtype=leaf.dtype)
+        if remap.old_capacity == 0:
+            return jnp.full(
+                (remap.new_capacity,) + leaf.shape[1:],
+                fill,
+                dtype=leaf.dtype,
+            )
+        selected = leaf[remap.source_indices]
         mask = remap.continued.reshape((remap.new_capacity,) + (1,) * (leaf.ndim - 1))
         return jnp.where(mask, selected, fill)
 
@@ -222,9 +333,15 @@ def remap_particle_pair_values(
 
 
 __all__ = [
+    "CLUMP_COMPONENT_INTERACTION",
+    "IMPLICIT_BARRIER_INTERACTION",
+    "INTERACTION_KEY_WIDTH",
+    "PARTICLE_PAIR_INTERACTION",
+    "PARTICLE_WALL_INTERACTION",
     "ParticlePairKeys",
     "ParticlePairKeySpace",
     "ParticlePairRemap",
     "match_particle_pair_keys",
+    "particle_wall_interaction_keys",
     "remap_particle_pair_values",
 ]

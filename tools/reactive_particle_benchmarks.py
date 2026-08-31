@@ -113,7 +113,7 @@ def main():
                 compiled,
                 state,
                 boundary,
-                phx.solver.ParticleConversionBackend.STRUCTURED_TRIDIAGONAL,
+                phx.solver.ParticleConversionBackend.STRUCTURED_NATIVE,
             ),
         ]
         cases.append(

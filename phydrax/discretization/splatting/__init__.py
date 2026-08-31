@@ -25,6 +25,7 @@ from ._types import (
     SplatExecutionPolicy,
     SplatGeometryAD,
     SplatReconstructionResult,
+    SplatRouteScatterResult,
 )
 
 
@@ -44,5 +45,6 @@ __all__ = [
     "SplatExecutionPolicy",
     "SplatGeometryAD",
     "SplatReconstructionResult",
+    "SplatRouteScatterResult",
     "TensorBSplineSplatAssignment",
 ]

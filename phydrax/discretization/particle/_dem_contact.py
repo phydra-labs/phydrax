@@ -29,6 +29,7 @@ from ._dem_contact_state import (
     DEMRotationalHistory,
     DEMTangentialHistory,
 )
+from ._pair_state import INTERACTION_KEY_WIDTH
 from ._rigid_sphere import sphere_lever_torque
 
 
@@ -1108,7 +1109,7 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
         )
         active = normal.active | cohesion.active
         next_history = DEMContactHistory(
-            jnp.where(current_valid, current_keys, -1).astype(jnp.int64),
+            jnp.where(current_valid[:, None], current_keys, -1).astype(jnp.int64),
             current_valid,
             active,
             DEMNormalHistory(
@@ -1425,7 +1426,7 @@ def _validate_batch_inputs(
     ):
         raise ValueError("DEM contact batch fields have inconsistent shapes.")
     if (
-        history.pair_keys.shape != (capacity,)
+        history.pair_keys.shape != (capacity, INTERACTION_KEY_WIDTH)
         or history.valid.shape != (capacity,)
         or history.active.shape != (capacity,)
         or history.normal.maximum_overlap.shape != (capacity,)
@@ -1446,8 +1447,9 @@ def _validate_batch_inputs(
         for leaf in jax.tree.leaves(history.cohesion)
     ):
         raise ValueError("DEM cohesion history does not match contact capacity.")
+    if jnp.asarray(keys).shape != (capacity, INTERACTION_KEY_WIDTH):
+        raise ValueError("DEM contact identities have invalid route shape.")
     scalar_arrays = (
-        keys,
         valid,
         continued,
         left_inverse_mass,

@@ -63,7 +63,7 @@ def test_rigid_body_lie_step_and_clump_owner_component_contracts():
     )
     assert expanded.valid.shape == (4,)
     assert jnp.sum(expanded.valid) == 4
-    assert jnp.unique(expanded.component_pair_keys).shape[0] == 4
+    assert jnp.unique(expanded.component_pair_keys, axis=0).shape[0] == 4
 
 
 def test_triangle_and_shape_agnostic_sphere_contact_geometry():

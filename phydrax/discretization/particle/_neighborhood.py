@@ -24,6 +24,7 @@ from .._core import (
 )
 from ._core import ParticleDiscretization
 from ._pairwise import ParticleBox, ParticlePairRelation
+from ._periodic_cell import ParticleCell
 from ._precision import ParticleRealization
 
 
@@ -31,7 +32,7 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
     """Fixed-shape runtime particle relation and complete capacity status."""
 
     pair_relation: ParticlePairRelation
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     storage_to_logical: Array
     logical_to_storage: Array
     cell_ids: Array
@@ -54,7 +55,7 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
         pair_relation: ParticlePairRelation,
         /,
         *,
-        box: ParticleBox | None,
+        box: ParticleBox | ParticleCell | None,
         storage_to_logical: ArrayLike,
         logical_to_storage: ArrayLike,
         cell_ids: ArrayLike,
@@ -74,8 +75,8 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
     ):
         if not isinstance(pair_relation, ParticlePairRelation):
             raise TypeError("pair_relation must be a ParticlePairRelation.")
-        if box is not None and not isinstance(box, ParticleBox):
-            raise TypeError("box must be a ParticleBox or None.")
+        if box is not None and not isinstance(box, (ParticleBox, ParticleCell)):
+            raise TypeError("box must be a ParticleBox, ParticleCell, or None.")
         storage = jnp.asarray(storage_to_logical)
         logical = jnp.asarray(logical_to_storage)
         cells = jnp.asarray(cell_ids)
@@ -153,7 +154,7 @@ class AbstractParticleNeighborhoodPlan(StrictModule, NonTrainableState):
     """Structural plan for a geometry-dependent particle relation."""
 
     key: AbstractAttribute[DiscretizationKey]
-    box: AbstractAttribute[ParticleBox | None]
+    box: AbstractAttribute[ParticleBox | ParticleCell | None]
     backend: AbstractAttribute[ParticleRealization]
     plan_id: AbstractAttribute[str]
 
@@ -169,7 +170,7 @@ class AbstractPreparedParticleNeighborhood(StrictModule, NonTrainableState):
 
     plan: AbstractAttribute[AbstractParticleNeighborhoodPlan]
     key: AbstractAttribute[DiscretizationKey]
-    box: AbstractAttribute[ParticleBox | None]
+    box: AbstractAttribute[ParticleBox | ParticleCell | None]
     backend: AbstractAttribute[ParticleRealization]
     pair_capacity: AbstractAttribute[int]
     particle_discretization_id: AbstractAttribute[str]
@@ -179,7 +180,9 @@ class AbstractPreparedParticleNeighborhood(StrictModule, NonTrainableState):
     artifact_kind: AbstractAttribute[str]
 
     @abc.abstractmethod
-    def build(self, position: ArrayLike, /) -> ParticleNeighborhoodState:
+    def build(
+        self, position: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
         raise NotImplementedError
 
     @property
@@ -191,7 +194,7 @@ class DenseParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     """All canonical same-set pairs under an explicit allocation budget."""
 
     maximum_pairs: int = eqx.field(static=True)
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     backend: ParticleRealization = eqx.field(static=True)
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
@@ -201,15 +204,15 @@ class DenseParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         maximum_pairs: int,
         /,
         *,
-        box: ParticleBox | None = None,
+        box: ParticleBox | ParticleCell | None = None,
         name: str = "dense-particle-neighborhood",
         plan_id: str | None = None,
     ):
         maximum = int(maximum_pairs)
         if maximum < 0:
             raise ValueError("maximum_pairs must be non-negative.")
-        if box is not None and not isinstance(box, ParticleBox):
-            raise TypeError("box must be a ParticleBox or None.")
+        if box is not None and not isinstance(box, (ParticleBox, ParticleCell)):
+            raise TypeError("box must be a ParticleBox, ParticleCell, or None.")
         key = DiscretizationKey(
             name,
             DiscretizationRole.AUXILIARY,
@@ -243,7 +246,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     pair_relation: ParticlePairRelation
     preparation: PreparationReport
     key: DiscretizationKey
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     backend: ParticleRealization = eqx.field(static=True)
     pair_capacity: int = eqx.field(static=True)
     particle_capacity: int = eqx.field(static=True)
@@ -342,19 +345,48 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         self.artifact_kind = "dense-particle-neighborhood"
         self.prepared_id = prepared_id
 
-    def build(self, position: ArrayLike, /) -> ParticleNeighborhoodState:
+    def build(
+        self, position: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
         value = jnp.asarray(position)
         if value.ndim != 2 or value.shape[0] != self.particle_capacity:
             raise ValueError(
                 "Particle positions must have shape (particle_capacity, dimension)."
             )
+        base = self.pair_relation
+        if active_mask is None:
+            route_valid = base.valid
+        else:
+            active = jnp.asarray(active_mask, dtype=bool)
+            if active.shape != (self.particle_capacity,):
+                raise ValueError("active_mask must have particle-capacity shape.")
+            route_valid = (
+                base.valid & active[base.left_indices] & active[base.right_indices]
+            )
+        relation = EdgeRelation(
+            base.left_indices,
+            base.right_indices,
+            source_size=self.particle_capacity,
+            target_size=self.particle_capacity,
+            valid=route_valid,
+        )
+        pair_relation = ParticlePairRelation(
+            relation,
+            base.left_particle_ids,
+            base.right_particle_ids,
+            source_support_id=base.source_support_id,
+            target_support_id=base.target_support_id,
+            same_set=True,
+            unordered=True,
+            relation_schema_id=base.relation_schema_id,
+        )
         logical = jnp.arange(self.particle_capacity, dtype=jnp.int32)
-        pair_count = jnp.sum(self.pair_relation.valid, dtype=jnp.int32)
+        pair_count = jnp.sum(route_valid, dtype=jnp.int32)
         empty = jnp.zeros((0,), dtype=jnp.int32)
         zero = jnp.zeros((), dtype=jnp.int32)
         false = jnp.asarray(False)
         return ParticleNeighborhoodState(
-            self.pair_relation,
+            pair_relation,
             box=self.box,
             storage_to_logical=logical,
             logical_to_storage=logical,
@@ -371,7 +403,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             domain_violation=false,
             domain_violation_count=zero,
             prepared_neighborhood_id=self.prepared_id,
-            relation_schema_id=self.pair_relation.relation_schema_id,
+            relation_schema_id=pair_relation.relation_schema_id,
         )
 
 

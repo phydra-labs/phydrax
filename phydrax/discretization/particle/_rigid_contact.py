@@ -67,7 +67,7 @@ def sphere_contact_adapter(
     effective_radius = jnp.where(
         radius_sum > 0.0, left_radius * right_radius / radius_sum, 0.0
     )
-    zero_feature = jnp.zeros(contact_keys.shape, dtype=jnp.int32)
+    zero_feature = jnp.zeros((contact_keys.shape[0],), dtype=jnp.int32)
     degeneracy = geometry.degenerate.astype(jnp.int32)
     return RigidContactGeometry(
         geometry.normal,

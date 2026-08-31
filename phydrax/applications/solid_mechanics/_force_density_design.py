@@ -16,16 +16,21 @@ from ..._trainable import NonTrainableState
 from ...optim import (
     AbstractStateDesignMethod,
     AbstractStateSolver,
+    AbstractStructuredNonlinearMethod,
     Bounds,
+    compile_structured_state_design,
     OptimizationDiagnostics,
     OptimizationStatus,
     OptimizationTermination,
     ReducedAdjoint,
     solve_state_design,
+    solve_structured_state_design,
     StateDesignConstraint,
     StateDesignProblem,
     StateDesignResult,
     StateEquationResult,
+    StructuredStateDesignCompilation,
+    StructuredStateDesignResult,
 )
 from ._force_density import (
     _physical_state,
@@ -35,6 +40,7 @@ from ._force_density import (
     ForceDensityProblem,
     ForceDensityResult,
     ForceDensityState,
+    ForceDensityStatus,
     prepare_force_density,
     PreparedForceDensitySolve,
     solve_force_density,
@@ -151,9 +157,29 @@ class ForceDensityStateSolver(AbstractStateSolver):
             setup_refreshes = evidence.setup_refreshes
             numeric_refreshes = evidence.numeric_refreshes
         status = jnp.where(
-            result.successful,
+            result.status == int(ForceDensityStatus.SUCCESS),
             int(OptimizationStatus.SUCCESS),
-            int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+            jnp.where(
+                result.status == int(ForceDensityStatus.LINEAR_SOLVE_FAILED),
+                int(OptimizationStatus.LINEAR_SOLVE_FAILED),
+                jnp.where(
+                    result.status == int(ForceDensityStatus.NONLINEAR_SOLVE_FAILED),
+                    int(OptimizationStatus.BACKEND_FAILED),
+                    jnp.where(
+                        result.status == int(ForceDensityStatus.NONFINITE_STATE),
+                        int(OptimizationStatus.NONFINITE_EVALUATION),
+                        jnp.where(
+                            (result.status == int(ForceDensityStatus.DEGENERATE_MEMBER))
+                            | (
+                                result.status
+                                == int(ForceDensityStatus.INVALID_LOAD_GEOMETRY)
+                            ),
+                            int(OptimizationStatus.INFEASIBLE),
+                            int(OptimizationStatus.CERTIFICATION_FAILED),
+                        ),
+                    ),
+                ),
+            ),
         )
         diagnostics = OptimizationDiagnostics(
             residual_evaluations=residual_evaluations,
@@ -163,7 +189,9 @@ class ForceDensityStateSolver(AbstractStateSolver):
             linear_iterations=linear_iterations,
             setup_refreshes=setup_refreshes,
             numeric_refreshes=numeric_refreshes,
-            final_optimality_norm=result.diagnostics.free_residual_norm,
+            final_optimality_norm=jnp.asarray(
+                jnp.nan, dtype=result.diagnostics.free_residual_norm.dtype
+            ),
         )
         return StateEquationResult(reduced, residual, status, diagnostics)
 
@@ -307,6 +335,113 @@ class ForceDensityDesignResult(StrictModule):
         return self.state_design.successful & self.equilibrium.successful
 
 
+class StructuredForceDensityDesignCompilation(StrictModule):
+    """Compiled all-at-once force-density state/design problem."""
+
+    problem: ForceDensityDesignProblem
+    state_design: StructuredStateDesignCompilation
+    args: Any
+
+
+class StructuredForceDensityDesignResult(StrictModule):
+    """Structured KKT result paired with final physical equilibrium evidence."""
+
+    state_design: StructuredStateDesignResult
+    equilibrium: ForceDensityResult
+    inputs: ForceDensityInputs
+    problem_id: str = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
+        return self.state_design.successful & self.equilibrium.successful
+
+
+def compile_structured_force_density_design(
+    problem: ForceDensityDesignProblem,
+    initial_design: PyTree[Any],
+    /,
+    *,
+    initial_positions: Any | None = None,
+    sample_args: Any = None,
+    exact_hessian: bool = True,
+    compiler: Any = "auto",
+    chunk_size: int | None = None,
+) -> StructuredForceDensityDesignCompilation:
+    """Compile physical equilibrium, objective, and constraints all at once."""
+    if not isinstance(problem, ForceDensityDesignProblem):
+        raise TypeError("problem must be a ForceDensityDesignProblem.")
+    inputs = problem.inputs(initial_design, sample_args)
+    equilibrium = solve_force_density(
+        prepare_force_density(
+            problem.plan,
+            inputs,
+            initial_positions=initial_positions,
+        )
+    )
+    if not bool(equilibrium.successful):
+        raise ValueError(
+            "Initial force-density equilibrium must be successful before structured compilation."
+        )
+    initial_state = problem.equilibrium_problem.structure.reduce(
+        equilibrium.state.positions
+    )
+    compiled = compile_structured_state_design(
+        problem.as_state_design_problem(),
+        initial_state,
+        initial_design,
+        sample_args=sample_args,
+        exact_hessian=exact_hessian,
+        compiler=compiler,
+        chunk_size=chunk_size,
+    )
+    return StructuredForceDensityDesignCompilation(problem, compiled, sample_args)
+
+
+def solve_structured_force_density_design(
+    compilation: StructuredForceDensityDesignCompilation,
+    /,
+    *,
+    method: AbstractStructuredNonlinearMethod,
+    termination: OptimizationTermination | None = None,
+    initial_state: PyTree[Any] | None = None,
+    initial_design: PyTree[Any] | None = None,
+    warm_start: Any = None,
+) -> StructuredForceDensityDesignResult:
+    """Solve one compiled force-density design and recertify physical equilibrium."""
+    if not isinstance(compilation, StructuredForceDensityDesignCompilation):
+        raise TypeError("compilation must be a StructuredForceDensityDesignCompilation.")
+    solved = solve_structured_state_design(
+        compilation.state_design,
+        method=method,
+        termination=termination,
+        initial_state=initial_state,
+        initial_design=initial_design,
+        warm_start=warm_start,
+    )
+    problem = compilation.problem
+    inputs = problem.inputs(solved.design, compilation.args)
+    positions = problem.equilibrium_problem.structure.expand(
+        solved.state, inputs.prescribed_values
+    )
+    equilibrium = solve_force_density(
+        prepare_force_density(
+            problem.plan,
+            inputs,
+            initial_positions=(
+                positions
+                if problem.equilibrium_problem.load_model.depends_on_positions
+                else None
+            ),
+        )
+    )
+    return StructuredForceDensityDesignResult(
+        solved,
+        equilibrium,
+        inputs,
+        problem.problem_id,
+    )
+
+
 def solve_force_density_design(
     problem: ForceDensityDesignProblem,
     initial_design: PyTree[Any],
@@ -320,6 +455,11 @@ def solve_force_density_design(
     """Solve and physically recertify one force-density inverse design."""
     if not isinstance(problem, ForceDensityDesignProblem):
         raise TypeError("problem must be a ForceDensityDesignProblem.")
+    if problem.constraints and method is None:
+        raise ValueError(
+            "Constrained force-density designs require an explicit ReducedMMA "
+            "method or the structured force-density design lifecycle."
+        )
     method_ = ReducedAdjoint() if method is None else method
     termination_ = (
         OptimizationTermination(maximum_steps=200) if termination is None else termination
@@ -373,5 +513,9 @@ __all__ = [
     "ForceDensityDesignProblem",
     "ForceDensityDesignResult",
     "ForceDensityStateSolver",
+    "StructuredForceDensityDesignCompilation",
+    "StructuredForceDensityDesignResult",
+    "compile_structured_force_density_design",
     "solve_force_density_design",
+    "solve_structured_force_density_design",
 ]

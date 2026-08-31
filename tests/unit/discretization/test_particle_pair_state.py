@@ -22,16 +22,19 @@ def test_pair_key_space_is_stable_under_arbitrary_particle_ids():
     keys = phx.discretization.ParticlePairKeySpace(particles).keys(relation)
 
     assert keys.successful
-    assert jnp.array_equal(jnp.sort(keys.keys), jnp.asarray([0, 1, 2]))
+    expected = jnp.asarray([[0, 2, 10, 0, 0], [0, 2, 30, 0, 0], [0, 10, 30, 0, 0]])
+    order = jnp.lexsort((keys.keys[:, 2], keys.keys[:, 1]))
+    assert jnp.array_equal(keys.keys[order], expected)
 
 
 def test_pair_history_remap_preserves_continued_values_and_zeros_births():
+    old_keys = jnp.asarray([[0, 1, 2, 0, 0], [0, 1, 3, 0, 0], [0, 2, 3, 0, 0]])
+    new_keys = jnp.asarray([[0, 2, 3, 0, 0], [0, 1, 2, 0, 0], [0, 3, 4, 0, 0]])
     remap = phx.discretization.match_particle_pair_keys(
-        jnp.asarray([0, 1, 2]),
+        old_keys,
         jnp.asarray([True, True, True]),
-        jnp.asarray([2, 0, 3]),
+        new_keys,
         jnp.asarray([True, True, True]),
-        maximum_key=5,
     )
     values = {
         "scalar": jnp.asarray([10.0, 20.0, 30.0]),
@@ -61,18 +64,16 @@ def test_pair_history_remap_preserves_continued_values_and_zeros_births():
 
 def test_pair_remap_reports_duplicates_and_accepts_empty_relations():
     duplicate = phx.discretization.match_particle_pair_keys(
-        jnp.asarray([1, 1]),
+        jnp.asarray([[0, 1, 2, 0, 0], [0, 1, 2, 0, 0]]),
         jnp.asarray([True, True]),
-        jnp.asarray([1, 2]),
+        jnp.asarray([[0, 1, 2, 0, 0], [0, 2, 3, 0, 0]]),
         jnp.asarray([True, True]),
-        maximum_key=3,
     )
     empty = phx.discretization.match_particle_pair_keys(
-        jnp.zeros((0,), dtype=jnp.int64),
+        jnp.zeros((0, 5), dtype=jnp.int64),
         jnp.zeros((0,), dtype=bool),
-        jnp.zeros((0,), dtype=jnp.int64),
+        jnp.zeros((0, 5), dtype=jnp.int64),
         jnp.zeros((0,), dtype=bool),
-        maximum_key=0,
     )
 
     assert not duplicate.successful

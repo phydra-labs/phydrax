@@ -32,7 +32,7 @@ batch_plan = phx.discretization.ParticleInternalBatchPlan(
     owner_indices,
     phx.discretization.RadialShellMeshPlan(
         phx.discretization.ParticleInternalGeometry.SPHERE,
-        shell_count=8,
+        cell_count=8,
     ),
     species_count=3,
 )
@@ -62,7 +62,7 @@ Boundary values are supplied with `ParticleTransportBoundary`. Heat and species 
 Compile through `ParticleConversionProblemIR` and `compile_particle_conversion_problem`. Then select:
 
 - `REFERENCE_ROSENBROCK`: a general implicit reference route;
-- `STRUCTURED_TRIDIAGONAL`: native radial transport solves plus local source updates.
+- `STRUCTURED_NATIVE`: native radial tridiagonal or multidimensional sparse transport solves plus local source updates.
 
 Both routes return `ParticleConversionStepResult`. Candidate and accepted states are distinct. Any solver, thermodynamic, transport, reaction, phase, admissibility, or balance failure rejects the whole conversion step.
 

@@ -18,7 +18,11 @@ from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
+from ...atomistic._graph import (
+    AtomisticGraph,
+    AtomisticGraphExecutionPlan,
+    realize_atomistic_graph,
+)
 from ...atomistic._potential import (
     AbstractAtomisticPotential,
     initialize_atomistic_potential_identity,
@@ -41,8 +45,6 @@ class _NequIPConfiguration(StrictModule, NonTrainableState):
     edge_representation: O3Representation
     tensor_product_plan_ids: tuple[str, ...] = eqx.field(static=True)
     cutoff: float = eqx.field(static=True)
-    maximum_neighbors: int = eqx.field(static=True)
-    maximum_dense_atoms: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     interaction_count: int = eqx.field(static=True)
     radial_basis_count: int = eqx.field(static=True)
@@ -206,8 +208,6 @@ class NequIPPotential(AbstractAtomisticPotential):
         /,
         *,
         cutoff: float,
-        maximum_neighbors: int,
-        maximum_dense_atoms: int,
         feature_count: int = 32,
         interaction_count: int = 3,
         radial_basis_count: int = 20,
@@ -219,8 +219,6 @@ class NequIPPotential(AbstractAtomisticPotential):
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
         cutoff_value = float(cutoff)
-        neighbor_limit = int(maximum_neighbors)
-        dense_limit = int(maximum_dense_atoms)
         features = int(feature_count)
         interactions = int(interaction_count)
         radial_count = int(radial_basis_count)
@@ -228,10 +226,6 @@ class NequIPPotential(AbstractAtomisticPotential):
         tensor_product_limit = int(maximum_tensor_product_parameters)
         if not math.isfinite(cutoff_value) or cutoff_value <= 0.0:
             raise ValueError("cutoff must be finite and positive.")
-        if neighbor_limit < 0 or dense_limit <= 0:
-            raise ValueError(
-                "Neighbor capacity must be non-negative and dense guard positive."
-            )
         if features <= 0 or interactions <= 0 or radial_count <= 0:
             raise ValueError(
                 "NequIP feature, interaction, and radial counts must be positive."
@@ -304,8 +298,6 @@ class NequIPPotential(AbstractAtomisticPotential):
             edge_representation=edge_representation,
             tensor_product_plan_ids=plan_ids,
             cutoff=cutoff_value,
-            maximum_neighbors=neighbor_limit,
-            maximum_dense_atoms=dense_limit,
             feature_count=features,
             interaction_count=interactions,
             radial_basis_count=radial_count,
@@ -322,8 +314,6 @@ class NequIPPotential(AbstractAtomisticPotential):
                 "scale": scale.scale_id,
                 "precision": precision_.policy_id,
                 "cutoff": cutoff_value,
-                "maximum_neighbors": neighbor_limit,
-                "maximum_dense_atoms": dense_limit,
                 "feature_count": features,
                 "interaction_count": interactions,
                 "radial_basis_count": radial_count,
@@ -403,33 +393,30 @@ class NequIPPotential(AbstractAtomisticPotential):
         )
         return packed * edge_mask.astype(dtype)[:, None]
 
-    def _energy_unchecked(
+    def graph_energy(
         self,
-        batch: AtomisticBatch,
-        positions: Array,
+        atomic_numbers: Array,
+        atom_mask: Array,
+        atom_cases: Array,
+        case_count: int,
+        atom_capacity: int,
+        graph: AtomisticGraph,
         /,
-    ) -> tuple[Array, Array, AtomisticGraph]:
-        coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
-        if coordinate.shape != batch.positions.shape:
-            raise ValueError("positions must have the batch position shape.")
-        coordinate = jnp.where(batch.atom_mask[:, :, None], coordinate, 0.0)
-        graph = realize_atomistic_graph(
-            batch,
-            cutoff=self.configuration.cutoff,
-            maximum_neighbors=self.configuration.maximum_neighbors,
-            maximum_dense_atoms=self.configuration.maximum_dense_atoms,
-            positions=coordinate,
-        )
+    ) -> tuple[Array, Array]:
         ir = graph.graph
         if ir.edge_mask is None:
             raise ValueError("NequIP requires explicit edge masks.")
-        numbers = batch.atomic_numbers.reshape((-1,))
+        numbers = jnp.asarray(atomic_numbers).reshape((-1,))
         numbers = eqx.error_if(
             numbers,
             jnp.any(numbers > self.configuration.maximum_atomic_number),
             "Atomic number exceeds NequIPPotential.maximum_atomic_number.",
         )
-        node_mask = batch.atom_mask.reshape((-1,)).astype(self.precision.compute_dtype)
+        node_mask = (
+            jnp.asarray(atom_mask, dtype=bool)
+            .reshape((-1,))
+            .astype(self.precision.compute_dtype)
+        )
         node_count = int(numbers.shape[0])
         packed_size = self.configuration.hidden_representation.packed_size
         values = jnp.zeros((node_count, packed_size), dtype=self.precision.compute_dtype)
@@ -456,21 +443,48 @@ class NequIPPotential(AbstractAtomisticPotential):
         atom_energy = self.readout_energy(self.readout_hidden(invariant_scalar))
         atom_energy = atom_energy * node_mask.astype(atom_energy.dtype)
         total_energy = (
-            jnp.zeros((batch.case_count,), dtype=self.precision.reduction_dtype)
-            .at[batch.atom_cases]
+            jnp.zeros((case_count,), dtype=self.precision.reduction_dtype)
+            .at[jnp.asarray(atom_cases).reshape((-1,))]
             .add(atom_energy.astype(self.precision.reduction_dtype))
         )
         return (
             total_energy.astype(self.precision.output_dtype),
-            atom_energy.reshape((batch.case_count, batch.atom_capacity)).astype(
+            atom_energy.reshape((case_count, atom_capacity)).astype(
                 self.precision.output_dtype
             ),
+        )
+
+    def _energy_unchecked(
+        self,
+        batch: AtomisticBatch,
+        positions: Array,
+        execution: AtomisticGraphExecutionPlan,
+        /,
+    ) -> tuple[Array, Array, AtomisticGraph]:
+        coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
+        if coordinate.shape != batch.positions.shape:
+            raise ValueError("positions must have the batch position shape.")
+        coordinate = jnp.where(batch.atom_mask[:, :, None], coordinate, 0.0)
+        graph = realize_atomistic_graph(
+            batch,
+            execution,
+            cutoff=self.configuration.cutoff,
+            positions=coordinate,
+        )
+        energy, atom_energy = self.graph_energy(
+            batch.atomic_numbers,
+            batch.atom_mask,
+            batch.atom_cases,
+            batch.case_count,
+            batch.atom_capacity,
             graph,
         )
+        return energy, atom_energy, graph
 
     def energy(
         self,
         batch: AtomisticBatch,
+        execution: AtomisticGraphExecutionPlan,
         /,
         *,
         positions: Array | None = None,
@@ -479,15 +493,20 @@ class NequIPPotential(AbstractAtomisticPotential):
 
         self._validate_batch(batch)
         coordinate = batch.positions if positions is None else positions
-        energy, _, graph = self._energy_unchecked(batch, coordinate)
+        energy, _, graph = self._energy_unchecked(batch, coordinate, execution)
         return graph.require_success(energy)
 
-    def __call__(self, structure: AtomicStructure | AtomisticBatch, /) -> Array:
+    def __call__(
+        self,
+        structure: AtomicStructure | AtomisticBatch,
+        execution: AtomisticGraphExecutionPlan,
+        /,
+    ) -> Array:
         if isinstance(structure, AtomicStructure):
             batch = AtomisticBatch.from_structure(structure)
-            return self.energy(batch)[0]
+            return self.energy(batch, execution)[0]
         if isinstance(structure, AtomisticBatch):
-            return self.energy(structure)
+            return self.energy(structure, execution)
         raise TypeError("NequIPPotential expects AtomicStructure or AtomisticBatch.")
 
 

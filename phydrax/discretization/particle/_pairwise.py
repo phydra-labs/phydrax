@@ -17,6 +17,7 @@ from ..._numerics._compensated import two_sum
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation
+from ._periodic_cell import ParticleCell
 from ._precision import ParticleAccumulation
 
 
@@ -251,7 +252,7 @@ def particle_pair_geometry(
     pairs: ParticlePairRelation,
     /,
     *,
-    box: ParticleBox | None = None,
+    box: ParticleBox | ParticleCell | None = None,
 ) -> ParticlePairGeometry:
     """Evaluate finite, zero-safe geometry on canonical particle pairs."""
 
