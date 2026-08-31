@@ -18,15 +18,15 @@ from .._trainable import NonTrainableState
 from .._tree_math import tree_allfinite, tree_where
 from ..discretization.finite_volume._incompressible import FaceVelocity
 from ..discretization.particle import DEMRuntimeState, RigidSphereKinematics
-from ..equations._mac_ib_cfd_dem import (
-    evaluate_resolved_mac_ib_cfd_dem,
-    ResolvedMACIBCFDEMCouplingPlan,
-    ResolvedMACIBEvaluation,
+from ..equations._mac_penalty_ib_cfd_dem import (
+    evaluate_mac_penalty_ib_cfd_dem,
+    MACPenaltyIBCFDEMCouplingPlan,
+    MACPenaltyIBEvaluation,
 )
 from ._structured_incompressible import MACRateProjectionResult
 
 
-class MACResolvedIBWindowStatus(IntFlag):
+class MACPenaltyIBWindowStatus(IntFlag):
     SUCCESS = 0
     INVALID_TIME_STEP = 1
     IB_EVALUATION_FAILED = 2
@@ -37,7 +37,7 @@ class MACResolvedIBWindowStatus(IntFlag):
     WORK_IDENTITY_FAILED = 64
 
 
-class MACResolvedIBCouplingSchedulePlan(StrictModule, NonTrainableState):
+class MACPenaltyIBCouplingSchedulePlan(StrictModule, NonTrainableState):
     """Fixed-ratio DEM subcycling inside one atomic MAC macro window."""
 
     dem_substeps: int = eqx.field(static=True)
@@ -50,13 +50,13 @@ class MACResolvedIBCouplingSchedulePlan(StrictModule, NonTrainableState):
         self.dem_substeps = count
         self.schedule_id = canonical_fingerprint(
             {
-                "kind": "mac-resolved-ib-coupling-schedule",
+                "kind": "mac-penalty-ib-coupling-schedule",
                 "dem_substeps": count,
             }
         )
 
 
-class MACResolvedIBCouplingState(StrictModule):
+class MACPenaltyIBCouplingState(StrictModule):
     """Atomic resolved MAC--DEM state with accepted cumulative ledgers."""
 
     dem_state: DEMRuntimeState
@@ -84,13 +84,13 @@ class MACResolvedIBCouplingState(StrictModule):
     @classmethod
     def initialize(
         cls,
-        coupling: ResolvedMACIBCFDEMCouplingPlan,
+        coupling: MACPenaltyIBCFDEMCouplingPlan,
         dem_state: DEMRuntimeState,
         fluid_state: ArrayLike,
         /,
-    ) -> MACResolvedIBCouplingState:
-        if not isinstance(coupling, ResolvedMACIBCFDEMCouplingPlan):
-            raise TypeError("coupling must be ResolvedMACIBCFDEMCouplingPlan.")
+    ) -> MACPenaltyIBCouplingState:
+        if not isinstance(coupling, MACPenaltyIBCFDEMCouplingPlan):
+            raise TypeError("coupling must be MACPenaltyIBCFDEMCouplingPlan.")
         if not isinstance(dem_state, DEMRuntimeState):
             raise TypeError("dem_state must be DEMRuntimeState.")
         fluid = coupling.fluid.validate_state(fluid_state)
@@ -125,12 +125,12 @@ class MACResolvedIBCouplingState(StrictModule):
         )
 
 
-class MACResolvedIBMacroStepResult(StrictModule):
+class MACPenaltyIBMacroStepResult(StrictModule):
     """Candidate, rollback, and ledger evidence for one atomic macro window."""
 
-    candidate_state: MACResolvedIBCouplingState
-    accepted_state: MACResolvedIBCouplingState
-    last_evaluation: ResolvedMACIBEvaluation
+    candidate_state: MACPenaltyIBCouplingState
+    accepted_state: MACPenaltyIBCouplingState
+    last_evaluation: MACPenaltyIBEvaluation
     pressure_projection: MACRateProjectionResult
     fluid_source_rate: FaceVelocity
     unprojected_rate: FaceVelocity
@@ -162,7 +162,7 @@ class MACResolvedIBMacroStepResult(StrictModule):
 
 
 def _hydrodynamic_kick(
-    coupling: ResolvedMACIBCFDEMCouplingPlan,
+    coupling: MACPenaltyIBCFDEMCouplingPlan,
     state: DEMRuntimeState,
     force: Array,
     torque: Array,
@@ -192,7 +192,7 @@ def _hydrodynamic_kick(
 
 
 def _face_resultant(
-    coupling: ResolvedMACIBCFDEMCouplingPlan,
+    coupling: MACPenaltyIBCFDEMCouplingPlan,
     value: FaceVelocity,
     /,
 ) -> Array:
@@ -215,24 +215,24 @@ def _boundary_loads(state: DEMRuntimeState, /) -> tuple[Array, Array]:
     return force, torque
 
 
-def advance_mac_resolved_ib_window(
-    coupling: ResolvedMACIBCFDEMCouplingPlan,
-    schedule: MACResolvedIBCouplingSchedulePlan,
-    state: MACResolvedIBCouplingState,
+def advance_mac_penalty_ib_cfd_dem_window(
+    coupling: MACPenaltyIBCFDEMCouplingPlan,
+    schedule: MACPenaltyIBCouplingSchedulePlan,
+    state: MACPenaltyIBCouplingState,
     time: ArrayLike,
     fluid_step_size: ArrayLike,
     /,
     *,
     args: Any = None,
-) -> MACResolvedIBMacroStepResult:
+) -> MACPenaltyIBMacroStepResult:
     """Advance one frozen-fluid, fixed-subcycle, atomic MAC--DEM window."""
 
-    if not isinstance(coupling, ResolvedMACIBCFDEMCouplingPlan):
-        raise TypeError("coupling must be ResolvedMACIBCFDEMCouplingPlan.")
-    if not isinstance(schedule, MACResolvedIBCouplingSchedulePlan):
-        raise TypeError("schedule must be MACResolvedIBCouplingSchedulePlan.")
-    if not isinstance(state, MACResolvedIBCouplingState):
-        raise TypeError("state must be MACResolvedIBCouplingState.")
+    if not isinstance(coupling, MACPenaltyIBCFDEMCouplingPlan):
+        raise TypeError("coupling must be MACPenaltyIBCFDEMCouplingPlan.")
+    if not isinstance(schedule, MACPenaltyIBCouplingSchedulePlan):
+        raise TypeError("schedule must be MACPenaltyIBCouplingSchedulePlan.")
+    if not isinstance(state, MACPenaltyIBCouplingState):
+        raise TypeError("state must be MACPenaltyIBCouplingState.")
     fluid_state = coupling.fluid.validate_state(state.fluid_state)
     dtype = fluid_state.dtype
     macro_dt = jnp.asarray(fluid_step_size, dtype=dtype)
@@ -251,7 +251,7 @@ def advance_mac_resolved_ib_window(
     zero_angular = jnp.zeros_like(state.dem_state.kinematics.angular_velocity)
     zero_scalar = jnp.zeros((), dtype=dtype)
     initial_status = jnp.where(
-        valid_window, 0, int(MACResolvedIBWindowStatus.INVALID_TIME_STEP)
+        valid_window, 0, int(MACPenaltyIBWindowStatus.INVALID_TIME_STEP)
     ).astype(jnp.int32)
 
     def substep(carry, index):
@@ -277,7 +277,7 @@ def advance_mac_resolved_ib_window(
             status,
         ) = carry
         subtime = safe_start_time + index.astype(dtype) * dem_dt
-        first = evaluate_resolved_mac_ib_cfd_dem(
+        first = evaluate_mac_penalty_ib_cfd_dem(
             coupling, dem_state.kinematics, fluid_velocity, dem_dt
         )
         pre = _hydrodynamic_kick(
@@ -288,7 +288,7 @@ def advance_mac_resolved_ib_window(
             0.5 * dem_dt,
         )
         detail = coupling.dynamics.step_detailed(index, subtime, pre, dem_dt, args)
-        second = evaluate_resolved_mac_ib_cfd_dem(
+        second = evaluate_mac_penalty_ib_cfd_dem(
             coupling, detail.accepted_state.kinematics, fluid_velocity, dem_dt
         )
         post = _hydrodynamic_kick(
@@ -353,12 +353,12 @@ def advance_mac_resolved_ib_window(
         balance_delta = detail.energy.contact_balance_loss
 
         status = status | jnp.where(
-            detail.successful, 0, int(MACResolvedIBWindowStatus.DEM_STEP_FAILED)
+            detail.successful, 0, int(MACPenaltyIBWindowStatus.DEM_STEP_FAILED)
         ).astype(jnp.int32)
         status = status | jnp.where(
             first.successful & second.successful,
             0,
-            int(MACResolvedIBWindowStatus.IB_EVALUATION_FAILED),
+            int(MACPenaltyIBWindowStatus.IB_EVALUATION_FAILED),
         ).astype(jnp.int32)
         next_carry = (
             accepted_dem,
@@ -480,7 +480,7 @@ def advance_mac_resolved_ib_window(
     momentum_identity = jnp.max(jnp.abs(pre_reaction_residual)) <= tolerance
     work_identity = jnp.abs(hydrodynamic_work_residual) <= tolerance
 
-    candidate = MACResolvedIBCouplingState(
+    candidate = MACPenaltyIBCouplingState(
         dem_state=dem_candidate,
         fluid_state=fluid_candidate,
         cumulative_body_impulse=state.cumulative_body_impulse + body_impulse,
@@ -542,20 +542,20 @@ def advance_mac_resolved_ib_window(
     status = status | jnp.where(
         projection.converged,
         0,
-        int(MACResolvedIBWindowStatus.PRESSURE_PROJECTION_FAILED),
+        int(MACPenaltyIBWindowStatus.PRESSURE_PROJECTION_FAILED),
     ).astype(jnp.int32)
     status = status | jnp.where(
-        finite, 0, int(MACResolvedIBWindowStatus.NONFINITE)
+        finite, 0, int(MACPenaltyIBWindowStatus.NONFINITE)
     ).astype(jnp.int32)
     status = status | jnp.where(
         momentum_identity,
         0,
-        int(MACResolvedIBWindowStatus.MOMENTUM_IDENTITY_FAILED),
+        int(MACPenaltyIBWindowStatus.MOMENTUM_IDENTITY_FAILED),
     ).astype(jnp.int32)
     status = status | jnp.where(
         work_identity,
         0,
-        int(MACResolvedIBWindowStatus.WORK_IDENTITY_FAILED),
+        int(MACPenaltyIBWindowStatus.WORK_IDENTITY_FAILED),
     ).astype(jnp.int32)
     successful = (
         substeps_successful
@@ -563,11 +563,11 @@ def advance_mac_resolved_ib_window(
         & finite
         & momentum_identity
         & work_identity
-        & (status == int(MACResolvedIBWindowStatus.SUCCESS))
+        & (status == int(MACPenaltyIBWindowStatus.SUCCESS))
     )
     accepted = tree_where(successful, candidate, state)
     last_evaluation = jax.tree.map(lambda value: value[-1], evaluations)
-    return MACResolvedIBMacroStepResult(
+    return MACPenaltyIBMacroStepResult(
         candidate_state=candidate,
         accepted_state=accepted,
         last_evaluation=last_evaluation,
@@ -603,9 +603,9 @@ def advance_mac_resolved_ib_window(
 
 
 __all__ = [
-    "MACResolvedIBCouplingSchedulePlan",
-    "MACResolvedIBCouplingState",
-    "MACResolvedIBMacroStepResult",
-    "MACResolvedIBWindowStatus",
-    "advance_mac_resolved_ib_window",
+    "MACPenaltyIBCouplingSchedulePlan",
+    "MACPenaltyIBCouplingState",
+    "MACPenaltyIBMacroStepResult",
+    "MACPenaltyIBWindowStatus",
+    "advance_mac_penalty_ib_cfd_dem_window",
 ]
