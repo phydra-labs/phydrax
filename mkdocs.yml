@@ -123,6 +123,7 @@ nav:
         - Domains and sampling: "guides_domain.md"
         - Discretization: "guides_discretization.md"
         - Computational topology: "guides_computational_topology.md"
+        - Advanced topology: "guides_advanced_topology.md"
         - Particle methods: "guides_particle_methods.md"
         - Finite-molecule atomistic learning: "guides_atomistic.md"
         - Particle-grid splatting: "guides_particle_splatting.md"
@@ -234,6 +235,7 @@ nav:
             - Exact homology: "api/topology/homology.md"
             - Filtrations and persistence: "api/topology/persistence.md"
             - Hodge integration: "api/topology/hodge.md"
+            - Advanced topology: "api/topology/advanced.md"
         - Domains:
             - Overview: "api/domain/index.md"
             - Time: "api/domain/time.md"

@@ -3,7 +3,6 @@
 #
 
 """Free-boundary PINN, operator, probabilistic, and benchmark workflows."""
-
 from ._benchmarks import (
     ExactStefanBenchmark,
     ExactStefanFields,
@@ -53,9 +52,11 @@ from ._stefan import (
     StefanRepresentation,
     StefanRepresentationComparison,
 )
+from ._topology import free_boundary_topology_plan
 
 
 __all__ = [
+    "free_boundary_topology_plan",
     "ExactStefanBenchmark",
     "ExactStefanFields",
     "FSIReport",
