@@ -70,6 +70,9 @@ def test_markov_sampling_is_jittable_reproducible_and_prefix_stable():
     compiled = eqx.filter_jit(run)(state_two, jr.key(4))
     extended = run(state_three, jr.key(4))
 
+    assert isinstance(eager, phx.sampling.AbstractChainSampleResult)
+    assert eager.chain_provenance == "markov:metropolis-hastings:gaussian-random-walk"
+
     assert jnp.array_equal(eager.samples, compiled.samples)
     assert jnp.array_equal(eager.accepted, compiled.accepted)
     assert jnp.array_equal(eager.samples, extended.samples[:2])

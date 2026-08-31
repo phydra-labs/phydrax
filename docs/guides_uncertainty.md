@@ -409,6 +409,50 @@ streaming and batch execution, status-aware diagnostics, and pickle-free compati
 checkpoints. Predictive conversion is available where mathematically defined. Complete
 histories can be exported as portable results.
 
+#### Exact temporal Matérn Gaussian processes
+
+For a scalar time coordinate, Matérn-3/2 and Matérn-5/2 covariances have exact
+two- and three-state Markov representations. Use `compile_state_space_kernel` when
+that supported temporal structure is present instead of paying for dense GP
+factorization:
+
+```python
+observation_times = jnp.linspace(0.0, 1.0, 16)
+prediction_times = jnp.linspace(-0.1, 1.1, 24)
+observation_available = jnp.ones(observation_times.shape, dtype=bool)
+observation_values = jnp.sin(2.0 * jnp.pi * observation_times)
+
+plan = phx.uq.compile_state_space_kernel(
+    phx.kernels.Matern32Kernel(length_scale=0.6),
+    observation_times,
+    prediction_times,
+    train_mask=observation_available,
+)
+temporal_gp = phx.uq.fit_state_space_gaussian_process(
+    plan,
+    observation_values,
+    noise_scale=0.03,
+)
+```
+
+The compiler sorts one irregular schedule, restores the caller's train/query
+orders, and uses exact observation masks for missing or query-only positions.
+Training timestamps must be unique; repeated query timestamps and train-query
+overlaps share a latent state. Filtering is sequential square-root and smoothing is
+one reverse scan, so state history and marginal query output use linear schedule
+storage. Internal inference shifts the earliest external time to zero, so even a
+sub-ULP length scale at a large absolute time origin has a representable stationary
+initial interval. Stationary long-gap covariance remains bounded, and that earlier
+prior keeps kernel gradients away from a zero process root. The result
+contains latent and observation-predictive marginals, the active-observation log
+marginal likelihood, status/masks, prepared and evaluated identity, exact evaluated
+parameters, method provenance, and precision evidence.
+
+This is an exact temporal-kernel route, not a generic conversion of covariance
+algebra. It does not support sums, SHO/CARMA, multidimensional inputs, derivative
+observations, non-Gaussian likelihoods, or parallel filtering, and it does not use
+large-noise missing-data sentinels or covariance repair.
+
 #### Variational latent-SDE smoothing with SING
 
 `sing_smoother` performs natural-gradient variational inference over one
@@ -2515,6 +2559,56 @@ prediction = phx.uq.propagate(
 
 `propagate` records non-finite realizations in `PredictiveField.valid`, or raises with
 `valid_policy="raise"`. Chunked and unchunked evaluation preserve the same samples.
+
+### Nonintrusive polynomial-chaos expansions
+
+Use polynomial chaos when the uncertain inputs are independent scalar `Uniform`
+or `Normal` laws and repeated evaluation of a low- or moderate-dimensional
+observable justifies a finite global polynomial surrogate:
+
+```python
+diffusivity = phx.domain.ProbabilityDomain(
+    phx.uq.Uniform(0.05, 0.15), label="diffusivity"
+)
+source = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(1.0, 0.1), label="source"
+)
+basis = phx.uq.PolynomialChaosBasis((diffusivity, source), 3)
+
+quadrature = phx.integration.ProductIntegrationPlan(
+    {
+        "diffusivity": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussLegendreRule(5)
+        ),
+        "source": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussHermiteRule(5)
+        ),
+    }
+)
+fit = phx.uq.PolynomialChaosProjectionPlan(basis, quadrature).fit(
+    lambda diffusivity, source: forward(diffusivity, source)
+)
+surrogate = fit.expansion
+
+mean = surrogate.mean
+variance = surrogate.variance
+first_order = surrogate.first_order_sobol
+total_order = surrogate.total_order_sobol
+```
+
+Projection preflights point/replicate counts and sample-by-feature basis bytes before
+delegating point generation and probability weights to the existing
+product-integration contract. When model evaluations already exist, fit the same
+basis with `PolynomialChaosRegressionPlan(basis).fit(points, values)`. An unweighted
+square design is an exact linear problem; every weighted or overdetermined design is
+least squares. Underdetermined, nonfinite, and default-policy rank-deficient designs
+fail without a hidden pseudoinverse. Fit results retain solver or integration
+evidence and can be exported with `phx.uq.export_result`.
+
+The coefficient moments and Sobol effects are exact for the fitted orthonormal
+expansion. They do not certify truncation error for a model outside the selected
+span. LogNormal, Gamma, Beta, correlated inputs, adaptive/compressed bases, and
+intrusive stochastic Galerkin systems are intentionally outside this contract.
 
 ### Reusable sparse parameter surrogates
 

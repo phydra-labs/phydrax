@@ -240,6 +240,14 @@ DFT-field, frequency-domain, and reversible adjoints have distinct eligibility
 contracts; reversible execution rejects PML, dispersion, conductivity, active media,
 and other noninvertible state.
 
+`phydrax.solver.maxwell.fourier_modal` is a separate frequency-domain substrate for
+one- or two-dimensionally periodic layer stacks. It uses reciprocal-lattice harmonic
+convolution, full-tensor finite-layer operators, eigendecomposition-free boundary
+cascades, homogeneous ports, diffraction orders, named current planes, and
+Brillouin-zone source integration. It reuses `phydrax.linalg` solves and spectral
+precision but does not reinterpret cochain material arrays or replace compatible
+Maxwell. See [Fourier-modal Maxwell](guides_fourier_modal_maxwell.md).
+
 The same degree-safe calculus applies full tetrahedral Whitney Hodge matrices and their
 inverse actions directly in codifferentials, energy pairings, frequency solves, and
 unstructured time evolution; diagonal metadata is not substituted for those operators.

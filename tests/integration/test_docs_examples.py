@@ -115,6 +115,19 @@ def _shrink_doc_iterations(code: str, *, num_iter_cap: int) -> str:
         code,
     )
     code = re.sub(r"n_epochs\s*=\s*\d+", "n_epochs=2", code)
+    code = re.sub(r"num_iterations\s*=\s*\d+", "num_iterations=0", code)
+    code = re.sub(r"draws_per_iteration\s*=\s*\d+", "draws_per_iteration=2", code)
+    code = re.sub(r"steps_per_draw\s*=\s*\d+", "steps_per_draw=1", code)
+    code = re.sub(r"warmup_steps\s*=\s*\d+", "warmup_steps=0", code)
+    code = re.sub(
+        r"final_evaluation_draws\s*=\s*\d+",
+        "final_evaluation_draws=4",
+        code,
+    )
+    code = re.sub(r"hidden_features\s*=\s*\d+", "hidden_features=8", code)
+    code = re.sub(r"pair_features\s*=\s*\d+", "pair_features=4", code)
+    code = re.sub(r"layer_count\s*=\s*\d+", "layer_count=1", code)
+    code = re.sub(r"determinant_count\s*=\s*\d+", "determinant_count=2", code)
     return code
 
 

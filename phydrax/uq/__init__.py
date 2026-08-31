@@ -48,7 +48,7 @@ from .._likelihoods import (
     ScalarNaturalExponentialFamilyLikelihood,
     StudentTLikelihood,
 )
-from .._probability import AbstractProbabilityLaw
+from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from ..linalg._gaussian_chain import (
     combine_gaussian_filter_elements,
     combine_gaussian_information_elements,
@@ -516,6 +516,14 @@ from ._particle_parameter_score import (
     ParameterizedParticleGenealogicalScoreResult,
 )
 from ._pathfinder import fit_pathfinder, PathfinderResult
+from ._polynomial_chaos import (
+    PolynomialChaosBasis,
+    PolynomialChaosExpansion,
+    PolynomialChaosFitResult,
+    PolynomialChaosProjectionPlan,
+    PolynomialChaosRegressionPlan,
+    PolynomialMultiIndexSet,
+)
 from ._posterior import (
     AbstractBijector,
     ExpBijector,
@@ -712,6 +720,14 @@ from ._state_space_estimation import (
     StateSpaceSampler,
     StateSpaceSamplingWorkflowResult,
 )
+from ._state_space_gp import (
+    compile_state_space_kernel,
+    fit_state_space_gaussian_process,
+    state_space_gaussian_process_status_name,
+    STATE_SPACE_GP_SMOOTHER_FAILURE,
+    StateSpaceGaussianProcessPlan,
+    StateSpaceGaussianProcessResult,
+)
 from ._state_space_inference import (
     EXACT_STATE_SPACE_DEGENERATE_LIKELIHOOD,
     exact_state_space_log_likelihood,
@@ -763,6 +779,7 @@ from ._stochastic_spectra import (
     state_output_cross_spectral_density,
     state_spectral_density,
 )
+from ._topology import TopologyEnsembleSummary
 from ._transport_barycenters import (
     aggregate_free_support_transport_barycenter,
     aggregate_transport_barycenter,
@@ -792,6 +809,7 @@ from ._whitening import GaussianPriorWhitening
 
 
 __all__ = [
+    "TopologyEnsembleSummary",
     "QuantumPOVM",
     "QuantumTomographyData",
     "TomographyLikelihoodResult",
@@ -901,6 +919,7 @@ __all__ = [
     "Normal",
     "Uniform",
     "AbstractProbabilityLaw",
+    "DiagonalNormalLaw",
     "DirichletFamily",
     "AbstractExponentialFamily",
     "BernoulliFamily",
@@ -1265,6 +1284,12 @@ __all__ = [
     "LinearizedVarianceEstimate",
     "propagate_linearized",
     "propagate_linearized_map",
+    "PolynomialChaosBasis",
+    "PolynomialChaosExpansion",
+    "PolynomialChaosFitResult",
+    "PolynomialChaosProjectionPlan",
+    "PolynomialChaosRegressionPlan",
+    "PolynomialMultiIndexSet",
     "GaussianPriorWhitening",
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",
@@ -1412,6 +1437,12 @@ __all__ = [
     "SparseGaussianProcessDiscrepancy",
     "SparseGaussianProcessFactor",
     "value_functional",
+    "StateSpaceGaussianProcessPlan",
+    "StateSpaceGaussianProcessResult",
+    "compile_state_space_kernel",
+    "fit_state_space_gaussian_process",
+    "STATE_SPACE_GP_SMOOTHER_FAILURE",
+    "state_space_gaussian_process_status_name",
     "DiscrepancyIdentifiabilityReport",
     "DiscrepancyIdentifiabilityThresholds",
     "discrepancy_identifiability_report",

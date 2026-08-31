@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._topology import fracture_topology_plan
 from ._workflow import (
     classify_crack_cells,
     CrackGeometry,
@@ -17,6 +18,7 @@ from ._workflow import (
 
 
 __all__ = [
+    "fracture_topology_plan",
     "CrackGeometry",
     "CutCellQuadrature",
     "FixedMeshEnrichmentLayout",

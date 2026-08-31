@@ -3,6 +3,7 @@
 #
 
 from ._addressing import derive_key, SampleAddress
+from ._chain import AbstractChainSampleResult
 from ._designs import (
     get_sampler,
     get_sampler_host,
@@ -44,6 +45,7 @@ from ._types import (
 
 
 __all__ = [
+    "AbstractChainSampleResult",
     "AbstractProposal",
     "AntitheticDesign",
     "CallableProposal",

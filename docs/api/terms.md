@@ -166,7 +166,7 @@ quadrature, masks, and channel geometry.
 
 ---
 
-::: phydrax.terms.FlowMatchingPolicy
+::: phydrax.terms.UniformTimeSamplingPolicy
 
 ---
 
@@ -179,6 +179,37 @@ quadrature, masks, and channel geometry.
 ---
 
 ::: phydrax.terms.AbstractFlowMatchingMetric
+
+## Denoising score matching
+
+`DenoisingScoreMatchingTerm` samples exact Gaussian perturbations from a prescribed
+VP or VE process. The clean data source is an existing normalized
+`WeightedSampleTarget`; fixed sources or once-per-update providers retain masks,
+log weights, independence declarations, and provenance.
+
+The caller supplies a `UniformTimeSamplingPolicy` with a strictly positive lower
+bound. Objective weighting is explicit: unit, conditional transition variance, or
+squared diffusion rate. A perturbation batch is materialized outside differentiation
+and reused for one complete gradient evaluation.
+
+This objective differs from `ScoreMatchingTerm`: denoising uses the known conditional
+transition score and requires no score divergence. The optimal state-time field is the
+marginal score after expectation over clean data, so its finite-sample loss need not
+be zero unless the conditional and marginal scores coincide.
+
+::: phydrax.terms.DenoisingScoreMatchingTerm
+
+---
+
+::: phydrax.terms.DenoisingScoreMatchingBatch
+
+---
+
+::: phydrax.terms.DenoisingScoreMatchingDiagnostics
+
+---
+
+::: phydrax.terms.UniformTimeSamplingPolicy
 
 ## Particle score matching
 

@@ -15,6 +15,31 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
       to use a scan-over-depth execution path when topology is compatible.
     - `scan=True` is primarily a compile-time optimization for deeper repeated blocks.
 
+## Continuum-electron amplitudes
+
+`FermiNet` is a finite, nonperiodic molecular amplitude with a static spin
+partition, rotation-invariant one/two-electron distance streams, full generalized
+determinants, sparsity-aware scaled log envelopes with higher-order-correct
+signed-log products and polynomial singular-term derivatives, a positive
+physical decay floor, and stable signed linear determinant combination. It
+returns `phydrax.operators.LogAmplitude` for
+one configuration or a leading
+batch. Same-spin exchanges are antisymmetric.
+
+The exact continuum-electron path is limited to
+`phydrax.operators.ELECTRONIC_MAX_ELECTRONS == 4`. `FermiNet` rejects larger
+systems; this conservative ceiling bounds the polynomial determinant required for
+honest singular-term derivatives across supported dtypes.
+
+::: phydrax.nn.quantum.FermiNet
+    options:
+        members:
+            - __init__
+            - __call__
+            - envelope_decay
+
+---
+
 ::: phydrax.nn.models.MLP
     options:
         members:
@@ -1368,6 +1393,29 @@ existing lattice callable and costs one model evaluation per group element.
 cross-dimensional embeddings and rejects a projected kernel whose discarded
 relative residual exceeds the configured tolerance.
 
+#### Low-degree Cartesian O(3) tensor products
+
+`O3TensorProductPlan` uses the existing `O3Representation` packing for ordinary
+and pseudo scalars, vectors, and symmetric-traceless rank-two tensors. It
+enumerates legal degree/parity paths through degree two, canonical `uvw`
+multiplicity connections, component normalization, parameter count, contraction
+work, coefficient storage, resource limits, and content identity before
+allocation. `O3TensorProduct` prepares independently derived Cartesian
+Clebsch--Gordan maps and accepts either internal trainable weights or one
+externally supplied weight per planned multiplicity connection.
+
+::: phydrax.nn.operator.layers.O3TensorProductPlan
+
+---
+
+::: phydrax.nn.operator.layers.O3TensorProduct
+
+`phydrax.nn.atomistic.NequIPPotential` uses external radial weights for every
+actual planned instruction. This is continuous O(3) equivariance in three
+dimensions, not the finite lattice-group contract above. Its supported research
+scope is degree at most two and finite nonperiodic molecules; it is neither an
+arbitrary irreps layer nor a high-degree or MACE implementation.
+
 #### Clifford grade fields
 
 `CliffordGradeRepresentation` packs complete exterior grades under one explicit
@@ -2263,14 +2311,16 @@ Three comparison modes are available:
 - **capacity matched** selects the closest architecture-specific size only when
   the target lies in the common feasible parameter range;
 - **compute matched** compiles a normalized loss-and-gradient step and matches
-  measured JAX/XLA FLOPs while recording accessed bytes;
+  compiler-reported JAX/XLA FLOPs while recording compiler-reported accessed bytes;
 - **Pareto** sweeps every requested size scale and reports validation error,
-  worst shifted error, training FLOPs, inference latency, backend peak memory,
-  and parameter count.
+  worst shifted error, training FLOPs, synchronized steady inference latency,
+  compiler-estimated executable memory, and parameter count.
 
-An unmeasurable objective remains `None`; the corresponding Pareto point is
-incomplete and has no dominance label. In particular, CPU runs do not pretend
-to provide accelerator peak-memory measurements.
+Every evaluation records lowering, compilation, first execution, and every steady
+inference sample separately. Compiler memory is the explicit argument + output +
+temporary estimate for that executable; it is not the process allocator high-water mark.
+An unavailable compiler objective remains `None`, making the Pareto point incomplete
+with no dominance label.
 
 Every learning-rate/seed/size trial persists its full training curve, periodic
 validation curve, best checkpoint, optimizer state, PRNG key, elapsed time, and
@@ -2342,12 +2392,13 @@ and nearest held-out realization distance 0.677.
 | `LocalIntegralOperator` | 2,641 | 0.2 | 0.9955 | 0.9960 | 0.9955 | 0.9973 | 0.9974 |
 
 Neither learned model beats the constant reference materially, and neither
-converges for all five seeds. No candidate is promoted. Peak device memory is
-unavailable on the CPU backend, so every Pareto point is explicitly incomplete
-and no dominance label is emitted. POD-ROM is structurally inapplicable because
-the evaluation changes query geometry; requested architectures that are absent
-from every selected scenario now fail before training instead of disappearing
-from the report.
+converges for all five seeds. No candidate is promoted. These historical artifacts
+predate explicit lowering/compilation/first-execution separation and recorded the
+process-level peak-memory field as unavailable on CPU. They remain historical
+diagnostics rather than inputs to the current promotion contract. POD-ROM is
+structurally inapplicable because the evaluation changes query geometry; requested
+architectures that are absent from every selected scenario now fail before training
+instead of disappearing from the report.
 
 
 A separate five-seed `DeepONet` run applies 20% mask-aware sensor dropout to
