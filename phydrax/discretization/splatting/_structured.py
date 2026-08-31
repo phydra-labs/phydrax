@@ -381,7 +381,13 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     def resource_evidence_id(self) -> str:
         return self.preparation.report_id
 
-    def build(self, position: ArrayLike, /) -> ParticleGridSplatState:
+    def build(
+        self,
+        position: ArrayLike,
+        /,
+        *,
+        assignment_input: object = None,
+    ) -> ParticleGridSplatState:
         """Build fixed assignment routes for one runtime particle configuration."""
         raw = jnp.asarray(position)
         expected = (self.particles.capacity, self.particles.ambient_dimension)
@@ -392,6 +398,13 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         geometry = self.plan.precision.geometry(raw)
         if self.plan.execution.geometry_ad == "frozen":
             geometry = jax.lax.stop_gradient(geometry)
+            assignment_input = jax.tree.map(
+                lambda value: (
+                    jax.lax.stop_gradient(value) if eqx.is_array(value) else value
+                ),
+                assignment_input,
+                is_leaf=lambda value: value is None,
+            )
         active = self.particles.active_mask
         finite = jnp.all(jnp.isfinite(geometry), axis=-1)
         invalid = active & ~finite
@@ -405,6 +418,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             self.axis_bounds,
             safe,
             active & finite,
+            assignment_input=assignment_input,
         )
         captured = assignment_state.captured_fractions.astype(
             self.plan.precision.evaluation_dtype

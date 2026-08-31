@@ -669,6 +669,26 @@ from ._markov_cubature import (
     PolynomialRecombination,
     solve_markov_cubature,
 )
+from ._material_point_adaptive import (
+    AdaptiveMPMRolloutPlan,
+    AdaptiveMPMRolloutResult,
+    MPMAdaptiveAttemptJournal,
+    MPMAdaptivePolicy,
+    MPMAdaptiveStatus,
+)
+from ._material_point_fracture import (
+    MPMPhaseFieldEvidence,
+    MPMPhaseFieldFracturePlan,
+    MPMPhaseFieldRuntimeState,
+    MPMPhaseFieldStepResult,
+    PreparedMPMPhaseFieldDynamics,
+)
+from ._material_point_implicit import (
+    ImplicitMPMDiagnostics,
+    ImplicitMPMMethodPlan,
+    ImplicitMPMStepResult,
+    PreparedImplicitMPMDynamics,
+)
 from ._material_point_rollout import (
     MPMGradientKind,
     MPMGradientReport,
@@ -1957,6 +1977,20 @@ __all__ = [
     "MeshVaryingUQAggregator",
     "NonlinearLocalCondensation",
     "RelaxedHPMarking",
+    "AdaptiveMPMRolloutPlan",
+    "AdaptiveMPMRolloutResult",
+    "MPMAdaptiveAttemptJournal",
+    "MPMAdaptivePolicy",
+    "MPMAdaptiveStatus",
+    "ImplicitMPMDiagnostics",
+    "ImplicitMPMMethodPlan",
+    "ImplicitMPMStepResult",
+    "PreparedImplicitMPMDynamics",
+    "MPMPhaseFieldEvidence",
+    "MPMPhaseFieldFracturePlan",
+    "MPMPhaseFieldRuntimeState",
+    "MPMPhaseFieldStepResult",
+    "PreparedMPMPhaseFieldDynamics",
     "MPMGradientKind",
     "MPMGradientReport",
     "MPMReplayEvidence",

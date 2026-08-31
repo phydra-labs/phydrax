@@ -9,7 +9,7 @@ import os
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
@@ -26,6 +26,10 @@ from ..discretization.finite_volume import (
     UnstructuredFiniteVolumeGeometryState,
 )
 from ._finite_volume_runtime import FiniteVolumeRuntimeState
+
+
+if TYPE_CHECKING:
+    from ..discretization.finite_volume import ShallowWaterObservables
 
 
 OutputDiscretization = FiniteVolumeDiscretization | UnstructuredFiniteVolumeDiscretization
@@ -280,6 +284,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         accepted_geometry: UnstructuredFiniteVolumeGeometryState
         | ArrayLike
         | None = None,
+        shallow_water: ShallowWaterObservables | None = None,
     ) -> int:
         self._validate_discretization(discretization)
         if not isinstance(runtime_state, FiniteVolumeRuntimeState):
@@ -353,6 +358,47 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                 compression="gzip",
                 shuffle=True,
             )
+            if shallow_water is not None:
+                from ..discretization.finite_volume import ShallowWaterObservables
+
+                if not isinstance(shallow_water, ShallowWaterObservables):
+                    raise TypeError(
+                        "shallow_water must be ShallowWaterObservables or None."
+                    )
+                expected_shape = discretization.cell_shape
+                if (
+                    shallow_water.depth.shape != expected_shape
+                    or shallow_water.bathymetry.shape != expected_shape
+                    or shallow_water.surface.shape != expected_shape
+                    or shallow_water.velocity.shape
+                    != expected_shape + (discretization.component_count - 1,)
+                ):
+                    raise ValueError(
+                        "Shallow-water observable shapes must match output geometry."
+                    )
+                shallow_group = group.create_group("shallow_water")
+                shallow_group.attrs["bed_id"] = shallow_water.bed_id
+                shallow_group.attrs["precision_id"] = shallow_water.precision_id
+                for name, field in (
+                    ("depth", shallow_water.depth),
+                    ("bathymetry", shallow_water.bathymetry),
+                    ("surface", shallow_water.surface),
+                    ("momentum", shallow_water.momentum),
+                    ("velocity", shallow_water.velocity),
+                    ("energy_density", shallow_water.energy_density),
+                ):
+                    shallow_group.create_dataset(
+                        name,
+                        data=np.asarray(field, dtype=output_dtype),
+                        compression="gzip",
+                        shuffle=True,
+                    )
+                shallow_group.create_dataset(
+                    "wet_mask",
+                    data=np.asarray(shallow_water.wet_mask, dtype=np.bool_),
+                    compression="gzip",
+                    shuffle=True,
+                )
         self._write_xdmf(discretization)
         return index
 

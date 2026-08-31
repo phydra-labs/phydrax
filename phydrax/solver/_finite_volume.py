@@ -17,9 +17,11 @@ from .._numerics._ssp_runge_kutta import ssprk33_step
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import (
+    AbstractNumericalFluxPlan,
     PreparedFiniteVolumeDynamics,
     PreparedTriangleFiniteVolumeDynamics,
     PreparedUnstructuredFiniteVolumeDynamics,
+    ShallowWaterHydrostaticHLLPlan,
 )
 from ..discretization.finite_volume._flux_ledger import (
     FiniteVolumeAcceptedFluxIntegralLedger,
@@ -340,9 +342,7 @@ def unstructured_ssprk33_content_candidate(
         initial_reduction_content = stage_initial.precision.reduction(
             stage_initial.conservative_content
         )
-        q1_reduction_content = stage_initial.precision.reduction(
-            q1.conservative_content
-        )
+        q1_reduction_content = stage_initial.precision.reduction(q1.conservative_content)
         q2_base = stage_initial.precision.storage(
             initial_reduction_content
             + 0.25 * (q1_reduction_content - initial_reduction_content)
@@ -387,8 +387,7 @@ def unstructured_ssprk33_content_candidate(
             )
             qnew_base = stage_initial.precision.storage(
                 initial_reduction_content
-                + (2.0 / 3.0)
-                * (q2_reduction_content - initial_reduction_content)
+                + (2.0 / 3.0) * (q2_reduction_content - initial_reduction_content)
             )
             limited_3 = positivity.limit_stage_rate_ledgers(
                 dynamics.system,
@@ -742,6 +741,13 @@ class UnsplitFiniteVolumeSSPRK3Plan(StrictModule, NonTrainableState):
             dynamics, PreparedUnstructuredFiniteVolumeDynamics
         ) and _has_unstructured_coupling(dynamics):
             raise ValueError(_COUPLED_UNSTRUCTURED_SSPRK3_ERROR)
+        if isinstance(dynamics, PreparedFiniteVolumeDynamics) and isinstance(
+            dynamics.method.interface_solver, ShallowWaterHydrostaticHLLPlan
+        ):
+            raise ValueError(
+                "Hydrostatic wet/dry shallow water requires "
+                "PreparedFiniteVolumeRuntime stage positivity."
+            )
         self.dynamics = dynamics
         self.temporal_method_id = "temporal:ssprk:3:3"
         self.plan_id = canonical_fingerprint(
@@ -780,6 +786,10 @@ class DirectionalSplitFiniteVolumePlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("Directional splitting requires finite-volume dynamics.")
+        if not isinstance(dynamics.method.interface_solver, AbstractNumericalFluxPlan):
+            raise ValueError(
+                "Directional splitting requires a numerical-flux interface method."
+            )
         if splitting not in ("godunov", "strang"):
             raise ValueError("splitting must be 'godunov' or 'strang'.")
         self.dynamics = dynamics

@@ -1,0 +1,10 @@
+{
+  "maturity": "experimental",
+  "capability": "active_blocks",
+  "metrics": {
+    "active_blocks": 4,
+    "overflow": false,
+    "active_nodes": 100
+  },
+  "passed": true
+}
