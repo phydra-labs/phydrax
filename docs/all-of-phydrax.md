@@ -674,6 +674,15 @@ states; and continuous or finite-catalog sizing reports governing members and
 cases. Required evidence aggregates to certified, failed, or incomplete—absence
 never becomes structural safety.
 
+Advanced evidence adds named generalized channels, sourced section frames,
+connection/support mechanics, extensible catenaries, contact/friction,
+nonuniform warping, fiber plasticity transactions, thin-walled GBT/finite-strip
+modes, shell escalation, physical collapse events, dynamic stepping, exact
+precedence search, standards clauses, reliability, calibration, evidence
+acquisition, and immutable structural-twin ancestry. Each layer retains model
+fidelity, applicability, generalized derivative, optimality-gap, uncertainty,
+and data provenance rather than collapsing them into one safety Boolean.
+
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
 pseudo-transient continuation, vector Halley, Type-I/II Anderson, Steffensen,
@@ -1215,6 +1224,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   then aggregate equilibrium, prestress, sequence, and capacity evidence. See
   [Guides → Member-network structural verification](guides_member_network_structures.md)
   and [API → Member-network structural verification](api/member_network.md).
+- **Advanced structural evidence**: analyze catenary/contact regimes, sourced
+  section orientation, joint and support mechanics, warping and fiber plasticity,
+  local/distortional buckling, collapse events, construction-order optimality,
+  standards clauses, reliability, calibration, and evidence acquisition. See
+  [Guides → Advanced structural evidence](guides_advanced_structural_evidence.md)
+  and [API → Advanced structural evidence](api/advanced_structural.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
