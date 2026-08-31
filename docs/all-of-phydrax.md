@@ -631,6 +631,17 @@ physical residuals, nested solver evidence, and stable plan identities; they do
 not infer material behavior, buckling, or stability without the required
 constitutive evidence.
 
+Constitutive member-network verification consumes force-density geometry without
+changing that boundary. Stress-free lengths, materials, physical section
+families, translation/rotation DOFs, exact tension-only active sets,
+corotational frames, discrete rods, and surface hinges define prepared elastic
+equilibrium. Local/generalized buckling and continuation retain their assumptions;
+prestress inversion includes fabrication, actuator, stability, and sequence
+evidence; construction stages transfer immutable external IDs and reference
+states; and continuous or finite-catalog sizing reports governing members and
+cases. Required evidence aggregates to certified, failed, or incomplete—absence
+never becomes structural safety.
+
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
 pseudo-transient continuation, vector Halley, Type-I/II Anderson, Steffensen,
@@ -1159,6 +1170,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   tangent stability, per-case/per-graph evidence, and continuation branches. See
   [Guides → Force-density form-finding](guides_force_density.md) and
   [API → Force-density structural design](api/force_density.md).
+- **Member-network structural verification**: supply stress-free references,
+  materials, physical sections, cable unilateral laws, frame/rod/hinge bending,
+  local/global buckling assumptions, construction stages, and sizing candidates;
+  then aggregate equilibrium, prestress, sequence, and capacity evidence. See
+  [Guides → Member-network structural verification](guides_member_network_structures.md)
+  and [API → Member-network structural verification](api/member_network.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

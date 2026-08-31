@@ -1,0 +1,40 @@
+{
+  "axial": [
+    {
+      "member_count": 24,
+      "node_count": 25,
+      "plan_seconds": 4.4352901249985734,
+      "refresh_seconds": 1.8590675139991315,
+      "residual_norm": 9.099912297645509e-12,
+      "solve_seconds": 2.7851102919994446,
+      "status": 0,
+      "tip_displacement": 0.0009999999999998899
+    },
+    {
+      "member_count": 99,
+      "node_count": 100,
+      "plan_seconds": 4.500370957997802,
+      "refresh_seconds": 1.9397191110001586,
+      "residual_norm": 3.33164079821255e-11,
+      "solve_seconds": 2.450468709001143,
+      "status": 0,
+      "tip_displacement": 0.0009999999999996678
+    },
+    {
+      "member_count": 499,
+      "node_count": 500,
+      "plan_seconds": 4.448996833998535,
+      "refresh_seconds": 1.9458718333335128,
+      "residual_norm": 8.680156490013362e-10,
+      "solve_seconds": 2.8027476660026878,
+      "status": 0,
+      "tip_displacement": 0.001000000000000556
+    }
+  ],
+  "beam": {
+    "minimum_tangent_eigenvalue": 785.3876011756549,
+    "status": 0,
+    "tip_y": -0.00035833382797227073,
+    "wall_seconds": 13.34937116600122
+  }
+}
