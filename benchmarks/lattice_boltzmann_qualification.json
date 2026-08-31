@@ -1,0 +1,242 @@
+{
+  "couette": {
+    "cases": [
+      {
+        "cell_size": 0.125,
+        "height": 8,
+        "maximum_mach": 0.010148735197552734,
+        "minimum_density": 0.9999999999999146,
+        "minimum_population": 0.027240420701674494,
+        "relative_l2": 1.769945965669617e-09,
+        "relative_mass_drift": 8.515410598874951e-14,
+        "steps": 1280,
+        "successful": true,
+        "time_step": 0.078125
+      },
+      {
+        "cell_size": 0.08333333333333333,
+        "height": 12,
+        "maximum_mach": 0.006916175098176474,
+        "minimum_density": 0.9999999999998325,
+        "minimum_population": 0.02742324871796208,
+        "relative_l2": 1.9400504165478667e-09,
+        "relative_mass_drift": 1.6974076465380171e-13,
+        "steps": 2880,
+        "successful": true,
+        "time_step": 0.034722222222222224
+      },
+      {
+        "cell_size": 0.0625,
+        "height": 16,
+        "maximum_mach": 0.005243513186108992,
+        "minimum_density": 0.9999999999996594,
+        "minimum_population": 0.027513261360557397,
+        "relative_l2": 2.002787389821571e-09,
+        "relative_mass_drift": 3.4094949086238557e-13,
+        "steps": 5120,
+        "successful": true,
+        "time_step": 0.01953125
+      }
+    ],
+    "finest_relative_l2": 2.002787389821571e-09,
+    "observed_order": -0.18145549465762612,
+    "passed": true
+  },
+  "d3q19_shear": {
+    "elapsed_time": 0.09765625,
+    "maximum_mach": 0.01462524604269435,
+    "minimum_density": 0.9999999999999989,
+    "minimum_population": 0.0270610421352062,
+    "passed": true,
+    "relative_error": 0.008062813477847519,
+    "relative_mass_drift": 1.1102230246251565e-16,
+    "shape": [
+      16,
+      16,
+      16
+    ],
+    "steps": 5,
+    "successful": true,
+    "time_step": 0.01953125
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "416fb3818ae46051700967a6c86a4fc73273f7791bc0a65ff0218662b9136130",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.1",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.1",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "79b81a6dbcc23cb1341242cf5f4615f9f74d80c5275fc4837797953a6407594e",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "poiseuille": {
+    "cases": [
+      {
+        "cell_size": 0.125,
+        "height": 8,
+        "maximum_mach": 0.006660107456397223,
+        "minimum_density": 0.999999999999913,
+        "minimum_population": 0.027453517329387528,
+        "relative_l2": 2.771435267821208e-09,
+        "relative_mass_drift": 8.548717289613705e-14,
+        "steps": 1280,
+        "successful": true,
+        "time_step": 0.078125
+      },
+      {
+        "cell_size": 0.08333333333333333,
+        "height": 12,
+        "maximum_mach": 0.004479225708706694,
+        "minimum_density": 0.9999999999998226,
+        "minimum_population": 0.02756132691436693,
+        "relative_l2": 2.7161943786515488e-09,
+        "relative_mass_drift": 1.721092404396687e-13,
+        "steps": 2880,
+        "successful": true,
+        "time_step": 0.034722222222222224
+      },
+      {
+        "cell_size": 0.0625,
+        "height": 16,
+        "maximum_mach": 0.003369697225191978,
+        "minimum_density": 0.99999999999966,
+        "minimum_population": 0.027615334593985286,
+        "relative_l2": 2.6982635467631373e-09,
+        "relative_mass_drift": 3.4083846855992306e-13,
+        "steps": 5120,
+        "successful": true,
+        "time_step": 0.01953125
+      }
+    ],
+    "finest_relative_l2": 2.6982635467631373e-09,
+    "observed_order": 0.03932753276397891,
+    "passed": true
+  },
+  "runtime": {
+    "boundary_id": "770adddac19725eed21970a5437f4eafc42dfd6794e83ed583dc5662c18b723d",
+    "compilation_id": "774a73a3a721afef944087e9930dd8df892123eb6090e6cecc2aa1e49cd666d0",
+    "compilation_seconds": 0.134806709,
+    "compiler": {
+      "argument_bytes": 1179648,
+      "bytes_accessed": 82856936,
+      "estimated_device_memory_bytes": 4391192,
+      "flops": 40534020,
+      "generated_code_bytes": 0,
+      "output_bytes": 1179672,
+      "source": "jax-compiled-executable",
+      "temporary_bytes": 2031872
+    },
+    "discretization_id": "af02c3c3d1053720c84220ad1d5ace06c2d0f7dd299bd48628eaaab7cb23a448",
+    "fluid_cells": 16384,
+    "fluid_site_mlups": 14.52697340829715,
+    "logical_state_bytes": 1179648,
+    "lowering_seconds": 0.060666167,
+    "method_id": "0379ecac433c5f9facc99cd984c2f6665fb8d70f00214cb7225eae08b890240f",
+    "population_count": 9,
+    "problem_id": "bd340d253beadd4bbdc73d3cb0438702fef17ad03c78514421239f102d2350d2",
+    "shape": [
+      128,
+      128
+    ],
+    "timing": {
+      "count": 5,
+      "max_ms": 3.626041,
+      "mean_ms": 1.597508,
+      "median_ms": 1.1278329999999999,
+      "min_ms": 1.0040419999999999,
+      "samples_ms": [
+        1.1278329999999999,
+        1.0040419999999999,
+        1.1850829999999999,
+        3.626041,
+        1.044541
+      ],
+      "std_ms": 1.0162292570659437
+    },
+    "total_site_mlups": 14.52697340829715
+  },
+  "scope": {
+    "collisions": [
+      "BGK",
+      "TRT"
+    ],
+    "dtypes": [
+      "float64"
+    ],
+    "forcing": "Guo",
+    "geometry": "periodic and planar halfway walls",
+    "lattices": [
+      "D2Q9",
+      "D3Q19"
+    ]
+  },
+  "shear_decay": {
+    "cases": [
+      {
+        "cell_size": 0.0625,
+        "elapsed_time": 0.09765625,
+        "expected_amplitude": 0.0462895725601809,
+        "mass_defect": 0.0,
+        "recovered_amplitude": 0.045879823101734524,
+        "relative_error": 0.008851873883986837,
+        "resolution": 16,
+        "steps": 5,
+        "successful": true,
+        "time_step": 0.01953125
+      },
+      {
+        "cell_size": 0.041666666666666664,
+        "elapsed_time": 0.10416666666666667,
+        "expected_amplitude": 0.04605223529290192,
+        "mass_defect": 0.0,
+        "recovered_amplitude": 0.04587009977295545,
+        "relative_error": 0.003954976751683266,
+        "resolution": 24,
+        "steps": 12,
+        "successful": true,
+        "time_step": 0.008680555555555556
+      },
+      {
+        "cell_size": 0.03125,
+        "elapsed_time": 0.09765625,
+        "expected_amplitude": 0.0462895725601809,
+        "mass_defect": 1.1102230246251568e-16,
+        "recovered_amplitude": 0.04618707121897901,
+        "relative_error": 0.0022143505660725082,
+        "resolution": 32,
+        "steps": 20,
+        "successful": true,
+        "time_step": 0.0048828125
+      }
+    ],
+    "finest_relative_error": 0.0022143505660725082,
+    "observed_order": 1.9983043597745265,
+    "passed": true
+  }
+}

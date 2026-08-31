@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from ..._phase_field import AbstractBulkFreeEnergy, DoubleWellFreeEnergy
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization import FiniteElementDiscretization
@@ -24,28 +25,10 @@ from ...solver import (
 )
 
 
-class DoubleWellFreeEnergy(StrictModule, NonTrainableState):
-    scale: Array
-
-    def __init__(self, scale: ArrayLike = 1.0, /):
-        scale_ = jnp.asarray(scale)
-        if scale_.shape != () or not bool(jnp.isfinite(scale_)) or scale_ <= 0.0:
-            raise ValueError("Double-well scale must be one positive finite scalar.")
-        self.scale = scale_
-
-    def density(self, value: ArrayLike, /) -> Array:
-        value_ = jnp.asarray(value)
-        return 0.25 * self.scale * (value_**2 - 1.0) ** 2
-
-    def derivative(self, value: ArrayLike, /) -> Array:
-        value_ = jnp.asarray(value)
-        return self.scale * (value_**3 - value_)
-
-
 class AllenCahnParameters(StrictModule, NonTrainableState):
     mobility: Array
     gradient_coefficient: Array
-    free_energy: DoubleWellFreeEnergy
+    free_energy: AbstractBulkFreeEnergy
 
     def __init__(
         self,
@@ -53,7 +36,7 @@ class AllenCahnParameters(StrictModule, NonTrainableState):
         gradient_coefficient: ArrayLike,
         /,
         *,
-        free_energy: DoubleWellFreeEnergy | None = None,
+        free_energy: AbstractBulkFreeEnergy | None = None,
     ):
         mobility_ = jnp.asarray(mobility)
         gradient = jnp.asarray(gradient_coefficient)
@@ -74,7 +57,7 @@ class AllenCahnParameters(StrictModule, NonTrainableState):
 class CahnHilliardParameters(StrictModule, NonTrainableState):
     mobility: Array
     gradient_coefficient: Array
-    free_energy: DoubleWellFreeEnergy
+    free_energy: AbstractBulkFreeEnergy
 
     def __init__(
         self,
@@ -82,7 +65,7 @@ class CahnHilliardParameters(StrictModule, NonTrainableState):
         gradient_coefficient: ArrayLike,
         /,
         *,
-        free_energy: DoubleWellFreeEnergy | None = None,
+        free_energy: AbstractBulkFreeEnergy | None = None,
     ):
         mobility_ = jnp.asarray(mobility)
         gradient = jnp.asarray(gradient_coefficient)
@@ -144,7 +127,7 @@ def phase_field_energy(
     discretization: FiniteElementDiscretization,
     field_name: str,
     state: ArrayLike,
-    parameters: AllenCahnParameters,
+    parameters: AllenCahnParameters | CahnHilliardParameters,
     /,
 ) -> Array:
     value = jnp.asarray(state)
@@ -435,7 +418,6 @@ def cahn_hilliard_schedule(
 __all__ = [
     "AllenCahnParameters",
     "CahnHilliardParameters",
-    "DoubleWellFreeEnergy",
     "PhaseFieldStepResult",
     "allen_cahn_schedule",
     "allen_cahn_form",
