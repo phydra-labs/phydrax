@@ -17,7 +17,13 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import CochainDiscretization
 from ..linalg import DenseLinearOperator, eigen as eigen_linalg, OperatorProperties
-from ._maxwell import AbstractPreparedMaxwellConstitutive
+from ._maxwell import (
+    AbstractPreparedMaxwellConstitutive,
+    CompatibleMaxwellState,
+    MaxwellCochainLayout,
+    PreparedCompatibleMaxwell,
+)
+from ._maxwell_sources import MaxwellSourceForcing
 
 
 def _paired_matrix(metric: Array, matrix: Array, /) -> Array:
@@ -89,19 +95,23 @@ class FrequencyMaxwellOperator(StrictModule):
     constitutive: AbstractPreparedMaxwellConstitutive
     angular_frequency: Array
     material_state: Any
+    layout: MaxwellCochainLayout
     operator_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         cochain: CochainDiscretization,
+        layout: MaxwellCochainLayout,
         constitutive: AbstractPreparedMaxwellConstitutive,
         angular_frequency: ArrayLike,
         /,
         *,
         material_state: Any = None,
     ):
-        if not isinstance(cochain, CochainDiscretization) or cochain.max_degree != 3:
-            raise TypeError("Frequency Maxwell requires a 3-D CochainDiscretization.")
+        if not isinstance(cochain, CochainDiscretization):
+            raise TypeError("Frequency Maxwell requires a CochainDiscretization.")
+        if not isinstance(layout, MaxwellCochainLayout):
+            raise TypeError("Frequency Maxwell requires a MaxwellCochainLayout.")
         if not isinstance(constitutive, AbstractPreparedMaxwellConstitutive):
             raise TypeError("constitutive must be prepared Maxwell material data.")
         if not constitutive.capabilities.frequency_domain:
@@ -118,13 +128,17 @@ class FrequencyMaxwellOperator(StrictModule):
             raise ValueError("angular_frequency must be a finite nonnegative scalar.")
         constitutive.validate_state(material_state)
         self.cochain = cochain
+        if constitutive.layout_id != layout.layout_id:
+            raise ValueError("Frequency material and Maxwell layout do not match.")
         self.constitutive = constitutive
+        self.layout = layout
         self.angular_frequency = frequency
         self.material_state = material_state
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "frequency-maxwell-operator",
                 "cochain": cochain.prepared_id,
+                "layout": layout.layout_id,
                 "constitutive": constitutive.prepared_id,
                 "angular_frequency": float(np.asarray(frequency)),
             }
@@ -132,19 +146,49 @@ class FrequencyMaxwellOperator(StrictModule):
 
     @property
     def size(self) -> int:
-        return self.cochain.cell_counts[1]
+        return self.layout.electric_count
 
     def mv(self, electric: ArrayLike, /) -> Array:
         electric_ = jnp.asarray(electric)
         if electric_.shape != (self.size,):
             raise ValueError("Frequency Maxwell electric field has wrong shape.")
-        curl = self.cochain.exterior_derivative(1, electric_)
+        curl = self.cochain.exterior_derivative(self.layout.electric_degree, electric_)
         magnetic = self.constitutive.magnetic_field(curl, self.material_state)
-        curl_curl = self.cochain.codifferential(2, magnetic)
+        curl_curl = self.cochain.codifferential(self.layout.magnetic_degree, magnetic)
         displacement = self.constitutive.electric_displacement(
             electric_, self.material_state
         )
         return curl_curl - self.angular_frequency**2 * displacement
+
+    def defect(
+        self, electric: ArrayLike, source: ArrayLike, /
+    ) -> MaxwellHarmonicDefectReport:
+        electric_, source_ = jnp.asarray(electric), jnp.asarray(source)
+        if electric_.shape != (self.size,) or source_.shape != (self.size,):
+            raise ValueError("Frequency Maxwell defect vectors have the wrong shape.")
+        applied = self.mv(electric_)
+        residual = applied - source_
+        metric = self.cochain.hodge_metric(self.layout.electric_degree)
+        norm = lambda value: jnp.sqrt(
+            jnp.maximum(
+                jnp.real(jnp.vdot(value, _paired_matrix(metric, value[:, None])[:, 0])),
+                0.0,
+            )
+        )
+        absolute = norm(residual)
+        denominator = norm(applied) + norm(source_)
+        relative = absolute / jnp.maximum(denominator, jnp.finfo(absolute.dtype).tiny)
+        zero = jnp.asarray(0.0, dtype=absolute.dtype)
+        return MaxwellHarmonicDefectReport(
+            absolute,
+            relative,
+            absolute,
+            zero,
+            zero,
+            zero,
+            jnp.asarray(True),
+            "exp(-i*omega*t)",
+        )
 
     def adjoint_mv(self, electric: ArrayLike, /) -> Array:
         electric_ = jnp.asarray(electric)
@@ -221,6 +265,7 @@ class FrequencyMaxwellOperator(StrictModule):
             raise ValueError("mode_count is outside the operator dimension.")
         zero_frequency = FrequencyMaxwellOperator(
             self.cochain,
+            self.layout,
             self.constitutive,
             0.0,
             material_state=self.material_state,
@@ -234,7 +279,7 @@ class FrequencyMaxwellOperator(StrictModule):
             in_axes=1,
             out_axes=1,
         )(identity)
-        hodge = self.cochain.hodge_metric(1)
+        hodge = self.cochain.hodge_metric(self.layout.electric_degree)
         paired_stiffness = _paired_matrix(hodge, stiffness)
         paired_mass = _paired_matrix(hodge, mass)
         problem = eigen_linalg.GeneralizedEigenproblem(
@@ -271,6 +316,179 @@ class FrequencyMaxwellOperator(StrictModule):
                 }
             ),
         )
+
+
+class MaxwellHarmonicDefectReport(StrictModule):
+    absolute_norm: Array
+    relative_norm: Array
+    electric_defect: Array
+    magnetic_defect: Array
+    charge_defect: Array
+    auxiliary_defect: Array
+    eligible: Array
+    convention: str = eqx.field(static=True)
+
+
+class MaxwellHarmonicSource(StrictModule):
+    electric_current: Array
+    magnetic_current: Array
+    convention: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        electric_current: ArrayLike,
+        magnetic_current: ArrayLike,
+        /,
+        *,
+        convention: str = "exp(-i*omega*t)",
+    ):
+        if convention != "exp(-i*omega*t)":
+            raise ValueError(
+                "Maxwell harmonic source convention must be exp(-i*omega*t)."
+            )
+        self.electric_current = jnp.asarray(electric_current)
+        self.magnetic_current = jnp.asarray(magnetic_current)
+        self.convention = convention
+
+
+def _hodge_norm(metric: Array, value: Array, /) -> Array:
+    paired = metric * value if metric.ndim == 1 else metric @ value
+    return jnp.sqrt(jnp.maximum(jnp.real(jnp.vdot(value, paired)), 0.0))
+
+
+def _tree_norm(tree: Any, /) -> Array:
+    leaves = tuple(
+        leaf for leaf in jax.tree_util.tree_leaves(tree) if isinstance(leaf, jax.Array)
+    )
+    if not leaves:
+        return jnp.asarray(0.0)
+    return jnp.sqrt(sum(jnp.real(jnp.vdot(leaf, leaf)) for leaf in leaves))
+
+
+def compatible_maxwell_harmonic_defect(
+    runtime: PreparedCompatibleMaxwell,
+    state_phasor: CompatibleMaxwellState,
+    source_phasor: MaxwellHarmonicSource,
+    angular_frequency: ArrayLike,
+    step_size: ArrayLike,
+    /,
+) -> MaxwellHarmonicDefectReport:
+    """Defect of the complete affine leapfrog map for exp(-i*omega*t)."""
+
+    if not isinstance(runtime, PreparedCompatibleMaxwell):
+        raise TypeError("Complete Maxwell harmonic defect requires a prepared runtime.")
+    if not runtime.capabilities.linear_time_invariant or runtime.capabilities.nonlinear:
+        raise ValueError(
+            "Complete harmonic defect requires linear time-invariant dynamics."
+        )
+    state = runtime._state(state_phasor)
+    if not isinstance(source_phasor, MaxwellHarmonicSource):
+        raise TypeError("source_phasor must be MaxwellHarmonicSource.")
+    if source_phasor.electric_current.shape != (runtime.layout.electric_count,):
+        raise ValueError("Harmonic electric source has the wrong retained shape.")
+    if source_phasor.magnetic_current.shape != (runtime.layout.magnetic_count,):
+        raise ValueError("Harmonic magnetic source has the wrong retained shape.")
+    omega, dt = jnp.asarray(angular_frequency), runtime._step_size(step_size)
+    if omega.shape != () or jnp.iscomplexobj(omega):
+        raise ValueError("Harmonic angular frequency must be a real scalar.")
+    phase_half = jnp.exp(-0.5j * omega * dt)
+    phase_full = phase_half**2
+    base = MaxwellSourceForcing(
+        source_phasor.electric_current,
+        source_phasor.magnetic_current,
+    )
+    samples = (
+        base,
+        MaxwellSourceForcing(
+            phase_half * source_phasor.electric_current,
+            phase_half * source_phasor.magnetic_current,
+        ),
+        MaxwellSourceForcing(
+            phase_full * source_phasor.electric_current,
+            phase_full * source_phasor.magnetic_current,
+        ),
+    )
+    coefficients = (
+        None if runtime.pml is None else runtime.pml.bind_coefficients(dt, 0.5 * dt)
+    )
+    stepped = runtime._step_core(
+        jnp.asarray(0.0),
+        state,
+        dt,
+        None,
+        cpml_coefficients=coefficients,
+        source_samples=samples,
+    )
+    target_material = jax.tree_util.tree_map(
+        lambda value: phase_full * value,
+        state.auxiliary.material,
+    )
+    target_boundary = jax.tree_util.tree_map(
+        lambda value: phase_full * value,
+        state.auxiliary.boundary,
+    )
+    d_defect = (
+        stepped.primary.electric_displacement
+        - phase_full * state.primary.electric_displacement
+    )
+    b_defect = stepped.primary.magnetic_flux - phase_full * state.primary.magnetic_flux
+    q_defect = stepped.primary.charge - phase_full * state.primary.charge
+    material_defect = jax.tree_util.tree_map(
+        lambda left, right: left - right,
+        stepped.auxiliary.material,
+        target_material,
+    )
+    boundary_defect = jax.tree_util.tree_map(
+        lambda left, right: left - right,
+        stepped.auxiliary.boundary,
+        target_boundary,
+    )
+    electric_norm = _hodge_norm(
+        runtime.plan.bridge.cochain.hodge_metric(runtime.layout.electric_degree),
+        d_defect,
+    )
+    magnetic_norm = _hodge_norm(
+        runtime.plan.bridge.cochain.hodge_metric(runtime.layout.magnetic_degree),
+        b_defect,
+    )
+    charge_norm = jnp.linalg.norm(q_defect)
+    auxiliary_norm = jnp.sqrt(
+        _tree_norm(material_defect) ** 2 + _tree_norm(boundary_defect) ** 2
+    )
+    absolute = jnp.sqrt(
+        electric_norm**2 + magnetic_norm**2 + charge_norm**2 + auxiliary_norm**2
+    )
+    state_scale = (
+        _hodge_norm(
+            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.electric_degree),
+            stepped.primary.electric_displacement,
+        )
+        + _hodge_norm(
+            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.magnetic_degree),
+            stepped.primary.magnetic_flux,
+        )
+        + jnp.linalg.norm(stepped.primary.charge)
+        + _tree_norm(stepped.auxiliary)
+        + _hodge_norm(
+            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.electric_degree),
+            state.primary.electric_displacement,
+        )
+        + _hodge_norm(
+            runtime.plan.bridge.cochain.hodge_metric(runtime.layout.magnetic_degree),
+            state.primary.magnetic_flux,
+        )
+    )
+    relative = absolute / jnp.maximum(state_scale, jnp.finfo(absolute.dtype).tiny)
+    return MaxwellHarmonicDefectReport(
+        absolute,
+        relative,
+        electric_norm,
+        magnetic_norm,
+        charge_norm,
+        auxiliary_norm,
+        jnp.asarray(True),
+        source_phasor.convention,
+    )
 
 
 class FrequencyMaxwellAdjointResult(StrictModule):
@@ -328,6 +546,9 @@ __all__ = [
     "FrequencyMaxwellEigenResult",
     "FrequencyMaxwellOperator",
     "FrequencyMaxwellSolveResult",
+    "MaxwellHarmonicDefectReport",
+    "MaxwellHarmonicSource",
+    "compatible_maxwell_harmonic_defect",
     "eigenspace_directional_derivative",
     "frequency_maxwell_adjoint",
 ]

@@ -152,14 +152,10 @@ def compose_boundary_relations(
         jnp.maximum(left.diagnostics.solve_residual, right.diagnostics.solve_residual),
         _matrix_relative_residual(system, middle, rhs),
     )
-    initializer_remainder = jnp.maximum(
-        left.diagnostics.initializer_remainder,
-        right.diagnostics.initializer_remainder,
+    initializer_remainder = (
+        left.diagnostics.initializer_remainder + right.diagnostics.initializer_remainder
     )
-    paired_error = jnp.maximum(
-        left.diagnostics.paired_error,
-        right.diagnostics.paired_error,
-    )
+    paired_error = left.diagnostics.paired_error + right.diagnostics.paired_error
     finite = (
         left.diagnostics.finite
         & right.diagnostics.finite

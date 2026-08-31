@@ -24,6 +24,7 @@ from ._maxwell import (
     AbstractMaxwellConstitutivePlan,
     CompatibleMaxwellState,
     MaxwellAuxiliaryState,
+    MaxwellCochainLayout,
     MaxwellPrimaryState,
 )
 
@@ -323,6 +324,7 @@ class UnstructuredMaxwellPlan(StrictModule):
     """Compatible D/B evolution on an arbitrary three-dimensional cochain complex."""
 
     cochain: CochainDiscretization
+    layout: MaxwellCochainLayout
     constitutive: AbstractMaxwellConstitutivePlan
     spectral_upper_bound: float = eqx.field(static=True)
     courant_factor: float = eqx.field(static=True)
@@ -347,7 +349,9 @@ class UnstructuredMaxwellPlan(StrictModule):
             raise ValueError("spectral_upper_bound must be finite and positive.")
         if not np.isfinite(factor) or factor <= 0.0 or factor > 1.0:
             raise ValueError("courant_factor must lie in (0, 1].")
+        layout = MaxwellCochainLayout(cochain, "full_3d")
         self.cochain = cochain
+        self.layout = layout
         self.constitutive = constitutive
         self.spectral_upper_bound = bound
         self.courant_factor = factor
@@ -355,6 +359,7 @@ class UnstructuredMaxwellPlan(StrictModule):
             {
                 "kind": "unstructured-maxwell-plan",
                 "cochain": cochain.prepared_id,
+                "layout": layout.layout_id,
                 "constitutive": constitutive.plan_id,
                 "spectral_upper_bound": bound,
                 "courant_factor": factor,
@@ -372,7 +377,7 @@ class PreparedUnstructuredMaxwell(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: UnstructuredMaxwellPlan, /):
-        constitutive = plan.constitutive.prepare(plan.cochain)
+        constitutive = plan.constitutive.prepare(plan.cochain, plan.layout)
         self.plan = plan
         self.constitutive = constitutive
         self.stable_dt = (

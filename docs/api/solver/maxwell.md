@@ -9,6 +9,87 @@ Phydrax provides complementary Maxwell substrates.
 - `phydrax.solver.maxwell.fourier_modal` solves transversely periodic layered
   frequency-domain problems with boundary-field propagation.
 
+## Compatible time-domain lifecycle
+
+::: phydrax.solver.maxwell.MaxwellCochainLayout
+
+---
+
+::: phydrax.solver.maxwell.MaxwellResourcePolicy
+
+---
+
+::: phydrax.solver.maxwell.MaxwellMagneticConstraintPolicy
+
+---
+
+::: phydrax.solver.maxwell.CompatibleMaxwellPlan
+
+---
+
+::: phydrax.solver.maxwell.PreparedCompatibleMaxwell
+
+---
+
+::: phydrax.solver.maxwell.CompatibleMaxwellRefreshSpec
+
+---
+
+::: phydrax.solver.maxwell.refresh_compatible_maxwell
+
+---
+
+::: phydrax.solver.maxwell.solve_compatible_maxwell
+
+## Sources, observers, and ports
+
+::: phydrax.solver.maxwell.MaxwellElectricCurrentSourcePlan
+
+---
+
+::: phydrax.solver.maxwell.MaxwellPairedCurrentSourcePlan
+
+---
+
+::: phydrax.solver.maxwell.MaxwellHuygensSourcePlan
+
+---
+
+
+::: phydrax.solver.maxwell.MaxwellModePortPlan
+
+---
+
+::: phydrax.solver.maxwell.DFTObserverPlan
+
+## Harmonic and material evidence
+
+::: phydrax.solver.maxwell.MaxwellHarmonicDefectReport
+
+---
+
+::: phydrax.solver.maxwell.compatible_maxwell_harmonic_defect
+
+---
+
+::: phydrax.solver.maxwell.MaxwellScalarMaterialAssemblyPolicy
+
+---
+
+::: phydrax.solver.maxwell.assemble_scalar_maxwell_material
+
+## Independent case batching
+
+::: phydrax.solver.maxwell.PreparedCompatibleMaxwellCaseBatch
+
+---
+
+::: phydrax.solver.maxwell.prepare_compatible_maxwell_case_batch
+
+---
+
+::: phydrax.solver.maxwell.solve_compatible_maxwell_case_batch
+
 ## Fourier-modal lifecycle
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalMaxwellProblem

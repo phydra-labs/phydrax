@@ -130,8 +130,15 @@ advance periodic 3-D Maxwell fields with a trajectory current that certifies
 discrete continuity. Fixed-population free-surface FLIP separately binds cell and
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
-SPH/VOF interface geometry. Explicit material point dynamics compose that
-transfer with quadratic nodal B-splines, matched
+SPH/VOF interface geometry.
+Cosmological applications reuse those particle and transfer identities rather than
+introducing a separate simulation substrate. Flat differentiable FLRW backgrounds,
+first/second Lagrangian growth, unit-bearing expansion and linear-power products,
+state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose the
+existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
+as an explicit table; transfer, Boltzmann, halo, survey, and CMB calculations remain
+external capability boundaries.
+Explicit material point dynamics compose that transfer with quadratic nodal B-splines, matched
 APIC momentum, first-Piola reference-volume forces, transactional USL updates,
 stability evidence, and fixed-temporal replay for plane-strain and
 three-dimensional Neo-Hookean solids. DEM adds stable compositional
