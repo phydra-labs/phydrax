@@ -94,14 +94,6 @@ from ._finite_element_material import (
     FiniteElementMaterialState,
     FiniteElementMaterialTransaction,
 )
-from ._variational import (
-    BoundaryLoadAction,
-    coefficient,
-    DiffusionAction,
-    MassAction,
-    SourceAction,
-    VariationalCoefficient,
-)
 from ._finite_element_variational import (
     CellBilinearAction,
     CellEnergyAction,
@@ -118,19 +110,6 @@ from ._finite_element_variational import (
     PairwiseVolumeFluxAction,
     PreparedOperatorAction,
     SIPGFacetAction,
-)
-from .vem import (
-    CompiledVirtualElementProblem,
-    VirtualElementAction,
-    VirtualElementExecutionContext,
-    VirtualElementExecutionPolicy,
-    VirtualElementForm,
-    VirtualElementReconstruction,
-    VirtualElementRobinAction,
-    compile_virtual_element_problem,
-    evaluate_virtual_element_reconstruction,
-    evaluate_virtual_element_trace,
-    project_virtual_element_field,
 )
 from ._finite_volume_verification import (
     couette_velocity_profile,
@@ -161,6 +140,7 @@ from ._hyperbolic_systems import (
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._ib_cfd_dem import (
     evaluate_resolved_ib_cfd_dem,
     IBConstraintPlan,
@@ -212,6 +192,10 @@ from ._lattice_boltzmann_species import *  # noqa: F403
 from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
 from ._lattice_boltzmann_thermal import *  # noqa: F403
 from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_all
+from ._local_constitutive_root import (
+    LocalConstitutiveRootDiagnostics,
+    LocalConstitutiveRootPlan,
+)
 from ._mac_ib_cfd_dem import (
     evaluate_resolved_mac_ib_cfd_dem,
     ResolvedMACIBCFDEMCouplingPlan,
@@ -251,14 +235,17 @@ from ._manufactured import (
     ManufacturedSpatialOperator,
 )
 from ._material_point import (
+    AbstractImplicitMPMConstitutivePlan,
     AbstractMPMConstitutivePlan,
     compile_material_point_problem,
     CompiledMaterialPointProblem,
     ExternalMPMAcceleration,
     MaterialPointArguments,
     MaterialPointProblemIR,
+    MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
     MPMKinematics,
+    MPMLinearizedConstitutiveResponse,
 )
 from ._materials import (
     AbstractThermodynamicMaterial,
@@ -392,6 +379,14 @@ from ._transport_closures import (
     TransportProperties,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
+from ._variational import (
+    BoundaryLoadAction,
+    coefficient,
+    DiffusionAction,
+    MassAction,
+    SourceAction,
+    VariationalCoefficient,
+)
 from ._weakly_compressible import (
     compile_weakly_compressible_sph_problem,
     CompiledWeaklyCompressibleSPHProblem,
@@ -473,6 +468,19 @@ from .trefftz import (
     TrialSpaceCertificate,
     TrialValidityRegion,
 )
+from .vem import (
+    compile_virtual_element_problem,
+    CompiledVirtualElementProblem,
+    evaluate_virtual_element_reconstruction,
+    evaluate_virtual_element_trace,
+    project_virtual_element_field,
+    VirtualElementAction,
+    VirtualElementExecutionContext,
+    VirtualElementExecutionPolicy,
+    VirtualElementForm,
+    VirtualElementReconstruction,
+    VirtualElementRobinAction,
+)
 
 
 __all__ = [
@@ -516,8 +524,13 @@ __all__ = [
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
+    "LocalConstitutiveRootDiagnostics",
+    "LocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
+    "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",
+    "MPMConstitutiveCapabilities",
+    "MPMLinearizedConstitutiveResponse",
     "MPMKinematics",
     "compile_flip_problem",
     "FLIPProblemIR",
@@ -658,6 +671,7 @@ __all__ = [
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
+    "ShallowWaterCoriolisSource",
     "PrandtlTransport",
     "StiffenedGasMaterial",
     "ideal_gas_euler_entropy_pair",

@@ -51,33 +51,11 @@ def test_wave_family_limiter_preserves_wave_and_fluctuation_shapes():
     decomposition = phx.discretization.RoeWavePropagationPlan().decompose(
         system, state, jnp.roll(state, -1, axis=0), 0
     )
-    limited = phx.discretization.WaveFamilyLimiterPlan("mc").limit(
-        decomposition, 0
-    )
+    limited = phx.discretization.WaveFamilyLimiterPlan("mc").limit(decomposition, 0)
 
     assert limited.waves.shape == decomposition.waves.shape
     assert limited.left_fluctuation.shape == state.shape
     assert jnp.all(jnp.isfinite(limited.waves))
-
-
-def test_shallow_water_fwave_exactly_balances_lake_at_rest_step():
-    system = phx.equations.ShallowWaterSystem()
-    bathymetry_left = jnp.asarray([0.1])
-    bathymetry_right = jnp.asarray([0.3])
-    left = jnp.asarray([[0.9, 0.0]])
-    right = jnp.asarray([[0.7, 0.0]])
-    decomposition = phx.discretization.FWaveShallowWaterPlan().decompose(
-        system,
-        left,
-        right,
-        0,
-        auxiliary_left=bathymetry_left,
-        auxiliary_right=bathymetry_right,
-    )
-
-    np.testing.assert_allclose(decomposition.waves, 0.0, atol=2e-13)
-    np.testing.assert_allclose(decomposition.left_fluctuation, 0.0, atol=2e-13)
-    np.testing.assert_allclose(decomposition.right_fluctuation, 0.0, atol=2e-13)
 
 
 def test_capacity_scales_hyperbolic_stable_step():
@@ -94,12 +72,8 @@ def test_capacity_scales_hyperbolic_stable_step():
         phx.discretization.PiecewiseConstantReconstruction(),
         phx.discretization.RusanovFluxPlan(),
     )
-    problem = phx.equations.ConservationProblemIR(
-        "capacity", "state", system, boundaries
-    )
-    unit = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    problem = phx.equations.ConservationProblemIR("capacity", "state", system, boundaries)
+    unit = phx.equations.compile_conservation_problem(problem, discretization, method)
     doubled = phx.equations.compile_conservation_problem(
         problem,
         discretization,
@@ -134,9 +108,7 @@ def test_split_and_unsplit_steppers_preserve_constant_multidimensional_state():
         phx.discretization.MUSCLReconstruction(),
         phx.discretization.RusanovFluxPlan(),
     )
-    compiled = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     state = jnp.ones(discretization.state_shape)
     unsplit = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(compiled.dynamics).advance(
         0.0, state, 0.01

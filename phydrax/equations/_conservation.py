@@ -34,7 +34,6 @@ from ..discretization.finite_volume import (
     FiniteVolumeDiscretization,
     FiniteVolumeMethodPlan,
     FiniteVolumePrecisionPolicy,
-    FWaveShallowWaterPlan,
     HLLCFluxPlan,
     MappedFiniteVolumeDiscretization,
     NoSlipAdiabaticWallBoundary,
@@ -45,6 +44,7 @@ from ..discretization.finite_volume import (
     PreparedUnstructuredFiniteVolumeDynamics,
     PrescribedHeatFluxWallBoundary,
     RoeFluxPlan,
+    ShallowWaterHydrostaticHLLPlan,
     TriangleFiniteVolumeBoundarySet,
     TriangleFiniteVolumeDiscretization,
     TriangleFiniteVolumeMethodPlan,
@@ -70,6 +70,7 @@ from ._hyperbolic_systems import (
     ShallowWaterSystem,
 )
 from ._multiphase import TwoMaterialVOFSystem
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from .fem._conservation import (
     DGSEMConservationMethodPlan,
     PreparedDGSEMConservationDynamics,
@@ -366,6 +367,12 @@ def _validate_method(
     /,
 ) -> None:
     system = problem.system
+    if isinstance(problem.source, ShallowWaterCoriolisSource):
+        if not isinstance(system, ShallowWaterSystem) or system.dimension != 2:
+            raise ValueError(
+                "Shallow-water Coriolis forcing requires a two-dimensional "
+                "ShallowWaterSystem."
+            )
     solver = method.interface_solver
     if isinstance(solver, RoeFluxPlan) and not isinstance(
         system, AbstractCharacteristicSystem
@@ -384,15 +391,23 @@ def _validate_method(
         raise ValueError("Euler entropy fluxes require an Euler-compatible system.")
     if method.positivity is not None and not isinstance(system, AbstractAdmissibleSystem):
         raise ValueError("Positivity limiting requires an admissible system.")
-    if isinstance(solver, FWaveShallowWaterPlan) and not isinstance(
-        system, ShallowWaterSystem
-    ):
-        raise ValueError("Shallow-water f-wave flux requires ShallowWaterSystem.")
+    if isinstance(solver, ShallowWaterHydrostaticHLLPlan):
+        if not isinstance(system, ShallowWaterSystem):
+            raise ValueError("Hydrostatic shallow-water HLL requires ShallowWaterSystem.")
+        if system.dimension not in (1, 2):
+            raise ValueError("Hydrostatic shallow water supports one or two dimensions.")
     if isinstance(solver, AbstractWavePropagationPlan) and method.positivity is not None:
         raise ValueError(
             "Wave-propagation positivity limiting is not yet a face-state policy."
         )
-    if not isinstance(solver, (AbstractNumericalFluxPlan, AbstractWavePropagationPlan)):
+    if not isinstance(
+        solver,
+        (
+            AbstractNumericalFluxPlan,
+            AbstractWavePropagationPlan,
+            ShallowWaterHydrostaticHLLPlan,
+        ),
+    ):
         raise TypeError("Finite-volume method has an invalid interface solver.")
     if method.positivity is not None and not isinstance(
         method.positivity, ConvexStateLimiterPlan
@@ -746,6 +761,20 @@ def compile_conservation_problem(
     if not isinstance(method, FiniteVolumeMethodPlan):
         raise TypeError("Structured geometry requires FiniteVolumeMethodPlan.")
     _validate_method(problem, method, entropy_pair)
+    solver = method.interface_solver
+    bed_aware = isinstance(solver, ShallowWaterHydrostaticHLLPlan)
+    if bathymetry is None and bed_aware:
+        raise ValueError("The selected shallow-water interface requires bathymetry.")
+    if bathymetry is not None and not bed_aware:
+        raise ValueError(
+            "Bathymetry requires a bed-aware shallow-water interface method."
+        )
+    if isinstance(solver, ShallowWaterHydrostaticHLLPlan) and isinstance(
+        discretization, MappedFiniteVolumeDiscretization
+    ):
+        raise ValueError(
+            "Initial hydrostatic shallow water requires Cartesian structured geometry."
+        )
     dynamics = PreparedFiniteVolumeDynamics(
         problem.system,
         discretization,

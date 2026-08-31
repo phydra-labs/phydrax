@@ -1,0 +1,44 @@
+{
+  "benchmarks": [
+    {
+      "cell_residuals_per_second": 1402051.3757983535,
+      "compile_seconds": 0.626234541003214,
+      "count": 1024,
+      "execution_seconds": 0.0007303584003238939,
+      "maximum_residual": 2.5891919930954828,
+      "reconstruction": "piecewise-constant",
+      "regime": "fully-wet",
+      "repeats": 5
+    },
+    {
+      "cell_residuals_per_second": 1347131.9638791045,
+      "compile_seconds": 0.7814989580001566,
+      "count": 1024,
+      "execution_seconds": 0.0007601334000355564,
+      "maximum_residual": 2.2194455025883144,
+      "reconstruction": "piecewise-constant",
+      "regime": "wet-dry",
+      "repeats": 5
+    },
+    {
+      "cell_residuals_per_second": 246298.40436890625,
+      "compile_seconds": 0.4190126670000609,
+      "count": 1024,
+      "execution_seconds": 0.004157558400038397,
+      "maximum_residual": 2.589294181864716,
+      "reconstruction": "muscl",
+      "regime": "fully-wet",
+      "repeats": 5
+    },
+    {
+      "cell_residuals_per_second": 456004.55581412214,
+      "compile_seconds": 0.5133626659990114,
+      "count": 1024,
+      "execution_seconds": 0.002245591599785257,
+      "maximum_residual": 2.2195291310040375,
+      "reconstruction": "muscl",
+      "regime": "wet-dry",
+      "repeats": 5
+    }
+  ]
+}

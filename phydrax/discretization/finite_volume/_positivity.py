@@ -22,6 +22,7 @@ from ._riemann import (
     AbstractNumericalFluxPlan,
     NumericalFluxResult,
 )
+from ._shallow_water import ShallowWaterBalancedFaceResult
 from ._structured import FiniteVolumeDiscretization
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
@@ -209,6 +210,17 @@ class FiniteVolumeAdmissibilityReport(StrictModule):
 class PositivityBlendResult(StrictModule):
     state: Array
     report: FiniteVolumeAdmissibilityReport
+    normal_fluxes: tuple[Array, ...]
+    integrated_fluxes: tuple[Array, ...]
+    face_blend_factors: tuple[Array, ...]
+
+
+class BalancedPositivityBlendResult(StrictModule):
+    """Positivity-limited shallow-water face contributions."""
+
+    state: Array
+    report: FiniteVolumeAdmissibilityReport
+    contributions: tuple[ShallowWaterBalancedFaceResult, ...]
     normal_fluxes: tuple[Array, ...]
     integrated_fluxes: tuple[Array, ...]
     face_blend_factors: tuple[Array, ...]
@@ -503,6 +515,194 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
             normal_fluxes=limited_fluxes_,
             integrated_fluxes=integrated_fluxes,
             face_blend_factors=final_face_factors,
+        )
+
+    def limit_balanced_face_contributions(
+        self,
+        system: Any,
+        base_state: Array,
+        high_order: tuple[ShallowWaterBalancedFaceResult, ...],
+        fallback: tuple[ShallowWaterBalancedFaceResult, ...],
+        common_residual: Array,
+        step_size: Array,
+        discretization: FiniteVolumeDiscretization,
+        /,
+    ) -> BalancedPositivityBlendResult:
+        """Blend transport and both bed corrections with one face factor."""
+        if not isinstance(discretization, FiniteVolumeDiscretization):
+            raise TypeError(
+                "Balanced shallow-water positivity requires Cartesian finite volumes."
+            )
+        if len(high_order) != len(fallback) or len(high_order) != len(
+            discretization.cell_shape
+        ):
+            raise ValueError(
+                "Balanced high-order and fallback face blocks must align by axis."
+            )
+        base = jnp.asarray(base_state)
+        common = jnp.asarray(common_residual, dtype=base.dtype)
+        dt = jnp.asarray(step_size, dtype=base.dtype).reshape(())
+
+        def residual(
+            contributions: tuple[ShallowWaterBalancedFaceResult, ...],
+        ) -> Array:
+            output = jnp.zeros_like(base)
+            for axis, contribution in enumerate(contributions):
+                measure = discretization.face_measures[axis].astype(base.dtype)[..., None]
+                left_integrated = contribution.left_flux.astype(base.dtype) * measure
+                right_integrated = contribution.right_flux.astype(base.dtype) * measure
+                if discretization.grid.structured_axes[axis].periodic:
+                    difference = (
+                        jnp.roll(left_integrated, -1, axis=axis) - right_integrated
+                    )
+                else:
+                    lower = [slice(None)] * right_integrated.ndim
+                    upper = [slice(None)] * left_integrated.ndim
+                    lower[axis] = slice(0, right_integrated.shape[axis] - 1)
+                    upper[axis] = slice(1, left_integrated.shape[axis])
+                    difference = (
+                        left_integrated[tuple(upper)] - right_integrated[tuple(lower)]
+                    )
+                output = output - difference / discretization.cell_volumes[
+                    ..., None
+                ].astype(base.dtype)
+            return output
+
+        fallback_state = base + dt * (residual(fallback) + common)
+        high_state = base + dt * (residual(high_order) + common)
+        fallback_valid_cells = system.admissible(fallback_state)
+        high_valid_cells = system.admissible(high_state)
+        direction = high_state - fallback_state
+
+        def local_body(_, bounds):
+            lower, upper = bounds
+            midpoint = 0.5 * (lower + upper)
+            candidate = fallback_state + midpoint[..., None] * direction
+            valid = system.admissible(candidate)
+            return jnp.where(valid, midpoint, lower), jnp.where(valid, upper, midpoint)
+
+        cell_factor, _ = jax.lax.fori_loop(
+            0,
+            self.iterations,
+            local_body,
+            (
+                jnp.zeros(base.shape[:-1], dtype=base.dtype),
+                jnp.ones(base.shape[:-1], dtype=base.dtype),
+            ),
+        )
+        cell_factor = jnp.where(high_valid_cells, 1.0, cell_factor)
+        cell_factor = jnp.where(fallback_valid_cells, cell_factor, 0.0)
+
+        face_factors = []
+        preliminary = []
+        for axis, (high, low) in enumerate(zip(high_order, fallback, strict=True)):
+            if discretization.grid.structured_axes[axis].periodic:
+                factor = jnp.minimum(jnp.roll(cell_factor, 1, axis=axis), cell_factor)
+            else:
+                moved = jnp.moveaxis(cell_factor, axis, 0)
+                interior = jnp.minimum(moved[:-1], moved[1:])
+                factor = jnp.moveaxis(
+                    jnp.concatenate((moved[:1], interior, moved[-1:])),
+                    0,
+                    axis,
+                )
+            face_factors.append(factor)
+            preliminary.append(
+                ShallowWaterBalancedFaceResult(
+                    low.normal_flux
+                    + factor[..., None] * (high.normal_flux - low.normal_flux),
+                    low.left_correction
+                    + factor[..., None] * (high.left_correction - low.left_correction),
+                    low.right_correction
+                    + factor[..., None] * (high.right_correction - low.right_correction),
+                    jnp.maximum(low.max_speed, high.max_speed),
+                    high.reconstructed_left,
+                    high.reconstructed_right,
+                    low.dry_face & high.dry_face,
+                )
+            )
+        preliminary_tuple = tuple(preliminary)
+        preliminary_state = base + dt * (residual(preliminary_tuple) + common)
+        preliminary_valid = jnp.all(system.admissible(preliminary_state))
+
+        def global_body(_, bounds):
+            lower, upper = bounds
+            midpoint = 0.5 * (lower + upper)
+            candidate_contributions = tuple(
+                ShallowWaterBalancedFaceResult(
+                    low.normal_flux
+                    + midpoint * (candidate.normal_flux - low.normal_flux),
+                    low.left_correction
+                    + midpoint * (candidate.left_correction - low.left_correction),
+                    low.right_correction
+                    + midpoint * (candidate.right_correction - low.right_correction),
+                    candidate.max_speed,
+                    candidate.reconstructed_left,
+                    candidate.reconstructed_right,
+                    candidate.dry_face,
+                )
+                for candidate, low in zip(preliminary_tuple, fallback, strict=True)
+            )
+            candidate_state = base + dt * (residual(candidate_contributions) + common)
+            valid = jnp.all(system.admissible(candidate_state))
+            return jnp.where(valid, midpoint, lower), jnp.where(valid, upper, midpoint)
+
+        secondary_factor, _ = jax.lax.fori_loop(
+            0,
+            self.iterations,
+            global_body,
+            (
+                jnp.asarray(0.0, dtype=base.dtype),
+                jnp.asarray(1.0, dtype=base.dtype),
+            ),
+        )
+        fallback_valid = jnp.all(fallback_valid_cells)
+        secondary_factor = jnp.where(preliminary_valid, 1.0, secondary_factor)
+        secondary_factor = jnp.where(fallback_valid, secondary_factor, 0.0)
+        limited = tuple(
+            ShallowWaterBalancedFaceResult(
+                low.normal_flux
+                + secondary_factor * (candidate.normal_flux - low.normal_flux),
+                low.left_correction
+                + secondary_factor * (candidate.left_correction - low.left_correction),
+                low.right_correction
+                + secondary_factor * (candidate.right_correction - low.right_correction),
+                candidate.max_speed,
+                candidate.reconstructed_left,
+                candidate.reconstructed_right,
+                candidate.dry_face,
+            )
+            for candidate, low in zip(preliminary_tuple, fallback, strict=True)
+        )
+        limited_state = base + dt * (residual(limited) + common)
+        limited_valid = jnp.all(system.admissible(limited_state))
+        normal_fluxes = tuple(contribution.normal_flux for contribution in limited)
+        integrated_fluxes = tuple(
+            contribution.normal_flux * measure[..., None]
+            for contribution, measure in zip(
+                limited,
+                discretization.face_measures,
+                strict=True,
+            )
+        )
+        return BalancedPositivityBlendResult(
+            state=limited_state,
+            report=FiniteVolumeAdmissibilityReport(
+                high_order_valid=jnp.all(high_valid_cells),
+                fallback_valid=fallback_valid,
+                blend_factor=jnp.minimum(jnp.min(cell_factor), secondary_factor),
+                activated=jnp.any(cell_factor < 1.0) | (secondary_factor < 1.0),
+                minimum_density=jnp.min(limited_state[..., 0]),
+                limited_state_valid=limited_valid,
+                secondary_reduction_applied=~preliminary_valid,
+                secondary_reduction_factor=secondary_factor,
+            ),
+            contributions=limited,
+            normal_fluxes=normal_fluxes,
+            integrated_fluxes=integrated_fluxes,
+            face_blend_factors=tuple(
+                secondary_factor * factor for factor in face_factors
+            ),
         )
 
     def limit_stage_rate_ledgers(
@@ -811,6 +1011,7 @@ class FluxPositivityPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "BalancedPositivityBlendResult",
     "EinfeldtHLLFluxPlan",
     "FiniteVolumeAdmissibilityReport",
     "FluxPositivityPlan",

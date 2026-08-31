@@ -74,6 +74,11 @@ Most workflows are composing a few primitives:
   scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
   SHAKE/RATTLE, triclinic cells, Ewald/PME, bounded replayable trajectories, and
   exact checkpoints retain explicit resources, precision, diagnostics, and provenance.
+- **Experimental velocimetry**: mask-aware multipass PIV, calibrated
+  multi-camera particle reconstruction and tracking, residual-image Lagrangian
+  refinement, deterministic synthetic qualification, and optional learned dense
+  displacement preserve image/physical coordinate frames, raw validity,
+  uncertainty, capacity, and provenance.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -193,6 +198,12 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the
+[MPM schedule/adaptivity guide](docs/guides_mpm_schedules.md), the
+[MPM constitutive guide](docs/guides_mpm_constitutive_extensions.md), the
+[MPM contact/field guide](docs/guides_mpm_contact_fields.md), the
+[MPM domain guide](docs/guides_mpm_particle_domains.md), the
+[MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
+[MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -312,6 +323,9 @@ is not imported by ordinary Phydrax or linear-algebra use.
 ## Documentation
 
 Can be found [here](https://phydra-labs.github.io/phydrax).
+The [velocimetry guide](docs/guides_velocimetry.md) covers classical and learned
+PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
+qualification, and explicit-loss interoperability.
 
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
