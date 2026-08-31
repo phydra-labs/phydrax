@@ -25,8 +25,13 @@ from ..discretization import (
     DiscretizationRole,
 )
 from ..discretization.fem import (
+    finite_element_hp_constraint,
+    finite_element_hp_domains,
     FiniteElementDirichletConstraint,
     FiniteElementDiscretization,
+    FiniteElementHPEpoch,
+    FiniteElementHPTraceConstraintPlan,
+    FiniteElementLinearConstraint,
     FiniteElementRuntimeData,
     IntegrationDomain,
 )
@@ -1469,8 +1474,10 @@ def _sipg_constant_subspace(
 class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     form: FiniteElementForm
     discretization: FiniteElementDiscretization
-    constraint: FiniteElementDirichletConstraint | None
-    constraints: tuple[FiniteElementDirichletConstraint | None, ...]
+    constraint: FiniteElementDirichletConstraint | FiniteElementLinearConstraint | None
+    constraints: tuple[
+        FiniteElementDirichletConstraint | FiniteElementLinearConstraint | None, ...
+    ]
     execution_policy: FiniteElementExecutionPolicy
     _action_ir: LocalActionIR
     _workset_program: WorksetProgram
@@ -1485,9 +1492,14 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         discretization: FiniteElementDiscretization,
         /,
         *,
-        constraint: FiniteElementDirichletConstraint | None = None,
+        constraint: FiniteElementDirichletConstraint
+        | FiniteElementLinearConstraint
+        | None = None,
         dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
-        constraints: Mapping[str, FiniteElementDirichletConstraint] | None = None,
+        constraints: Mapping[
+            str, FiniteElementDirichletConstraint | FiniteElementLinearConstraint
+        ]
+        | None = None,
         dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
         | None = None,
         execution_policy: FiniteElementExecutionPolicy | None = None,
@@ -1546,18 +1558,27 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     )
                 lift_value = full_space.zeros()
             else:
-                if not isinstance(constraint_value, FiniteElementDirichletConstraint):
+                if not isinstance(
+                    constraint_value,
+                    (FiniteElementDirichletConstraint, FiniteElementLinearConstraint),
+                ):
                     raise TypeError(
-                        "constraints must contain FiniteElementDirichletConstraint "
-                        "values."
+                        "constraints must contain finite-element constraint values."
                     )
                 if constraint_value.field_name != field_name:
                     raise ValueError("Constraint field does not match its map key.")
-                if boundary_values is None:
-                    raise ValueError(
-                        f"Constraint for {field_name!r} requires Dirichlet values."
-                    )
-                lift_value = constraint_value.lift(boundary_values)
+                if isinstance(constraint_value, FiniteElementLinearConstraint):
+                    if boundary_values is not None:
+                        raise ValueError(
+                            "Homogeneous hp constraints do not accept Dirichlet values."
+                        )
+                    lift_value = constraint_value.lift()
+                else:
+                    if boundary_values is None:
+                        raise ValueError(
+                            f"Constraint for {field_name!r} requires Dirichlet values."
+                        )
+                    lift_value = constraint_value.lift(boundary_values)
             constraint_values.append(constraint_value)
             lifts.append(lift_value)
         constraints_ = tuple(constraint_values)
@@ -2873,16 +2894,44 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
 
 def compile_finite_element_problem(
     form: FiniteElementForm,
-    discretization: FiniteElementDiscretization,
+    discretization: FiniteElementDiscretization | FiniteElementHPEpoch,
     /,
     *,
     constraint: FiniteElementDirichletConstraint | None = None,
     dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
-    constraints: Mapping[str, FiniteElementDirichletConstraint] | None = None,
+    constraints: Mapping[
+        str, FiniteElementDirichletConstraint | FiniteElementLinearConstraint
+    ]
+    | None = None,
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
     | None = None,
     execution_policy: FiniteElementExecutionPolicy | None = None,
 ) -> CompiledFiniteElementProblem:
+    if isinstance(discretization, FiniteElementHPEpoch):
+        epoch = discretization
+        if epoch.discretization is None:
+            raise ValueError("Compiled hp epochs require one prepared discretization.")
+        resolved_constraints = {} if constraints is None else dict(constraints)
+        for field_name, plan in epoch.constraints:
+            if field_name not in resolved_constraints:
+                resolved_constraints[field_name] = FiniteElementLinearConstraint(
+                    field_name,
+                    finite_element_hp_constraint(
+                        epoch.discretization,
+                        field_name,
+                        cast(FiniteElementHPTraceConstraintPlan, plan),
+                    ),
+                )
+        interior_domain, exterior_domain = finite_element_hp_domains(epoch)
+        discretization = eqx.tree_at(
+            lambda value: (
+                value.interior_facet_domain,
+                value.exterior_facet_domain,
+            ),
+            epoch.discretization,
+            (interior_domain, exterior_domain),
+        )
+        constraints = resolved_constraints
     return CompiledFiniteElementProblem(
         form,
         discretization,

@@ -91,7 +91,32 @@ from ._quadrature import (
     QuadratureEvidence,
     QuadratureRole,
 )
-from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
+from ._spectral_hp_physics import (
+    ALEMetricState,
+    BR1ViscousPlan,
+    certify_derived_dgsem_mortar,
+    ConservativeModalLimiter,
+    derived_mortar_entropy_defect,
+    DGSEMCharacteristicBoundaryPlan,
+    entropy_stable_wall_evidence,
+    EntropyStableWallEvidence,
+    HPOverintegrationPolicy,
+    LocalTimeSteppingPlan,
+    MovingMortarMetricPlan,
+    PositivityLimiter,
+    SplitFormPolicy,
+    SubcellFiniteVolumePlan,
+    TemporalHPBudget,
+    TroubledCellEvidence,
+    WellBalancedSourceLedger,
+)
+from ._worksets import (
+    batch_mortar_worksets,
+    CompiledMortarWorksetBatch,
+    CompiledWorkset,
+    WorksetProgram,
+    WorksetSignature,
+)
 
 
 __all__ = [
@@ -116,6 +141,8 @@ __all__ = [
     "CellDerivativeBatch",
     "FiniteElementMassPolicy",
     "DGTraceBatch",
+    "batch_mortar_worksets",
+    "CompiledMortarWorksetBatch",
     "CompiledWorkset",
     "HDGPoissonSolution",
     "DifferentialOperator",
@@ -171,4 +198,21 @@ __all__ = [
     "normal_trace",
     "symmetric_gradient",
     "tangential_trace",
+    "entropy_stable_wall_evidence",
+    "certify_derived_dgsem_mortar",
+    "derived_mortar_entropy_defect",
+    "ALEMetricState",
+    "BR1ViscousPlan",
+    "ConservativeModalLimiter",
+    "DGSEMCharacteristicBoundaryPlan",
+    "EntropyStableWallEvidence",
+    "HPOverintegrationPolicy",
+    "LocalTimeSteppingPlan",
+    "MovingMortarMetricPlan",
+    "PositivityLimiter",
+    "SplitFormPolicy",
+    "SubcellFiniteVolumePlan",
+    "TemporalHPBudget",
+    "TroubledCellEvidence",
+    "WellBalancedSourceLedger",
 ]

@@ -158,6 +158,7 @@ nav:
         - Multiphase and incompressible SPH: "guides_multiphase_incompressible_sph.md"
         - Finite elements: "guides_finite_elements.md"
         - Spectral elements: "guides_spectral_elements.md"
+        - Complete spectral hp: "guides_complete_spectral_hp.md"
         - Finite-element applications: "guides_fem_applications.md"
         - Force-density form-finding: "guides_force_density.md"
         - FEM solver acceleration: "guides_fem_solver_acceleration.md"
