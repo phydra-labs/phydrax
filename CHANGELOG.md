@@ -205,11 +205,17 @@
   analysis, local homology, certified implicit covers, and Conley homology
   index-pair workflows.
 - Added `phydrax.pgm`: immutable finite-discrete factor graphs over native
-  bipartite `GraphIR` topology; dense, enumerated, Ising, Potts, logical, and
-  cardinality factors; explicitly capped exact enumeration; exact-forest and loopy
-  sum/max-product belief propagation with honest normalizer/MAP semantics; validated
-  persistent chromatic Gibbs sampling; correlated-chain integration; structured
-  constructors; and exact-likelihood, moment, and contrastive-divergence primitives.
+  bipartite `GraphIR` topology; dense, sparse-enumerated, structured, and open
+  capability-declared kernels; explicit precision/resource evidence; directed linear
+  forest propagation; synchronous, Gauss--Seidel, accelerated, and qualified implicit
+  loopy BP; same-topology and heterogeneous graph batches; bounded variable
+  elimination, junction trees, normalized laws, smooth dual MAP bounds, and
+  perturb-and-MAP estimates; systematic/random/block/tempered/qualified-cluster
+  sampling with online reducers; persistent CD/SML, pseudolikelihood, Bethe, and exact
+  EM objectives; and pickle-free graph/BP/Gibbs checkpoints. Added general PyTree
+  conditional update programs under `phydrax.sampling.conditional` and factor-graph
+  reverse denoising, adaptive mixing control, and hybrid embeddings under
+  `phydrax.transport.discrete`.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
