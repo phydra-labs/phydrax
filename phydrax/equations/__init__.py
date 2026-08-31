@@ -386,6 +386,11 @@ from ._weakly_compressible import (
     CompiledWeaklyCompressibleSPHProblem,
     WeaklyCompressibleFluidProblemIR,
 )
+from ._vortex_particles import (
+    compile_vortex_particle_flow,
+    CompiledVortexParticleFlow,
+    VortexParticleFlowProblem,
+)
 from .fem import FiniteElementMassPolicy
 from .trefftz import (
     AbstractTrefftzBasis,
@@ -870,4 +875,10 @@ __all__ += [
     "double_well_chemical_derivative",
     "double_well_free_energy_density",
     "evaluate_binary_free_energy",
+]
+
+__all__ += [
+    "CompiledVortexParticleFlow",
+    "VortexParticleFlowProblem",
+    "compile_vortex_particle_flow",
 ]

@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import layer_potential
+from . import layer_potential, vortex
 from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
 from ._local_ops import local_integral, local_integral_ball
 from ._spatial_ops import nonlocal_integral, spatial_integral
@@ -54,6 +54,8 @@ from .layer_potential import (
     SurfacePanelization3D,
     SurfaceTargetReport3D,
 )
+from .vortex import *  # noqa: F403
+from .vortex import __all__ as _vortex_all
 
 
 __all__ = [
@@ -113,3 +115,5 @@ __all__ = [
     "spatial_integral",
     "time_convolution",
 ]
+
+__all__ += [name for name in _vortex_all if name not in __all__]

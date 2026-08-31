@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added fixed-capacity two- and three-dimensional vortex methods with
+  Gaussian free-space direct fields, periodic vortex-in-cell inversion,
+  conservative particle-strength exchange, classic stretching, regularized
+  filaments, steady and unsteady lifting surfaces, rigid polygonal vortex
+  panels, boundary-sheet transfer, conservative remeshing, explicit rVPM and
+  relaxation operators, nonlinear polar closure, fixed-tree acceleration,
+  actuator/rigid/stochastic/learned workflows, qualification evidence, and
+  fixed-topology differentiation contracts.
 - Added fixed-topology material-measure immersed-boundary coupling on uniform
   unit-density MAC grids: local cubic B-spline marker routes, force/torque/work
   certificates, exact prescribed pressure-plus-marker projection, IMEX-Euler and
