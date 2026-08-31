@@ -11,7 +11,11 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key, PyTree
 
-from phydrax.discretization import AbstractAxisSpec, AxisDiscretization
+from phydrax.discretization import (
+    AbstractAxisSpec,
+    AxisDiscretization,
+    AxisDomain,
+)
 from phydrax.domain import (
     AbstractGeometry,
     AbstractScalarDomain,
@@ -360,13 +364,18 @@ class IntegrationAxisSpec(AbstractAxisSpec):
 
     def materialize(self, lower: Array, upper: Array, /) -> AxisDiscretization:
         data = interval_rule_data(self.rule)
-        half = 0.5 * (jnp.asarray(upper) - jnp.asarray(lower))
-        center = 0.5 * (jnp.asarray(upper) + jnp.asarray(lower))
+        lower_ = jnp.asarray(lower)
+        upper_ = jnp.asarray(upper)
+        half = 0.5 * (upper_ - lower_)
+        center = 0.5 * (upper_ + lower_)
         return AxisDiscretization(
             nodes=center + half * data.nodes,
             quad_weights=half * data.weights,
             basis="legendre",
-            periodic=False,
+            domain=AxisDomain.interval(lower_, upper_),
+            primary_entity="point",
+            lower_endpoint_included=bool(jnp.isclose(data.nodes[0], -1.0)),
+            upper_endpoint_included=bool(jnp.isclose(data.nodes[-1], 1.0)),
         )
 
 

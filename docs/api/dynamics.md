@@ -56,6 +56,14 @@ structured `(state, input)` model requires a matching `InputLayout`. Input/outpu
 sizes are checked at construction, and the resulting `ContinuousModelVectorField`
 remains an explicit PyTree child for partitioning, optimization, and export.
 
+`discrete_model_system` binds a pointwise `AbstractArrayModel` as a complete
+next-state map. The binding is autonomous or consumes exactly one structured
+`(state, input)` pair, retains the model as an explicit trainable PyTree child,
+and declares the coordinate step that the map learned. `DiscreteEvolution`
+rejects intervals outside that step contract before calling the model. Axis
+models and variable-duration or stochastic transitions require different
+contracts and are not inferred from array inheritance.
+
 `TimeGrid` requires finite, strictly increasing physical times. `IterationGrid` requires
 strictly increasing integer iteration labels. Both are `EvolutionGrid` contracts, but
 physical-time normalization and iteration normalization remain distinct. An evolution
@@ -75,6 +83,10 @@ segment-level failure evidence.
 ::: phydrax.dynamics.continuous_model_system
 
 ::: phydrax.dynamics.DiscreteSystem
+
+::: phydrax.dynamics.DiscreteModelTransition
+
+::: phydrax.dynamics.discrete_model_system
 
 ::: phydrax.dynamics.AbstractInputPolicy
 
@@ -139,6 +151,49 @@ The four adapters preserve the source contract:
 ::: phydrax.dynamics.identification.local_polynomial_derivative
 
 ::: phydrax.dynamics.identification.bspline_derivative
+
+## Learned discrete maps
+
+`fit_discrete_model` learns deterministic fixed-step Euclidean maps directly
+from `TrajectoryData`. Windows are indexed lazily by parent case and start;
+overlapping arrays are not materialized. Every active prefix must preserve
+sample and transition validity, avoid resets, use the declared coordinate step,
+and consume each sample- or transition-aligned input exactly once. Invalid
+padding is sanitized before model evaluation, while a non-finite or
+out-of-geometry model or reference state fails closed.
+
+A `DiscreteModelRolloutPolicy` owns one static maximum horizon, a traced active
+horizon, global BPTT truncation, and rematerialization. Objective coefficients
+are normalized over active nodes before the window evidence
+`sqrt(weight[start] * weight[start + horizon])` is applied. Supervised,
+deterministic reference-branch, and residual objectives share one authored
+recurrent step. Full, prefix, chunked, rematerialized, and resumed execution are
+required to agree; no JAXPR transformation or inferred carry is involved.
+
+The first training contract accepts real `float32` or `float64` pointwise
+models and Euclidean state layouts. Variable steps, stochastic transitions,
+non-Euclidean discrepancies, and low-precision parameters are rejected rather
+than assigned implicit semantics.
+Checkpointed fits require a stable `model_id`; array shapes and Python type
+alone are not accepted as the identity of static activations, bindings, or
+architecture hyperparameters.
+
+
+::: phydrax.dynamics.identification.DiscreteModelRolloutPolicy
+
+::: phydrax.dynamics.identification.SupervisedDiscreteModelObjective
+
+::: phydrax.dynamics.identification.ReferenceBranchDiscreteModelObjective
+
+::: phydrax.dynamics.identification.ResidualDiscreteModelObjective
+
+::: phydrax.dynamics.identification.DiscreteModelValidationPolicy
+
+::: phydrax.dynamics.identification.DiscreteModelFitHistory
+
+::: phydrax.dynamics.identification.DiscreteModelFitResult
+
+::: phydrax.dynamics.identification.fit_discrete_model
 
 ## Feature libraries, DMD, and EDMD
 

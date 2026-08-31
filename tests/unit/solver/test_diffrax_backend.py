@@ -886,3 +886,75 @@ def test_complex_state_policy_precision_and_real_bypass_are_explicit():
         implicit_default.temporal_evidence.configuration_id
         == explicit_default.temporal_evidence.configuration_id
     )
+
+
+def test_diagonal_wiener_ensemble_preserves_distinct_initial_states():
+    dimension = 2
+    dense = phx.solver.DifferentialProblem(
+        lambda t, state, args: jnp.zeros_like(state),
+        jnp.zeros((dimension,)),
+        t0=0.0,
+        t1=0.1,
+        wiener_terms=(
+            phx.solver.WienerTerm(
+                "noise",
+                lambda t, state, args: 0.3 * jnp.eye(dimension),
+                (dimension,),
+                structure="additive",
+            ),
+        ),
+    )
+    diagonal_term = phx.solver.WienerTerm(
+        "noise",
+        lambda t, state, args: jnp.full(state.shape, 0.3),
+        (dimension,),
+        structure="additive",
+        representation="diagonal",
+    )
+    diagonal = phx.solver.DifferentialProblem(
+        lambda t, state, args: jnp.zeros_like(state),
+        jnp.zeros((dimension,)),
+        t0=0.0,
+        t1=0.1,
+        wiener_terms=(diagonal_term,),
+    )
+    realization = phx.stochastic.WienerRealization.independent(
+        jr.key(90),
+        (dimension,),
+        support=(0.0, 0.1),
+        sample_shape=(3,),
+        tolerance=1e-4,
+    )
+    initial = jnp.asarray([[0.0, 0.0], [1.0, -1.0], [3.0, 2.0]])
+    dense_solution = phx.solver.solve_diffrax_ensemble(
+        dense,
+        save_times=jnp.asarray([0.1]),
+        realization=realization,
+        initial_states=initial,
+        solver=dfx.Euler(),
+        dt0=0.01,
+    )
+    diagonal_solution = phx.solver.solve_diffrax_ensemble(
+        diagonal,
+        save_times=jnp.asarray([0.1]),
+        realization=realization,
+        initial_states=initial,
+        solver=dfx.Euler(),
+        dt0=0.01,
+    )
+
+    assert jnp.array_equal(dense_solution.states, diagonal_solution.states)
+    assert jnp.array_equal(
+        diagonal_solution.states[:, 0] - initial,
+        dense_solution.states[:, 0] - initial,
+    )
+    with pytest.raises(ValueError, match="no implicit dense matrix"):
+        diagonal_term.coefficient_matrix(0.0, jnp.zeros((dimension,)))
+    with pytest.raises(ValueError, match="initial_states must have shape"):
+        phx.solver.solve_diffrax_ensemble(
+            diagonal,
+            save_times=jnp.asarray([0.1]),
+            realization=realization,
+            initial_states=jnp.zeros((2, dimension)),
+            dt0=0.01,
+        )

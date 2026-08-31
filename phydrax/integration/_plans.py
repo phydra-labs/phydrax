@@ -19,6 +19,7 @@ from .._sampling import (
     RandomizedQMCDesign,
 )
 from .._strict import StrictModule
+from ._bayesian_quadrature import BayesianQuadraturePlan
 from ._rules import (
     CubatureRule,
     GaussKronrodRule,
@@ -502,6 +503,7 @@ IntegrationPlan: TypeAlias = (
     FixedQuadraturePlan
     | AdaptiveQuadraturePlan
     | AdaptiveTrianglePlan
+    | BayesianQuadraturePlan
     | MonteCarloPlan
     | StratifiedMonteCarloPlan
     | QuasiMonteCarloPlan
@@ -517,6 +519,7 @@ __all__ = [
     "AdaptiveQuadraturePlan",
     "AdaptiveTrianglePlan",
     "AntitheticDesign",
+    "BayesianQuadraturePlan",
     "CellQuadraturePlan",
     "ControlVariateEstimator",
     "FixedQuadraturePlan",

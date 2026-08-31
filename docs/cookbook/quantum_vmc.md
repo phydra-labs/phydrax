@@ -1,4 +1,6 @@
-# Discrete variational Monte Carlo
+# Local-operator variational Monte Carlo
+
+## Connected discrete example
 
 This recipe minimizes the energy of a two-spin transverse-field Ising model,
 
@@ -126,3 +128,83 @@ The final estimate is generated after the last update with a frozen model and a
 separate chain run. It remains a correlated-chain estimate, not an IID estimate. For a
 publication/release result, increase chain count and length and apply the UQ convergence
 diagnostics to the frozen-target draws.
+
+## Continuum molecular Coulomb example
+
+The same solver accepts a continuum local operator. This H₂ example uses Bohr and
+Hartree as the declared reference units, a full-determinant FermiNet, replayable
+walkers, and the state-dependent proposal's exact Metropolis--Hastings correction.
+
+```python
+scale = phx.atomistic.AtomisticScaleContract("bohr", "hartree")
+nuclei = phx.atomistic.AtomicStructure(
+    jnp.asarray([1, 1], dtype=jnp.int32),
+    jnp.asarray([[-0.7, 0.0, 0.0], [0.7, 0.0, 0.0]], dtype=jnp.float64),
+    jnp.ones((2,), dtype=jnp.float64),
+    scale,
+    name="H2",
+)
+model = phx.nn.quantum.FermiNet(
+    nuclei,
+    2,
+    1,  # leading spin-up count; the remaining electron is spin-down
+    hidden_features=64,
+    pair_features=32,
+    layer_count=4,
+    determinant_count=16,
+    key=jr.key(1),
+)
+hamiltonian = phx.operators.ElectronicCoulombHamiltonian(
+    nuclei,
+    2,
+    kinetic=phx.operators.ElectronicKineticPolicy(
+        trace_method="chunked-exact",
+        coordinate_chunk_size=3,
+    ),
+)
+walkers = phx.operators.electronic_initial_walkers(
+    jr.key(2), nuclei, 2, 64
+)
+proposal = phx.operators.harmonic_mean_electron_proposal(
+    nuclei, 2, step_size=0.2
+)
+electronic_problem = phx.solver.VariationalMonteCarloProblem(
+    model,
+    hamiltonian,
+    phx.sampling.MetropolisHastings(proposal),
+    walkers,
+)
+electronic_result = phx.solver.solve_variational_monte_carlo(
+    electronic_problem,
+    phx.solver.VariationalMonteCarloPolicy(
+        num_iterations=200,
+        draws_per_iteration=32,
+        steps_per_draw=4,
+        warmup_steps=100,
+        final_evaluation_draws=1024,
+        learning_rate=0.03,
+        damping=1e-3,
+        max_update_norm=0.1,
+    ),
+    key=jr.key(3),
+)
+print(electronic_result.final_estimate.physical_energy)
+print(electronic_result.final_estimate.local.method_id)
+print(electronic_result.final_estimate.local.work_count)
+```
+
+Both kinetic methods are exact coordinate traces and perform one second-derivative
+action per electron coordinate. `chunked-exact` changes peak derivative batching,
+not asymptotic coordinate cost. Coincident Coulomb configurations are invalid rather
+than regularized. Periodic, relativistic, and stochastic-trace Hamiltonians are
+unsupported. A finite correlated-chain energy is not automatically reported as a
+variational upper bound.
+
+The current end-to-end exact electronic contract supports one through four
+electrons (`phx.operators.ELECTRONIC_MAX_ELECTRONS`). Larger systems are rejected
+rather than routed through an unqualified determinant implementation; this H/He/H₂
+campaign is a small-system capability, not an unrestricted molecular claim.
+
+`tools/electronic_vmc_benchmarks.py` defines the fixed multi-seed H/He/H₂ campaign,
+including predeclared statistical and chemical gates, ESS/R-hat, timing, parameter
+counts, summaries, and provenance.

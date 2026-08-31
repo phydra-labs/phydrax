@@ -5,6 +5,7 @@
 """Reference designs, proposals, and stateful Markov sampling."""
 
 from .._sampling import (
+    AbstractChainSampleResult,
     AbstractProposal,
     AntitheticDesign,
     CallableProposal,
@@ -32,6 +33,7 @@ from . import collocation
 
 
 __all__ = [
+    "AbstractChainSampleResult",
     "AbstractProposal",
     "collocation",
     "AntitheticDesign",

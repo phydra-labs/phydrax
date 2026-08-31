@@ -14,6 +14,7 @@ from jaxtyping import Array, Key, PyTree
 
 from .._strict import StrictModule
 from ._addressing import derive_key, SampleAddress
+from ._chain import AbstractChainSampleResult
 from ._proposals import AbstractProposal
 
 
@@ -129,7 +130,7 @@ class MarkovTransitionInfo(StrictModule):
     target_valid: Array
 
 
-class MarkovSampleResult(StrictModule):
+class MarkovSampleResult(AbstractChainSampleResult):
     """Chain-preserving Markov draws and complete transition evidence."""
 
     samples: PyTree[Array]
@@ -209,6 +210,10 @@ class MarkovSampleResult(StrictModule):
     @property
     def num_draws(self) -> int:
         return int(self.log_target.shape[1])
+
+    @property
+    def chain_provenance(self) -> str:
+        return f"markov:{self.kernel_id}:{self.proposal_id}"
 
     @property
     def acceptance_rate(self) -> Array:

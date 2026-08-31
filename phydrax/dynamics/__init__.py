@@ -5,6 +5,13 @@
 """Dynamical-system, pathwise-evolution, analysis, and identification contracts."""
 
 from . import analysis, identification
+from ._cell_enclosure import CellMapEnclosure
+from ._conley import (
+    compute_conley_homology_index,
+    compute_conley_index,
+    ConleyHomologyIndex,
+    ConleyIndexResult,
+)
 from ._differential_algebraic import (
     AutonomousDifferentialAlgebraicResidual,
     DAERole,
@@ -29,7 +36,12 @@ from ._evolution import (
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import InputLayout, InputRole, StateLayout
 from ._linearization import EvolutionJacobianAction
-from ._model_system import continuous_model_system, ContinuousModelVectorField
+from ._model_system import (
+    continuous_model_system,
+    ContinuousModelVectorField,
+    discrete_model_system,
+    DiscreteModelTransition,
+)
 from ._second_order import (
     SecondOrderDifferentialProblem,
     SecondOrderDifferentialSystem,
@@ -59,6 +71,11 @@ from ._trajectory import (
 __all__ = [
     "analysis",
     "identification",
+    "CellMapEnclosure",
+    "ConleyHomologyIndex",
+    "compute_conley_homology_index",
+    "ConleyIndexResult",
+    "compute_conley_index",
     "AbstractDifferentiableEvolution",
     "AbstractEvolution",
     "AbstractInputPolicy",
@@ -75,6 +92,7 @@ __all__ = [
     "DifferentialAlgebraicResidual",
     "DifferentialAlgebraicSystem",
     "DiscreteEvolution",
+    "DiscreteModelTransition",
     "DiscreteSystem",
     "EVOLUTION_BACKEND_FAILED",
     "EVOLUTION_NONFINITE",
@@ -102,5 +120,6 @@ __all__ = [
     "TrajectoryData",
     "TrajectoryTransitions",
     "continuous_model_system",
+    "discrete_model_system",
     "evolve",
 ]

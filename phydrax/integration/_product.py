@@ -180,6 +180,43 @@ def _map_canonical(factor: Any, node: Array, /) -> tuple[Array, Array]:
     raise TypeError("Product deterministic plans support scalar/probability factors.")
 
 
+def _validate_sparse_factor(
+    factor: Any,
+    rule: str,
+    label: str,
+    /,
+) -> None:
+    if rule == "clenshaw-curtis":
+        return
+    if rule != "gauss-hermite":
+        raise ValueError(f"Unsupported sparse-grid axis rule {rule!r}.")
+    if not isinstance(factor, ProbabilityDomain):
+        raise TypeError(
+            f"Gauss--Hermite sparse-grid axis {label!r} requires a probability factor."
+        )
+    if (
+        not factor.supports_reference_transform
+        or factor.reference_measure != "standard-normal"
+    ):
+        raise ValueError(
+            f"Gauss--Hermite sparse-grid axis {label!r} requires a "
+            "standard-normal reference transform."
+        )
+
+
+def _map_sparse_canonical(
+    factor: Any,
+    node: Array,
+    rule: str,
+    label: str,
+    /,
+) -> tuple[Array, Array]:
+    _validate_sparse_factor(factor, rule, label)
+    if rule == "gauss-hermite":
+        return factor.from_reference(node), jnp.asarray(1.0)
+    return _map_canonical(factor, node)
+
+
 def _replicate_count(groups: tuple[tuple[tuple[str, ...], Any], ...], /) -> int:
     counts = {
         plan.design.num_replicates
@@ -273,6 +310,19 @@ def materialize_product(
             )
         for group_index, (labels, factor_plan) in enumerate(groups):
             factors = tuple(_unwrap(component.domain.factor(label)) for label in labels)
+            endpoint_factors = (
+                tuple(
+                    factor
+                    for factor, rule in zip(
+                        factors,
+                        factor_plan.axis_rules,
+                        strict=False,
+                    )
+                    if rule == "clenshaw-curtis"
+                )
+                if isinstance(factor_plan, SparseGridPlan)
+                else factors
+            )
             endpoint_inclusive = isinstance(factor_plan, SparseGridPlan) or (
                 isinstance(factor_plan, FixedQuadraturePlan)
                 and isinstance(factor_plan.rule, (ClenshawCurtisRule, TanhSinhRule))
@@ -280,10 +330,11 @@ def materialize_product(
             if endpoint_inclusive and any(
                 isinstance(factor, ProbabilityDomain)
                 and getattr(factor.distribution, "support", None) is None
-                for factor in factors
+                for factor in endpoint_factors
             ):
                 raise ValueError(
-                    "Endpoint-inclusive product rules require bounded probability support."
+                    "Endpoint-inclusive product rules require bounded probability "
+                    "support."
                 )
             if isinstance(factor_plan, FixedQuadraturePlan):
                 if isinstance(factor_plan.rule, GaussianCubatureRule):
@@ -354,20 +405,36 @@ def materialize_product(
                     raise ValueError(
                         "Sparse-grid factor dimension must match its label group."
                     )
+                for label, factor, rule in zip(
+                    labels,
+                    factors,
+                    factor_plan.axis_rules,
+                    strict=True,
+                ):
+                    _validate_sparse_factor(factor, rule, label)
                 nodes, raw_weights = _smolyak_rule(
                     factor_plan.dimension,
                     factor_plan.level,
                     factor_plan.anisotropy,
+                    factor_plan.axis_rules,
                 )
                 axis = structure.axis_for(labels[0])
                 if axis is None:
                     raise RuntimeError("Sparse-grid product factor has no axis.")
                 scale = jnp.asarray(1.0)
-                for column, (label, factor) in enumerate(
-                    zip(labels, factors, strict=True)
+                for column, (label, factor, rule) in enumerate(
+                    zip(
+                        labels,
+                        factors,
+                        factor_plan.axis_rules,
+                        strict=True,
+                    )
                 ):
-                    mapped, local_scale = _map_canonical(
-                        factor, jnp.asarray(nodes[:, column])
+                    mapped, local_scale = _map_sparse_canonical(
+                        factor,
+                        jnp.asarray(nodes[:, column]),
+                        rule,
+                        label,
                     )
                     points[label] = cx.Field(jnp.asarray(mapped), dims=(axis,))
                     scale = scale * local_scale

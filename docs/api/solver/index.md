@@ -26,14 +26,15 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and
   global collocation for future arguments.
+- [Maxwell solvers](maxwell.md) distinguishes compatible cochain evolution,
+  cochain frequency solves, and periodic layered Fourier-modal scattering.
 - [Functional solver](functional_solver.md) assembles training terms, evaluation
   terms, exact enforcement, and model-attached losses for optimization.
 - [Variational Monte Carlo](variational_monte_carlo.md) combines persistent Markov
-  chains, connected local observables, centered score geometry, and the existing
-  linear runtime for discrete amplitude optimization.
-- [Variational TDVP](variational_tdvp.md) reuses the same chains, connected
-  observables, and score geometry for fixed-step real- or imaginary-time parameter
-  evolution.
+  chains, generalized local quantum operators, centered matrix-free score geometry,
+  and the existing linear runtime for discrete or continuum-electron amplitudes.
+- [Variational TDVP](variational_tdvp.md) reuses the same chains, local actions,
+  and score geometry for fixed-step real- or imaginary-time parameter evolution.
 
 !!! note
     Key notes:
@@ -47,9 +48,10 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
     - `phydrax.optim.kfac(...)` accepts quadratic `ResidualPenalty` terms and freezes
       each active term realization across its gradient, curvature update, and line search.
     - Use `VariationalMonteCarloProblem` and `solve_variational_monte_carlo` for a
-      discrete connected operator and user-defined log amplitude. The VMC path is not
-      a `FunctionalSolver` optimizer because its target-dependent chains and covariance
-      gradient have a separate state transition.
+      local quantum operator and canonical log amplitude, including connected
+      discrete operators and finite molecular Coulomb electrons. The VMC path is
+      not a `FunctionalSolver`: persistent target-dependent chains and covariance
+      geometry have their own state transition.
     - Use `VariationalTDVPPolicy` and `solve_variational_tdvp` when the same amplitude
       manifold must evolve under projected Schrödinger or imaginary-time dynamics.
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.

@@ -189,6 +189,24 @@ independently against its own kernel, Gaussian-process, posterior, search-eviden
 and state-space contracts. No Hyperoptax source code is copied or redistributed,
 and randomized Kriging Believer is not implemented.
 
+The learned-evolution and autoregressive-training design study considered
+Ceyron/pdequinox at commit 492fe6e676bddce20085d67f12d178688d54f1b3
+and Ceyron/trainax at commit 06b0694f42662bdfde54c5114b73987f6a80faa8,
+Copyright (c) 2024 Felix Koehler, both licensed under the MIT License, together
+with Koehler, Niedermayr, Westermann, and Thuerey, “APEBench: A Benchmark for
+Autoregressive Neural Emulators of PDEs,” NeurIPS 2024. Phydrax independently
+implements its model, trajectory, operator-field, physical-boundary, precision,
+objective, checkpoint, and artifact contracts; no upstream source, templates,
+fixtures, or runtime dependency are copied or redistributed.
+
+The causal rollout certification design study considered j-towns/scanagram at
+commit 9c923648a1d0b7c778b0c6daeb770a9abdfbcf96, Copyright Jamie Townsend,
+licensed under the Apache License, Version 2.0. Phydrax independently authors
+explicit recurrent steps and carries and uses full-sequence, prefix, chunk, and
+resume equivalence as validation evidence. It does not include Scanagram's
+JAXPR interpreter, primitive rules, custom decorator, source, fixtures, or
+runtime dependency.
+
 Accurate conservation accounting
 The cancellation-aware conservation reductions are independent implementations of
 the error-free TwoSum and Sum2 algorithms described by Takeshi Ogita, Siegfried M.
@@ -209,6 +227,18 @@ rmanak/FD, GFDFlow, mGFD, and fdtdx. Phydrax does not copy, translate, bundle, l
 or import their solver source, generated tables, runtime types, templates, fixtures,
 or executables. GPL/CC projects remain outside the distribution; neutral adapters
 accept data schemas only.
+
+FMMAX
+Copyright 2023 Meta Platforms, Inc. and affiliates.
+Copyright 2025 invrs.io LLC.
+Licensed under the MIT License.
+The reciprocal-lattice harmonic layout, Fourier material factorization, stable
+scattering composition, translated-layer covariance, source batching, and
+Brillouin-zone semantics are informed by FMMAX v1.7.1 at commit
+e13d422cbb8b77820a5e375eb9f5c415be01b81e. Phydrax reimplements these methods
+against its own discretization, linear-operator, boundary-cascade, diagnostic,
+refresh, and provenance contracts and does not depend on the upstream package.
+See LICENSES/FMMAX-MIT.txt.
 
 High-order and spectral finite elements
 The spectral-element design study considered Nek5000, nekRS, Neko, Nekbone,

@@ -11,7 +11,7 @@ def _fourier(count=16):
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
 def test_fourier_modal_roundtrip_derivative_parseval_and_gradient():
@@ -51,7 +51,7 @@ def test_tensor_spectral_noise_basis_tracks_modal_and_point_value_spaces():
             ),
         ),
         axis_names=("x",),
-    ).prepare(jnp.asarray([[-1.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.interval(-1.0, 1.0),))
     physical = phx.stochastic.SpatialNoiseBasis.from_kernel_covariance(
         lambda left, right: jnp.exp(-jnp.sum((left - right) ** 2)),
         bounded,
@@ -109,7 +109,7 @@ def test_chebyshev_and_legendre_derivatives_are_polynomial_exact():
         space = phx.discretization.TensorSpectralPlan(
             (basis,),
             axis_names=("x",),
-        ).prepare(jnp.asarray([[-1.0], [1.0]]))
+        ).prepare((phx.discretization.AxisDomain.interval(-1.0, 1.0),))
         x = space.axes[0].nodes
         values = x**5 - 2.0 * x**3 + x
         expected = 5.0 * x**4 - 6.0 * x**2 + 1.0
@@ -126,9 +126,12 @@ def test_constrained_legendre_basis_and_boundary_lift_satisfy_endpoint_data():
     space = phx.discretization.TensorSpectralPlan(
         (constrained,),
         axis_names=("x",),
-    ).prepare(jnp.asarray([[-1.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.interval(-1.0, 1.0),))
     coefficients = jnp.arange(space.num_modes, dtype=jnp.complex128) / 10.0
-    base = base_plan.prepare(-1.0, 1.0, precision=space.plan.precision)
+    base = base_plan.prepare(
+        phx.discretization.AxisDomain.interval(-1.0, 1.0),
+        precision=space.plan.precision,
+    )
     synthesis = np.asarray(space.axes[0].modal_transform.synthesis)
     base_analysis = np.asarray(base.modal_transform.analysis)
     normalizers = np.sqrt(0.5 * (2.0 * np.arange(base.mode_count) + 1.0))
@@ -161,7 +164,7 @@ def test_galerkin_poisson_and_generalized_tau_use_internal_linalg():
             ),
         ),
         axis_names=("x",),
-    ).prepare(jnp.asarray([[-1.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.interval(-1.0, 1.0),))
     galerkin = phx.discretization.SpectralGalerkinMethodPlan().prepare(space)
     rhs = jnp.ones(space.physical_shape)
     coefficients, linear_result = galerkin.solve_poisson(rhs)

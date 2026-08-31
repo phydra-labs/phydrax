@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import platform
-import sys
 from dataclasses import asdict, dataclass
-from importlib.metadata import version
 from pathlib import Path
 
 import jax
 import numpy as np
 import polars as pl
+
+from benchmarks._io import atomic_write, write_json_atomic
+from benchmarks._runtime import capture_environment, RuntimeEnvironment
 
 from .models import compatible_architectures
 from .runner import OperatorBenchmarkResult, run_operator_benchmark
@@ -24,13 +24,15 @@ from .scenarios import (
 @dataclass(frozen=True)
 class BenchmarkRunMetadata:
     commit_identity: str
-    phydrax_version: str
-    jax_version: str
-    python_version: str
-    platform: str
-    device: str
-    default_float_dtype: str
+    runtime: RuntimeEnvironment
     scenario_checksums: tuple[tuple[str, str], ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "commit_identity": self.commit_identity,
+            "runtime": self.runtime.to_dict(),
+            "scenario_checksums": [list(value) for value in self.scenario_checksums],
+        }
 
 
 @dataclass(frozen=True)
@@ -50,10 +52,14 @@ class OperatorBenchmarkAggregate:
     spectral_mean: float | None
     conservation_error_mean: float
     maximum_absolute_error_mean: float
-    compile_seconds_mean: float
+    lowering_seconds_mean: float
+    compilation_seconds_mean: float
+    first_execution_seconds_mean: float
+    inference_seed_medians_seconds: tuple[float, ...]
     inference_seconds_mean: float
+    inference_seconds_std: float
     training_seconds_mean: float
-    peak_memory_bytes_mean: float | None = None
+    compiler_estimated_memory_bytes_mean: float | None = None
     size_scale: float = 1.0
     convergence_rate: float = 0.0
 
@@ -65,7 +71,11 @@ class OperatorBenchmarkMatrixResult:
     aggregates: tuple[OperatorBenchmarkAggregate, ...]
 
     def to_dict(self):
-        return asdict(self)
+        return {
+            "metadata": self.metadata.to_dict(),
+            "results": [result.to_dict() for result in self.results],
+            "aggregates": [asdict(aggregate) for aggregate in self.aggregates],
+        }
 
 
 @dataclass(frozen=True)
@@ -199,15 +209,9 @@ def benchmark_metadata(
     *,
     commit_identity: str,
 ) -> BenchmarkRunMetadata:
-    device = jax.devices()[0]
     return BenchmarkRunMetadata(
         commit_identity=str(commit_identity),
-        phydrax_version=version("phydrax"),
-        jax_version=version("jax"),
-        python_version=platform.python_version(),
-        platform=sys.platform,
-        device=f"{device.platform}:{device.device_kind}",
-        default_float_dtype=str(jax.numpy.asarray(0.0).dtype),
+        runtime=capture_environment(),
         scenario_checksums=tuple(
             (scenario.name, scenario_checksum(scenario)) for scenario in scenarios
         ),
@@ -240,8 +244,11 @@ def aggregate_benchmark_results(
         h1_values = [row.h1 for _, row in rows if row.h1 is not None]
         spectral_values = [row.spectral for _, row in rows if row.spectral is not None]
         memory_values = [
-            row.peak_memory_bytes for _, row in rows if row.peak_memory_bytes is not None
+            value
+            for _, row in rows
+            if (value := row.compiler_evidence.estimated_device_memory_bytes) is not None
         ]
+        inference_medians = tuple(_inference_median(row) for _, row in rows)
         aggregates.append(
             OperatorBenchmarkAggregate(
                 scenario=scenario,
@@ -268,22 +275,35 @@ def aggregate_benchmark_results(
                 maximum_absolute_error_mean=float(
                     np.mean([row.maximum_absolute_error for _, row in rows])
                 ),
-                compile_seconds_mean=float(
-                    np.mean([row.compile_seconds for _, row in rows])
+                lowering_seconds_mean=float(
+                    np.mean([row.lowering_seconds for _, row in rows])
                 ),
-                inference_seconds_mean=float(
-                    np.mean([row.inference_seconds for _, row in rows])
+                compilation_seconds_mean=float(
+                    np.mean([row.compilation_seconds for _, row in rows])
                 ),
+                first_execution_seconds_mean=float(
+                    np.mean([row.first_execution_seconds for _, row in rows])
+                ),
+                inference_seed_medians_seconds=inference_medians,
+                inference_seconds_mean=float(np.mean(inference_medians)),
+                inference_seconds_std=float(np.std(inference_medians)),
                 training_seconds_mean=float(
                     np.mean([result.training_seconds for result, _ in rows])
                 ),
-                peak_memory_bytes_mean=(
+                compiler_estimated_memory_bytes_mean=(
                     None if not memory_values else float(np.mean(memory_values))
                 ),
                 convergence_rate=float(np.mean([result.converged for result, _ in rows])),
             )
         )
     return tuple(aggregates)
+
+
+def _inference_median(evaluation) -> float:
+    value = evaluation.inference_timing.median_seconds
+    if value is None:
+        raise ValueError("Operator inference timing must contain measured samples.")
+    return value
 
 
 def run_benchmark_matrix(
@@ -395,11 +415,11 @@ def save_benchmark_artifacts(
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "operator_benchmarks.json"
     parquet_path = root / "operator_benchmarks.parquet"
-    json_path.write_text(
-        json.dumps(matrix.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    atomic_write(
+        parquet_path,
+        lambda temporary: pl.DataFrame(_aggregate_rows(matrix)).write_parquet(temporary),
     )
-    pl.DataFrame(_aggregate_rows(matrix)).write_parquet(parquet_path)
+    write_json_atomic(json_path, matrix.to_dict())
     return json_path, parquet_path
 
 

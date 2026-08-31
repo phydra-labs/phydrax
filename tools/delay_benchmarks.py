@@ -15,6 +15,12 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import (
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+    synchronize,
+)
 
 
 def _constant_delay_problem(drift, history, delays, /, **kwargs):
@@ -31,10 +37,6 @@ def _constant_delay_problem(drift, history, delays, /, **kwargs):
     )
 
 
-def _block(tree: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
-
-
 def _measure(
     operation: Callable[[jax.Array], tuple[jax.Array, jax.Array, jax.Array]],
     argument: jax.Array,
@@ -42,23 +44,23 @@ def _measure(
     *,
     repeats: int,
 ) -> tuple[tuple[jax.Array, jax.Array, jax.Array], dict[str, Any]]:
-    started = time.perf_counter()
-    compiled = jax.jit(operation).lower(argument).compile()
-    compile_ms = 1e3 * (time.perf_counter() - started)
-
-    started = time.perf_counter()
-    output = _block(compiled(argument))
-    first_execution_ms = 1e3 * (time.perf_counter() - started)
-
-    started = time.perf_counter()
-    for _ in range(repeats):
-        output = _block(compiled(argument))
-    steady_ms = 1e3 * (time.perf_counter() - started) / repeats
+    jitted = jax.jit(operation)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(argument),
+        lambda lowered: lowered.compile(),
+    )
+    output, first_execution_seconds = measure_synchronized(lambda: compiled(argument))
+    output, distribution = measure_repeated(
+        lambda: compiled(argument),
+        warmup=0,
+        repeats=repeats,
+    )
     return output, {
         "execution_mode": "jit",
-        "compile_ms": compile_ms,
-        "first_execution_ms": first_execution_ms,
-        "steady_ms": steady_ms,
+        "compile_ms": 1_000.0
+        * (compilation.lowering_seconds + compilation.compilation_seconds),
+        "first_execution_ms": 1_000.0 * first_execution_seconds,
+        "steady_ms": 1_000.0 * float(distribution.mean_seconds),
     }
 
 
@@ -69,19 +71,17 @@ def _measure_eager(
     *,
     repeats: int,
 ) -> tuple[tuple[jax.Array, jax.Array, jax.Array], dict[str, Any]]:
-    started = time.perf_counter()
-    output = _block(operation(argument))
-    first_execution_ms = 1e3 * (time.perf_counter() - started)
-
-    started = time.perf_counter()
-    for _ in range(repeats):
-        output = _block(operation(argument))
-    steady_ms = 1e3 * (time.perf_counter() - started) / repeats
+    output, first_execution_seconds = measure_synchronized(lambda: operation(argument))
+    output, distribution = measure_repeated(
+        lambda: operation(argument),
+        warmup=0,
+        repeats=repeats,
+    )
     return output, {
         "execution_mode": "eager-host-orchestrated",
         "compile_ms": None,
-        "first_execution_ms": first_execution_ms,
-        "steady_ms": steady_ms,
+        "first_execution_ms": 1_000.0 * first_execution_seconds,
+        "steady_ms": 1_000.0 * float(distribution.mean_seconds),
     }
 
 
@@ -538,7 +538,7 @@ def run_benchmarks(
             max_steps=None,
             throw=True,
         )
-        _block(solution.states)
+        synchronize(solution.states)
         wall_ms = 1e3 * (time.perf_counter() - started)
         expected = jnp.exp(smooth_rate * horizon) * base
         return {
@@ -576,7 +576,7 @@ def run_benchmarks(
             max_steps_per_segment=64,
             throw=True,
         )
-        _block(solution.states)
+        synchronize(solution.states)
         wall_ms = 1e3 * (time.perf_counter() - started)
         expected = jnp.exp(smooth_rate * horizon) * base
         return {

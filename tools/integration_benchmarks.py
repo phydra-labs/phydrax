@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -17,11 +16,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-
-
-def _block_estimate(estimate: phx.integration.IntegrationEstimate) -> None:
-    jax.block_until_ready(estimate.value.data)
-    jax.block_until_ready(estimate.status)
+from benchmarks._runtime import measure_repeated
 
 
 def _measure(
@@ -30,14 +25,12 @@ def _measure(
     *,
     repeats: int,
 ) -> tuple[phx.integration.IntegrationEstimate, float]:
-    estimate = operation()
-    _block_estimate(estimate)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        estimate = operation()
-        _block_estimate(estimate)
-    elapsed_ms = 1e3 * (time.perf_counter() - started) / repeats
-    return estimate, elapsed_ms
+    estimate, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
+    )
+    return estimate, 1_000.0 * float(distribution.mean_seconds)
 
 
 def _record(
@@ -73,14 +66,12 @@ def _measure_compiled(
 ) -> tuple[phx.integration.IntegrationEstimate, float]:
     compiled = jax.jit(operation)
     scale = jnp.asarray(1.0)
-    estimate = compiled(scale)
-    _block_estimate(estimate)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        estimate = compiled(scale)
-        _block_estimate(estimate)
-    elapsed_ms = 1e3 * (time.perf_counter() - started) / repeats
-    return estimate, elapsed_ms
+    estimate, distribution = measure_repeated(
+        lambda: compiled(scale),
+        warmup=1,
+        repeats=repeats,
+    )
+    return estimate, 1_000.0 * float(distribution.mean_seconds)
 
 
 def _interoperability_record(

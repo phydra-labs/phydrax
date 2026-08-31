@@ -14,15 +14,16 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated
 
 
 def _timed(function, repeats):
-    started = time.perf_counter()
-    value = None
-    for _ in range(repeats):
-        value = function()
-        jax.block_until_ready(value)
-    return value, (time.perf_counter() - started) / repeats
+    value, distribution = measure_repeated(
+        function,
+        warmup=0,
+        repeats=repeats,
+    )
+    return value, float(distribution.mean_seconds)
 
 
 def _periodic_grid(points):
@@ -300,9 +301,7 @@ def _industrial_extensions(points, repeats):
         phx.discretization.FiniteVolumeBoundarySet(("x",), (pair,)),
     )
     euler_method = phx.discretization.FiniteVolumeMethodPlan(
-        phx.discretization.HighResolutionReconstructionPlan(
-            "weno_z", boundary="outflow"
-        ),
+        phx.discretization.HighResolutionReconstructionPlan("weno_z", boundary="outflow"),
         phx.discretization.HLLCFluxPlan(),
         positivity=phx.discretization.ConvexStateLimiterPlan(),
     )

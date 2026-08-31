@@ -154,7 +154,9 @@ def test_bspline_rejects_invalid_degree_nonuniform_axes_and_budget():
         nodes=jnp.asarray([0.0, 0.1, 0.4, 1.0]),
         quad_weights=None,
         basis="uniform",
-        periodic=False,
+        domain=phx.discretization.AxisDomain.interval(0.0, 1.0),
+        lower_endpoint_included=True,
+        upper_endpoint_included=True,
     )
     grid = phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
     assignment = phx.discretization.TensorBSplineSplatAssignment(2)

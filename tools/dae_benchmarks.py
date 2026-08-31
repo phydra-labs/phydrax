@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import platform
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -20,6 +19,15 @@ import jax.scipy as jsp
 import numpy as np
 
 import phydrax as phx
+from benchmarks._io import write_json_atomic
+from benchmarks._runtime import (
+    capture_environment,
+    logical_array_bytes,
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+    synchronize,
+)
 
 
 jax.config.update("jax_enable_x64", True)
@@ -75,20 +83,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _block(tree: Any, /) -> None:
-    for leaf in jax.tree.leaves(tree):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
-
-
-def _logical_array_bytes(tree: Any, /) -> int:
-    return sum(
-        int(leaf.nbytes)
-        for leaf in jax.tree.leaves(tree)
-        if isinstance(leaf, (jax.Array, np.ndarray))
-    )
-
-
 def _elapsed_ms(started: float, /) -> float:
     return 1e3 * (time.perf_counter() - started)
 
@@ -96,17 +90,6 @@ def _elapsed_ms(started: float, /) -> float:
 def _finite_float(value: Any, /) -> float | None:
     number = float(np.asarray(value))
     return number if math.isfinite(number) else None
-
-
-def _summary(samples: list[float], /) -> dict[str, float]:
-    values = np.asarray(samples, dtype=float)
-    return {
-        "mean_ms": float(np.mean(values)),
-        "standard_deviation_ms": float(np.std(values)),
-        "median_ms": float(np.median(values)),
-        "minimum_ms": float(np.min(values)),
-        "maximum_ms": float(np.max(values)),
-    }
 
 
 def _policy(*, residual_tolerance: float = 1e-10) -> phx.solver.DAESolvePolicy:
@@ -143,7 +126,7 @@ def _prepare(
 ) -> tuple[phx.solver.PreparedDAESolve, float]:
     started = time.perf_counter()
     prepared = phx.solver.prepare_dae(problem, grid, policy=policy)
-    _block(prepared)
+    synchronize(prepared)
     return prepared, _elapsed_ms(started)
 
 
@@ -245,27 +228,6 @@ def _adaptive_case(
     )
 
 
-def _lower_compile(
-    function: Any,
-    argument: jax.Array,
-    /,
-) -> tuple[Any, float, float]:
-    started = time.perf_counter()
-    lowered = function.lower(argument)
-    lowering_ms = _elapsed_ms(started)
-    started = time.perf_counter()
-    compiled = lowered.compile()
-    compilation_ms = _elapsed_ms(started)
-    return compiled, lowering_ms, compilation_ms
-
-
-def _execute(function: Any, argument: jax.Array, /) -> tuple[Any, float]:
-    started = time.perf_counter()
-    result = function(argument)
-    _block(result)
-    return result, _elapsed_ms(started)
-
-
 def _enum_histogram(status: Any, enum_type: Any, /) -> dict[str, int]:
     values, counts = np.unique(np.asarray(status), return_counts=True)
     return {
@@ -304,16 +266,22 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
             args=case.args_from_parameter(value),
         )
     )
-    compiled_solve, forward_lowering_ms, forward_compilation_ms = _lower_compile(
-        solve,
-        case.parameter,
+    compiled_solve, forward_compilation = measure_lower_and_compile(
+        lambda: solve.lower(case.parameter),
+        lambda lowered: lowered.compile(),
     )
-    solution, forward_first_ms = _execute(compiled_solve, case.parameter)
-    solution, forward_warmup_ms = _execute(compiled_solve, case.parameter)
-    forward_samples: list[float] = []
-    for _ in range(repeats):
-        solution, elapsed = _execute(compiled_solve, case.parameter)
-        forward_samples.append(elapsed)
+    solution, forward_first_seconds = measure_synchronized(
+        lambda: compiled_solve(case.parameter)
+    )
+    solution, forward_warmup_seconds = measure_synchronized(
+        lambda: compiled_solve(case.parameter)
+    )
+    solution, forward_distribution = measure_repeated(
+        lambda: compiled_solve(case.parameter),
+        warmup=0,
+        repeats=repeats,
+    )
+    forward_milliseconds = forward_distribution.to_milliseconds_dict()
 
     value_and_grad = jax.jit(
         jax.value_and_grad(
@@ -325,26 +293,22 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
             )
         )
     )
-    (
-        compiled_value_and_grad,
-        gradient_lowering_ms,
-        gradient_compilation_ms,
-    ) = _lower_compile(value_and_grad, case.parameter)
-    (objective, gradient), gradient_first_ms = _execute(
-        compiled_value_and_grad,
-        case.parameter,
+    compiled_value_and_grad, gradient_compilation = measure_lower_and_compile(
+        lambda: value_and_grad.lower(case.parameter),
+        lambda lowered: lowered.compile(),
     )
-    (objective, gradient), gradient_warmup_ms = _execute(
-        compiled_value_and_grad,
-        case.parameter,
+    (objective, gradient), gradient_first_seconds = measure_synchronized(
+        lambda: compiled_value_and_grad(case.parameter)
     )
-    gradient_samples: list[float] = []
-    for _ in range(repeats):
-        (objective, gradient), elapsed = _execute(
-            compiled_value_and_grad,
-            case.parameter,
-        )
-        gradient_samples.append(elapsed)
+    (objective, gradient), gradient_warmup_seconds = measure_synchronized(
+        lambda: compiled_value_and_grad(case.parameter)
+    )
+    (objective, gradient), gradient_distribution = measure_repeated(
+        lambda: compiled_value_and_grad(case.parameter),
+        warmup=0,
+        repeats=repeats,
+    )
+    gradient_milliseconds = gradient_distribution.to_milliseconds_dict()
 
     finite_difference_step: float | None = None
     if case.reference_gradient is None:
@@ -357,7 +321,7 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
         finite_difference_step = case.finite_difference_step
     else:
         gradient_reference = case.reference_gradient(case.parameter)
-    _block(gradient_reference)
+    synchronize(gradient_reference)
 
     trajectory_error = case.trajectory_error(solution, case.parameter)
     constraint_residual = (
@@ -374,7 +338,7 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
         jnp.abs(gradient_reference),
         jnp.asarray(1e-30, dtype=gradient.dtype),
     )
-    _block(
+    synchronize(
         (
             trajectory_error,
             constraint_residual,
@@ -642,20 +606,32 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
             "model_setup_ms": case.model_setup_ms,
             "solver_preparation_ms": case.solver_preparation_ms,
             "forward": {
-                "lowering_ms": forward_lowering_ms,
-                "compilation_ms": forward_compilation_ms,
-                "first_execution_ms": forward_first_ms,
-                "warmup_execution_ms": forward_warmup_ms,
-                "steady_samples_ms": forward_samples,
-                "steady_summary": _summary(forward_samples),
+                "lowering_ms": 1_000.0 * forward_compilation.lowering_seconds,
+                "compilation_ms": 1_000.0 * forward_compilation.compilation_seconds,
+                "first_execution_ms": 1_000.0 * forward_first_seconds,
+                "warmup_execution_ms": 1_000.0 * forward_warmup_seconds,
+                "steady_samples_ms": forward_milliseconds["samples_ms"],
+                "steady_summary": {
+                    "mean_ms": forward_milliseconds["mean_ms"],
+                    "standard_deviation_ms": forward_milliseconds["std_ms"],
+                    "median_ms": forward_milliseconds["median_ms"],
+                    "minimum_ms": forward_milliseconds["min_ms"],
+                    "maximum_ms": forward_milliseconds["max_ms"],
+                },
             },
             "value_and_grad": {
-                "lowering_ms": gradient_lowering_ms,
-                "compilation_ms": gradient_compilation_ms,
-                "first_execution_ms": gradient_first_ms,
-                "warmup_execution_ms": gradient_warmup_ms,
-                "steady_samples_ms": gradient_samples,
-                "steady_summary": _summary(gradient_samples),
+                "lowering_ms": 1_000.0 * gradient_compilation.lowering_seconds,
+                "compilation_ms": 1_000.0 * gradient_compilation.compilation_seconds,
+                "first_execution_ms": 1_000.0 * gradient_first_seconds,
+                "warmup_execution_ms": 1_000.0 * gradient_warmup_seconds,
+                "steady_samples_ms": gradient_milliseconds["samples_ms"],
+                "steady_summary": {
+                    "mean_ms": gradient_milliseconds["mean_ms"],
+                    "standard_deviation_ms": gradient_milliseconds["std_ms"],
+                    "median_ms": gradient_milliseconds["median_ms"],
+                    "minimum_ms": gradient_milliseconds["min_ms"],
+                    "maximum_ms": gradient_milliseconds["max_ms"],
+                },
             },
         },
         "storage": {
@@ -663,13 +639,13 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
                 "logical array payloads; excludes allocator pools and compiled "
                 "executables"
             ),
-            "prepared_array_bytes": _logical_array_bytes(case.prepared),
-            "solution_array_bytes": _logical_array_bytes(solution),
+            "prepared_array_bytes": logical_array_bytes(case.prepared),
+            "solution_array_bytes": logical_array_bytes(solution),
             "state_trajectory_bytes": int(solution.states.nbytes),
             "state_rate_trajectory_bytes": int(solution.state_rates.nbytes),
-            "accepted_history_bytes": _logical_array_bytes(solution.step_history),
-            "attempt_history_bytes": _logical_array_bytes(solution.attempt_history),
-            "regularity_evidence_bytes": _logical_array_bytes(solution.regularity),
+            "accepted_history_bytes": logical_array_bytes(solution.step_history),
+            "attempt_history_bytes": logical_array_bytes(solution.attempt_history),
+            "regularity_evidence_bytes": logical_array_bytes(solution.regularity),
             "replay_estimated_memory_bytes": replay.estimated_memory_bytes,
             "replay_selected_chunk_size": replay.selected_chunk_size,
         },
@@ -695,7 +671,7 @@ def _scalar_linear(steps: int) -> _Case:
         jnp.linspace(0.0, 1.0, steps + 1),
         time_id=f"benchmark:dae:scalar-linear:{steps}",
     )
-    _block((problem, grid))
+    synchronize((problem, grid))
     model_setup_ms = _elapsed_ms(started)
     prepared, preparation_ms = _prepare(problem, grid, _policy())
     return _Case(
@@ -748,7 +724,7 @@ def _vector_linear(steps: int) -> _Case:
         jnp.linspace(0.0, 0.5, steps + 1),
         time_id=f"benchmark:dae:vector-linear:{steps}",
     )
-    _block((problem, grid))
+    synchronize((problem, grid))
     model_setup_ms = _elapsed_ms(started)
     prepared, preparation_ms = _prepare(problem, grid, _policy())
 
@@ -818,7 +794,7 @@ def _robertson(steps: int) -> _Case:
         jnp.linspace(0.0, 1e-2, steps + 1),
         time_id=f"benchmark:dae:robertson:{steps}",
     )
-    _block((problem, grid))
+    synchronize((problem, grid))
     model_setup_ms = _elapsed_ms(started)
     prepared, preparation_ms = _prepare(
         problem,
@@ -890,7 +866,7 @@ def _circuit(steps: int) -> _Case:
         jnp.linspace(0.0, 1.0, steps + 1),
         time_id=f"benchmark:dae:circuit:{steps}",
     )
-    _block((problem, grid))
+    synchronize((problem, grid))
     model_setup_ms = _elapsed_ms(started)
     prepared, preparation_ms = _prepare(problem, grid, _policy())
 
@@ -1006,7 +982,7 @@ def _reaction_diffusion(steps: int, spatial_points: int) -> _Case:
         jnp.linspace(0.0, 0.02, steps + 1),
         time_id=f"benchmark:dae:reaction-diffusion:{steps}:{spatial_points}",
     )
-    _block((problem, grid, compiled))
+    synchronize((problem, grid, compiled))
     model_setup_ms = _elapsed_ms(started)
     prepared, preparation_ms = _prepare(problem, grid, _policy())
     eigenvalue = jnp.vdot(initial_u, spatial.laplacian(initial_u)) / jnp.vdot(
@@ -1067,20 +1043,6 @@ def _reaction_diffusion(steps: int, spatial_points: int) -> _Case:
             "regularity_verified": compiled.structural_report.regularity_verified,
         },
     )
-
-
-def _environment() -> dict[str, Any]:
-    device = jax.devices()[0]
-    return {
-        "python_version": platform.python_version(),
-        "jax_version": jax.__version__,
-        "backend": jax.default_backend(),
-        "device_kind": device.device_kind,
-        "machine": platform.machine(),
-        "system": platform.system(),
-        "system_release": platform.release(),
-        "x64_enabled": bool(jax.config.read("jax_enable_x64")),
-    }
 
 
 def main() -> None:
@@ -1155,14 +1117,13 @@ def main() -> None:
                 "smoke": bool(arguments.smoke),
             },
         },
-        "environment": _environment(),
+        "environment": capture_environment().to_dict(),
         "cases": records,
         "passed": all(record["passed"] for record in records),
     }
     rendered = json.dumps(report, indent=2, sort_keys=True, allow_nan=False)
     if arguments.output is not None:
-        arguments.output.parent.mkdir(parents=True, exist_ok=True)
-        arguments.output.write_text(rendered + "\n", encoding="utf-8")
+        write_json_atomic(arguments.output, report)
     print(rendered)
 
 

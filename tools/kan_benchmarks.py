@@ -17,15 +17,9 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
+from benchmarks._runtime import synchronize
 from phydrax._interpolation import bspline_stencil
 from phydrax._trainable import partition_trainable
-
-
-def _block(tree: Any) -> Any:
-    return jax.tree.map(
-        lambda leaf: leaf.block_until_ready() if eqx.is_array(leaf) else leaf,
-        tree,
-    )
 
 
 def _benchmark(
@@ -35,12 +29,12 @@ def _benchmark(
 ) -> dict[str, float]:
     compiled = eqx.filter_jit(function)
     started = time.perf_counter()
-    _block(compiled(*arguments))
+    synchronize(compiled(*arguments))
     compile_and_first_ms = 1e3 * (time.perf_counter() - started)
 
     started = time.perf_counter()
     for _ in range(repeats):
-        _block(compiled(*arguments))
+        synchronize(compiled(*arguments))
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
     return {
         "compile_and_first_ms": compile_and_first_ms,
@@ -312,7 +306,7 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
     started = time.perf_counter()
     for _ in range(400):
         parameters, optimizer_state, loss = step(parameters, optimizer_state)
-    _block((parameters, optimizer_state, loss))
+    synchronize((parameters, optimizer_state, loss))
     optimization_ms = 1e3 * (time.perf_counter() - started)
     optimized_grid = eqx.tree_at(
         lambda value: value.raw_span_logits,

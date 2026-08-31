@@ -26,27 +26,36 @@ AxisEntityKind: TypeAlias = Literal["point", "interval"]
 class StructuredAxis(StrictModule, NonTrainableState):
     """Point/interval entities and dual measures for one structured axis."""
 
-    primary_entity: AxisPrimaryEntity = eqx.field(static=True)
-    periodic: bool = eqx.field(static=True)
     bounds: Array
     point_coordinates: Array
     interval_centers: Array
     interval_widths: Array
     point_measures: Array
+    primary_entity: AxisPrimaryEntity = eqx.field(static=True)
+    periodic: bool = eqx.field(static=True)
+    domain_kind: str = eqx.field(static=True)
+    domain_id: str = eqx.field(static=True)
+    lower_endpoint_included: bool = eqx.field(static=True)
+    upper_endpoint_included: bool = eqx.field(static=True)
     axis_id: str = eqx.field(static=True)
 
     def __init__(self, axis: AxisDiscretization, /):
         if not isinstance(axis, AxisDiscretization):
             raise TypeError("axis must be an AxisDiscretization.")
         nodes = np.asarray(axis.nodes, dtype=float)
-        if nodes.size < 1 or np.any(~np.isfinite(nodes)):
-            raise ValueError("Structured axis nodes must be finite and non-empty.")
-        if axis.bounds is not None:
-            bounds = np.asarray(axis.bounds, dtype=float)
+        if (
+            nodes.size < 1
+            or np.any(~np.isfinite(nodes))
+            or (nodes.size > 1 and np.any(np.diff(nodes) <= 0.0))
+        ):
+            raise ValueError(
+                "Structured axis nodes must be finite, nonempty, and increasing."
+            )
+        finite_bounds = axis.domain.finite_bounds
+        if finite_bounds is not None:
+            bounds = np.asarray(finite_bounds, dtype=float)
         elif axis.periodic:
-            if axis.quad_weights is None:
-                raise ValueError("Periodic structured axis requires measure or bounds.")
-            bounds = np.asarray([nodes[0], nodes[0] + np.sum(axis.quad_weights)])
+            raise ValueError("Periodic structured axes require finite bounds.")
         else:
             bounds = np.asarray([nodes[0], nodes[-1]])
         if axis.primary_entity == "point":
@@ -57,17 +66,22 @@ class StructuredAxis(StrictModule, NonTrainableState):
                 widths = np.diff(extended)
                 centers = points + 0.5 * widths
                 centers = bounds[0] + np.mod(centers - bounds[0], period)
-                point_measures = 0.5 * (widths + np.roll(widths, 1))
+                geometric_measures = 0.5 * (widths + np.roll(widths, 1))
             else:
                 if points.size < 2:
-                    raise ValueError("Bounded nodal axis requires at least two points.")
+                    raise ValueError("Point-primary axes require at least two points.")
                 widths = np.diff(points)
                 centers = 0.5 * (points[:-1] + points[1:])
-                point_measures = np.empty_like(points)
-                point_measures[0] = 0.5 * widths[0]
-                point_measures[-1] = 0.5 * widths[-1]
+                geometric_measures = np.empty_like(points)
+                geometric_measures[0] = 0.5 * widths[0]
+                geometric_measures[-1] = 0.5 * widths[-1]
                 if points.size > 2:
-                    point_measures[1:-1] = 0.5 * (widths[:-1] + widths[1:])
+                    geometric_measures[1:-1] = 0.5 * (widths[:-1] + widths[1:])
+            point_measures = (
+                geometric_measures
+                if axis.quad_weights is None
+                else np.asarray(axis.quad_weights, dtype=float)
+            )
         else:
             centers = nodes
             count = int(nodes.size)
@@ -108,25 +122,36 @@ class StructuredAxis(StrictModule, NonTrainableState):
             np.any(~np.isfinite(widths))
             or np.any(widths <= 0.0)
             or np.any(~np.isfinite(point_measures))
-            or np.any(point_measures <= 0.0)
+            or np.any(point_measures < 0.0)
+            or not np.any(point_measures > 0.0)
         ):
-            raise ValueError("Structured entity measures must be finite and positive.")
-        self.primary_entity = axis.primary_entity
-        self.periodic = axis.periodic
+            raise ValueError(
+                "Structured entity measures must be finite and non-negative "
+                "with positive total support."
+            )
         self.bounds = jnp.asarray(bounds)
         self.point_coordinates = jnp.asarray(points)
         self.interval_centers = jnp.asarray(centers)
         self.interval_widths = jnp.asarray(widths)
         self.point_measures = jnp.asarray(point_measures)
+        self.primary_entity = axis.primary_entity
+        self.periodic = axis.periodic
+        self.domain_kind = axis.domain.kind
+        self.domain_id = axis.domain.domain_id
+        self.lower_endpoint_included = axis.lower_endpoint_included
+        self.upper_endpoint_included = axis.upper_endpoint_included
         self.axis_id = canonical_fingerprint(
             {
                 "kind": "structured-axis",
                 "primary_entity": axis.primary_entity,
-                "periodic": axis.periodic,
+                "domain": axis.domain.domain_id,
+                "lower_endpoint_included": axis.lower_endpoint_included,
+                "upper_endpoint_included": axis.upper_endpoint_included,
                 "bounds": array_tree_fingerprint(bounds),
                 "points": array_tree_fingerprint(points),
                 "interval_centers": array_tree_fingerprint(centers),
                 "interval_widths": array_tree_fingerprint(widths),
+                "point_measures": array_tree_fingerprint(point_measures),
             }
         )
 
@@ -205,12 +230,13 @@ class TensorEntityLayout(StrictModule, NonTrainableState):
         for dimension, (axis, entity) in enumerate(zip(axes_, entities, strict=True)):
             lower = jnp.zeros(shape, dtype=bool)
             upper = jnp.zeros(shape, dtype=bool)
-            if not axis.periodic and entity == "point":
+            if entity == "point" and axis.lower_endpoint_included:
                 lower_index: list[slice | int] = [slice(None)] * len(shape)
-                upper_index: list[slice | int] = [slice(None)] * len(shape)
                 lower_index[dimension] = 0
-                upper_index[dimension] = shape[dimension] - 1
                 lower = lower.at[tuple(lower_index)].set(True)
+            if entity == "point" and axis.upper_endpoint_included:
+                upper_index: list[slice | int] = [slice(None)] * len(shape)
+                upper_index[dimension] = shape[dimension] - 1
                 upper = upper.at[tuple(upper_index)].set(True)
             lower_masks.append(lower)
             upper_masks.append(upper)

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from benchmarks._runtime import capture_environment
 from benchmarks.advanced_solvers.adapters import adapter_names, load_adapter
 from benchmarks.advanced_solvers.adapters.base import (
     Availability,
@@ -299,17 +300,7 @@ def test_capabilities_cli_emits_all_common_solver_families(capsys):
 
 
 def _environment():
-    return {
-        "fingerprint": "test-environment",
-        "python_version": "3.12.0",
-        "platform": "test-platform",
-        "machine": "test-machine",
-        "processor": "test-processor",
-        "logical_cpus": 1,
-        "numpy_version": np.__version__,
-        "jax": {"version": "test", "backend": "cpu", "devices": []},
-        "thread_environment": {},
-    }
+    return capture_environment().to_dict()
 
 
 def test_phydrax_sparse_linear_adapter_runs_public_canonical_operator_contract():

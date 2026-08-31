@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -15,23 +14,15 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-
-
-def _block(tree: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
+from benchmarks._runtime import measure_host, measure_synchronized
 
 
 def _timed(operation: Callable[[], Any], /) -> tuple[Any, float]:
-    started = time.perf_counter()
-    result = operation()
-    _block(result)
-    return result, time.perf_counter() - started
+    return measure_synchronized(operation)
 
 
 def _compiled(operation: Callable[[], Any], /) -> tuple[Any, float]:
-    started = time.perf_counter()
-    executable = operation()
-    return executable, time.perf_counter() - started
+    return measure_host(operation)
 
 
 def _nonlinear_diagonal_objective(parameters: jax.Array, weights: jax.Array) -> jax.Array:
