@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import layer_potential
+from . import layer_potential, vortex
 from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
 from ._local_ops import local_integral, local_integral_ball
 from ._spatial_ops import nonlocal_integral, spatial_integral
@@ -39,6 +39,9 @@ from .layer_potential import (
     LaplaceLayerKernel3D,
     LaplaceLayerPotential2D,
     LaplaceLayerPotential3D,
+    LaplaceSingleLayerDP0AssemblyReport3D,
+    LaplaceSingleLayerDP0Galerkin3D,
+    LaplaceSingleLayerDP0GalerkinPolicy3D,
     LaplaceTreecodeBackend2D,
     LaplaceTreecodeEvaluation2D,
     LayerBackendEvaluation2D,
@@ -48,12 +51,15 @@ from .layer_potential import (
     LayerEvaluationResult,
     LayerPotentialTargetReport,
     PanelInteractionReport2D,
+    prepare_laplace_single_layer_dp0_3d,
     QBXEvaluation2D,
     QBXEvaluation3D,
     RCIPPreconditioner2D,
     SurfacePanelization3D,
     SurfaceTargetReport3D,
 )
+from .vortex import *  # noqa: F403
+from .vortex import __all__ as _vortex_all
 
 
 __all__ = [
@@ -73,6 +79,10 @@ __all__ = [
     "LayerEvaluationReport",
     "LayerEvaluationResult",
     "LayerPotentialTargetReport",
+    "LaplaceSingleLayerDP0AssemblyReport3D",
+    "LaplaceSingleLayerDP0Galerkin3D",
+    "LaplaceSingleLayerDP0GalerkinPolicy3D",
+    "prepare_laplace_single_layer_dp0_3d",
     "evaluate_layer_potential",
     "AdaptiveLayerEvaluation2D",
     "PanelInteractionReport2D",
@@ -113,3 +123,5 @@ __all__ = [
     "spatial_integral",
     "time_convolution",
 ]
+
+__all__ += [name for name in _vortex_all if name not in __all__]

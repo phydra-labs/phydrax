@@ -1,0 +1,11 @@
+{
+  "maturity": "experimental",
+  "capability": "fracture",
+  "metrics": {
+    "successful": true,
+    "damage_residual": 0.0,
+    "minimum_damage_increment": 0.0,
+    "fracture_energy": 0.0
+  },
+  "passed": true
+}

@@ -14,6 +14,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -23,6 +25,65 @@ class ArrayArchiveError(RuntimeError):
 
 class ArrayArchiveCorruptionError(ArrayArchiveError):
     """Raised when an array archive is incomplete, corrupt, or noncanonical."""
+
+
+def pack_array_tree(
+    prefix: str,
+    tree: Any,
+    arrays: dict[str, object],
+    /,
+) -> dict[str, object]:
+    """Pack one array-only PyTree into a deterministic archive namespace."""
+
+    identifier = str(prefix)
+    if not identifier:
+        raise ValueError("Array-tree archive prefix must be nonempty.")
+    path_leaves, _ = jax.tree_util.tree_flatten_with_path(tree)
+    paths: list[str] = []
+    names: list[str] = []
+    for index, (path, leaf) in enumerate(path_leaves):
+        value = np.asarray(leaf)
+        if value.dtype.hasobject:
+            raise TypeError("Archived PyTrees cannot contain object arrays.")
+        name = f"{identifier}/{index:06d}"
+        paths.append(jax.tree_util.keystr(path) or "<root>")
+        names.append(name)
+        arrays[name] = value
+    return {"paths": paths, "arrays": names, "num_leaves": len(names)}
+
+
+def unpack_array_tree(
+    specification: Mapping[str, Any],
+    arrays: Mapping[str, Any],
+    template: Any,
+    /,
+) -> Any:
+    """Restore one array-only PyTree against an exact runtime template."""
+    if not isinstance(specification, Mapping):
+        raise ValueError("Archived PyTree specification must be a mapping.")
+
+    template_path_leaves, treedef = jax.tree_util.tree_flatten_with_path(template)
+    expected_paths = [
+        jax.tree_util.keystr(path) or "<root>" for path, _ in template_path_leaves
+    ]
+    names = specification.get("arrays")
+    if (
+        specification.get("paths") != expected_paths
+        or specification.get("num_leaves") != len(expected_paths)
+        or not isinstance(names, list)
+        or len(names) != len(expected_paths)
+    ):
+        raise ValueError("Archived PyTree does not match the runtime template.")
+    leaves = []
+    for name, (_, template_leaf) in zip(names, template_path_leaves, strict=True):
+        if not isinstance(name, str) or name not in arrays:
+            raise ValueError("Archived PyTree array is missing.")
+        value = jnp.asarray(arrays[name])
+        expected = jnp.asarray(template_leaf)
+        if value.shape != expected.shape or value.dtype != expected.dtype:
+            raise ValueError("Archived PyTree array shape or dtype changed.")
+        leaves.append(value)
+    return jax.tree_util.tree_unflatten(treedef, leaves)
 
 
 def write_array_archive(
@@ -181,5 +242,7 @@ __all__ = [
     "ArrayArchiveCorruptionError",
     "ArrayArchiveError",
     "read_array_archive",
+    "pack_array_tree",
+    "unpack_array_tree",
     "write_array_archive",
 ]

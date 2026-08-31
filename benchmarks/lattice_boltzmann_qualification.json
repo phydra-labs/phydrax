@@ -61,7 +61,7 @@
   },
   "environment": {
     "default_float_dtype": "float64",
-    "fingerprint": "416fb3818ae46051700967a6c86a4fc73273f7791bc0a65ff0218662b9136130",
+    "fingerprint": "c4394b4235f4523a99515374cae0ccb9fe83b59740b18eda60865fcc339fd3e5",
     "jax": {
       "backend": "cpu",
       "devices": [
@@ -77,7 +77,7 @@
     "logical_cpus": 10,
     "machine": "arm64",
     "numpy_version": "2.3.5",
-    "package_fingerprint": "79b81a6dbcc23cb1341242cf5f4615f9f74d80c5275fc4837797953a6407594e",
+    "package_fingerprint": "68119d6cd44934c2b5249649aa84d3b4f7a6d1e5fe1659c3d2d3837c3509a1c0",
     "performance_environment": {
       "JAX_COMPILATION_CACHE_DIR": null,
       "JAX_PLATFORMS": null,
@@ -140,8 +140,8 @@
   },
   "runtime": {
     "boundary_id": "770adddac19725eed21970a5437f4eafc42dfd6794e83ed583dc5662c18b723d",
-    "compilation_id": "774a73a3a721afef944087e9930dd8df892123eb6090e6cecc2aa1e49cd666d0",
-    "compilation_seconds": 0.134806709,
+    "compilation_id": "b929f3bd590765e5e3671c66e3216ae38763a79da1cd41f0d413599a26a0f849",
+    "compilation_seconds": 0.453588,
     "compiler": {
       "argument_bytes": 1179648,
       "bytes_accessed": 82856936,
@@ -154,9 +154,9 @@
     },
     "discretization_id": "af02c3c3d1053720c84220ad1d5ace06c2d0f7dd299bd48628eaaab7cb23a448",
     "fluid_cells": 16384,
-    "fluid_site_mlups": 14.52697340829715,
+    "fluid_site_mlups": 8.600714556436415,
     "logical_state_bytes": 1179648,
-    "lowering_seconds": 0.060666167,
+    "lowering_seconds": 0.187242542,
     "method_id": "0379ecac433c5f9facc99cd984c2f6665fb8d70f00214cb7225eae08b890240f",
     "population_count": 9,
     "problem_id": "bd340d253beadd4bbdc73d3cb0438702fef17ad03c78514421239f102d2350d2",
@@ -166,20 +166,20 @@
     ],
     "timing": {
       "count": 5,
-      "max_ms": 3.626041,
-      "mean_ms": 1.597508,
-      "median_ms": 1.1278329999999999,
-      "min_ms": 1.0040419999999999,
+      "max_ms": 3.677625,
+      "mean_ms": 2.358275,
+      "median_ms": 1.904958,
+      "min_ms": 1.652875,
       "samples_ms": [
-        1.1278329999999999,
-        1.0040419999999999,
-        1.1850829999999999,
-        3.626041,
-        1.044541
+        3.677625,
+        1.652875,
+        1.67375,
+        1.904958,
+        2.8821670000000004
       ],
-      "std_ms": 1.0162292570659437
+      "std_ms": 0.7983491953121766
     },
-    "total_site_mlups": 14.52697340829715
+    "total_site_mlups": 8.600714556436415
   },
   "scope": {
     "collisions": [

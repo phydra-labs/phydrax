@@ -4,10 +4,13 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.operators.differential import (
+    deformation_gradient,
     deviatoric_stress,
     hydrostatic_pressure,
     hydrostatic_stress,
@@ -15,6 +18,8 @@ from phydrax.operators.differential import (
     linear_elastic_orthotropic_stress_2d,
     maxwell_stress,
     neo_hookean_cauchy,
+    neo_hookean_pk1,
+    neo_hookean_reference_energy,
     svk_pk2_stress,
     viscous_stress,
 )
@@ -147,15 +152,145 @@ def test_finite_strain_shapes_zero_disp():
     def uz(x):
         return jnp.array([0.0, 0.0])
 
-    mu, lam, kappa = 2.0, 3.0, 5.0
+    mu, lam = 2.0, 3.0
     S = svk_pk2_stress(uz, lambda_=lam, mu=mu)
     s = jnp.asarray(
         S(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     assert jnp.allclose(s, jnp.zeros((2, 2)))
 
-    nh = neo_hookean_cauchy(uz, mu=mu, kappa=kappa)
+    nh = neo_hookean_cauchy(uz, mu=mu, lambda_=lam)
     sig = jnp.asarray(
         nh(frozendict({"x": cx.Field(jnp.array([0.0, 0.0]), dims=(None,))})).data
     )
     assert jnp.allclose(sig, jnp.zeros((2, 2)))
+
+
+def test_neo_hookean_field_energy_and_stresses_match_plane_strain_array_model():
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+    displacement_gradient = jnp.asarray([[0.08, 0.07], [0.02, -0.06]])
+    deformation = jnp.eye(2) + displacement_gradient
+    mu = 3.0
+    lambda_ = 9.0
+
+    @geom.Function("x")
+    def u(x):
+        return displacement_gradient @ x
+
+    point = frozendict({"x": cx.Field(jnp.asarray((0.2, -0.4)), dims=(None,))})
+    energy = jnp.asarray(
+        neo_hookean_reference_energy(u, mu=mu, lambda_=lambda_)(point).data
+    )
+    first_piola = jnp.asarray(neo_hookean_pk1(u, mu=mu, lambda_=lambda_)(point).data)
+    cauchy = jnp.asarray(neo_hookean_cauchy(u, mu=mu, lambda_=lambda_)(point).data)
+
+    parameters = phx.applications.solid_mechanics.NeoHookeanParameters(mu, lambda_)
+    embedded = jnp.eye(3).at[:2, :2].set(deformation)
+    expected_energy = phx.applications.solid_mechanics.neo_hookean_reference_energy(
+        embedded, parameters
+    )
+    expected_first_piola = phx.applications.solid_mechanics.neo_hookean_first_piola(
+        embedded, parameters
+    )[:2, :2]
+    expected_cauchy = expected_first_piola @ deformation.T / jnp.linalg.det(deformation)
+
+    np.testing.assert_allclose(energy, expected_energy, rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(first_piola, expected_first_piola, rtol=2e-11, atol=2e-11)
+    np.testing.assert_allclose(cauchy, expected_cauchy, rtol=2e-11, atol=2e-11)
+
+
+def test_neo_hookean_field_supports_heterogeneous_scalar_materials():
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+
+    @geom.Function("x")
+    def u(x):
+        return jnp.asarray((0.05 * x[0], -0.02 * x[1]))
+
+    @geom.Function("x")
+    def mu(x):
+        return 2.0 + 0.5 * x[0]
+
+    point_value = jnp.asarray((0.4, -0.3))
+    point = frozendict({"x": cx.Field(point_value, dims=(None,))})
+    actual = jnp.asarray(neo_hookean_reference_energy(u, mu=mu, lambda_=4.0)(point).data)
+    deformation = jnp.diag(jnp.asarray((1.05, 0.98, 1.0)))
+    parameters = phx.applications.solid_mechanics.NeoHookeanParameters(
+        2.0 + 0.5 * point_value[0], 4.0
+    )
+    expected = phx.applications.solid_mechanics.neo_hookean_reference_energy(
+        deformation, parameters
+    )
+    np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
+
+
+@pytest.mark.parametrize(
+    "mu, lambda_",
+    [
+        (-1.0, 3.0),
+        (2.0, -2.0),
+        (jnp.nan, 3.0),
+    ],
+)
+def test_neo_hookean_field_marks_invalid_materials_nonfinite(mu, lambda_):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+
+    @geom.Function("x")
+    def u(x):
+        return jnp.asarray((0.0, 0.0))
+
+    point = frozendict({"x": cx.Field(jnp.zeros(2), dims=(None,))})
+    value = neo_hookean_reference_energy(u, mu=mu, lambda_=lambda_)(point).data
+    assert not bool(jnp.isfinite(value))
+
+
+def test_neo_hookean_field_marks_nonpositive_jacobian_nonfinite():
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+
+    @geom.Function("x")
+    def inverted(x):
+        return jnp.asarray((-2.0 * x[0], 0.0))
+
+    point = frozendict({"x": cx.Field(jnp.asarray((0.2, 0.1)), dims=(None,))})
+    energy = neo_hookean_reference_energy(inverted, mu=2.0, lambda_=3.0)(point).data
+    first_piola = neo_hookean_pk1(inverted, mu=2.0, lambda_=3.0)(point).data
+    cauchy = neo_hookean_cauchy(inverted, mu=2.0, lambda_=3.0)(point).data
+    assert not bool(jnp.isfinite(energy))
+    assert not bool(jnp.all(jnp.isfinite(first_piola)))
+    assert not bool(jnp.all(jnp.isfinite(cauchy)))
+
+
+@pytest.mark.parametrize("components", [1, 3])
+def test_deformation_gradient_rejects_displacement_dimension_mismatch(components):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+
+    @geom.Function("x")
+    def displacement(x):
+        return jnp.zeros((components,))
+
+    gradient = deformation_gradient(displacement)
+    point = frozendict({"x": cx.Field(jnp.zeros(2), dims=(None,))})
+    with pytest.raises(ValueError, match="displacement gradient"):
+        gradient(point)
+
+
+def test_neo_hookean_field_rejects_retired_kappa_keyword():
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+
+    @geom.Function("x")
+    def u(x):
+        return jnp.asarray((0.0, 0.0))
+
+    with pytest.raises(TypeError, match="kappa"):
+        neo_hookean_cauchy(u, mu=2.0, kappa=3.0)

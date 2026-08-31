@@ -17,6 +17,18 @@
 
 ---
 
+::: phydrax.equations.MPMConstitutiveCapabilities
+
+---
+
+::: phydrax.equations.MPMLinearizedConstitutiveResponse
+
+---
+
+::: phydrax.equations.LocalConstitutiveRootPlan
+
+---
+
 ::: phydrax.equations.MaterialPointArguments
 
 ---
@@ -47,6 +59,30 @@
 
 ::: phydrax.solver.MPMGradientReport
 
+## Adaptive, implicit, and fracture solvers
+
+::: phydrax.solver.MPMAdaptivePolicy
+
+---
+
+::: phydrax.solver.AdaptiveMPMRolloutPlan
+
+---
+
+::: phydrax.solver.ImplicitMPMMethodPlan
+
+---
+
+::: phydrax.solver.PreparedImplicitMPMDynamics
+
+---
+
+::: phydrax.solver.MPMPhaseFieldFracturePlan
+
+---
+
+::: phydrax.solver.PreparedMPMPhaseFieldDynamics
+
 ## Baseline solid material
 
 ::: phydrax.applications.solid_mechanics.NeoHookeanParameters
@@ -54,3 +90,23 @@
 ---
 
 ::: phydrax.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan
+
+---
+
+::: phydrax.applications.solid_mechanics.IsotropicPlaneStressMPMConstitutivePlan
+
+---
+
+::: phydrax.applications.solid_mechanics.FiniteStrainJ2Parameters
+
+---
+
+::: phydrax.applications.solid_mechanics.FiniteStrainJ2MPMConstitutivePlan
+
+---
+
+::: phydrax.applications.solid_mechanics.MPMPhaseFieldParameters
+
+---
+
+::: phydrax.applications.solid_mechanics.PhaseFieldNeoHookeanMPMConstitutivePlan

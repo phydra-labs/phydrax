@@ -325,6 +325,14 @@ class AbstractLinearOperator(StrictModule):
         return ScaledLinearOperator(self, -1.0)
 
 
+class _AbstractCostedLinearOperator(AbstractLinearOperator):
+    """Linear operator with exact per-right-hand-side action scratch."""
+
+    @abc.abstractmethod
+    def _action_workspace_cost(self, /) -> tuple[int, str]:
+        raise NotImplementedError
+
+
 class _DiagonalAssembly(Protocol):
     def _assemble_diagonal(self, /) -> Array: ...
 
@@ -1256,6 +1264,21 @@ def _operator_action_workspace(
     operator: AbstractLinearOperator,
     /,
 ) -> tuple[int, bool, str]:
+    custom = (
+        operator._action_workspace_cost()
+        if isinstance(operator, _AbstractCostedLinearOperator)
+        else None
+    )
+    if custom is not None:
+        workspace, operation_class = custom
+        workspace = int(workspace)
+        operation_class = str(operation_class)
+        if workspace < 0 or not operation_class:
+            raise ValueError(
+                "Custom operator action costs must be non-negative and named."
+            )
+        return workspace, True, operation_class
+
     from ._sparse_contract import AbstractSparseLinearOperator
     from ._structured_operators import (
         BandedLinearOperator,

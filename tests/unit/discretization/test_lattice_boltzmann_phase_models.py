@@ -11,7 +11,6 @@ from phydrax.discretization.lattice_boltzmann._colour_gradient import (
     recolour_populations,
 )
 from phydrax.discretization.lattice_boltzmann._free_energy import (
-    free_energy_phase_fields,
     phase_field_equilibrium,
     phase_population_moments,
 )
@@ -25,7 +24,15 @@ from phydrax.discretization.lattice_boltzmann._lattice import D2Q9
 from phydrax.discretization.lattice_boltzmann._precision import (
     LatticeBoltzmannPrecisionPolicy,
 )
-from phydrax.equations import DoubleWellFreeEnergy
+from phydrax.discretization.lattice_boltzmann._thermodynamics import (
+    PreparedBinaryKineticThermodynamics,
+)
+from phydrax.equations import (
+    BinaryPhaseThermodynamicClosure,
+    BinaryThermodynamicParameters,
+    DoubleWellFreeEnergy,
+    ThermodynamicForceRepresentation,
+)
 
 
 def test_recolouring_is_label_symmetric_and_conserves_required_moments():
@@ -108,8 +115,15 @@ def test_free_energy_force_stress_and_phase_population_moments_are_explicit():
     velocity = jnp.broadcast_to(
         jnp.asarray((0.02, -0.01), dtype=jnp.float64), (*phase.shape, 2)
     )
-    fields = free_energy_phase_fields(phase, lattice, 0.08, 0.12)
-    swapped = free_energy_phase_fields(-phase, lattice, 0.08, 0.12)
+    closure = BinaryPhaseThermodynamicClosure()
+    thermodynamics = PreparedBinaryKineticThermodynamics(
+        closure,
+        lattice,
+        ThermodynamicForceRepresentation.CHEMICAL_POTENTIAL_GRADIENT,
+    )
+    parameters = BinaryThermodynamicParameters(0.08, 0.12)
+    fields = thermodynamics.evaluate(phase, parameters)
+    swapped = thermodynamics.evaluate(-phase, parameters)
     equilibrium = phase_field_equilibrium(
         phase, fields.chemical_potential, velocity, lattice, precision
     )
@@ -123,11 +137,11 @@ def test_free_energy_force_stress_and_phase_population_moments_are_explicit():
         fields.chemical_force_density, swapped.chemical_force_density, atol=2e-12
     )
     np.testing.assert_allclose(
-        fields.korteweg_stress, swapped.korteweg_stress, atol=2e-12
+        fields.symmetric_stress, swapped.symmetric_stress, atol=2e-12
     )
     np.testing.assert_allclose(
-        fields.korteweg_stress,
-        jnp.swapaxes(fields.korteweg_stress, -1, -2),
+        fields.symmetric_stress,
+        jnp.swapaxes(fields.symmetric_stress, -1, -2),
         atol=1e-14,
     )
 
@@ -143,9 +157,17 @@ def test_interfacial_and_free_energy_coefficients_are_differentiable():
             continuum_surface_force(phase, lattice, sigma).force_density ** 2
         )
     )(jnp.asarray(0.03, dtype=jnp.float64))
+    closure = BinaryPhaseThermodynamicClosure()
+    thermodynamics = PreparedBinaryKineticThermodynamics(
+        closure,
+        lattice,
+        ThermodynamicForceRepresentation.CHEMICAL_POTENTIAL_GRADIENT,
+    )
     bulk_gradient = jax.grad(
         lambda bulk: jnp.sum(
-            free_energy_phase_fields(phase, lattice, bulk, 0.1).bulk_energy_density
+            thermodynamics.evaluate(
+                phase, BinaryThermodynamicParameters(bulk, 0.1)
+            ).bulk_energy_density
         )
     )(jnp.asarray(0.08, dtype=jnp.float64))
 
@@ -161,16 +183,22 @@ def test_lbm_and_application_double_well_share_one_constitutive_source():
     phase = jnp.linspace(-0.8, 0.8, 16, dtype=jnp.float64).reshape((4, 4))
     bulk = jnp.asarray(0.08)
     kappa = jnp.asarray(0.12)
-    fields = free_energy_phase_fields(phase, lattice, bulk, kappa)
-    constitutive = DoubleWellFreeEnergy(bulk)
+    closure = BinaryPhaseThermodynamicClosure(DoubleWellFreeEnergy())
+    thermodynamics = PreparedBinaryKineticThermodynamics(
+        closure,
+        lattice,
+        ThermodynamicForceRepresentation.CHEMICAL_POTENTIAL_GRADIENT,
+    )
+    fields = thermodynamics.evaluate(phase, BinaryThermodynamicParameters(bulk, kappa))
+    constitutive = DoubleWellFreeEnergy()
 
     np.testing.assert_allclose(
         fields.bulk_energy_density,
-        constitutive.density(phase),
+        bulk * constitutive.density(phase),
         atol=1e-14,
     )
     np.testing.assert_allclose(
         fields.chemical_potential + kappa * fields.laplacian,
-        constitutive.derivative(phase),
+        bulk * constitutive.derivative(phase),
         atol=1e-14,
     )

@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...geometry import CompiledGeometry, GeometryCapability
 from ._discretization import LatticeBoltzmannDiscretization
 
 
@@ -26,10 +27,10 @@ def _default_body_names(count: int, /) -> tuple[str, ...]:
 
 
 class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
-    """Frozen exact-SDF intersections for every fluid-to-solid lattice link.
+    """Frozen SDF-reconstructed intersections for fluid-to-solid lattice links.
 
-    Fractions measure distance from the fluid cell centre toward the solid source
-    in lattice-link units. They are compiled once and never regenerated at run time.
+    Fractions linearly reconstruct the signed-distance zero from the fluid cell
+    centre toward the solid source. They never regenerate at run time.
     """
 
     fluid_mask: Array
@@ -160,4 +161,153 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["FixedSDFLinkGeometry"]
+class LatticeBoltzmannGeometryImportEvidence(StrictModule, NonTrainableState):
+    blocked_link_count: int = eqx.field(static=True)
+    fluid_cell_count: int = eqx.field(static=True)
+    solid_cell_count: int = eqx.field(static=True)
+    minimum_cell_distance_margin: float = eqx.field(static=True)
+    maximum_normal_residual: float = eqx.field(static=True)
+    finite: bool = eqx.field(static=True)
+    passed: bool = eqx.field(static=True)
+    evidence_id: str = eqx.field(static=True)
+
+
+class PreparedLatticeBoltzmannLinkGeometry(StrictModule, NonTrainableState):
+    link_geometry: FixedSDFLinkGeometry
+    boundary_fraction: Array
+    boundary_normals: Array
+    evidence: LatticeBoltzmannGeometryImportEvidence
+    source_id: str = eqx.field(static=True)
+
+
+def prepare_lattice_boltzmann_link_geometry(
+    discretization: LatticeBoltzmannDiscretization,
+    geometry: CompiledGeometry,
+    /,
+    *,
+    fluid_region: str = "outside",
+    body_name: str = "body",
+) -> PreparedLatticeBoltzmannLinkGeometry:
+    """Compile exact signed-distance geometry into fixed per-link LBM metadata."""
+
+    if not isinstance(discretization, LatticeBoltzmannDiscretization):
+        raise TypeError("discretization must be LatticeBoltzmannDiscretization.")
+    if not isinstance(geometry, CompiledGeometry):
+        raise TypeError("geometry must be CompiledGeometry.")
+    if geometry.ambient_dimension != discretization.velocity_set.dimension:
+        raise ValueError("Geometry and lattice dimensions do not match.")
+    if fluid_region not in ("outside", "inside"):
+        raise ValueError("fluid_region must be 'outside' or 'inside'.")
+    name = str(body_name)
+    if not name:
+        raise ValueError("body_name must be nonempty.")
+    geometry.require(GeometryCapability.SIGNED_DISTANCE)
+    geometry.require(GeometryCapability.BOUNDARY_NORMAL)
+    points = jnp.asarray(discretization.grid.points)
+    signed_distance = np.asarray(geometry.signed_distance(points), dtype=np.float64)
+    shape = discretization.grid.shape
+    dimension = discretization.velocity_set.dimension
+    if signed_distance.shape != (discretization.grid.size,):
+        raise ValueError("Geometry signed distance must return one scalar per cell.")
+    if fluid_region == "inside":
+        signed_distance = -signed_distance
+    signed_distance = signed_distance.reshape(shape)
+    cell_points = np.asarray(points, dtype=np.float64).reshape(shape + (dimension,))
+    link_geometry = FixedSDFLinkGeometry(
+        discretization,
+        signed_distance,
+        body_names=(name,),
+    )
+    raw_fractions = np.asarray(link_geometry.link_fraction)
+    blocked = np.isfinite(raw_fractions)
+    fractions = np.where(blocked, raw_fractions, 0.0)
+    velocities = np.asarray(
+        discretization.velocity_set.velocities,
+        dtype=np.float64,
+    )
+    boundary_points = cell_points[..., None, :] - (
+        fractions[..., None]
+        * float(discretization.cell_size)
+        * velocities.reshape((1,) * len(shape) + velocities.shape)
+    )
+    active_normals = np.asarray(
+        geometry.boundary_normal(jnp.asarray(boundary_points[blocked])),
+        dtype=np.float64,
+    )
+    if active_normals.shape != (int(np.count_nonzero(blocked)), dimension):
+        raise ValueError("Geometry normal must return one vector per blocked link.")
+    if fluid_region == "inside":
+        active_normals = -active_normals
+    active_normal_norm = np.sqrt(np.sum(active_normals**2, axis=-1))
+    safe_norm = np.where(active_normal_norm > 0.0, active_normal_norm, 1.0)
+    link_normals = np.zeros((*shape, len(velocities), dimension), dtype=np.float64)
+    link_normals[blocked] = active_normals / safe_norm[..., None]
+    active_normal_residual = np.abs(np.sqrt(np.sum(link_normals**2, axis=-1)) - 1.0)
+    maximum_normal_residual = float(np.max(active_normal_residual[blocked], initial=0.0))
+    minimum_margin = float(np.min(np.abs(signed_distance)))
+    finite = bool(
+        np.all(np.isfinite(signed_distance))
+        and np.all(np.isfinite(link_normals))
+        and np.all(np.isfinite(fractions))
+    )
+    passed = bool(
+        finite
+        and minimum_margin > 0.0
+        and maximum_normal_residual <= 1.0e-10
+        and np.all((fractions[blocked] > 0.0) & (fractions[blocked] <= 1.0))
+        and np.all(fractions[~blocked] == 0.0)
+    )
+    source_id = canonical_fingerprint(
+        {
+            "kind": "compiled-geometry-to-lattice-boltzmann-links",
+            "kernel": type(geometry.kernel).__name__,
+            "schema": repr(geometry.schema),
+            "tolerance": repr(geometry.tolerance),
+            "state": array_tree_fingerprint(
+                tuple(np.asarray(value) for value in geometry.state.values)
+            ),
+            "fluid_region": fluid_region,
+            "body_name": name,
+            "link_geometry": link_geometry.geometry_id,
+        }
+    )
+    evidence_id = canonical_fingerprint(
+        {
+            "kind": "lattice-boltzmann-geometry-import-evidence",
+            "source": source_id,
+            "blocked_links": int(np.count_nonzero(blocked)),
+            "fluid_cells": int(np.count_nonzero(link_geometry.fluid_mask)),
+            "solid_cells": int(np.count_nonzero(~np.asarray(link_geometry.fluid_mask))),
+            "minimum_margin": minimum_margin,
+            "maximum_normal_residual": maximum_normal_residual,
+            "finite": finite,
+            "passed": passed,
+        }
+    )
+    evidence = LatticeBoltzmannGeometryImportEvidence(
+        int(np.count_nonzero(blocked)),
+        int(np.count_nonzero(link_geometry.fluid_mask)),
+        int(np.count_nonzero(~np.asarray(link_geometry.fluid_mask))),
+        minimum_margin,
+        maximum_normal_residual,
+        finite,
+        passed,
+        evidence_id,
+    )
+    if not passed:
+        raise ValueError("Compiled geometry failed LBM link metadata certification.")
+    return PreparedLatticeBoltzmannLinkGeometry(
+        link_geometry,
+        jnp.asarray(fractions),
+        jnp.asarray(link_normals),
+        evidence,
+        source_id,
+    )
+
+
+__all__ = [
+    "FixedSDFLinkGeometry",
+    "LatticeBoltzmannGeometryImportEvidence",
+    "PreparedLatticeBoltzmannLinkGeometry",
+    "prepare_lattice_boltzmann_link_geometry",
+]

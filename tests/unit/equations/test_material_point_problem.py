@@ -65,22 +65,24 @@ def test_material_point_compiler_records_complete_dependency_bundle():
 
 
 @pytest.mark.parametrize(
-    ("assignment", "message"),
+    "assignment",
     [
-        (phx.discretization.MultilinearSplatAssignment(), "TensorBSpline"),
-        (phx.discretization.TensorBSplineSplatAssignment(3), "quadratic"),
+        phx.discretization.MultilinearSplatAssignment(),
+        phx.discretization.TensorBSplineSplatAssignment(3),
     ],
 )
-def test_material_point_compiler_rejects_unqualified_assignments(assignment, message):
+def test_material_point_compiler_accepts_capability_qualified_assignments(assignment):
     problem, particles, splat, domain = _parts(assignment=assignment)
-    with pytest.raises((TypeError, ValueError), match=message):
-        phx.equations.compile_material_point_problem(
-            problem,
-            particles,
-            splat,
-            phx.discretization.ExplicitMPMMethodPlan(),
-            domain,
-        )
+    compiled = phx.equations.compile_material_point_problem(
+        problem,
+        particles,
+        splat,
+        phx.discretization.ExplicitMPMMethodPlan(),
+        domain,
+    )
+    assert (
+        compiled.dynamics.splat.plan.assignment.assignment_id == assignment.assignment_id
+    )
 
 
 def test_material_point_compiler_rejects_cell_targets_and_drop_boundaries():

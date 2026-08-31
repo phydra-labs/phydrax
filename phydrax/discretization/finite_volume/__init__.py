@@ -220,6 +220,7 @@ from ._physical_boundaries import (
     SupersonicOutflowBoundary,
 )
 from ._positivity import (
+    BalancedPositivityBlendResult,
     EinfeldtHLLFluxPlan,
     FiniteVolumeAdmissibilityReport,
     FluxPositivityPlan,
@@ -249,6 +250,15 @@ from ._riemann import (
     NumericalFluxResult,
     RoeFluxPlan,
     RusanovFluxPlan,
+)
+from ._shallow_water import (
+    PreparedShallowWaterBathymetry,
+    shallow_water_observables,
+    ShallowWaterAcceptedFaceIntegrals,
+    ShallowWaterBalancedFaceResult,
+    ShallowWaterHydrostaticHLLPlan,
+    ShallowWaterObservables,
+    ShallowWaterWetDryPolicy,
 )
 from ._small_cell import (
     ConservativeSmallCellRedistributionEvidence,
@@ -355,7 +365,6 @@ from ._unstructured_weno import (
 from ._viscous import ViscousFluxPlan, ViscousStabilityReport
 from ._wave import (
     AbstractWavePropagationPlan,
-    FWaveShallowWaterPlan,
     RoeWavePropagationPlan,
     TransverseWaveSolverPlan,
     WaveDecomposition,
@@ -507,7 +516,6 @@ __all__ = [
     "flux_register_from_accepted_steps",
     "EntropyStableEulerFluxPlan",
     "ExtrapolationBoundary",
-    "FWaveShallowWaterPlan",
     "FiniteVolumeBoundaryPair",
     "FiniteVolumeBoundarySet",
     "FiniteVolumeHaloPlan",
@@ -593,6 +601,14 @@ __all__ = [
     "EinfeldtHLLFluxPlan",
     "FiniteVolumeAdmissibilityReport",
     "FluxPositivityPlan",
+    "BalancedPositivityBlendResult",
+    "PreparedShallowWaterBathymetry",
+    "ShallowWaterAcceptedFaceIntegrals",
+    "shallow_water_observables",
+    "ShallowWaterBalancedFaceResult",
+    "ShallowWaterHydrostaticHLLPlan",
+    "ShallowWaterObservables",
+    "ShallowWaterWetDryPolicy",
     "PositivityBlendResult",
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",

@@ -11,10 +11,14 @@ from ._aa import (
 )
 from ._amr import (
     LatticeBoltzmannAMRAdvanceResult,
+    LatticeBoltzmannAMRInterfaceEvidence,
     LatticeBoltzmannAMRPlan,
     LatticeBoltzmannAMRState,
+    LatticeBoltzmannAMRTemporalInterfacePlan,
     LatticeBoltzmannAMRTransferEvidence,
     LatticeBoltzmannAMRTransferPlan,
+    LatticeBoltzmannCollisionAwareAMRAdvanceResult,
+    PreparedLatticeBoltzmannAMRTransfer,
 )
 from ._boundary import (
     compile_staged_lattice_boltzmann_boundary,
@@ -28,6 +32,12 @@ from ._boundary import (
 )
 from ._boundary_open import LatticeBoltzmannBoundaryState
 from ._boundary_wall import LatticeBoltzmannWallLedger
+from ._checkpoint import (
+    KineticCheckpoint,
+    KineticCheckpointPlan,
+    read_kinetic_checkpoint,
+    write_kinetic_checkpoint,
+)
 from ._collision import (
     BGKCollisionPlan,
     CentralMomentCollisionPlan,
@@ -60,6 +70,7 @@ from ._distributed import (
     LatticeBoltzmannShardingMetadata,
     ShardedLatticeBoltzmannExecutionPlan,
 )
+from ._distributed_dynamics import PreparedDistributedLatticeBoltzmannDynamics
 from ._dynamics import (
     LatticeAcceleration,
     LatticeBoltzmannDiagnostics,
@@ -136,7 +147,12 @@ from ._lattice import (
     LatticeBoltzmannCapabilityEvidence,
     LatticeBoltzmannVelocitySet,
 )
-from ._link_geometry import FixedSDFLinkGeometry
+from ._link_geometry import (
+    FixedSDFLinkGeometry,
+    LatticeBoltzmannGeometryImportEvidence,
+    prepare_lattice_boltzmann_link_geometry,
+    PreparedLatticeBoltzmannLinkGeometry,
+)
 from ._link_topology import (
     CompiledLatticeBoltzmannLinkTopology,
     LatticeBoltzmannBodyBoundary,
@@ -172,6 +188,19 @@ from ._multiblock import (
     LatticeBoltzmannMultiblockState,
 )
 from ._precision import LatticeBoltzmannPrecisionPolicy
+from ._program import (
+    athermal_lattice_boltzmann_manifest,
+    coupled_population_manifest,
+    finite_volume_dvm_manifest,
+    KineticFailureScope,
+    KineticFieldRole,
+    KineticFieldSpec,
+    KineticProgramManifest,
+    KineticStageSpec,
+    reactive_transport_manifest,
+    smooth_compressible_dvm_manifest,
+    transport_population_manifest,
+)
 from ._scaling import LatticeBoltzmannScaling
 from ._species import (
     SpeciesBoundaryCondition,
@@ -187,6 +216,11 @@ from ._thermal import (
     ThermalEnergyLedger,
     ThermalLatticeBoltzmannPlan,
     ThermalLatticeBoltzmannState,
+)
+from ._thermodynamics import (
+    BinaryKineticThermodynamicFields,
+    isotropic_tensor_divergence,
+    PreparedBinaryKineticThermodynamics,
 )
 
 

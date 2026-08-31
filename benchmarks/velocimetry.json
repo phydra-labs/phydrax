@@ -1,0 +1,36 @@
+{
+  "backend": "cpu",
+  "cases": [
+    {
+      "compile_and_first_ms": 1392.0064999983879,
+      "name": "classical-piv",
+      "problem_size": "image=64x64,windows=49",
+      "steady_ms": 10.35172500050976,
+      "successful": true
+    },
+    {
+      "compile_and_first_ms": 726.6859170013049,
+      "name": "camera-triangulation",
+      "problem_size": "cameras=2,points=1",
+      "steady_ms": 0.09215839963871986,
+      "successful": true
+    },
+    {
+      "compile_and_first_ms": 169.13841699715704,
+      "name": "particle-image-raster",
+      "problem_size": "image=64x64,particles=64",
+      "steady_ms": 0.3060499999264721,
+      "successful": true
+    },
+    {
+      "compile_and_first_ms": 2912.8288340034487,
+      "name": "learned-dense-piv",
+      "problem_size": "image=16x16,levels=2,radius=1",
+      "steady_ms": 3.587566599890124,
+      "successful": true
+    }
+  ],
+  "device": "cpu:cpu",
+  "maturity": "benchmark",
+  "passed": true
+}

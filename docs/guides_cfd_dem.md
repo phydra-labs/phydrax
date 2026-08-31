@@ -12,16 +12,21 @@ A relation fails when support is empty, cannot be normalized, or exceeds cells-p
 
 `advance_cfd_dem_window` requires an integer number of DEM substeps per fluid macro-step. Hydrodynamic impulse is accumulated over the accepted window; fluid and DEM candidates commit atomically or both roll back.
 
-## Resolved immersed boundary
+## Resolved immersed-boundary penalty coupling
 
-`ResolvedMACIBCFDEMCouplingPlan` binds rigid-sphere markers to the actual staggered
-MAC face centers. `MACMarkerTransferPlan` gathers velocity and spreads the exact
-dual-measure adjoint acceleration; force, torque, virtual work, support capacity,
-and fixed-body reaction are explicit evidence. `advance_mac_resolved_ib_window`
-subcycles existing DEM contact dynamics, accumulates trapezoidal hydrodynamic
-impulses, inserts the face source before pressure projection, and commits fluid and
-particle states atomically. The penalty constraint reports its slip and stiffness;
-it is not presented as an exact no-slip multiplier method.
+`MACPenaltyIBCFDEMCouplingPlan` binds fixed material marker quadrature to
+rigid-sphere DEM ownership. `MACMarkerTransferPlan` uses local cubic tensor
+B-spline routes on the actual staggered MAC face layouts. Gather and spread are
+material/face-measure Hilbert adjoints; force, torque, virtual work, support,
+and fixed-body reaction are explicit evidence.
+
+`advance_mac_penalty_ib_cfd_dem_window` subcycles DEM contact dynamics,
+accumulates trapezoidal hydrodynamic impulses, inserts the penalty source before
+pressure projection, and commits fluid and particle states atomically.
+`IBPenaltyPlan` reports numerical validity separately from slip qualification;
+strict slip qualification remains the default acceptance policy. This path is
+not the exact pressure-plus-marker multiplier method described in the dedicated
+[immersed-boundary guide](guides_immersed_boundary.md).
 
 ## Reactive heat and species coupling
 

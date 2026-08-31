@@ -18,6 +18,10 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...equations._materials import IdealGasMaterial
 from ...equations._transport_closures import AbstractTransportClosure, TransportProperties
+from ..lattice_boltzmann._program import (
+    KineticProgramManifest,
+    smooth_compressible_dvm_manifest,
+)
 from ._quadrature import (
     CertifiedDiscreteVelocityQuadrature,
     d2v17_quadrature,
@@ -121,6 +125,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
     particle_moment_lift: Array
     particle_nullspace_projector: Array
     energy_moment_lift: Array
+    program_manifest: KineticProgramManifest
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -153,9 +158,16 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
         gram = matrix @ matrix.T
         lift = matrix.T @ np.linalg.solve(gram, np.eye(matrix.shape[0]))
         projector = np.eye(quadrature.population_count) - lift @ matrix
+        program_manifest = smooth_compressible_dvm_manifest(
+            quadrature.quadrature_id,
+            f"dtype:{quadrature.velocities.dtype}",
+            quadrature.population_count,
+            quadrature.dimension,
+        )
         self.quadrature = quadrature
         self.material = material
         self.transport = transport
+        self.program_manifest = program_manifest
         self.particle_moment_matrix = jnp.asarray(
             matrix, dtype=quadrature.velocities.dtype
         )
@@ -170,6 +182,7 @@ class SmoothCompressibleD2VKineticMethod(StrictModule, NonTrainableState):
                 "quadrature": quadrature.quadrature_id,
                 "material": material.material_id,
                 "transport": transport.closure_id,
+                "program_manifest": program_manifest.manifest_id,
                 "energy_layout": "separate-total-energy-populations",
             }
         )

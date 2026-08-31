@@ -37,12 +37,13 @@ def _growth_drift(log_scale: Array, state: Array, background: FLRWBackground) ->
 
 
 class FLRWGrowthPlan(StrictModule, NonTrainableState):
-    """Solve first- and second-order Newtonian Lagrangian growth in ln(a)."""
+    """Flat, smooth-dark-energy Newtonian first/second Lagrangian growth."""
 
     scale_factors: Array
     relative_tolerance: float = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
     maximum_steps: int = eqx.field(static=True)
+    matter_era_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -53,11 +54,13 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
         relative_tolerance: float = 1.0e-8,
         absolute_tolerance: float = 1.0e-10,
         maximum_steps: int = 4096,
+        matter_era_tolerance: float = 5.0e-2,
     ):
         nodes_host = np.asarray(scale_factors, dtype=float).reshape((-1,))
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
         steps = int(maximum_steps)
+        era_tolerance = float(matter_era_tolerance)
         if (
             nodes_host.size < 2
             or np.any(~np.isfinite(nodes_host))
@@ -74,19 +77,23 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
             or not np.isfinite(absolute)
             or absolute <= 0.0
             or steps <= 0
+            or not np.isfinite(era_tolerance)
+            or era_tolerance <= 0.0
         ):
             raise ValueError("FLRW growth numerical policy is invalid.")
         self.scale_factors = jnp.asarray(nodes_host)
         self.relative_tolerance = relative
         self.absolute_tolerance = absolute
         self.maximum_steps = steps
+        self.matter_era_tolerance = era_tolerance
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "flat-flrw-lagrangian-growth",
+                "kind": "flat-smooth-de-flrw-lagrangian-growth",
                 "scale_factors": nodes_host.tolist(),
                 "relative_tolerance": relative,
                 "absolute_tolerance": absolute,
                 "maximum_steps": steps,
+                "matter_era_tolerance": era_tolerance,
             }
         )
 
@@ -94,8 +101,10 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
         return CosmologyProductProvenance(
             producer="phydrax.applications.cosmology.FLRWGrowthPlan",
             producer_version="native",
-            model_id=background.model_id,
+            model_form_id=background.model_form_id,
+            request_id="native-dynamic-background",
             numerical_policy_id=self.plan_id,
+            physics_policy_id="flat-smooth-dark-energy-newtonian-growth",
             scale_id=background.scale.scale_id,
             source_kind="native",
             differentiability="native-parameter",
@@ -109,12 +118,25 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
             background.hubble(self.scale_factors),
             background.scale,
             self._provenance(background),
+            background.realization,
         )
 
     def solve(self, background: FLRWBackground, /) -> LagrangianGrowthHistory:
         if not isinstance(background, FLRWBackground):
             raise TypeError("background must be FLRWBackground.")
-        start = self.scale_factors[0]
+        start = self.scale_factors[0].astype(background.hubble_constant.dtype)
+        start = background.require_flat(start)
+        matter = background.matter_fraction(start)
+        contamination = background.radiation_fraction(
+            start
+        ) + background.dark_energy_fraction(start)
+        start = eqx.error_if(
+            start,
+            (matter <= 0.0)
+            | (contamination > self.matter_era_tolerance * matter)
+            | (background.dark_energy_w0 + background.dark_energy_wa >= 0.0),
+            "FLRW growth requires a flat, matter-era start and vanishing early CPL dark energy.",
+        )
         initial = jnp.stack(
             (
                 start,
@@ -122,7 +144,7 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
                 (3.0 / 7.0) * start**2,
                 (6.0 / 7.0) * start**2,
             )
-        ).astype(background.hubble_constant.dtype)
+        )
         log_nodes = jnp.log(self.scale_factors).astype(initial.dtype)
         problem = DifferentialProblem(
             _growth_drift,
@@ -159,6 +181,7 @@ class FLRWGrowthPlan(StrictModule, NonTrainableState):
             second_derivative / second,
             background.scale,
             self._provenance(background),
+            background.realization,
         )
 
 

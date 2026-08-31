@@ -1,0 +1,139 @@
+{
+  "affine": {
+    "cauchy_error": 5.551115123125783e-17,
+    "energy_error": 0.0,
+    "first_piola_error": 0.0,
+    "invalid_jacobian_detected": true
+  },
+  "configuration": {
+    "bulk_modulus": 4.0,
+    "fe_refinements": [
+      8,
+      16,
+      24
+    ],
+    "held_out_boundary_samples": 8192,
+    "held_out_interior_samples": 8192,
+    "lame_lambda": 3.3333333333333335,
+    "neural_depth": 3,
+    "neural_iterations": 60,
+    "neural_seeds": [
+      17,
+      29
+    ],
+    "neural_width": 24,
+    "plane_strain": true,
+    "shear_modulus": 1.0,
+    "traction": 0.1,
+    "training_boundary_samples": 1024,
+    "training_interior_samples": 4096
+  },
+  "environment": {
+    "backend": "cpu",
+    "device": "cpu",
+    "dtype": "float64",
+    "jax": "0.9.1",
+    "platform": "macOS-15.7.2-arm64-arm-64bit"
+  },
+  "finite_element": [
+    {
+      "final_residual_norm": 9.03533304279359e-08,
+      "iterations": 11,
+      "minimum_jacobian": 1.0088290544058018,
+      "refinement": 8,
+      "relative_force_balance": 6.190852824387614e-06,
+      "residual_evaluations": 22,
+      "status": 0,
+      "successful": true,
+      "tip_displacement": [
+        0.029459261169727455,
+        -0.0010614948174644493
+      ],
+      "total_potential": -0.0014706582924923011
+    },
+    {
+      "final_residual_norm": 1.9085131170336248e-07,
+      "iterations": 22,
+      "minimum_jacobian": 1.0092949623900884,
+      "refinement": 16,
+      "relative_force_balance": 2.5979887691459544e-05,
+      "residual_evaluations": 44,
+      "status": 0,
+      "successful": true,
+      "tip_displacement": [
+        0.029758266767870238,
+        -0.00039089989286167587
+      ],
+      "total_potential": -0.0014839010850621742
+    },
+    {
+      "final_residual_norm": 1.8499814619740386e-07,
+      "iterations": 36,
+      "minimum_jacobian": 1.0092349912847727,
+      "refinement": 24,
+      "relative_force_balance": 3.745600976341973e-05,
+      "residual_evaluations": 72,
+      "status": 0,
+      "successful": true,
+      "tip_displacement": [
+        0.029840916057695243,
+        -0.0002142383124141995
+      ],
+      "total_potential": -0.0014875796254950242
+    }
+  ],
+  "gates": {
+    "affine_error": 2e-10,
+    "clamp_linf": 1e-10,
+    "displacement_relative_l2": 0.2,
+    "fe_relative_force_balance": 5e-05,
+    "first_piola_relative_l2": 0.35,
+    "held_out_relative_spread": 0.12,
+    "minimum_jacobian": 0.25,
+    "neural_relative_force_balance": 0.2,
+    "relative_potential_gap": 0.15
+  },
+  "maturity": "experimental",
+  "neural": [
+    {
+      "clamp_linf": 0.0,
+      "displacement_linf": 0.003761021074189368,
+      "displacement_relative_l2": 0.11243348141111825,
+      "equilibrium_residual_l2": 0.06092650068102324,
+      "final_training_potential": -0.0014924522845663525,
+      "first_piola_relative_l2": 0.13376451640650272,
+      "held_out_potentials": [
+        -0.0014953911002242688,
+        -0.0013791496888301757,
+        -0.0014394315554650961
+      ],
+      "held_out_relative_spread": 0.08083599205852526,
+      "minimum_jacobian": 1.0070041193746722,
+      "nonpositive_jacobian_count": 0,
+      "relative_force_balance": 0.053248694869069586,
+      "relative_potential_gap": 0.03333525354786234,
+      "seed": 17
+    },
+    {
+      "clamp_linf": 0.0,
+      "displacement_linf": 0.002147818114081688,
+      "displacement_relative_l2": 0.05795887184880822,
+      "equilibrium_residual_l2": 0.043594506326261565,
+      "final_training_potential": -0.0014290465827561322,
+      "first_piola_relative_l2": 0.10389468180657206,
+      "held_out_potentials": [
+        -0.0014789480110808785,
+        -0.001606518431298278,
+        -0.0015535504379636615
+      ],
+      "held_out_relative_spread": 0.08249835482899055,
+      "minimum_jacobian": 1.009305944919522,
+      "nonpositive_jacobian_count": 0,
+      "relative_force_balance": 0.023330920740353294,
+      "relative_potential_gap": 0.03949995927088267,
+      "seed": 29
+    }
+  ],
+  "passed": true,
+  "smoke": false
+}

@@ -11,6 +11,13 @@ from ._assignment import (
     SplatAssignmentState,
 )
 from ._bspline import TensorBSplineSplatAssignment
+from ._cpdi import (
+    AffineCPDISplatAssignment,
+    CPDI2AssignmentInput,
+    CPDI2SplatAssignment,
+    CPDIAssignmentInput,
+)
+from ._gimp import GIMPAssignmentInput, UniformGIMPSplatAssignment
 from ._structured import (
     ParticleGridSplatPlan,
     ParticleGridSplatState,
@@ -31,6 +38,11 @@ from ._types import (
 
 __all__ = [
     "AbstractStructuredSplatAssignment",
+    "AffineCPDISplatAssignment",
+    "CPDI2AssignmentInput",
+    "CPDI2SplatAssignment",
+    "CPDIAssignmentInput",
+    "GIMPAssignmentInput",
     "MultilinearSplatAssignment",
     "ParticleGridSplatBudget",
     "ParticleGridSplatPlan",
@@ -47,4 +59,5 @@ __all__ = [
     "SplatReconstructionResult",
     "SplatRouteScatterResult",
     "TensorBSplineSplatAssignment",
+    "UniformGIMPSplatAssignment",
 ]

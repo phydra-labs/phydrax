@@ -411,7 +411,7 @@ class _PlanarMeshRegionKernel(GeometryKernel):
 
 
 _MESH_CERTIFICATE = FieldCertificate(
-    ZeroSetAccuracy.TOLERANCE_BOUND,
+    ZeroSetAccuracy.EXACT,
     SignReliability.RELIABLE,
     DistanceSemantics.EXACT,
     FieldRegularity.PIECEWISE_SMOOTH,
@@ -457,6 +457,15 @@ class MeshRegion(GeometrySource):
         self.vertices = mesh.vertices
         self.faces = mesh.faces
         self.feature_id = feature_id or f"mesh-region-{uuid4().hex}"
+
+    @property
+    def triangle_mesh(self) -> TriangleMesh:
+        """Return the authoritative oriented triangular boundary realization."""
+        return TriangleMesh(
+            self.vertices,
+            self.faces,
+            source_id=self.feature_id,
+        )
 
     def _compile(self, context):
         vertices = context.bind(

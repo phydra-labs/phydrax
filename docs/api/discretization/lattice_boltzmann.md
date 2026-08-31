@@ -142,6 +142,18 @@
 
 ---
 
+::: phydrax.discretization.prepare_lattice_boltzmann_link_geometry
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannGeometryImportEvidence
+
+---
+
+::: phydrax.discretization.PreparedLatticeBoltzmannLinkGeometry
+
+---
+
 ::: phydrax.discretization.MovingSDFGeometryPlan
 
 ---
@@ -182,7 +194,63 @@
 
 ---
 
+::: phydrax.discretization.PreparedLatticeBoltzmannAMRTransfer
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannAMRTemporalInterfacePlan
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannAMRInterfaceEvidence
+
+---
+
+::: phydrax.discretization.LatticeBoltzmannCollisionAwareAMRAdvanceResult
+
+---
+
 ::: phydrax.discretization.MappedLatticeBoltzmannPlan
+
+## Shared thermodynamic closure
+
+::: phydrax.equations.AbstractKineticThermodynamicClosure
+
+---
+
+::: phydrax.equations.BinaryThermodynamicParameters
+
+---
+
+::: phydrax.equations.BinaryPhaseThermodynamicClosure
+
+---
+
+::: phydrax.equations.ThermodynamicForceRepresentation
+
+---
+
+::: phydrax.discretization.PreparedBinaryKineticThermodynamics
+
+---
+
+::: phydrax.discretization.BinaryKineticThermodynamicFields
+
+## Vascular target profiles
+
+::: phydrax.equations.ParabolicVelocityParameters
+
+---
+
+::: phydrax.equations.ParabolicVelocityProfilePlan
+
+---
+
+::: phydrax.equations.WomersleyVelocityParameters
+
+---
+
+::: phydrax.equations.WomersleyVelocityProfilePlan
 
 ## Multiphysics distributions
 
@@ -199,6 +267,42 @@
 ---
 
 ::: phydrax.discretization.SpeciesLatticeBoltzmannPlan
+
+## Program manifest and checkpoint
+
+::: phydrax.discretization.KineticFieldRole
+
+---
+
+::: phydrax.discretization.KineticFailureScope
+
+---
+
+::: phydrax.discretization.KineticProgramManifest
+
+---
+
+::: phydrax.discretization.KineticFieldSpec
+
+---
+
+::: phydrax.discretization.KineticStageSpec
+
+---
+
+::: phydrax.discretization.KineticCheckpoint
+
+---
+
+::: phydrax.discretization.KineticCheckpointPlan
+
+---
+
+::: phydrax.discretization.write_kinetic_checkpoint
+
+---
+
+::: phydrax.discretization.read_kinetic_checkpoint
 
 ## Runtime and diagnostics
 
@@ -223,6 +327,10 @@
 ---
 
 ::: phydrax.discretization.LatticeBoltzmannHaloSchedule
+
+---
+
+::: phydrax.discretization.PreparedDistributedLatticeBoltzmannDynamics
 
 ---
 
