@@ -367,6 +367,44 @@ policy = phx.linalg.LinearSolvePolicy(
 prepared = phx.linalg.prepare(problem, policy)
 ```
 
+### Randomized Nyström preconditioning
+
+`RandomizedNystromPreconditionerBuilder` prepares a shifted fixed-rank inverse
+from matrix-free actions of an unbatched, certified self-adjoint positive-semidefinite
+operator. The setup operator may differ from the solved shifted system. Preparation
+uses a deterministic Gaussian sketch, retains a fixed number of Ritz directions, and
+records sketch rank, stabilization, captured sketch energy, core conditioning, and
+exact setup matvec work.
+
+```text
+builder = phx.linalg.RandomizedNystromPreconditionerBuilder(
+    24,
+    oversampling=8,
+    shift=1e-3,
+    seed=0,
+)
+policy = phx.linalg.LinearSolvePolicy(
+    phx.linalg.PCG(),
+    preconditioning=phx.linalg.PreconditioningPolicy(
+        builder,
+        setup_operator=positive_semidefinite_operator,
+    ),
+)
+```
+
+The initial implementation requires Euclidean `ArraySpace` or `PyTreeSpace`
+coordinates and a strictly positive shift. `probe_refresh="reuse"` recomputes
+numeric factors from the same probes; `"redraw"` folds the refresh count into the
+seed without changing capacity. It never retries an indefinite small core or falls
+back to another preconditioner. Mixed preconditioner storage precision is not yet
+supported.
+
+::: phydrax.linalg.RandomizedNystromPreconditionerBuilder
+
+::: phydrax.linalg.RandomizedNystromPreconditioner
+
+::: phydrax.linalg.RandomizedNystromDiagnostics
+
 `PreconditionerProperties` records `linear`, `stationary`, `self_adjoint`, and
 `positive_definite` claims with the same evidence vocabulary as operator
 properties. Planning uses only certified claims. It never infers solver safety

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added fixed-rank randomized Nyström preconditioning with auditable sketch and
+  refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
+  field metrics with rectangular or Gram tangent solves and saved-node audits;
+  backward Diffrax characteristic tracing with macro-step neural projection; and
+  mass-preserving fixed-support residual-attention collocation with explicit ESS,
+  KFAC, and controlled-policy contracts.
 - Added experimental two- and three-dimensional soft-sphere DEM with rigid
   translational/angular state, collision-free stable pair keys, persistent
   Cundall--Strack contact history, linear spring--dashpot and Hertz--Mindlin

@@ -86,6 +86,9 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Learned field evolution**: fixed physical measures project PDE rates onto
+  selected model tangents, Diffrax evolves the resulting parameter ODE, and
+  backward Diffrax characteristics feed optional time-slice field projection.
 - **Variational quantum dynamics**: stable complex log amplitudes, connected discrete
   operators, validated finite symmetry sectors, persistent-chain local energies,
   damped SR, frozen R-hat/ESS diagnostics, portable exact-resume checkpoints, and

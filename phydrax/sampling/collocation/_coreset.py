@@ -35,6 +35,7 @@ from ..._strict import StrictModule
 from ._adaptive import (
     _collocation_population_metrics,
     _concat_batches,
+    _normalized_importance,
     _point_sampling,
     _single_axis_and_size,
     _take_batch,
@@ -509,64 +510,6 @@ def _compiled_weighted_mmd(
         source_log_weights=source_log_weights,
         kernel=kernel,
         block_size=block_size,
-    )
-
-
-@jax.jit
-def _normalized_importance(
-    scores: Array,
-    /,
-    *,
-    exponent: Array,
-    uniform_fraction: Array,
-    minimum_ess_fraction: Array,
-    epsilon: Array,
-) -> tuple[Array, Array, Array, Array]:
-    values = jnp.asarray(scores, dtype=float)
-    count = int(values.shape[0])
-    values = jnp.nan_to_num(
-        values,
-        nan=0.0,
-        posinf=jnp.finfo(values.dtype).max,
-        neginf=0.0,
-    )
-    log_signal = exponent * jnp.log(jnp.maximum(values, 0.0) + epsilon)
-    log_signal = jnp.nan_to_num(
-        log_signal,
-        nan=0.0,
-        posinf=jnp.finfo(values.dtype).max,
-        neginf=-jnp.finfo(values.dtype).max,
-    )
-    signal_probability = jax.nn.softmax(log_signal)
-    uniform_probability = jnp.asarray(1.0 / count, dtype=values.dtype)
-    signal_concentration = jnp.sum(signal_probability * signal_probability)
-    target_ess = jnp.maximum(minimum_ess_fraction * count, 1.0)
-    target_concentration = 1.0 / target_ess
-    excess_signal_concentration = signal_concentration - uniform_probability
-    tolerance = 16.0 * jnp.finfo(values.dtype).eps
-    admissible_signal_fraction_squared = jnp.where(
-        excess_signal_concentration > tolerance,
-        (target_concentration - uniform_probability) / excess_signal_concentration,
-        1.0,
-    )
-    required_uniform_fraction = 1.0 - jnp.sqrt(
-        jnp.clip(admissible_signal_fraction_squared, 0.0, 1.0)
-    )
-    effective_uniform_fraction = jnp.maximum(
-        uniform_fraction,
-        required_uniform_fraction,
-    )
-    importance = (
-        effective_uniform_fraction * uniform_probability
-        + (1.0 - effective_uniform_fraction) * signal_probability
-    )
-    importance_ess = 1.0 / jnp.sum(importance * importance)
-    guard_triggered = effective_uniform_fraction > uniform_fraction + tolerance
-    return (
-        importance,
-        importance_ess,
-        effective_uniform_fraction,
-        guard_triggered,
     )
 
 
