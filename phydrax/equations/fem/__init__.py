@@ -19,7 +19,6 @@ from ._conservation import (
 )
 from ._execution import (
     CollocatedTensorProductOperator,
-    ElementTensorOperator,
     FiniteElementDiagonalData,
     FiniteElementMassPolicy,
     FiniteElementPreconditionerData,
@@ -108,7 +107,6 @@ __all__ = [
     "DGSEMPreparationReport",
     "DGSEMStableStepEvidence",
     "PreparedDGSEMConservationDynamics",
-    "ElementTensorOperator",
     "CollocatedTensorProductOperator",
     "PartialAssemblyOperator",
     "CoordinateObservation",

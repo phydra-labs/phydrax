@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added enhanced conforming scalar virtual elements of qualified degree one
+  through three on arbitrary-arity polygonal cell blocks, including certified
+  H1/L2 projectors, explicit stabilization, functional trace constraints,
+  matrix-free and sparse execution, fixed-topology geometry differentiation,
+  projected reconstruction, mass-matrix DAEs, and generalized eigenproblems.
 - Added bounded and periodic unit-density MAC incompressible dynamics with static
   no-slip wall closure, face-dual velocity coordinates, symmetry-preserving momentum
   transport, conservative explicit viscosity, transform-or-iterative stage

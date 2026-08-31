@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
@@ -294,6 +295,12 @@ class SurfacePressureLoadModel(AbstractForceDensityLoadModel):
         connectivity = structure.surface_connectivity
         if connectivity is None:
             raise ValueError("Surface pressure requires polygonal surface connectivity.")
+        if connectivity.cell_vertices.shape[1] != 4 or not np.all(
+            np.isin(np.asarray(connectivity.cell_kinds), (3, 4))
+        ):
+            raise ValueError(
+                "Surface pressure supports only triangular and quadrilateral cells."
+            )
         xyz = _positions(structure, positions)
         pressure = _real_array(
             "surface pressure parameters", parameters, (connectivity.cell_count,)
@@ -325,6 +332,10 @@ class SurfacePressureLoadModel(AbstractForceDensityLoadModel):
     ) -> Array:
         connectivity = structure.surface_connectivity
         if structure.dimension != 3 or connectivity is None:
+            return jnp.asarray(False)
+        if connectivity.cell_vertices.shape[1] != 4 or not np.all(
+            np.isin(np.asarray(connectivity.cell_kinds), (3, 4))
+        ):
             return jnp.asarray(False)
         xyz = _positions(structure, positions)
         pressure = _real_array(

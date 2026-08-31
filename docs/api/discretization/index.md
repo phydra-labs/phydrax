@@ -5,10 +5,12 @@ spaces, measures, prepared numerical methods, transfers, and multi-part provenan
 It composes with `domain`, `geometry`, `integration`, `linalg`, `stochastic`,
 `equations`, and `solver` without replacing their scientific contracts.
 
-See [Guide → Discretization](../../guides_discretization.md) for lifecycle and method
-examples, [Guide → Particle methods](../../guides_particle_methods.md) for material
-entity and interaction contracts, [Guide → Particle-grid splatting](../../guides_particle_splatting.md)
-for measure-aware particle/grid transfer, and [Guide → SPH](../../guides_sph.md)
+See [Guide → Discretization](../../guides_discretization.md) for lifecycle and
+method examples, [Guide → Virtual elements](../../guides_virtual_elements.md)
+for polygonal projection spaces, [Guide → Particle methods](../../guides_particle_methods.md)
+for material entity and interaction contracts,
+[Guide → Particle-grid splatting](../../guides_particle_splatting.md) for
+measure-aware particle/grid transfer, and [Guide → SPH](../../guides_sph.md)
 for the conservative barotropic workflow.
 
 ## Identity and lifecycle
