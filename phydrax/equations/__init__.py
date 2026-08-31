@@ -140,7 +140,6 @@ from ._hyperbolic_systems import (
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
-from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._ib_cfd_dem import (
     evaluate_resolved_ib_cfd_dem,
     IBConstraintPlan,
@@ -188,6 +187,8 @@ from ._lattice_boltzmann_free_energy import *  # noqa: F403
 from ._lattice_boltzmann_free_energy import (
     __all__ as _lattice_boltzmann_free_energy_all,
 )
+from ._lattice_boltzmann_profiles import *  # noqa: F403
+from ._lattice_boltzmann_profiles import __all__ as _lattice_boltzmann_profiles_all
 from ._lattice_boltzmann_species import *  # noqa: F403
 from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
 from ._lattice_boltzmann_thermal import *  # noqa: F403
@@ -345,6 +346,7 @@ from ._serialize import (
     pde_ir_to_dict,
     pde_ir_to_json,
 )
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._spectral_compile import (
     compile_spectral_pde,
     CompiledSpectralDynamics,
@@ -361,6 +363,13 @@ from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
     StencilStateLayout,
+)
+from ._thermodynamics import (
+    AbstractKineticThermodynamicClosure,
+    BinaryPhaseThermodynamicClosure,
+    BinaryThermodynamicLocalFields,
+    BinaryThermodynamicParameters,
+    ThermodynamicForceRepresentation,
 )
 from ._tokens import (
     pad_pde_tokens,
@@ -849,6 +858,7 @@ __all__ += [
         *_discrete_velocity_all,
         *_lattice_boltzmann_colour_gradient_all,
         *_lattice_boltzmann_free_energy_all,
+        *_lattice_boltzmann_profiles_all,
         *_lattice_boltzmann_species_all,
         *_lattice_boltzmann_thermal_all,
     )
@@ -880,4 +890,9 @@ __all__ += [
     "double_well_chemical_derivative",
     "double_well_free_energy_density",
     "evaluate_binary_free_energy",
+    "AbstractKineticThermodynamicClosure",
+    "BinaryPhaseThermodynamicClosure",
+    "BinaryThermodynamicLocalFields",
+    "BinaryThermodynamicParameters",
+    "ThermodynamicForceRepresentation",
 ]

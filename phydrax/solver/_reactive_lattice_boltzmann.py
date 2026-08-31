@@ -15,6 +15,10 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..discretization.lattice_boltzmann._program import (
+    KineticProgramManifest,
+    reactive_transport_manifest,
+)
 from ..discretization.lattice_boltzmann._species import SpeciesLatticeBoltzmannState
 from ..discretization.lattice_boltzmann._thermal import ThermalLatticeBoltzmannState
 
@@ -97,6 +101,30 @@ class ReactiveSpeciesCouplingSchedulePlan(StrictModule, NonTrainableState):
                 "element_tolerance": etol,
                 "energy_tolerance": htol,
             }
+        )
+
+    def program_manifest(
+        self,
+        thermal: KineticProgramManifest,
+        species: KineticProgramManifest,
+        /,
+    ) -> KineticProgramManifest:
+        if not isinstance(thermal, KineticProgramManifest) or not isinstance(
+            species, KineticProgramManifest
+        ):
+            raise TypeError("thermal and species must be KineticProgramManifest values.")
+        if (
+            thermal.lattice_id != species.lattice_id
+            or thermal.precision_policy_id != species.precision_policy_id
+        ):
+            raise ValueError(
+                "Reactive thermal and species manifests must share lattice and precision."
+            )
+        return reactive_transport_manifest(
+            thermal.lattice_id,
+            thermal.precision_policy_id,
+            thermal.manifest_id,
+            species.manifest_id,
         )
 
     def _reaction_half(

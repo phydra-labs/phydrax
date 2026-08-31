@@ -18,7 +18,10 @@ def test_allen_cahn_accepted_step_decreases_free_energy():
     discretization = phx.discretization.FiniteElementPlan(
         _mesh(), phx.discretization.FiniteElementFieldSpec("eta", element)
     ).prepare()
-    parameters = phx.applications.phase_field.AllenCahnParameters(1.0, 0.02)
+    parameters = phx.applications.phase_field.AllenCahnParameters(
+        1.0,
+        phx.equations.BinaryThermodynamicParameters(1.0, 0.02),
+    )
     result = phx.applications.phase_field.solve_allen_cahn_step(
         discretization,
         "eta",
@@ -40,7 +43,10 @@ def test_cahn_hilliard_step_preserves_mass():
             phx.discretization.FiniteElementFieldSpec("mu", element),
         ),
     ).prepare()
-    parameters = phx.applications.phase_field.CahnHilliardParameters(1.0, 0.02)
+    parameters = phx.applications.phase_field.CahnHilliardParameters(
+        1.0,
+        phx.equations.BinaryThermodynamicParameters(1.0, 0.02),
+    )
     result = phx.applications.phase_field.solve_cahn_hilliard_step(
         discretization,
         "c",

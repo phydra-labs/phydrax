@@ -48,7 +48,10 @@ phase_result = phx.applications.phase_field.solve_allen_cahn_step(
     "eta",
     jnp.full((4,), 0.2),
     0.01,
-    phx.applications.phase_field.AllenCahnParameters(1.0, 0.02),
+    phx.applications.phase_field.AllenCahnParameters(
+        1.0,
+        phx.equations.BinaryThermodynamicParameters(1.0, 0.02),
+    ),
 )
 
 if (
