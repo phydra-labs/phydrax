@@ -118,6 +118,7 @@ class CosmologicalParticleMeshPlan(StrictModule, NonTrainableState):
             jnp.abs(state.scale_factor - initial_scale) > 1.0e-12,
             "Cosmological PM state must start at the first scheduled scale factor.",
         )
+        state_scale = background.require_flat(state_scale)
         state = CosmologicalParticleState(
             state.positions,
             state.canonical_momenta,

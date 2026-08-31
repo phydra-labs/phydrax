@@ -10,6 +10,7 @@ from phydrax.applications.cosmology import (
     FLRWBackground,
     FLRWGrowthPlan,
     LagrangianPerturbationInitialConditionPlan,
+    MatterPowerDescriptor,
     MatterPowerTable,
 )
 from phydrax.discretization.finite_volume._mhd_boundary import (
@@ -500,8 +501,10 @@ def test_cosmology_inference_and_closure_contracts():
     provenance = CosmologyProductProvenance(
         producer="test",
         producer_version="current",
-        model_id=background.model_id,
+        model_form_id=background.model_form_id,
+        request_id="test-power",
         numerical_policy_id="test-power",
+        physics_policy_id="linear-cold-baryon-power",
         scale_id=background.scale.scale_id,
         source_kind="external",
         differentiability="constant",
@@ -510,9 +513,10 @@ def test_cosmology_inference_and_closure_contracts():
         [0.1, 1.0],
         [1.0, 20.0],
         [[1.0e-8, 1.0e-8], [1.0e-6, 1.0e-6]],
+        MatterPowerDescriptor("cold_baryon", "cold_baryon", spatial_dimension=1),
         background.scale,
         provenance,
-        spatial_dimension=1,
+        background.realization,
     )
     lpt = LagrangianPerturbationInitialConditionPlan(lpt_particles, (4,), (1.0,))
     realized = lpt.realize(background, growth, power, jnp.ones((4,)), 0.1)
