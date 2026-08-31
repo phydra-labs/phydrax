@@ -1,0 +1,12 @@
+{
+  "maturity": "experimental",
+  "capability": "implicit",
+  "metrics": {
+    "successful": true,
+    "residual_norm": 1.8295318101134797e-23,
+    "nonlinear_steps": 0,
+    "linear_iterations": 0,
+    "tangent_successful": true
+  },
+  "passed": true
+}

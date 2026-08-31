@@ -15,6 +15,7 @@ from . import (
     incompressible_flow,
     phase_field,
     solid_mechanics,
+    vortex_flow,
 )
 
 
@@ -29,4 +30,5 @@ __all__ = [
     "incompressible_flow",
     "phase_field",
     "solid_mechanics",
+    "vortex_flow",
 ]

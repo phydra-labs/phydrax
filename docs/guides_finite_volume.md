@@ -143,11 +143,14 @@ Wave propagation is a separate interface family, not an optional extension of a 
 result:
 
 - `RoeWavePropagationPlan` returns waves, speeds, and left/right fluctuations;
-- `FWaveShallowWaterPlan` decomposes a bathymetry-balanced flux jump;
 - `WaveFamilyLimiterPlan` limits each wave family;
 - `TransverseWaveSolverPlan` splits a normal fluctuation in a transverse direction.
 
-The initial f-wave implementation is one-dimensional and preserves lake-at-rest states.
+Bathymetric wet/dry shallow water is a separate balanced-face family.
+`ShallowWaterHydrostaticHLLPlan` returns one shared transport flux plus one-sided
+hydrostatic bed corrections. `PreparedFiniteVolumeRuntime` blends the complete face
+contribution against the piecewise-constant fallback at every SSPRK stage. See
+[Shallow water](guides_shallow_water.md).
 
 ## Boundaries
 
@@ -333,10 +336,14 @@ velocity from one face-density policy, shares one mass flux between density and
 momentum, and uses `MACVariableDensityProjectionPlan`. It does not claim an EOS,
 low-Mach heat expansion, VOF, or multiphase interface physics.
 
-`MACMarkerTransferPlan` gathers MAC face velocity and spreads marker force through
-the dual-measure adjoint. `ResolvedMACIBCFDEMCouplingPlan` and
-`advance_mac_resolved_ib_window` provide penalty IB force/torque, DEM contact
-subcycling, post-forcing projection, work/impulse ledgers, and complete rollback.
+`MACMarkerTransferPlan` builds fixed local cubic tensor B-spline routes on each
+staggered face layout and exposes material-measure adjoint gather/spread, moment,
+force, torque, and work evidence. `MACImmersedBoundaryProjectionPlan` solves
+pressure and prescribed marker constraints together. Its IMEX-Euler and SBDF2
+methods evaluate marker kinematics at the attempted stage. The separate
+`MACPenaltyIBCFDEMCouplingPlan` and
+`advance_mac_penalty_ib_cfd_dem_window` retain approximate penalty forcing, DEM
+contact subcycling, ledgers, and atomic rollback.
 
 ### Distribution, mapped geometry, and sensitivity
 
@@ -409,9 +416,10 @@ topology remain static.
 
 ## Current limitations
 
-- No unstructured or polyhedral meshes.
-- No moving mapped grids.
-- Initial shallow-water f-wave support is one-dimensional.
+- Bathymetric shallow water currently requires static Cartesian structured geometry;
+  mapped, triangle, unstructured, moving, SBP, spectral, and DGSEM beds are rejected.
+- Wet/dry shallow water supports piecewise-constant and equilibrium-aware MUSCL
+  reconstruction; balanced WENO is not yet supported.
 - Initial transverse solver support is a primitive building block, not a complete
   three-dimensional CTU implementation.
 - Mapped fluxes currently use Rusanov or HLL.

@@ -20,6 +20,10 @@ from ..discretization.lattice_boltzmann._lattice import (
 from ..discretization.lattice_boltzmann._precision import (
     LatticeBoltzmannPrecisionPolicy,
 )
+from ..discretization.lattice_boltzmann._program import (
+    KineticProgramManifest,
+    transport_population_manifest,
+)
 from ..discretization.lattice_boltzmann._thermal import (
     apply_thermal_boundary,
     boussinesq_force,
@@ -110,6 +114,7 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
     spacing: float = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
     cell_measure: Array
+    program_manifest: KineticProgramManifest
     compilation_id: str = eqx.field(static=True)
 
     def __init__(
@@ -156,17 +161,14 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Every thermal boundary normal must match lattice dimension."
                 )
-        generated = canonical_fingerprint(
-            {
-                "kind": "compiled-thermal-lattice-boltzmann-problem",
-                "problem": problem.problem_id,
-                "lattice": lattice.lattice_id,
-                "precision": precision.policy_id,
-                "shape": list(shape),
-                "spacing": dx,
-                "step_size": dt,
-                "cell_measure": array_tree_fingerprint(measure),
-            }
+        program_manifest = transport_population_manifest(
+            "thermal_lattice_boltzmann",
+            lattice.lattice_id,
+            precision.policy_id,
+            "thermal_populations",
+            (lattice.population_count,),
+            ("sensible_energy",),
+            dimension=lattice.dimension,
         )
         self.problem = problem
         self.lattice = lattice
@@ -174,7 +176,21 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         self.spatial_shape = shape
         self.spacing = dx
         self.step_size = dt
+        self.program_manifest = program_manifest
         self.cell_measure = jnp.asarray(measure)
+        generated = canonical_fingerprint(
+            {
+                "kind": "compiled-thermal-lattice-boltzmann-problem",
+                "problem": problem.problem_id,
+                "lattice": lattice.lattice_id,
+                "precision": precision.policy_id,
+                "shape": shape,
+                "spacing": dx,
+                "step_size": dt,
+                "cell_measure": array_tree_fingerprint(measure),
+                "program_manifest": program_manifest.manifest_id,
+            }
+        )
         self.compilation_id = generated
 
     def initialize_state(

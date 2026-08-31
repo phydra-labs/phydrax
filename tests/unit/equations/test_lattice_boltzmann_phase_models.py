@@ -93,6 +93,8 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
     discretization = _discretization()
     method = FreeEnergyLBMMethod(
         _forced_method(),
+        phx.equations.BinaryPhaseThermodynamicClosure(),
+        phx.equations.ThermodynamicForceRepresentation.CHEMICAL_POTENTIAL_GRADIENT,
         maximum_capillary_number=10.0,
         relative_energy_tolerance=1.0e-6,
     )
@@ -105,7 +107,11 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
     )
     x = discretization.grid.points[:, 0].reshape(discretization.grid.shape)
     phase = jnp.tanh((x - 0.5) / 0.08)
-    parameters = FreeEnergyLBMRuntimeParameters(0.01, 0.08, 0.02, 0.02)
+    parameters = FreeEnergyLBMRuntimeParameters(
+        0.01,
+        0.08,
+        phx.equations.BinaryThermodynamicParameters(0.02, 0.02),
+    )
     state = compiled.initialize_state(1.0, phase, jnp.zeros((2,)), parameters)
     initial = compiled.dynamics.scalar_diagnostics(0, 0.0, state, parameters)
 
@@ -130,7 +136,11 @@ def test_free_energy_compiler_preserves_moments_and_has_nonincreasing_accepted_e
         + method.relative_energy_tolerance * jnp.maximum(initial.ledger.total_energy, 1.0)
     )
 
-    invalid = FreeEnergyLBMRuntimeParameters(0.01, 0.0, 0.02, 0.02)
+    invalid = FreeEnergyLBMRuntimeParameters(
+        0.01,
+        0.0,
+        phx.equations.BinaryThermodynamicParameters(0.02, 0.02),
+    )
     rejected = compiled.dynamics.step_detailed(0, 0.0, state, 0.01, invalid)
     assert not bool(rejected.successful)
     np.testing.assert_array_equal(

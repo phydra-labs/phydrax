@@ -136,6 +136,7 @@ from .differential import (  # noqa: F401
     navier_stokes_stress,
     neo_hookean_cauchy,
     neo_hookean_pk1,
+    neo_hookean_reference_energy,
     partial_n,
     partial_t,
     partial_x,
@@ -241,6 +242,9 @@ from .integral import (  # noqa: F401
     LaplaceLayerKernel3D,
     LaplaceLayerPotential2D,
     LaplaceLayerPotential3D,
+    LaplaceSingleLayerDP0AssemblyReport3D,
+    LaplaceSingleLayerDP0Galerkin3D,
+    LaplaceSingleLayerDP0GalerkinPolicy3D,
     LaplaceTreecodeBackend2D,
     LaplaceTreecodeEvaluation2D,
     LayerBackendEvaluation2D,
@@ -254,6 +258,7 @@ from .integral import (  # noqa: F401
     mean,
     nonlocal_integral,
     PanelInteractionReport2D,
+    prepare_laplace_single_layer_dp0_3d,
     QBXEvaluation2D,
     QBXEvaluation3D,
     RCIPPreconditioner2D,
@@ -262,6 +267,8 @@ from .integral import (  # noqa: F401
     SurfaceTargetReport3D,
     time_convolution,
 )
+from .integral.vortex import *  # noqa: F401,F403
+from .integral.vortex import __all__ as _vortex_all
 from .interpolation import (  # noqa: F401
     BSplineBoundaryConstraint,
     BSplineBoundaryMode,
@@ -440,6 +447,7 @@ __all__ = [
     "maxwell_stress",
     "navier_stokes_stress",
     "neo_hookean_cauchy",
+    "neo_hookean_reference_energy",
     "neo_hookean_pk1",
     "partial_t",
     "partial_n",
@@ -520,6 +528,10 @@ __all__ = [
     "LayerEvaluationReport",
     "LayerEvaluationResult",
     "LayerPotentialTargetReport",
+    "LaplaceSingleLayerDP0AssemblyReport3D",
+    "LaplaceSingleLayerDP0Galerkin3D",
+    "LaplaceSingleLayerDP0GalerkinPolicy3D",
+    "prepare_laplace_single_layer_dp0_3d",
     "local_integral",
     "local_integral_ball",
     "mean",
@@ -682,3 +694,5 @@ __all__ = [
     "real_part",
     "trace",
 ]
+
+__all__ += [name for name in _vortex_all if name not in __all__]

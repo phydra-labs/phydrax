@@ -14,6 +14,11 @@ without silently claiming qualification outside their evidence envelope.
 - **Experimental infrastructure**: explicit data model and transfer/update contract;
   users must provide application-specific evidence before relying on it.
 
+Evidence is graduated rather than inferred: **invariant-complete**,
+**physics-qualified**, **differentiation-qualified**, **execution-qualified**, and
+**deployment-qualified** are independent claims. A capability advances only when the
+corresponding named artifact records its configuration and tolerances.
+
 ## Capability matrix
 
 | Capability | Status | Contract |
@@ -28,15 +33,19 @@ without silently claiming qualification outside their evidence envelope.
 | Static SDF, refreshed SDF, moving bodies, immersed forcing | Implemented research path | Geometry epochs, conservative newborn-cell initialization, and force ledgers |
 | Multiblock Cartesian coupling | Implemented research path | Same-step halo schedule with explicit transfer operators |
 | Ratio-2 block refinement | Experimental infrastructure | Conservative restriction/prolongation and fixed subcycling schedule |
+| Collision-aware ratio-2 transfer | Experimental research path | Equilibrium/nonequilibrium transfer, acoustic scaling, half-time interface data, and local defects |
 | Phase-field, colour-gradient, free-energy, thermal, passive species | Implemented research path | Separate distributions and explicit mass/energy/species ledgers |
+| Single-source binary thermodynamics | Implemented research path | Energy, variational derivative, symmetric stress, and selected force share one closure |
 | Reactive species with Strang splitting | Implemented research path | Atomic rollback across flow, thermal, and species states |
 | D2V17 and off-lattice D2V37 smooth compressible kinetic methods | Implemented research path | Total energy is a kinetic population; off-lattice transport is explicit |
 | Fixed FV/kinetic interface | Experimental infrastructure | One common conservative flux, FV shock ownership, atomic update |
 | Mapped-grid kinetic method | Experimental research path | Metric-identity/free-stream residuals and injected geometric source |
 | Sharded execution and halo exchange | Implemented execution path | Fixed decomposition, deterministic ownership, no dynamic repartitioning |
+| Prepared production sharding | Implemented execution path | Actual prepared hydrodynamics runs under fixed spatial NamedSharding with global reference equivalence |
 | AA/even-odd memory layout and fused step | Implemented execution path | Logical-state equivalence evidence and checkpoint parity metadata |
 | Block reverse replay | Implemented execution path | Fixed-size replay blocks; no adaptive recomputation policy |
 | IREE export | Forward inference only | Stable tuple ABI; gradients remain in JAX |
+| Portable kinetic checkpoint | Implemented execution path | Full array PyTree, runtime controls, program identity, topology, parity, and checksums |
 
 ## Core state and update order
 
@@ -108,6 +117,13 @@ refreshes require the explicit conservative transfer transaction.
 `ImmersedBoundaryForcingPlan` is a separate regularized marker coupling with
 equal-and-opposite force, torque, work, partition-of-unity, and convergence evidence.
 
+`prepare_lattice_boltzmann_link_geometry` bridges an existing
+`CompiledGeometry` with signed-distance and boundary-normal capabilities into
+certified per-link fractions and normals; the LBM layer does not duplicate CAD,
+mesh, image, or rasterization frontends. Parabolic and Womersley profile plans
+provide differentiable runtime velocity targets while leaving link ownership
+unchanged.
+
 `LatticeBoltzmannMultiblockCouplingPlan` exchanges all fixed conforming interface
 traces from the same source state before committing incoming directions, with exact
 orientation/Q-permutation reciprocity. Ratio-2 refinement uses explicit conservative
@@ -126,8 +142,19 @@ The multiphysics paths use separate distributions and expose conservation accoun
 - independent passive species distributions;
 - reactive species with a fixed Strang reaction/transport/reaction schedule.
 
-`AbstractBulkFreeEnergy` and `DoubleWellFreeEnergy` are shared equation-layer
-constitutive contracts; application workflows consume the same source of truth.
+`AbstractBulkFreeEnergy` and `DoubleWellFreeEnergy` define the local potential.
+`BinaryPhaseThermodynamicClosure` combines that potential with differentiable
+`BinaryThermodynamicParameters` so bulk energy, chemical potential, symmetric stress,
+and both stress-divergence and chemical-potential-gradient force representations
+come from one source. `PreparedBinaryKineticThermodynamics` binds the closure to the
+certified lattice stencil and records the selected force policy and representation
+residual. Application phase-field workflows consume the same closure and parameters.
+The same closure also supplies the characteristic interface width and planar
+surface tension used by free-energy admissibility and capillary diagnostics.
+Chemical-potential-gradient and negative stress-divergence forcing are separate,
+explicitly selected discrete representations; qualification records their
+mesh-convergent agreement rather than assuming a discrete product rule.
+
 Every ledger separates initial amount, boundary exchange, volumetric source,
 reaction exchange where applicable, and residual. A coupled step commits all fields
 or rolls all fields back.
@@ -144,6 +171,26 @@ Density, momentum, total energy, pressure, and temperature are recovered jointly
 and realizability evidence exposes nonfinite, nonpositive, or population-level
 violations. The fixed FV/kinetic interface derives one population flux and maps that
 same flux into conservative variables, so both sides see equal and opposite exchange.
+Its local program manifest therefore contains moment, equilibrium, collision, and
+realizability stages only. Finite-volume DVM transport has a separate reconstruction,
+numerical-flux, source, residual, and conservation manifest; neither path claims
+integer lattice streaming for off-lattice quadratures.
+
+## Program manifest and restart
+
+Every prepared kinetic path exposes a `KineticProgramManifest`. Its field
+specifications declare population, macroscopic, source, geometry, history, ledger,
+precision, halo, conservation, checkpoint, and differentiability roles. Ordered
+stage specifications declare reads, writes, exchanges, reductions, and failure
+scope. Preparation rejects unknown or unavailable reads, duplicate stage ordering,
+and exchanged fields without halo support. The manifest is metadata over the
+existing pure kernels; it is not a runtime model DSL.
+
+`KineticCheckpointPlan` fingerprints the runtime and manifest together with optional
+geometry, topology, execution, and replay identities. `write_kinetic_checkpoint` and
+`read_kinetic_checkpoint` use the checksummed pickle-free array archive and exact
+PyTree templates. Population fields, runtime controls, boundary history, ledgers,
+AMR phase, and AA parity therefore retain exact shape and dtype across continuation.
 
 ## Runtime parameters and differentiation
 
@@ -166,10 +213,14 @@ and shock ownership are nondifferentiable decisions. Reverse execution uses
 
 ## Execution and export
 
-`ShardedLatticeBoltzmannExecutionPlan` and `LatticeBoltzmannHaloSchedule`
-describe a fixed device mesh, an unpartitioned Q axis, and direction-selected
-face/edge/corner halo routes. Qualification compares the global reference; production
-can omit that duplicate realization. No runtime repartitioning occurs.
+`PreparedDistributedLatticeBoltzmannDynamics` binds the actual prepared hydrodynamic
+step to `ShardedLatticeBoltzmannExecutionPlan` and
+`LatticeBoltzmannHaloSchedule`. The global population tensor keeps JAX semantics
+under a fixed spatial mesh, Q remains unpartitioned, and the direction-complete halo
+schedule certifies every source route. Qualification compares complete populations,
+failures, work, and diagnostics against the unpartitioned production dynamics.
+Production may omit the duplicate reference realization. No runtime repartitioning
+occurs.
 
 `AALatticeBoltzmannPlan` stores logical even/odd parity and includes parity in
 checkpoints. `FusedLatticeBoltzmannExecutionPlan` JIT-compiles the full fixed scan
@@ -182,12 +233,12 @@ not part of the IREE ABI. Training and differentiation remain in JAX.
 
 ## Qualification and acceptance
 
-Run `tools/lattice_boltzmann_qualification.py` for the baseline shear-decay,
-Poiseuille, Couette, and runtime artifact. Run
-`tools/kinetic_expansion_qualification.py` for advanced invariants: collision
-conservation/positivity evidence, boundary write-once ownership, geometry-transfer
-conservation, multiphysics ledgers, DVM quadrature/energy evidence, single-device
-versus sharded equivalence, AA parity, and replay equivalence.
+Run `tools/lattice_boltzmann_qualification.py` for the qualified baseline and
+`tools/kinetic_expansion_qualification.py` for advanced invariants. Run
+`tools/kinetic_scientific_qualification.py` for named physics, differentiation,
+checkpoint, collision-aware AMR, curved-geometry, DVM, and actual production-sharding
+evidence. The scientific artifact reports each evidence level separately; forward
+IREE deployment remains unqualified when the matched compiler/runtime is unavailable.
 
 Qualification artifacts record software/hardware identity, parameters, tolerances,
 errors, conservation defects, throughput, compiler memory evidence, and explicit

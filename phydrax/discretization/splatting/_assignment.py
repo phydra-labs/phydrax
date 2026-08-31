@@ -30,6 +30,10 @@ class SplatAssignmentCapabilities(StrictModule, NonTrainableState):
     supports_nonuniform: bool = eqx.field(static=True)
     supports_mixed_entities: bool = eqx.field(static=True)
     capability_id: str = eqx.field(static=True)
+    apic_compatible: bool = eqx.field(static=True)
+    source_geometry_kind: str = eqx.field(static=True)
+    domain_differentiable: bool = eqx.field(static=True)
+    maximum_support_radius_cells: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -41,6 +45,10 @@ class SplatAssignmentCapabilities(StrictModule, NonTrainableState):
         maximum_explicit_derivative_order: int,
         supports_nonuniform: bool,
         supports_mixed_entities: bool,
+        apic_compatible: bool = True,
+        source_geometry_kind: str = "point",
+        domain_differentiable: bool = False,
+        maximum_support_radius_cells: float = 2.0,
     ):
         reproduction = int(polynomial_reproduction_order)
         derivative = int(maximum_explicit_derivative_order)
@@ -55,6 +63,16 @@ class SplatAssignmentCapabilities(StrictModule, NonTrainableState):
         self.maximum_explicit_derivative_order = derivative
         self.supports_nonuniform = bool(supports_nonuniform)
         self.supports_mixed_entities = bool(supports_mixed_entities)
+        geometry = str(source_geometry_kind)
+        if not geometry:
+            raise ValueError("source_geometry_kind must be non-empty.")
+        self.apic_compatible = bool(apic_compatible)
+        self.source_geometry_kind = geometry
+        self.domain_differentiable = bool(domain_differentiable)
+        support_radius = float(maximum_support_radius_cells)
+        if not np.isfinite(support_radius) or support_radius <= 0.0:
+            raise ValueError("maximum_support_radius_cells must be positive.")
+        self.maximum_support_radius_cells = support_radius
         self.capability_id = canonical_fingerprint(
             {
                 "kind": "splat-assignment-capabilities",
@@ -65,6 +83,10 @@ class SplatAssignmentCapabilities(StrictModule, NonTrainableState):
                 "maximum_explicit_derivative_order": derivative,
                 "supports_nonuniform": self.supports_nonuniform,
                 "supports_mixed_entities": self.supports_mixed_entities,
+                "apic_compatible": self.apic_compatible,
+                "source_geometry_kind": geometry,
+                "domain_differentiable": self.domain_differentiable,
+                "maximum_support_radius_cells": support_radius,
             }
         )
 
@@ -168,6 +190,26 @@ class AbstractStructuredSplatAssignment(StrictModule, NonTrainableState):
         raise NotImplementedError
 
     @abc.abstractmethod
+    def validate_input(
+        self,
+        assignment_input: object,
+        source_count: int,
+        dimension: int,
+        /,
+    ) -> None:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def update_input(
+        self,
+        position: Array,
+        deformation_gradient: Array,
+        committed_input: object,
+        /,
+    ) -> object:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def build(
         self,
         layout: TensorEntityLayout,
@@ -175,8 +217,10 @@ class AbstractStructuredSplatAssignment(StrictModule, NonTrainableState):
         axis_bounds: tuple[tuple[float, float], ...],
         position: Array,
         active: Array,
-        /,
+        *,
+        assignment_input: object = None,
     ) -> SplatAssignmentState:
+        del assignment_input
         raise NotImplementedError
 
 
@@ -417,6 +461,7 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
             maximum_explicit_derivative_order=1,
             supports_nonuniform=True,
             supports_mixed_entities=True,
+            maximum_support_radius_cells=1.0,
         )
         self.capabilities = capabilities
         self.assignment_id = canonical_fingerprint(
@@ -453,6 +498,15 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
                     axis.periodic,
                 )
 
+    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+        del source_count, dimension
+        if assignment_input is not None:
+            raise ValueError("Multilinear assignment accepts no source-domain input.")
+
+    def update_input(self, position, deformation_gradient, committed_input, /) -> object:
+        del position, deformation_gradient, committed_input
+        return None
+
     def build(
         self,
         layout: TensorEntityLayout,
@@ -460,8 +514,12 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
         axis_bounds: tuple[tuple[float, float], ...],
         position: Array,
         active: Array,
-        /,
+        *,
+        assignment_input: object = None,
     ) -> SplatAssignmentState:
+        self.validate_input(
+            assignment_input, int(position.shape[0]), int(position.shape[1])
+        )
         uniform_mixed = any(entity == "interval" for entity in layout.axis_entities)
         stencils = []
         for axis, (coordinates, bounds, geometry_axis) in enumerate(

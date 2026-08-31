@@ -30,6 +30,7 @@ from ..._doc import DOC_KEY0
 from ..._model import StructuredDerivativeProvider
 from ..._strict import StrictModule
 from ...domain._evaluation import evaluate_pointwise_callable
+from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ._array_ops import (
     _basis_nth_derivative,
     _fd_nth_derivative,
@@ -3080,7 +3081,22 @@ def deformation_gradient(
 
     G = grad(u, var=var, mode=mode, backend="ad", ad_engine=ad_engine)
     I = jnp.eye(var_dim)
-    return G + I
+
+    def _F(*args, key=None, **kwargs):
+        Gx = jnp.asarray(G.func(*args, key=key, **kwargs))
+        if Gx.shape[-2:] != (var_dim, var_dim):
+            raise ValueError(
+                "deformation_gradient expected a displacement gradient with trailing "
+                f"shape ({var_dim}, {var_dim}), got {Gx.shape[-2:]}."
+            )
+        return Gx + I
+
+    return DomainFunction(
+        domain=G.domain,
+        deps=G.deps,
+        func=_F,
+        metadata=G.metadata,
+    )
 
 
 def green_lagrange_strain(
@@ -3295,12 +3311,146 @@ def cauchy_from_pk2(
     )
 
 
+def _prepare_neo_hookean_fields(
+    u: DomainFunction,
+    mu: DomainFunction | ArrayLike,
+    lambda_: DomainFunction | ArrayLike,
+    var: str | None,
+    mode: Literal["reverse", "forward"],
+):
+    var = _resolve_var(u, var)
+    factor, var_dim = _factor_and_dim(u, var)
+    if factor.kind == "scalar":
+        raise ValueError(
+            "Neo-Hookean field operators require a geometry variable, not a scalar variable."
+        )
+    if var_dim not in (2, 3):
+        raise ValueError("Neo-Hookean field operators support dimensions 2 and 3.")
+
+    mu_fn = _as_domain_function(u, mu)
+    lambda_fn = _as_domain_function(u, lambda_)
+    joined = u.domain.join(mu_fn.domain).join(lambda_fn.domain)
+    u2 = u.promote(joined)
+    mu2 = mu_fn.promote(joined)
+    lambda2 = lambda_fn.promote(joined)
+    F = deformation_gradient(u2, var=var, mode=mode)
+
+    deps = tuple(
+        lbl
+        for lbl in joined.labels
+        if (lbl in u2.deps) or (lbl in mu2.deps) or (lbl in lambda2.deps)
+    )
+    idx = {lbl: i for i, lbl in enumerate(deps)}
+    u_pos = tuple(idx[lbl] for lbl in u2.deps)
+    mu_pos = tuple(idx[lbl] for lbl in mu2.deps)
+    lambda_pos = tuple(idx[lbl] for lbl in lambda2.deps)
+    return (
+        var_dim,
+        joined,
+        mu2,
+        lambda2,
+        F,
+        deps,
+        u_pos,
+        mu_pos,
+        lambda_pos,
+    )
+
+
+def _neo_hookean_material_values(mu_v: ArrayLike, lambda_v: ArrayLike):
+    mu_v = jnp.asarray(mu_v)
+    lambda_v = jnp.asarray(lambda_v)
+    if mu_v.shape != () or lambda_v.shape != ():
+        raise ValueError("Neo-Hookean material fields must be scalar-valued.")
+    bulk_v = lambda_v + (2.0 / 3.0) * mu_v
+    valid = jnp.isfinite(mu_v) & jnp.isfinite(lambda_v) & (mu_v > 0.0) & (bulk_v > 0.0)
+    return mu_v, lambda_v, valid
+
+
+def neo_hookean_reference_energy(
+    u: DomainFunction,
+    /,
+    *,
+    mu: DomainFunction | ArrayLike,
+    lambda_: DomainFunction | ArrayLike,
+    var: str | None = None,
+    mode: Literal["reverse", "forward"] = "reverse",
+) -> DomainFunction:
+    r"""Compressible neo-Hookean reference-volume energy density.
+
+    With deformation gradient $F = I + \nabla u$, $J=\det F$, spatial
+    dimension $d\in\{2,3\}$, shear modulus $\mu$, and Lamé's first
+    parameter $\lambda$, this returns
+
+    $$
+    W(F) = \frac{\mu}{2}(F:F-d) - \mu\ln J
+           + \frac{\lambda}{2}(\ln J)^2.
+    $$
+
+    Two-dimensional displacement fields use the three-dimensional plane-strain
+    restriction $\operatorname{diag}(F,1)$. Material parameters may be constants
+    or scalar `DomainFunction`s. Non-admissible material values or $J\leq0$
+    produce `NaN`.
+
+    **Arguments:**
+
+    - `u`: Displacement field.
+    - `mu`: Shear modulus $\mu$.
+    - `lambda_`: Lamé's first parameter $\lambda$.
+    - `var`: Geometry label.
+    - `mode`: Autodiff mode used by `deformation_gradient`.
+
+    **Returns:**
+
+    - A scalar `DomainFunction` representing the reference-volume density $W$.
+    """
+    (
+        var_dim,
+        joined,
+        mu2,
+        lambda2,
+        F,
+        deps,
+        u_pos,
+        mu_pos,
+        lambda_pos,
+    ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
+
+    def _op(*args, key=None, **kwargs):
+        u_args = [args[i] for i in u_pos]
+        mu_args = [args[i] for i in mu_pos]
+        lambda_args = [args[i] for i in lambda_pos]
+        Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
+        mu_v, lambda_v, material_valid = _neo_hookean_material_values(
+            mu2.func(*mu_args, key=key, **kwargs),
+            lambda2.func(*lambda_args, key=key, **kwargs),
+        )
+        J = jnp.linalg.det(Fx)
+        valid = material_valid & jnp.all(jnp.isfinite(Fx)) & jnp.isfinite(J) & (J > 0.0)
+        safe_J = jnp.where(valid, J, 1.0)
+        log_J = jnp.log(safe_J)
+        first_invariant = oe.contract("...ij,...ij->...", Fx, Fx)
+        energy = (
+            0.5 * mu_v * (first_invariant - float(var_dim))
+            - mu_v * log_J
+            + 0.5 * lambda_v * log_J * log_J
+        )
+        return jnp.where(valid, energy, jnp.nan)
+
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=u.metadata,
+    )
+
+
 def neo_hookean_pk1(
     u: DomainFunction,
     /,
     *,
     mu: DomainFunction | ArrayLike,
-    kappa: DomainFunction | ArrayLike,
+    lambda_: DomainFunction | ArrayLike,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
 ) -> DomainFunction:
@@ -3309,16 +3459,17 @@ def neo_hookean_pk1(
     With deformation gradient $F = I + \nabla u$ and $J=\det F$, this returns
 
     $$
-    P = \mu\,(F - F^{-T}) + \kappa\,\ln(J)\,F^{-T},
+    P = \mu\,(F - F^{-T}) + \lambda\,\ln(J)\,F^{-T},
     $$
 
-    where $\mu$ is the shear modulus and $\kappa$ is the bulk modulus.
+    where $\mu$ is the shear modulus and $\lambda$ is Lamé's first parameter.
+    Two-dimensional fields use the three-dimensional plane-strain restriction.
 
     **Arguments:**
 
     - `u`: Displacement field.
-    - `mu`: Shear modulus $\mu$ (constant or `DomainFunction`).
-    - `kappa`: Bulk modulus $\kappa$ (constant or `DomainFunction`).
+    - `mu`: Shear modulus $\mu$.
+    - `lambda_`: Lamé's first parameter $\lambda$.
     - `var`: Geometry label.
     - `mode`: Autodiff mode used by `deformation_gradient`.
 
@@ -3326,42 +3477,46 @@ def neo_hookean_pk1(
 
     - A `DomainFunction` representing the PK1 stress $P$ with trailing shape `(..., d, d)`.
     """
-    var = _resolve_var(u, var)
-    factor, _ = _factor_and_dim(u, var)
-    if factor.kind == "scalar":
-        raise ValueError(
-            "neo_hookean_pk1(var=...) requires a geometry variable, not a scalar variable."
-        )
-
-    mu_fn = _as_domain_function(u, mu)
-    k_fn = _as_domain_function(u, kappa)
-    joined = u.domain.join(mu_fn.domain).join(k_fn.domain)
-    u2 = u.promote(joined)
-    mu2 = mu_fn.promote(joined)
-    k2 = k_fn.promote(joined)
-
-    F = deformation_gradient(u2, var=var, mode=mode)
-
-    deps = tuple(
-        lbl
-        for lbl in joined.labels
-        if (lbl in u2.deps) or (lbl in mu2.deps) or (lbl in k2.deps)
-    )
-    idx = {lbl: i for i, lbl in enumerate(deps)}
-    u_pos = tuple(idx[lbl] for lbl in u2.deps)
-    mu_pos = tuple(idx[lbl] for lbl in mu2.deps)
-    k_pos = tuple(idx[lbl] for lbl in k2.deps)
+    (
+        var_dim,
+        joined,
+        mu2,
+        lambda2,
+        F,
+        deps,
+        u_pos,
+        mu_pos,
+        lambda_pos,
+    ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
+    identity = jnp.eye(var_dim)
+    solve_plan = SmallLinearSolvePlan(var_dim)
 
     def _op(*args, key=None, **kwargs):
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
-        k_args = [args[i] for i in k_pos]
+        lambda_args = [args[i] for i in lambda_pos]
         Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
-        FinvT = jnp.linalg.inv(Fx).swapaxes(-1, -2)
-        J = jnp.linalg.det(Fx)
-        mu_v = jnp.asarray(mu2.func(*mu_args, key=key, **kwargs))
-        k_v = jnp.asarray(k2.func(*k_args, key=key, **kwargs))
-        return mu_v * (Fx - FinvT) + k_v * jnp.log(J)[..., None, None] * FinvT
+        mu_v, lambda_v, material_valid = _neo_hookean_material_values(
+            mu2.func(*mu_args, key=key, **kwargs),
+            lambda2.func(*lambda_args, key=key, **kwargs),
+        )
+        inverse_result = solve_small_linear(
+            solve_plan,
+            Fx,
+            jnp.broadcast_to(identity, Fx.shape),
+        )
+        J = inverse_result.determinant
+        valid = (
+            material_valid
+            & inverse_result.successful
+            & jnp.all(jnp.isfinite(Fx))
+            & jnp.isfinite(J)
+            & (J > 0.0)
+        )
+        log_J = jnp.log(jnp.where(valid, J, 1.0))
+        FinvT = jnp.swapaxes(inverse_result.value, -1, -2)
+        stress = mu_v * (Fx - FinvT) + lambda_v * log_J * FinvT
+        return jnp.where(valid, stress, jnp.full_like(stress, jnp.nan))
 
     return DomainFunction(
         domain=joined,
@@ -3376,70 +3531,64 @@ def neo_hookean_cauchy(
     /,
     *,
     mu: DomainFunction | ArrayLike,
-    kappa: DomainFunction | ArrayLike,
+    lambda_: DomainFunction | ArrayLike,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
 ) -> DomainFunction:
     r"""Compressible neo-Hookean Cauchy stress.
 
-    With $F = I + \nabla u$, $J=\det F$, and left Cauchy–Green tensor $B=FF^\top$, this
-    returns
+    With $F = I + \nabla u$, $J=\det F$, and left Cauchy–Green tensor
+    $B=FF^\top$, this returns
 
     $$
-    \sigma = \frac{\mu}{J}(B - I) + \frac{\kappa\ln(J)}{J}\,I.
+    \sigma = \frac{\mu}{J}(B - I) + \frac{\lambda\ln(J)}{J}\,I.
     $$
+
+    Two-dimensional fields use the three-dimensional plane-strain restriction.
 
     **Arguments:**
 
     - `u`: Displacement field.
     - `mu`: Shear modulus $\mu$.
-    - `kappa`: Bulk modulus $\kappa$.
+    - `lambda_`: Lamé's first parameter $\lambda$.
     - `var`: Geometry label.
     - `mode`: Autodiff mode used by `deformation_gradient`.
 
     **Returns:**
 
-    - A `DomainFunction` representing the Cauchy stress $\sigma$ with trailing shape `(..., d, d)`.
+    - A `DomainFunction` representing the Cauchy stress $\sigma$ with trailing
+      shape `(..., d, d)`.
     """
-    var = _resolve_var(u, var)
-    factor, var_dim = _factor_and_dim(u, var)
-    if factor.kind == "scalar":
-        raise ValueError(
-            "neo_hookean_cauchy(var=...) requires a geometry variable, not a scalar variable."
-        )
-
-    mu_fn = _as_domain_function(u, mu)
-    k_fn = _as_domain_function(u, kappa)
-    joined = u.domain.join(mu_fn.domain).join(k_fn.domain)
-    u2 = u.promote(joined)
-    mu2 = mu_fn.promote(joined)
-    k2 = k_fn.promote(joined)
-
-    F = deformation_gradient(u2, var=var, mode=mode)
-    I = jnp.eye(var_dim)
-
-    deps = tuple(
-        lbl
-        for lbl in joined.labels
-        if (lbl in u2.deps) or (lbl in mu2.deps) or (lbl in k2.deps)
-    )
-    idx = {lbl: i for i, lbl in enumerate(deps)}
-    u_pos = tuple(idx[lbl] for lbl in u2.deps)
-    mu_pos = tuple(idx[lbl] for lbl in mu2.deps)
-    k_pos = tuple(idx[lbl] for lbl in k2.deps)
+    (
+        var_dim,
+        joined,
+        mu2,
+        lambda2,
+        F,
+        deps,
+        u_pos,
+        mu_pos,
+        lambda_pos,
+    ) = _prepare_neo_hookean_fields(u, mu, lambda_, var, mode)
+    identity = jnp.eye(var_dim)
 
     def _op(*args, key=None, **kwargs):
         u_args = [args[i] for i in u_pos]
         mu_args = [args[i] for i in mu_pos]
-        k_args = [args[i] for i in k_pos]
+        lambda_args = [args[i] for i in lambda_pos]
         Fx = jnp.asarray(F.func(*u_args, key=key, **kwargs))
-        B = Fx @ jnp.swapaxes(Fx, -1, -2)
+        mu_v, lambda_v, material_valid = _neo_hookean_material_values(
+            mu2.func(*mu_args, key=key, **kwargs),
+            lambda2.func(*lambda_args, key=key, **kwargs),
+        )
         J = jnp.linalg.det(Fx)
-        mu_v = jnp.asarray(mu2.func(*mu_args, key=key, **kwargs))
-        k_v = jnp.asarray(k2.func(*k_args, key=key, **kwargs))
-        term = (mu_v / J)[..., None, None] * (B - I)
-        vol = (k_v * jnp.log(J) / J)[..., None, None] * I
-        return term + vol
+        valid = material_valid & jnp.all(jnp.isfinite(Fx)) & jnp.isfinite(J) & (J > 0.0)
+        safe_J = jnp.where(valid, J, 1.0)
+        B = oe.contract("...ik,...jk->...ij", Fx, Fx)
+        stress = (mu_v / safe_J) * (B - identity) + (
+            lambda_v * jnp.log(safe_J) / safe_J
+        ) * identity
+        return jnp.where(valid, stress, jnp.full_like(stress, jnp.nan))
 
     return DomainFunction(
         domain=joined,

@@ -4,6 +4,7 @@
 
 """Conforming finite element discretizations."""
 
+from .._integration_domain import IntegrationDomain
 from . import smoothing
 from ._adaptivity import (
     coarsen_triangles_local,
@@ -43,7 +44,6 @@ from ._distributed import (
     partition_cells_contiguous,
     PartitionedFiniteElementDofMap,
 )
-from .._integration_domain import IntegrationDomain
 from ._embedded import (
     EmbeddedQuadrature,
     FiniteElementEnrichment,
@@ -122,6 +122,10 @@ from ._hp_solver import (
     FiniteElementHPSkeletonPlan,
     FiniteElementHPSolverRefreshPlan,
 )
+from ._immersed_marker import (
+    FiniteElementImmersedMarkerMapPlan,
+    PreparedFiniteElementImmersedMarkerMap,
+)
 from ._io import evaluate_finite_element_field, write_finite_element_field
 from ._low_order_auxiliary import (
     low_order_auxiliary_preconditioner_builder,
@@ -172,6 +176,23 @@ from ._reference_topology import (
     reference_cell_topology,
     REFERENCE_TOPOLOGIES,
     ReferenceCellTopology,
+)
+from ._rigid_coupling import (
+    AttachmentActionReactionCertificate,
+    AttachmentRankEvidence,
+    InterpolationTransposeEvidence,
+    MixedVolumetricConstraintPayload,
+    MixedVolumetricConstraintPlan,
+    prepare_finite_element_point_interpolation,
+    prepare_mixed_volumetric_constraint,
+    PreparedFiniteElementPointInterpolation,
+    PressureGaugeEvidence,
+    PressureGaugePlan,
+    RigidDeformableAttachmentEvaluation,
+    RigidDeformableAttachmentPlan,
+    RigidDeformableKKTLinearization,
+    RigidDeformableKKTPayload,
+    VolumetricConstraintRankEvidence,
 )
 from ._sbp import (
     ElementLocalSBPData,
@@ -360,6 +381,8 @@ __all__ = [
     "FiniteElementDofMap",
     "FiniteElementFieldSpec",
     "FiniteElementPlan",
+    "FiniteElementImmersedMarkerMapPlan",
+    "PreparedFiniteElementImmersedMarkerMap",
     "HDGCondensationPlan",
     "HDGTraceSpace",
     "FiniteElementRuntimeData",
@@ -406,5 +429,20 @@ __all__ = [
     "HPMixedPrecisionPolicy",
     "HPWorksetMemoryPlan",
     "PersistentSemanticCache",
+    "AttachmentActionReactionCertificate",
+    "AttachmentRankEvidence",
+    "InterpolationTransposeEvidence",
+    "MixedVolumetricConstraintPayload",
+    "MixedVolumetricConstraintPlan",
+    "prepare_finite_element_point_interpolation",
+    "prepare_mixed_volumetric_constraint",
+    "PreparedFiniteElementPointInterpolation",
+    "PressureGaugeEvidence",
+    "PressureGaugePlan",
+    "RigidDeformableAttachmentEvaluation",
+    "RigidDeformableAttachmentPlan",
+    "RigidDeformableKKTLinearization",
+    "RigidDeformableKKTPayload",
+    "VolumetricConstraintRankEvidence",
     "lagrange_element",
 ]

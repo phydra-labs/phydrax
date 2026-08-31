@@ -1,0 +1,21 @@
+{
+  "grid_count": 20,
+  "marker_count": 32,
+  "route_width": 16,
+  "relation_bytes": 54272,
+  "scalar_workspace_bytes": 6400,
+  "partition_defect": 3.3306690738754696e-16,
+  "first_moment_defect": 6.792526610621685e-17,
+  "gradient_sum_defect": 4.6629367034256575e-15,
+  "force_defect": 7.318870567939792e-17,
+  "torque_defect": 1.5983479950953125e-16,
+  "work_defect": 0.0,
+  "divergence_norm": 0.0,
+  "marker_slip_norm": 0.0,
+  "kkt_residual_norm": 0.0,
+  "marker_numerical_rank": 64,
+  "marker_condition": 216367.37716741135,
+  "marker_rank_certified": true,
+  "finite": true,
+  "passed": true
+}

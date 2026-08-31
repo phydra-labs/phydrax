@@ -42,6 +42,14 @@ from ._reconstruction import (
     reconstruct_ghosted_axis,
 )
 from ._riemann import AbstractNumericalFluxPlan, HLLFluxPlan, RusanovFluxPlan
+from ._shallow_water import (
+    PreparedShallowWaterBathymetry,
+    reconstruct_shallow_water_faces,
+    shallow_water_observables,
+    ShallowWaterBalancedFaceResult,
+    ShallowWaterHydrostaticHLLPlan,
+    ShallowWaterObservables,
+)
 from ._structured import FiniteVolumeDiscretization
 from ._viscous import ViscousFluxPlan
 from ._wave import AbstractWavePropagationPlan, WaveFamilyLimiterPlan
@@ -119,7 +127,11 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         | NonuniformWENOReconstructionPlan
         | CharacteristicReconstructionPlan
         | WENOReconstructionPlan,
-        interface_solver: AbstractNumericalFluxPlan | AbstractWavePropagationPlan,
+        interface_solver: (
+            AbstractNumericalFluxPlan
+            | AbstractWavePropagationPlan
+            | ShallowWaterHydrostaticHLLPlan
+        ),
         /,
         *,
         positivity: ConvexStateLimiterPlan | None = None,
@@ -140,7 +152,12 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("Unsupported finite-volume reconstruction plan.")
         if not isinstance(
-            interface_solver, (AbstractNumericalFluxPlan, AbstractWavePropagationPlan)
+            interface_solver,
+            (
+                AbstractNumericalFluxPlan,
+                AbstractWavePropagationPlan,
+                ShallowWaterHydrostaticHLLPlan,
+            ),
         ):
             raise TypeError("Unsupported finite-volume interface solver.")
         if positivity is not None and not isinstance(positivity, ConvexStateLimiterPlan):
@@ -155,6 +172,25 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Wave limiting requires a wave-propagation interface solver."
             )
+        if isinstance(interface_solver, ShallowWaterHydrostaticHLLPlan):
+            if positivity is not None:
+                raise ValueError(
+                    "Hydrostatic shallow water owns stage positivity; "
+                    "face-state positivity must be omitted."
+                )
+            if wave_limiter is not None:
+                raise ValueError(
+                    "Hydrostatic shallow water does not accept a wave limiter."
+                )
+            if viscous is not None or closure is not None:
+                raise ValueError(
+                    "Initial hydrostatic shallow water does not support viscous "
+                    "or learned face closures."
+                )
+            if differentiability != "branchwise":
+                raise ValueError(
+                    "Robust hydrostatic shallow water is branchwise differentiable."
+                )
         if viscous is not None and not isinstance(viscous, ViscousFluxPlan):
             raise TypeError("viscous must be ViscousFluxPlan or None.")
         if closure is not None and not isinstance(closure, ConservativeFaceClosurePlan):
@@ -166,11 +202,12 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             "unsupported",
         ):
             raise ValueError("Unknown differentiability policy.")
-        interface_id = (
-            interface_solver.flux_id
-            if isinstance(interface_solver, AbstractNumericalFluxPlan)
-            else interface_solver.wave_plan_id
-        )
+        if isinstance(interface_solver, AbstractNumericalFluxPlan):
+            interface_id = interface_solver.flux_id
+        elif isinstance(interface_solver, AbstractWavePropagationPlan):
+            interface_id = interface_solver.wave_plan_id
+        else:
+            interface_id = interface_solver.plan_id
         reconstruction_id = reconstruction.plan_id
         self.reconstruction = reconstruction
         self.interface_solver = interface_solver
@@ -200,6 +237,7 @@ class FiniteVolumeResidualDiagnostics(StrictModule):
     signal_speeds: tuple[Array, ...]
     boundary_outward_flux: Array
     source_integral: Array
+    bed_source_integral: Array
     conservation_defect: Array
     maximum_rate: Array
     precision_evidence: PrecisionEvidenceEnvelope
@@ -215,7 +253,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
     boundaries: FiniteVolumeBoundarySet
     halo: PreparedFiniteVolumeHaloPlan
     capacity: Array
-    bathymetry: Array | None
+    bathymetry: PreparedShallowWaterBathymetry | None
     axis_reconstructions: tuple[Any, ...]
     precision: FiniteVolumePrecisionPolicy
     entropy_pair: ConvexEntropyPair | None
@@ -282,6 +320,16 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                 raise ValueError("Periodic axes cannot declare physical boundary pairs.")
             if not structured_axis.periodic and pair is None:
                 raise ValueError("Every bounded axis requires a boundary pair.")
+        if isinstance(method.interface_solver, ShallowWaterHydrostaticHLLPlan):
+            for pair in boundaries.pairs:
+                if pair is not None and (
+                    isinstance(pair.lower, PrescribedNormalFluxBoundary)
+                    or isinstance(pair.upper, PrescribedNormalFluxBoundary)
+                ):
+                    raise ValueError(
+                        "Hydrostatic shallow water does not support prescribed "
+                        "normal-flux boundaries."
+                    )
         precision_ = (
             FiniteVolumePrecisionPolicy(jnp.dtype(discretization.cell_volumes.dtype).name)
             if precision is None
@@ -299,11 +347,33 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             jnp.any(~jnp.isfinite(capacity_) | (capacity_ <= 0.0)),
             "Finite-volume capacity must be finite and positive.",
         )
-        bathymetry_ = (
-            None if bathymetry is None else precision_.reconstruction(bathymetry)
-        )
-        if bathymetry_ is not None and bathymetry_.shape != discretization.cell_shape:
-            raise ValueError("bathymetry must match the finite-volume cell shape.")
+        if isinstance(method.interface_solver, ShallowWaterHydrostaticHLLPlan):
+            if isinstance(discretization, MappedFiniteVolumeDiscretization):
+                raise ValueError(
+                    "Initial hydrostatic shallow water requires Cartesian "
+                    "structured finite volumes."
+                )
+            if capacity is not None:
+                raise ValueError(
+                    "Initial hydrostatic shallow water does not support capacity fields."
+                )
+            if bathymetry is None:
+                raise ValueError("Hydrostatic shallow water requires a bathymetry field.")
+            bathymetry_: PreparedShallowWaterBathymetry | None = (
+                PreparedShallowWaterBathymetry(
+                    bathymetry,
+                    discretization.cell_shape,
+                    geometry_id=discretization.prepared_id,
+                    precision_id=precision_.policy_id,
+                    dtype=precision_.reconstruction_dtype,
+                )
+            )
+        else:
+            if bathymetry is not None:
+                raise ValueError(
+                    "Bathymetry requires hydrostatic shallow-water dynamics."
+                )
+            bathymetry_ = None
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
         source_identifier = None if source_id is None else str(source_id)
@@ -370,9 +440,15 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     reconstruction.plan_id for reconstruction in axis_reconstructions
                 ],
                 "capacity": array_tree_fingerprint(np.asarray(capacity_)),
-                "bathymetry": None
-                if bathymetry_ is None
-                else array_tree_fingerprint(np.asarray(bathymetry_)),
+                "bathymetry": (
+                    None
+                    if bathymetry_ is None
+                    else (
+                        bathymetry_.bed_id
+                        if isinstance(bathymetry_, PreparedShallowWaterBathymetry)
+                        else array_tree_fingerprint(np.asarray(bathymetry_))
+                    )
+                ),
                 "precision": precision_.policy_id,
                 "entropy_pair": None if entropy_pair is None else entropy_pair.pair_id,
                 "source": source_identifier,
@@ -384,6 +460,23 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         return self.precision.reduction(
             self.discretization.cell_volumes
         ) * self.precision.reduction(self.capacity)
+
+    def shallow_water_observables(self, state: ArrayLike, /) -> ShallowWaterObservables:
+        solver = self.method.interface_solver
+        if not isinstance(solver, ShallowWaterHydrostaticHLLPlan):
+            raise TypeError(
+                "Shallow-water observables require hydrostatic shallow-water dynamics."
+            )
+        if not isinstance(self.bathymetry, PreparedShallowWaterBathymetry):
+            raise TypeError("Shallow-water observables require prepared bathymetry.")
+        value = jnp.asarray(state)
+        self.precision.validate_state(value)
+        return shallow_water_observables(
+            self.system,
+            value,
+            self.bathymetry,
+            solver.wet_dry,
+        )
 
     def _boundary_states(
         self,
@@ -435,6 +528,83 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             left = self.method.positivity.limit(self.system, averages[0], left)
             right = self.method.positivity.limit(self.system, averages[1], right)
         return self.precision.reconstruction(left), self.precision.reconstruction(right)
+
+    def _reconstruct_balanced(
+        self,
+        time: Array,
+        state: Array,
+        axis: int,
+        args: Any,
+        /,
+    ) -> tuple[Array, Array, Array, Array]:
+        solver = self.method.interface_solver
+        if not isinstance(solver, ShallowWaterHydrostaticHLLPlan):
+            raise TypeError(
+                "Balanced shallow-water reconstruction requires its hydrostatic plan."
+            )
+        if not isinstance(self.bathymetry, PreparedShallowWaterBathymetry):
+            raise TypeError(
+                "Balanced shallow-water reconstruction requires prepared bathymetry."
+            )
+        time_ = self.precision.decision(time)
+        value = self.precision.reconstruction(state)
+        periodic = self.discretization.grid.structured_axes[axis].periodic
+        ghosted = self.halo.materialize_axis(self.system, time_, value, axis, args)
+        ghosted_bed = self.bathymetry.ghost_axis(axis, ghosted.depth, periodic=periodic)
+        left, right, bed_left, bed_right = reconstruct_shallow_water_faces(
+            self.axis_reconstructions[axis],
+            self.system,
+            solver.wet_dry,
+            ghosted.values,
+            ghosted_bed,
+            axis,
+            interior_cell_count=self.discretization.cell_shape[axis],
+            ghost_depth=ghosted.depth,
+            periodic=periodic,
+            axis_coordinates=self.precision.reconstruction(ghosted.axis_coordinates),
+        )
+        return (
+            self.precision.reconstruction(left),
+            self.precision.reconstruction(right),
+            self.precision.reconstruction(bed_left),
+            self.precision.reconstruction(bed_right),
+        )
+
+    def balanced_face_contributions(
+        self,
+        time: Array,
+        state: Array,
+        args: Any = None,
+        /,
+    ) -> tuple[ShallowWaterBalancedFaceResult, ...]:
+        solver = self.method.interface_solver
+        if not isinstance(solver, ShallowWaterHydrostaticHLLPlan):
+            raise TypeError(
+                "Balanced face contributions require hydrostatic shallow water."
+            )
+        value = jnp.asarray(state)
+        if value.shape != self.discretization.state_shape:
+            raise ValueError(
+                f"Finite-volume state must have shape {self.discretization.state_shape}."
+            )
+        self.precision.validate_state(value)
+        contributions = []
+        for axis in range(len(self.discretization.cell_shape)):
+            left, right, bed_left, bed_right = self._reconstruct_balanced(
+                time, value, axis, args
+            )
+            contributions.append(
+                solver.face_contribution(
+                    self.system,
+                    self.precision.flux(left),
+                    self.precision.flux(right),
+                    self.precision.flux(bed_left),
+                    self.precision.flux(bed_right),
+                    axis,
+                    args,
+                )
+            )
+        return tuple(contributions)
 
     def _override_boundary_flux(
         self,
@@ -589,6 +759,55 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             )
         return self.precision.storage(residual)
 
+    def _balanced_residual(
+        self,
+        contributions: tuple[ShallowWaterBalancedFaceResult, ...],
+        /,
+    ) -> Array:
+        if len(contributions) != len(self.discretization.cell_shape):
+            raise ValueError(
+                "Balanced face contributions must contain one block per axis."
+            )
+        residual = jnp.zeros(
+            self.discretization.state_shape,
+            dtype=jnp.dtype(self.precision.reduction_dtype),
+        )
+        for axis, contribution in enumerate(contributions):
+            measure = self.precision.reduction(
+                self.discretization.face_measures[axis][..., None]
+            )
+            left_integrated = self.precision.reduction(contribution.left_flux) * measure
+            right_integrated = self.precision.reduction(contribution.right_flux) * measure
+            if self.discretization.grid.structured_axes[axis].periodic:
+                difference = jnp.roll(left_integrated, -1, axis=axis) - right_integrated
+            else:
+                lower = [slice(None)] * right_integrated.ndim
+                upper = [slice(None)] * left_integrated.ndim
+                lower[axis] = slice(0, right_integrated.shape[axis] - 1)
+                upper[axis] = slice(1, left_integrated.shape[axis])
+                difference = (
+                    left_integrated[tuple(upper)] - right_integrated[tuple(lower)]
+                )
+            residual = self.precision.reduction(
+                residual
+                - self.precision.reduction(difference) / self.effective_volumes[..., None]
+            )
+        return self.precision.storage(residual)
+
+    def _balanced_bed_source(
+        self,
+        contributions: tuple[ShallowWaterBalancedFaceResult, ...],
+        /,
+    ) -> Array:
+        shared = tuple(
+            self.precision.flux(contribution.normal_flux)
+            for contribution in contributions
+        )
+        return self.precision.storage(
+            self.precision.reduction(self._balanced_residual(contributions))
+            - self.precision.reduction(self._flux_residual(shared))
+        )
+
     def _wave_residual(
         self,
         time: Array,
@@ -608,22 +827,6 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             left, right = self._reconstruct(time, state, axis, args)
             auxiliary_left = None
             auxiliary_right = None
-            if self.bathymetry is not None:
-                lower, upper = self._boundary_states(time, state, axis, args)
-                del lower, upper
-                auxiliary_left, auxiliary_right = (
-                    PiecewiseConstantReconstruction().reconstruct_axis(
-                        self.bathymetry[..., None],
-                        axis,
-                        periodic=self.discretization.grid.structured_axes[axis].periodic,
-                        lower_exterior=jnp.take(self.bathymetry, 0, axis=axis)[..., None],
-                        upper_exterior=jnp.take(
-                            self.bathymetry, self.bathymetry.shape[axis] - 1, axis=axis
-                        )[..., None],
-                    )
-                )
-                auxiliary_left = auxiliary_left[..., 0]
-                auxiliary_right = auxiliary_right[..., 0]
             decomposition = solver.decompose(
                 self.system,
                 self.precision.flux(left),
@@ -731,6 +934,9 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan):
             fluxes, _ = self.face_fluxes(time, value, args)
             residual = self._flux_residual(fluxes)
+        elif isinstance(self.method.interface_solver, ShallowWaterHydrostaticHLLPlan):
+            contributions = self.balanced_face_contributions(time, value, args)
+            residual = self._balanced_residual(contributions)
         else:
             residual, _ = self._wave_residual(time, value, args)
         residual = self.precision.reduction(residual) + self.precision.reduction(
@@ -784,6 +990,14 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         self.precision.validate_state(value)
         if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan):
             _, speeds = self.face_fluxes(jnp.asarray(0.0), value, args)
+        elif isinstance(self.method.interface_solver, ShallowWaterHydrostaticHLLPlan):
+            contributions = self.balanced_face_contributions(
+                jnp.asarray(0.0), value, args
+            )
+            speeds = tuple(
+                self.precision.decision(contribution.max_speed)
+                for contribution in contributions
+            )
         else:
             _, speeds = self._wave_residual(jnp.asarray(0.0), value, args)
         maximum = self.precision.decision(jnp.max(self._rate_from_speeds(speeds)))
@@ -792,6 +1006,16 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             self.precision.decision(cfl_) / maximum,
             jnp.inf,
         )
+        from ...equations._shallow_water_sources import (
+            ShallowWaterCoriolisSource,
+        )
+
+        if isinstance(self.source, ShallowWaterCoriolisSource):
+            source_step = self.source.stable_step(
+                self.discretization.cell_centers,
+                safety=min(cfl_, 1.0),
+            )
+            hyperbolic_step = jnp.minimum(hyperbolic_step, source_step)
         if self.method.viscous is None:
             return self.precision.decision(hyperbolic_step)
         viscous_step = self.method.viscous.stable_step(
@@ -814,6 +1038,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         self.precision.validate_state(value)
         boundary_chunks: tuple[Array, ...] = ()
         source = self._source_value(time, value, args)
+        bed_source = jnp.zeros_like(value)
         if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan):
             fluxes, speeds = self.face_fluxes(time, value, args)
             convective_residual = self.precision.reduction(self._flux_residual(fluxes))
@@ -839,6 +1064,61 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                 )
                 lower_measure = self.precision.reduction(
                     jnp.take(self.discretization.face_measures[axis], 0, axis=axis)
+                )
+                upper_measure = self.precision.reduction(
+                    jnp.take(
+                        self.discretization.face_measures[axis],
+                        self.discretization.face_measures[axis].shape[axis] - 1,
+                        axis=axis,
+                    )
+                )
+                boundary_chunks_list.append(
+                    upper * upper_measure[..., None] - lower * lower_measure[..., None]
+                )
+            boundary_chunks = tuple(boundary_chunks_list)
+            boundary_flux = (
+                compensated_sum_chunks(boundary_chunks, output_ndim=1)
+                if boundary_chunks
+                else jnp.zeros(
+                    (self.discretization.component_count,),
+                    dtype=jnp.dtype(self.precision.reduction_dtype),
+                )
+            )
+        elif isinstance(self.method.interface_solver, ShallowWaterHydrostaticHLLPlan):
+            contributions = self.balanced_face_contributions(time, value, args)
+            fluxes = tuple(
+                self.precision.flux(contribution.normal_flux)
+                for contribution in contributions
+            )
+            speeds = tuple(
+                self.precision.decision(contribution.max_speed)
+                for contribution in contributions
+            )
+            convective_residual = self.precision.reduction(self._flux_residual(fluxes))
+            bed_source = self.precision.reduction(
+                self._balanced_bed_source(contributions)
+            )
+            residual = convective_residual + bed_source + self.precision.reduction(source)
+            boundary_chunks_list = []
+            for axis, contribution in enumerate(contributions):
+                if self.discretization.grid.structured_axes[axis].periodic:
+                    continue
+                lower = self.precision.reduction(
+                    jnp.take(contribution.normal_flux, 0, axis=axis)
+                )
+                upper = self.precision.reduction(
+                    jnp.take(
+                        contribution.normal_flux,
+                        contribution.normal_flux.shape[axis] - 1,
+                        axis=axis,
+                    )
+                )
+                lower_measure = self.precision.reduction(
+                    jnp.take(
+                        self.discretization.face_measures[axis],
+                        0,
+                        axis=axis,
+                    )
                 )
                 upper_measure = self.precision.reduction(
                     jnp.take(
@@ -887,9 +1167,18 @@ class PreparedFiniteVolumeDynamics(StrictModule):
         else:
             source_integral = compensated_sum(source_terms, axis=spatial_axes)
             balance_chunks = (change_terms, -source_terms) + boundary_chunks
+        bed_source_terms = self.precision.reduction(
+            self.effective_volumes[..., None] * bed_source
+        )
+        bed_source_integral = compensated_sum(bed_source_terms, axis=spatial_axes)
+        balance_chunks = balance_chunks + (-bed_source_terms,)
+        conservative_interface = isinstance(
+            self.method.interface_solver,
+            (AbstractNumericalFluxPlan, ShallowWaterHydrostaticHLLPlan),
+        )
         defect = (
             compensated_sum_chunks(balance_chunks, output_ndim=1)
-            if isinstance(self.method.interface_solver, AbstractNumericalFluxPlan)
+            if conservative_interface
             else boundary_flux
         )
         rate = self._rate_from_speeds(speeds)
@@ -911,6 +1200,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             normal_fluxes=fluxes,
             signal_speeds=speeds,
             boundary_outward_flux=boundary_flux,
+            bed_source_integral=bed_source_integral,
             source_integral=source_integral,
             conservation_defect=defect,
             maximum_rate=self.precision.decision(jnp.max(rate)),

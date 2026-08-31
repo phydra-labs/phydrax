@@ -21,6 +21,10 @@ from ..discretization.lattice_boltzmann._lattice import (
 from ..discretization.lattice_boltzmann._precision import (
     LatticeBoltzmannPrecisionPolicy,
 )
+from ..discretization.lattice_boltzmann._program import (
+    KineticProgramManifest,
+    transport_population_manifest,
+)
 from ..discretization.lattice_boltzmann._species import (
     apply_species_boundary,
     collide_species,
@@ -118,6 +122,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
     spacing: float = eqx.field(static=True)
     step_size: float = eqx.field(static=True)
     cell_measure: Array
+    program_manifest: KineticProgramManifest
     compilation_id: str = eqx.field(static=True)
 
     def __init__(
@@ -175,6 +180,16 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
                 shape + (problem.schema.species_count,),
             ):
                 raise ValueError("Every species boundary value must end in species axis.")
+        program_manifest = transport_population_manifest(
+            "species_lattice_boltzmann",
+            lattice.lattice_id,
+            precision.policy_id,
+            "species_populations",
+            (problem.schema.species_count, lattice.population_count),
+            ("species_amount", "element_amount"),
+            dimension=lattice.dimension,
+            source_component_shape=(problem.schema.species_count,),
+        )
         generated = canonical_fingerprint(
             {
                 "kind": "compiled-species-lattice-boltzmann-problem",
@@ -185,6 +200,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
                 "spacing": dx,
                 "step_size": dt,
                 "cell_measure": array_tree_fingerprint(measure),
+                "program_manifest": program_manifest.manifest_id,
             }
         )
         self.problem = problem
@@ -194,6 +210,7 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         self.spacing = dx
         self.step_size = dt
         self.cell_measure = jnp.asarray(measure)
+        self.program_manifest = program_manifest
         self.compilation_id = generated
 
     def initialize_state(

@@ -131,14 +131,27 @@ discrete continuity. Fixed-population free-surface FLIP separately binds cell an
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
+Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
+to stable particle supports without reinterpreting material mass. Qualified
+routes include Gaussian free-space direct evaluation, periodic
+particle-to-grid Fourier inversion, conservative Gaussian strength exchange,
+classic 3-D stretching, regularized filaments, steady and fixed-capacity
+unsteady lifting wakes, polygonal vortex panels, rigid panel motion,
+boundary-sheet transfer, conservative remeshing, explicit advanced
+formulations, and fixed-tree/workflow evidence. See
+[Guide → Vortex methods](guides_vortex_methods.md),
+[Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
+[Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle and transfer identities rather than
-introducing a separate simulation substrate. Flat differentiable FLRW backgrounds,
-first/second Lagrangian growth, unit-bearing expansion and linear-power products,
-state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose the
-existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
-as an explicit table; transfer, Boltzmann, halo, survey, and native CMB spectrum
-generation remain external capability boundaries. Provenance-bearing CMB theory tables
-and fixed response/window likelihood composition are native downstream products.
+introducing a separate simulation substrate. Differentiable curved/CPL FLRW geometry,
+fixed-quadrature distances, realization-safe named transfer and matter-power products,
+state-ready flat 1LPT/2LPT, collisionless PM, and adiabatic gas--DM gravity compose the
+existing splat, self-gravity, finite-volume, and transactional KDK operations. Precision
+Boltzmann, massive-neutrino perturbation, and complete CMB evolution remain isolated
+external products. Native downstream contracts cover explicit power corrections,
+analytic halo foundations, compact Limber/RSD predictions, canonical CMB spectra, and
+small-N force qualification without claiming calibrated fits, survey likelihoods, or
+production tree gravity.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,
@@ -150,25 +163,33 @@ execution. Astrophysical observation applications add observer projection, physi
 occultation contacts, photon-counting bandpasses, concrete instrument responses, ray
 transfer, and static field operators without introducing a second observation or
 inference runtime.
-Explicit material point dynamics compose that transfer with quadratic nodal B-splines, matched
-APIC momentum, first-Piola reference-volume forces, transactional USL updates,
-stability evidence, and fixed-temporal replay for plane-strain and
-three-dimensional Neo-Hookean solids. DEM adds stable compositional
+Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
+transactional adaptive realization and replay, plane-strain/plane-stress/3-D
+hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
+rigid and two-field Coulomb contact, matrix-free implicit roots, diffuse and
+sharp fracture alternatives, active-block masks, and compact block storage.
+DEM adds stable compositional
 normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
 elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
 bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
-and wear, bonds/topology events, and certified sensitivity modes. Static
-three-dimensional rigid-body graphs additionally provide globally coupled fixed,
-ball, and hinge constraints with SO(3) pose projection, velocity KKT projection,
-physical residual certification, and transactional rollback; contact, joint limits,
-compliance, and dynamic topology remain separate contracts. Radial particle
+and wear, bonds/topology events, and certified sensitivity modes. Rigid mechanics
+adds globally coupled planar/spatial fixed, ball, hinge, prismatic, and distance
+joints; compliant/dissipative laws and motors; unilateral limits; hard restitution
+and exact Coulomb-cone contact; breakage; fixed-capacity topology transactions; and
+physical residual/rank/energy/branch certificates. Radial particle
 conversion adds typed thermochemistry, reactions, evaporation,
 shrinking-core conversion, morphology, conservative continuum/contact/radiative
 exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Material point method](guides_material_point_method.md),
+[Guide → MPM schedules](guides_mpm_schedules.md),
+[Guide → MPM constitutive extensions](guides_mpm_constitutive_extensions.md),
+[Guide → MPM contact and fields](guides_mpm_contact_fields.md),
+[Guide → MPM particle domains](guides_mpm_particle_domains.md),
+[Guide → MPM adaptive and implicit](guides_mpm_adaptive_implicit.md),
+[Guide → MPM fracture and sparse storage](guides_mpm_fracture_sparse.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
 [Guide → Wet granular contact](guides_wet_granular_contact.md),
 [Guide → Superquadric DEM](guides_superquadric_dem.md),
@@ -177,6 +198,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
 [Guide → Constrained rigid-body dynamics](guides_constrained_rigid_bodies.md),
+[Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
@@ -227,6 +249,29 @@ failure remains typed and fail-closed. See
 [Guide → Atomistic dynamics](guides_atomistic_dynamics.md),
 [Cookbook → Atomistic dynamics](cookbook/atomistic_dynamics.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
+
+### Experimental velocimetry from images to trajectories
+
+`phydrax.velocimetry` keeps particle image velocimetry, dense image displacement,
+particle tracking velocimetry, and residual-image Lagrangian refinement
+scientifically distinct. Classical PIV plans prepare mask-aware FFT correlation,
+extended search, deterministic peak evidence, multipass image deformation,
+validation, optional non-mutating replacement, and calibrated physical
+conversion. Camera rigs expose pinhole/distorted/refractive projection and rays;
+robust calibration, conflict-free multi-view association, triangulation, temporal
+tracking, and smoothing retain frames, identities, covariance, failures, and
+capacity evidence.
+
+Radiometric particle-image formation supports deterministic synthetic
+qualification and continuous Shake refinement without reusing conservative
+particle-grid deposition semantics. An optional native learned backend shares
+only the neutral dense image-displacement contract. Canonical archives and
+explicit-loss external adapters preserve zero versus invalid data, raw versus
+filled values, coordinate transforms, and provenance. PIV fields can adapt to
+compatible tensor grids and state-space observations; reconstructed PTV tracks
+can adapt to `TrajectoryData` with explicit gap resets. See
+[Guide → Velocimetry](guides_velocimetry.md) and
+[API → Velocimetry](api/velocimetry/index.md).
 
 ### Computational topology: exact invariants and filtered fields
 
@@ -653,6 +698,15 @@ evidence; construction stages transfer immutable external IDs and reference
 states; and continuous or finite-catalog sizing reports governing members and
 cases. Required evidence aggregates to certified, failed, or incomplete—absence
 never becomes structural safety.
+
+Advanced evidence adds named generalized channels, sourced section frames,
+connection/support mechanics, extensible catenaries, contact/friction,
+nonuniform warping, fiber plasticity transactions, thin-walled GBT/finite-strip
+modes, shell escalation, physical collapse events, dynamic stepping, exact
+precedence search, standards clauses, reliability, calibration, evidence
+acquisition, and immutable structural-twin ancestry. Each layer retains model
+fidelity, applicability, generalized derivative, optimality-gap, uncertainty,
+and data provenance rather than collapsing them into one safety Boolean.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
@@ -1175,6 +1229,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
+- **Transient and deformable mechanics**: solve transactional implicit Newmark
+  volumetric FEM with material-state/admissibility ledgers; couple rigid bodies
+  through exact interpolation/transpose attachment KKT blocks and mixed pressure
+  gauges; evolve objective two-/three-dimensional Cosserat rods and triangular
+  membrane/bending shells; and construct fixed-capacity deformable or rigid–MPM
+  contact/coupling routes. See
+  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md).
 - **Force-density structural form-finding**: build sparse or affine-restraint
   tension, compression, or mixed-sign networks; compose self-weight, traction,
   pressure, or pneumatic loads; optimize forces, supports, loads, gridshell
@@ -1188,6 +1249,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   then aggregate equilibrium, prestress, sequence, and capacity evidence. See
   [Guides → Member-network structural verification](guides_member_network_structures.md)
   and [API → Member-network structural verification](api/member_network.md).
+- **Advanced structural evidence**: analyze catenary/contact regimes, sourced
+  section orientation, joint and support mechanics, warping and fiber plasticity,
+  local/distortional buckling, collapse events, construction-order optimality,
+  standards clauses, reliability, calibration, and evidence acquisition. See
+  [Guides → Advanced structural evidence](guides_advanced_structural_evidence.md)
+  and [API → Advanced structural evidence](api/advanced_structural.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

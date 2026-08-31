@@ -1,0 +1,10 @@
+{
+  "maturity": "experimental",
+  "capability": "sparse",
+  "metrics": {
+    "dense_sparse_parity": 0.0,
+    "compact_values": 200,
+    "dense_values": 200
+  },
+  "passed": true
+}

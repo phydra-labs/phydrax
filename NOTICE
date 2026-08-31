@@ -149,6 +149,16 @@ section, reference-state, unilateral, bending, buckling, construction, sizing,
 and evidence contracts; no source, fixtures, generated data, or runtime
 dependency is copied or redistributed.
 
+The advanced structural-evidence design study considered Jayaraman and Knudson,
+“A Curved Element for the Analysis of Cable Structures” (1981); Vlasov
+thin-walled beam theory; generalized-beam/finite-strip local-buckling
+literature; fiber-section plasticity and consistent return mapping; and
+direct-analysis, reliability, and structural model-calibration literature.
+Phydrax independently implements catenary, contact, orientation, connection,
+warping, fiber, section-mode, search, compliance, uncertainty, calibration, and
+evidence-graph contracts; no external source, proprietary standards tables,
+fixtures, or generated data are copied or redistributed.
+
 The spectral-residual operator-learning design study considered ASK-Berkeley's
 Neural-Spectral-Methods repository at commit
 090e7a173f27734dbae5ec479a410ca1748981af, Copyright (c) 2023

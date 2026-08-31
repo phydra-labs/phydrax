@@ -483,6 +483,18 @@ pointwise field residual.
 
 ---
 
+`neo_hookean_reference_energy`, `neo_hookean_pk1`, and
+`neo_hookean_cauchy` use the same logarithmic compressible material. Their
+`lambda_` argument is Lamé's first parameter, not the physical bulk modulus
+$K=\lambda+2\mu/3$. Two-dimensional displacement fields are the plane-strain
+restriction of the three-dimensional model; plane stress is not inferred.
+Nonpositive deformation Jacobians and inadmissible material coefficients produce
+nonfinite outputs rather than a clamped constitutive response.
+
+::: phydrax.operators.neo_hookean_reference_energy
+
+---
+
 ::: phydrax.operators.neo_hookean_pk1
 
 ---
