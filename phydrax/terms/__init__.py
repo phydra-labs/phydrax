@@ -134,6 +134,7 @@ from ._score_matching import (
     ScoreSampleProvider,
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
+from ._topology import FrozenTopologyTerm
 from ._trajectory_classification import (
     RaggedTimeSeriesClassificationBatch,
     RaggedTimeSeriesClassificationTerm,
@@ -173,6 +174,7 @@ __all__ = [
     "AbstractFlowMatchingMetric",
     "AbstractSamplingTerm",
     "AbstractScalarTerm",
+    "FrozenTopologyTerm",
     "BSDETerm",
     "BarycenterObjectiveTerm",
     "BatchSampler",

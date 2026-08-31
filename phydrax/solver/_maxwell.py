@@ -34,6 +34,8 @@ from ..linalg import (
     RankPolicy,
     solve as solve_linear,
 )
+from ..topology import CellSubcomplex
+from ._harmonic_constraints import HarmonicConstraint
 from ._maxwell_boundaries import MaxwellBoundaryPlan, PreparedMaxwellBoundary
 from ._maxwell_observers import (
     AbstractMaxwellObserverPlan,
@@ -465,6 +467,7 @@ class CompatibleMaxwellPlan(StrictModule):
     boundaries: tuple[MaxwellBoundaryPlan, ...]
     observers: tuple[AbstractMaxwellObserverPlan, ...]
     pml: MaxwellCPMLPlan | None
+    harmonic_constraint: HarmonicConstraint | None
     current_source: Callable[[Array, Array, Any], ArrayLike] | None = eqx.field(
         static=True
     )
@@ -481,6 +484,7 @@ class CompatibleMaxwellPlan(StrictModule):
         observers: Sequence[AbstractMaxwellObserverPlan] = (),
         pml: MaxwellCPMLPlan | None = None,
         current_source: Callable[[Array, Array, Any], ArrayLike] | None = None,
+        harmonic_constraint: HarmonicConstraint | None = None,
         courant_factor: float = 0.95,
         plan_id: str | None = None,
     ):
@@ -503,6 +507,18 @@ class CompatibleMaxwellPlan(StrictModule):
             raise TypeError("observers must contain AbstractMaxwellObserverPlan values.")
         if pml is not None and not isinstance(pml, MaxwellCPMLPlan):
             raise TypeError("pml must be MaxwellCPMLPlan or None.")
+        if harmonic_constraint is not None:
+            if not isinstance(harmonic_constraint, HarmonicConstraint):
+                raise TypeError("harmonic_constraint must be HarmonicConstraint or None.")
+            if harmonic_constraint.frame.degree != 2:
+                raise ValueError(
+                    "Compatible Maxwell harmonic constraints require degree two."
+                )
+            expected_source = CellSubcomplex.full(bridge.cochain.topology).subcomplex_id
+            if harmonic_constraint.frame.exact_basis.source_id != expected_source:
+                raise ValueError(
+                    "Maxwell harmonic constraint belongs to a different topology."
+                )
         if current_source is not None and not callable(current_source):
             raise TypeError("current_source must be callable or None.")
         factor = float(courant_factor)
@@ -517,6 +533,11 @@ class CompatibleMaxwellPlan(StrictModule):
                     "boundaries": [value.plan_id for value in boundary_plans],
                     "observers": [value.plan_id for value in observer_plans],
                     "pml": None if pml is None else pml.plan_id,
+                    "harmonic_constraint": (
+                        None
+                        if harmonic_constraint is None
+                        else harmonic_constraint.constraint_id
+                    ),
                     "current_source": (
                         None if current_source is None else repr(current_source)
                     ),
@@ -533,6 +554,7 @@ class CompatibleMaxwellPlan(StrictModule):
         self.boundaries = boundary_plans
         self.observers = observer_plans
         self.pml = pml
+        self.harmonic_constraint = harmonic_constraint
         self.current_source = current_source
         self.courant_factor = factor
         self.plan_id = identifier
@@ -551,6 +573,7 @@ class PreparedCompatibleMaxwell(StrictModule):
     capabilities: MaxwellCapabilities
     pml: PreparedMaxwellCPML | None
     magnetic_constraint_solver: Any
+    harmonic_constraint: HarmonicConstraint | None
     cfl_limit: Array
     stable_dt: Array
     discretization_bundle: DiscretizationBundle
@@ -633,6 +656,7 @@ class PreparedCompatibleMaxwell(StrictModule):
         self.observers = observers
         self.cfl_limit = cfl_limit
         self.pml = pml
+        self.harmonic_constraint = plan.harmonic_constraint
         self.magnetic_constraint_solver = magnetic_constraint_solver
         self.stable_dt = stable_dt
         self.discretization_bundle = bundle
@@ -962,7 +986,13 @@ class PreparedCompatibleMaxwell(StrictModule):
                 self.magnetic_constraint_solver,
                 residual,
             ).value
-        return magnetic_flux - correction
+        projected = magnetic_flux - correction
+        if self.harmonic_constraint is None:
+            return projected
+        if self.harmonic_constraint.policy == "free":
+            periods = self.harmonic_constraint.frame.periods(magnetic_flux)
+            return self.harmonic_constraint.frame.with_periods(projected, periods)
+        return self.harmonic_constraint.apply(projected)
 
     def leapfrog_step(
         self,

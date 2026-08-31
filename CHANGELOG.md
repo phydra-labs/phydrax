@@ -48,6 +48,12 @@
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
   deployment merging, and checksum-validated adapter artifacts bound to the
   complete base model content and structure.
+- Added advanced computational topology: exact cellular and filtered maps,
+  induced maps and cone audits, extended and temporal field topology, diagram
+  features and certified matching, rational and integral class algebra,
+  harmonic-period constraints, exact Morse cancellation, structured cubical
+  analysis, local homology, certified implicit covers, and Conley homology
+  index-pair workflows.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

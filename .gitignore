@@ -42,6 +42,7 @@ benchmarks/*
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/topology.json
+!benchmarks/advanced_topology.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/

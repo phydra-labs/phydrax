@@ -763,6 +763,7 @@ from ._stochastic_spectra import (
     state_output_cross_spectral_density,
     state_spectral_density,
 )
+from ._topology import TopologyEnsembleSummary
 from ._transport_barycenters import (
     aggregate_free_support_transport_barycenter,
     aggregate_transport_barycenter,
@@ -792,6 +793,7 @@ from ._whitening import GaussianPriorWhitening
 
 
 __all__ = [
+    "TopologyEnsembleSummary",
     "QuantumPOVM",
     "QuantumTomographyData",
     "TomographyLikelihoodResult",
