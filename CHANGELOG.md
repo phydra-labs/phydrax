@@ -3,6 +3,20 @@
 ## Unreleased
 
 ### Added
+- Added `phydrax.circuit`: block-valued typed wave ports, dense and matrix-free
+  hierarchical scattering, grounded dense/sparse MNA, causal implicit element laws,
+  native DAE/DC/continuation/descriptor analysis, rational macromodels, periodic
+  analysis, correlated noise, metrology/de-embedding, field/electrothermal coupling,
+  SPICE and restricted behavioral interchange, certified learned dissipative laws,
+  Touchstone I/O, and thin native optimization/UQ adapters.
+- Generalized compatible time-domain Maxwell to explicit full-3D, TEz, and TMz
+  cochain roles; added resource-preflighted final-state runs, sparse magnetic
+  constraint projection with proved elision, boundary-packed CPML, prepared paired
+  electric/magnetic sources and mode ports, harmonic-defect evidence, scalar
+  geometry material assembly, and independent case batching.
+- Added sparse metric-aware conic density filtering with explicit fixed-region
+  semantics, finite-beta tanh projection, differentiable composed transforms, and
+  separate forward-only hard thresholding.
 - Added exact fixed-temporal finite-volume replay with full, step, or block
   rematerialization; transactional balance-law source composition and persistence;
   periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral

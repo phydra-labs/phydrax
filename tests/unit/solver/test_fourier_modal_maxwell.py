@@ -140,3 +140,53 @@ def test_zero_thickness_boundary_is_identity() -> None:
     np.testing.assert_allclose(np.asarray(relation.d), np.eye(2), atol=1e-12)
     np.testing.assert_allclose(np.asarray(relation.b), 0.0, atol=1e-12)
     np.testing.assert_allclose(np.asarray(relation.c), 0.0, atol=1e-12)
+
+
+def test_resource_plan_accounts_for_retained_layer_and_global_operators() -> None:
+    harmonics = _harmonics()
+    material = fm.FrequencyMaxwellMaterial(2.0, material_id="resource-material")
+    layer = fm.FourierModalLayer(
+        material,
+        0.1,
+        fm.DirectFourierFactorizationPlan(),
+        layer_id="resource-layer",
+    )
+    port = fm.HomogeneousMaxwellPort(material, port_id="exterior")
+    problem = fm.FourierModalMaxwellProblem(
+        harmonics,
+        2.0 * jnp.pi,
+        jnp.asarray((0.0, 0.0)),
+        port,
+        (layer,),
+        port,
+    )
+    itemsize = np.dtype(harmonics.plan.precision.coefficient_dtype).itemsize
+    old_layer_only_estimate = 50 * harmonics.harmonic_count**2 * itemsize
+    constrained = fm.FourierModalSolvePolicy(
+        resources=fm.FourierModalResourcePolicy(
+            preparation_bytes=old_layer_only_estimate,
+        )
+    )
+    with pytest.raises(ValueError, match="preparation byte budget"):
+        fm.plan_fourier_modal_maxwell(problem, constrained)
+
+
+def test_boundary_composition_accumulates_initializer_and_paired_errors() -> None:
+    identity = jnp.eye(1, dtype=jnp.complex128)
+    zero = jnp.zeros_like(identity)
+    relation = fm.BoundaryRelation(
+        identity,
+        zero,
+        zero,
+        identity,
+        fm.BoundaryRelationDiagnostics(
+            jnp.asarray(0.0),
+            jnp.asarray(0.25),
+            jnp.asarray(0.125),
+            jnp.asarray(True),
+            jnp.asarray(True),
+        ),
+    )
+    doubled = fm.compose_boundary_relations(relation, relation)
+    assert float(doubled.diagnostics.initializer_remainder) == pytest.approx(0.5)
+    assert float(doubled.diagnostics.paired_error) == pytest.approx(0.25)

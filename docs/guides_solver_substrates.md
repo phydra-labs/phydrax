@@ -215,30 +215,38 @@ Singular direct and multigrid solves distinguish compatibility (`error` or
 ## Compatible electromagnetics
 
 `CompatibleMaxwellPlan` evolves electric displacement `D`, magnetic flux `B`, and
-charge on one exact cochain complex. Prepared constitutive maps derive `E` and `H`;
-the primary state therefore remains valid for diagonal, anisotropic, conductive,
-dispersive, nonlinear, gyrotropic, and active materials. Every prepared material
-declares loss, passivity/activity, reversibility, frequency-domain support, and
-auxiliary state. Unsupported combinations fail during preparation.
+charge on one exact cochain complex. Its role layout covers full three-dimensional
+Maxwell and genuine two-dimensional TEz/TMz reductions without treating a physical
+axis as a batch. Prepared constitutive maps derive `E` and `H`; the primary state
+therefore remains valid for diagonal, anisotropic, conductive, dispersive, nonlinear,
+gyrotropic, and active materials. Every prepared material declares loss,
+passivity/activity, reversibility, frequency-domain support, magnetic-closedness
+preservation, and auxiliary state. Unsupported combinations fail during preparation.
 
 PEC/PMC traces, periodic quotient topology, unitary Bloch twists, passive impedance
 boundaries, conforming jumps, and norm-compatible mortars remain explicit prepared
-objects. Structured electromagnetic CPML owns one convolutional memory per derivative
-axis, separately from material state and observers; both electric and magnetic forces
-consume those directional memories. The physical magnetic flux is projected through
-the prepared minimum-norm `phydrax.linalg` solve so the topological magnetic constraint
-remains exact under anisotropic damping. The runtime reports electric and magnetic
-constraints, source, boundary, material, and PML power, energy, and CFL evidence.
+objects. Structured CPML stores one memory per active directional derivative and
+cochain support on exact boundary slabs rather than on the full interior. Prepared
+electric and paired magnetic source plans share the leapfrog sample-time and continuity
+contract; mode/Huygens launches share one oriented trace and power normalization with
+streaming observers and circuit ports.
 
-Specialized materials, boundaries, observers, modal analysis, and adjoints live under
-`phydrax.solver.maxwell`; the solver root exposes only the four core Maxwell lifecycle
-types. Observers stream native/weighted probes, synchronized energy, Poynting flux,
-and DFT state without retaining full histories. Frequency and transverse mode solves
-use the certified generalized self-adjoint eigen engine; isolated-cluster sensitivities
-use basis-invariant spectral-projector derivatives. Checkpointed PyTree, two-run
-DFT-field, frequency-domain, and reversible adjoints have distinct eligibility
-contracts; reversible execution rejects PML, dispersion, conductivity, active media,
-and other noninvertible state.
+The magnetic constraint policy elides projection only when every magnetic action
+proves closedness preservation. Other paths use a resource-bounded sparse native
+minimum-norm solve and retain harmonic-period evidence; production preparation does not
+materialize the incidence matrix densely. The resource policy preflights primary,
+material, CPML, observer, projection, checkpoint, padding, case, and acquisition bytes.
+`solve_compatible_maxwell` scans the same private step core as `leapfrog_step`, returns
+the final logical state and streaming observations, and never implicitly retains a
+trajectory.
+
+Specialized materials, boundaries, sources, observers, modal analysis, harmonic
+defects, batching, and adjoints live under `phydrax.solver.maxwell`; the solver root
+continues to expose the core Maxwell lifecycle. Frequency and transverse mode solves
+reuse native linear/eigen infrastructure. Checkpointed PyTree, two-run DFT-field,
+frequency-domain, and reversible adjoints retain distinct eligibility contracts;
+reversible execution rejects PML, dispersion, conductivity, active media, and other
+noninvertible state. See [Compatible time-domain Maxwell](guides_compatible_maxwell.md).
 
 `phydrax.solver.maxwell.fourier_modal` is a separate frequency-domain substrate for
 one- or two-dimensionally periodic layer stacks. It uses reciprocal-lattice harmonic

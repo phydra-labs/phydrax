@@ -46,7 +46,10 @@ benchmarks/*
 !benchmarks/fourier_modal_maxwell.json
 !benchmarks/fourier_modal_maxwell_qualification.json
 !benchmarks/fourier_modal_rasterization.json
-!benchmarks/maxwell_amoeba.json
+!benchmarks/circuit_mna.json
+!benchmarks/circuit_network.json
+!benchmarks/circuit_substrate.json
+!benchmarks/compatible_maxwell.json
 !benchmarks/incompressible_spectral.json
 !benchmarks/unbounded_spectral.json
 !benchmarks/structured_flow.json

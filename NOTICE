@@ -271,3 +271,14 @@ provenance contracts. No source code, generated kernels, numerical tables,
 fixtures, serialized artifacts, runtime types, or executables from those
 projects are copied, translated, bundled, linked, imported, or redistributed.
 Copyleft and unclear-license projects remain design references only.
+
+Differentiable electromagnetic and circuit design study
+The compatible-Maxwell execution and circuit-composition design study considered
+spinsphotonics/fdtdz at commit ef4ea7a8ca4c, beamzorg/beamz at commit
+6da0b685328b, gdsfactory/sax at commit 910ea69480d4, and gvcallen/paramrf
+at commit 995d983547ea, together with their cited finite-difference,
+scattering-network, and modified-nodal-analysis literature. Phydrax implements
+the resulting cochain, port, circuit, source, material, resource, failure,
+differentiation, and evidence contracts independently. No upstream source,
+tests, fixtures, generated kernels, runtime types, numerical tables, or
+executables are copied, translated, bundled, linked, imported, or redistributed.

@@ -84,12 +84,13 @@ def test_periodic_and_bloch_cochain_derivatives_preserve_chain_identity():
 
 def test_material_families_are_fail_closed_and_differentiable():
     bridge = phx.discretization.StructuredCochainBridge(_grid((2, 2, 2)))
+    layout = phx.solver.maxwell.MaxwellCochainLayout(bridge)
     n1 = bridge.cochain.cell_counts[1]
     n2 = bridge.cochain.cell_counts[2]
     conductive = phx.solver.maxwell.ConductiveMaxwellConstitutivePlan(
         electric_conductivity=0.2,
         magnetic_conductivity=0.1,
-    ).prepare(bridge.cochain)
+    ).prepare(bridge.cochain, layout)
     electric = jnp.ones((n1,))
     magnetic = jnp.ones((n2,))
     assert (
@@ -105,7 +106,7 @@ def test_material_families_are_fail_closed_and_differentiable():
 
     dispersive = phx.solver.maxwell.LorentzDrudeMaxwellConstitutivePlan(
         jnp.asarray([1.0]), jnp.asarray([0.1]), jnp.asarray([0.5])
-    ).prepare(bridge.cochain)
+    ).prepare(bridge.cochain, layout)
     material_state = dispersive.initialize_state()
     updated = dispersive.advance_state(
         jnp.asarray(0.0),
@@ -121,7 +122,7 @@ def test_material_families_are_fail_closed_and_differentiable():
         pockels=0.01,
         kerr=0.02,
         field_bound=2.0,
-    ).prepare(bridge.cochain)
+    ).prepare(bridge.cochain, layout)
     field = jnp.linspace(-0.3, 0.3, n1)
     displacement = nonlinear.electric_displacement(field, None)
     np.testing.assert_allclose(
@@ -130,7 +131,7 @@ def test_material_families_are_fail_closed_and_differentiable():
 
     active = phx.solver.maxwell.ActiveGainMaxwellConstitutivePlan(
         0.1, saturation_intensity=1.0
-    ).prepare(bridge.cochain)
+    ).prepare(bridge.cochain, layout)
     assert (
         active.dissipated_power(
             electric,
@@ -156,7 +157,7 @@ def test_frequency_modes_adjoints_and_reversible_execution():
     assert isinstance(final, phx.solver.CompatibleMaxwellState)
 
     operator = phx.solver.maxwell.FrequencyMaxwellOperator(
-        bridge.cochain, runtime.constitutive, 0.5
+        bridge.cochain, runtime.layout, runtime.constitutive, 0.5
     )
     field = jnp.ones((operator.size,), dtype=complex)
     assert operator.mv(field).shape == field.shape
@@ -167,6 +168,8 @@ def test_frequency_modes_adjoints_and_reversible_execution():
         jnp.diag(jnp.asarray([4.0, 1.0])),
         jnp.eye(2),
         1,
+        magnetic_reconstruction=jnp.eye(2),
+        power_pairing=jnp.eye(2),
     ).solve()
     np.testing.assert_allclose(transverse.propagation_constants, 2.0)
     assert jnp.all(transverse.residuals < 1e-12)
