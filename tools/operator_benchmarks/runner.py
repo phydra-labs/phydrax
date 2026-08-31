@@ -18,6 +18,7 @@ from phydrax.nn.operator import (
     FunctionSamples,
     operator_architecture_contract,
     operator_conservation_error,
+    operator_dependency_support,
     operator_h1_loss,
     operator_l2_loss,
     operator_spectral_loss,
@@ -142,6 +143,7 @@ class OperatorBenchmarkResult:
     family: str
     seed: int
     parameter_count: int
+    dependency_support: dict[str, Any]
     training_steps: int
     training_seconds: float
     initial_loss: float
@@ -954,6 +956,7 @@ def run_operator_benchmark(
         family=str(family),
         seed=int(seed),
         parameter_count=parameter_count(trained),
+        dependency_support=asdict(operator_dependency_support(trained)),
         training_steps=len(losses),
         training_seconds=training_seconds,
         initial_loss=initial,

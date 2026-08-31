@@ -4,188 +4,383 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, NamedTuple
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
-from ..data import OperatorBatch
+from ..._keys import EvalKey
+from ..data import OperatorBatch, OperatorPrediction
+from ..engine import AbstractOperatorModel
+from ..sharding import OperatorShardingPolicy, shard_operator_batch
+from ..task import OperatorTask
+from ._dtype import OperatorDTypePolicy
+from ._execution import (
+    _evaluate_operator_step,
+    nondimensionalize_batch,
+    samples_with_values,
+)
+from ._normalization import OperatorNormalizationPolicy
+from ._physics import OperatorOutputPipeline
+from ._trained_operator import TrainedOperator
+
+
+_ROLLOUT_MODEL_KEY_DOMAIN = 100
 
 
 @dataclass(frozen=True)
-class TeacherForcingSchedule:
-    """Bounded linear or cosine teacher-forcing probability schedule."""
+class OperatorRolloutRoute:
+    """One coincident task state routed from a physical output to its source."""
 
-    start: float = 1.0
-    end: float = 0.0
+    source_name: str
+    prediction_name: str
+    task_field: str
+
+    def __post_init__(self):
+        for name, value in (
+            ("source_name", self.source_name),
+            ("prediction_name", self.prediction_name),
+            ("task_field", self.task_field),
+        ):
+            if not str(value):
+                raise ValueError(f"Operator rollout {name} must be non-empty.")
+        object.__setattr__(self, "source_name", str(self.source_name))
+        object.__setattr__(self, "prediction_name", str(self.prediction_name))
+        object.__setattr__(self, "task_field", str(self.task_field))
+
+
+@dataclass(frozen=True)
+class OperatorRolloutPolicy:
+    """Static-maximum recurrent horizon, truncation, and rematerialization policy."""
+
+    maximum_horizon: int
+    initial_horizon: int = 1
     transition_steps: int = 1
-    kind: Literal["linear", "cosine"] = "linear"
+    truncate_every: int | None = None
+    rematerialize: bool = False
 
     def __post_init__(self):
-        if not 0.0 <= float(self.start) <= 1.0 or not 0.0 <= float(self.end) <= 1.0:
-            raise ValueError("Teacher-forcing probabilities must lie in [0, 1].")
+        if int(self.maximum_horizon) <= 0:
+            raise ValueError("maximum_horizon must be positive.")
+        if int(self.initial_horizon) <= 0:
+            raise ValueError("initial_horizon must be positive.")
+        if int(self.initial_horizon) > int(self.maximum_horizon):
+            raise ValueError("initial_horizon cannot exceed maximum_horizon.")
         if int(self.transition_steps) <= 0:
             raise ValueError("transition_steps must be positive.")
-        if self.kind not in ("linear", "cosine"):
-            raise ValueError("kind must be 'linear' or 'cosine'.")
-
-    def __call__(self, step: Any, /) -> Array:
-        fraction = jnp.clip(jnp.asarray(step) / float(self.transition_steps), 0.0, 1.0)
-        if self.kind == "cosine":
-            fraction = 0.5 - 0.5 * jnp.cos(jnp.pi * fraction)
-        return self.start + fraction * (self.end - self.start)
-
-
-@dataclass(frozen=True)
-class RolloutHorizonSchedule:
-    """Integer curriculum from short to long rollout horizons."""
-
-    start: int
-    end: int
-    transition_steps: int
-
-    def __post_init__(self):
-        if int(self.start) <= 0 or int(self.end) < int(self.start):
-            raise ValueError("Rollout horizons must satisfy 0 < start <= end.")
-        if int(self.transition_steps) <= 0:
-            raise ValueError("transition_steps must be positive.")
-
-    def __call__(self, step: int, /) -> int:
-        fraction = min(max(int(step), 0), self.transition_steps) / self.transition_steps
-        return min(
-            self.end,
-            self.start + int(jnp.floor(fraction * (self.end - self.start))),
+        if self.truncate_every is not None and int(self.truncate_every) <= 0:
+            raise ValueError("truncate_every must be positive when provided.")
+        object.__setattr__(self, "maximum_horizon", int(self.maximum_horizon))
+        object.__setattr__(self, "initial_horizon", int(self.initial_horizon))
+        object.__setattr__(self, "transition_steps", int(self.transition_steps))
+        object.__setattr__(
+            self,
+            "truncate_every",
+            None if self.truncate_every is None else int(self.truncate_every),
         )
+        object.__setattr__(self, "rematerialize", bool(self.rematerialize))
+
+    def active_horizon(self, step: Any, /) -> Array:
+        """Return the traced linearly-clamped integer horizon at an update step."""
+        maximum = jnp.asarray(int(self.maximum_horizon), dtype=jnp.int32)
+        initial = jnp.asarray(int(self.initial_horizon), dtype=jnp.int32)
+        if int(self.maximum_horizon) == int(self.initial_horizon):
+            return maximum
+        progress = jnp.clip(
+            jnp.asarray(step, dtype=jnp.float32) / float(self.transition_steps),
+            0.0,
+            1.0,
+        )
+        horizon = initial + jnp.floor(
+            progress * float(int(self.maximum_horizon) - int(self.initial_horizon))
+        ).astype(jnp.int32)
+        return jnp.clip(horizon, initial, maximum)
 
 
 @dataclass(frozen=True)
 class OperatorRollout:
-    """Predictions and case-level teacher-forcing choices for one rollout."""
+    """Physical predictions and continuation state from one deployed rollout."""
 
-    predictions: Array
-    teacher_forcing_mask: Array
+    predictions: tuple[OperatorPrediction, ...]
+    final_batch: OperatorBatch
+    next_step: int
 
 
-def _probability(
-    value: float | TeacherForcingSchedule,
-    training_step: int,
+class _OperatorRolloutCarry(NamedTuple):
+    physical_batch: OperatorBatch
+    execution_batch: OperatorBatch
+    next_step: Array
+
+
+def _validate_rollout_route(
+    route: OperatorRolloutRoute,
+    task: OperatorTask,
+    output_field_map: Mapping[str, str],
+    batch: OperatorBatch,
     /,
-) -> Array:
-    probability = (
-        value(training_step)
-        if isinstance(value, TeacherForcingSchedule)
-        else jnp.asarray(value)
+) -> None:
+    if not isinstance(route, OperatorRolloutRoute):
+        raise TypeError("route must be an OperatorRolloutRoute.")
+    if task.problem.source_query_relation != "coincident":
+        raise ValueError("Operator rollout requires a coincident source/query task.")
+    if route.task_field not in task.field_by_name:
+        raise KeyError(f"Unknown rollout task field {route.task_field!r}.")
+    field = task.field_by_name[route.task_field]
+    if not field.is_source or not field.is_target:
+        raise ValueError("The routed task field must be both a source and a target.")
+    if field.is_classification:
+        raise ValueError("Classification fields cannot be recurrent rollout state.")
+    if field.source_name != route.source_name:
+        raise ValueError("Rollout source_name disagrees with the task field binding.")
+    if output_field_map.get(route.prediction_name) != route.task_field:
+        raise ValueError("Rollout prediction_name disagrees with the model output map.")
+    assert field.query_name is not None
+    source = batch.input(route.source_name)
+    query = batch.query(field.query_name)
+    if source.support_id != query.support_id or source.sample_shape != query.sample_shape:
+        raise ValueError(
+            "Operator rollout source and target query supports must coincide."
+        )
+    if source.values is None:
+        raise ValueError("Operator rollout state source has no values.")
+    assert field.output_spec is not None
+    expected = batch.case_shape + source.sample_shape + field.output_spec.channel_shape
+    if tuple(int(size) for size in source.values.shape) != expected:
+        raise ValueError("Operator rollout source values do not match the target spec.")
+
+
+def _prepare_rollout_execution_batch(
+    physical_batch: OperatorBatch,
+    task: OperatorTask,
+    normalization: OperatorNormalizationPolicy | None,
+    dtype_policy: OperatorDTypePolicy,
+    sharding_policy: OperatorShardingPolicy | None,
+    /,
+) -> OperatorBatch:
+    execution_batch = nondimensionalize_batch(physical_batch, task)
+    if normalization is not None:
+        execution_batch = normalization.normalize_batch(execution_batch)
+    execution_batch = dtype_policy.cast_batch(execution_batch)
+    if sharding_policy is not None:
+        execution_batch = shard_operator_batch(execution_batch, sharding_policy)
+    return execution_batch
+
+
+def _feedback_physical_batch(
+    batch: OperatorBatch,
+    prediction: OperatorPrediction,
+    route: OperatorRolloutRoute,
+    /,
+) -> OperatorBatch:
+    inputs = dict(batch.inputs)
+    source = batch.input(route.source_name)
+    values = prediction.field(route.task_field).values
+    assert source.values is not None
+    values = values.astype(source.values.dtype)
+    inputs[route.source_name] = samples_with_values(source, values)
+    return OperatorBatch(
+        inputs=inputs,
+        queries=batch.queries,
+        case_axes=batch.case_axes,
+        case_shape=batch.case_shape,
     )
-    if bool(jnp.any((probability < 0.0) | (probability > 1.0))):
-        raise ValueError("teacher_forcing must lie in [0, 1].")
-    return probability
+
+
+def _operator_rollout_step(
+    predictor: Callable,
+    model: AbstractOperatorModel,
+    carry: _OperatorRolloutCarry,
+    route: OperatorRolloutRoute,
+    task: OperatorTask,
+    output_field_map: Mapping[str, str],
+    output_pipeline: OperatorOutputPipeline | None,
+    normalization: OperatorNormalizationPolicy | None,
+    dtype_policy: OperatorDTypePolicy,
+    sharding_policy: OperatorShardingPolicy | None,
+    key: EvalKey,
+    /,
+) -> tuple[_OperatorRolloutCarry, tuple[Any, ...]]:
+    step_key = (
+        None
+        if key is None
+        else jax.random.fold_in(
+            jax.random.fold_in(key, _ROLLOUT_MODEL_KEY_DOMAIN),
+            carry.next_step,
+        )
+    )
+    execution_prediction, physical_prediction = _evaluate_operator_step(
+        model,
+        carry.execution_batch,
+        carry.physical_batch,
+        task,
+        output_field_map,
+        output_pipeline,
+        normalization,
+        dtype_policy,
+        step_key,
+        predictor=predictor,
+    )
+    next_physical_batch = _feedback_physical_batch(
+        carry.physical_batch,
+        physical_prediction,
+        route,
+    )
+    next_execution_batch = _prepare_rollout_execution_batch(
+        next_physical_batch,
+        task,
+        normalization,
+        dtype_policy,
+        sharding_policy,
+    )
+    next_carry = _OperatorRolloutCarry(
+        next_physical_batch,
+        next_execution_batch,
+        carry.next_step + jnp.asarray(1, dtype=carry.next_step.dtype),
+    )
+    return next_carry, (
+        execution_prediction,
+        physical_prediction,
+        carry.execution_batch,
+        carry.physical_batch,
+    )
+
+
+def _stop_rollout_feedback(carry: _OperatorRolloutCarry, /) -> _OperatorRolloutCarry:
+    def stop(value):
+        return jax.lax.stop_gradient(value) if eqx.is_array(value) else value
+
+    return _OperatorRolloutCarry(
+        jax.tree_util.tree_map(stop, carry.physical_batch),
+        jax.tree_util.tree_map(stop, carry.execution_batch),
+        carry.next_step,
+    )
+
+
+def _operator_rollout_scan(
+    predictor: Callable,
+    model: AbstractOperatorModel,
+    physical_batch: OperatorBatch,
+    execution_batch: OperatorBatch,
+    route: OperatorRolloutRoute,
+    policy: OperatorRolloutPolicy,
+    task: OperatorTask,
+    output_field_map: Mapping[str, str],
+    output_pipeline: OperatorOutputPipeline | None,
+    normalization: OperatorNormalizationPolicy | None,
+    dtype_policy: OperatorDTypePolicy,
+    sharding_policy: OperatorShardingPolicy | None,
+    key: EvalKey,
+    /,
+    *,
+    step_offset: int = 0,
+    active_horizon: int | None = None,
+) -> tuple[_OperatorRolloutCarry, tuple[Any, ...]]:
+    carry = _OperatorRolloutCarry(
+        physical_batch,
+        execution_batch,
+        jnp.asarray(step_offset, dtype=jnp.int32),
+    )
+
+    def scan_step(current_carry, index):
+        return _operator_rollout_step(
+            predictor,
+            model,
+            current_carry,
+            route,
+            task,
+            output_field_map,
+            output_pipeline,
+            normalization,
+            dtype_policy,
+            sharding_policy,
+            key,
+        )
+
+    authored_step = (
+        eqx.filter_checkpoint(scan_step) if policy.rematerialize else scan_step
+    )
+    outputs = []
+    horizon = (
+        int(policy.maximum_horizon) if active_horizon is None else int(active_horizon)
+    )
+    if horizon < 1 or horizon > int(policy.maximum_horizon):
+        raise ValueError("active_horizon must lie within the rollout policy.")
+    for index in range(horizon):
+        carry, predictions = authored_step(carry, index)
+        if (
+            policy.truncate_every is not None
+            and (index + 1) % int(policy.truncate_every) == 0
+        ):
+            carry = _stop_rollout_feedback(carry)
+        outputs.append(predictions)
+    return carry, tuple(zip(*outputs, strict=True))
 
 
 def autoregressive_operator_rollout(
-    model: Callable,
+    trained_operator: TrainedOperator,
     initial_batch: OperatorBatch,
     steps: int,
-    advance: Callable[[OperatorBatch, Array, int], OperatorBatch],
+    route: OperatorRolloutRoute,
     /,
     *,
-    teacher_targets: Array | None = None,
-    teacher_forcing: float | TeacherForcingSchedule = 0.0,
-    training_step: int = 0,
-    detach_feedback: bool = False,
-    key: Key[Array, ""] = DOC_KEY0,
+    key: EvalKey = DOC_KEY0,
+    step_offset: int = 0,
 ) -> OperatorRollout:
-    """Roll an operator forward with scheduled, case-level teacher forcing."""
-    count = int(steps)
-    if count <= 0:
-        raise ValueError("steps must be positive.")
-    if teacher_targets is not None and int(teacher_targets.shape[0]) < count:
-        raise ValueError("teacher_targets is shorter than the requested rollout.")
-    probability = _probability(teacher_forcing, int(training_step))
-    keys = jr.split(key, count * 2)
-    batch = initial_batch
-    predictions = []
-    masks = []
-    for index in range(count):
-        prediction = jnp.asarray(model(batch, key=keys[2 * index]))
-        predictions.append(prediction)
-        if teacher_targets is None:
-            use_teacher = jnp.zeros(batch.case_shape, dtype=bool)
-            feedback = prediction
-        else:
-            target = jnp.asarray(teacher_targets[index])
-            if target.shape != prediction.shape:
-                raise ValueError("Teacher target and prediction shapes must match.")
-            use_teacher = jr.bernoulli(
-                keys[2 * index + 1],
-                probability,
-                shape=batch.case_shape,
-            )
-            broadcast = use_teacher.reshape(
-                batch.case_shape + (1,) * (prediction.ndim - len(batch.case_shape))
-            )
-            feedback = jnp.where(broadcast, target, prediction)
-        masks.append(use_teacher)
-        if detach_feedback:
-            feedback = jax.lax.stop_gradient(feedback)
-        if index + 1 < count:
-            batch = advance(batch, feedback, index)
-            if not isinstance(batch, OperatorBatch):
-                raise TypeError("advance must return an OperatorBatch.")
-    return OperatorRollout(
-        predictions=jnp.stack(predictions, axis=0),
-        teacher_forcing_mask=jnp.stack(masks, axis=0),
-    )
-
-
-def autoregressive_operator_loss(
-    model: Callable,
-    initial_batch: OperatorBatch,
-    targets: Array,
-    advance: Callable[[OperatorBatch, Array, int], OperatorBatch],
-    /,
-    *,
-    training_step: int,
-    horizon: int | RolloutHorizonSchedule,
-    teacher_forcing: float | TeacherForcingSchedule = 0.0,
-    loss_fn: Callable[[Array, Array], Array] | None = None,
-    detach_feedback: bool = False,
-    key: Key[Array, ""] = DOC_KEY0,
-) -> Array:
-    """Evaluate a scheduled multi-step rollout objective."""
-    count = (
-        horizon(training_step)
-        if isinstance(horizon, RolloutHorizonSchedule)
-        else int(horizon)
-    )
-    target_values = jnp.asarray(targets)
-    if int(target_values.shape[0]) < count:
-        raise ValueError("targets is shorter than the scheduled rollout horizon.")
-    rollout = autoregressive_operator_rollout(
-        model,
+    """Deploy one task-bound physical-state recurrence with semantic step keys."""
+    if not isinstance(trained_operator, TrainedOperator):
+        raise TypeError("autoregressive_operator_rollout requires a TrainedOperator.")
+    if int(steps) < 0:
+        raise ValueError("steps must be non-negative.")
+    if int(step_offset) < 0:
+        raise ValueError("step_offset must be non-negative.")
+    plan = trained_operator.execution_plan
+    if not plan.contract.capabilities.autoregressive_rollout:
+        raise ValueError("The trained operator architecture does not support rollout.")
+    if int(step_offset) + int(steps) > int(plan.task.problem.rollout_steps):
+        raise ValueError("Requested rollout exceeds the task rollout contract.")
+    _validate_rollout_route(
+        route,
+        plan.task,
+        plan.output_field_map,
         initial_batch,
-        count,
-        advance,
-        teacher_targets=target_values,
-        teacher_forcing=teacher_forcing,
-        training_step=training_step,
-        detach_feedback=detach_feedback,
-        key=key,
     )
-    if loss_fn is None:
-        return jnp.mean(jnp.abs(rollout.predictions - target_values[:count]) ** 2)
-    losses = jax.vmap(loss_fn)(rollout.predictions, target_values[:count])
-    return jnp.mean(losses)
+    prepared = plan.prepare(initial_batch)
+    carry = _OperatorRolloutCarry(
+        prepared.physical_batch,
+        prepared.execution_batch,
+        jnp.asarray(step_offset, dtype=jnp.int32),
+    )
+    predictions: list[OperatorPrediction] = []
+    for _ in range(int(steps)):
+        carry, (_, physical_prediction, _, _) = _operator_rollout_step(
+            plan.lowered_callable,
+            plan.execution_model,
+            carry,
+            route,
+            plan.task,
+            plan.output_field_map,
+            plan.output_pipeline,
+            plan.normalization,
+            plan.dtype_policy,
+            plan.sharding_policy,
+            key,
+        )
+        predictions.append(physical_prediction)
+    return OperatorRollout(
+        predictions=tuple(predictions),
+        final_batch=carry.physical_batch,
+        next_step=int(step_offset) + int(steps),
+    )
 
 
 __all__ = [
     "OperatorRollout",
-    "RolloutHorizonSchedule",
-    "TeacherForcingSchedule",
-    "autoregressive_operator_loss",
+    "OperatorRolloutPolicy",
+    "OperatorRolloutRoute",
     "autoregressive_operator_rollout",
 ]

@@ -173,3 +173,48 @@ def test_diffrax_evolution_reports_backend_failure_without_method_fallback():
 
     assert not bool(result.valid)
     assert int(result.status) == phx.dynamics.EVOLUTION_BACKEND_FAILED
+
+
+def test_declared_discrete_step_rejects_mismatched_and_nonfinite_intervals():
+    def transition(coordinate, state, args):
+        del coordinate, args
+        return state
+
+    system = phx.dynamics.DiscreteSystem(
+        transition,
+        state_layout=phx.dynamics.StateLayout((1,)),
+        system_id="fixed-step",
+        step_size=0.25,
+        step_rtol=0.0,
+        step_atol=1e-12,
+    )
+    evolution = phx.dynamics.DiscreteEvolution(system)
+
+    assert jnp.array_equal(
+        evolution.advance(jnp.asarray([1.0]), 2.0, 2.25).final_state,
+        jnp.asarray([1.0]),
+    )
+    with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="step_size"):
+        evolution.advance(jnp.asarray([1.0]), 2.0, 2.5)
+    with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="finite"):
+        evolution.advance(jnp.asarray([1.0]), jnp.nan, jnp.nan)
+
+
+def test_discrete_step_metadata_validates_tolerances():
+    layout = phx.dynamics.StateLayout((1,))
+    transition = lambda coordinate, state, args: state
+
+    with pytest.raises(ValueError, match="step_size"):
+        phx.dynamics.DiscreteSystem(
+            transition,
+            state_layout=layout,
+            system_id="bad-step",
+            step_size=jnp.inf,
+        )
+    with pytest.raises(ValueError, match="step_rtol"):
+        phx.dynamics.DiscreteSystem(
+            transition,
+            state_layout=layout,
+            system_id="bad-tolerance",
+            step_rtol=-1.0,
+        )

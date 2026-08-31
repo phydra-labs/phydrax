@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
+from opt_einsum import contract
 
 from phydrax.nn.layers import MeasureNormalizedConvND
 
@@ -14,6 +15,31 @@ _DIMENSION_NUMBERS = {
     2: ("NHWC", "HWIO", "NHWC"),
     3: ("NDHWC", "DHWIO", "NDHWC"),
 }
+
+
+def _circular_reference(layer, values, mask, quadrature):
+    sample_count = values.shape[0]
+    kernel_count = layer.kernel_size[0]
+    dilation = layer.dilation[0]
+    halo = dilation * (kernel_count - 1) // 2
+    sanitized = jnp.where(mask[:, None], values, 0.0)
+    support = jnp.where(mask, quadrature, 0.0)
+    outputs = []
+    for output_index in range(sample_count):
+        indices = (
+            output_index - halo + dilation * jnp.arange(kernel_count)
+        ) % sample_count
+        measured = sanitized[indices] * support[indices, None]
+        numerator = contract("ki,kio->o", measured, layer.weight)
+        support_sum = jnp.sum(support[indices])
+        output = numerator / jnp.maximum(
+            support_sum / kernel_count,
+            layer.epsilon,
+        )
+        if layer.bias is not None:
+            output = output + layer.bias
+        outputs.append(jnp.where(support_sum > 0.0, output, 0.0))
+    return jnp.stack(outputs)
 
 
 @pytest.mark.parametrize(
@@ -140,3 +166,106 @@ def test_measure_convolution_preserves_leading_case_axes():
 
     output = eqx.filter_jit(layer)(values, source_mask=mask)
     assert output.shape == (2, 3, math.floor((7 - 3) / 2) + 1, 5, 2)
+
+
+@pytest.mark.parametrize(
+    ("sample_count", "kernel_size", "dilation"),
+    ((7, 3, 2), (4, 9, 3)),
+)
+def test_circular_measure_convolution_matches_modular_reference_with_large_halos(
+    sample_count,
+    kernel_size,
+    dilation,
+):
+    layer = MeasureNormalizedConvND(
+        spatial_ndim=1,
+        in_channels=2,
+        out_channels=2,
+        kernel_size=kernel_size,
+        dilation=dilation,
+        circular=True,
+        key=jr.key(40 + sample_count),
+    )
+    mask = (jnp.arange(sample_count) % 3) != 1
+    target_mask = (jnp.arange(sample_count) % 4) != 2
+    finite_values = jr.normal(jr.key(50 + sample_count), (sample_count, 2))
+    values = jnp.where(mask[:, None], finite_values, jnp.nan)
+    quadrature = jnp.linspace(0.25, 1.25, sample_count)
+
+    actual = layer(
+        values,
+        source_mask=mask,
+        target_mask=target_mask,
+        quadrature=quadrature,
+    )
+    expected = _circular_reference(layer, values, mask, quadrature)
+    expected = jnp.where(target_mask[:, None], expected, 0.0)
+
+    assert jnp.all(jnp.isfinite(actual))
+    assert jnp.allclose(actual, expected, atol=2e-6, rtol=2e-6)
+
+
+def test_circular_measure_convolution_owns_same_padding_and_odd_effective_kernels():
+    default = MeasureNormalizedConvND(
+        spatial_ndim=1,
+        in_channels=1,
+        out_channels=1,
+        key=jr.key(60),
+    )
+    assert not default.circular
+
+    with pytest.raises(ValueError, match="owns SAME"):
+        MeasureNormalizedConvND(
+            spatial_ndim=1,
+            in_channels=1,
+            out_channels=1,
+            circular=True,
+            padding="VALID",
+            key=jr.key(61),
+        )
+    with pytest.raises(ValueError, match="odd effective"):
+        MeasureNormalizedConvND(
+            spatial_ndim=1,
+            in_channels=1,
+            out_channels=1,
+            kernel_size=2,
+            circular=True,
+            key=jr.key(62),
+        )
+
+    dilated = MeasureNormalizedConvND(
+        spatial_ndim=1,
+        in_channels=1,
+        out_channels=1,
+        kernel_size=2,
+        dilation=2,
+        circular=True,
+        key=jr.key(63),
+    )
+    assert dilated(jnp.ones((5, 1))).shape == (5, 1)
+
+
+def test_circular_measure_convolution_preserves_batch_axes_and_target_mask():
+    layer = MeasureNormalizedConvND(
+        spatial_ndim=2,
+        in_channels=1,
+        out_channels=2,
+        kernel_size=(3, 5),
+        circular=True,
+        key=jr.key(64),
+    )
+    values = jnp.ones((2, 3, 4, 5, 1))
+    source_mask = jnp.ones((4, 5), dtype=bool).at[0, 0].set(False)
+    target_mask = jnp.ones((4, 5), dtype=bool).at[-1, -1].set(False)
+    values = jnp.where(source_mask[..., None], values, jnp.nan)
+
+    output = layer(
+        values,
+        source_mask=source_mask,
+        target_mask=target_mask,
+        quadrature=jnp.linspace(0.5, 1.5, 20).reshape(4, 5),
+    )
+
+    assert output.shape == (2, 3, 4, 5, 2)
+    assert jnp.all(jnp.isfinite(output))
+    assert jnp.array_equal(output[..., -1, -1, :], jnp.zeros((2, 3, 2)))

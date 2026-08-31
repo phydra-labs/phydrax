@@ -369,6 +369,12 @@ consistent segmented continuation, frozen-grid implicit replay derivatives,
 checkpointed reverse passes, guarded numerical reuse, and local regularity evidence
 without introducing a second identification representation.
 Array models bind into `ContinuousSystem` as explicit trainable PyTree children.
+Pointwise array models also bind as deterministic fixed-step `DiscreteSystem`
+maps with an explicit coordinate-step contract. Neural identification reads
+`TrajectoryData` through lazy validity/reset/control-aware windows and combines
+supervised, deterministic reference-branch, and residual rollout objectives.
+One authored recurrent step underlies full, prefix, chunked, rematerialized,
+and resumed execution; Phydrax does not infer carry state from a JAXPR trace.
 Structured Port-Hamiltonian fields provide state-dependent energy,
 interconnection, dissipation, control, and forcing components while preserving
 exact skew and semidefinite geometry; solver-owned isothermal dynamics add the
@@ -715,6 +721,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Autoregressive operator learning**: bind one coincident physical state
+  source and prediction with `OperatorRolloutRoute`. Training and deployment use
+  the same authored step: raw output is physicalized, constrained, restored to
+  the physical source, and reprocessed through source normalization before the
+  next call. Named future targets and recurrent residuals support traced
+  fixed-capacity horizons, while `final_batch` and an absolute step offset make
+  chunk continuation and semantic keys explicit. Dynamic controls, independent
+  queries, multiple recurrent states, and inferred carry are not accepted by
+  this route.
 - **Irregular-time sequence mixing**: use `DiagonalStateSpaceMixer` for an
   input-independent stable diagonal continuous-time baseline, or
   `SelectiveStateSpaceMixer` when input-dependent step, injection, and readout

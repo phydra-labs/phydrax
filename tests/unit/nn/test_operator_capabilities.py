@@ -9,16 +9,48 @@ import pytest
 import phydrax as phx
 
 
-def _grid_batch(*, size=5, periodic=True, mask=None, physical_quadrature=True):
-    nodes = jnp.arange(size, dtype=float) / size
+def _grid_batch(
+    *,
+    size=5,
+    periodic=True,
+    mask=None,
+    physical_quadrature=True,
+    basis="uniform",
+    query_shift=0.0,
+    nodes=None,
+):
+    nodes = (
+        jnp.arange(size, dtype=float) / max(size, 1)
+        if nodes is None
+        else jnp.asarray(nodes, dtype=float)
+    )
+    size = int(nodes.size)
     weights = jnp.ones(size) if physical_quadrature else None
     axes = (
         phx.nn.operator.OperatorAxis(
-            "x", nodes, quadrature_weights=weights, periodic=periodic
+            "x",
+            nodes,
+            quadrature_weights=weights,
+            basis=basis,
+            periodic=periodic,
         ),
         phx.nn.operator.OperatorAxis(
-            "y", nodes, quadrature_weights=weights, periodic=periodic
+            "y",
+            nodes,
+            quadrature_weights=weights,
+            basis=basis,
+            periodic=periodic,
         ),
+    )
+    query_axes = tuple(
+        phx.nn.operator.OperatorAxis(
+            axis.name,
+            axis.nodes + query_shift,
+            quadrature_weights=axis.quadrature_weights,
+            basis=axis.basis,
+            periodic=axis.periodic,
+        )
+        for axis in axes
     )
     source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, size, size)),
@@ -27,7 +59,7 @@ def _grid_batch(*, size=5, periodic=True, mask=None, physical_quadrature=True):
     )
     return phx.nn.operator.OperatorBatch(
         inputs={"u": source},
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=axes)},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=query_axes)},
         case_axes=("case",),
     )
 
@@ -137,6 +169,52 @@ def test_cno_and_uno_declare_their_actual_measure_and_mask_support():
     assert cno_masked.accepted
     assert "MISSING_PHYSICAL_QUADRATURE" in cno_missing_measure.codes
     assert "MASKED_INPUT_UNSUPPORTED" in uno_masked.codes
+
+
+def test_cno_family_catalog_requires_exact_periodic_uniform_fourier_axes():
+    for architecture in ("CNO", "UNO"):
+        capabilities = phx.nn.operator.operator_architecture_contract(
+            architecture
+        ).capabilities
+        assert capabilities.axis_requirement == "periodic_fourier_uniform"
+        assert capabilities.minimum_axis_size == 2
+
+        assert (
+            "NONPERIODIC_AXIS"
+            in phx.nn.operator.validate_operator_architecture(
+                architecture,
+                _grid_batch(periodic=False),
+            ).codes
+        )
+        assert "UNSUPPORTED_AXIS_BASIS" in (
+            phx.nn.operator.validate_operator_architecture(
+                architecture,
+                _grid_batch(basis="legendre"),
+            ).codes
+        )
+        assert (
+            "AXIS_TOO_SMALL"
+            in phx.nn.operator.validate_operator_architecture(
+                architecture,
+                _grid_batch(size=1),
+            ).codes
+        )
+        assert (
+            "NONUNIFORM_AXIS"
+            in phx.nn.operator.validate_operator_architecture(
+                architecture,
+                _grid_batch(nodes=jnp.asarray([0.0, 0.2, 0.7, 1.0])),
+            ).codes
+        )
+        assert "SOURCE_QUERY_RELATION" in (
+            phx.nn.operator.validate_operator_architecture(
+                architecture,
+                _grid_batch(query_shift=0.125),
+                problem=phx.nn.operator.OperatorProblemSpec(
+                    source_query_relation="coincident"
+                ),
+            ).codes
+        )
 
 
 def test_spectral_operator_contracts_match_runtime_invariants():
