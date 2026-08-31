@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Added reciprocal-lattice harmonic discretization with true one-dimensional and
+  oblique two-dimensional periodicity, selected FFT analysis/synthesis,
+  pairwise-difference material convolution, translation covariance, resource
+  preflight, and Gamma-containing Brillouin-zone rules.
+- Added `phydrax.solver.maxwell.fourier_modal`: full-tensor periodic finite layers,
+  homogeneous ports, differentiable boundary-field cascade propagation, direct,
+  inverse, and local-frame Fourier factorization, a nondifferentiable modal reference
+  backend, stable scattering composition, named electric/magnetic current planes,
+  multi-RHS and Brillouin source semantics, interior field reconstruction,
+  diffraction-order far fields, explicit refresh, convergence, resource, diagnostic,
+  status, and provenance contracts.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
