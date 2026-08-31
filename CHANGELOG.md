@@ -133,6 +133,14 @@
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
   deployment merging, and checksum-validated adapter artifacts bound to the
   complete base model content and structure.
+- Added deterministic fixed-step learned discrete systems with lazy
+  mask/reset/control-aware trajectory windows, supervised, reference-branch,
+  and residual rollout objectives, evidence-weighted gradient accumulation,
+  exact update-boundary resume, and full/prefix/chunk causal equivalence.
+- Added task-bound recurrent neural-operator training with one pipeline-safe
+  physical state route, named future targets, supervised and residual rollout
+  losses, route-aware deployed continuation, and instance-authoritative
+  pointwise/finite/global/unknown dependency-support evidence.
 - Added advanced computational topology: exact cellular and filtered maps,
   induced maps and cone audits, extended and temporal field topology, diagram
   features and certified matching, rational and integral class algebra,
@@ -841,6 +849,14 @@
   resource accounting.
 
 ### Changed
+- Neural-operator autoregression now requires a task-bound physical state route
+  and the deployed normalization/constraint pipeline. The raw callable/advance
+  rollout, standalone autoregressive loss, and teacher-forcing schedule were
+  removed in one clean cutover.
+- CNO and UNO now have periodic-Fourier semantics: circular measure-aware local
+  convolution, endpoint-exclusive sine/cosine coordinate features, periodic
+  uniform axes, and new semantic architecture identities. Nonperiodic and
+  legacy artifact routes are rejected rather than reinterpreted.
 - Benchmark tooling now shares one synchronized PyTree timing runtime, normalized
   software/hardware fingerprints, raw duration distributions, official XLA
   cost/memory evidence, atomic artifact writes, and environment-checked bootstrap
