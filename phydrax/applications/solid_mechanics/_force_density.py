@@ -9,22 +9,27 @@ from math import isfinite
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import array_tree_signature, canonical_fingerprint
+from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
+    AbstractLinearOperator,
     ArraySpace,
     bind_numeric,
+    DenseLinearOperator,
     DifferentiationPolicy,
+    JacobiPreconditionerBuilder,
     LinearSolvePolicy,
     LinearSolveResult,
     LinearSolveTemplate,
     LinearSystem,
     OperatorProperties,
+    PreconditioningPolicy,
     prepare_template,
     PreparedLinearSolve,
     solve as solve_linear,
@@ -34,14 +39,21 @@ from ...nonlinear import (
     implicit_root_result,
     ImplicitRootDerivativePolicy,
     NewtonKrylov,
+    NewtonTrustRegion,
+    NonlinearPrecisionPolicy,
     NonlinearResult,
     NonlinearSystemProblem,
     NonlinearTermination,
+    prepare_nonlinear,
+    PreparedNonlinearSolve,
+    refresh_nonlinear,
 )
 from ...sparse import SparseCoordinateOperator
 from ._force_density_loads import (
     AbstractForceDensityLoadModel,
+    evaluate_force_density_load,
     FixedNodalLoadModel,
+    ForceDensityLoadState,
 )
 from ._force_density_topology import ForceDensityStructure
 
@@ -61,6 +73,92 @@ class ForceDensityStatus(IntEnum):
     EQUILIBRIUM_RESIDUAL_TOO_LARGE = 4
     DEGENERATE_MEMBER = 5
     INVALID_LOAD_GEOMETRY = 6
+
+
+_STATUS_MESSAGES = {
+    ForceDensityStatus.SUCCESS: "success",
+    ForceDensityStatus.LINEAR_SOLVE_FAILED: "linear equilibrium solve failed",
+    ForceDensityStatus.NONLINEAR_SOLVE_FAILED: "nonlinear equilibrium solve failed",
+    ForceDensityStatus.NONFINITE_STATE: "equilibrium state contains non-finite values",
+    ForceDensityStatus.EQUILIBRIUM_RESIDUAL_TOO_LARGE: (
+        "physical equilibrium residual exceeds tolerance"
+    ),
+    ForceDensityStatus.DEGENERATE_MEMBER: "one or more active members are degenerate",
+    ForceDensityStatus.INVALID_LOAD_GEOMETRY: (
+        "load model geometry is outside its valid domain"
+    ),
+}
+
+
+def force_density_status_message(status: int | ForceDensityStatus, /) -> str:
+    """Return the stable message for one force-density status."""
+    return _STATUS_MESSAGES[ForceDensityStatus(int(status))]
+
+
+def _load_tree_contract(
+    value: Any, /
+) -> tuple[str, tuple[str, ...], tuple[tuple[int, ...], ...], tuple[str, ...]]:
+    path_leaves, structure = jax.tree_util.tree_flatten_with_path(value)
+    paths: list[str] = []
+    shapes: list[tuple[int, ...]] = []
+    dtypes: list[str] = []
+    for path, leaf in path_leaves:
+        array = jnp.asarray(leaf)
+        if not jnp.issubdtype(array.dtype, jnp.inexact) or jnp.iscomplexobj(array):
+            raise TypeError("Load-parameter leaves must be real inexact arrays.")
+        paths.append(jax.tree_util.keystr(path))
+        shapes.append(tuple(int(size) for size in array.shape))
+        dtypes.append(str(array.dtype))
+    return str(structure), tuple(paths), tuple(shapes), tuple(dtypes)
+
+
+class ForceDensityInputSignature(StrictModule, NonTrainableState):
+    """Static PyTree, shape, and dtype contract for numeric refresh."""
+
+    force_density_shape: tuple[int, ...] = eqx.field(static=True)
+    force_density_dtype: str = eqx.field(static=True)
+    prescribed_shape: tuple[int, ...] = eqx.field(static=True)
+    prescribed_dtype: str = eqx.field(static=True)
+    load_tree: str = eqx.field(static=True)
+    load_paths: tuple[str, ...] = eqx.field(static=True)
+    load_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    load_dtypes: tuple[str, ...] = eqx.field(static=True)
+    signature_id: str = eqx.field(static=True)
+
+    def __init__(self, inputs: ForceDensityInputs, /):
+        load_tree, load_paths, load_shapes, load_dtypes = _load_tree_contract(
+            inputs.load_parameters
+        )
+        payload = {
+            "force_density": {
+                "shape": list(inputs.force_densities.shape),
+                "dtype": str(inputs.force_densities.dtype),
+            },
+            "prescribed": {
+                "shape": list(inputs.prescribed_values.shape),
+                "dtype": str(inputs.prescribed_values.dtype),
+            },
+            "load_tree": load_tree,
+            "load_paths": list(load_paths),
+            "load_shapes": [list(shape) for shape in load_shapes],
+            "load_dtypes": list(load_dtypes),
+        }
+        self.force_density_shape = tuple(inputs.force_densities.shape)
+        self.force_density_dtype = str(inputs.force_densities.dtype)
+        self.prescribed_shape = tuple(inputs.prescribed_values.shape)
+        self.prescribed_dtype = str(inputs.prescribed_values.dtype)
+        self.load_tree = load_tree
+        self.load_paths = load_paths
+        self.load_shapes = load_shapes
+        self.load_dtypes = load_dtypes
+        self.signature_id = canonical_fingerprint(payload)
+
+    def validate(self, inputs: ForceDensityInputs, /) -> None:
+        current = ForceDensityInputSignature(inputs)
+        if current.signature_id != self.signature_id:
+            raise ValueError(
+                "Force-density numeric refresh changed the input PyTree, shape, or dtype contract."
+            )
 
 
 class ForceDensityTolerances(StrictModule, NonTrainableState):
@@ -222,6 +320,7 @@ class ForceDensityState(StrictModule):
     member_lengths: Array
     force_densities: Array
     axial_forces: Array
+    load_state: ForceDensityLoadState
     applied_nodal_loads: Array
     internal_nodal_forces: Array
     equilibrium_residual: Array
@@ -237,11 +336,14 @@ class ForceDensityDiagnostics(StrictModule):
     free_residual_norm: Array
     relative_free_residual: Array
     global_balance_norm: Array
+    graph_free_residual_norms: Array
+    graph_balance_norms: Array
     minimum_member_length: Array
     degenerate_member_count: Array
     minimum_force_density: Array
     finite: Array
     load_geometry_valid: Array
+    minimum_load_regularity: Array
     equilibrium_valid: Array
 
 
@@ -252,8 +354,10 @@ class ForceDensityProvenance(StrictModule):
     structure_id: str = eqx.field(static=True)
     load_model_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    solver_plan_id: str | None = eqx.field(static=True)
     route: Literal["linear", "nonlinear"] = eqx.field(static=True)
     sign_mode: ForceDensitySignMode = eqx.field(static=True)
+    numeric_version: Array
 
 
 class ForceDensityResult(StrictModule):
@@ -270,6 +374,10 @@ class ForceDensityResult(StrictModule):
     def successful(self) -> Array:
         return self.status == int(ForceDensityStatus.SUCCESS)
 
+    @property
+    def message(self) -> str:
+        return force_density_status_message(int(self.status))
+
 
 class ForceDensityPlan(StrictModule, NonTrainableState):
     """Symbolic force-density execution plan."""
@@ -277,9 +385,15 @@ class ForceDensityPlan(StrictModule, NonTrainableState):
     problem: ForceDensityProblem
     linear_policy: LinearSolvePolicy
     linear_template: LinearSolveTemplate | None
+    nonlinear_template: PreparedNonlinearSolve | None
     nonlinear_method: AbstractNonlinearMethod
     nonlinear_termination: NonlinearTermination
+    nonlinear_precision: NonlinearPrecisionPolicy
     derivative_policy: ImplicitRootDerivativePolicy | None
+    input_signature: ForceDensityInputSignature
+    nonlinear_uses_setup: bool = eqx.field(static=True)
+    initial_state_dtype: str | None = eqx.field(static=True)
+    policy_signature: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
 
@@ -289,8 +403,20 @@ class PreparedForceDensitySolve(StrictModule):
     plan: ForceDensityPlan
     inputs: ForceDensityInputs
     linear_solve: PreparedLinearSolve | None
+    nonlinear_solve: PreparedNonlinearSolve | None
     initial_reduced: Array | None
     numeric_version: Array
+
+
+class BatchedForceDensityResult(StrictModule):
+    """Stacked same-topology cases with one status and evidence record per case."""
+
+    results: ForceDensityResult
+    batch_size: int = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
+        return self.results.successful
 
 
 def _norm(value: Array, /) -> Array:
@@ -347,11 +473,35 @@ def _normalization(problem: ForceDensityProblem, /) -> float:
     return -1.0 if problem.sign_mode == "compression" else 1.0
 
 
+def _full_equilibrium_matrix(
+    structure: ForceDensityStructure,
+    force_densities: Array,
+    /,
+) -> Array:
+    dimension = structure.dimension
+    coordinates = jnp.arange(dimension, dtype=jnp.int32)
+    sender_dofs = (structure.senders[:, None] * dimension + coordinates[None, :]).reshape(
+        (-1,)
+    )
+    receiver_dofs = (
+        structure.receivers[:, None] * dimension + coordinates[None, :]
+    ).reshape((-1,))
+    values = jnp.repeat(force_densities, dimension)
+    matrix = jnp.zeros(
+        (structure.full_dof_count, structure.full_dof_count),
+        dtype=force_densities.dtype,
+    )
+    matrix = matrix.at[sender_dofs, sender_dofs].add(values)
+    matrix = matrix.at[receiver_dofs, receiver_dofs].add(values)
+    matrix = matrix.at[sender_dofs, receiver_dofs].add(-values)
+    return matrix.at[receiver_dofs, sender_dofs].add(-values)
+
+
 def _operator(
     problem: ForceDensityProblem,
     force_densities: Array,
     /,
-) -> SparseCoordinateOperator:
+) -> AbstractLinearOperator:
     structure = problem.structure
     scale = jnp.asarray(_normalization(problem), dtype=force_densities.dtype)
     coefficients = (
@@ -379,6 +529,18 @@ def _operator(
             ),
         },
     )
+    if structure.affine_constraints:
+        if structure.affine_prolongation is None:
+            raise RuntimeError("Affine prolongation is unavailable.")
+        full = _full_equilibrium_matrix(structure, force_densities)
+        reduced = (
+            structure.affine_prolongation.T @ full @ structure.affine_prolongation
+        ) * scale
+        return DenseLinearOperator(
+            reduced,
+            properties=properties,
+            operator_id=f"{problem.problem_id}:reduced-affine-equilibrium",
+        )
     return SparseCoordinateOperator(
         structure.equilibrium_relation,
         coefficients,
@@ -420,6 +582,32 @@ def _internal_nodal_forces(
     return internal.at[structure.receivers].add(member_vectors)
 
 
+def _load_state(
+    problem: ForceDensityProblem,
+    inputs: ForceDensityInputs,
+    positions: Array,
+    dtype: Any,
+    /,
+) -> ForceDensityLoadState:
+    structure = problem.structure
+    state = evaluate_force_density_load(
+        problem.load_model,
+        structure,
+        positions,
+        inputs.load_parameters,
+    )
+    expected = (structure.node_count, structure.dimension)
+    if state.total.shape != expected:
+        raise ValueError(
+            f"Load model must return shape {expected}; got {state.total.shape}."
+        )
+    if state.total.dtype != jnp.dtype(dtype):
+        raise TypeError(
+            "Load-model output must share the force-density coordinate dtype."
+        )
+    return state
+
+
 def _nodal_loads(
     problem: ForceDensityProblem,
     inputs: ForceDensityInputs,
@@ -427,18 +615,7 @@ def _nodal_loads(
     dtype: Any,
     /,
 ) -> Array:
-    structure = problem.structure
-    loads = jnp.asarray(
-        problem.load_model.nodal_loads(structure, positions, inputs.load_parameters)
-    )
-    expected = (structure.node_count, structure.dimension)
-    if loads.shape != expected:
-        raise ValueError(f"Load model must return shape {expected}; got {loads.shape}.")
-    if loads.dtype != jnp.dtype(dtype):
-        raise TypeError(
-            "Load-model output must share the force-density coordinate dtype."
-        )
-    return loads
+    return _load_state(problem, inputs, positions, dtype).total
 
 
 def _linear_rhs(
@@ -502,6 +679,49 @@ def _initial_reduced(
     return structure.reduce(positions)
 
 
+def _default_nonlinear_method(
+    problem: ForceDensityProblem,
+    force_densities: Array,
+    /,
+) -> tuple[NewtonKrylov, bool]:
+    method = NewtonKrylov()
+    if (
+        problem.sign_mode not in ("tension", "compression")
+        or problem.structure.free_dof_count == 0
+    ):
+        return method, False
+    setup = _operator(problem, force_densities)
+    preconditioning = PreconditioningPolicy(
+        JacobiPreconditionerBuilder(),
+        setup_operator=setup,
+        side="right",
+        refresh="numeric",
+    )
+    linear_policy = eqx.tree_at(
+        lambda selected: selected.preconditioning,
+        method.linear_policy,
+        preconditioning,
+        is_leaf=lambda value: value is None,
+    )
+    return (
+        eqx.tree_at(lambda selected: selected.linear_policy, method, linear_policy),
+        True,
+    )
+
+
+def _termination_payload(termination: NonlinearTermination, /) -> dict[str, Any]:
+    return {
+        "absolute_residual": termination.absolute_residual,
+        "relative_residual": termination.relative_residual,
+        "absolute_step": termination.absolute_step,
+        "relative_step": termination.relative_step,
+        "maximum_steps": termination.maximum_steps,
+        "maximum_evaluations": termination.maximum_evaluations,
+        "maximum_linear_iterations": termination.maximum_linear_iterations,
+        "divergence_factor": termination.divergence_factor,
+    }
+
+
 def plan_force_density(
     problem: ForceDensityProblem,
     sample_inputs: ForceDensityInputs,
@@ -510,6 +730,7 @@ def plan_force_density(
     linear_policy: LinearSolvePolicy | None = None,
     nonlinear_method: AbstractNonlinearMethod | None = None,
     nonlinear_termination: NonlinearTermination | None = None,
+    nonlinear_precision: NonlinearPrecisionPolicy | None = None,
     derivative_policy: ImplicitRootDerivativePolicy | None = None,
     initial_positions: ArrayLike | None = None,
 ) -> ForceDensityPlan:
@@ -520,6 +741,7 @@ def plan_force_density(
         raise TypeError("sample_inputs must be ForceDensityInputs.")
     force_densities = _validated_force_densities(problem, sample_inputs)
     initial = _initial_reduced(problem, sample_inputs, initial_positions)
+    input_signature = ForceDensityInputSignature(sample_inputs)
     policy = (
         LinearSolvePolicy(
             differentiation=DifferentiationPolicy("mathematical"),
@@ -530,7 +752,18 @@ def plan_force_density(
     )
     if not isinstance(policy, LinearSolvePolicy):
         raise TypeError("linear_policy must be LinearSolvePolicy or None.")
-    method = NewtonKrylov() if nonlinear_method is None else nonlinear_method
+    if nonlinear_method is None:
+        if problem.load_model.depends_on_positions:
+            method, uses_setup = _default_nonlinear_method(problem, force_densities)
+        else:
+            method, uses_setup = NewtonKrylov(), False
+    else:
+        method = nonlinear_method
+        uses_setup = (
+            isinstance(method, (NewtonKrylov, NewtonTrustRegion))
+            and method.linear_policy.preconditioning is not None
+            and method.linear_policy.preconditioning.builder is not None
+        )
     termination = (
         NonlinearTermination(
             absolute_residual=problem.tolerances.absolute_equilibrium,
@@ -539,42 +772,149 @@ def plan_force_density(
         if nonlinear_termination is None
         else nonlinear_termination
     )
+    precision = (
+        NonlinearPrecisionPolicy() if nonlinear_precision is None else nonlinear_precision
+    )
+    if derivative_policy is None and uses_setup:
+        derivative_linear_policy = eqx.tree_at(
+            lambda selected: selected.preconditioning,
+            method.linear_policy,
+            None,
+        )
+        derivative_policy = ImplicitRootDerivativePolicy(
+            tangent_linear_policy=derivative_linear_policy,
+            adjoint_linear_policy=derivative_linear_policy,
+        )
     if not isinstance(method, AbstractNonlinearMethod):
         raise TypeError("nonlinear_method must be AbstractNonlinearMethod or None.")
+    if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
+        raise ValueError(
+            "Position-dependent force-density plans require a prepared Newton method."
+        )
     if not isinstance(termination, NonlinearTermination):
         raise TypeError("nonlinear_termination must be NonlinearTermination or None.")
+    if not isinstance(precision, NonlinearPrecisionPolicy):
+        raise TypeError("nonlinear_precision must be NonlinearPrecisionPolicy or None.")
     if derivative_policy is not None and not isinstance(
         derivative_policy, ImplicitRootDerivativePolicy
     ):
         raise TypeError("derivative_policy must be ImplicitRootDerivativePolicy or None.")
 
-    template = None
-    if problem.structure.free_dof_count and not problem.load_model.depends_on_positions:
-        linear_problem = _linear_problem(problem, force_densities)
-        template = prepare_template(linear_problem, policy)
+    linear_template = None
+    nonlinear_template = None
+    if problem.structure.free_dof_count:
+        if problem.load_model.depends_on_positions:
+            if initial is None:
+                raise RuntimeError(
+                    "Nonlinear force-density initial state is unavailable."
+                )
+            nonlinear_template = prepare_nonlinear(
+                _nonlinear_problem(
+                    problem,
+                    force_densities.dtype,
+                    use_linear_setup=uses_setup,
+                ),
+                initial,
+                method=method,
+                termination=termination,
+                args=sample_inputs,
+                precision=precision,
+            )
+        else:
+            linear_template = prepare_template(
+                _linear_problem(problem, force_densities), policy
+            )
     route = "nonlinear" if problem.load_model.depends_on_positions else "linear"
+    policy_signature = canonical_fingerprint(
+        {
+            "termination": _termination_payload(termination),
+            "nonlinear_method": method.method_id,
+            "nonlinear_linear_plan": (
+                None if nonlinear_template is None else nonlinear_template.linear_plan_id
+            ),
+            "nonlinear_precision": precision.policy_id,
+            "derivative_policy": repr(derivative_policy),
+            "uses_weighted_setup": uses_setup,
+        }
+    )
     identifier = canonical_fingerprint(
         {
             "kind": "force-density-plan",
             "problem": problem.problem_id,
             "route": route,
-            "linear_method": policy.method.name,
-            "linear_template": None if template is None else template.template_id,
-            "nonlinear_method": method.method_id,
-            "input_signature": array_tree_signature(
-                (sample_inputs.force_densities, sample_inputs.prescribed_values)
+            "linear_template": (
+                None if linear_template is None else linear_template.template_id
             ),
+            "nonlinear_template": (
+                None
+                if nonlinear_template is None
+                else nonlinear_template.linear_template_id
+            ),
+            "input_signature": input_signature.signature_id,
             "initial_shape": None if initial is None else list(initial.shape),
+            "initial_dtype": None if initial is None else str(initial.dtype),
+            "policy_signature": policy_signature,
         }
     )
     return ForceDensityPlan(
         problem,
         policy,
-        template,
+        linear_template,
+        nonlinear_template,
         method,
         termination,
+        precision,
         derivative_policy,
+        input_signature,
+        uses_setup,
+        None if initial is None else str(initial.dtype),
+        policy_signature,
         identifier,
+    )
+
+
+def _bind_force_density(
+    plan: ForceDensityPlan,
+    inputs: ForceDensityInputs,
+    initial_positions: ArrayLike | None,
+    numeric_version: Any,
+    nonlinear_seed: PreparedNonlinearSolve | None,
+    /,
+) -> PreparedForceDensitySolve:
+    plan.input_signature.validate(inputs)
+    force_densities = _validated_force_densities(plan.problem, inputs)
+    initial = _initial_reduced(plan.problem, inputs, initial_positions)
+    if initial is not None and str(initial.dtype) != plan.initial_state_dtype:
+        raise TypeError("Nonlinear initial-state dtype changed during numeric refresh.")
+    linear = None
+    if plan.linear_template is not None:
+        linear = bind_numeric(
+            plan.linear_template,
+            _linear_problem(plan.problem, force_densities),
+            numeric_version=numeric_version,
+        )
+    nonlinear = None
+    seed = plan.nonlinear_template if nonlinear_seed is None else nonlinear_seed
+    if seed is not None:
+        if initial is None:
+            raise RuntimeError("Prepared nonlinear force-density seed is unavailable.")
+        nonlinear = refresh_nonlinear(
+            seed,
+            _nonlinear_problem(
+                plan.problem,
+                force_densities.dtype,
+                use_linear_setup=plan.nonlinear_uses_setup,
+            ),
+            initial,
+            args=inputs,
+        )
+    return PreparedForceDensitySolve(
+        plan,
+        inputs,
+        linear,
+        nonlinear,
+        initial,
+        jnp.asarray(numeric_version, dtype=jnp.int32),
     )
 
 
@@ -591,21 +931,12 @@ def prepare_force_density(
         raise TypeError("plan must be a ForceDensityPlan.")
     if not isinstance(inputs, ForceDensityInputs):
         raise TypeError("inputs must be ForceDensityInputs.")
-    force_densities = _validated_force_densities(plan.problem, inputs)
-    initial = _initial_reduced(plan.problem, inputs, initial_positions)
-    linear = None
-    if plan.linear_template is not None:
-        linear = bind_numeric(
-            plan.linear_template,
-            _linear_problem(plan.problem, force_densities),
-            numeric_version=numeric_version,
-        )
-    return PreparedForceDensitySolve(
+    return _bind_force_density(
         plan,
         inputs,
-        linear,
-        initial,
-        jnp.asarray(numeric_version, dtype=jnp.int32),
+        initial_positions,
+        numeric_version,
+        None,
     )
 
 
@@ -616,19 +947,25 @@ def refresh_force_density(
     *,
     initial_positions: ArrayLike | None = None,
 ) -> PreparedForceDensitySolve:
-    """Refresh only numeric inputs while preserving symbolic solve identity."""
+    """Refresh numeric inputs while preserving linear and nonlinear templates."""
     if not isinstance(prepared, PreparedForceDensitySolve):
         raise TypeError("prepared must be a PreparedForceDensitySolve.")
-    return prepare_force_density(
+    return _bind_force_density(
         prepared.plan,
         inputs,
-        initial_positions=initial_positions,
-        numeric_version=prepared.numeric_version + 1,
+        initial_positions,
+        prepared.numeric_version + 1,
+        prepared.nonlinear_solve,
     )
 
 
-def _nonlinear_problem(plan: ForceDensityPlan, dtype: Any, /) -> NonlinearSystemProblem:
-    problem = plan.problem
+def _nonlinear_problem(
+    problem: ForceDensityProblem,
+    dtype: Any,
+    /,
+    *,
+    use_linear_setup: bool,
+) -> NonlinearSystemProblem:
     structure = problem.structure
     space = ArraySpace((structure.free_dof_count,), dtype=dtype)
 
@@ -653,11 +990,17 @@ def _nonlinear_problem(plan: ForceDensityPlan, dtype: Any, /) -> NonlinearSystem
             & problem.load_model.valid(structure, positions, inputs.load_parameters)
         )
 
+    def linear_setup(reduced, inputs):
+        del reduced
+        force_densities = _validated_force_densities(problem, inputs)
+        return _operator(problem, force_densities)
+
     return NonlinearSystemProblem(
         residual,
         state_space=space,
         residual_space=space,
         validity=validity,
+        linear_setup=linear_setup if use_linear_setup else None,
         problem_id=f"{problem.problem_id}:nonlinear-state",
     )
 
@@ -674,14 +1017,31 @@ def _physical_state(
     lengths = jnp.sqrt(jnp.sum(vectors * vectors, axis=-1))
     lengths = jnp.where(structure.member_valid, lengths, 0.0)
     axial = jnp.where(structure.member_valid, force_densities * lengths, 0.0)
-    loads = _nodal_loads(problem, inputs, positions, force_densities.dtype)
+    load_state = _load_state(problem, inputs, positions, force_densities.dtype)
+    loads = load_state.total
     internal = _internal_nodal_forces(structure, force_densities, positions)
     residual = loads - internal
-    reactions = jnp.where(
-        structure.constrained_dofs & structure.node_valid[:, None],
-        internal - loads,
-        0.0,
-    )
+    if structure.affine_constraints:
+        if structure.affine_prolongation is None:
+            raise RuntimeError("Affine prolongation is unavailable.")
+        imbalance = (internal - loads).reshape((-1,))
+        free_imbalance = structure.affine_prolongation @ (
+            structure.affine_prolongation.T @ imbalance
+        )
+        reactions = (imbalance - free_imbalance).reshape(
+            (structure.node_count, structure.dimension)
+        )
+        free_residual_full = (
+            structure.affine_prolongation @ structure.reduce(residual)
+        ).reshape((structure.node_count, structure.dimension))
+    else:
+        reactions = jnp.where(
+            structure.constrained_dofs & structure.node_valid[:, None],
+            internal - loads,
+            0.0,
+        )
+        free_mask = (~structure.constrained_dofs) & structure.node_valid[:, None]
+        free_residual_full = jnp.where(free_mask, residual, 0.0)
     free_residual = structure.reduce(residual)
     free_load = structure.reduce(loads)
     free_internal = structure.reduce(internal)
@@ -689,6 +1049,22 @@ def _physical_state(
     scale = jnp.maximum(_norm(free_load), _norm(free_internal))
     tiny = jnp.finfo(force_densities.dtype).tiny
     relative_residual = residual_norm / jnp.maximum(scale, tiny)
+    node_residual_squared = jnp.sum(free_residual_full**2, axis=-1)
+    graph_residual = jnp.sqrt(
+        jax.ops.segment_sum(
+            node_residual_squared,
+            structure.node_graph_indices,
+            num_segments=structure.graph.num_graphs,
+        )
+    )
+    graph_balance_vectors = jax.ops.segment_sum(
+        loads + reactions,
+        structure.node_graph_indices,
+        num_segments=structure.graph.num_graphs,
+    )
+    graph_balance = jnp.sqrt(
+        jnp.sum(graph_balance_vectors * graph_balance_vectors, axis=-1)
+    )
     global_balance = _norm(jnp.sum(loads + reactions, axis=0))
     active_lengths = jnp.where(structure.member_valid, lengths, jnp.inf)
     minimum_length = jnp.min(active_lengths)
@@ -704,7 +1080,7 @@ def _physical_state(
         & jnp.all(jnp.isfinite(lengths))
         & jnp.all(jnp.isfinite(axial))
     )
-    load_valid = problem.load_model.valid(structure, positions, inputs.load_parameters)
+    load_valid = load_state.valid
     threshold = problem.tolerances.absolute_equilibrium + (
         problem.tolerances.relative_equilibrium * scale
     )
@@ -715,6 +1091,7 @@ def _physical_state(
         lengths,
         force_densities,
         axial,
+        load_state,
         loads,
         internal,
         residual,
@@ -727,11 +1104,14 @@ def _physical_state(
         residual_norm,
         relative_residual,
         global_balance,
+        graph_residual,
+        graph_balance,
         minimum_length,
         jnp.sum(degenerate, dtype=jnp.int32),
         minimum_density,
         finite,
         load_valid,
+        load_state.minimum_regularity,
         equilibrium_valid,
     )
     return state, diagnostics
@@ -793,15 +1173,11 @@ def solve_force_density(
     if structure.free_dof_count == 0:
         reduced = jnp.empty((0,), dtype=force_densities.dtype)
     elif problem.load_model.depends_on_positions:
-        if prepared.initial_reduced is None:
-            raise RuntimeError("Prepared nonlinear force-density seed is unavailable.")
+        if prepared.nonlinear_solve is None:
+            raise RuntimeError("Prepared nonlinear force-density solve is unavailable.")
         nonlinear_result = implicit_root_result(
-            _nonlinear_problem(plan, force_densities.dtype),
-            prepared.initial_reduced,
-            method=plan.nonlinear_method,
-            termination=plan.nonlinear_termination,
+            prepared.nonlinear_solve,
             derivative_policy=plan.derivative_policy,
-            args=inputs,
         )
         reduced = nonlinear_result.state
     else:
@@ -821,13 +1197,24 @@ def solve_force_density(
     route: Literal["linear", "nonlinear"] = (
         "nonlinear" if problem.load_model.depends_on_positions else "linear"
     )
+    solver_plan_id = (
+        plan.linear_template.plan.plan_id
+        if plan.linear_template is not None
+        else (
+            None
+            if plan.nonlinear_template is None
+            else plan.nonlinear_template.linear_plan_id
+        )
+    )
     provenance = ForceDensityProvenance(
         problem.problem_id,
         structure.structure_id,
         problem.load_model.load_model_id,
         plan.plan_id,
+        solver_plan_id,
         route,
         problem.sign_mode,
+        prepared.numeric_version,
     )
     return ForceDensityResult(
         state,
@@ -847,6 +1234,7 @@ def force_density_equilibrium(
     linear_policy: LinearSolvePolicy | None = None,
     nonlinear_method: AbstractNonlinearMethod | None = None,
     nonlinear_termination: NonlinearTermination | None = None,
+    nonlinear_precision: NonlinearPrecisionPolicy | None = None,
     derivative_policy: ImplicitRootDerivativePolicy | None = None,
     initial_positions: ArrayLike | None = None,
 ) -> ForceDensityResult:
@@ -857,11 +1245,68 @@ def force_density_equilibrium(
         linear_policy=linear_policy,
         nonlinear_method=nonlinear_method,
         nonlinear_termination=nonlinear_termination,
+        nonlinear_precision=nonlinear_precision,
         derivative_policy=derivative_policy,
         initial_positions=initial_positions,
     )
     prepared = prepare_force_density(plan, inputs, initial_positions=initial_positions)
     return solve_force_density(prepared)
+
+
+def solve_force_density_batch(
+    plan: ForceDensityPlan,
+    force_densities: ArrayLike,
+    prescribed_values: ArrayLike,
+    load_parameters: Any,
+    /,
+    *,
+    initial_positions: ArrayLike | None = None,
+) -> BatchedForceDensityResult:
+    """Vmap same-topology numeric cases with one result status per case."""
+    if not isinstance(plan, ForceDensityPlan):
+        raise TypeError("plan must be a ForceDensityPlan.")
+    densities = jnp.asarray(force_densities)
+    prescribed = jnp.asarray(prescribed_values)
+    if densities.ndim != 2 or prescribed.ndim != 2:
+        raise ValueError(
+            "Batched force_densities and prescribed_values must have one leading case axis."
+        )
+    batch_size = int(densities.shape[0])
+    if prescribed.shape[0] != batch_size:
+        raise ValueError("Batched inputs must share one case count.")
+    for leaf in jax.tree.leaves(load_parameters):
+        if jnp.asarray(leaf).shape[0] != batch_size:
+            raise ValueError("Every batched load-parameter leaf needs the case axis.")
+
+    if initial_positions is None:
+
+        def one_case(q, prescribed_case, load_case):
+            inputs = ForceDensityInputs(q, prescribed_case, load_case)
+            return solve_force_density(prepare_force_density(plan, inputs))
+
+        results = jax.vmap(one_case)(densities, prescribed, load_parameters)
+    else:
+        initial = jnp.asarray(initial_positions)
+        if initial.shape[0] != batch_size:
+            raise ValueError("initial_positions must share the case axis.")
+
+        def one_case(q, prescribed_case, load_case, initial_case):
+            inputs = ForceDensityInputs(q, prescribed_case, load_case)
+            return solve_force_density(
+                prepare_force_density(
+                    plan,
+                    inputs,
+                    initial_positions=initial_case,
+                )
+            )
+
+        results = jax.vmap(one_case)(
+            densities,
+            prescribed,
+            load_parameters,
+            initial,
+        )
+    return BatchedForceDensityResult(results, batch_size)
 
 
 def force_density_load_path(
@@ -886,7 +1331,9 @@ def force_density_load_path(
 
 
 __all__ = [
+    "BatchedForceDensityResult",
     "ForceDensityDiagnostics",
+    "ForceDensityInputSignature",
     "ForceDensityInputs",
     "ForceDensityPlan",
     "ForceDensityProblem",
@@ -899,8 +1346,10 @@ __all__ = [
     "PreparedForceDensitySolve",
     "force_density_equilibrium",
     "force_density_load_path",
+    "force_density_status_message",
     "plan_force_density",
     "prepare_force_density",
     "refresh_force_density",
     "solve_force_density",
+    "solve_force_density_batch",
 ]

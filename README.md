@@ -44,10 +44,13 @@ Most workflows are composing a few primitives:
   gravity/cooling/stochastic source processes, compatible constrained MHD,
   temporal/stochastic composition, and auditable plan/preparation identities.
 - **Discrete structural form-finding**: sparse pin-jointed force-density
-  equilibrium supports full or componentwise coordinate restraints, tension,
-  compression, mixed signs, fixed and shape-dependent loads, mathematical
-  solution derivatives, and force/support/load state-design optimization with
-  physical residual, reaction, status, and provenance evidence.
+  equilibrium supports coordinate and general affine restraints, tension,
+  compression, mixed signs, prepared linear/nonlinear refresh, weighted
+  preconditioning, fixed, self-weight, traction, pressure, and pneumatic loads,
+  batched cases, graph-level evidence, pure design observables, constrained
+  force/support/load optimization, mechanism/self-stress analysis, constitutive
+  tangent stability, and continuation with physical residual, reaction, status,
+  load-component, and provenance evidence.
 - **Atomistic learning and dynamics**: scale-identified atomic structures,
   position-independent systems, stable-ID molecular topology, classical and learned
   scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,

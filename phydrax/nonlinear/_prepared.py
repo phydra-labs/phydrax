@@ -342,7 +342,8 @@ def refresh_nonlinear(
     if linear_operator.source.size != linear_operator.target.size:
         raise ValueError("Newton methods require a square Jacobian coordinate map.")
     prepared_linear, refresh_state = prepared.linear_refresh_state.refresh(
-        LinearSystem(linear_operator, problem_id=prepared.linear_plan.problem_id)
+        LinearSystem(linear_operator, problem_id=prepared.linear_plan.problem_id),
+        setup_operator=problem_.linear_setup(state, args),
     )
     recycling_policy = prepared_linear.plan.policy.recycling
     recycling = (
