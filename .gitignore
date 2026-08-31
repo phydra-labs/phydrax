@@ -54,6 +54,7 @@ benchmarks/*
 !benchmarks/incompressible_spectral.json
 !benchmarks/unbounded_spectral.json
 !benchmarks/structured_flow.json
+!benchmarks/shallow_water.json
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/material_point.json

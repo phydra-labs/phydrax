@@ -194,6 +194,7 @@ nav:
         - Compatible time-domain Maxwell: "guides_compatible_maxwell.md"
         - Finite real algebras: "guides_finite_real_algebras.md"
         - Structured finite volume: "guides_finite_volume.md"
+        - Shallow water: "guides_shallow_water.md"
         - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
         - Compressible multiphysics: "guides_compressible_multiphysics.md"
         - Advanced multiphysics: "guides_advanced_multiphysics.md"

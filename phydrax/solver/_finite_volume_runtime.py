@@ -18,6 +18,7 @@ from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import (
+    AbstractWavePropagationPlan,
     ConservativeSmallCellRedistributionPlan,
     ConservativeSmallCellRedistributionReport,
     FiniteVolumeAdmissibilityReport,
@@ -46,6 +47,15 @@ from ..discretization.finite_volume._flux_ledger import (
 from ..discretization.finite_volume._geometry_protocol import (
     FiniteVolumeGeometryStatus,
     FiniteVolumeStageMetrics,
+)
+from ..discretization.finite_volume._positivity import (
+    BalancedPositivityBlendResult,
+)
+from ..discretization.finite_volume._shallow_water import (
+    PreparedShallowWaterBathymetry,
+    ShallowWaterAcceptedFaceIntegrals,
+    ShallowWaterBalancedFaceResult,
+    ShallowWaterHydrostaticHLLPlan,
 )
 from ..discretization.finite_volume._unstructured_motion import (
     UnstructuredALEStepGeometry,
@@ -253,6 +263,7 @@ class FiniteVolumeAdvanceResult(StrictModule):
     ale: FiniteVolumeALEAdvanceEvidence | None
     embedded: FiniteVolumeEmbeddedAdvanceEvidence | None
     successor_runtime: PreparedFiniteVolumeRuntime | None = None
+    shallow_water_integrals: ShallowWaterAcceptedFaceIntegrals | None = None
 
 
 class FiniteVolumeScheduledAdvanceResult(StrictModule):
@@ -319,6 +330,13 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             ),
         ):
             raise TypeError("dynamics must be prepared finite-volume dynamics.")
+        if isinstance(dynamics, PreparedFiniteVolumeDynamics) and isinstance(
+            dynamics.method.interface_solver, AbstractWavePropagationPlan
+        ):
+            raise ValueError(
+                "Wave-propagation dynamics do not expose the face fluxes required "
+                "by PreparedFiniteVolumeRuntime."
+            )
         if not isinstance(positivity, FluxPositivityPlan):
             raise TypeError("positivity must be FluxPositivityPlan.")
         policy_ = FiniteVolumeStepPolicy() if policy is None else policy
@@ -352,6 +370,26 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             ),
         ):
             fallback = dynamics.make_fallback_dynamics(positivity.fallback_flux)
+        elif isinstance(dynamics.method.interface_solver, ShallowWaterHydrostaticHLLPlan):
+            if not isinstance(dynamics.bathymetry, PreparedShallowWaterBathymetry):
+                raise TypeError(
+                    "Hydrostatic shallow-water runtime requires prepared bathymetry."
+                )
+            fallback_method = FiniteVolumeMethodPlan(
+                PiecewiseConstantReconstruction(),
+                dynamics.method.interface_solver,
+                differentiability="branchwise",
+            )
+            fallback = PreparedFiniteVolumeDynamics(
+                dynamics.system,
+                dynamics.discretization,
+                fallback_method,
+                dynamics.boundaries,
+                bathymetry=dynamics.bathymetry.values,
+                precision=dynamics.precision,
+                source=dynamics.source,
+                source_id=dynamics.source_id,
+            )
         else:
             fallback_method = FiniteVolumeMethodPlan(
                 PiecewiseConstantReconstruction(),
@@ -959,6 +997,44 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             for layout in discretization.face_layouts
         )
 
+    def _zero_shallow_water_integrals(
+        self,
+    ) -> ShallowWaterAcceptedFaceIntegrals | None:
+        if not isinstance(self.dynamics, PreparedFiniteVolumeDynamics) or not isinstance(
+            self.dynamics.method.interface_solver,
+            ShallowWaterHydrostaticHLLPlan,
+        ):
+            return None
+        if not isinstance(self.dynamics.bathymetry, PreparedShallowWaterBathymetry):
+            raise TypeError(
+                "Hydrostatic shallow-water runtime requires prepared bathymetry."
+            )
+        dtype = jnp.dtype(self.precision.reduction_dtype)
+        contributions = []
+        for layout in self.dynamics.discretization.face_layouts:
+            shape = layout.shape + (self.dynamics.discretization.component_count,)
+            state = jnp.zeros(shape, dtype=dtype)
+            speed = jnp.zeros(layout.shape, dtype=dtype)
+            contributions.append(
+                ShallowWaterBalancedFaceResult(
+                    state,
+                    state,
+                    state,
+                    speed,
+                    state,
+                    state,
+                    jnp.ones(layout.shape, dtype=bool),
+                )
+            )
+        return ShallowWaterAcceptedFaceIntegrals(
+            tuple(contributions),
+            tuple(self.dynamics.discretization.face_measures),
+            jnp.asarray(0.0, dtype=dtype),
+            axis_names=self.dynamics.discretization.grid.axis_names,
+            bed_id=self.dynamics.bathymetry.bed_id,
+            plan_id=self.dynamics.method.interface_solver.plan_id,
+        )
+
     def _static_accepted_flux_integral_ledger(
         self,
         original_content: FiniteVolumeConservativeContentState,
@@ -1053,6 +1129,41 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         args: Any,
         /,
     ):
+        if isinstance(
+            self.dynamics,
+            PreparedFiniteVolumeDynamics,
+        ) and isinstance(
+            self.dynamics.method.interface_solver,
+            ShallowWaterHydrostaticHLLPlan,
+        ):
+            if not isinstance(self.fallback_dynamics, PreparedFiniteVolumeDynamics):
+                raise TypeError(
+                    "Hydrostatic shallow-water fallback must use structured dynamics."
+                )
+            high_contributions = self.dynamics.balanced_face_contributions(
+                time, evaluation_state, args
+            )
+            fallback_contributions = self.fallback_dynamics.balanced_face_contributions(
+                time, evaluation_state, args
+            )
+            high_residual = self.precision.reduction(
+                self.dynamics(time, evaluation_state, args)
+            )
+            common_residual = self.precision.storage(
+                high_residual
+                - self.precision.reduction(
+                    self.dynamics._balanced_residual(high_contributions)
+                )
+            )
+            return self.positivity.limit_balanced_face_contributions(
+                self.dynamics.system,
+                combination_base,
+                high_contributions,
+                fallback_contributions,
+                common_residual,
+                step_size,
+                self.dynamics.discretization,
+            )
         high_fluxes, _ = self._face_fluxes(self.dynamics, time, evaluation_state, args)
         fallback_fluxes, _ = self._face_fluxes(
             self.fallback_dynamics, time, evaluation_state, args
@@ -1151,6 +1262,63 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 strict=True,
             )
         )
+        if isinstance(third, BalancedPositivityBlendResult):
+            if not isinstance(first, BalancedPositivityBlendResult) or not isinstance(
+                second, BalancedPositivityBlendResult
+            ):
+                raise TypeError(
+                    "All hydrostatic shallow-water stages must use balanced positivity."
+                )
+            accepted_contributions = tuple(
+                ShallowWaterBalancedFaceResult(
+                    self.precision.flux(
+                        (1.0 / 6.0)
+                        * self.precision.reduction(first_contribution.normal_flux)
+                        + (1.0 / 6.0)
+                        * self.precision.reduction(second_contribution.normal_flux)
+                        + (2.0 / 3.0)
+                        * self.precision.reduction(third_contribution.normal_flux)
+                    ),
+                    self.precision.flux(
+                        (1.0 / 6.0)
+                        * self.precision.reduction(first_contribution.left_correction)
+                        + (1.0 / 6.0)
+                        * self.precision.reduction(second_contribution.left_correction)
+                        + (2.0 / 3.0)
+                        * self.precision.reduction(third_contribution.left_correction)
+                    ),
+                    self.precision.flux(
+                        (1.0 / 6.0)
+                        * self.precision.reduction(first_contribution.right_correction)
+                        + (1.0 / 6.0)
+                        * self.precision.reduction(second_contribution.right_correction)
+                        + (2.0 / 3.0)
+                        * self.precision.reduction(third_contribution.right_correction)
+                    ),
+                    third_contribution.max_speed,
+                    third_contribution.reconstructed_left,
+                    third_contribution.reconstructed_right,
+                    third_contribution.dry_face,
+                )
+                for (
+                    first_contribution,
+                    second_contribution,
+                    third_contribution,
+                ) in zip(
+                    first.contributions,
+                    second.contributions,
+                    third.contributions,
+                    strict=True,
+                )
+            )
+            return BalancedPositivityBlendResult(
+                state=self.precision.storage(third.state),
+                report=self._precision_report(third.report),
+                contributions=accepted_contributions,
+                normal_fluxes=normal_fluxes,
+                integrated_fluxes=integrated_flux_rates,
+                face_blend_factors=third.face_blend_factors,
+            )
         return type(third)(
             state=self.precision.storage(third.state),
             report=self._precision_report(third.report),
@@ -1488,6 +1656,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 precision_evidence=self.precision.evidence(),
                 ale=None,
                 embedded=None,
+                shallow_water_integrals=self._zero_shallow_water_integrals(),
             )
 
         return self._refresh_sliding_after_accept(
@@ -2422,6 +2591,9 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             ),
         )
         accepted_flux_rates = self._zero_static_flux_rates()
+        accepted_balanced_contributions: (
+            tuple[ShallowWaterBalancedFaceResult, ...] | None
+        ) = None
         current_dt = self.precision.decision(attempted)
         for retry in range(self.policy.maximum_retries + 1):
             candidate = self._candidate(
@@ -2462,6 +2634,16 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     strict=True,
                 )
             )
+            if isinstance(candidate, BalancedPositivityBlendResult):
+                if accepted_balanced_contributions is None:
+                    accepted_balanced_contributions = jax.tree.map(
+                        jnp.zeros_like, candidate.contributions
+                    )
+                accepted_balanced_contributions = jax.tree.map(
+                    lambda new, old: jnp.where(take, new, old),
+                    candidate.contributions,
+                    accepted_balanced_contributions,
+                )
             accepted = accepted | take
             current_dt = self.precision.decision(
                 current_dt * self.policy.reduction_factor
@@ -2518,6 +2700,25 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             sliding_shift=runtime_state.sliding_shift,
             sliding_event_id=runtime_state.sliding_event_id,
         )
+        shallow_water_integrals = None
+        if isinstance(self.dynamics, PreparedFiniteVolumeDynamics) and isinstance(
+            self.dynamics.method.interface_solver,
+            ShallowWaterHydrostaticHLLPlan,
+        ):
+            if accepted_balanced_contributions is None or not isinstance(
+                self.dynamics.bathymetry, PreparedShallowWaterBathymetry
+            ):
+                raise RuntimeError(
+                    "Hydrostatic shallow-water acceptance lacks face evidence."
+                )
+            shallow_water_integrals = ShallowWaterAcceptedFaceIntegrals(
+                accepted_balanced_contributions,
+                tuple(self.dynamics.discretization.face_measures),
+                accepted_dt,
+                axis_names=self.dynamics.discretization.grid.axis_names,
+                bed_id=self.dynamics.bathymetry.bed_id,
+                plan_id=self.dynamics.method.interface_solver.plan_id,
+            )
         return FiniteVolumeAdvanceResult(
             runtime_state=next_state,
             accepted=accepted,
@@ -2538,6 +2739,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             precision_evidence=self.precision.evidence(),
             ale=None,
             embedded=None,
+            shallow_water_integrals=shallow_water_integrals,
         )
 
 

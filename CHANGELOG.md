@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added one- and two-dimensional Cartesian wet/dry shallow-water finite volumes with
+  exact dry-state semantics, prepared static bathymetry, Chen--Noelle hydrostatic HLL
+  face contributions, equilibrium-aware MUSCL reconstruction, SSPRK-stage conservative
+  positivity, accepted one-sided bed-integral evidence, f/beta-plane Coriolis forcing,
+  renderer-neutral observables, output support, qualification cases, and benchmarks.
+  Removed the unqualified one-dimensional shallow-water f-wave path.
 - Added native experimental velocimetry with mask-aware multipass and ensemble
   PIV, explicit peak/validation/replacement evidence, calibrated physical
   conversion, pinhole/distorted/refractive camera rigs, robust calibration and
@@ -903,7 +909,7 @@
   to tensor support; supports uniform/nonuniform Cartesian and stationary mapped
   geometry, typed physical boundaries, piecewise-constant/MUSCL/WENO-Z/TENO/MP5 and
   characteristic reconstruction, Rusanov/HLL/HLLC/Roe and entropy fluxes, normal and
-  transverse wave propagation, shallow-water f-wave balancing, multidimensional
+  transverse wave propagation, hydrostatic wet/dry shallow water, multidimensional
   split/unsplit execution, Euler/multispecies/MHD systems, positivity and
   differentiability policies, conservative diffusion and compressible viscous fluxes,
   MAC pressure projection, matrix-free linearization, conforming/nested multiblock
