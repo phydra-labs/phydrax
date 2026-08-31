@@ -14,6 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...solver import AdaptiveBalanceLawRolloutPlan, BalanceLawRuntimeState
+from ._background import FLRWBackground
 from ._particles import CosmologicalKDKPlan, CosmologicalParticleState
 
 
@@ -30,6 +31,8 @@ class CosmologicalBaryonParticleDiagnostics(StrictModule):
 
 
 class CosmologicalBaryonParticlePlan(StrictModule, NonTrainableState):
+    """Synchronize a generic baryon rollout and one externally forced KDK step."""
+
     baryon_rollout: AdaptiveBalanceLawRolloutPlan
     particle_plan: CosmologicalKDKPlan
     plan_id: str = eqx.field(static=True)
@@ -56,6 +59,7 @@ class CosmologicalBaryonParticlePlan(StrictModule, NonTrainableState):
 
     def advance(
         self,
+        background: FLRWBackground,
         state: CosmologicalBaryonParticleState,
         acceleration_start: Array,
         acceleration_end: Array,
@@ -69,6 +73,7 @@ class CosmologicalBaryonParticlePlan(StrictModule, NonTrainableState):
             dtype=state.particles.scale_factor.dtype,
         )
         particles, particle_evidence = self.particle_plan.advance(
+            background,
             state.particles,
             end_scale,
             acceleration_start,

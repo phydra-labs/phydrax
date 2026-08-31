@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added explicit cosmological length/mass/time scales, parameter-differentiable flat
+  FLRW backgrounds, native first/second Lagrangian growth, immutable expansion/growth
+  and linear-power products, state-ready 1LPT/2LPT, and transactional periodic
+  scale-factor particle-mesh rollout. The cosmological path reuses the existing
+  particle discretization, splat, self-gravity, and typed PM force evaluation;
+  synchronized baryon/particle orchestration remains distinct from physical coupling.
 - Added enhanced conforming scalar virtual elements of qualified degree one
   through three on arbitrary-arity polygonal cell blocks, including certified
   H1/L2 projectors, explicit stabilization, functional trace constraints,

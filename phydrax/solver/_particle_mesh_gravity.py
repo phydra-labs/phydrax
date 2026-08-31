@@ -14,13 +14,25 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization.splatting import PreparedParticleGridSplat
+from ..discretization.splatting import PreparedParticleGridSplat, SplatDepositResult
 from ._self_gravity import PreparedNewtonianSelfGravity
 
 
 class ParticleMeshGravityState(StrictModule):
     position: Array
     momentum: Array
+
+
+class ParticleMeshGravityForceResult(StrictModule):
+    """One deposited-density, Poisson, and gathered-acceleration evaluation."""
+
+    acceleration: Array
+    potential: Array
+    deposited: SplatDepositResult
+    net_force: Array
+    converged: Array
+    support_complete: Array
+    successful: Array
 
 
 class ParticleMeshGravityDiagnostics(StrictModule):
@@ -119,7 +131,7 @@ class ParticleMeshGravityPlan(StrictModule, NonTrainableState):
         /,
         *,
         background_density: ArrayLike | None = None,
-    ):
+    ) -> ParticleMeshGravityForceResult:
         deposited, routes = self.density(position)
         density = deposited.density
         if background_density is not None:
@@ -131,15 +143,27 @@ class ParticleMeshGravityPlan(StrictModule, NonTrainableState):
             density, args
         )
         gathered = self.transfer.gather(routes, cell_acceleration)
-        active = self.transfer.particles.active_mask[:, None]
+        active_mask = self.transfer.particles.active_mask
+        active = active_mask[:, None]
         acceleration = jnp.where(active, gathered.values, 0.0)
+        support_complete = jnp.all(gathered.support | ~active_mask)
+        physical_masses = self.transfer.particles.masses.astype(acceleration.dtype)
+        net_force = jnp.sum(physical_masses[:, None] * acceleration, axis=0)
         successful = (
             deposited.successful
             & solved.converged
-            & jnp.all(gathered.support | ~self.transfer.particles.active_mask)
+            & support_complete
             & jnp.all(jnp.isfinite(acceleration))
         )
-        return acceleration, potential, deposited, successful
+        return ParticleMeshGravityForceResult(
+            acceleration=acceleration,
+            potential=potential,
+            deposited=deposited,
+            net_force=net_force,
+            converged=solved.converged,
+            support_complete=support_complete,
+            successful=successful,
+        )
 
     def step(
         self,
@@ -163,20 +187,24 @@ class ParticleMeshGravityPlan(StrictModule, NonTrainableState):
         )
         masses = self.transfer.particles.safe_masses.astype(state.position.dtype)
         active = self.transfer.particles.active_mask[:, None]
-        acceleration_0, potential_0, deposited_0, success_0 = self.acceleration(
+        force_0 = self.acceleration(
             state.position, args, background_density=background_density
         )
-        half_momentum = state.momentum + 0.5 * step * masses[:, None] * acceleration_0
+        half_momentum = (
+            state.momentum + 0.5 * step * masses[:, None] * force_0.acceleration
+        )
         next_position = state.position + step * half_momentum / masses[:, None]
         next_position = jnp.where(active, next_position, 0.0)
-        acceleration_1, potential_1, deposited_1, success_1 = self.acceleration(
+        force_1 = self.acceleration(
             next_position, args, background_density=background_density
         )
-        next_momentum = half_momentum + 0.5 * step * masses[:, None] * acceleration_1
+        next_momentum = (
+            half_momentum + 0.5 * step * masses[:, None] * force_1.acceleration
+        )
         next_momentum = jnp.where(active, next_momentum, 0.0)
         successful = (
-            success_0
-            & success_1
+            force_0.successful
+            & force_1.successful
             & jnp.all(jnp.isfinite(next_position))
             & jnp.all(jnp.isfinite(next_momentum))
         )
@@ -187,27 +215,23 @@ class ParticleMeshGravityPlan(StrictModule, NonTrainableState):
             lambda _: state,
             operand=None,
         )
-        physical_masses = self.transfer.particles.masses.astype(state.position.dtype)
-        net_force = jnp.sum(
-            physical_masses[:, None] * acceleration_0,
-            axis=0,
-        )
         diagnostics = ParticleMeshGravityDiagnostics(
-            initial_acceleration=acceleration_0,
-            final_acceleration=acceleration_1,
-            initial_potential=potential_0,
-            final_potential=potential_1,
+            initial_acceleration=force_0.acceleration,
+            final_acceleration=force_1.acceleration,
+            initial_potential=force_0.potential,
+            final_potential=force_1.potential,
             mass_balance_defect=jnp.maximum(
-                deposited_0.balance.maximum_absolute_balance_defect,
-                deposited_1.balance.maximum_absolute_balance_defect,
+                force_0.deposited.balance.maximum_absolute_balance_defect,
+                force_1.deposited.balance.maximum_absolute_balance_defect,
             ),
-            net_force=net_force,
+            net_force=force_0.net_force,
             successful=successful,
         )
         return ParticleMeshGravityStepResult(accepted, diagnostics, successful)
 
 
 __all__ = [
+    "ParticleMeshGravityForceResult",
     "ParticleMeshGravityDiagnostics",
     "ParticleMeshGravityPlan",
     "ParticleMeshGravityState",
