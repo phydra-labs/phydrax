@@ -26,6 +26,9 @@ python examples/material_point_materials.py
 python examples/material_point_domains_sparse.py
 python examples/material_point_contact_fracture.py
 python examples/material_point_implicit.py
+python examples/electrostatic_pic.py
+python examples/electromagnetic_pic.py
+python examples/flip_dam_break.py
 python examples/wet_granular_bridge.py
 python examples/superquadric_collision.py
 python examples/particle_internal_heating.py

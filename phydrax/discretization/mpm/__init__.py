@@ -29,6 +29,16 @@ from ._fracture import (
     MPMFractureTopologyState,
 )
 from ._method import APICTransferPlan, ExplicitMPMMethodPlan, MPMResourcePolicy
+from ._rigid_coupling import (
+    PreparedRigidMPMCoupling,
+    RigidMPMConstraintPayload,
+    RigidMPMCouplingEvaluation,
+    RigidMPMCouplingMode,
+    RigidMPMCouplingPlan,
+    RigidMPMCouplingState,
+    RigidMPMCouplingStepResult,
+    RigidMPMRouteCacheCertificate,
+)
 from ._schedule import (
     AbstractExplicitMPMSchedule,
     MUSLMPMSchedule,
@@ -99,6 +109,14 @@ __all__ = [
     "MPMTransferEvidence",
     "MUSLMPMSchedule",
     "PreparedMPMDynamics",
+    "PreparedRigidMPMCoupling",
+    "RigidMPMConstraintPayload",
+    "RigidMPMCouplingEvaluation",
+    "RigidMPMCouplingMode",
+    "RigidMPMCouplingPlan",
+    "RigidMPMCouplingState",
+    "RigidMPMCouplingStepResult",
+    "RigidMPMRouteCacheCertificate",
     "PrescribedGridVelocityPlan",
     "PrescribedGridVelocityResult",
     "RigidMPMContactPlan",

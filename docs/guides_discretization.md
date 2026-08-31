@@ -240,6 +240,19 @@ geometry evaluation is JAX-differentiable through
 See [Finite elements](guides_finite_elements.md) for reference tabulation,
 DOF maps, constraints, functionals, sparse lowering, and DAE integration.
 
+## Virtual elements
+
+`CellMesh.from_polygons` extends the canonical cell complex to fixed-arity
+polygon blocks. `VirtualElementPlan` binds enhanced conforming H1 functional
+DOFs to computable polynomial value and gradient projections. The compiled
+form then realizes consistency plus explicit projector-kernel stabilization
+without constructing an interior basis.
+
+The qualified surface covers scalar degrees one through three, polygonal
+diffusion/reaction/mass, trace boundary data, matrix-free and sparse actions,
+fixed-topology geometry refresh, heat DAEs, generalized eigenproblems, and
+projected reconstruction. See [Virtual elements](guides_virtual_elements.md).
+
 ## Finite volume
 
 Structured finite volume binds cell-average fields and directional face-flux spaces to

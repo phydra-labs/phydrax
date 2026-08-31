@@ -13,7 +13,6 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..applications.solid_mechanics import MPMPhaseFieldParameters
 from ..discretization.mpm import MPMParticleState, MPMRuntimeState, PreparedMPMDynamics
 from ..equations import MaterialPointArguments
 
@@ -206,6 +205,10 @@ class PreparedMPMPhaseFieldDynamics(StrictModule, NonTrainableState):
         arguments: MaterialPointArguments,
         /,
     ) -> MPMPhaseFieldStepResult:
+        from ..applications.solid_mechanics._mpm_fracture import (
+            MPMPhaseFieldParameters,
+        )
+
         if not isinstance(arguments.material_parameters, MPMPhaseFieldParameters):
             raise TypeError("Phase-field dynamics require MPMPhaseFieldParameters.")
         mechanics_result = self.mechanics.step_detailed(

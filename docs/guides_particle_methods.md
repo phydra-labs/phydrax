@@ -93,6 +93,14 @@ stability evidence, and fixed-temporal replay form one method-specific contract.
 Splatting remains the reusable data plane and does not independently claim MPM
 solver semantics.
 
+## Particle-in-cell methods
+
+[Electrostatic and electromagnetic PIC](guides_particle_in_cell.md) attach extensive
+macrocharge to existing material particles, use the structured splat data plane for
+endpoint charge and physical field gather, and compose compatible cochain field
+solves. Electromagnetic current is a separate trajectory operator that certifies
+discrete continuity; ordinary splatting does not make that claim.
+
 ## Fluid method families
 
 Conservative barotropic SPH compiles position and canonical momentum to a
@@ -101,6 +109,11 @@ first-order position/velocity state, explicit summation or continuity density,
 optional Morris physical viscosity, and SSPRK integration. Both methods share
 the same kernels, pair relations, dense authority, cell-list execution, and
 `GraphIR` views.
+
+Fixed-population [FLIP](guides_flip.md) uses one cell splat and one splat per
+staggered MAC face component for parcel-volume and momentum transfer. Its
+particle/grid-delta update and atmospheric pressure projection are distinct from
+SPH free-surface pressure and MPM constitutive dynamics.
 
 ## Discrete element method
 

@@ -94,8 +94,24 @@ when a compatible cochain complex is available.
 
 ## Cosmology, inference, and learned closures
 
-`phydrax.applications.cosmology` provides a flat `FLRWBackground`, scale-factor KDK
-particle dynamics, and first-order Lagrangian initial conditions.
+`phydrax.applications.cosmology` provides a parameter-differentiable flat
+radiation--matter--Lambda `FLRWBackground`, explicit comoving length/mass/time scales,
+native first- and second-order Lagrangian growth, immutable expansion/growth/linear-power
+tables, state-ready 1LPT/2LPT, and a transactional periodic particle-mesh rollout in
+scale factor.
+
+Particles use comoving position `x` and canonical momentum `p = m a^2 dx/dt`.
+`ParticleMeshGravityPlan.acceleration` solves for the rescaled potential
+`psi = a Phi` from comoving density,
+`nabla_x^2 psi = 4 pi G (rho_com - mean(rho_com))`. The cosmological KDK then
+integrates `dx/da = p / (m a^3 H)` and `dp/da = m g_psi / (a^2 H)`. One prepared
+particle discretization owns IDs, masses, active support, and dimension across LPT,
+KDK, deposition, and force gathering.
+
+The native linear-power input is a supplied `MatterPowerTable`; Phydrax does not claim
+a Boltzmann, transfer-function, nonlinear-correction, halo, survey-observable, or CMB
+solver. `CosmologicalBaryonParticlePlan` synchronizes terminal scale factor only and
+does not claim physical baryon--dark-matter exchange.
 
 `WhitenedFieldInferencePlan`, `ParticleMarginalLikelihoodPlan`, and
 `SimulationSensitivityReport` compose existing inference substrates with field-valued

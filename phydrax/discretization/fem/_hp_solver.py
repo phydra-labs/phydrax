@@ -18,6 +18,8 @@ from ...linalg import (
     AbstractPreconditioner,
     AbstractPreconditionerBuilder,
     DenseInversePreconditionerBuilder,
+    LocalEliminationPlan,
+    LocalEliminationResult,
     MaterializationPolicy,
     PreconditionerCostEstimate,
     PreconditionerProperties,
@@ -25,20 +27,19 @@ from ...linalg import (
 )
 from ._hp import FiniteElementHPTransferPlan
 from ._hp_runtime import FiniteElementHPEpoch, FiniteElementHPTraceConstraintPlan
-from ._local_elimination import FiniteElementLocalEliminationPlan, LocalEliminationResult
 
 
 class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
     """Degree-bucket local elimination with retained trace coordinates."""
 
     bucket_degrees: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    eliminations: tuple[FiniteElementLocalEliminationPlan, ...]
+    eliminations: tuple[LocalEliminationPlan, ...]
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         bucket_degrees: Sequence[tuple[int, ...]],
-        eliminations: Sequence[FiniteElementLocalEliminationPlan],
+        eliminations: Sequence[LocalEliminationPlan],
         /,
     ):
         degrees = tuple(
@@ -50,7 +51,7 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
             or len(degrees) != len(plans)
             or len(set(degrees)) != len(degrees)
             or any(
-                not isinstance(plan, FiniteElementLocalEliminationPlan) for plan in plans
+                not isinstance(plan, LocalEliminationPlan) for plan in plans
             )
         ):
             raise ValueError("hp condensation degrees or elimination plans are invalid.")
@@ -118,7 +119,7 @@ def finite_element_hp_condensation_plan(
             np.unique(nodes[:, axis]).size - 1 for axis in range(nodes.shape[1])
         )
         degrees.append(axis_degrees)
-        plans.append(FiniteElementLocalEliminationPlan(element.local_dof_count, retained))
+        plans.append(LocalEliminationPlan(element.local_dof_count, retained))
     if not plans:
         raise ValueError(
             "hp condensation requires at least one element with interior DOFs."

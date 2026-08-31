@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -82,7 +84,7 @@ def _canonical_entity_ids(keys: np.ndarray, /) -> np.ndarray:
 
 
 class PolygonalConnectivity(StrictModule, NonTrainableState):
-    """Canonical edge incidence for mixed triangular/quadrilateral cells."""
+    """Canonical edge incidence for mixed two-dimensional polygonal cells."""
 
     edges: Array
     cell_vertices: Array
@@ -97,10 +99,11 @@ class PolygonalConnectivity(StrictModule, NonTrainableState):
     vertex_count: int = eqx.field(static=True)
     triangle_count: int = eqx.field(static=True)
     quadrilateral_count: int = eqx.field(static=True)
+    polygon_count: int = eqx.field(static=True)
 
     @property
     def cell_count(self) -> int:
-        return self.triangle_count + self.quadrilateral_count
+        return self.triangle_count + self.quadrilateral_count + self.polygon_count
 
 
 class TetrahedralConnectivity(StrictModule, NonTrainableState):
@@ -125,32 +128,54 @@ def polygonal_connectivity(
     quadrilaterals: ArrayLike | None,
     vertex_count: int,
     /,
+    *,
+    polygons: Sequence[ArrayLike] = (),
 ) -> PolygonalConnectivity:
-    """Build one edge-manifold connectivity record for mixed 2-D cells."""
+    """Build one edge-manifold record for mixed 2-D polygonal cells."""
 
     vertices = int(vertex_count)
     if vertices <= 0:
         raise ValueError("vertex_count must be positive.")
     triangle_cells = _validated_cells("triangles", triangles, 3, vertices)
     quadrilateral_cells = _validated_cells("quadrilaterals", quadrilaterals, 4, vertices)
-    if triangle_cells.shape[0] + quadrilateral_cells.shape[0] == 0:
+    polygon_cells = []
+    for index, values in enumerate(polygons):
+        array = np.asarray(values, dtype=np.int32)
+        if array.ndim != 2 or array.shape[1] < 3:
+            raise ValueError(f"polygon block {index} must have shape (n, arity >= 3).")
+        polygon_cells.append(
+            _validated_cells(
+                f"polygon block {index}",
+                array,
+                int(array.shape[1]),
+                vertices,
+            )
+        )
+    blocks = (triangle_cells, quadrilateral_cells, *polygon_cells)
+    if sum(block.shape[0] for block in blocks) == 0:
         raise ValueError("At least one polygonal cell is required.")
+    canonical_cells = [
+        tuple(sorted(int(value) for value in cell)) for block in blocks for cell in block
+    ]
+    if len(set(canonical_cells)) != len(canonical_cells):
+        raise ValueError("Polygonal connectivity contains duplicate cells.")
 
-    cell_count = triangle_cells.shape[0] + quadrilateral_cells.shape[0]
-    cell_vertices = np.zeros((cell_count, 4), dtype=np.int32)
-    cell_valid = np.zeros((cell_count, 4), dtype=bool)
-    cell_kinds = np.empty((cell_count,), dtype=np.int8)
-    triangle_count = triangle_cells.shape[0]
-    cell_vertices[:triangle_count, :3] = triangle_cells
-    cell_valid[:triangle_count, :3] = True
-    cell_kinds[:triangle_count] = 3
-    cell_vertices[triangle_count:] = quadrilateral_cells
-    cell_valid[triangle_count:] = True
-    cell_kinds[triangle_count:] = 4
+    capacity = max(4, *(block.shape[1] for block in blocks))
+    cell_count = sum(block.shape[0] for block in blocks)
+    cell_vertices = np.zeros((cell_count, capacity), dtype=np.int32)
+    cell_valid = np.zeros((cell_count, capacity), dtype=bool)
+    cell_kinds = np.empty((cell_count,), dtype=np.int32)
+    offset = 0
+    for block in blocks:
+        count, arity = block.shape
+        cell_vertices[offset : offset + count, :arity] = block
+        cell_valid[offset : offset + count, :arity] = True
+        cell_kinds[offset : offset + count] = arity
+        offset += count
 
     edge_keys: dict[tuple[int, int], int] = {}
-    cell_edges = np.zeros((cell_count, 4), dtype=np.int32)
-    cell_signs = np.zeros((cell_count, 4), dtype=float)
+    cell_edges = np.zeros((cell_count, capacity), dtype=np.int32)
+    cell_signs = np.zeros((cell_count, capacity), dtype=float)
     incidents: list[list[float]] = []
     for cell in range(cell_count):
         arity = int(cell_kinds[cell])
@@ -189,8 +214,9 @@ def polygonal_connectivity(
         boundary_edges=jnp.asarray(boundary_edges),
         boundary_vertices=jnp.asarray(boundary_vertices),
         vertex_count=vertices,
-        triangle_count=triangle_count,
+        triangle_count=triangle_cells.shape[0],
         quadrilateral_count=quadrilateral_cells.shape[0],
+        polygon_count=sum(block.shape[0] for block in polygon_cells),
     )
 
 
@@ -200,11 +226,17 @@ def polygonal_cell_complex(
     vertex_count: int,
     /,
     *,
+    polygons: Sequence[ArrayLike] = (),
     vertex_global_ids: ArrayLike | None = None,
     cell_global_ids: ArrayLike | None = None,
 ) -> CellComplexTopology:
 
-    connectivity = polygonal_connectivity(triangles, quadrilaterals, vertex_count)
+    connectivity = polygonal_connectivity(
+        triangles,
+        quadrilaterals,
+        vertex_count,
+        polygons=polygons,
+    )
     edges = np.asarray(connectivity.edges, dtype=np.int32)
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
     cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)

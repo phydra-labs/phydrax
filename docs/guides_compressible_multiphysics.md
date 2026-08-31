@@ -78,9 +78,17 @@ including cell, magnetic-cochain, retention, and divergence evidence.
 ## Particle mesh gravity
 
 `ParticleMeshGravityPlan` reuses one `PreparedParticleGridSplat` for conservative mass
-deposition and grid-field gathering. Its kick-drift-kick update preserves stable
-material particle identities. Particle routing is piecewise differentiable; cell-route
-changes remain discrete.
+deposition and grid-field gathering. Its ordinary-time kick-drift-kick update preserves
+stable material particle identities. `ParticleMeshGravityForceResult` exposes the
+deposited field, Poisson convergence, gathered acceleration, support, mass balance, and
+net force without imposing an evolution coordinate. Particle routing is piecewise
+differentiable; cell-route changes remain discrete.
+
+`CosmologicalParticleMeshPlan` composes that same acceleration evaluation with
+`CosmologicalKDKPlan`; it never nests the ordinary-time PM step or creates a second
+deposition/Poisson path. The cosmological plan advances canonical momentum over an
+explicit scale-factor schedule, recomputes endpoint force, reuses one authoritative
+particle discretization, and rolls back on failed force or state evidence.
 
 ## Constrained transport MHD
 

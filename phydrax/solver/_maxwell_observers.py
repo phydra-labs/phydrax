@@ -52,8 +52,7 @@ class AbstractMaxwellObserverPlan(StrictModule):
     @abc.abstractmethod
     def prepare(
         self,
-        electric_count: int,
-        magnetic_count: int,
+        layout: Any,
         /,
     ) -> AbstractPreparedMaxwellObserver:
         raise NotImplementedError
@@ -108,11 +107,12 @@ class FieldProbePlan(AbstractMaxwellObserverPlan):
 
     def prepare(
         self,
-        electric_count: int,
-        magnetic_count: int,
+        layout: Any,
         /,
     ) -> PreparedFieldProbe:
-        count = electric_count if self.field == "electric" else magnetic_count
+        count = (
+            layout.electric_count if self.field == "electric" else layout.magnetic_count
+        )
         if bool(jnp.any(self.indices < 0)) or bool(jnp.any(self.indices >= count)):
             raise ValueError("Probe indices are outside the selected cochain field.")
         return PreparedFieldProbe(self)
@@ -207,13 +207,12 @@ class DFTObserverPlan(AbstractMaxwellObserverPlan):
 
     def prepare(
         self,
-        electric_count: int,
-        magnetic_count: int,
+        layout: Any,
         /,
     ) -> PreparedDFTObserver:
         return PreparedDFTObserver(
             self,
-            self.probe.prepare(electric_count, magnetic_count),
+            self.probe.prepare(layout),
         )
 
 
@@ -357,10 +356,10 @@ class SynchronizedEnergyObserverPlan(AbstractMaxwellObserverPlan):
 
     def prepare(
         self,
-        electric_count: int,
-        magnetic_count: int,
+        layout: Any,
         /,
     ) -> PreparedSynchronizedEnergyObserver:
+        electric_count, magnetic_count = layout.electric_count, layout.magnetic_count
         if self.electric_weights.shape != (electric_count,):
             raise ValueError("Electric energy weights do not match electric cochains.")
         if self.magnetic_weights.shape != (magnetic_count,):
@@ -404,6 +403,120 @@ class PreparedSynchronizedEnergyObserver(AbstractPreparedMaxwellObserver):
         return value
 
 
+class ModeAmplitudeObserverState(StrictModule):
+    accumulator: Array
+    samples: Array
+
+
+class ModeAmplitudeObserverPlan(AbstractMaxwellObserverPlan):
+    """Streaming paired E/H modal amplitudes without field-history storage."""
+
+    electric_modes: Array
+    magnetic_modes: Array
+    angular_frequencies: Array
+    direction: int = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        electric_modes: ArrayLike,
+        magnetic_modes: ArrayLike,
+        angular_frequencies: ArrayLike,
+        /,
+        *,
+        direction: int = 1,
+    ):
+        electric = jnp.asarray(electric_modes)
+        magnetic = jnp.asarray(magnetic_modes)
+        frequencies = jnp.asarray(angular_frequencies, dtype=float)
+        if (
+            electric.ndim != 2
+            or magnetic.ndim != 2
+            or electric.shape[1] != magnetic.shape[1]
+        ):
+            raise ValueError("Paired modal bases must have matching mode axes.")
+        if (
+            frequencies.ndim != 1
+            or frequencies.size == 0
+            or bool(jnp.any(frequencies < 0.0))
+        ):
+            raise ValueError(
+                "Modal observer frequencies must be nonempty and nonnegative."
+            )
+        if direction not in (-1, 1):
+            raise ValueError("Modal observer direction must be -1 or +1.")
+        self.electric_modes, self.magnetic_modes = electric, magnetic
+        self.angular_frequencies, self.direction = frequencies, int(direction)
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "maxwell-mode-amplitude-observer",
+                "electric_modes": array_tree_fingerprint(electric),
+                "magnetic_modes": array_tree_fingerprint(magnetic),
+                "frequencies": array_tree_fingerprint(frequencies),
+                "direction": direction,
+            }
+        )
+
+    def prepare(self, layout: Any, /) -> PreparedModeAmplitudeObserver:
+        if self.electric_modes.shape[0] != layout.electric_count:
+            raise ValueError(
+                "Electric mode traces do not match the retained electric space."
+            )
+        if self.magnetic_modes.shape[0] != layout.magnetic_count:
+            raise ValueError(
+                "Magnetic mode traces do not match the retained magnetic space."
+            )
+        return PreparedModeAmplitudeObserver(self)
+
+
+class PreparedModeAmplitudeObserver(AbstractPreparedMaxwellObserver):
+    electric_modes: Array
+    magnetic_modes: Array
+    angular_frequencies: Array
+    direction: int = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: ModeAmplitudeObserverPlan, /):
+        self.electric_modes = plan.electric_modes
+        self.magnetic_modes = plan.magnetic_modes
+        self.angular_frequencies = plan.angular_frequencies
+        self.direction = plan.direction
+        self.prepared_id = canonical_fingerprint(
+            {"kind": "prepared-mode-amplitude-observer", "plan": plan.plan_id}
+        )
+
+    def initialize(self, /) -> ModeAmplitudeObserverState:
+        shape = (self.angular_frequencies.size, self.electric_modes.shape[1])
+        return ModeAmplitudeObserverState(
+            jnp.zeros(shape, dtype=complex),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+
+    def update(
+        self,
+        time: Array,
+        electric: Array,
+        magnetic: Array,
+        state: Any,
+        /,
+    ) -> ModeAmplitudeObserverState:
+        if not isinstance(state, ModeAmplitudeObserverState):
+            raise TypeError("Modal observer requires ModeAmplitudeObserverState.")
+        electric_part = jnp.conj(self.electric_modes.T) @ electric
+        magnetic_part = jnp.conj(self.magnetic_modes.T) @ magnetic
+        amplitude = 0.5 * (electric_part + self.direction * magnetic_part)
+        phase = jnp.exp(1j * self.angular_frequencies * time)
+        return ModeAmplitudeObserverState(
+            state.accumulator + phase[:, None] * amplitude[None, :],
+            state.samples + 1,
+        )
+
+    def value(self, state: Any, /) -> Array:
+        if not isinstance(state, ModeAmplitudeObserverState):
+            raise TypeError("Modal observer requires ModeAmplitudeObserverState.")
+        return state.accumulator / jnp.maximum(state.samples, 1)
+
+
 __all__ = [
     "AbstractMaxwellObserverPlan",
     "AbstractPreparedMaxwellObserver",
@@ -411,9 +524,12 @@ __all__ = [
     "DFTObserverState",
     "FieldProbePlan",
     "MaxwellFieldKind",
+    "ModeAmplitudeObserverPlan",
+    "ModeAmplitudeObserverState",
     "PoyntingFluxPlan",
     "PreparedDFTObserver",
     "PreparedFieldProbe",
+    "PreparedModeAmplitudeObserver",
     "PreparedSynchronizedEnergyObserver",
     "SynchronizedEnergyObserverPlan",
 ]

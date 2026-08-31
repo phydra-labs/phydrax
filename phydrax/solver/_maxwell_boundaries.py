@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -61,8 +61,13 @@ class MaxwellBoundaryPlan(StrictModule):
             }
         )
 
-    def prepare(self, bridge: StructuredCochainBridge, /) -> PreparedMaxwellBoundary:
-        return PreparedMaxwellBoundary(self, bridge)
+    def prepare(
+        self,
+        bridge: StructuredCochainBridge,
+        layout: Any,
+        /,
+    ) -> PreparedMaxwellBoundary:
+        return PreparedMaxwellBoundary(self, bridge, layout)
 
 
 class PreparedMaxwellBoundary(StrictModule):
@@ -73,18 +78,39 @@ class PreparedMaxwellBoundary(StrictModule):
     magnetic_boundary: Array
     admittance: Array | None
     electric_measure: Array
+    magnetic_closedness_preserving: bool = eqx.field(static=True)
+    layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         plan: MaxwellBoundaryPlan,
         bridge: StructuredCochainBridge,
+        layout: Any,
         /,
     ):
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be a StructuredCochainBridge.")
-        electric_boundary = jnp.asarray(bridge.cochain.boundary_masks[1], dtype=bool)
-        magnetic_boundary = jnp.asarray(bridge.cochain.boundary_masks[2], dtype=bool)
+        electric_boundary = jnp.asarray(
+            bridge.cochain.boundary_masks[layout.electric_degree],
+            dtype=bool,
+        )
+        magnetic_boundary = jnp.asarray(
+            bridge.cochain.boundary_masks[layout.magnetic_degree],
+            dtype=bool,
+        )
+        if layout.polarization == "tez":
+            shape = bridge.orientation_shapes[layout.magnetic_degree][0]
+            adjacent = np.zeros(shape, dtype=bool)
+            for axis, structured_axis in enumerate(bridge.grid.structured_axes):
+                if structured_axis.periodic:
+                    continue
+                lower: list[slice | int] = [slice(None)] * bridge.dimension
+                upper: list[slice | int] = [slice(None)] * bridge.dimension
+                lower[axis], upper[axis] = 0, shape[axis] - 1
+                adjacent[tuple(lower)] = True
+                adjacent[tuple(upper)] = True
+            magnetic_boundary = jnp.asarray(adjacent.reshape((-1,)))
         admittance = plan.admittance
         if admittance is not None:
             if admittance.shape not in ((), (1,), electric_boundary.shape):
@@ -96,12 +122,15 @@ class PreparedMaxwellBoundary(StrictModule):
         self.electric_boundary = electric_boundary
         self.magnetic_boundary = magnetic_boundary
         self.admittance = admittance
-        self.electric_measure = bridge.cochain.hodge_stars[1]
+        self.electric_measure = bridge.cochain.hodge_stars[layout.electric_degree]
+        self.magnetic_closedness_preserving = plan.kind != "pmc"
+        self.layout_id = layout.layout_id
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-maxwell-boundary",
                 "plan": plan.plan_id,
                 "bridge": bridge.bridge_id,
+                "layout": layout.layout_id,
             }
         )
 

@@ -228,3 +228,8 @@ general multiway nodal contact, anisotropic plane-stress closure, sharp friction
 implicit MPM, deformation-dependent CPDI implicit Jacobians, dynamic hash/tree grids,
 compact sparse implicit/fracture operators, or derivatives through adaptive decisions
 and fracture topology epochs.
+
+Electrostatic/electromagnetic [PIC](guides_particle_in_cell.md) and
+free-surface [FLIP](guides_flip.md) are separate method families over the same
+prepared splat data plane; they do not reuse MPM constitutive state or explicit
+stress-update dynamics.

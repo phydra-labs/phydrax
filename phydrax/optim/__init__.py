@@ -34,6 +34,14 @@ from ._constrained_sensitivity import (
     ConstrainedSensitivityMode,
     ConstrainedSensitivityResult,
 )
+from ._density_transform import (
+    ConicDensityFilterPlan,
+    DensityTransformPlan,
+    PreparedConicDensityFilter,
+    PreparedDensityTransform,
+    TanhDensityProjectionPlan,
+    threshold_density,
+)
 from ._derivative_free_least_squares import FiniteDifferenceGaussNewton
 from ._differential_evolution import DifferentialEvolutionSearch
 from ._external_backends import (
@@ -437,6 +445,12 @@ __all__ = [
     "CompositeLeastSquaresResult",
     "ConsensusADMM",
     "ConstrainedOptimalityCertificate",
+    "ConicDensityFilterPlan",
+    "DensityTransformPlan",
+    "PreparedConicDensityFilter",
+    "PreparedDensityTransform",
+    "TanhDensityProjectionPlan",
+    "threshold_density",
     "DifferentialEvolutionSearch",
     "DenseNewtonDogleg",
     "DenseNewtonDoglegState",

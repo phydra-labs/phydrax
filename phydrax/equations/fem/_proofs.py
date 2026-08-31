@@ -27,6 +27,7 @@ from ...linalg import (
     OperatorProperties,
     solve,
 )
+from .._variational import VariationalCoefficient
 from .._finite_element_variational import (
     _interval_rule,
     _reference_rule_data,
@@ -34,7 +35,6 @@ from .._finite_element_variational import (
     coefficient,
     DiffusionAction,
     ExteriorFacetAction,
-    FiniteElementCoefficient,
     FiniteElementForm,
     InteriorFacetAction,
     PreparedOperatorAction,
@@ -99,7 +99,7 @@ def upwind_advection_form(
     *,
     interior_domain: IntegrationDomain | None = None,
     boundary_domain: IntegrationDomain | None = None,
-    inflow: FiniteElementCoefficient | ArrayLike | Callable = 0.0,
+    inflow: VariationalCoefficient | ArrayLike | Callable = 0.0,
     inflow_coefficient_id: str | None = None,
     source: ArrayLike | Callable | None = None,
     form_id: str = "upwind-advection",
@@ -113,7 +113,7 @@ def upwind_advection_form(
         raise ValueError("boundary_domain must select exterior facets.")
     inflow_ = (
         inflow
-        if isinstance(inflow, FiniteElementCoefficient)
+        if isinstance(inflow, VariationalCoefficient)
         else coefficient(inflow, coefficient_id=inflow_coefficient_id)
     )
 

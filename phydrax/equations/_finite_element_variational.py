@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, cast, Literal, TYPE_CHECKING, TypeAlias
+from typing import Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -66,6 +66,17 @@ from ..linalg import (
 from ..linalg.eigen import GeneralizedEigenproblem
 from ..nonlinear import LaggedLinearSolveUpdate, NonlinearSystemProblem
 from ..sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
+from ._variational import (
+    _normalize_rules,
+    _rule_id,
+    BoundaryLoadAction,
+    DiffusionAction,
+    IntegrationRule as ReferenceRule,
+    MassAction,
+    SourceAction,
+    VariationalCoefficient,
+    coefficient,
+)
 
 
 if TYPE_CHECKING:
@@ -74,7 +85,6 @@ if TYPE_CHECKING:
     from .fem._worksets import WorksetProgram
 
 
-ReferenceRule: TypeAlias = Any
 
 
 def _reference_rule_data(rule: ReferenceRule, /):
@@ -113,31 +123,6 @@ def _hexahedron_rule():
     return ReferenceHexahedronRule()
 
 
-def _rule_id(rule: ReferenceRule, /) -> str:
-    data = _reference_rule_data(rule)
-    return canonical_fingerprint(
-        {
-            "kind": "finite-element-reference-rule",
-            "rule_type": type(rule).__name__,
-            "reference_domain": data.cell,
-            "points": array_tree_fingerprint(np.asarray(data.points)),
-            "weights": array_tree_fingerprint(np.asarray(data.weights)),
-        }
-    )
-
-
-def _normalize_rules(
-    rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]],
-    /,
-) -> tuple[tuple[str, ReferenceRule], ...]:
-    items = tuple(rules.items()) if isinstance(rules, Mapping) else tuple(rules)
-    normalized = tuple(sorted(((str(name), rule) for name, rule in items)))
-    names = tuple(name for name, _ in normalized)
-    if any(not name for name in names) or len(set(names)) != len(names):
-        raise ValueError("Reference-rule block names must be unique and non-empty.")
-    for _, rule in normalized:
-        _reference_rule_data(rule)
-    return normalized
 
 
 def _default_rule(cell_kind: str, /) -> ReferenceRule:
@@ -152,252 +137,9 @@ def _default_rule(cell_kind: str, /) -> ReferenceRule:
     raise ValueError(f"No finite-element rule exists for cell kind {cell_kind!r}.")
 
 
-class FiniteElementCoefficient(StrictModule, NonTrainableState):
-    """Coefficient data bound to an explicit finite-element evaluation layout."""
-
-    value: Array
-    evaluator: Callable[[Array, object], ArrayLike] | None
-    location: str = eqx.field(static=True)
-    support_id: str | None = eqx.field(static=True)
-    entity_set_id: str | None = eqx.field(static=True)
-    field_space_id: str | None = eqx.field(static=True)
-    rule_id: str | None = eqx.field(static=True)
-    side: str = eqx.field(static=True)
-    layout_axes: tuple[str, ...] = eqx.field(static=True)
-    layout_id: str = eqx.field(static=True)
-    coefficient_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        value: ArrayLike | Callable[[Array, object], ArrayLike],
-        /,
-        *,
-        coefficient_id: str | None = None,
-        location: str = "point",
-        support_id: str | None = None,
-        entity_set_id: str | None = None,
-        field_space_id: str | None = None,
-        rule_id: str | None = None,
-        side: str = "none",
-        layout_axes: Sequence[str] | None = None,
-    ):
-        location_ = str(location)
-        if location_ not in ("point", "cell", "facet", "quadrature", "dof"):
-            raise ValueError(
-                "Coefficient location must be point, cell, facet, quadrature, or dof."
-            )
-        side_ = str(side)
-        if side_ not in ("none", "plus", "minus"):
-            raise ValueError("Coefficient side must be none, plus, or minus.")
-        if side_ != "none" and location_ != "facet":
-            raise ValueError("Plus/minus coefficient sides require facet location.")
-        support = None if support_id is None else str(support_id)
-        entity_set = None if entity_set_id is None else str(entity_set_id)
-        field_space = None if field_space_id is None else str(field_space_id)
-        rule = None if rule_id is None else str(rule_id)
-        if any(value_ == "" for value_ in (support, entity_set, field_space, rule)):
-            raise ValueError("Coefficient identities must be non-empty or None.")
-        if location_ in ("cell", "facet", "quadrature") and (
-            support is None or entity_set is None
-        ):
-            raise ValueError(
-                "Entity and quadrature coefficients require support_id and entity_set_id."
-            )
-        if location_ == "quadrature" and rule is None:
-            raise ValueError("Quadrature coefficients require rule_id.")
-        if location_ == "dof" and (support is None or field_space is None):
-            raise ValueError("DOF coefficients require support_id and field_space_id.")
-        if callable(value) and location_ != "point":
-            raise ValueError("Callable coefficients require point location.")
-        default_axes = {
-            "point": (),
-            "cell": ("entity",),
-            "facet": ("entity",),
-            "quadrature": ("entity", "quadrature"),
-            "dof": ("dof",),
-        }[location_]
-        axes = (
-            default_axes
-            if layout_axes is None
-            else tuple(str(axis) for axis in layout_axes)
-        )
-        if any(not axis for axis in axes) or len(set(axes)) != len(axes):
-            raise ValueError("Coefficient layout axes must be unique non-empty names.")
-        if axes != default_axes:
-            raise ValueError(
-                f"{location_} coefficients require canonical layout axes "
-                f"{default_axes!r}; got {axes!r}."
-            )
-        if callable(value):
-            if coefficient_id is None or not str(coefficient_id):
-                raise ValueError(
-                    "Callable coefficients require an explicit coefficient_id."
-                )
-            array = jnp.asarray(0.0)
-            evaluator = cast(Callable[[Array, object], ArrayLike], value)
-            identifier = str(coefficient_id)
-            data_fingerprint = None
-        else:
-            array = jnp.asarray(value)
-            if not jnp.issubdtype(array.dtype, jnp.inexact):
-                array = array.astype(float)
-            evaluator = None
-            data_fingerprint = array_tree_fingerprint(np.asarray(array))
-            identifier = (
-                canonical_fingerprint(
-                    {
-                        "kind": "finite-element-coefficient",
-                        "data": data_fingerprint,
-                        "location": location_,
-                        "support": support,
-                        "entity_set": entity_set,
-                        "field_space": field_space,
-                        "rule": rule,
-                        "side": side_,
-                        "layout_axes": list(axes),
-                    }
-                )
-                if coefficient_id is None
-                else str(coefficient_id)
-            )
-            if not identifier:
-                raise ValueError("coefficient_id must be non-empty.")
-        self.value = array
-        self.evaluator = evaluator
-        self.location = location_
-        self.support_id = support
-        self.entity_set_id = entity_set
-        self.field_space_id = field_space
-        self.rule_id = rule
-        self.side = side_
-        self.layout_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-coefficient-layout",
-                "callable": evaluator is not None,
-                "shape": None if evaluator is not None else list(array.shape),
-                "dtype": None if evaluator is not None else str(array.dtype),
-                "location": location_,
-                "support": support,
-                "entity_set": entity_set,
-                "field_space": field_space,
-                "rule": rule,
-                "side": side_,
-                "layout_axes": list(axes),
-            }
-        )
-        self.layout_axes = axes
-        self.coefficient_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-coefficient-binding",
-                "identity": identifier,
-                "layout": self.layout_id,
-                "data": data_fingerprint,
-            }
-        )
-
-    @property
-    def constant(self) -> bool:
-        return self.evaluator is None and self.location == "point"
-
-    def evaluate(
-        self,
-        points: Array,
-        args: object = None,
-        /,
-        *,
-        entity_indices: ArrayLike | None = None,
-        dof_indices: ArrayLike | None = None,
-        dof_orientations: ArrayLike | None = None,
-        basis_values: ArrayLike | None = None,
-        support_id: str | None = None,
-        entity_set_id: str | None = None,
-        field_space_id: str | None = None,
-        rule_id: str | None = None,
-        side: str | None = None,
-    ) -> Array:
-        for name, declared, observed in (
-            ("support", self.support_id, support_id),
-            ("entity set", self.entity_set_id, entity_set_id),
-            ("field space", self.field_space_id, field_space_id),
-            ("quadrature rule", self.rule_id, rule_id),
-        ):
-            if declared is not None and declared != (
-                None if observed is None else str(observed)
-            ):
-                raise ValueError(
-                    f"Coefficient {name} identity does not match evaluation."
-                )
-        if side is not None and self.side != str(side):
-            raise ValueError("Coefficient facet side does not match evaluation.")
-        if self.evaluator is not None:
-            return jnp.asarray(self.evaluator(points, args))
-        if self.location == "point":
-            return jnp.broadcast_to(
-                self.value,
-                points.shape[:-1] + self.value.shape,
-            )
-        if self.location == "dof":
-            if dof_indices is None or basis_values is None:
-                raise ValueError("DOF coefficient evaluation requires routes and basis.")
-            routes = jnp.asarray(dof_indices, dtype=jnp.int32)
-            basis = jnp.asarray(basis_values)
-            local = self.value[routes]
-            if dof_orientations is not None:
-                orientations = jnp.asarray(dof_orientations)
-                if orientations.shape != routes.shape:
-                    raise ValueError(
-                        "DOF coefficient orientations must match gathered routes."
-                    )
-                local = local * orientations.reshape(
-                    orientations.shape + (1,) * (local.ndim - orientations.ndim)
-                )
-            if basis.ndim == 2:
-                return oe.contract("qi,ci...->cq...", basis, local)
-            if basis.ndim == 3:
-                return oe.contract("cqi,ci...->cq...", basis, local)
-            raise ValueError("DOF coefficient basis must have rank two or three.")
-        if entity_indices is None:
-            raise ValueError("Entity/quadrature coefficients require entity indices.")
-        indices = jnp.asarray(entity_indices, dtype=jnp.int32)
-        selected = self.value[indices]
-        if self.location in ("cell", "facet"):
-            shape = (selected.shape[0],) + (1,) * (points.ndim - 2) + selected.shape[1:]
-            selected = selected.reshape(shape)
-            return jnp.broadcast_to(
-                selected,
-                points.shape[:-1] + selected.shape[points.ndim - 1 :],
-            )
-        if selected.shape[: points.ndim - 1] != points.shape[:-1]:
-            raise ValueError(
-                "Quadrature coefficient leading shape must match selected points."
-            )
-        return selected
 
 
-def coefficient(
-    value: ArrayLike | Callable[[Array, object], ArrayLike],
-    /,
-    *,
-    coefficient_id: str | None = None,
-    location: str = "point",
-    support_id: str | None = None,
-    entity_set_id: str | None = None,
-    field_space_id: str | None = None,
-    rule_id: str | None = None,
-    side: str = "none",
-    layout_axes: Sequence[str] | None = None,
-) -> FiniteElementCoefficient:
-    return FiniteElementCoefficient(
-        value,
-        coefficient_id=coefficient_id,
-        location=location,
-        support_id=support_id,
-        entity_set_id=entity_set_id,
-        field_space_id=field_space_id,
-        rule_id=rule_id,
-        side=side,
-        layout_axes=layout_axes,
-    )
+_UNIT_MASS_COEFFICIENT = coefficient(np.asarray(1.0))
 
 
 class FiniteElementExecutionContext(StrictModule, NonTrainableState):
@@ -490,147 +232,6 @@ class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
             }
         )
 
-
-class DiffusionAction(StrictModule, NonTrainableState):
-    field_name: str = eqx.field(static=True)
-    diffusivity: FiniteElementCoefficient
-    action_id: str = eqx.field(static=True)
-    domain: IntegrationDomain | None
-    rules: tuple[tuple[str, ReferenceRule], ...]
-
-    def __init__(
-        self,
-        field_name: str,
-        diffusivity: FiniteElementCoefficient | ArrayLike = 1.0,
-        /,
-        *,
-        action_id: str = "diffusion",
-        domain: IntegrationDomain | None = None,
-        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-    ):
-        field = str(field_name)
-        identifier = str(action_id)
-        if not field or not identifier:
-            raise ValueError("Diffusion field and term IDs must be non-empty.")
-        self.field_name = field
-        self.diffusivity = (
-            diffusivity
-            if isinstance(diffusivity, FiniteElementCoefficient)
-            else coefficient(diffusivity)
-        )
-        if domain is not None and not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be IntegrationDomain or None.")
-        if domain is not None and domain.kind != "cell":
-            raise ValueError("DiffusionAction requires a cell integration domain.")
-        self.domain = domain
-        self.rules = _normalize_rules(rules)
-        self.action_id = identifier
-
-
-class MassAction(StrictModule, NonTrainableState):
-    field_name: str = eqx.field(static=True)
-    coefficient: FiniteElementCoefficient
-    action_id: str = eqx.field(static=True)
-    domain: IntegrationDomain | None
-    rules: tuple[tuple[str, ReferenceRule], ...]
-
-    def __init__(
-        self,
-        field_name: str,
-        value: FiniteElementCoefficient | ArrayLike = 1.0,
-        /,
-        *,
-        action_id: str = "mass",
-        domain: IntegrationDomain | None = None,
-        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-    ):
-        field = str(field_name)
-        identifier = str(action_id)
-        if not field or not identifier:
-            raise ValueError("Mass field and term IDs must be non-empty.")
-        self.field_name = field
-        self.coefficient = (
-            value if isinstance(value, FiniteElementCoefficient) else coefficient(value)
-        )
-        if domain is not None and not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be IntegrationDomain or None.")
-        if domain is not None and domain.kind != "cell":
-            raise ValueError("MassAction requires a cell integration domain.")
-        self.domain = domain
-        self.rules = _normalize_rules(rules)
-        self.action_id = identifier
-
-
-class SourceAction(StrictModule, NonTrainableState):
-    field_name: str = eqx.field(static=True)
-    source: FiniteElementCoefficient
-    action_id: str = eqx.field(static=True)
-    domain: IntegrationDomain | None
-    rules: tuple[tuple[str, ReferenceRule], ...]
-
-    def __init__(
-        self,
-        field_name: str,
-        source: FiniteElementCoefficient | ArrayLike,
-        /,
-        *,
-        action_id: str = "source",
-        domain: IntegrationDomain | None = None,
-        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-    ):
-        field = str(field_name)
-        identifier = str(action_id)
-        if not field or not identifier:
-            raise ValueError("Source field and term IDs must be non-empty.")
-        self.field_name = field
-        self.source = (
-            source
-            if isinstance(source, FiniteElementCoefficient)
-            else coefficient(source)
-        )
-        if domain is not None and not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be IntegrationDomain or None.")
-        if domain is not None and domain.kind != "cell":
-            raise ValueError("SourceAction requires a cell integration domain.")
-        self.domain = domain
-        self.rules = _normalize_rules(rules)
-        self.action_id = identifier
-
-
-class BoundaryLoadAction(StrictModule, NonTrainableState):
-    field_name: str = eqx.field(static=True)
-    load: FiniteElementCoefficient
-    action_id: str = eqx.field(static=True)
-    domain: IntegrationDomain | None
-    rules: tuple[tuple[str, ReferenceRule], ...]
-
-    def __init__(
-        self,
-        field_name: str,
-        load: FiniteElementCoefficient | ArrayLike,
-        /,
-        *,
-        action_id: str = "boundary-load",
-        domain: IntegrationDomain | None = None,
-        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-    ):
-        field = str(field_name)
-        identifier = str(action_id)
-        if not field or not identifier:
-            raise ValueError("Boundary-load field and term IDs must be non-empty.")
-        self.field_name = field
-        self.load = (
-            load if isinstance(load, FiniteElementCoefficient) else coefficient(load)
-        )
-        if domain is not None and not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be IntegrationDomain or None.")
-        if domain is not None and domain.kind != "exterior_facet":
-            raise ValueError(
-                "BoundaryLoadAction requires an exterior-facet integration domain."
-            )
-        self.domain = domain
-        self.rules = _normalize_rules(rules)
-        self.action_id = identifier
 
 
 class CellResidualAction(StrictModule, NonTrainableState):
@@ -845,8 +446,8 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
 
     kind: SIPGBoundaryKind = eqx.field(static=True)
     domain: IntegrationDomain
-    value: FiniteElementCoefficient
-    robin_coefficient: FiniteElementCoefficient | None
+    value: VariationalCoefficient
+    robin_coefficient: VariationalCoefficient | None
     penalty_policy: SIPGPenaltyPolicy | None
     condition_id: str = eqx.field(static=True)
 
@@ -854,10 +455,10 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
         self,
         kind: SIPGBoundaryKind,
         domain: IntegrationDomain,
-        value: FiniteElementCoefficient | ArrayLike | Callable,
+        value: VariationalCoefficient | ArrayLike | Callable,
         /,
         *,
-        robin_coefficient: FiniteElementCoefficient | ArrayLike | Callable | None = None,
+        robin_coefficient: VariationalCoefficient | ArrayLike | Callable | None = None,
         penalty_policy: SIPGPenaltyPolicy | None = None,
     ):
         if kind not in ("dirichlet", "neumann", "robin"):
@@ -869,11 +470,11 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
         ):
             raise TypeError("penalty_policy must be SIPGPenaltyPolicy or None.")
         value_ = (
-            value if isinstance(value, FiniteElementCoefficient) else coefficient(value)
+            value if isinstance(value, VariationalCoefficient) else coefficient(value)
         )
         robin = (
             robin_coefficient
-            if isinstance(robin_coefficient, FiniteElementCoefficient)
+            if isinstance(robin_coefficient, VariationalCoefficient)
             else (None if robin_coefficient is None else coefficient(robin_coefficient))
         )
         if kind == "robin" and robin is None:
@@ -903,7 +504,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
     """Executable SIPG interior or exterior facet action."""
 
     field_name: str = eqx.field(static=True)
-    diffusivity: FiniteElementCoefficient
+    diffusivity: VariationalCoefficient
     penalty_policy: SIPGPenaltyPolicy
     boundary: SIPGBoundaryCondition | None
     domain: IntegrationDomain
@@ -913,7 +514,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        diffusivity: FiniteElementCoefficient | ArrayLike | Callable,
+        diffusivity: VariationalCoefficient | ArrayLike | Callable,
         penalty_policy: SIPGPenaltyPolicy,
         domain: IntegrationDomain,
         /,
@@ -941,7 +542,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
         self.field_name = field
         self.diffusivity = (
             diffusivity
-            if isinstance(diffusivity, FiniteElementCoefficient)
+            if isinstance(diffusivity, VariationalCoefficient)
             else coefficient(diffusivity)
         )
         self.penalty_policy = penalty_policy
@@ -2493,23 +2094,16 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             right_hand_side,
         )
 
-    def _mass_operators(
+    def _compile_unit_mass_problem(
         self,
-        context: FiniteElementExecutionContext,
-        coefficient: Array,
         mass_policy: object = None,
         /,
-    ) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
+    ) -> CompiledFiniteElementProblem:
         from .fem._execution import FiniteElementMassPolicy
 
         policy = FiniteElementMassPolicy() if mass_policy is None else mass_policy
         if not isinstance(policy, FiniteElementMassPolicy):
             raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
-        coefficient = eqx.error_if(
-            coefficient,
-            jnp.any(~jnp.isfinite(coefficient) | (jnp.real(coefficient) <= 0.0)),
-            "Finite-element mass coefficient must be positive and finite.",
-        )
         local_kernel = "collocated" if policy.kind == "collocated_diagonal" else "auto"
         mass_rules = {}
         field_index = self.discretization._field_index(self.form.field_name)
@@ -2564,7 +2158,6 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 ReferenceQuadrilateralRule,
             )
 
-            field_index = self.discretization._field_index(self.form.field_name)
             for block, element in zip(
                 self.discretization.mesh.blocks,
                 self.discretization.elements[field_index],
@@ -2601,7 +2194,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 mass_rules[block.name] = rule
         mass_action = MassAction(
             self.form.field_name,
-            1.0,
+            _UNIT_MASS_COEFFICIENT,
             rules=mass_rules,
             action_id="compiled-dynamics-mass",
         )
@@ -2620,7 +2213,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 },
             ),
         )
-        compiled_mass = CompiledFiniteElementProblem(
+        return CompiledFiniteElementProblem(
             mass_form,
             self.discretization,
             execution_policy=FiniteElementExecutionPolicy(
@@ -2629,8 +2222,34 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 accumulation=self.execution_policy.accumulation,
             ),
         )
-        unit_mass = compiled_mass.linearization_operator(
-            compiled_mass.state_space.zeros(),
+
+    def _mass_operators(
+        self,
+        context: FiniteElementExecutionContext,
+        coefficient: Array,
+        mass_policy: object = None,
+        compiled_mass: CompiledFiniteElementProblem | None = None,
+        /,
+    ) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
+        from .fem._execution import FiniteElementMassPolicy
+
+        policy = FiniteElementMassPolicy() if mass_policy is None else mass_policy
+        if not isinstance(policy, FiniteElementMassPolicy):
+            raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
+        coefficient = eqx.error_if(
+            coefficient,
+            jnp.any(~jnp.isfinite(coefficient) | (jnp.real(coefficient) <= 0.0)),
+            "Finite-element mass coefficient must be positive and finite.",
+        )
+        mass_problem = (
+            self._compile_unit_mass_problem(policy)
+            if compiled_mass is None
+            else compiled_mass
+        )
+        if not isinstance(mass_problem, CompiledFiniteElementProblem):
+            raise TypeError("compiled_mass must be CompiledFiniteElementProblem or None.")
+        unit_mass = mass_problem.linearization_operator(
+            mass_problem.state_space.zeros(),
             context,
         )
         full_mass = FunctionLinearOperator(
@@ -2799,6 +2418,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             if system_id is None
             else str(system_id)
         )
+        compiled_mass = self._compile_unit_mass_problem(mass_policy)
 
         def residual(time, configuration, velocity, acceleration, args):
             base = self._execution_context(args)
@@ -2811,7 +2431,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 metric_data=base.metric_data,
                 user_args=base.user_args,
             )
-            full_mass, reduced_mass = self._mass_operators(context, mass_, mass_policy)
+            full_mass, reduced_mass = self._mass_operators(
+                context, mass_, mass_policy, compiled_mass
+            )
             value = (
                 reduced_mass.mv(acceleration)
                 + damping_ * reduced_mass.mv(velocity)
@@ -2952,7 +2574,6 @@ __all__ = [
     "DiffusionAction",
     "ExteriorFacetAction",
     "FiniteElementAction",
-    "FiniteElementCoefficient",
     "FiniteElementExecutionContext",
     "FiniteElementExecutionPolicy",
     "FiniteElementForm",

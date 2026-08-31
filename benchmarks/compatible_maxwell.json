@@ -1,0 +1,89 @@
+{
+  "backend": "cpu",
+  "dtype": "float64",
+  "jax": "0.9.1",
+  "kind": "compatible-maxwell-benchmark",
+  "python": "3.12.8",
+  "rows": [
+    {
+      "degree_counts": [
+        729,
+        1944,
+        1728,
+        512
+      ],
+      "electric_constraint_linf": 0.0,
+      "first_step_seconds": 2.1465725,
+      "magnetic_constraint_linf": 0.0,
+      "magnetic_projection_elided": true,
+      "polarization": "full_3d",
+      "prepare_seconds": 4.228743292,
+      "resource_bytes": {
+        "cpml": 0,
+        "logical_primary": 70416,
+        "material_auxiliary": 0,
+        "observer": 0,
+        "projection_workspace": 716800,
+        "total": 787216
+      },
+      "shape": [
+        8,
+        8,
+        8
+      ],
+      "warm_step_seconds": 0.0004085415
+    },
+    {
+      "degree_counts": [
+        4225,
+        8320,
+        4096
+      ],
+      "electric_constraint_linf": 0.0,
+      "first_step_seconds": 1.329010833,
+      "magnetic_constraint_linf": 0.0,
+      "magnetic_projection_elided": true,
+      "polarization": "tez",
+      "prepare_seconds": 1.469242541,
+      "resource_bytes": {
+        "cpml": 0,
+        "logical_primary": 266256,
+        "material_auxiliary": 0,
+        "observer": 0,
+        "projection_workspace": 0,
+        "total": 266256
+      },
+      "shape": [
+        64,
+        64
+      ],
+      "warm_step_seconds": 0.0056448335
+    },
+    {
+      "degree_counts": [
+        4225,
+        8320,
+        4096
+      ],
+      "electric_constraint_linf": 0.0,
+      "first_step_seconds": 0.420743542,
+      "magnetic_constraint_linf": 0.0,
+      "magnetic_projection_elided": true,
+      "polarization": "tmz",
+      "prepare_seconds": 2.739030208,
+      "resource_bytes": {
+        "cpml": 0,
+        "logical_primary": 200720,
+        "material_auxiliary": 0,
+        "observer": 0,
+        "projection_workspace": 3973120,
+        "total": 4173840
+      },
+      "shape": [
+        64,
+        64
+      ],
+      "warm_step_seconds": 0.0006619165
+    }
+  ]
+}
