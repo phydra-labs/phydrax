@@ -352,7 +352,15 @@ consume the same policy and retain content-addressed evidence.
 
 ---
 
-::: phydrax.solver.FiniteVolumeRolloutPlan
+::: phydrax.solver.AdaptiveFiniteVolumeRolloutPlan
+
+---
+
+::: phydrax.solver.ScheduledFiniteVolumeRolloutPlan
+
+---
+
+::: phydrax.solver.FiniteVolumeReplayPolicy
 
 ---
 

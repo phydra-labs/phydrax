@@ -48,18 +48,34 @@ def _normal_ale_inputs(
 
 
 class NumericalFluxResult(StrictModule):
-    """One canonical normal flux density and its signal-speed bound."""
+    """One canonical normal flux density, signal bound, and fallback evidence."""
 
     normal_flux: Array
     max_speed: Array
+    fallback_activated: Array
 
-    def __init__(self, normal_flux: Array, max_speed: Array, /):
+    def __init__(
+        self,
+        normal_flux: Array,
+        max_speed: Array,
+        /,
+        *,
+        fallback_activated: Array | None = None,
+    ):
         flux = jnp.asarray(normal_flux)
         speed = jnp.asarray(max_speed)
-        if speed.shape != flux.shape[:-1]:
-            raise ValueError("Numerical flux speed must match the face batch shape.")
+        fallback = (
+            jnp.zeros(speed.shape, dtype=bool)
+            if fallback_activated is None
+            else jnp.asarray(fallback_activated, dtype=bool)
+        )
+        if speed.shape != flux.shape[:-1] or fallback.shape != speed.shape:
+            raise ValueError(
+                "Numerical flux speed/fallback must match the face batch shape."
+            )
         self.normal_flux = flux
         self.max_speed = speed
+        self.fallback_activated = fallback
 
 
 class AbstractNumericalFluxPlan(StrictModule, NonTrainableState):
@@ -98,7 +114,6 @@ class AbstractSymmetricTwoPointFluxPlan(AbstractNumericalFluxPlan):
         /,
     ) -> Array:
         raise NotImplementedError
-
 
 
 class RusanovFluxPlan(AbstractNumericalFluxPlan):
@@ -595,6 +610,373 @@ class HLLCFluxPlan(AbstractNumericalFluxPlan):
         return NumericalFluxResult(flux, speed)
 
 
+class HLLDFluxPlan(AbstractNumericalFluxPlan):
+    """Five-wave HLLD flux for the canonical eight-component ideal-MHD layout."""
+
+    denominator_epsilon: float = eqx.field(static=True)
+    normal_field_tolerance: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        denominator_epsilon: float = 1e-10,
+        normal_field_tolerance: float = 1e-10,
+    ):
+        epsilon = float(denominator_epsilon)
+        tolerance = float(normal_field_tolerance)
+        if (
+            not np.isfinite(epsilon)
+            or epsilon <= 0.0
+            or not np.isfinite(tolerance)
+            or tolerance < 0.0
+        ):
+            raise ValueError("HLLD tolerances are invalid.")
+        self.denominator_epsilon = epsilon
+        self.normal_field_tolerance = tolerance
+        self.differentiability = "branchwise"
+        self.flux_id = canonical_fingerprint(
+            {
+                "kind": "hlld-ideal-mhd-flux",
+                "denominator_epsilon": epsilon,
+                "normal_field_tolerance": tolerance,
+            }
+        )
+
+    @staticmethod
+    def _layout(system: Any, axis: int, /) -> tuple[int, int]:
+        expected = (
+            "density",
+            "momentum_x",
+            "momentum_y",
+            "momentum_z",
+            "total_energy",
+            "magnetic_x",
+            "magnetic_y",
+            "magnetic_z",
+        )
+        if tuple(system.component_names) != expected:
+            raise TypeError("HLLD requires the canonical ideal-MHD state layout.")
+        axis_ = int(axis)
+        if axis_ < 0 or axis_ >= system.dimension:
+            raise ValueError("HLLD flux axis is out of range.")
+        tangential = tuple(value for value in range(3) if value != axis_)
+        return tangential[0], tangential[1]
+
+    def _safe_denominator(self, value: Array, /) -> tuple[Array, Array]:
+        small = jnp.abs(value) <= self.denominator_epsilon
+        sign = jnp.where(value >= 0.0, 1.0, -1.0)
+        return jnp.where(small, sign * self.denominator_epsilon, value), small
+
+    @staticmethod
+    def _fast_speed(primitive: Array, axis: int, gamma: float, /) -> Array:
+        density = primitive[..., 0]
+        pressure = primitive[..., 4]
+        magnetic = primitive[..., 5:8]
+        sound_squared = gamma * pressure / density
+        magnetic_squared = jnp.sum(magnetic**2, axis=-1) / density
+        normal_squared = magnetic[..., axis] ** 2 / density
+        discriminant = jnp.maximum(
+            (sound_squared + magnetic_squared) ** 2
+            - 4.0 * sound_squared * normal_squared,
+            0.0,
+        )
+        return jnp.sqrt(0.5 * (sound_squared + magnetic_squared + jnp.sqrt(discriminant)))
+
+    @staticmethod
+    def _state(
+        density: Array,
+        normal_velocity: Array,
+        tangential_velocity: tuple[Array, Array],
+        energy: Array,
+        normal_magnetic: Array,
+        tangential_magnetic: tuple[Array, Array],
+        axis: int,
+        tangential_axes: tuple[int, int],
+        /,
+    ) -> Array:
+        velocity = jnp.zeros(density.shape + (3,), dtype=density.dtype)
+        magnetic = jnp.zeros_like(velocity)
+        velocity = velocity.at[..., axis].set(normal_velocity)
+        velocity = velocity.at[..., tangential_axes[0]].set(tangential_velocity[0])
+        velocity = velocity.at[..., tangential_axes[1]].set(tangential_velocity[1])
+        magnetic = magnetic.at[..., axis].set(normal_magnetic)
+        magnetic = magnetic.at[..., tangential_axes[0]].set(tangential_magnetic[0])
+        magnetic = magnetic.at[..., tangential_axes[1]].set(tangential_magnetic[1])
+        return jnp.concatenate(
+            (
+                density[..., None],
+                density[..., None] * velocity,
+                energy[..., None],
+                magnetic,
+            ),
+            axis=-1,
+        )
+
+    def face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        axis_ = int(axis)
+        tangential_axes = self._layout(system, axis_)
+        left_ = jnp.asarray(left)
+        right_ = jnp.asarray(right)
+        primitive_left = system.conserved_to_primitive(left_)
+        primitive_right = system.conserved_to_primitive(right_)
+        rho_l = primitive_left[..., 0]
+        rho_r = primitive_right[..., 0]
+        velocity_l = primitive_left[..., 1:4]
+        velocity_r = primitive_right[..., 1:4]
+        pressure_l = primitive_left[..., 4]
+        pressure_r = primitive_right[..., 4]
+        magnetic_l = primitive_left[..., 5:8]
+        magnetic_r = primitive_right[..., 5:8]
+        vn_l = velocity_l[..., axis_]
+        vn_r = velocity_r[..., axis_]
+        bn_l = magnetic_l[..., axis_]
+        bn_r = magnetic_r[..., axis_]
+        bn = 0.5 * (bn_l + bn_r)
+        normal_scale = 1.0 + jnp.maximum(jnp.abs(bn_l), jnp.abs(bn_r))
+        inconsistent_bn = (
+            jnp.abs(bn_l - bn_r) > self.normal_field_tolerance * normal_scale
+        )
+        cf_l = self._fast_speed(primitive_left, axis_, system.gamma)
+        cf_r = self._fast_speed(primitive_right, axis_, system.gamma)
+        s_l = jnp.minimum(vn_l - cf_l, vn_r - cf_r)
+        s_r = jnp.maximum(vn_l + cf_l, vn_r + cf_r)
+        flux_l = system.physical_flux(left_, axis_, args)
+        flux_r = system.physical_flux(right_, axis_, args)
+        total_pressure_l = pressure_l + 0.5 * jnp.sum(magnetic_l**2, axis=-1)
+        total_pressure_r = pressure_r + 0.5 * jnp.sum(magnetic_r**2, axis=-1)
+        contact_denominator_raw = rho_r * (s_r - vn_r) - rho_l * (s_l - vn_l)
+        contact_denominator, bad_contact = self._safe_denominator(contact_denominator_raw)
+        s_m = (
+            rho_r * vn_r * (s_r - vn_r)
+            - rho_l * vn_l * (s_l - vn_l)
+            + total_pressure_l
+            - total_pressure_r
+        ) / contact_denominator
+        total_pressure_star_l = total_pressure_l + rho_l * (s_l - vn_l) * (s_m - vn_l)
+        total_pressure_star_r = total_pressure_r + rho_r * (s_r - vn_r) * (s_m - vn_r)
+        total_pressure_star = 0.5 * (total_pressure_star_l + total_pressure_star_r)
+
+        def star_state(
+            state: Array,
+            density: Array,
+            velocity: Array,
+            magnetic: Array,
+            total_pressure: Array,
+            signal: Array,
+            normal_velocity: Array,
+        ):
+            density_denominator, bad_density = self._safe_denominator(signal - s_m)
+            density_star = density * (signal - normal_velocity) / density_denominator
+            transverse_denominator_raw = (
+                density * (signal - normal_velocity) * (signal - s_m) - bn**2
+            )
+            transverse_denominator, bad_transverse = self._safe_denominator(
+                transverse_denominator_raw
+            )
+            transverse_velocity = []
+            transverse_magnetic = []
+            for transverse_axis in tangential_axes:
+                velocity_t = velocity[..., transverse_axis]
+                magnetic_t = magnetic[..., transverse_axis]
+                velocity_star_t = velocity_t - (
+                    bn * magnetic_t * (s_m - normal_velocity) / transverse_denominator
+                )
+                magnetic_star_t = (
+                    magnetic_t
+                    * (density * (signal - normal_velocity) ** 2 - bn**2)
+                    / transverse_denominator
+                )
+                transverse_velocity.append(velocity_star_t)
+                transverse_magnetic.append(magnetic_star_t)
+            velocity_star = jnp.zeros_like(velocity)
+            magnetic_star = jnp.zeros_like(magnetic)
+            velocity_star = velocity_star.at[..., axis_].set(s_m)
+            magnetic_star = magnetic_star.at[..., axis_].set(bn)
+            for index, transverse_axis in enumerate(tangential_axes):
+                velocity_star = velocity_star.at[..., transverse_axis].set(
+                    transverse_velocity[index]
+                )
+                magnetic_star = magnetic_star.at[..., transverse_axis].set(
+                    transverse_magnetic[index]
+                )
+            velocity_dot_magnetic = jnp.sum(velocity * magnetic, axis=-1)
+            star_dot = jnp.sum(velocity_star * magnetic_star, axis=-1)
+            energy_numerator = (
+                (signal - normal_velocity) * state[..., 4]
+                - total_pressure * normal_velocity
+                + total_pressure_star * s_m
+                + bn * (velocity_dot_magnetic - star_dot)
+            )
+            energy_denominator, bad_energy = self._safe_denominator(signal - s_m)
+            energy_star = energy_numerator / energy_denominator
+            star = self._state(
+                density_star,
+                s_m,
+                (transverse_velocity[0], transverse_velocity[1]),
+                energy_star,
+                bn,
+                (transverse_magnetic[0], transverse_magnetic[1]),
+                axis_,
+                tangential_axes,
+            )
+            return (
+                star,
+                density_star,
+                velocity_star,
+                magnetic_star,
+                bad_density | bad_transverse | bad_energy,
+            )
+
+        left_star, rho_l_star, velocity_l_star, magnetic_l_star, bad_l = star_state(
+            left_,
+            rho_l,
+            velocity_l,
+            magnetic_l,
+            total_pressure_l,
+            s_l,
+            vn_l,
+        )
+        right_star, rho_r_star, velocity_r_star, magnetic_r_star, bad_r = star_state(
+            right_,
+            rho_r,
+            velocity_r,
+            magnetic_r,
+            total_pressure_r,
+            s_r,
+            vn_r,
+        )
+        sqrt_l = jnp.sqrt(jnp.maximum(rho_l_star, self.denominator_epsilon))
+        sqrt_r = jnp.sqrt(jnp.maximum(rho_r_star, self.denominator_epsilon))
+        root_sum, bad_roots = self._safe_denominator(sqrt_l + sqrt_r)
+        sign_bn = jnp.where(bn >= 0.0, 1.0, -1.0)
+        velocity_ss = jnp.zeros_like(velocity_l_star)
+        magnetic_ss = jnp.zeros_like(magnetic_l_star)
+        velocity_ss = velocity_ss.at[..., axis_].set(s_m)
+        magnetic_ss = magnetic_ss.at[..., axis_].set(bn)
+        for transverse_axis in tangential_axes:
+            velocity_value = (
+                sqrt_l * velocity_l_star[..., transverse_axis]
+                + sqrt_r * velocity_r_star[..., transverse_axis]
+                + sign_bn
+                * (
+                    magnetic_r_star[..., transverse_axis]
+                    - magnetic_l_star[..., transverse_axis]
+                )
+            ) / root_sum
+            magnetic_value = (
+                sqrt_l * magnetic_r_star[..., transverse_axis]
+                + sqrt_r * magnetic_l_star[..., transverse_axis]
+                + sign_bn
+                * sqrt_l
+                * sqrt_r
+                * (
+                    velocity_r_star[..., transverse_axis]
+                    - velocity_l_star[..., transverse_axis]
+                )
+            ) / root_sum
+            velocity_ss = velocity_ss.at[..., transverse_axis].set(velocity_value)
+            magnetic_ss = magnetic_ss.at[..., transverse_axis].set(magnetic_value)
+        dot_l_star = jnp.sum(velocity_l_star * magnetic_l_star, axis=-1)
+        dot_r_star = jnp.sum(velocity_r_star * magnetic_r_star, axis=-1)
+        dot_ss = jnp.sum(velocity_ss * magnetic_ss, axis=-1)
+        energy_l_ss = left_star[..., 4] - sqrt_l * sign_bn * (dot_l_star - dot_ss)
+        energy_r_ss = right_star[..., 4] + sqrt_r * sign_bn * (dot_r_star - dot_ss)
+        left_ss = self._state(
+            rho_l_star,
+            s_m,
+            (
+                velocity_ss[..., tangential_axes[0]],
+                velocity_ss[..., tangential_axes[1]],
+            ),
+            energy_l_ss,
+            bn,
+            (
+                magnetic_ss[..., tangential_axes[0]],
+                magnetic_ss[..., tangential_axes[1]],
+            ),
+            axis_,
+            tangential_axes,
+        )
+        right_ss = self._state(
+            rho_r_star,
+            s_m,
+            (
+                velocity_ss[..., tangential_axes[0]],
+                velocity_ss[..., tangential_axes[1]],
+            ),
+            energy_r_ss,
+            bn,
+            (
+                magnetic_ss[..., tangential_axes[0]],
+                magnetic_ss[..., tangential_axes[1]],
+            ),
+            axis_,
+            tangential_axes,
+        )
+        s_l_star = s_m - jnp.abs(bn) / sqrt_l
+        s_r_star = s_m + jnp.abs(bn) / sqrt_r
+        flux_l_star = flux_l + s_l[..., None] * (left_star - left_)
+        flux_r_star = flux_r + s_r[..., None] * (right_star - right_)
+        flux_l_ss = flux_l_star + s_l_star[..., None] * (left_ss - left_star)
+        flux_r_ss = flux_r_star + s_r_star[..., None] * (right_ss - right_star)
+        hlld_flux = jnp.where(
+            (s_l >= 0.0)[..., None],
+            flux_l,
+            jnp.where(
+                (s_l_star >= 0.0)[..., None],
+                flux_l_star,
+                jnp.where(
+                    (s_m >= 0.0)[..., None],
+                    flux_l_ss,
+                    jnp.where(
+                        (s_r_star > 0.0)[..., None],
+                        flux_r_ss,
+                        jnp.where((s_r > 0.0)[..., None], flux_r_star, flux_r),
+                    ),
+                ),
+            ),
+        )
+        intermediate_valid = (
+            system.admissible(left_star)
+            & system.admissible(right_star)
+            & system.admissible(left_ss)
+            & system.admissible(right_ss)
+        )
+        finite = (
+            jnp.all(jnp.isfinite(left_star), axis=-1)
+            & jnp.all(jnp.isfinite(right_star), axis=-1)
+            & jnp.all(jnp.isfinite(left_ss), axis=-1)
+            & jnp.all(jnp.isfinite(right_ss), axis=-1)
+            & jnp.all(jnp.isfinite(hlld_flux), axis=-1)
+        )
+        weak_normal = jnp.abs(bn) <= self.denominator_epsilon
+        fallback = (
+            inconsistent_bn
+            | bad_contact
+            | bad_l
+            | bad_r
+            | bad_roots
+            | weak_normal
+            | ~intermediate_valid
+            | ~finite
+        )
+        hll = HLLFluxPlan().face_flux(system, left_, right_, axis_, args)
+        flux = jnp.where(fallback[..., None], hll.normal_flux, hlld_flux)
+        return NumericalFluxResult(
+            flux,
+            hll.max_speed,
+            fallback_activated=fallback,
+        )
+
+
 class RoeFluxPlan(AbstractNumericalFluxPlan):
     """Roe characteristic flux with a quadratic entropy fix."""
 
@@ -650,9 +1032,7 @@ def _logarithmic_mean(left: Array, right: Array, /) -> Array:
     log_difference = jnp.log(right) - jnp.log(left)
     near = jnp.abs(difference) <= 1e-7 * jnp.abs(average)
     safe_difference = jnp.where(near, jnp.ones_like(difference), difference)
-    safe_log_difference = jnp.where(
-        near, jnp.ones_like(log_difference), log_difference
-    )
+    safe_log_difference = jnp.where(near, jnp.ones_like(log_difference), log_difference)
     ratio = safe_difference / safe_log_difference
     return jnp.where(near, average, ratio)
 

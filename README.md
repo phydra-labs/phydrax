@@ -40,8 +40,9 @@ Most workflows are composing a few primitives:
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, material-particle supports, conservative SPH, measure-aware
   particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
-  measures, transfers, temporal/stochastic
-  composition, and auditable plan/preparation identities.
+  measures, transfers, fixed-temporal differentiable replay, transactional
+  gravity/cooling/stochastic source processes, compatible constrained MHD,
+  temporal/stochastic composition, and auditable plan/preparation identities.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
 - **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
   transformations, metrics, connections, curvature, embedded charts, and

@@ -11,6 +11,8 @@ explicitly qualified per feature rather than being implied by the core API.
 adds an `AbstractTransportClosure`:
 
 ```python
+import phydrax as phx
+
 material = phx.equations.IdealGasMaterial(
     1.4,
     287.0,
@@ -150,18 +152,30 @@ XDMF geometry representation.
 
 ## Differentiable rollout
 
-`FiniteVolumeRolloutPlan` executes a fixed number of runtime steps through `jax.lax.scan`.
-Retention policies are final state, fixed-stride checkpoints, or full trajectory.
-Step-level rematerialization uses `jax.checkpoint`.
+`AdaptiveFiniteVolumeRolloutPlan` executes a bounded number of adaptive attempts and
+records the accepted prefix as a `RealizedTemporalMesh`.
+`ScheduledFiniteVolumeRolloutPlan` consumes an explicit all-active internal
+`TemporalMesh`; every interval is either accepted exactly or rejected without changing
+state or physical time. It never accepts a CFL clamp or retry.
 
-`gradient_report()` compares:
+`FiniteVolumeReplayPolicy` separates reverse storage from output retention:
 
-- forward-mode directional derivative;
-- reverse-mode directional derivative;
-- centered finite-difference derivative.
+- `full`: ordinary scan;
+- `step`: rematerialize each step body;
+- `block`: retain block boundaries and rematerialize each inner block.
 
-The rollout differentiates the fixed discrete program. Positivity activation, retries,
-hard limiters, shock motion, and topology changes remain branchwise or unsupported.
+Retention remains final state, fixed-stride checkpoints, or full trajectory. Final-only
+retention does not materialize a state trajectory.
+
+`gradient_report()` compares forward-mode, reverse-mode, and centered finite-difference
+directional derivatives. The fixed temporal mesh and topology are nontrainable.
+Positivity activation, hard limiters, shock motion, fallback masks, and schedule
+validity remain branchwise.
+
+Stateful self-gravity, stochastic forcing, and cooling use
+`PreparedBalanceLawRuntime`, whose symmetric source/transport composition commits
+process state only after the complete interval succeeds. See
+[Differentiable compressible multiphysics](guides_compressible_multiphysics.md).
 
 ## Named sharding
 

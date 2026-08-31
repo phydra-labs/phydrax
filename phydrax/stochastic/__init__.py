@@ -145,6 +145,7 @@ from ._measure_change import (
     PathMeasureChange,
     wiener_measure_change,
 )
+from ._ou import OrnsteinUhlenbeckRealization
 from ._path_dependent_bsde import ReflectedPathDependentBSDEProblem
 from ._process import (
     AbstractMarginalTransitionLaw,
@@ -296,6 +297,7 @@ __all__ = [
     "AbstractStructuralComponent",
     "AbstractProcessDistribution",
     "AtomicStochasticRealization",
+    "OrnsteinUhlenbeckRealization",
     "AtomicPathEvent",
     "AutoregressiveComponent",
     "autodiff_bsde_control",

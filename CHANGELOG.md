@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Added exact fixed-temporal finite-volume replay with full, step, or block
+  rematerialization; transactional balance-law source composition and persistence;
+  periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral
+  Ornstein--Uhlenbeck forcing; implicitly differentiated tabulated cooling;
+  conservative trainable face closures; and periodic Cartesian constrained MHD with
+  integrated cochain face fluxes, edge circulations, coupled stage positivity, and
+  HLLD-to-HLL fallback evidence.
+- Added bounded adaptive balance-law realization with process-aware step limits,
+  transactional retry rollback, fixed-capacity decision journals, and exact scheduled
+  replay of accepted temporal meshes. Added global OU realizations whose innovations
+  obey the OU semigroup under interval subdivision, including antithetic coupling.
 - Added an end-to-end free-boundary SciML substrate: differentiable compact
   Heaviside/delta and coarea calculus; level-set phase, normal, curvature,
   velocity, and Eikonal operators; discontinuity-aware coordinate lifts;
