@@ -74,6 +74,10 @@ For plane strain, the two-dimensional deformation is embedded with out-of-plane 
 one. Plane stress is not implemented. Nonpositive `J` is a rejected material trial, not
 a clamped state.
 
+The field-valued energy and stress operators use the same $\mu$, $\lambda$, $K$,
+plane-strain, reference-volume, and nonpositive-$J$ conventions.
+
+
 Material parameters remain rollout arguments. Place state initialization inside a
 parameterized objective when the initial constitutive response depends on trainable
 parameters.
