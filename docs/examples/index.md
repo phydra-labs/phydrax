@@ -34,3 +34,20 @@ python examples/reactive_cfd_dem.py
 Each script prints its acceptance flag and the balance or geometry residuals
 that qualify the exercised route. The material-point example additionally
 reports transfer mass defect and minimum deformation Jacobian.
+
+## Velocimetry scripts
+
+The native image-measurement stack includes deterministic, directly runnable
+workflows:
+
+```text
+python examples/piv_synthetic_translation.py
+python examples/ptv_calibrated_stereo.py
+python examples/stb_synthetic_particles.py
+python examples/learned_piv_synthetic_training.py
+python examples/velocimetry_interop.py
+```
+
+The scripts report measurement validity and scientific error evidence. They
+distinguish image displacement from physical velocity and reconstructed
+particle identities from latent synthetic particle IDs.

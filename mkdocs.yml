@@ -127,6 +127,13 @@ nav:
         - Computational topology: "guides_computational_topology.md"
         - Advanced topology: "guides_advanced_topology.md"
         - Particle methods: "guides_particle_methods.md"
+        - Experimental velocimetry:
+            - Overview: "guides_velocimetry.md"
+            - Classical PIV: "guides_velocimetry_piv.md"
+            - Camera calibration and PTV: "guides_velocimetry_ptv.md"
+            - Residual-image LPT: "guides_velocimetry_stb.md"
+            - Learned dense PIV: "guides_learned_piv.md"
+            - Persistence and interoperability: "guides_velocimetry_interop.md"
         - Finite-molecule atomistic learning: "guides_atomistic.md"
         - Atomistic dynamics: "guides_atomistic_dynamics.md"
         - Particle-grid splatting: "guides_particle_splatting.md"
@@ -215,6 +222,14 @@ nav:
     - API:
         - Overview: "api/phydrax.md"
         - Atomistic molecular learning: "api/atomistic.md"
+        - Velocimetry:
+            - Overview: "api/velocimetry/index.md"
+            - Imaging: "api/velocimetry/imaging.md"
+            - Cameras and reconstruction: "api/velocimetry/camera.md"
+            - Particle image velocimetry: "api/velocimetry/piv.md"
+            - Particle tracking: "api/velocimetry/tracking.md"
+            - Synthetic qualification: "api/velocimetry/synthetic.md"
+            - Persistence and adapters: "api/velocimetry/io.md"
         - Equation representations:
             - Exact PDE trial spaces: "api/equations/trefftz.md"
             - Holomorphic potential fields: "api/equations/holomorphic.md"

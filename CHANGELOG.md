@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added native experimental velocimetry with mask-aware multipass and ensemble
+  PIV, explicit peak/validation/replacement evidence, calibrated physical
+  conversion, pinhole/distorted/refractive camera rigs, robust calibration and
+  triangulation, conflict-free multi-view particle reconstruction, streaming and
+  globally refined PTV tracks, frozen-association smoothing, radiometric
+  particle-image formation, residual-image Lagrangian refinement, deterministic
+  synthetic qualification, optional learned dense displacement, canonical
+  archives, and explicit-loss ecosystem adapters.
 - Added fixed-population compatible particle-in-cell dynamics over stable charged
   particle supports: measure-aware endpoint charge, physical cochain E/B gather,
   matrix-free compatible electrostatics, relativistic Boris stepping, periodic
