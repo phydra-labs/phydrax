@@ -45,6 +45,11 @@
   reduced-adjoint state/design optimization, sparse physical-radius density
   filtering, SIMP compliance topology optimization, and independent
   reference-discretization reanalysis.
+- Added native sparse force-density form-finding for pin-jointed tension,
+  compression, and mixed-sign structures with componentwise coordinate restraints,
+  fixed and shape-dependent edge/surface loads, prepared numeric refresh,
+  mathematically implicit linear/root derivatives, physical residual and reaction
+  certification, and force/support/load state-design optimization.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.
