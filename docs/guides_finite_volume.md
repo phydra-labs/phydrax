@@ -333,10 +333,14 @@ velocity from one face-density policy, shares one mass flux between density and
 momentum, and uses `MACVariableDensityProjectionPlan`. It does not claim an EOS,
 low-Mach heat expansion, VOF, or multiphase interface physics.
 
-`MACMarkerTransferPlan` gathers MAC face velocity and spreads marker force through
-the dual-measure adjoint. `ResolvedMACIBCFDEMCouplingPlan` and
-`advance_mac_resolved_ib_window` provide penalty IB force/torque, DEM contact
-subcycling, post-forcing projection, work/impulse ledgers, and complete rollback.
+`MACMarkerTransferPlan` builds fixed local cubic tensor B-spline routes on each
+staggered face layout and exposes material-measure adjoint gather/spread, moment,
+force, torque, and work evidence. `MACImmersedBoundaryProjectionPlan` solves
+pressure and prescribed marker constraints together. Its IMEX-Euler and SBDF2
+methods evaluate marker kinematics at the attempted stage. The separate
+`MACPenaltyIBCFDEMCouplingPlan` and
+`advance_mac_penalty_ib_cfd_dem_window` retain approximate penalty forcing, DEM
+contact subcycling, ledgers, and atomic rollback.
 
 ### Distribution, mapped geometry, and sensitivity
 

@@ -94,14 +94,6 @@ from ._finite_element_material import (
     FiniteElementMaterialState,
     FiniteElementMaterialTransaction,
 )
-from ._variational import (
-    BoundaryLoadAction,
-    coefficient,
-    DiffusionAction,
-    MassAction,
-    SourceAction,
-    VariationalCoefficient,
-)
 from ._finite_element_variational import (
     CellBilinearAction,
     CellEnergyAction,
@@ -118,19 +110,6 @@ from ._finite_element_variational import (
     PairwiseVolumeFluxAction,
     PreparedOperatorAction,
     SIPGFacetAction,
-)
-from .vem import (
-    CompiledVirtualElementProblem,
-    VirtualElementAction,
-    VirtualElementExecutionContext,
-    VirtualElementExecutionPolicy,
-    VirtualElementForm,
-    VirtualElementReconstruction,
-    VirtualElementRobinAction,
-    compile_virtual_element_problem,
-    evaluate_virtual_element_reconstruction,
-    evaluate_virtual_element_trace,
-    project_virtual_element_field,
 )
 from ._finite_volume_verification import (
     couette_velocity_profile,
@@ -160,13 +139,6 @@ from ._hyperbolic_systems import (
     MultispeciesEulerSystem,
     ScalarConservationSystem,
     ShallowWaterSystem,
-)
-from ._ib_cfd_dem import (
-    evaluate_resolved_ib_cfd_dem,
-    IBConstraintPlan,
-    ResolvedIBCFDEMCouplingPlan,
-    ResolvedIBEvaluation,
-    ResolvedIBGeometryPlan,
 )
 from ._incompressible import (
     compile_periodic_incompressible_flow,
@@ -212,17 +184,18 @@ from ._lattice_boltzmann_species import *  # noqa: F403
 from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
 from ._lattice_boltzmann_thermal import *  # noqa: F403
 from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_all
-from ._mac_ib_cfd_dem import (
-    evaluate_resolved_mac_ib_cfd_dem,
-    ResolvedMACIBCFDEMCouplingPlan,
-    ResolvedMACIBEvaluation,
-    ResolvedMACIBStatus,
-)
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
     CompiledMACIncompressibleDynamics,
     MACIncompressibleDiagnostics,
     MACStepRestriction,
+)
+from ._mac_penalty_ib_cfd_dem import (
+    evaluate_mac_penalty_ib_cfd_dem,
+    IBPenaltyPlan,
+    MACPenaltyIBCFDEMCouplingPlan,
+    MACPenaltyIBEvaluation,
+    MACPenaltyIBStatus,
 )
 from ._mac_scalar_buoyancy import (
     compile_mac_scalar_buoyancy,
@@ -392,6 +365,14 @@ from ._transport_closures import (
     TransportProperties,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
+from ._variational import (
+    BoundaryLoadAction,
+    coefficient,
+    DiffusionAction,
+    MassAction,
+    SourceAction,
+    VariationalCoefficient,
+)
 from ._weakly_compressible import (
     compile_weakly_compressible_sph_problem,
     CompiledWeaklyCompressibleSPHProblem,
@@ -472,6 +453,19 @@ from .trefftz import (
     TrialSpaceAuditReport,
     TrialSpaceCertificate,
     TrialValidityRegion,
+)
+from .vem import (
+    compile_virtual_element_problem,
+    CompiledVirtualElementProblem,
+    evaluate_virtual_element_reconstruction,
+    evaluate_virtual_element_trace,
+    project_virtual_element_field,
+    VirtualElementAction,
+    VirtualElementExecutionContext,
+    VirtualElementExecutionPolicy,
+    VirtualElementForm,
+    VirtualElementReconstruction,
+    VirtualElementRobinAction,
 )
 
 
@@ -647,9 +641,10 @@ __all__ = [
     "MACVariableDensityState",
     "MACVariableDensityStepRestriction",
     "MACVariableDensityStepResult",
-    "ResolvedMACIBCFDEMCouplingPlan",
-    "ResolvedMACIBEvaluation",
-    "ResolvedMACIBStatus",
+    "IBPenaltyPlan",
+    "MACPenaltyIBCFDEMCouplingPlan",
+    "MACPenaltyIBEvaluation",
+    "MACPenaltyIBStatus",
     "CompiledLatticeBoltzmannProblem",
     "LatticeBoltzmannProblem",
     "compile_lattice_boltzmann_problem",
@@ -691,7 +686,7 @@ __all__ = [
     "MonogenicPolynomialBasis",
     "compile_mac_scalar_buoyancy",
     "compile_mac_variable_density_flow",
-    "evaluate_resolved_mac_ib_cfd_dem",
+    "evaluate_mac_penalty_ib_cfd_dem",
     "compile_mac_incompressible_flow",
     "compile_periodic_incompressible_flow",
     "compile_channel_flow",
@@ -784,13 +779,8 @@ __all__ = [
     "CFDEMCouplingEvaluation",
     "FluidParticleSample",
     "HydrodynamicClosureResult",
-    "IBConstraintPlan",
-    "ResolvedIBCFDEMCouplingPlan",
-    "ResolvedIBEvaluation",
-    "ResolvedIBGeometryPlan",
     "StokesDragPlan",
     "UnresolvedCFDEMCouplingPlan",
-    "evaluate_resolved_ib_cfd_dem",
     "evaluate_unresolved_cfd_dem",
     "AntoineSaturationPressurePlan",
     "EvaporationPhaseChangePlan",

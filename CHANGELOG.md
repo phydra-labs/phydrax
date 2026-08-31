@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added fixed-topology material-measure immersed-boundary coupling on uniform
+  unit-density MAC grids: local cubic B-spline marker routes, force/torque/work
+  certificates, exact prescribed pressure-plus-marker projection, IMEX-Euler and
+  SBDF2 execution, explicitly separate penalty CFD–DEM, generic free rigid-body
+  coupling, fixed FE marker H/H* maps, synchronized deformable coupling, and
+  fixed-routing implicit sensitivities. Variable density, mapped/AMR/distributed
+  markers, remeshing, contact extensions, fluctuating hydrodynamics,
+  divergence-free interpolation, and sharp-interface changes remain unsupported.
 - Added fixed-population compatible particle-in-cell dynamics over stable charged
   particle supports: measure-aware endpoint charge, physical cochain E/B gather,
   matrix-free compatible electrostatics, relativistic Boris stepping, periodic

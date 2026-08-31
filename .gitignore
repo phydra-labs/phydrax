@@ -56,6 +56,7 @@ benchmarks/*
 !benchmarks/structured_flow.json
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
+!benchmarks/mac_immersed_boundary.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json
 !benchmarks/iree_export.json

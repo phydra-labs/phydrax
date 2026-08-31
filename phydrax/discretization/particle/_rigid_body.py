@@ -289,7 +289,7 @@ def _quaternion_relative_rotation_vector(reference: Array, point: Array, /) -> A
     return scale * vector
 
 
-def _rigid_body_world_inertia(
+def rigid_body_world_inertia(
     bodies: PreparedRigidBodySet,
     orientation: Array,
     /,
@@ -332,7 +332,7 @@ def _rigid_body_half_kick(
     )
 
 
-def _rigid_body_drift(
+def rigid_body_drift(
     bodies: PreparedRigidBodySet,
     kinematics: RigidBodyKinematics,
     step_size: Array,
@@ -429,7 +429,7 @@ def rigid_body_angular_acceleration(
 ) -> Array:
     if bodies.ambient_dimension == 2:
         return bodies.inverse_inertia_body[:, None] * torque
-    inertia_world, inverse_world = _rigid_body_world_inertia(
+    inertia_world, inverse_world = rigid_body_world_inertia(
         bodies, kinematics.orientation
     )
     angular_momentum = contract(
@@ -452,7 +452,7 @@ def rigid_body_kick_drift_kick(
     if not callable(load_function):
         raise TypeError("load_function must be callable.")
     half = _rigid_body_half_kick(bodies, kinematics, load, step_size)
-    staged = _rigid_body_drift(bodies, half, step_size)
+    staged = rigid_body_drift(bodies, half, step_size)
     next_load = load_function(time + step_size, staged, args)
     if not isinstance(next_load, RigidBodyLoad):
         raise TypeError("load_function must return RigidBodyLoad.")
@@ -540,5 +540,7 @@ __all__ = [
     "RigidBodyStepResult",
     "quaternion_rotation_matrix",
     "rigid_body_angular_acceleration",
+    "rigid_body_drift",
     "rigid_body_kick_drift_kick",
+    "rigid_body_world_inertia",
 ]

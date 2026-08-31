@@ -29,6 +29,7 @@ python examples/superquadric_collision.py
 python examples/particle_internal_heating.py
 python examples/particle_radial_drying.py
 python examples/reactive_cfd_dem.py
+python examples/prescribed_immersed_cylinder.py
 ```
 
 Each script prints its acceptance flag and the balance or geometry residuals

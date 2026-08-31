@@ -432,7 +432,9 @@ from ._rigid_body import (
     PreparedRigidBodySet,
     quaternion_rotation_matrix,
     rigid_body_angular_acceleration,
+    rigid_body_drift,
     rigid_body_kick_drift_kick,
+    rigid_body_world_inertia,
     RigidBodyKinematics,
     RigidBodyLoad,
     RigidBodySetPlan,
@@ -463,6 +465,11 @@ from ._rigid_joints import (
     RigidJointGraphPlan,
     RigidJointMultipliers,
     RigidJointResiduals,
+)
+from ._rigid_marker import (
+    PreparedRigidMarkerMap,
+    RigidGeneralizedVelocity,
+    RigidMarkerMapPlan,
 )
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
@@ -911,6 +918,7 @@ __all__ = [
     "RigidJointMultipliers",
     "RigidJointResiduals",
     "PreparedRigidBodySet",
+    "PreparedRigidMarkerMap",
     "PreparedRigidSphereClumpSet",
     "PreparedTriangleWall",
     "PrescribedDEMBarrierMotionPlan",
@@ -919,6 +927,8 @@ __all__ = [
     "RigidBodySetPlan",
     "RigidBodyStateGeometry",
     "RigidBodyStepResult",
+    "RigidGeneralizedVelocity",
+    "RigidMarkerMapPlan",
     "RigidContactGeometry",
     "RigidSphereClumpSetPlan",
     "DEMServoControlMode",
@@ -947,6 +957,8 @@ __all__ = [
     "quaternion_rotation_matrix",
     "reduce_clump_component_loads",
     "rigid_body_angular_acceleration",
+    "rigid_body_drift",
+    "rigid_body_world_inertia",
     "rigid_joint_maximum_residual",
     "rigid_body_kick_drift_kick",
     "sphere_contact_adapter",

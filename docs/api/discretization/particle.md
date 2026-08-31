@@ -349,7 +349,7 @@
 
 ---
 
-::: phydrax.equations.ResolvedIBCFDEMCouplingPlan
+::: phydrax.equations.MACPenaltyIBCFDEMCouplingPlan
 
 ---
 

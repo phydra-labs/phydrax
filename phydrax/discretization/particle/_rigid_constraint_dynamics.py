@@ -46,10 +46,10 @@ from ...nonlinear import (
 from ._rigid_body import (
     _quaternion_relative_rotation_vector,
     _rigid_body_close_kick,
-    _rigid_body_drift,
     _rigid_body_half_kick,
-    _rigid_body_world_inertia,
     PreparedRigidBodySet,
+    rigid_body_drift,
+    rigid_body_world_inertia,
     RigidBodyKinematics,
     RigidBodyLoad,
 )
@@ -480,7 +480,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 validity=_PositionProjectionValidity(solver),
                 problem_id=f"rigid-position-projection/{joints.prepared_id}",
             )
-            _, inertia_world = _rigid_body_world_inertia(bodies, reference.orientation)
+            _, inertia_world = rigid_body_world_inertia(bodies, reference.orientation)
             args = _PositionProjectionArguments(
                 reference,
                 inertia_world[joints.mobile_indices],
@@ -551,7 +551,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     ) -> NonlinearResult:
         if self.position_problem is None or self.position_template is None:
             raise ValueError("An empty joint graph has no position projection solve.")
-        inertia_world, _ = _rigid_body_world_inertia(self.bodies, predicted.orientation)
+        inertia_world, _ = rigid_body_world_inertia(self.bodies, predicted.orientation)
         arguments = _PositionProjectionArguments(
             predicted,
             inertia_world[self.joints.mobile_indices],
@@ -571,7 +571,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     def _kinetic_energy(self, kinematics: RigidBodyKinematics, /) -> Array:
         mobile = self.joints.mobile_indices
         masses = self.bodies.particles.safe_masses[mobile]
-        inertia_world, _ = _rigid_body_world_inertia(self.bodies, kinematics.orientation)
+        inertia_world, _ = rigid_body_world_inertia(self.bodies, kinematics.orientation)
         linear = 0.5 * jnp.sum(masses[:, None] * kinematics.velocity[mobile] ** 2)
         angular = 0.5 * jnp.sum(
             kinematics.angular_velocity[mobile]
@@ -598,7 +598,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         constraint_space = PyTreeSpace(constraint_template)
         mobile = graph.mobile_indices
         masses = self.bodies.particles.safe_masses[mobile]
-        inertia_world, _ = _rigid_body_world_inertia(self.bodies, kinematics.orientation)
+        inertia_world, _ = rigid_body_world_inertia(self.bodies, kinematics.orientation)
         inertia = inertia_world[mobile]
 
         mass = FunctionLinearOperator(
@@ -766,7 +766,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         half = _rigid_body_half_kick(
             self.bodies, state.kinematics, initial_load, safe_step
         )
-        predicted = _rigid_body_drift(self.bodies, half, safe_step)
+        predicted = rigid_body_drift(self.bodies, half, safe_step)
 
         if self.joints.constraint_count == 0:
             closing_load = self._load(time_ + safe_step, predicted, args)
