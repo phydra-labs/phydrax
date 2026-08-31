@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -12,6 +13,7 @@ import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
 from ..discretization.finite_difference import (
     diagonalize_fd_laplacian,
     FDLaplacianSolvePlan,
@@ -20,14 +22,24 @@ from ..discretization.finite_volume import (
     ConservativeDiffusionPlan,
     PreparedFiniteVolumeDynamics,
 )
-from ..equations import CompressibleNavierStokesSystem, EulerSystem
+from ..equations import (
+    CompressibleNavierStokesSystem,
+    EulerSystem,
+    IdealMHDSystem,
+)
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
+    AbstractPreparedAcceptedStepCoupling,
     AbstractPreparedBalanceLawProcess,
+    BalanceLawAcceptedStepContext,
+    BalanceLawAcceptedStepCouplingAdvance,
     BalanceLawProcessAdvance,
     BalanceLawProcessState,
 )
-from ._finite_volume_runtime import FiniteVolumeRuntimeState, PreparedFiniteVolumeRuntime
+from ._balance_law_transport import (
+    AbstractPreparedBalanceLawTransport,
+    BalanceLawSourceView,
+)
 
 
 class NewtonianGravityDiagnostics(eqx.Module):
@@ -42,10 +54,83 @@ class NewtonianGravityDiagnostics(eqx.Module):
     converged: Array
 
 
+class ConservativeGravityEnergyDiagnostics(StrictModule):
+    gravitational_energy_before: Array
+    gravitational_energy_after: Array
+    gas_energy_correction: Array
+    combined_energy_defect: Array
+
+
+class ConservativeGravityEnergyCoupling(AbstractPreparedAcceptedStepCoupling):
+    """Transactional gas-plus-gravity energy correction for an accepted step."""
+
+    gravity: PreparedNewtonianSelfGravity
+
+    def __init__(self, gravity: PreparedNewtonianSelfGravity, /):
+        if not isinstance(gravity, PreparedNewtonianSelfGravity):
+            raise TypeError("gravity must be PreparedNewtonianSelfGravity.")
+        self.gravity = gravity
+        self.modified_components = ("total_energy",)
+        self.coupling_id = canonical_fingerprint(
+            {
+                "kind": "conservative-gravity-energy-coupling",
+                "gravity": gravity.process_id,
+            }
+        )
+
+    def apply(
+        self,
+        context: BalanceLawAcceptedStepContext,
+        args: Any = None,
+        /,
+    ) -> BalanceLawAcceptedStepCouplingAdvance:
+        incoming = self.gravity._field(context.incoming_cell_average)
+        provisional = self.gravity._field(context.provisional_cell_average)
+        density_before = incoming[..., self.gravity.density_index]
+        density_after = provisional[..., self.gravity.density_index]
+        potential_before, _, _, solved_before = self.gravity.solve_density(
+            density_before, args
+        )
+        potential_after, _, _, solved_after = self.gravity.solve_density(
+            density_after, args
+        )
+        gravitational_before = 0.5 * density_before * potential_before
+        gravitational_after = 0.5 * density_after * potential_after
+        correction = -(gravitational_after - gravitational_before)
+        candidate = provisional.at[..., self.gravity.energy_index].add(correction)
+        measure = self.gravity.dynamics.discretization.cell_volumes
+        defect = jnp.sum(
+            measure
+            * (
+                candidate[..., self.gravity.energy_index]
+                - incoming[..., self.gravity.energy_index]
+                + gravitational_after
+                - gravitational_before
+            )
+        )
+        successful = (
+            solved_before.converged
+            & solved_after.converged
+            & jnp.all(jnp.isfinite(candidate))
+        )
+        diagnostics = ConservativeGravityEnergyDiagnostics(
+            gravitational_energy_before=jnp.sum(measure * gravitational_before),
+            gravitational_energy_after=jnp.sum(measure * gravitational_after),
+            gas_energy_correction=jnp.sum(measure * correction),
+            combined_energy_defect=defect,
+        )
+        return BalanceLawAcceptedStepCouplingAdvance(
+            cell_average=candidate.reshape(context.provisional_cell_average.shape),
+            successful=successful,
+            diagnostics=diagnostics,
+        )
+
+
 class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
     gravitational_constant: float = eqx.field(static=True)
     gravity_argument: str | None = eqx.field(static=True)
     freefall_fraction: float = eqx.field(static=True)
+    boundaries: tuple[tuple[str, str, str], ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -54,10 +139,31 @@ class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
         *,
         gravity_argument: str | None = None,
         freefall_fraction: float = 0.25,
+        boundaries: Mapping[
+            str,
+            tuple[
+                Literal["periodic", "dirichlet", "neumann"],
+                Literal["periodic", "dirichlet", "neumann"],
+            ],
+        ]
+        | None = None,
     ):
         coupling = float(gravitational_constant)
         fraction = float(freefall_fraction)
         argument = None if gravity_argument is None else str(gravity_argument)
+        boundary_items = tuple(
+            (str(axis), str(pair[0]), str(pair[1]))
+            for axis, pair in sorted(
+                ({} if boundaries is None else dict(boundaries)).items()
+            )
+        )
+        if any(
+            not axis
+            or lower not in ("periodic", "dirichlet", "neumann")
+            or upper not in ("periodic", "dirichlet", "neumann")
+            for axis, lower, upper in boundary_items
+        ):
+            raise ValueError("Newtonian gravity boundary policy is invalid.")
         if (
             not np.isfinite(coupling)
             or coupling <= 0.0
@@ -69,24 +175,26 @@ class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
         self.gravitational_constant = coupling
         self.gravity_argument = argument
         self.freefall_fraction = fraction
+        self.boundaries = boundary_items
         self.process_id = canonical_fingerprint(
             {
                 "kind": "newtonian-self-gravity",
                 "gravitational_constant": coupling,
                 "gravity_argument": argument,
                 "freefall_fraction": fraction,
+                "boundaries": [list(item) for item in boundary_items],
             }
         )
 
     def prepare(
-        self, runtime: PreparedFiniteVolumeRuntime, /
-    ) -> "PreparedNewtonianSelfGravity":
-        return PreparedNewtonianSelfGravity(self, runtime)
+        self, transport: AbstractPreparedBalanceLawTransport, /
+    ) -> PreparedNewtonianSelfGravity:
+        return PreparedNewtonianSelfGravity(self, transport)
 
 
 class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
     plan: NewtonianSelfGravityPlan
-    runtime: PreparedFiniteVolumeRuntime
+    transport: AbstractPreparedBalanceLawTransport
     dynamics: PreparedFiniteVolumeDynamics
     diffusion: Any
     poisson: FDLaplacianSolvePlan
@@ -98,38 +206,62 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
     def __init__(
         self,
         plan: NewtonianSelfGravityPlan,
-        runtime: PreparedFiniteVolumeRuntime,
+        transport: AbstractPreparedBalanceLawTransport,
         /,
     ):
         if not isinstance(plan, NewtonianSelfGravityPlan):
             raise TypeError("plan must be NewtonianSelfGravityPlan.")
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime) or not isinstance(
-            runtime.dynamics, PreparedFiniteVolumeDynamics
-        ):
+        if not isinstance(
+            transport, AbstractPreparedBalanceLawTransport
+        ) or not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError(
-                "Newtonian self-gravity requires stationary structured FV runtime."
+                "Newtonian self-gravity requires stationary structured FV dynamics."
             )
-        dynamics = runtime.dynamics
-        if not isinstance(dynamics.system, (EulerSystem, CompressibleNavierStokesSystem)):
-            raise TypeError("Newtonian self-gravity requires Euler/Navier-Stokes.")
+        dynamics = transport.dynamics
+        if not isinstance(
+            dynamics.system,
+            (EulerSystem, CompressibleNavierStokesSystem, IdealMHDSystem),
+        ):
+            raise TypeError("Newtonian self-gravity requires a compressible system.")
         grid = dynamics.discretization.grid
-        if any(not axis.periodic for axis in grid.structured_axes):
-            raise ValueError("Initial Newtonian self-gravity support is fully periodic.")
+        supplied_boundaries = {
+            axis: (lower, upper) for axis, lower, upper in plan.boundaries
+        }
+        unknown_axes = set(supplied_boundaries).difference(grid.axis_names)
+        if unknown_axes:
+            raise ValueError(
+                f"Gravity boundaries contain unknown axes {sorted(unknown_axes)!r}."
+            )
         names = tuple(dynamics.system.component_names)
         density_index = names.index("density")
         momentum_indices = tuple(
-            names.index(f"momentum_{axis}") for axis in range(dynamics.system.dimension)
+            index for index, name in enumerate(names) if name.startswith("momentum_")
         )
+        if len(momentum_indices) != dynamics.system.dimension:
+            raise RuntimeError("Gravity system momentum layout is inconsistent.")
         energy_index = names.index("total_energy")
-        boundaries = {name: ("periodic", "periodic") for name in grid.axis_names}
+        boundaries = {
+            name: supplied_boundaries.get(
+                name,
+                ("periodic", "periodic") if axis.periodic else ("neumann", "neumann"),
+            )
+            for name, axis in zip(grid.axis_names, grid.structured_axes, strict=True)
+        }
+        has_nullspace = all(
+            lower in ("periodic", "neumann") and upper in ("periodic", "neumann")
+            for lower, upper in boundaries.values()
+        )
         diagonalization = diagonalize_fd_laplacian(grid, boundaries)
         poisson = FDLaplacianSolvePlan(
             diagonalization,
             operator_scale=1.0,
-            compatibility="project_rhs",
-            gauge="zero_mean",
+            compatibility="project_rhs" if has_nullspace else "error",
+            gauge="zero_mean" if has_nullspace else "minimum_norm",
         )
-        diffusion = ConservativeDiffusionPlan(grid).prepare(1.0)
+        diffusion = ConservativeDiffusionPlan(
+            grid,
+            boundaries=boundaries,
+        ).prepare(1.0)
         probe = jnp.arange(
             int(np.prod(grid.shape)), dtype=diffusion.source.dtype
         ).reshape(grid.shape)
@@ -143,7 +275,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
                 "Gravity transform and conservative Laplacian actions disagree."
             )
         self.plan = plan
-        self.runtime = runtime
+        self.transport = transport
         self.dynamics = dynamics
         self.diffusion = diffusion
         self.poisson = poisson
@@ -155,7 +287,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
             {
                 "kind": "prepared-newtonian-self-gravity",
                 "plan": plan.process_id,
-                "runtime": runtime.runtime_id,
+                "transport": transport.transport_id,
                 "poisson": poisson.plan_id,
                 "diffusion": diffusion.operator_id,
             }
@@ -163,11 +295,14 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         self.requires_realization = False
         self.realization_name = None
         self.differentiability = "smooth_discrete"
+        self.modified_components = tuple(names[index] for index in momentum_indices) + (
+            "total_energy",
+        )
 
     def initialize(
-        self, transport_state: FiniteVolumeRuntimeState, args: Any = None, /
+        self, source_view: BalanceLawSourceView, args: Any = None, /
     ) -> BalanceLawProcessState:
-        del transport_state, args
+        del source_view, args
         return BalanceLawProcessState.empty(self.process_id)
 
     def _gravity(self, args: Any, dtype, /) -> Array:
@@ -201,7 +336,12 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
             raise ValueError(f"Gravity density must have shape {self.cell_shape}.")
         coupling = self._gravity(args, density_.dtype)
         measure = self.dynamics.discretization.cell_volumes.astype(density_.dtype)
-        mean_density = jnp.sum(measure * density_) / jnp.sum(measure)
+        has_nullspace = bool(self.poisson.diagonalization.nullspace_dimension)
+        mean_density = (
+            jnp.sum(measure * density_) / jnp.sum(measure)
+            if has_nullspace
+            else jnp.asarray(0.0, dtype=density_.dtype)
+        )
         source = 4.0 * jnp.pi * coupling * (density_ - mean_density)
         solved = self.poisson.solve(source)
         potential = solved.value
@@ -209,6 +349,16 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         face_acceleration = tuple(-gradient for gradient in gradients)
         cell_components = tuple(
             0.5 * (component + jnp.roll(component, -1, axis=axis))
+            if self.dynamics.discretization.grid.structured_axes[axis].periodic
+            else 0.5
+            * (
+                jnp.take(component, jnp.arange(component.shape[axis] - 1), axis=axis)
+                + jnp.take(
+                    component,
+                    jnp.arange(1, component.shape[axis]),
+                    axis=axis,
+                )
+            )
             for axis, component in enumerate(face_acceleration)
         )
         cell_acceleration = jnp.stack(cell_components, axis=-1)
@@ -300,6 +450,8 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
 
 
 __all__ = [
+    "ConservativeGravityEnergyCoupling",
+    "ConservativeGravityEnergyDiagnostics",
     "NewtonianGravityDiagnostics",
     "NewtonianSelfGravityPlan",
     "PreparedNewtonianSelfGravity",

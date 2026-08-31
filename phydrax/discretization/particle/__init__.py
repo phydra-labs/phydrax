@@ -248,6 +248,10 @@ from ._implicit_contact import (
     ImplicitRigidShapePlan,
     sphere_implicit_contact,
 )
+from ._metric_cell_list import (
+    MetricCellListParticleNeighborhoodPlan,
+    PreparedMetricCellListParticleNeighborhood,
+)
 from ._multiphase import (
     multiphase_interface_interaction,
     MultiphaseInteractionResult,
@@ -354,6 +358,7 @@ from ._particle_surface_exchange import (
     ParticleContactExchangeEvaluation,
     ParticleContactExchangePlan,
 )
+from ._periodic_cell import ParticleCell
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._production_boundaries import (
     BoundaryFeatureKind,
@@ -726,6 +731,7 @@ __all__ = [
     "DenseParticleNeighborhoodPlan",
     "ContinuityDensityPlan",
     "ParticleBox",
+    "ParticleCell",
     "ParticleDiscretization",
     "ParticleExecutionPolicy",
     "ParticlePairGeometry",
@@ -736,6 +742,8 @@ __all__ = [
     "ParticleNeighborhoodState",
     "PreparedBarotropicSPHDynamics",
     "PreparedCellListParticleNeighborhood",
+    "MetricCellListParticleNeighborhoodPlan",
+    "PreparedMetricCellListParticleNeighborhood",
     "PreparedDenseParticleNeighborhood",
     "PreparedWeaklyCompressibleSPHDynamics",
     "SummationDensityPlan",

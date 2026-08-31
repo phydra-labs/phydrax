@@ -115,12 +115,70 @@ generalized eigenproblems, Ritz extraction, recycling, continuation, results,
 accepted-step schedules, and checkpoints remain in `phydrax.linalg` and
 `phydrax.solver`.
 
+## Adaptive tensor hp epochs
+
+`FiniteElementHPTopology` is a fixed-capacity refinement forest. Allocated
+inactive parents retain their stable `(root, path)` identity, geometry, child
+routes, and refinement depth, while `active` selects the current leaves.
+`initial_finite_element_hp_topology`, `refine_tensor_hp_cells`, and
+`coarsen_tensor_hp_cells` implement isotropic quadrilateral/hexahedral h changes;
+per-axis p remains anisotropic. `balanced_hp_refinement_ids` closes requested
+refinement under the 2:1 face rule before a candidate is built.
+
+`FiniteElementHPEpoch` binds one active `CellMesh`, forest topology, inherited
+geometry, deterministic degree buckets, nonconforming interface overlay, prepared
+finite-element discretization, and trace constraints. Active cells are grouped by
+degree tuple, so existing reference actions and kernels remain authoritative.
+Curved children evaluate the accepted parent coordinate map rather than fitting
+independent faces.
+
+For H1 fields, a canonical master trace constrains p- and h-nonconforming cell
+traces. For L2/DG fields, coarse-to-fine patches lower through asymmetric mortar
+worksets with independent owner and neighbour widths. Hanging interfaces are
+removed from the physical exterior domain.
+
+## Adaptive decisions and transactions
+
+`FiniteElementHPResidualJumpLedger`, `tensor_modal_decay_estimate`, and
+`FiniteElementHPErrorEstimate` keep estimation separate from adaptation policy.
+`finite_element_hp_decision` applies degree/depth bounds, active-cell and estimated
+DOF budgets, and coarsening hysteresis. Balance-added cells are recorded separately
+from the requested set.
+
+Primal interpolation, physical mass projection, raw dual pullback, and pairing
+adjoint remain separate transfer roles. `FiniteElementHPTransaction` pairs accepted
+and candidate epochs with their lineage and transfers. The solver topology
+transaction transfers declared state/history roles, certifies the fully prepared
+candidate, and then promotes atomically or returns the accepted state unchanged.
+Epoch forest and geometry data have canonical restart adapters.
+
+## Adaptive solvers and distribution
+
+Degree-bucket local elimination extends existing static condensation onto the hp
+trace skeleton. `FiniteElementHPMultigridPlan` composes adjacent h/p transfers;
+`FiniteElementHPSolverRefreshPlan` distinguishes reusable degree signatures from
+route, metric, and skeleton refreshes.
+
+Children inherit parent partition ownership. Adaptive owned/halo worksets and
+mortar dependency plans are rebuilt from stable tree identities. This remains a
+partition-independent planning contract, not dynamic repartitioning or an MPI
+runtime.
+
+## Nonconforming DGSEM
+
+Conservative mortar evidence is not automatically entropy evidence.
+`certify_dgsem_mortar_compatibility` separately checks mass compatibility,
+constant reproduction, opposite normals, and the supplied entropy defect.
+Nonconforming DGSEM flux ledgers reject a mortar without a passing certificate.
+
 ## Current limits
 
+- h-refinement is isotropic with a 2:1 face-balance contract; anisotropic h and
+  arbitrary n-irregular interfaces are not provided.
 - Tensor reference actions cover quadrilaterals and hexahedra; simplex tensor-SBP
   execution is separate future work.
 - High-order compatible H(div)/H(curl) tensor families are not provided.
 - DGSEM is periodic and stationary-mesh only.
 - Mortar entropy compatibility is not inferred from ordinary L2 projection.
-- Distributed plans do not constitute an MPI mesh partitioner or communication
-  runtime.
+- Distributed plans do not constitute dynamic repartitioning, cell migration, an
+  MPI mesh partitioner, or a communication runtime.

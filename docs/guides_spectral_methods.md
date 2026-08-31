@@ -453,8 +453,9 @@ solution = phx.solver.solve_channel_sbdf2(
 )
 ```
 
-`IncompressibleFlowProblem` is shared by periodic and channel spectral compilers and
-owns viscosity plus an optional modal forcing with a required stable identity.
+`IncompressibleFlowProblem` is shared by the spectral and MAC compilers and owns
+viscosity plus an optional compiler-space forcing with a required stable identity.
+The periodic and channel compilers interpret that forcing in modal coordinates.
 `ChannelStokesPlan` is a budgeted dense primitive velocity–pressure reference solve;
 channel compilation requires its viscosity to match the problem exactly. Persistent
 state contains velocity only; pressure, affine pressure gradient, divergence, wall

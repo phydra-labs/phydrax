@@ -6,6 +6,7 @@ import phydrax.atomistic._graph as graph_module
 from phydrax.atomistic import (
     AtomicStructure,
     AtomisticBatch,
+    AtomisticGraphExecutionPlan,
     AtomisticScaleContract,
     realize_atomistic_graph,
 )
@@ -61,7 +62,7 @@ def test_batch_padding_does_not_change_structure_identity_or_graph_isolation():
     )
     batch = AtomisticBatch.from_structures((hydrogen, oxygen), atom_capacity=3)
     graph = realize_atomistic_graph(
-        batch, cutoff=2.0, maximum_neighbors=2, maximum_dense_atoms=3
+        batch, AtomisticGraphExecutionPlan(2, maximum_dense_atoms=3), cutoff=2.0
     )
     assert graph.graph.num_graphs == 2
     assert graph.graph.nodes["atomic_numbers"].shape == (6,)
@@ -82,9 +83,8 @@ def test_graph_displacement_distance_direction_and_coincident_atom_semantics():
     )
     graph = realize_atomistic_graph(
         AtomisticBatch.from_structure(structure),
+        AtomisticGraphExecutionPlan(1, maximum_dense_atoms=2),
         cutoff=1.0,
-        maximum_neighbors=1,
-        maximum_dense_atoms=2,
     )
     np.testing.assert_allclose(graph.graph.edges["distance"], 0.0)
     np.testing.assert_allclose(graph.graph.edges["direction"], 0.0)
@@ -101,9 +101,8 @@ def test_neighborhood_overflow_is_reported_without_truncation():
     )
     graph = realize_atomistic_graph(
         AtomisticBatch.from_structure(structure),
+        AtomisticGraphExecutionPlan(1, maximum_dense_atoms=3),
         cutoff=1.0,
-        maximum_neighbors=1,
-        maximum_dense_atoms=3,
     )
     assert bool(graph.overflow[0])
     assert int(graph.maximum_neighbor_count[0]) == 2
@@ -122,10 +121,7 @@ def test_dense_graph_guards_before_candidate_allocation(monkeypatch):
     monkeypatch.setattr(graph_module.np, "repeat", forbidden_allocation)
     with pytest.raises(ValueError, match="resource guard"):
         realize_atomistic_graph(
-            batch,
-            cutoff=2.0,
-            maximum_neighbors=1,
-            maximum_dense_atoms=1,
+            batch, AtomisticGraphExecutionPlan(1, maximum_dense_atoms=1), cutoff=2.0
         )
 
 
@@ -147,5 +143,5 @@ def test_with_positions_preserves_topology_and_refreshes_content_identity():
         )
     )
     moved = batch.with_positions(batch.positions + 0.25)
-    assert moved.candidate_topology_id == batch.candidate_topology_id
+    assert moved.atom_topology_id == batch.atom_topology_id
     assert moved.batch_id != batch.batch_id

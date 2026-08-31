@@ -15,6 +15,11 @@ from .._term import (
     evaluate,
     TermEvaluation,
 )
+from ._adversarial import (
+    AdversarialEvaluation,
+    ImplicitGenerator,
+    wasserstein_adversarial_evaluation,
+)
 from ._bsde import BSDETerm
 from ._classification import (
     SupervisedClassificationTerm,
@@ -52,6 +57,11 @@ from ._dense_classification import (
     DenseOverlapClassificationTerm,
     DenseSiteClassificationBatch,
     DenseSiteClassificationTerm,
+)
+from ._energy_model import (
+    EnergyTarget,
+    PersistentContrastiveDivergence,
+    PersistentEnergyState,
 )
 from ._factorized_variational_eigenspace import (
     factorized_variational_eigenspace,
@@ -182,6 +192,12 @@ __all__ = [
     "AbstractFlowMatchingMetric",
     "AbstractSamplingTerm",
     "AbstractScalarTerm",
+    "AdversarialEvaluation",
+    "ImplicitGenerator",
+    "EnergyTarget",
+    "PersistentContrastiveDivergence",
+    "PersistentEnergyState",
+    "wasserstein_adversarial_evaluation",
     "FrozenTopologyTerm",
     "BSDETerm",
     "BarycenterObjectiveTerm",

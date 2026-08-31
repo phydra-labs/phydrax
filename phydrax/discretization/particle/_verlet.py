@@ -16,12 +16,14 @@ from ..._trainable import NonTrainableState
 from .._core import DiscretizationCapability, DiscretizationKey, PreparationReport
 from ._cell_list import CellListParticleNeighborhoodPlan
 from ._core import ParticleDiscretization
+from ._metric_cell_list import MetricCellListParticleNeighborhoodPlan
 from ._neighborhood import (
     AbstractParticleNeighborhoodPlan,
     AbstractPreparedParticleNeighborhood,
     ParticleNeighborhoodState,
 )
 from ._pairwise import ParticleBox
+from ._periodic_cell import ParticleCell
 from ._precision import ParticleRealization
 
 
@@ -29,10 +31,12 @@ class ParticleVerletState(StrictModule, NonTrainableState):
     neighborhood: ParticleNeighborhoodState
     reference_position: Array
     reference_active_mask: Array
+    reference_cell_vectors: Array
     epoch: Array
     rebuilt: Array
     rebuild_count: Array
     maximum_reference_displacement: Array
+    maximum_cell_deformation: Array
     certificate_margin: Array
     successful: Array
     prepared_verlet_id: str = eqx.field(static=True)
@@ -44,7 +48,7 @@ class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     base: AbstractParticleNeighborhoodPlan
     interaction_radius: float = eqx.field(static=True)
     skin: float = eqx.field(static=True)
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     backend: ParticleRealization = eqx.field(static=True)
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
@@ -67,9 +71,10 @@ class VerletParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
             raise ValueError("interaction_radius must be finite and positive.")
         if not np.isfinite(skin_) or skin_ <= 0.0:
             raise ValueError("skin must be finite and positive.")
-        if isinstance(base, CellListParticleNeighborhoodPlan) and base.search_radius < (
-            interaction + skin_
-        ):
+        if isinstance(
+            base,
+            (CellListParticleNeighborhoodPlan, MetricCellListParticleNeighborhoodPlan),
+        ) and base.search_radius < (interaction + skin_):
             raise ValueError(
                 "Cell-list search radius must cover interaction_radius plus skin."
             )
@@ -107,7 +112,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     plan: VerletParticleNeighborhoodPlan
     base: AbstractPreparedParticleNeighborhood
     key: DiscretizationKey
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     backend: ParticleRealization = eqx.field(static=True)
     pair_capacity: int = eqx.field(static=True)
     particle_capacity: int = eqx.field(static=True)
@@ -173,20 +178,45 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         active = self._active(active_mask)
         return self.base.build(positions, active_mask=active)
 
+    def _resolved_cell_vectors(self, dtype, cell_vectors: ArrayLike | None, /) -> Array:
+        if cell_vectors is not None:
+            value = jnp.asarray(cell_vectors, dtype=dtype)
+        elif isinstance(self.box, ParticleCell):
+            value = self.box.vectors.astype(dtype)
+        elif isinstance(self.box, ParticleBox):
+            value = jnp.diag(self.box.lengths.astype(dtype))
+        else:
+            value = jnp.zeros((0, 0), dtype=dtype)
+        if value.ndim != 2 or value.shape[0] != value.shape[1]:
+            raise ValueError("Verlet cell vectors must be a square matrix.")
+        return value
+
     def initialize(
-        self, positions: ArrayLike, /, *, active_mask: ArrayLike | None = None
+        self,
+        positions: ArrayLike,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
+        cell_vectors: ArrayLike | None = None,
     ) -> ParticleVerletState:
         value = self._positions(positions)
         active = self._active(active_mask)
+        vectors = self._resolved_cell_vectors(value.dtype, cell_vectors)
         neighborhood = self.base.build(value, active_mask=active)
-        successful = neighborhood.successful & jnp.all(jnp.isfinite(value))
+        successful = (
+            neighborhood.successful
+            & jnp.all(jnp.isfinite(value))
+            & jnp.all(jnp.isfinite(vectors))
+        )
         return ParticleVerletState(
             neighborhood,
             value,
             active,
+            vectors,
             jnp.zeros((), dtype=jnp.int32),
             jnp.asarray(True),
             jnp.asarray(1, dtype=jnp.int32),
+            jnp.zeros((), dtype=value.dtype),
             jnp.zeros((), dtype=value.dtype),
             jnp.asarray(0.5 * self.plan.skin, dtype=value.dtype),
             successful,
@@ -200,6 +230,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         /,
         *,
         active_mask: ArrayLike | None = None,
+        cell_vectors: ArrayLike | None = None,
     ) -> ParticleVerletState:
         if not isinstance(previous, ParticleVerletState):
             raise TypeError("previous must be a ParticleVerletState.")
@@ -207,13 +238,23 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             raise ValueError("Verlet state belongs to another prepared neighborhood.")
         value = self._positions(positions)
         active = self._active(active_mask)
+        vectors = self._resolved_cell_vectors(value.dtype, cell_vectors)
+        if vectors.shape != previous.reference_cell_vectors.shape:
+            raise ValueError("Verlet cell shape changed from its prepared state.")
         displacement = value - previous.reference_position
         if self.box is not None:
             displacement = self.box.minimum_image(displacement)
         distance = jnp.sqrt(jnp.sum(displacement * displacement, axis=-1))
-        maximum = jnp.max(distance)
+        particle_maximum = jnp.max(distance)
+        cell_delta = vectors - previous.reference_cell_vectors
+        cell_deformation = jnp.sqrt(jnp.sum(cell_delta * cell_delta))
+        maximum = particle_maximum + cell_deformation
         threshold = jnp.asarray(0.5 * self.plan.skin, dtype=value.dtype)
-        finite = jnp.all(jnp.isfinite(value)) & jnp.isfinite(maximum)
+        finite = (
+            jnp.all(jnp.isfinite(value))
+            & jnp.all(jnp.isfinite(vectors))
+            & jnp.isfinite(maximum)
+        )
         rebuild = (
             (~previous.successful)
             | (~finite)
@@ -228,10 +269,12 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
                 neighborhood,
                 value,
                 active,
+                vectors,
                 previous.epoch + jnp.asarray(1, dtype=jnp.int32),
                 jnp.asarray(True),
                 previous.rebuild_count + jnp.asarray(1, dtype=jnp.int32),
-                maximum,
+                particle_maximum,
+                cell_deformation,
                 threshold,
                 successful,
                 self.prepared_id,
@@ -242,10 +285,12 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
                 previous.neighborhood,
                 previous.reference_position,
                 previous.reference_active_mask,
+                previous.reference_cell_vectors,
                 previous.epoch,
                 jnp.asarray(False),
                 previous.rebuild_count,
-                maximum,
+                particle_maximum,
+                cell_deformation,
                 threshold - maximum,
                 previous.successful & finite,
                 self.prepared_id,

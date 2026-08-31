@@ -17,7 +17,7 @@ from ._iterative import (
     NonlinearConstraint,
     OptimizationTermination,
 )
-from ._pde_constrained import StateDesignProblem
+from ._pde_constrained import StateDesignConstraint, StateDesignProblem
 from ._structured_compile import (
     compile_structured_minimization,
     solve_structured_minimization,
@@ -45,6 +45,21 @@ class StructuredStateDesignResult(StrictModule):
     @property
     def successful(self) -> Array:
         return self.optimization.successful
+
+
+def _lower_state_design_constraint(
+    constraint: StateDesignConstraint,
+    /,
+) -> NonlinearConstraint:
+    def function(values, args):
+        return constraint.value(values[0], values[1], args)
+
+    return NonlinearConstraint(
+        function,
+        lower=constraint.lower,
+        upper=constraint.upper,
+        constraint_id=constraint.constraint_id,
+    )
 
 
 def compile_structured_state_design(
@@ -96,6 +111,10 @@ def compile_structured_state_design(
                 lower=zeros,
                 upper=zeros,
                 constraint_id=f"{problem.problem_id}:state-equation",
+            ),
+            *tuple(
+                _lower_state_design_constraint(constraint)
+                for constraint in problem.constraints
             ),
         ),
         problem_id=f"{problem.problem_id}:structured-all-at-once",

@@ -18,7 +18,11 @@ from ..._doc import DOC_KEY0
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...atomistic._graph import AtomisticGraph, realize_atomistic_graph
+from ...atomistic._graph import (
+    AtomisticGraph,
+    AtomisticGraphExecutionPlan,
+    realize_atomistic_graph,
+)
 from ...atomistic._potential import (
     AbstractAtomisticPotential,
     initialize_atomistic_potential_identity,
@@ -36,8 +40,6 @@ from ..parameters import IdentityTransform
 class _PaiNNConfiguration(StrictModule, NonTrainableState):
     radial_frequencies: Array
     cutoff: float = eqx.field(static=True)
-    maximum_neighbors: int = eqx.field(static=True)
-    maximum_dense_atoms: int = eqx.field(static=True)
     feature_count: int = eqx.field(static=True)
     interaction_count: int = eqx.field(static=True)
     radial_basis_count: int = eqx.field(static=True)
@@ -210,8 +212,6 @@ class PaiNNPotential(AbstractAtomisticPotential):
         /,
         *,
         cutoff: float,
-        maximum_neighbors: int,
-        maximum_dense_atoms: int,
         feature_count: int = 64,
         interaction_count: int = 3,
         radial_basis_count: int = 20,
@@ -222,18 +222,12 @@ class PaiNNPotential(AbstractAtomisticPotential):
         if not isinstance(scale, AtomisticScaleContract):
             raise TypeError("scale must be an AtomisticScaleContract.")
         cutoff_value = float(cutoff)
-        neighbor_limit = int(maximum_neighbors)
-        dense_limit = int(maximum_dense_atoms)
         features = int(feature_count)
         interactions = int(interaction_count)
         radial_count = int(radial_basis_count)
         maximum_z = int(maximum_atomic_number)
         if not math.isfinite(cutoff_value) or cutoff_value <= 0.0:
             raise ValueError("cutoff must be finite and positive.")
-        if neighbor_limit < 0 or dense_limit <= 0:
-            raise ValueError(
-                "Neighbor capacity must be non-negative and dense guard positive."
-            )
         if features <= 0 or interactions <= 0 or radial_count <= 0:
             raise ValueError(
                 "PaiNN feature, interaction, and radial counts must be positive."
@@ -281,8 +275,6 @@ class PaiNNPotential(AbstractAtomisticPotential):
         self.configuration = _PaiNNConfiguration(
             radial_frequencies=jnp.arange(1, radial_count + 1, dtype=compute_dtype),
             cutoff=cutoff_value,
-            maximum_neighbors=neighbor_limit,
-            maximum_dense_atoms=dense_limit,
             feature_count=features,
             interaction_count=interactions,
             radial_basis_count=radial_count,
@@ -296,8 +288,6 @@ class PaiNNPotential(AbstractAtomisticPotential):
                 "scale": scale.scale_id,
                 "precision": precision_.policy_id,
                 "cutoff": cutoff_value,
-                "maximum_neighbors": neighbor_limit,
-                "maximum_dense_atoms": dense_limit,
                 "feature_count": features,
                 "interaction_count": interactions,
                 "radial_basis_count": radial_count,
@@ -351,57 +341,77 @@ class PaiNNPotential(AbstractAtomisticPotential):
         )
         return basis, envelope[:, None]
 
-    def _energy_unchecked(
+    def graph_energy(
         self,
-        batch: AtomisticBatch,
-        positions: Array,
+        atomic_numbers: Array,
+        atom_mask: Array,
+        atom_cases: Array,
+        case_count: int,
+        atom_capacity: int,
+        graph: AtomisticGraph,
         /,
-    ) -> tuple[Array, Array, AtomisticGraph]:
-        coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
-        graph = realize_atomistic_graph(
-            batch,
-            cutoff=self.configuration.cutoff,
-            maximum_neighbors=self.configuration.maximum_neighbors,
-            maximum_dense_atoms=self.configuration.maximum_dense_atoms,
-            positions=coordinate,
-        )
-        numbers = batch.atomic_numbers.reshape((-1,))
+    ) -> tuple[Array, Array]:
+        numbers = jnp.asarray(atomic_numbers).reshape((-1,))
         numbers = eqx.error_if(
             numbers,
             jnp.any(numbers > self.configuration.maximum_atomic_number),
             "Atomic number exceeds PaiNNPotential.maximum_atomic_number.",
         )
-        atom_mask = batch.atom_mask.reshape((-1,))
+        mask = jnp.asarray(atom_mask, dtype=bool).reshape((-1,))
         scalar = self.embedding[numbers].astype(self.precision.compute_dtype)
         vector = jnp.zeros(
             (scalar.shape[0], 3, self.configuration.feature_count),
             dtype=self.precision.compute_dtype,
         )
-        scalar = scalar * atom_mask[:, None]
+        scalar = scalar * mask[:, None]
         distance = jnp.asarray(graph.graph.edges["distance"])[:, 0]
         radial, cutoff_weight = self._radial_basis(distance)
         for interaction in self.interactions:
             scalar, vector = interaction(scalar, vector, graph, radial, cutoff_weight)
-            scalar = scalar * atom_mask[:, None]
-            vector = vector * atom_mask[:, None, None]
+            scalar = scalar * mask[:, None]
+            vector = vector * mask[:, None, None]
         atom_energy = self.readout_energy(self.readout_hidden(scalar))
-        atom_energy = atom_energy * atom_mask.astype(atom_energy.dtype)
+        atom_energy = atom_energy * mask.astype(atom_energy.dtype)
         total_energy = (
-            jnp.zeros((batch.case_count,), dtype=self.precision.reduction_dtype)
-            .at[batch.atom_cases]
+            jnp.zeros((case_count,), dtype=self.precision.reduction_dtype)
+            .at[jnp.asarray(atom_cases).reshape((-1,))]
             .add(atom_energy.astype(self.precision.reduction_dtype))
         )
         return (
             total_energy.astype(self.precision.output_dtype),
-            atom_energy.reshape((batch.case_count, batch.atom_capacity)).astype(
+            atom_energy.reshape((case_count, atom_capacity)).astype(
                 self.precision.output_dtype
             ),
+        )
+
+    def _energy_unchecked(
+        self,
+        batch: AtomisticBatch,
+        positions: Array,
+        execution: AtomisticGraphExecutionPlan,
+        /,
+    ) -> tuple[Array, Array, AtomisticGraph]:
+        coordinate = jnp.asarray(positions, dtype=self.precision.coordinate_dtype)
+        graph = realize_atomistic_graph(
+            batch,
+            execution,
+            cutoff=self.configuration.cutoff,
+            positions=coordinate,
+        )
+        energy, atom_energy = self.graph_energy(
+            batch.atomic_numbers,
+            batch.atom_mask,
+            batch.atom_cases,
+            batch.case_count,
+            batch.atom_capacity,
             graph,
         )
+        return energy, atom_energy, graph
 
     def energy(
         self,
         batch: AtomisticBatch,
+        execution: AtomisticGraphExecutionPlan,
         /,
         *,
         positions: Array | None = None,
@@ -410,15 +420,20 @@ class PaiNNPotential(AbstractAtomisticPotential):
 
         self._validate_batch(batch)
         coordinate = batch.positions if positions is None else positions
-        energy, _, graph = self._energy_unchecked(batch, coordinate)
+        energy, _, graph = self._energy_unchecked(batch, coordinate, execution)
         return graph.require_success(energy)
 
-    def __call__(self, structure: AtomicStructure | AtomisticBatch, /) -> Array:
+    def __call__(
+        self,
+        structure: AtomicStructure | AtomisticBatch,
+        execution: AtomisticGraphExecutionPlan,
+        /,
+    ) -> Array:
         if isinstance(structure, AtomicStructure):
             batch = AtomisticBatch.from_structure(structure)
-            return self.energy(batch)[0]
+            return self.energy(batch, execution)[0]
         if isinstance(structure, AtomisticBatch):
-            return self.energy(structure)
+            return self.energy(structure, execution)
         raise TypeError("PaiNNPotential expects AtomicStructure or AtomisticBatch.")
 
 

@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import continuous, diffusion, dynamic
+from . import continuous, diffusion, discrete, dynamic
 from ._barycenters import (
     BarycenterDiagnostics,
     BarycenterProblemProvenance,
@@ -113,11 +113,33 @@ from .continuous import (
     transport_plan_endpoint_coupling,
 )
 from .diffusion import (
+    AbstractScoreGuidance,
+    ClassifierFreeGuidance,
+    general_probability_flow_system,
+    general_reverse_diffusion_problem,
+    GeneralReverseProblem,
+    GuidanceEvaluation,
+    GuidanceExactness,
+    GuidedScoreField,
+    PotentialGuidance,
     probability_flow_system,
     ProbabilityFlowVectorField,
     ReverseDiffusion,
     ReverseDiffusionRealization,
     ReverseDiffusionResult,
+    ScoreContext,
+    TimeConditionedLikelihoodGuidance,
+)
+from .discrete import (
+    AbstractDiscreteNoisingKernel,
+    AdaptiveMixingPenalty,
+    AdaptiveMixingState,
+    CategoricalNoisingKernel,
+    DiscreteDenoisingProcess,
+    DiscreteForwardProcess,
+    FactorGraphReverseKernel,
+    HybridDiscreteEmbedding,
+    RecoveryLikelihoodObjective,
 )
 from .dynamic import (
     bridge_path_law_diagnostics,
@@ -144,6 +166,16 @@ from .dynamic import (
 
 
 __all__ = [
+    "discrete",
+    "AbstractDiscreteNoisingKernel",
+    "AdaptiveMixingPenalty",
+    "AdaptiveMixingState",
+    "CategoricalNoisingKernel",
+    "DiscreteDenoisingProcess",
+    "DiscreteForwardProcess",
+    "FactorGraphReverseKernel",
+    "HybridDiscreteEmbedding",
+    "RecoveryLikelihoodObjective",
     "AbstractBalancedTransportPlan",
     "AbstractBalancedTransportSolver",
     "AbstractGroundCost",
@@ -181,6 +213,15 @@ __all__ = [
     "PreparedSinkhornReference",
     "PreparedUnbalancedSinkhornReference",
     "PositiveFeatureSinkhorn",
+    "AbstractScoreGuidance",
+    "ClassifierFreeGuidance",
+    "GeneralReverseProblem",
+    "GuidanceEvaluation",
+    "GuidanceExactness",
+    "GuidedScoreField",
+    "PotentialGuidance",
+    "ScoreContext",
+    "TimeConditionedLikelihoodGuidance",
     "ProbabilityFlowVectorField",
     "ReverseDiffusion",
     "ReverseDiffusionRealization",
@@ -249,6 +290,8 @@ __all__ = [
     "require_unbalanced_converged",
     "reference_path_log_prob",
     "require_converged_bridge",
+    "general_probability_flow_system",
+    "general_reverse_diffusion_problem",
     "probability_flow_system",
     "sinkhorn_divergence",
     "sinkhorn_divergence_against",

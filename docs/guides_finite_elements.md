@@ -160,6 +160,14 @@ coarsening, P1 primal/dual transfers, local DWR indicators, and
 transaction. Failed material transfer or certification preserves the accepted
 state.
 
+Tensor hp adaptation uses `FiniteElementHPTopology` as an allocated refinement
+forest and `FiniteElementHPEpoch` as the immutable prepared snapshot. Isotropic
+quad/hex h-refinement composes with anisotropic p, master-trace H1 constraints,
+DG mortar interfaces, curved parent-map inheritance, role-specific transfers,
+degree-bucket condensation/multigrid, and atomic solver promotion. Error evidence
+and hp decisions remain separate; the marking decision is a discrete derivative
+boundary.
+
 Executable application namespaces live under `phydrax.applications`:
 phase-field Allen-Cahn/Cahn-Hilliard, finite-strain crystal plasticity,
 frictionless persistent-pair contact, phase-field fracture, and fixed-crack
@@ -186,7 +194,7 @@ Execution remains single-device unless a caller supplies a JAX named-axis
 collective context; no MPI runtime or mesh partitioner is claimed. Compatible
 elements are triangle RT0/Nedelec0; HDG is lowest-order triangular primal HDG;
 the legacy SIPG convenience remains scalar on one homogeneous 2-D polygon
-block; local mesh adaptation remains conforming T3 refinement with
-complete-family coarsening. DGSEM is periodic and stationary-mesh only.
+block. Triangle adaptation remains conforming T3 refinement; tensor h-refinement
+is isotropic and 2:1 balanced. DGSEM remains stationary-mesh only.
 Search, active-set selection, marking, topology changes, and hp candidate
 promotion are discrete derivative boundaries.
