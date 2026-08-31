@@ -41,8 +41,6 @@ _RUNTIME_ARRAY_NAMES = (
     "last_status",
     "controller_state",
     "integrator_state",
-    "forcing_state",
-    "random_state",
     "output_cursor",
     "topology_journal/kinds",
     "topology_journal/states",
@@ -400,8 +398,6 @@ def _runtime_arrays(
         "last_status": np.asarray(runtime_state.last_status, dtype=np.int32),
         "controller_state": np.asarray(runtime_state.controller_state),
         "integrator_state": np.asarray(runtime_state.integrator_state),
-        "forcing_state": np.asarray(runtime_state.forcing_state),
-        "random_state": np.asarray(runtime_state.random_state, dtype=np.uint32),
         "output_cursor": np.asarray(runtime_state.output_cursor, dtype=np.int32),
     }
     arrays.update(
@@ -464,8 +460,6 @@ def _validate_runtime_arrays(
         value = np.asarray(arrays[name])
         if value.shape != shape or value.dtype != dtype:
             raise ValueError(f"Finite-volume checkpoint runtime array {name!r} changed.")
-    if np.asarray(arrays["random_state"]).dtype != np.dtype(np.uint32):
-        raise ValueError("Finite-volume checkpoint random state dtype changed.")
     content = np.asarray(arrays["content/conservative_content"])
     volumes = np.asarray(arrays["content/effective_cell_volumes"])
     active = np.asarray(arrays["content/active_cell_mask"])
@@ -784,8 +778,6 @@ def _read_schema5_checkpoint(
         last_status=arrays["last_status"],
         controller_state=arrays["controller_state"],
         integrator_state=arrays["integrator_state"],
-        forcing_state=arrays["forcing_state"],
-        random_state=arrays["random_state"],
         output_cursor=arrays["output_cursor"],
         sliding_coupling=sliding_coupling,
         sliding_shift=sliding_shift,
@@ -972,8 +964,6 @@ def _migrate_legacy_runtime(
         last_status=arrays["last_status"],
         controller_state=arrays["controller_state"],
         integrator_state=arrays["integrator_state"],
-        forcing_state=arrays["forcing_state"],
-        random_state=arrays["random_state"],
         output_cursor=arrays["output_cursor"],
     )
     if migrated.content_state.geometry_family_id != runtime.geometry_family_id:

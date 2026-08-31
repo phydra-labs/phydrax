@@ -75,6 +75,8 @@ class FiniteVolumeRunStatus(IntEnum):
     RETRY_LIMIT_REACHED = 3
     MINIMUM_STEP_REACHED = 4
     NONFINITE_STATE = 5
+    STABILITY_LIMIT_EXCEEDED = 6
+    PRESCRIBED_STEP_REJECTED = 7
 
 
 class FiniteVolumeStepPolicy(StrictModule, NonTrainableState):
@@ -128,8 +130,6 @@ class FiniteVolumeRuntimeState(StrictModule):
     last_status: Array
     controller_state: Array
     integrator_state: Array
-    forcing_state: Array
-    random_state: Array
     output_cursor: Array
     sliding_coupling: PeriodicSlidingCoupling | None
     sliding_shift: Array
@@ -147,8 +147,6 @@ class FiniteVolumeRuntimeState(StrictModule):
         last_status: ArrayLike = FiniteVolumeRunStatus.SUCCESS,
         controller_state: ArrayLike | None = None,
         integrator_state: ArrayLike | None = None,
-        forcing_state: ArrayLike | None = None,
-        random_state: ArrayLike | None = None,
         output_cursor: ArrayLike = 0,
         sliding_coupling: PeriodicSlidingCoupling | None = None,
         sliding_shift: ArrayLike = 0.0,
@@ -188,11 +186,6 @@ class FiniteVolumeRuntimeState(StrictModule):
         )
         self.integrator_state = jnp.asarray(
             () if integrator_state is None else integrator_state
-        )
-        self.forcing_state = jnp.asarray(() if forcing_state is None else forcing_state)
-        self.random_state = jnp.asarray(
-            () if random_state is None else random_state,
-            dtype=jnp.uint32,
         )
         self.output_cursor = jnp.asarray(output_cursor, dtype=jnp.int32).reshape(())
         self.sliding_coupling = sliding_coupling
@@ -260,6 +253,17 @@ class FiniteVolumeAdvanceResult(StrictModule):
     ale: FiniteVolumeALEAdvanceEvidence | None
     embedded: FiniteVolumeEmbeddedAdvanceEvidence | None
     successor_runtime: PreparedFiniteVolumeRuntime | None = None
+
+
+class FiniteVolumeScheduledAdvanceResult(StrictModule):
+    """One exact prescribed-step attempt with explicit stability evidence."""
+
+    runtime_state: FiniteVolumeRuntimeState
+    attempted: FiniteVolumeAdvanceResult
+    accepted: Array
+    requested_step_size: Array
+    stable_step_size: Array
+    stability_margin: Array
 
 
 class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
@@ -768,8 +772,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         last_status: ArrayLike = FiniteVolumeRunStatus.SUCCESS,
         controller_state: ArrayLike | None = None,
         integrator_state: ArrayLike | None = None,
-        forcing_state: ArrayLike | None = None,
-        random_state: ArrayLike | None = None,
         output_cursor: ArrayLike = 0,
     ) -> FiniteVolumeRuntimeState:
         time_value = self.precision.decision(time)
@@ -863,8 +865,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             last_status=last_status,
             controller_state=controller_state,
             integrator_state=integrator_state,
-            forcing_state=forcing_state,
-            random_state=random_state,
             output_cursor=output_cursor,
             sliding_coupling=self.sliding_initial_coupling,
             sliding_shift=(
@@ -1286,8 +1286,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             last_status=accepted_state.last_status,
             controller_state=accepted_state.controller_state,
             integrator_state=accepted_state.integrator_state,
-            forcing_state=accepted_state.forcing_state,
-            random_state=accepted_state.random_state,
             output_cursor=accepted_state.output_cursor,
             sliding_coupling=coupling,
             sliding_shift=shift,
@@ -1449,8 +1447,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 last_status=int(FiniteVolumeRunStatus.INVALID_INITIAL_STATE),
                 controller_state=runtime_state.controller_state,
                 integrator_state=runtime_state.integrator_state,
-                forcing_state=runtime_state.forcing_state,
-                random_state=runtime_state.random_state,
                 output_cursor=runtime_state.output_cursor,
                 sliding_coupling=runtime_state.sliding_coupling,
                 sliding_shift=runtime_state.sliding_shift,
@@ -1498,6 +1494,101 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             runtime_state,
             jax.lax.cond(valid, valid_branch, invalid_branch, operand=None),
             args,
+        )
+
+    def advance_prescribed(
+        self,
+        runtime_state: FiniteVolumeRuntimeState,
+        step_size: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> FiniteVolumeScheduledAdvanceResult:
+        """Attempt exactly ``step_size`` without accepting a clamp or retry."""
+
+        if not isinstance(self.dynamics, PreparedFiniteVolumeDynamics):
+            raise ValueError(
+                "Prescribed finite-volume replay currently requires stationary "
+                "structured dynamics."
+            )
+        if self.embedded_redistribution is not None or self.sliding_plan is not None:
+            raise ValueError(
+                "Prescribed finite-volume replay does not support embedded or "
+                "sliding topology."
+            )
+        requested = self.precision.decision(jnp.asarray(step_size).reshape(()))
+        requested = eqx.error_if(
+            requested,
+            ~jnp.isfinite(requested) | (requested <= 0.0),
+            "Prescribed finite-volume step_size must be positive and finite.",
+        )
+        replay_state = FiniteVolumeRuntimeState(
+            runtime_state.content_state,
+            runtime_state.topology_journal,
+            requested,
+            accepted_step=runtime_state.accepted_step,
+            last_status=runtime_state.last_status,
+            controller_state=runtime_state.controller_state,
+            integrator_state=runtime_state.integrator_state,
+            output_cursor=runtime_state.output_cursor,
+            sliding_coupling=runtime_state.sliding_coupling,
+            sliding_shift=runtime_state.sliding_shift,
+            sliding_event_id=runtime_state.sliding_event_id,
+        )
+        stage_state = self._provide_stage_state(
+            runtime_state.time, runtime_state.cell_average()
+        )
+        stable = self.precision.decision(
+            self.dynamics.stable_step(stage_state, args, cfl=self.policy.cfl)
+        )
+        attempted = self.advance(replay_state, args)
+        tolerance = (
+            32.0 * jnp.finfo(requested.dtype).eps * jnp.maximum(jnp.abs(requested), 1.0)
+        )
+        exact = (
+            attempted.accepted
+            & (attempted.retries == 0)
+            & (jnp.abs(attempted.accepted_step_size - requested) <= tolerance)
+        )
+        status = jnp.where(
+            exact,
+            attempted.runtime_state.last_status,
+            jnp.where(
+                requested > stable + tolerance,
+                int(FiniteVolumeRunStatus.STABILITY_LIMIT_EXCEEDED),
+                int(FiniteVolumeRunStatus.PRESCRIBED_STEP_REJECTED),
+            ),
+        )
+        content = jax.lax.cond(
+            exact,
+            lambda _: attempted.runtime_state.content_state,
+            lambda _: runtime_state.content_state,
+            operand=None,
+        )
+        final_state = FiniteVolumeRuntimeState(
+            content,
+            runtime_state.topology_journal,
+            self.precision.decision(jnp.where(exact, requested, runtime_state.step_size)),
+            accepted_step=jnp.where(
+                exact,
+                attempted.runtime_state.accepted_step,
+                runtime_state.accepted_step,
+            ),
+            last_status=status,
+            controller_state=runtime_state.controller_state,
+            integrator_state=runtime_state.integrator_state,
+            output_cursor=runtime_state.output_cursor,
+            sliding_coupling=runtime_state.sliding_coupling,
+            sliding_shift=runtime_state.sliding_shift,
+            sliding_event_id=runtime_state.sliding_event_id,
+        )
+        margin = self.precision.decision(stable / requested - 1.0)
+        return FiniteVolumeScheduledAdvanceResult(
+            runtime_state=final_state,
+            attempted=attempted,
+            accepted=exact,
+            requested_step_size=requested,
+            stable_step_size=stable,
+            stability_margin=margin,
         )
 
     def _advance_overset(
@@ -1706,8 +1797,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             last_status=status,
             controller_state=runtime_state.controller_state,
             integrator_state=runtime_state.integrator_state,
-            forcing_state=runtime_state.forcing_state,
-            random_state=runtime_state.random_state,
             output_cursor=runtime_state.output_cursor,
             sliding_coupling=runtime_state.sliding_coupling,
             sliding_shift=runtime_state.sliding_shift,
@@ -2004,8 +2093,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             last_status=status,
             controller_state=runtime_state.controller_state,
             integrator_state=runtime_state.integrator_state,
-            forcing_state=runtime_state.forcing_state,
-            random_state=runtime_state.random_state,
             output_cursor=runtime_state.output_cursor,
             sliding_coupling=runtime_state.sliding_coupling,
             sliding_shift=runtime_state.sliding_shift,
@@ -2256,8 +2343,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             last_status=status,
             controller_state=runtime_state.controller_state,
             integrator_state=runtime_state.integrator_state,
-            forcing_state=runtime_state.forcing_state,
-            random_state=runtime_state.random_state,
             output_cursor=runtime_state.output_cursor,
             sliding_coupling=runtime_state.sliding_coupling,
             sliding_shift=runtime_state.sliding_shift,
@@ -2428,8 +2513,6 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             last_status=status,
             controller_state=runtime_state.controller_state,
             integrator_state=runtime_state.integrator_state,
-            forcing_state=runtime_state.forcing_state,
-            random_state=runtime_state.random_state,
             output_cursor=runtime_state.output_cursor,
             sliding_coupling=runtime_state.sliding_coupling,
             sliding_shift=runtime_state.sliding_shift,
@@ -2462,6 +2545,7 @@ __all__ = [
     "FiniteVolumeALEAdvanceEvidence",
     "FiniteVolumeEmbeddedAdvanceEvidence",
     "FiniteVolumeAdvanceResult",
+    "FiniteVolumeScheduledAdvanceResult",
     "FiniteVolumeRunStatus",
     "FiniteVolumeRuntimeState",
     "FiniteVolumeStepPolicy",

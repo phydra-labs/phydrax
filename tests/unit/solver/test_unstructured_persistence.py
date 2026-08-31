@@ -68,8 +68,6 @@ def _unstructured_runtime():
         accepted_step=7,
         controller_state=jnp.asarray((0.3, 0.4)),
         integrator_state=jnp.asarray((1.2,)),
-        forcing_state=jnp.asarray((2.5,)),
-        random_state=jnp.asarray((11, 17), dtype=jnp.uint32),
         output_cursor=4,
     )
     execution = phx.solver.FiniteVolumeExecutionSpec(1.0, 1000)

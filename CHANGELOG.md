@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Added exact fixed-temporal finite-volume replay with full, step, or block
+  rematerialization; transactional balance-law source composition and persistence;
+  periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral
+  Ornstein--Uhlenbeck forcing; implicitly differentiated tabulated cooling;
+  conservative trainable face closures; and periodic Cartesian constrained MHD with
+  integrated cochain face fluxes, edge circulations, coupled stage positivity, and
+  HLLD-to-HLL fallback evidence.
+- Added bounded adaptive balance-law realization with process-aware step limits,
+  transactional retry rollback, fixed-capacity decision journals, and exact scheduled
+  replay of accepted temporal meshes. Added global OU realizations whose innovations
+  obey the OU semigroup under interval subdivision, including antithetic coupling.
 - Added fixed-rank randomized Nyström preconditioning with auditable sketch and
   refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
   field metrics with rectangular or Gram tangent solves and saved-node audits;

@@ -40,8 +40,9 @@ Most workflows are composing a few primitives:
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, material-particle supports, conservative SPH, measure-aware
   particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
-  measures, transfers, temporal/stochastic
-  composition, and auditable plan/preparation identities.
+  measures, transfers, fixed-temporal differentiable replay, transactional
+  gravity/cooling/stochastic source processes, compatible constrained MHD,
+  temporal/stochastic composition, and auditable plan/preparation identities.
 - **Finite-molecule atomistic learning**: scale-identified atomic structures and
   padded case-isolated batches reuse material-particle identities and `GraphIR`;
   PaiNN scalar/vector interactions produce invariant molecular energies and

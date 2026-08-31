@@ -30,9 +30,7 @@ def _periodic_advection(resolutions, cfl):
             phx.discretization.FiniteVolumeBoundarySet.periodic(("x",)),
         )
         method = phx.discretization.FiniteVolumeMethodPlan(
-            phx.discretization.MUSCLReconstruction(
-                phx.discretization.UnlimitedLimiter()
-            ),
+            phx.discretization.MUSCLReconstruction(phx.discretization.UnlimitedLimiter()),
             phx.discretization.HLLFluxPlan(),
         )
         compiled = phx.equations.compile_conservation_problem(
@@ -53,8 +51,7 @@ def _periodic_advection(resolutions, cfl):
         )
         errors.append(norms.l2)
         conservation.append(
-            jnp.sum(discretization.cell_volumes[..., None] * state)
-            - initial_integral
+            jnp.sum(discretization.cell_volumes[..., None] * state) - initial_integral
         )
     convergence = phx.equations.finite_volume_convergence_result(
         resolutions, jnp.asarray(errors), 2.0
@@ -92,49 +89,27 @@ def _euler_case(case, resolution, steps):
         phx.discretization.HLLCFluxPlan(),
         positivity=phx.discretization.ConvexStateLimiterPlan(),
     )
-    compiled = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
         compiled.dynamics,
         phx.discretization.FluxPositivityPlan(),
         phx.solver.FiniteVolumeStepPolicy(cfl=0.35),
     )
     state = case.initial_state(discretization.cell_centers, 0.0, None)
-    runtime_state = phx.solver.FiniteVolumeRuntimeState(
-        state, 0.0, case.final_time / steps
-    )
+    step_size = case.final_time / steps
+    runtime_state = runtime.initialize_state(state, 0.0, step_size)
     activations = 0
     retries = 0
     attempts = 0
-    maximum_attempts = 16 * steps
-    while (
-        float(runtime_state.time) < case.final_time
-        and attempts < maximum_attempts
-    ):
-        remaining = case.final_time - runtime_state.time
-        runtime_state = phx.solver.FiniteVolumeRuntimeState(
-            runtime_state.conservative_state,
-            runtime_state.time,
-            jnp.minimum(runtime_state.step_size, remaining),
-            accepted_step=runtime_state.accepted_step,
-            last_status=runtime_state.last_status,
-            controller_state=runtime_state.controller_state,
-            integrator_state=runtime_state.integrator_state,
-            forcing_state=runtime_state.forcing_state,
-            random_state=runtime_state.random_state,
-            output_cursor=runtime_state.output_cursor,
-        )
-        result = runtime.advance(runtime_state)
-        runtime_state = result.runtime_state
-        activations += int(result.positivity.activated)
-        retries += int(result.retries)
+    for _ in range(steps):
+        result = runtime.advance_prescribed(runtime_state, step_size)
+        activations += int(result.attempted.positivity.activated)
+        retries += int(result.attempted.retries)
         attempts += 1
+        runtime_state = result.runtime_state
         if not bool(result.accepted):
             break
-    primitive = case.system.conserved_to_primitive(
-        runtime_state.conservative_state
-    )
+    primitive = case.system.conserved_to_primitive(runtime_state.cell_average())
     return {
         "case": case.name,
         "resolution": resolution,
@@ -170,9 +145,7 @@ def main():
     arguments = parser.parse_args()
     resolutions = tuple(int(value) for value in arguments.resolutions.split(","))
     if any(value < 8 for value in resolutions) or arguments.sod_steps <= 0:
-        raise ValueError(
-            "Qualification resolutions and step count are too small."
-        )
+        raise ValueError("Qualification resolutions and step count are too small.")
     cases = {
         "sod": phx.equations.sod_verification_case,
         "lax": phx.equations.lax_verification_case,
