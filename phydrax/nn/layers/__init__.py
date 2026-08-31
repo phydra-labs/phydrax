@@ -13,6 +13,10 @@ from ._causal_recurrent import (
     run_causal_recurrent,
 )
 from ._complex_linear import ComplexLinear
+from ._diffusion_conditioning import (
+    SinusoidalTimeEmbedding,
+    TimeConditionedVectorModel,
+)
 from ._dropout import Dropout, inference_mode
 from ._fourier_embeddings import (
     ExplicitFourierFeatureEmbeddings,
@@ -95,6 +99,8 @@ __all__ = [
     "FourierEvaluationMethod",
     "GRUCell",
     "sample_fourier_grid",
+    "SinusoidalTimeEmbedding",
+    "TimeConditionedVectorModel",
     "Dropout",
     "ComplexLinear",
     "InterfaceDistanceSemantics",

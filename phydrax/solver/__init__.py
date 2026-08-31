@@ -959,6 +959,7 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
+from ._wiener_operator import WienerNoiseBlock, WienerNoiseLayout
 from ._xxz_open import (
     boundary_driven_xxz_problem,
     qualify_boundary_driven_xxz,
@@ -1358,6 +1359,8 @@ __all__ = [
     "StochasticCollocationResult",
     "StochasticVolterraProblem",
     "WeakObservableEstimate",
+    "WienerNoiseBlock",
+    "WienerNoiseLayout",
     "WienerCoefficientRepresentation",
     "WienerTerm",
     "SplitDifferentialProblem",

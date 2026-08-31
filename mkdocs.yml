@@ -203,6 +203,7 @@ nav:
             - Overview: "api/transport/index.md"
             - Continuous learned transport: "api/transport/continuous.md"
             - Score diffusion transport: "api/transport/diffusion.md"
+            - Advanced generative transport: "api/transport/generative_expansion.md"
             - Ground costs: "api/transport/costs.md"
             - Sinkhorn and divergence: "api/transport/sinkhorn.md"
             - Unbalanced Sinkhorn: "api/transport/unbalanced.md"
