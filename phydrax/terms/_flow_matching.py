@@ -31,57 +31,13 @@ from .._term import AbstractSamplingTerm
 from ..transport.continuous._coupling import EndpointCouplingSample
 from ..transport.continuous._interpolant import AbstractEndpointInterpolant
 from ._sample_statistics import effective_sample_size, normalized_log_weights
+from ._time_sampling import UniformTimeSamplingPolicy
 
 
 FlowMatchingSamplingMode: TypeAlias = Literal["fixed", "resample"]
 FlowEndpointProvider: TypeAlias = Callable[[Key[Array, ""]], EndpointCouplingSample]
 
 
-class FlowMatchingPolicy(StrictModule):
-    """Time-sampling policy for endpoint flow matching."""
-
-    minimum_time: Array
-    maximum_time: Array
-    distribution: Literal["uniform"] = eqx.field(static=True)
-    policy_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        minimum_time: ArrayLike = 0.0,
-        maximum_time: ArrayLike = 1.0,
-        /,
-        *,
-        distribution: Literal["uniform"] = "uniform",
-        policy_id: str | None = None,
-    ):
-        lower = jnp.asarray(minimum_time, dtype=float).reshape(())
-        upper = jnp.asarray(maximum_time, dtype=float).reshape(())
-        if not bool(jnp.isfinite(lower) & jnp.isfinite(upper)):
-            raise ValueError("Flow-matching time bounds must be finite.")
-        if not bool(upper > lower):
-            raise ValueError("Flow-matching maximum_time must exceed minimum_time.")
-        if distribution != "uniform":
-            raise ValueError(
-                "The initial flow-matching policy supports only uniform time."
-            )
-        resolved_id = (
-            canonical_fingerprint(
-                {
-                    "kind": "flow-matching-time-policy-v1",
-                    "minimum_time": float(lower),
-                    "maximum_time": float(upper),
-                    "distribution": distribution,
-                }
-            )
-            if policy_id is None
-            else str(policy_id)
-        )
-        if not resolved_id:
-            raise ValueError("policy_id must be non-empty.")
-        self.minimum_time = lower
-        self.maximum_time = upper
-        self.distribution = distribution
-        self.policy_id = resolved_id
 
 
 class FlowMatchingBatch(StrictModule):
@@ -220,7 +176,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
     fixed_endpoints: EndpointCouplingSample | None
     endpoint_provider: FlowEndpointProvider | None
     interpolant: AbstractEndpointInterpolant
-    policy: FlowMatchingPolicy
+    policy: UniformTimeSamplingPolicy
     metric: AbstractFlowMatchingMetric
     scalar_weight: Array
     velocity_name: str = eqx.field(static=True)
@@ -236,7 +192,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
         interpolant: AbstractEndpointInterpolant,
         /,
         *,
-        policy: FlowMatchingPolicy | None = None,
+        policy: UniformTimeSamplingPolicy | None = None,
         metric: AbstractFlowMatchingMetric | None = None,
         sampling_mode: FlowMatchingSamplingMode = "fixed",
         scalar_weight: ArrayLike = 1.0,
@@ -252,10 +208,10 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             raise ValueError("sampling_mode must be 'fixed' or 'resample'.")
         if not state_label or not time_label or state_label == time_label:
             raise ValueError("state_label and time_label must be distinct and non-empty.")
-        resolved_policy = FlowMatchingPolicy() if policy is None else policy
+        resolved_policy = UniformTimeSamplingPolicy() if policy is None else policy
         resolved_metric = EuclideanFlowMatchingMetric() if metric is None else metric
-        if not isinstance(resolved_policy, FlowMatchingPolicy):
-            raise TypeError("policy must be FlowMatchingPolicy or None.")
+        if not isinstance(resolved_policy, UniformTimeSamplingPolicy):
+            raise TypeError("policy must be UniformTimeSamplingPolicy or None.")
         if not isinstance(resolved_metric, AbstractFlowMatchingMetric):
             raise TypeError("metric must implement AbstractFlowMatchingMetric.")
         if bool(resolved_policy.minimum_time < interpolant.source_coordinate) or bool(
@@ -303,11 +259,9 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             endpoints = self.endpoint_provider(endpoint_key)
         if endpoints.event_shape != self.interpolant.event_shape:
             raise ValueError("Endpoint provider returned an incompatible event shape.")
-        time = jr.uniform(
+        time = self.policy.sample(
             time_key,
             (endpoints.num_pairs,),
-            minval=self.policy.minimum_time,
-            maxval=self.policy.maximum_time,
             dtype=endpoints.source.real.dtype,
         )
         evaluation = self.interpolant.evaluate(
@@ -531,7 +485,6 @@ __all__ = [
     "FlowEndpointProvider",
     "FlowMatchingBatch",
     "FlowMatchingDiagnostics",
-    "FlowMatchingPolicy",
     "FlowMatchingSamplingMode",
     "FlowMatchingTerm",
 ]

@@ -177,6 +177,7 @@ nav:
         - Optimal transport:
             - Overview: "api/transport/index.md"
             - Continuous learned transport: "api/transport/continuous.md"
+            - Score diffusion transport: "api/transport/diffusion.md"
             - Ground costs: "api/transport/costs.md"
             - Sinkhorn and divergence: "api/transport/sinkhorn.md"
             - Unbalanced Sinkhorn: "api/transport/unbalanced.md"
@@ -300,6 +301,7 @@ nav:
             - Activations: "api/nn/activations.md"
         - Stochastic processes:
             - Overview: "api/stochastic/index.md"
+            - Gaussian score diffusions: "api/stochastic/diffusion.md"
             - Signatures and path kernels: "api/stochastic/signatures.md"
             - State-space models: "api/stochastic/state_space.md"
             - Martingales and stopping: "api/stochastic/martingales.md"

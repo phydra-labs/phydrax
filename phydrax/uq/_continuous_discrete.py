@@ -236,9 +236,13 @@ def _diffusion_covariance(
     size = prod(transition.state_shape) if transition.state_shape else 1
     covariance = jnp.zeros((size, size), dtype=state.dtype)
     for term in transition.wiener_terms:
-        coefficient = jnp.asarray(term.coefficient(time, state, context))
-        matrix = coefficient.reshape((size, term.noise_size))
-        covariance = covariance + matrix @ jnp.conj(matrix.T)
+        coefficient = term.coefficient_array(time, state, context)
+        if term.representation == "diagonal":
+            diagonal = coefficient.reshape((size,))
+            covariance = covariance + jnp.diag(jnp.abs(diagonal) ** 2)
+        else:
+            matrix = coefficient.reshape((size, term.noise_size))
+            covariance = covariance + matrix @ jnp.conj(matrix.T)
     return covariance
 
 

@@ -875,6 +875,16 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   and channel geometry through `OperatorFlowMatchingMetric`.
   See [Guides → Optimal transport](guides_transport.md) and
   [API → Continuous learned transport](api/transport/continuous.md).
+- **Score-based diffusion transport**: prescribe an exact VP or VE Gaussian
+  perturbation, train a state-shaped marginal score with
+  `DenoisingScoreMatchingTerm`, and reuse that field in either replayable
+  `ReverseDiffusion` or `probability_flow_system`. Reverse samples retain distinct
+  terminal states, global Wiener paths, solver status, and terminal-reference
+  semantics. Probability flow composes with `ContinuousFlowLaw` instead of creating a
+  second density implementation. The initial contract is full-rank real Euclidean
+  vector state only; singular, manifold, and field diffusion remain explicit future
+  contracts. See [API → Gaussian score diffusions](api/stochastic/diffusion.md) and
+  [API → Score diffusion transport](api/transport/diffusion.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
   `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
   and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density

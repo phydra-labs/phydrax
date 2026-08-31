@@ -190,6 +190,7 @@ from ._differential import (
     DifferentialSolution,
     DifferentialVectorField,
     NoiseStructure,
+    WienerCoefficientRepresentation,
     WienerTerm,
 )
 from ._differential_algebraic import (
@@ -1173,6 +1174,7 @@ __all__ = [
     "StochasticCollocationResult",
     "StochasticVolterraProblem",
     "WeakObservableEstimate",
+    "WienerCoefficientRepresentation",
     "WienerTerm",
     "SplitDifferentialProblem",
     "SSPRK33",
