@@ -45,7 +45,7 @@ term evaluation.
 """
 
 from .._hybrid_sensitivity import HybridSensitivityMode
-from . import maxwell
+from . import advanced, maxwell
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -1039,6 +1039,7 @@ from .maxwell import (
 
 
 __all__ = [
+    "advanced",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
     "BalanceLawAdvanceResult",
