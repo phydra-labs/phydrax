@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._material_point import NeoHookeanMPMConstitutivePlan
 from ._models import (
     j2_radial_return,
     J2PlasticityParameters,
@@ -9,6 +10,7 @@ from ._models import (
     J2PlasticityUpdate,
     neo_hookean_first_piola,
     neo_hookean_form,
+    neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
 from ._topology import (
@@ -32,12 +34,14 @@ __all__ = [
     "J2PlasticityState",
     "J2PlasticityUpdate",
     "NeoHookeanParameters",
+    "NeoHookeanMPMConstitutivePlan",
     "PreparedDensityFilter",
     "SIMPInterpolation",
     "TopologyOptimizationResult",
     "TopologyReanalysisReport",
     "j2_radial_return",
     "neo_hookean_first_piola",
+    "neo_hookean_reference_energy",
     "neo_hookean_form",
     "reanalyse_topology_design",
     "solve_topology_optimization",

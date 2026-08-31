@@ -166,6 +166,7 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
+[material-point-method guide](docs/guides_material_point_method.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
