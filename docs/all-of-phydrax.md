@@ -570,6 +570,19 @@ large designs with few inequalities. Its reduced state/design form reuses exact
 adjoints and supports fixed-mesh SIMP compliance optimization with sparse
 physical-radius filtering and mandatory independent reanalysis evidence.
 
+Pin-jointed structural form-finding lives in
+`phydrax.applications.solid_mechanics`. `ForceDensityStructure` compiles member
+topology and full or componentwise coordinate restraints into one sparse reduced
+equilibrium relation. Sign-definite tension and compression expose certified
+positive-definite linear systems; mixed signs retain only self-adjoint evidence.
+Fixed nodal and reference line loads remain linear, while current line loads and
+oriented T3/Q4 pressure become physical nonlinear roots with implicit derivatives.
+The same state/design runtime optimizes force densities, support coordinates, and
+load parameters without a parallel goal or optimizer hierarchy. Results retain
+member forces, reactions, physical residuals, nested solver evidence, and stable
+plan identities; they do not claim constitutive stiffness, buckling, bending, or
+stability.
+
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
 pseudo-transient continuation, vector Halley, Type-I/II Anderson, Steffensen,
@@ -1091,6 +1104,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
+- **Force-density structural form-finding**: build sparse pin-jointed tension,
+  compression, or mixed-sign equilibrium problems; add fixed or follower loads;
+  and optimize force densities, support positions, or load parameters through the
+  native state/design runtime. See
+  [Guides → Force-density form-finding](guides_force_density.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

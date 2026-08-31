@@ -1,0 +1,38 @@
+{
+  "arch": {
+    "final_load_path": 54.772255750516635,
+    "force_density_magnitude": 5.2033643025249345,
+    "initial_load_path": 66.88157894736841,
+    "iterations": 9,
+    "linear_solves": 26,
+    "node_count": 20,
+    "relative_load_path_error": 0.051316701949485885,
+    "relative_rise_error": 0.0013860032469378552,
+    "residual_norm": 4.219782314658102e-14,
+    "rise": 4.324125448814313,
+    "status": 0,
+    "target_load_path": 57.73502691896258,
+    "target_rise": 4.330127018922193,
+    "wall_seconds": 6.605348290999245
+  },
+  "forward": [
+    {
+      "contribution_count": 180,
+      "first_solve_seconds": 2.684749125000053,
+      "free_dof_count": 46,
+      "global_balance_norm": 0.0,
+      "gradient_norm": 683.8622326876614,
+      "gradient_seconds": 0.9545241659998283,
+      "linear_backend": "native-krylov",
+      "linear_method": "pcg",
+      "member_count": 24,
+      "node_count": 25,
+      "plan_id": "6d94925279be71ec9681f26de3281da29ff85dede895e21c23408ba71518056e",
+      "plan_seconds": 0.6557847920003042,
+      "prepare_seconds": 0.04285287499988044,
+      "residual_norm": 3.195263526895161e-14,
+      "status": 0,
+      "steady_refresh_solve_seconds": 0.40714308400038135
+    }
+  ]
+}
