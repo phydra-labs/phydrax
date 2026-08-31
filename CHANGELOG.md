@@ -3,6 +3,38 @@
 ## Unreleased
 
 ### Added
+- Added native atomistic dynamics with complete unit identities,
+  position-independent prepared systems, stable-ID molecular topology and pair
+  exceptions, composable classical/learned scalar-energy programs, dense and
+  triclinic cell/Verlet execution, momentum-form NVE and BAOAB NVT,
+  SHAKE/RATTLE constraints, stress, direct Ewald and B-spline PME, isotropic
+  NPT moves, bounded replayable trajectories, exact checkpoints, hybrid and
+  RESPA composition, Born–Oppenheimer provider boundaries, ring polymers with
+  PILE, and variance-constrained semi-grand transitions. Dense graph resources
+  are now explicit execution-plan identity rather than learned architecture identity.
+- Added fixed-capacity explicit Material Point Method dynamics for plane-strain and
+  three-dimensional Neo-Hookean solids: nodal quadratic B-splines, matched APIC
+  transfer, first-Piola reference-volume forces, transactional USL updates,
+  support-halo and prescribed-velocity boundaries, acoustic/advective/force step
+  evidence, full/step/block replay, final/checkpoint/trajectory retention, and
+  piecewise-versus-frozen gradient reports. Corrected logarithmic Neo-Hookean
+  parameter naming so its volumetric coefficient is Lamé lambda, with an explicit
+  physical shear/bulk constructor.
+- Added bounded and periodic unit-density MAC incompressible dynamics with static
+  no-slip wall closure, face-dual velocity coordinates, symmetry-preserving momentum
+  transport, conservative explicit viscosity, transform-or-iterative stage
+  projection, fixed-step SSPRK composition, short-horizon differentiation, step
+  restrictions, and complete constraint and kinetic-energy diagnostics. Hardened
+  singular transform solves so masked pressure nullspaces retain finite reverse-mode
+  derivatives.
+- Extended the MAC flow substrate with dynamic no-slip/free-slip/inflow/pressure/open
+  boundary closures, named conservative scalars and Boussinesq exchange, iterative,
+  transform, hybrid-line and IMEX/SBDF2 viscous solves, conservative variable-density
+  face momentum, dual-measure resolved IB–DEM coupling, transactional adaptivity and
+  replay, short-horizon and least-squares-shadowing sensitivities, explicit sharded
+  pressure CG, compatible mapped/ALE geometry, and conservative nondifferentiable
+  remesh epochs. Every path exposes its mass, momentum, energy, residual, topology,
+  differentiation, resource, and fail-closed acceptance evidence.
 - Added exact fixed-temporal finite-volume replay with full, step, or block
   rematerialization; transactional balance-law source composition and persistence;
   periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral
@@ -18,6 +50,11 @@
   prepared balance-law transport contract. Gravity, cooling, and OU forcing now compose
   with face-flux MHD under the same adaptive realization, scheduled replay, rollback,
   component-ownership checks, and portable checkpoint semantics.
+- Added dimension-generic constrained-MHD layouts, primitive PLM/WENO/TENO/MP5
+  reconstruction, HLL-UCT, accepted face/edge integral ledgers, physical boundary
+  policies, dual-energy and CTU support, non-ideal and AMR cochain operators, bounded
+  gravity, exact cooling coordinates, modal forcing, thermochemistry, radiation
+  moments, cosmological workflows, field inference, and structure-preserving closures.
 - Added fixed-rank randomized Nyström preconditioning with auditable sketch and
   refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
   field metrics with rectangular or Gram tangent solves and saved-node audits;

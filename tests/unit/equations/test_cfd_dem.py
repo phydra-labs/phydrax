@@ -136,3 +136,57 @@ def test_resolved_ib_work_adjoint_is_conservative():
     )
     assert evaluation.successful
     assert jnp.isclose(evaluation.work_adjoint_residual, 0.0)
+
+
+def test_resolved_mac_ib_window_preserves_zero_load_and_projection():
+    dem, dem_state, _ = _compiled_dem()
+    grid = phx.discretization.TensorGridPlan(
+        tuple(phx.discretization.UniformCellAxisSpec(6, periodic=True) for _ in range(2)),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[-0.5, -0.5], [0.5, 0.5]]))
+    finite_volume = phx.discretization.FiniteVolumePlan(grid).prepare()
+    operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
+    momentum = phx.discretization.MACMomentumPlan(operators).prepare()
+    fluid = phx.equations.compile_mac_incompressible_flow(
+        phx.equations.IncompressibleFlowProblem(2, 0.01),
+        momentum,
+        phx.solver.MACPressureProjectionPlan(operators, solve_method="transform"),
+    )
+    face_transfer = phx.discretization.MACMarkerTransferPlan(operators, 0.3, 12).prepare()
+    geometry = phx.equations.ResolvedIBGeometryPlan(
+        jnp.zeros((2, 2)),
+        jnp.asarray([0, 1]),
+        jnp.ones((2,)),
+        jnp.asarray([[0.0, 0.0]]),
+        0.3,
+        1,
+    )
+    coupling = phx.equations.ResolvedMACIBCFDEMCouplingPlan(
+        fluid,
+        dem.dynamics,
+        geometry,
+        phx.equations.IBConstraintPlan(1.0),
+        face_transfer,
+    )
+    zero_velocity = tuple(
+        jnp.zeros(layout.shape) for layout in finite_volume.face_layouts
+    )
+    evaluation = phx.equations.evaluate_resolved_mac_ib_cfd_dem(
+        coupling, dem_state.kinematics, zero_velocity, jnp.asarray(1.0e-4)
+    )
+    coupled_state = phx.solver.MACResolvedIBCouplingState.initialize(
+        coupling, dem_state, fluid.project_state(zero_velocity)
+    )
+    step = phx.solver.advance_mac_resolved_ib_window(
+        coupling,
+        phx.solver.MACResolvedIBCouplingSchedulePlan(1),
+        coupled_state,
+        jnp.asarray(0.0),
+        jnp.asarray(1.0e-4),
+    )
+
+    assert evaluation.successful
+    assert jnp.abs(evaluation.work_adjoint_residual) < 1e-10
+    assert step.successful
+    accepted_velocity = fluid.unpack_velocity(step.accepted_state.fluid_state)
+    assert jnp.linalg.norm(operators.divergence(accepted_velocity)) < 1e-8

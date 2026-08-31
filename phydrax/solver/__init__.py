@@ -45,7 +45,7 @@ term evaluation.
 """
 
 from .._hybrid_sensitivity import HybridSensitivityMode
-from . import maxwell
+from . import advanced, maxwell
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -561,6 +561,70 @@ from ._lindblad import (
     solve_lindblad,
 )
 from ._linear_trial_space import LinearTrialSpaceResult, solve_linear_trial_space
+from ._mac_adaptive import (
+    MACAcceptedGridTrace,
+    MACAdaptiveAttemptJournal,
+    MACAdaptivePolicy,
+    MACAdaptiveRolloutPlan,
+    MACAdaptiveRolloutResult,
+    MACAdaptiveStatus,
+    MACCompositeStepController,
+    MACCompositeStepRestriction,
+    MACFrozenGridReplayPlan,
+    MACFrozenGridReplayResult,
+    MACNamedRateLimit,
+)
+from ._mac_ale import (
+    MACALEGeometryPlan,
+    MACALEResult,
+    MACALEStageGeometry,
+    MACRemeshEpochPlan,
+    MACRemeshEpochResult,
+)
+from ._mac_distributed_projection import (
+    MACCollectiveAdapter,
+    MACDistributedProjectionPlan,
+    MACDistributedProjectionResult,
+)
+from ._mac_resolved_ib_cfd_dem import (
+    advance_mac_resolved_ib_window,
+    MACResolvedIBCouplingSchedulePlan,
+    MACResolvedIBCouplingState,
+    MACResolvedIBMacroStepResult,
+    MACResolvedIBWindowStatus,
+)
+from ._mac_sensitivity import (
+    MACDerivativeMode,
+    MACFixedGridSensitivityPlan,
+    MACNeutralMode,
+    MACReplayCertification,
+    MACSegmentedShadowingPlan,
+    MACShadowingSensitivityResult,
+    MACShadowingStatus,
+    MACTerminalJVPResult,
+    MACTerminalVJPResult,
+)
+from ._mac_variable_density import (
+    MACVariableDensityProjectionPlan,
+    MACVariableDensityProjectionResult,
+    MACVariableDensityRateProjectionResult,
+)
+from ._mac_viscous import (
+    MAC_VISCOUS_BOUNDARY_FAILURE,
+    MAC_VISCOUS_HELMHOLTZ_FAILURE,
+    MAC_VISCOUS_HISTORY_INVALID,
+    MAC_VISCOUS_PROJECTION_FAILURE,
+    MAC_VISCOUS_SUCCESS,
+    MACHelmholtzResourceEstimate,
+    MACHelmholtzResult,
+    MACHelmholtzSolveMethod,
+    MACHelmholtzSolvePlan,
+    MACIMEXEulerMethod,
+    MACIMEXEulerResult,
+    MACSBDF2Method,
+    MACSBDF2State,
+    MACSBDF2StepResult,
+)
 from ._markov_cubature import (
     MarkovCubatureDiagnostics,
     MarkovCubatureMethod,
@@ -569,6 +633,17 @@ from ._markov_cubature import (
     MarkovCubatureStatus,
     PolynomialRecombination,
     solve_markov_cubature,
+)
+from ._material_point_rollout import (
+    MPMGradientKind,
+    MPMGradientReport,
+    MPMReplayEvidence,
+    MPMReplayMode,
+    MPMReplayPolicy,
+    MPMRetainedTrajectory,
+    MPMRetentionMode,
+    MPMRolloutResult,
+    ScheduledMPMRolloutPlan,
 )
 from ._memory import (
     ConvolutionKernel,
@@ -892,6 +967,7 @@ from ._structured_incompressible import (
     MACPressureProjectionPlan,
     MACPressureProjectionResult,
     MACPressureSolveMethod,
+    MACRateProjectionResult,
 )
 from ._symplectic import (
     integrate_stormer_verlet,
@@ -974,6 +1050,7 @@ from .maxwell import (
 
 
 __all__ = [
+    "advanced",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
     "BalanceLawAdvanceResult",
@@ -1322,9 +1399,60 @@ __all__ = [
     "ETDRKMethod",
     "HermitianCoordinateEvolution",
     "HERMITIAN_COORDINATE_INVALID",
+    "MACHelmholtzResourceEstimate",
+    "MACHelmholtzResult",
+    "MACHelmholtzSolveMethod",
+    "MACHelmholtzSolvePlan",
+    "MACIMEXEulerMethod",
+    "MACIMEXEulerResult",
+    "MACSBDF2Method",
+    "MACSBDF2State",
+    "MACSBDF2StepResult",
+    "MAC_VISCOUS_BOUNDARY_FAILURE",
+    "MAC_VISCOUS_HELMHOLTZ_FAILURE",
+    "MAC_VISCOUS_HISTORY_INVALID",
+    "MAC_VISCOUS_PROJECTION_FAILURE",
+    "MAC_VISCOUS_SUCCESS",
+    "MACALEGeometryPlan",
+    "MACALEResult",
+    "MACALEStageGeometry",
+    "MACRemeshEpochPlan",
+    "MACRemeshEpochResult",
+    "MACAcceptedGridTrace",
+    "MACAdaptiveAttemptJournal",
+    "MACAdaptivePolicy",
+    "MACAdaptiveRolloutPlan",
+    "MACAdaptiveRolloutResult",
+    "MACAdaptiveStatus",
+    "MACCollectiveAdapter",
+    "MACCompositeStepController",
+    "MACCompositeStepRestriction",
+    "MACDerivativeMode",
+    "MACDistributedProjectionPlan",
+    "MACDistributedProjectionResult",
+    "MACFixedGridSensitivityPlan",
+    "MACFrozenGridReplayPlan",
+    "MACFrozenGridReplayResult",
+    "MACNamedRateLimit",
+    "MACNeutralMode",
+    "MACRateProjectionResult",
     "MACPressureProjectionPlan",
     "MACPressureProjectionResult",
     "MACPressureSolveMethod",
+    "MACReplayCertification",
+    "MACResolvedIBCouplingSchedulePlan",
+    "MACResolvedIBCouplingState",
+    "MACResolvedIBMacroStepResult",
+    "MACResolvedIBWindowStatus",
+    "MACSegmentedShadowingPlan",
+    "MACShadowingSensitivityResult",
+    "MACShadowingStatus",
+    "MACTerminalJVPResult",
+    "MACTerminalVJPResult",
+    "MACVariableDensityProjectionPlan",
+    "MACVariableDensityProjectionResult",
+    "MACVariableDensityRateProjectionResult",
+    "advance_mac_resolved_ib_window",
     "SemidiscreteSPDE",
     "SemilinearDrift",
     "SemilinearFallback",
@@ -1691,4 +1819,13 @@ __all__ = [
     "solve_characteristic_projection",
     "solve_neural_galerkin",
     "trace_characteristics",
+    "MPMGradientKind",
+    "MPMGradientReport",
+    "MPMReplayEvidence",
+    "MPMReplayMode",
+    "MPMReplayPolicy",
+    "MPMRetentionMode",
+    "MPMRetainedTrajectory",
+    "MPMRolloutResult",
+    "ScheduledMPMRolloutPlan",
 ]

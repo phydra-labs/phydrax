@@ -85,6 +85,7 @@ class BalanceLawTransportAdvance(StrictModule):
     stable_step_size: Array
     stability_margin: Array
     diagnostics: Any
+    accepted_integrals: Any
 
 
 class AbstractPreparedBalanceLawTransport(StrictModule, NonTrainableState):
@@ -244,6 +245,7 @@ class PreparedFiniteVolumeBalanceLawTransport(AbstractPreparedBalanceLawTranspor
             stable_step_size=result.stable_step_size,
             stability_margin=result.stability_margin,
             diagnostics=result,
+            accepted_integrals=result.attempted.accepted_flux_integrals,
         )
 
     def auxiliary_state(self, state: BalanceLawTransportState, /) -> Array:
@@ -367,7 +369,10 @@ class PreparedConstrainedMHDBalanceLawTransport(AbstractPreparedBalanceLawTransp
             jnp.any(value[..., 5:8] != incoming[..., 5:8]),
             "Balance-law source process changed face-owned magnetic state.",
         )
-        reduced = value[..., :5].reshape(self.integrator.spatial.cell_shape + (5,))
+        reduced = self.integrator.spatial.layout.reduce_full_state(value).reshape(
+            self.integrator.spatial.cell_shape
+            + (self.integrator.spatial.layout.reduced_component_count,)
+        )
         return ConstrainedMHDState(
             reduced,
             state.magnetic_flux,
@@ -396,6 +401,7 @@ class PreparedConstrainedMHDBalanceLawTransport(AbstractPreparedBalanceLawTransp
             stable_step_size=stable,
             stability_margin=result.diagnostics.stability_margin,
             diagnostics=result,
+            accepted_integrals=result.accepted_integrals,
         )
 
     def auxiliary_state(self, state: BalanceLawTransportState, /) -> Array:

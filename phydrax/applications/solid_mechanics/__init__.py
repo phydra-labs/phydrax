@@ -77,6 +77,7 @@ from ._force_density_stability import (
     ForceDensityTangentStabilityResult,
 )
 from ._force_density_topology import ForceDensityStructure
+from ._material_point import NeoHookeanMPMConstitutivePlan
 from ._models import (
     j2_radial_return,
     J2PlasticityParameters,
@@ -84,6 +85,7 @@ from ._models import (
     J2PlasticityUpdate,
     neo_hookean_first_piola,
     neo_hookean_form,
+    neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
 from ._topology import (
@@ -130,6 +132,7 @@ __all__ = [
     "J2PlasticityParameters",
     "J2PlasticityState",
     "J2PlasticityUpdate",
+    "NeoHookeanMPMConstitutivePlan",
     "NeoHookeanParameters",
     "PneumaticPressureLoadModel",
     "PreparedDensityFilter",
@@ -161,6 +164,7 @@ __all__ = [
     "member_directions",
     "neo_hookean_first_piola",
     "neo_hookean_form",
+    "neo_hookean_reference_energy",
     "plan_force_density",
     "point_line_distance",
     "point_plane_signed_distance",

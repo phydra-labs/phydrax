@@ -205,6 +205,13 @@ respect to those parameters. Identifiability still belongs to the model and data
 Hamiltonians may be ambiguous up to constants, and learned Lagrangians may have gauge
 freedom.
 
+## Discrete continuum mechanics
+
+The [Material Point Method](guides_material_point_method.md) is a separate
+updated-Lagrangian particle-grid discretization with an explicit fixed-temporal
+solver. Its APIC, first-Piola, stability, and replay contracts do not follow
+automatically from the continuous canonical operators on this page.
+
 ## Scope
 
 The current API covers continuous-time canonical mechanics. Deferred topics include

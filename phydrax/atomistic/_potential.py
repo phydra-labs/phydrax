@@ -8,15 +8,112 @@ import copy
 from abc import abstractmethod
 from typing import Any, cast, TypeVar
 
+import equinox as eqx
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import AbstractAttribute, StrictModule
+from .._trainable import NonTrainableState
 
 
 _AtomisticPotentialT = TypeVar("_AtomisticPotentialT", bound="AbstractAtomisticPotential")
 
 
+class AtomisticPotentialCapabilities(StrictModule, NonTrainableState):
+    """Static execution capabilities, never a scientific stability claim."""
+
+    conservative_energy: bool = eqx.field(static=True)
+    finite_geometry: bool = eqx.field(static=True)
+    orthorhombic_periodic: bool = eqx.field(static=True)
+    triclinic_periodic: bool = eqx.field(static=True)
+    cell_derivative: bool = eqx.field(static=True)
+    local_energy: bool = eqx.field(static=True)
+    local_energy_delta: bool = eqx.field(static=True)
+    dynamic_species: bool = eqx.field(static=True)
+    capabilities_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        conservative_energy: bool = True,
+        finite_geometry: bool = True,
+        orthorhombic_periodic: bool = False,
+        triclinic_periodic: bool = False,
+        cell_derivative: bool = False,
+        local_energy: bool = True,
+        local_energy_delta: bool = False,
+        dynamic_species: bool = False,
+    ):
+        values = {
+            "conservative_energy": bool(conservative_energy),
+            "finite_geometry": bool(finite_geometry),
+            "orthorhombic_periodic": bool(orthorhombic_periodic),
+            "triclinic_periodic": bool(triclinic_periodic),
+            "cell_derivative": bool(cell_derivative),
+            "local_energy": bool(local_energy),
+            "local_energy_delta": bool(local_energy_delta),
+            "dynamic_species": bool(dynamic_species),
+        }
+        for name, value in values.items():
+            setattr(self, name, value)
+        self.capabilities_id = canonical_fingerprint(
+            {"kind": "atomistic-potential-capabilities", **values}
+        )
+
+
+class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
+    """Prepared-context requirements used to avoid unused runtime allocations."""
+
+    cutoff: float | None = eqx.field(static=True)
+    pair_geometry: bool = eqx.field(static=True)
+    directed_graph: bool = eqx.field(static=True)
+    bonded_geometry: bool = eqx.field(static=True)
+    reciprocal_grid: bool = eqx.field(static=True)
+    requirements_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        cutoff: float | None = None,
+        pair_geometry: bool = False,
+        directed_graph: bool = False,
+        bonded_geometry: bool = False,
+        reciprocal_grid: bool = False,
+    ):
+        cutoff_ = None if cutoff is None else float(cutoff)
+        if cutoff_ is not None and cutoff_ <= 0.0:
+            raise ValueError("Potential cutoff must be positive or None.")
+        self.cutoff = cutoff_
+        self.pair_geometry = bool(pair_geometry)
+        self.directed_graph = bool(directed_graph)
+        self.bonded_geometry = bool(bonded_geometry)
+        self.reciprocal_grid = bool(reciprocal_grid)
+        self.requirements_id = canonical_fingerprint(
+            {
+                "kind": "atomistic-potential-requirements",
+                "cutoff": cutoff_,
+                "pair_geometry": self.pair_geometry,
+                "directed_graph": self.directed_graph,
+                "bonded_geometry": self.bonded_geometry,
+                "reciprocal_grid": self.reciprocal_grid,
+            }
+        )
+
+
+class AbstractPreparedAtomisticPotential(StrictModule):
+    """System-bound scalar-energy execution form."""
+
+    prepared_id: AbstractAttribute[str]
+    capabilities: AbstractAttribute[AtomisticPotentialCapabilities]
+    requirements: AbstractAttribute[AtomisticPotentialRequirements]
+
+    @abstractmethod
+    def energy(self, context: Any, /) -> tuple[Any, Any]:
+        """Return scalar energy and fixed-schema auxiliary evidence."""
+        raise NotImplementedError
+
+
 class AbstractAtomisticPotential(StrictModule):
-    """Atomistic energy model with checkpointable parameter-state provenance."""
+    """Atomistic scalar-energy model with checkpointable parameter provenance."""
 
     configuration: AbstractAttribute[Any]
     scale: AbstractAttribute[Any]
@@ -26,22 +123,43 @@ class AbstractAtomisticPotential(StrictModule):
     potential_id: AbstractAttribute[str]
     method_id: AbstractAttribute[str]
 
+    @property
+    def capabilities(self) -> AtomisticPotentialCapabilities:
+        return AtomisticPotentialCapabilities()
+
+    @property
+    def requirements(self) -> AtomisticPotentialRequirements:
+        return AtomisticPotentialRequirements(
+            cutoff=float(self.configuration.cutoff),
+            pair_geometry=True,
+            directed_graph=True,
+        )
+
     @abstractmethod
     def _validate_batch(self, batch: Any, /) -> None:
-        """Validate one atomic batch against this model's execution contract."""
-
         raise NotImplementedError
 
     @abstractmethod
-    def _energy_unchecked(self, batch: Any, positions: Any, /) -> tuple[Any, Any, Any]:
-        """Evaluate batch energies and graph evidence after public validation."""
+    def _energy_unchecked(
+        self, batch: Any, positions: Any, execution: Any, /
+    ) -> tuple[Any, Any, Any]:
+        raise NotImplementedError
 
+    @abstractmethod
+    def graph_energy(
+        self,
+        atomic_numbers: Any,
+        atom_mask: Any,
+        atom_cases: Any,
+        case_count: int,
+        atom_capacity: int,
+        graph: Any,
+        /,
+    ) -> tuple[Any, Any]:
         raise NotImplementedError
 
     @abstractmethod
     def parameter_state_tree(self, /) -> Any:
-        """Return exactly the trainable arrays defining numerical predictions."""
-
         raise NotImplementedError
 
 
@@ -57,13 +175,7 @@ def _parameter_state_id(potential: AbstractAtomisticPotential, /) -> str:
 def checkpoint_atomistic_potential(
     potential: _AtomisticPotentialT, /
 ) -> _AtomisticPotentialT:
-    """Return an immutable model copy with refreshed content-addressed provenance.
-
-    External Equinox/Optax tree updates preserve static metadata and therefore do
-    not constitute a provenance checkpoint. Call this operation after every such
-    update and before prediction, persistence, or publication. Native atomistic
-    training checkpoints its returned final and selected-best models automatically.
-    """
+    """Return an immutable model copy with refreshed content-addressed provenance."""
 
     if not isinstance(potential, AbstractAtomisticPotential):
         raise TypeError("potential must implement AbstractAtomisticPotential.")
@@ -86,8 +198,6 @@ def _with_atomistic_potential_identity(
     identity_source: AbstractAtomisticPotential,
     /,
 ) -> _AtomisticPotentialT:
-    """Copy a potential-shaped tree with checkpoint identity from another tree."""
-
     synchronized = cast(_AtomisticPotentialT, copy.copy(potential))
     object.__setattr__(
         synchronized, "parameter_state_id", identity_source.parameter_state_id
@@ -99,8 +209,6 @@ def _with_atomistic_potential_identity(
 def initialize_atomistic_potential_identity(
     potential: AbstractAtomisticPotential, /
 ) -> tuple[str, str]:
-    """Compute constructor-time state and evaluated-potential identities."""
-
     state_id = _parameter_state_id(potential)
     potential_id = canonical_fingerprint(
         {
@@ -112,4 +220,10 @@ def initialize_atomistic_potential_identity(
     return state_id, potential_id
 
 
-__all__ = ["AbstractAtomisticPotential", "checkpoint_atomistic_potential"]
+__all__ = [
+    "AbstractAtomisticPotential",
+    "AbstractPreparedAtomisticPotential",
+    "AtomisticPotentialCapabilities",
+    "AtomisticPotentialRequirements",
+    "checkpoint_atomistic_potential",
+]

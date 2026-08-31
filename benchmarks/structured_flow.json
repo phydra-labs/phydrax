@@ -13,6 +13,11 @@
   "mac_transform_divergence": 1.3235800202421293e-13,
   "mac_iterative_divergence": 4.49595569885312e-13,
   "mac_route_difference": 5.689893001203927e-15,
+  "mac_momentum_count": 16,
+  "mac_momentum_skew_defect": 2.7755575615628914e-17,
+  "mac_diffusion_symmetry_defect": 0.0,
+  "mac_projected_rate_divergence": 3.6529053619856686e-14,
+  "mac_nonlinear_energy_defect": 4.284833970109077e-17,
   "finite": true,
   "passed": true
 }

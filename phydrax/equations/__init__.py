@@ -4,7 +4,7 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
-from . import fem, trefftz
+from . import advanced, fem, trefftz
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
@@ -157,12 +157,53 @@ from ._lagrangian_fluid import (
     compile_barotropic_sph_problem,
     CompiledBarotropicSPHProblem,
 )
+from ._mac_ib_cfd_dem import (
+    evaluate_resolved_mac_ib_cfd_dem,
+    ResolvedMACIBCFDEMCouplingPlan,
+    ResolvedMACIBEvaluation,
+    ResolvedMACIBStatus,
+)
+from ._mac_incompressible import (
+    compile_mac_incompressible_flow,
+    CompiledMACIncompressibleDynamics,
+    MACIncompressibleDiagnostics,
+    MACStepRestriction,
+)
+from ._mac_scalar_buoyancy import (
+    compile_mac_scalar_buoyancy,
+    CompiledMACScalarBuoyancyDynamics,
+    MACBuoyancyLaw,
+    MACBuoyancyLedger,
+    MACScalarBuoyancyDiagnostics,
+    MACScalarBuoyancyStage,
+    MACScalarBuoyancyStepRestriction,
+)
+from ._mac_variable_density import (
+    compile_mac_variable_density_flow,
+    CompiledMACVariableDensityDynamics,
+    MACVariableDensityDiagnostics,
+    MACVariableDensityFlowProblem,
+    MACVariableDensityRateResult,
+    MACVariableDensityState,
+    MACVariableDensityStepRestriction,
+    MACVariableDensityStepResult,
+)
 from ._manufactured import (
     ManufacturedConvergencePlan,
     ManufacturedConvergenceResult,
     ManufacturedNorm,
     ManufacturedPDECase,
     ManufacturedSpatialOperator,
+)
+from ._material_point import (
+    AbstractMPMConstitutivePlan,
+    compile_material_point_problem,
+    CompiledMaterialPointProblem,
+    ExternalMPMAcceleration,
+    MaterialPointArguments,
+    MaterialPointProblemIR,
+    MPMConstitutiveResponse,
+    MPMKinematics,
 )
 from ._materials import (
     AbstractThermodynamicMaterial,
@@ -363,6 +404,7 @@ from .trefftz import (
 
 
 __all__ = [
+    "advanced",
     "AbstractAdmissibleSystem",
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
@@ -381,11 +423,22 @@ __all__ = [
     "CompiledPDEProblem",
     "CompiledDiscreteDynamics",
     "CompiledDiscreteResidual",
+    "CompiledMACIncompressibleDynamics",
+    "CompiledMACScalarBuoyancyDynamics",
+    "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
     "CompiledSpectralDynamics",
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
+    "AbstractMPMConstitutivePlan",
+    "MPMConstitutiveResponse",
+    "MPMKinematics",
+    "compile_material_point_problem",
+    "CompiledMaterialPointProblem",
+    "ExternalMPMAcceleration",
+    "MaterialPointArguments",
+    "MaterialPointProblemIR",
     "ConstitutiveResponse",
     "FiniteElementMaterialState",
     "FiniteElementMaterialTransaction",
@@ -494,6 +547,22 @@ __all__ = [
     "plane_elasticity_traction_functional",
     "IdealGasMaterial",
     "IncompressibleFlowProblem",
+    "MACIncompressibleDiagnostics",
+    "MACBuoyancyLaw",
+    "MACBuoyancyLedger",
+    "MACStepRestriction",
+    "MACScalarBuoyancyDiagnostics",
+    "MACScalarBuoyancyStage",
+    "MACScalarBuoyancyStepRestriction",
+    "MACVariableDensityDiagnostics",
+    "MACVariableDensityFlowProblem",
+    "MACVariableDensityRateResult",
+    "MACVariableDensityState",
+    "MACVariableDensityStepRestriction",
+    "MACVariableDensityStepResult",
+    "ResolvedMACIBCFDEMCouplingPlan",
+    "ResolvedMACIBEvaluation",
+    "ResolvedMACIBStatus",
     "ChannelVelocityDiagnostics",
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
@@ -529,6 +598,10 @@ __all__ = [
     "LinearTrefftzField",
     "LinearMonogenicField",
     "MonogenicPolynomialBasis",
+    "compile_mac_scalar_buoyancy",
+    "compile_mac_variable_density_flow",
+    "evaluate_resolved_mac_ib_cfd_dem",
+    "compile_mac_incompressible_flow",
     "compile_periodic_incompressible_flow",
     "compile_channel_flow",
     "PlaneElasticityPotential2D",

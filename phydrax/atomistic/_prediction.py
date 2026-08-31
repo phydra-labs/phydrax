@@ -13,6 +13,7 @@ from opt_einsum import contract
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._graph import AtomisticGraphExecutionPlan
 from ._potential import AbstractAtomisticPotential
 from ._types import (
     AtomicStructure,
@@ -32,7 +33,8 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
     parameter_state_id: str = eqx.field(static=True)
     potential_id: str = eqx.field(static=True)
     batch_id: str = eqx.field(static=True)
-    candidate_topology_id: str = eqx.field(static=True)
+    atom_topology_id: str = eqx.field(static=True)
+    graph_execution_id: str = eqx.field(static=True)
     scale_id: str = eqx.field(static=True)
     precision_id: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -42,12 +44,19 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
     stress_available: bool = eqx.field(static=True)
     provenance_id: str = eqx.field(static=True)
 
-    def __init__(self, potential: _AtomisticPotential, batch: AtomisticBatch, /):
+    def __init__(
+        self,
+        potential: _AtomisticPotential,
+        batch: AtomisticBatch,
+        execution: AtomisticGraphExecutionPlan,
+        /,
+    ):
         self.architecture_id = potential.architecture_id
         self.parameter_state_id = potential.parameter_state_id
         self.potential_id = potential.potential_id
         self.batch_id = batch.batch_id
-        self.candidate_topology_id = batch.candidate_topology_id
+        self.atom_topology_id = batch.atom_topology_id
+        self.graph_execution_id = execution.plan_id
         self.scale_id = batch.scale.scale_id
         self.precision_id = potential.precision.policy_id
         self.method_id = potential.method_id
@@ -62,7 +71,8 @@ class AtomisticProvenance(StrictModule, NonTrainableState):
                 "parameter_state": potential.parameter_state_id,
                 "potential": potential.potential_id,
                 "batch": batch.batch_id,
-                "candidate_topology": batch.candidate_topology_id,
+                "atom_topology": batch.atom_topology_id,
+                "graph_execution": execution.plan_id,
                 "scale": batch.scale.scale_id,
                 "precision": potential.precision.policy_id,
                 "method": self.method_id,
@@ -95,6 +105,7 @@ class AtomisticPrediction(StrictModule, NonTrainableState):
 def energy_and_forces(
     potential: _AtomisticPotential,
     structure: AtomicStructure | AtomisticBatch,
+    execution: AtomisticGraphExecutionPlan,
     /,
 ) -> AtomisticPrediction:
     """Evaluate energy once and derive forces as its negative position gradient.
@@ -108,6 +119,8 @@ def energy_and_forces(
 
     if not isinstance(potential, AbstractAtomisticPotential):
         raise TypeError("potential must implement AbstractAtomisticPotential.")
+    if not isinstance(execution, AtomisticGraphExecutionPlan):
+        raise TypeError("execution must be an AtomisticGraphExecutionPlan.")
     if isinstance(structure, AtomicStructure):
         batch = AtomisticBatch.from_structure(structure)
     elif isinstance(structure, AtomisticBatch):
@@ -117,7 +130,9 @@ def energy_and_forces(
     potential._validate_batch(batch)
 
     def scalar_energy(position: Array) -> tuple[Array, tuple[Array, Array, Array, Array]]:
-        energy, atom_energy, graph = potential._energy_unchecked(batch, position)
+        energy, atom_energy, graph = potential._energy_unchecked(
+            batch, position, execution
+        )
         return jnp.sum(energy), (
             energy,
             atom_energy,
@@ -180,7 +195,7 @@ def energy_and_forces(
         net_force=net_force,
         net_torque=net_torque,
         scale=batch.scale,
-        provenance=AtomisticProvenance(potential, batch),
+        provenance=AtomisticProvenance(potential, batch, execution),
         energy_axes=("case",),
         force_axes=("case", "atom", "cartesian"),
     )

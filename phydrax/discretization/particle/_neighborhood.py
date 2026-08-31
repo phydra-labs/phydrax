@@ -24,6 +24,7 @@ from .._core import (
 )
 from ._core import ParticleDiscretization
 from ._pairwise import ParticleBox, ParticlePairRelation
+from ._periodic_cell import ParticleCell
 from ._precision import ParticleRealization
 
 
@@ -31,7 +32,7 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
     """Fixed-shape runtime particle relation and complete capacity status."""
 
     pair_relation: ParticlePairRelation
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     storage_to_logical: Array
     logical_to_storage: Array
     cell_ids: Array
@@ -54,7 +55,7 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
         pair_relation: ParticlePairRelation,
         /,
         *,
-        box: ParticleBox | None,
+        box: ParticleBox | ParticleCell | None,
         storage_to_logical: ArrayLike,
         logical_to_storage: ArrayLike,
         cell_ids: ArrayLike,
@@ -74,8 +75,8 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
     ):
         if not isinstance(pair_relation, ParticlePairRelation):
             raise TypeError("pair_relation must be a ParticlePairRelation.")
-        if box is not None and not isinstance(box, ParticleBox):
-            raise TypeError("box must be a ParticleBox or None.")
+        if box is not None and not isinstance(box, (ParticleBox, ParticleCell)):
+            raise TypeError("box must be a ParticleBox, ParticleCell, or None.")
         storage = jnp.asarray(storage_to_logical)
         logical = jnp.asarray(logical_to_storage)
         cells = jnp.asarray(cell_ids)
@@ -153,7 +154,7 @@ class AbstractParticleNeighborhoodPlan(StrictModule, NonTrainableState):
     """Structural plan for a geometry-dependent particle relation."""
 
     key: AbstractAttribute[DiscretizationKey]
-    box: AbstractAttribute[ParticleBox | None]
+    box: AbstractAttribute[ParticleBox | ParticleCell | None]
     backend: AbstractAttribute[ParticleRealization]
     plan_id: AbstractAttribute[str]
 
@@ -169,7 +170,7 @@ class AbstractPreparedParticleNeighborhood(StrictModule, NonTrainableState):
 
     plan: AbstractAttribute[AbstractParticleNeighborhoodPlan]
     key: AbstractAttribute[DiscretizationKey]
-    box: AbstractAttribute[ParticleBox | None]
+    box: AbstractAttribute[ParticleBox | ParticleCell | None]
     backend: AbstractAttribute[ParticleRealization]
     pair_capacity: AbstractAttribute[int]
     particle_discretization_id: AbstractAttribute[str]
@@ -191,7 +192,7 @@ class DenseParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
     """All canonical same-set pairs under an explicit allocation budget."""
 
     maximum_pairs: int = eqx.field(static=True)
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     backend: ParticleRealization = eqx.field(static=True)
     key: DiscretizationKey
     plan_id: str = eqx.field(static=True)
@@ -201,15 +202,15 @@ class DenseParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
         maximum_pairs: int,
         /,
         *,
-        box: ParticleBox | None = None,
+        box: ParticleBox | ParticleCell | None = None,
         name: str = "dense-particle-neighborhood",
         plan_id: str | None = None,
     ):
         maximum = int(maximum_pairs)
         if maximum < 0:
             raise ValueError("maximum_pairs must be non-negative.")
-        if box is not None and not isinstance(box, ParticleBox):
-            raise TypeError("box must be a ParticleBox or None.")
+        if box is not None and not isinstance(box, (ParticleBox, ParticleCell)):
+            raise TypeError("box must be a ParticleBox, ParticleCell, or None.")
         key = DiscretizationKey(
             name,
             DiscretizationRole.AUXILIARY,
@@ -243,7 +244,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     pair_relation: ParticlePairRelation
     preparation: PreparationReport
     key: DiscretizationKey
-    box: ParticleBox | None
+    box: ParticleBox | ParticleCell | None
     backend: ParticleRealization = eqx.field(static=True)
     pair_capacity: int = eqx.field(static=True)
     particle_capacity: int = eqx.field(static=True)
