@@ -181,7 +181,7 @@
 
 ---
 
-::: phydrax.equations.fem.ElementTensorOperator
+::: phydrax.sparse.ElementTensorOperator
 
 ---
 
@@ -201,7 +201,7 @@
 
 ---
 
-::: phydrax.equations.FiniteElementCoefficient
+::: phydrax.equations.VariationalCoefficient
 
 ---
 
@@ -369,7 +369,7 @@
 
 ---
 
-::: phydrax.discretization.FiniteElementLocalEliminationPlan
+::: phydrax.linalg.LocalEliminationPlan
 
 ---
 

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added enhanced conforming scalar virtual elements of qualified degree one
+  through three on arbitrary-arity polygonal cell blocks, including certified
+  H1/L2 projectors, explicit stabilization, functional trace constraints,
+  matrix-free and sparse execution, fixed-topology geometry differentiation,
+  projected reconstruction, mass-matrix DAEs, and generalized eigenproblems.
 - Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
   globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
   implicit root derivatives, physical position/velocity residual certification,

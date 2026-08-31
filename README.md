@@ -43,6 +43,10 @@ Most workflows are composing a few primitives:
   spaces, measures, transfers, fixed-temporal differentiable replay, transactional
   gravity/cooling/stochastic source processes, compatible constrained MHD,
   temporal/stochastic composition, and auditable plan/preparation identities.
+- **Virtual elements**: enhanced conforming degree-one-through-three polygonal
+  functional spaces expose certified H1/L2 projectors, explicit stabilization,
+  matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
+  fixed-topology differentiable geometry.
 - **Discrete structural form-finding**: sparse pin-jointed force-density
   equilibrium supports coordinate and general affine restraints, tension,
   compression, mixed signs, prepared linear/nonlinear refresh, weighted
@@ -181,6 +185,7 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [particle qualification guide](docs/guides_particle_qualification.md), the
 [global spectral guide](docs/guides_spectral_methods.md), the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
+[virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).

@@ -22,6 +22,7 @@ from ._derivative import (
     verify_sparse_derivative,
 )
 from ._linear import LinearAction, SparseCoordinateOperator, SparseLinearMap
+from ._local_tensor import ElementTensorOperator, scatter_local
 from ._ops import (
     gather_routes,
     linear_adjoint_apply,
@@ -43,6 +44,7 @@ __all__ = [
     "RowRelation",
     "SparseColoring",
     "SparseCoordinateOperator",
+    "ElementTensorOperator",
     "SparseDerivativeCompiler",
     "SparseDerivativeKind",
     "SparseDerivativeMode",
@@ -62,6 +64,7 @@ __all__ = [
     "linear_transpose_apply",
     "mask_routes",
     "prepare_sparse_linearization",
+    "scatter_local",
     "route_reduce",
     "verify_sparse_derivative",
 ]

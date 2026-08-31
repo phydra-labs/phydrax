@@ -106,6 +106,12 @@ variable-density dynamics, implicit diffusion, resolved face-marker coupling,
 sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
 certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
 and distributed halo plans remain available to the wider finite-volume family.
+Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
+vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
+projections, explicit projector-kernel stabilization, matrix-free or sparse
+realization, trace constraints, projected reconstruction, heat/eigen reuse, and
+fixed-topology differentiable geometry. They remain distinct from reference
+finite elements and do not fabricate virtual interior basis values.
 Material particles retain stable entity IDs and a physical mass measure while
 current positions remain temporal state. Fixed-h conservative barotropic SPH
 uses canonical unordered pairs, normalized compact kernels, energy-derived
@@ -152,6 +158,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Multiphase and incompressible SPH](guides_multiphase_incompressible_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
+[Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 

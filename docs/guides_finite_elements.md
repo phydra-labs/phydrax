@@ -15,6 +15,10 @@ Supported cell blocks are triangles, quadrilaterals, tetrahedra, and
 hexahedra. Polygonal meshes order triangle blocks before quadrilateral blocks
 so global cell/facet routes remain canonical.
 
+Arbitrary straight-sided polygons use the separate
+[virtual-element substrate](guides_virtual_elements.md); they are not represented
+as reference finite elements with fabricated interior basis tabulations.
+
 ## Reference elements and fields
 
 `lagrange_element(cell_kind, degree)` constructs nodal triangle, quadrilateral,

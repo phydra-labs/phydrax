@@ -42,6 +42,7 @@ _CELL_DIMENSIONS = {
     "quadrilateral": 2,
     "tetrahedron": 3,
     "hexahedron": 3,
+    "polygon": 2,
 }
 
 
@@ -67,14 +68,25 @@ class CellBlock(StrictModule, NonTrainableState):
         kind = str(cell_kind)
         if not block_name:
             raise ValueError("Cell block name must be non-empty.")
-        if kind not in _CELL_ARITIES:
+        if kind not in (*_CELL_ARITIES, "polygon"):
             raise ValueError(
-                "cell_kind must be one of 'triangle', 'quadrilateral', or 'tetrahedron'."
+                "cell_kind must be triangle, quadrilateral, polygon, "
+                "tetrahedron, or hexahedron."
             )
         cells = np.asarray(vertices, dtype=np.int32)
-        arity = _CELL_ARITIES[kind]
-        if cells.ndim != 2 or cells.shape[1] != arity or cells.shape[0] == 0:
-            raise ValueError(f"{kind} cell vertices must have shape (n > 0, {arity}).")
+        arity = (
+            int(cells.shape[1])
+            if kind == "polygon" and cells.ndim == 2
+            else _CELL_ARITIES.get(kind, -1)
+        )
+        if (
+            cells.ndim != 2
+            or cells.shape[0] == 0
+            or cells.shape[1] != arity
+            or arity < 3
+            or (kind == "polygon" and arity < 5)
+        ):
+            raise ValueError(f"{kind} cell vertices have incompatible arity {arity}.")
         if np.any(cells < 0):
             raise ValueError("Cell vertex indices must be non-negative.")
         if np.any(np.diff(np.sort(cells, axis=1), axis=1) == 0):
@@ -110,7 +122,11 @@ class CellBlock(StrictModule, NonTrainableState):
 
     @property
     def arity(self) -> int:
-        return _CELL_ARITIES[self.cell_kind]
+        return (
+            int(self.vertices.shape[1])
+            if self.cell_kind == "polygon"
+            else _CELL_ARITIES[self.cell_kind]
+        )
 
     @property
     def topological_dimension(self) -> int:
@@ -196,14 +212,14 @@ class CellMesh(StrictModule, NonTrainableState):
         )
         if topological_dimension == 2:
             if any(
-                block.cell_kind not in ("triangle", "quadrilateral")
+                block.cell_kind not in ("triangle", "quadrilateral", "polygon")
                 for block in normalized_blocks
             ):
                 raise ValueError("Two-dimensional meshes support polygonal blocks only.")
-            kinds = tuple(block.cell_kind for block in normalized_blocks)
-            if kinds != tuple(sorted(kinds, key=("triangle", "quadrilateral").index)):
+            arities = tuple(block.arity for block in normalized_blocks)
+            if arities != tuple(sorted(arities)):
                 raise ValueError(
-                    "Polygonal CellMesh blocks must place triangles before quadrilaterals."
+                    "Polygonal CellMesh blocks must be ordered by increasing arity."
                 )
             triangles = [
                 np.asarray(block.vertices, dtype=np.int32)
@@ -215,6 +231,11 @@ class CellMesh(StrictModule, NonTrainableState):
                 for block in normalized_blocks
                 if block.cell_kind == "quadrilateral"
             ]
+            polygons = tuple(
+                np.asarray(block.vertices, dtype=np.int32)
+                for block in normalized_blocks
+                if block.cell_kind == "polygon"
+            )
             triangle_cells = np.concatenate(triangles, axis=0) if triangles else None
             quadrilateral_cells = (
                 np.concatenate(quadrilaterals, axis=0) if quadrilaterals else None
@@ -223,11 +244,13 @@ class CellMesh(StrictModule, NonTrainableState):
                 triangle_cells,
                 quadrilateral_cells,
                 points.shape[0],
+                polygons=polygons,
             )
             topology = polygonal_cell_complex(
                 triangle_cells,
                 quadrilateral_cells,
                 points.shape[0],
+                polygons=polygons,
                 vertex_global_ids=global_ids,
                 cell_global_ids=cell_global_ids,
             )
@@ -341,6 +364,72 @@ class CellMesh(StrictModule, NonTrainableState):
                     global_ids=cell_global_ids,
                 ),
             ),
+            vertex_global_ids=vertex_global_ids,
+            numeric_version=numeric_version,
+        )
+
+    @classmethod
+    def from_polygons(
+        cls,
+        coordinates: ArrayLike,
+        polygons: Sequence[ArrayLike],
+        /,
+        *,
+        vertex_global_ids: ArrayLike | None = None,
+        cell_global_ids: ArrayLike | None = None,
+        numeric_version: str = "0",
+    ) -> CellMesh:
+        """Build a canonical mixed-arity polygon mesh from cyclic vertex loops."""
+
+        points = np.asarray(coordinates, dtype=float)
+        loops = tuple(np.asarray(loop, dtype=np.int32) for loop in polygons)
+        if not loops:
+            raise ValueError("from_polygons requires at least one cell.")
+        if any(loop.ndim != 1 or loop.size < 3 for loop in loops):
+            raise ValueError(
+                "Every polygon must be one rank-1 loop with at least 3 vertices."
+            )
+        identifiers = (
+            np.arange(len(loops), dtype=np.int64)
+            if cell_global_ids is None
+            else np.asarray(cell_global_ids, dtype=np.int64)
+        )
+        if identifiers.shape != (len(loops),):
+            raise ValueError("cell_global_ids must have one ID per polygon.")
+        grouped: dict[int, list[tuple[np.ndarray, int]]] = {}
+        for loop, identifier in zip(loops, identifiers, strict=True):
+            if np.any(loop < 0) or np.any(loop >= points.shape[0]):
+                raise ValueError("Polygon loop indexes an undeclared vertex.")
+            cell_points = points[loop]
+            area2 = float(
+                np.sum(
+                    cell_points[:, 0] * np.roll(cell_points[:, 1], -1)
+                    - np.roll(cell_points[:, 0], -1) * cell_points[:, 1]
+                )
+            )
+            if not np.isfinite(area2) or area2 == 0.0:
+                raise ValueError("Polygon loops require finite nonzero signed area.")
+            oriented = loop[::-1] if area2 < 0.0 else loop
+            grouped.setdefault(int(loop.size), []).append((oriented, int(identifier)))
+        blocks = []
+        for arity in sorted(grouped):
+            entries = grouped[arity]
+            kind = (
+                "triangle" if arity == 3 else "quadrilateral" if arity == 4 else "polygon"
+            )
+            blocks.append(
+                CellBlock(
+                    f"polygons-{arity}",
+                    kind,
+                    np.stack(tuple(entry[0] for entry in entries)),
+                    global_ids=np.asarray(
+                        tuple(entry[1] for entry in entries), dtype=np.int64
+                    ),
+                )
+            )
+        return cls(
+            points,
+            tuple(blocks),
             vertex_global_ids=vertex_global_ids,
             numeric_version=numeric_version,
         )
