@@ -1,0 +1,22 @@
+{
+  "de_rham": {
+    "degree": 5,
+    "gradient_shape": [
+      540,
+      216
+    ],
+    "curl_gradient_defect": 0.0,
+    "divergence_curl_defect": 0.0,
+    "construction_seconds": 0.029881791000661906
+  },
+  "subcell": {
+    "dg_nodes": 6,
+    "subcells": 11,
+    "roundtrip_error": 8.215650382226158e-15
+  },
+  "relaxed_marking": {
+    "budget": 3,
+    "weight_sum": 1.0001361997892875
+  },
+  "passed": true
+}

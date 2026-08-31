@@ -75,6 +75,32 @@ class FiniteElementDirichletConstraint(StrictModule, NonTrainableState):
         )
 
 
+class FiniteElementLinearConstraint(StrictModule, NonTrainableState):
+    """Homogeneous finite-element constraint without Dirichlet boundary data."""
+
+    field_name: str = eqx.field(static=True)
+    constraint_map: ConstraintMap
+    constraint_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        field_name: str,
+        constraint_map: ConstraintMap,
+        /,
+    ):
+        name = str(field_name)
+        if not name or not isinstance(constraint_map, ConstraintMap):
+            raise ValueError(
+                "Linear finite-element constraints require a field and ConstraintMap."
+            )
+        self.field_name = name
+        self.constraint_map = constraint_map
+        self.constraint_id = constraint_map.constraint_id
+
+    def lift(self, /):
+        return self.constraint_map.full_space.zeros()
+
+
 def _validate_component_constraints(
     discretization: FiniteElementDiscretization,
     dof_map,
@@ -324,6 +350,7 @@ def compose_finite_element_constraints(
 
 __all__ = [
     "FiniteElementDirichletConstraint",
+    "FiniteElementLinearConstraint",
     "compose_finite_element_constraints",
     "finite_element_hp_constraint",
     "affine_dof_constraint",
