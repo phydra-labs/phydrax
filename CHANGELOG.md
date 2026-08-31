@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added advanced cosmology contracts: curved/CPL FLRW geometry and distances,
+  realization-safe semantic transfer/power products, process-isolated linear-theory
+  interoperation, neutrino component algebra, model-card power corrections,
+  adiabatic gas--particle shared gravity, analytic halo foundations, Limber/RSD
+  predictions, canonical CMB spectra, and bounded periodic force qualification.
+  Periodic LPT/PM remains flat-only; complete Boltzmann/CMB evolution and production
+  tree gravity remain explicit external or unsupported boundaries.
 - Extended Material Point Method with explicit USF/USL-minus/MUSL schedules,
   fixed-capacity adaptive realization and scheduled replay, constitutive capability
   and algorithmic-tangent contracts, isotropic plane stress, multiplicative

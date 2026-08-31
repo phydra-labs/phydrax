@@ -132,12 +132,15 @@ staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
 Cosmological applications reuse those particle and transfer identities rather than
-introducing a separate simulation substrate. Flat differentiable FLRW backgrounds,
-first/second Lagrangian growth, unit-bearing expansion and linear-power products,
-state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose the
-existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
-as an explicit table; transfer, Boltzmann, halo, survey, and CMB calculations remain
-external capability boundaries.
+introducing a separate simulation substrate. Differentiable curved/CPL FLRW geometry,
+fixed-quadrature distances, realization-safe named transfer and matter-power products,
+state-ready flat 1LPT/2LPT, collisionless PM, and adiabatic gas--DM gravity compose the
+existing splat, self-gravity, finite-volume, and transactional KDK operations. Precision
+Boltzmann, massive-neutrino perturbation, and complete CMB evolution remain isolated
+external products. Native downstream contracts cover explicit power corrections,
+analytic halo foundations, compact Limber/RSD predictions, canonical CMB spectra, and
+small-N force qualification without claiming calibrated fits, survey likelihoods, or
+production tree gravity.
 Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
 transactional adaptive realization and replay, plane-strain/plane-stress/3-D
 hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,

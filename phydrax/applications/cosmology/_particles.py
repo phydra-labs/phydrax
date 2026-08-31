@@ -126,6 +126,7 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
         end = jnp.asarray(end_scale_factor, dtype=state.scale_factor.dtype)
         if end.shape != ():
             raise ValueError("Cosmological end scale factor must be scalar.")
+        end = background.require_flat(end)
         acceleration = jnp.asarray(acceleration_start, dtype=state.positions.dtype)
         if acceleration.shape != state.positions.shape:
             raise ValueError("Cosmological acceleration must align with particles.")
