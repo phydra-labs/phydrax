@@ -68,6 +68,11 @@ Most workflows are composing a few primitives:
   scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
   SHAKE/RATTLE, triclinic cells, Ewald/PME, bounded replayable trajectories, and
   exact checkpoints retain explicit resources, precision, diagnostics, and provenance.
+- **Experimental velocimetry**: mask-aware multipass PIV, calibrated
+  multi-camera particle reconstruction and tracking, residual-image Lagrangian
+  refinement, deterministic synthetic qualification, and optional learned dense
+  displacement preserve image/physical coordinate frames, raw validity,
+  uncertainty, capacity, and provenance.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -312,6 +317,9 @@ is not imported by ordinary Phydrax or linear-algebra use.
 ## Documentation
 
 Can be found [here](https://phydra-labs.github.io/phydrax).
+The [velocimetry guide](docs/guides_velocimetry.md) covers classical and learned
+PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
+qualification, and explicit-loss interoperability.
 
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and

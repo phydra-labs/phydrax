@@ -14,6 +14,19 @@ A benchmark notebook for the coupled 3-DOF spring-mass system in matrix form, wi
 
 - Public notebook: [spring-mass-ode](https://static.marimo.app/static/spring-mass-ode-xuq3)
 
+## Shallow-water scripts
+
+The wet/dry and rotating-flow paths have directly runnable qualification examples:
+
+```text
+python examples/shallow_water_wet_dry.py
+python examples/rotating_shallow_water.py
+```
+
+The first reports stage acceptance, minimum depth, mass defect, and wet-cell count.
+The second exercises identified f/beta-plane forcing and reports mass and momentum
+norm diagnostics. See [Shallow water](../guides_shallow_water.md).
+
 ## Particle physics scripts
 
 The repository includes directly runnable scripts for the fixed-capacity particle stack:
@@ -38,3 +51,20 @@ python examples/reactive_cfd_dem.py
 
 Each script prints its acceptance flag and balance, geometry, constitutive,
 contact, nonlinear, or topology evidence for the exercised route.
+
+## Velocimetry scripts
+
+The native image-measurement stack includes deterministic, directly runnable
+workflows:
+
+```text
+python examples/piv_synthetic_translation.py
+python examples/ptv_calibrated_stereo.py
+python examples/stb_synthetic_particles.py
+python examples/learned_piv_synthetic_training.py
+python examples/velocimetry_interop.py
+```
+
+The scripts report measurement validity and scientific error evidence. They
+distinguish image displacement from physical velocity and reconstructed
+particle identities from latent synthetic particle IDs.

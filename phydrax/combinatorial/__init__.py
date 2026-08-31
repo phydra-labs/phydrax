@@ -21,7 +21,18 @@ from ._method import (
     plan_combinatorial,
     solve_combinatorial,
 )
+from ._min_cost_flow import (
+    CapacitatedFlowSpace,
+    CycleCancelingMinCostFlow,
+    FlowDecision,
+)
 from ._problem import AbstractCombinatorialSpace, LinearCombinatorialProblem
+from ._set_packing import (
+    BranchAndBoundSetPacking,
+    GreedySetPacking,
+    SetPackingDecision,
+    SetPackingSpace,
+)
 from ._shortest_path import DAGShortestPath, PathDecision, ShortestPathSpace
 from ._types import (
     combinatorial_status_message,
@@ -40,18 +51,25 @@ __all__ = [
     "AbstractLinearCombinatorialMethod",
     "AssignmentDecision",
     "BipartiteAssignmentSpace",
+    "BranchAndBoundSetPacking",
     "BlackboxInterpolation",
     "BlackboxPullbackResult",
+    "CapacitatedFlowSpace",
     "ExhaustiveLinearOracle",
     "ExplicitDecision",
     "ExplicitDecisionSpace",
     "CardinalityDecision",
     "CardinalitySpace",
+    "CycleCancelingMinCostFlow",
     "StableCardinalityOracle",
+    "FlowDecision",
+    "GreedySetPacking",
     "HungarianAssignment",
     "DAGShortestPath",
     "PathDecision",
     "ShortestPathSpace",
+    "SetPackingDecision",
+    "SetPackingSpace",
     "CombinatorialCertificate",
     "CombinatorialCertification",
     "CombinatorialFeasibility",

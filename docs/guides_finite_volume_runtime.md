@@ -1,9 +1,11 @@
 # Structured finite-volume runtime
 
-The structured finite-volume runtime narrows the supported product contract to
-single-phase compressible flow on Cartesian uniform or stretched grids. Mapped,
-multiblock, AMR, incompressible, shallow-water, MHD, and distributed capabilities remain
-explicitly qualified per feature rather than being implied by the core API.
+The structured finite-volume runtime owns stage positivity, retries, accepted flux
+integrals, precision, and continuation state. Compressible flow and Cartesian
+bathymetric wet/dry shallow water have separately qualified method contracts. Mapped,
+multiblock, AMR, incompressible, MHD, and distributed combinations remain explicitly
+qualified rather than being implied by the core API. See
+[Shallow water](guides_shallow_water.md) for its balanced-face restrictions.
 
 ## Materials and transport
 
