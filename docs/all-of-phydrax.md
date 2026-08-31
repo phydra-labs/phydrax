@@ -106,6 +106,12 @@ variable-density dynamics, implicit diffusion, resolved face-marker coupling,
 sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
 certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
 and distributed halo plans remain available to the wider finite-volume family.
+Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
+vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
+projections, explicit projector-kernel stabilization, matrix-free or sparse
+realization, trace constraints, projected reconstruction, heat/eigen reuse, and
+fixed-topology differentiable geometry. They remain distinct from reference
+finite elements and do not fabricate virtual interior basis values.
 Material particles retain stable entity IDs and a physical mass measure while
 current positions remain temporal state. Fixed-h conservative barotropic SPH
 uses canonical unordered pairs, normalized compact kernels, energy-derived
@@ -116,8 +122,23 @@ energy/dissipation ledgers, and native SSPRK integration. Structured
 particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
-route moments, and fast/deterministic/compensated reductions. Explicit material
-point dynamics compose that transfer with quadratic nodal B-splines, matched
+route moments, and fast/deterministic/compensated reductions. Compatible
+particle-in-cell methods attach extensive macrocharge to the same stable
+particle support, deposit endpoint charge on degree-zero cochains, gather
+physical E/B from oriented cochain layouts, solve compatible electrostatics, and
+advance periodic 3-D Maxwell fields with a trajectory current that certifies
+discrete continuity. Fixed-population free-surface FLIP separately binds cell and
+staggered-face splats to a runtime atmospheric MAC projection and an explicit
+PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
+SPH/VOF interface geometry.
+Cosmological applications reuse those particle and transfer identities rather than
+introducing a separate simulation substrate. Flat differentiable FLRW backgrounds,
+first/second Lagrangian growth, unit-bearing expansion and linear-power products,
+state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose the
+existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
+as an explicit table; transfer, Boltzmann, halo, survey, and CMB calculations remain
+external capability boundaries.
+Explicit material point dynamics compose that transfer with quadratic nodal B-splines, matched
 APIC momentum, first-Piola reference-volume forces, transactional USL updates,
 stability evidence, and fixed-temporal replay for plane-strain and
 three-dimensional Neo-Hookean solids. DEM adds stable compositional
@@ -153,6 +174,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Multiphase and incompressible SPH](guides_multiphase_incompressible_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
+[Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
@@ -609,6 +631,17 @@ paths connect directly to continuation. Results retain member forces, reactions,
 physical residuals, nested solver evidence, and stable plan identities; they do
 not infer material behavior, buckling, or stability without the required
 constitutive evidence.
+
+Constitutive member-network verification consumes force-density geometry without
+changing that boundary. Stress-free lengths, materials, physical section
+families, translation/rotation DOFs, exact tension-only active sets,
+corotational frames, discrete rods, and surface hinges define prepared elastic
+equilibrium. Local/generalized buckling and continuation retain their assumptions;
+prestress inversion includes fabrication, actuator, stability, and sequence
+evidence; construction stages transfer immutable external IDs and reference
+states; and continuous or finite-catalog sizing reports governing members and
+cases. Required evidence aggregates to certified, failed, or incomplete—absence
+never becomes structural safety.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
@@ -1145,6 +1178,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   tangent stability, per-case/per-graph evidence, and continuation branches. See
   [Guides → Force-density form-finding](guides_force_density.md) and
   [API → Force-density structural design](api/force_density.md).
+- **Member-network structural verification**: supply stress-free references,
+  materials, physical sections, cable unilateral laws, frame/rod/hinge bending,
+  local/global buckling assumptions, construction stages, and sizing candidates;
+  then aggregate equilibrium, prestress, sequence, and capacity evidence. See
+  [Guides → Member-network structural verification](guides_member_network_structures.md)
+  and [API → Member-network structural verification](api/member_network.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

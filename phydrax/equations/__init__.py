@@ -23,7 +23,7 @@ from ..discretization.discrete_velocity._smooth_compressible import (
     SmoothCompressibleMoments,
     SmoothCompressibleRealizabilityEvidence,
 )
-from . import advanced, fem, trefftz
+from . import advanced, fem, trefftz, vem
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
@@ -94,28 +94,43 @@ from ._finite_element_material import (
     FiniteElementMaterialState,
     FiniteElementMaterialTransaction,
 )
-from ._finite_element_variational import (
+from ._variational import (
     BoundaryLoadAction,
+    coefficient,
+    DiffusionAction,
+    MassAction,
+    SourceAction,
+    VariationalCoefficient,
+)
+from ._finite_element_variational import (
     CellBilinearAction,
     CellEnergyAction,
     CellResidualAction,
-    coefficient,
     compile_finite_element_problem,
     CompiledFiniteElementProblem,
-    DiffusionAction,
     ExteriorFacetAction,
     FiniteElementAction,
-    FiniteElementCoefficient,
     FiniteElementExecutionContext,
     FiniteElementExecutionPolicy,
     FiniteElementForm,
     FiniteElementFunctional,
     InteriorFacetAction,
-    MassAction,
     PairwiseVolumeFluxAction,
     PreparedOperatorAction,
     SIPGFacetAction,
-    SourceAction,
+)
+from .vem import (
+    CompiledVirtualElementProblem,
+    VirtualElementAction,
+    VirtualElementExecutionContext,
+    VirtualElementExecutionPolicy,
+    VirtualElementForm,
+    VirtualElementReconstruction,
+    VirtualElementRobinAction,
+    compile_virtual_element_problem,
+    evaluate_virtual_element_reconstruction,
+    evaluate_virtual_element_trace,
+    project_virtual_element_field,
 )
 from ._finite_volume_verification import (
     couette_velocity_profile,
@@ -133,6 +148,7 @@ from ._finite_volume_verification import (
     sod_verification_case,
     woodward_colella_verification_case,
 )
+from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
@@ -461,6 +477,18 @@ from .trefftz import (
 
 __all__ = [
     "advanced",
+    "vem",
+    "CompiledVirtualElementProblem",
+    "VirtualElementAction",
+    "VirtualElementExecutionContext",
+    "VirtualElementExecutionPolicy",
+    "VirtualElementForm",
+    "VirtualElementReconstruction",
+    "VirtualElementRobinAction",
+    "compile_virtual_element_problem",
+    "evaluate_virtual_element_reconstruction",
+    "evaluate_virtual_element_trace",
+    "project_virtual_element_field",
     "AbstractAdmissibleSystem",
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
@@ -483,6 +511,7 @@ __all__ = [
     "CompiledMACScalarBuoyancyDynamics",
     "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
+    "CompiledFLIPProblem",
     "CompiledSpectralDynamics",
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
@@ -490,6 +519,8 @@ __all__ = [
     "AbstractMPMConstitutivePlan",
     "MPMConstitutiveResponse",
     "MPMKinematics",
+    "compile_flip_problem",
+    "FLIPProblemIR",
     "compile_material_point_problem",
     "CompiledMaterialPointProblem",
     "ExternalMPMAcceleration",
@@ -509,7 +540,7 @@ __all__ = [
     "DiffusionAction",
     "ExteriorFacetAction",
     "FiniteElementAction",
-    "FiniteElementCoefficient",
+    "VariationalCoefficient",
     "FiniteElementExecutionContext",
     "FiniteElementExecutionPolicy",
     "FiniteElementForm",

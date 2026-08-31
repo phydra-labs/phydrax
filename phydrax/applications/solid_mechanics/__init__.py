@@ -16,6 +16,7 @@ from ._fem_dynamics import (
     PreparedFiniteElementDynamicsStep,
     solve_finite_element_dynamics_step,
 )
+from . import member_network
 from ._force_density import (
     BatchedForceDensityResult,
     force_density_equilibrium,
@@ -241,6 +242,7 @@ __all__ = [
     "member_angle_residual",
     "member_direction_residual",
     "member_directions",
+    "member_network",
     "neo_hookean_first_piola",
     "neo_hookean_form",
     "neo_hookean_reference_energy",

@@ -16,8 +16,8 @@ from phydrax.discretization.fem._precision import FiniteElementPrecisionPolicy
 from phydrax.discretization.fem._reference_operator import (
     PreparedFiniteElementReference,
 )
+from phydrax.equations._variational import VariationalCoefficient
 from phydrax.equations._finite_element_variational import (
-    FiniteElementCoefficient,
     FiniteElementForm,
     MassAction,
     PairwiseVolumeFluxAction,
@@ -274,7 +274,7 @@ def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_value
     programs = []
     tables = []
     for offset in (0.0, 7.0):
-        coefficient = FiniteElementCoefficient(
+        coefficient = VariationalCoefficient(
             jnp.arange(9.0) + offset,
             coefficient_id="nodal-density",
             location="dof",

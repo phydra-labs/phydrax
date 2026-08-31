@@ -19,6 +19,7 @@ from ..discretization.particle import (
     PreparedSoftSphereDEMDynamics,
     PreparedTransportVelocityDynamics,
 )
+from ..equations._flip import CompiledFLIPProblem
 from ._fixed_step import AbstractFixedStepMethod, FixedStepResult
 
 
@@ -173,8 +174,47 @@ class DEMFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
         )
 
 
+class FLIPFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
+    dynamics: CompiledFLIPProblem
+    method_id: str = eqx.field(static=True)
+
+    def __init__(self, dynamics: CompiledFLIPProblem, /):
+        if not isinstance(dynamics, CompiledFLIPProblem):
+            raise TypeError("dynamics must be CompiledFLIPProblem.")
+        self.dynamics = dynamics
+        self.method_id = canonical_fingerprint(
+            {"kind": "flip-fixed-step", "dynamics": dynamics.compilation_id}
+        )
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        del step_index, time, args
+        result = self.dynamics.step_detailed(state, step_size)
+        return FixedStepResult(
+            result.candidate_state,
+            result.accepted_state,
+            result.successful,
+            jnp.maximum(
+                result.diagnostics.projection_residual,
+                result.diagnostics.divergence_norm,
+            ),
+            result.diagnostics.details.linear.diagnostics.iterations,
+            result.diagnostics.details.linear.diagnostics.iterations,
+            jnp.asarray(False),
+            jnp.zeros((), dtype=state.time.dtype),
+        )
+
+
 __all__ = [
     "DEMFixedStepMethod",
+    "FLIPFixedStepMethod",
     "DFSPHFixedStepMethod",
     "IISPHFixedStepMethod",
     "TransportVelocityFixedStepMethod",

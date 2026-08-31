@@ -139,6 +139,7 @@ from ._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
+from ._local_elimination import LocalEliminationPlan, LocalEliminationResult
 from ._low_rank_boundary import LowRankBoundaryCorrectionPlan
 from ._low_rank_updates import (
     BaseNonsingularity,
@@ -553,6 +554,8 @@ __all__ = [
     "LocalBlockFactorizationKind",
     "prepare_local_block_factorization",
     "solve_local_blocks",
+    "LocalEliminationPlan",
+    "LocalEliminationResult",
     "ConstraintMap",
     "HermitianFunctionResult",
     "HermitianSpectrum",

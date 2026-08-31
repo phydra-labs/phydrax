@@ -9,10 +9,10 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
-from ...linalg import prepare_local_block_factorization, solve_local_blocks
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from ._local_blocks import prepare_local_block_factorization, solve_local_blocks
 
 
 class LocalEliminationResult(StrictModule):
@@ -23,20 +23,15 @@ class LocalEliminationResult(StrictModule):
     failed: Array
 
 
-class FiniteElementLocalEliminationPlan(StrictModule, NonTrainableState):
-    """Static partition of cell-local coordinates into retained and private DOFs."""
+class LocalEliminationPlan(StrictModule, NonTrainableState):
+    """Static partition of local coordinates into retained and private DOFs."""
 
     retained_dofs: Array
     eliminated_dofs: Array
     local_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
-    def __init__(
-        self,
-        local_size: int,
-        retained_dofs: ArrayLike,
-        /,
-    ):
+    def __init__(self, local_size: int, retained_dofs: ArrayLike, /):
         size = int(local_size)
         retained = np.asarray(retained_dofs, dtype=np.int32)
         if size <= 1 or retained.ndim != 1 or retained.size == 0:
@@ -46,9 +41,7 @@ class FiniteElementLocalEliminationPlan(StrictModule, NonTrainableState):
         if np.unique(retained).size != retained.size:
             raise ValueError("Retained local DOF indices must be unique.")
         eliminated = np.setdiff1d(
-            np.arange(size, dtype=np.int32),
-            retained,
-            assume_unique=True,
+            np.arange(size, dtype=np.int32), retained, assume_unique=True
         )
         if eliminated.size == 0:
             raise ValueError("Local elimination requires at least one private DOF.")
@@ -57,7 +50,7 @@ class FiniteElementLocalEliminationPlan(StrictModule, NonTrainableState):
         self.local_size = size
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "finite-element-local-elimination",
+                "kind": "local-elimination",
                 "local_size": size,
                 "retained": retained.tolist(),
                 "eliminated": eliminated.tolist(),
@@ -65,10 +58,7 @@ class FiniteElementLocalEliminationPlan(StrictModule, NonTrainableState):
         )
 
     def condense(
-        self,
-        local_matrix: ArrayLike,
-        local_rhs: ArrayLike,
-        /,
+        self, local_matrix: ArrayLike, local_rhs: ArrayLike, /
     ) -> LocalEliminationResult:
         matrix = jnp.asarray(local_matrix)
         rhs = jnp.asarray(local_rhs)
@@ -113,20 +103,11 @@ class FiniteElementLocalEliminationPlan(StrictModule, NonTrainableState):
             raise ValueError("retained_solution shape is incompatible with the plan.")
         interior = (
             result.interior_load
-            - jnp.matmul(
-                result.interior_solution_operator,
-                retained[..., None],
-            )[..., 0]
+            - jnp.matmul(result.interior_solution_operator, retained[..., None])[..., 0]
         )
-        full = jnp.zeros(
-            (retained.shape[0], self.local_size),
-            dtype=retained.dtype,
-        )
+        full = jnp.zeros((retained.shape[0], self.local_size), dtype=retained.dtype)
         full = full.at[:, self.retained_dofs].set(retained)
         return full.at[:, self.eliminated_dofs].set(interior)
 
 
-__all__ = [
-    "FiniteElementLocalEliminationPlan",
-    "LocalEliminationResult",
-]
+__all__ = ["LocalEliminationPlan", "LocalEliminationResult"]
