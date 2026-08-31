@@ -97,7 +97,8 @@ Most workflows are composing a few primitives:
 - **Electromagnetics**: compatible cochain Maxwell and a reciprocal-lattice
   Fourier-modal substrate cover general time-domain topology and periodic layered
   frequency-domain scattering, respectively, with full-tensor finite layers,
-  boundary cascades, current planes, Brillouin-zone sources, and diffraction orders.
+  field-certificate-aware geometry rasterization, boundary cascades, current
+  planes, Brillouin-zone sources, and diffraction orders.
 - **Variational quantum dynamics**: stable complex log amplitudes, connected discrete
   operators, validated finite symmetry sectors, persistent-chain local energies,
   damped SR, frozen R-hat/ESS diagnostics, portable exact-resume checkpoints, and
@@ -113,18 +114,24 @@ Most workflows are composing a few primitives:
   Lyapunov/Riccati equations, Gramians, LQR/iLQR, compiled QPs, multiple shooting,
   bounded initialization search, and receding-horizon MPC.
 - **Nonlinear optimization**: typed scalar, residual, bound, nonlinear-constrained,
-  state/design, stochastic, and continuation problems; matrix-free second-order and
-  primal--dual methods; implicit solution derivatives; continuation stability events;
-  explicit status, diagnostics, certificates, and provenance.
+  state/design, stochastic, and continuation problems; matrix-free second-order,
+  primal--dual, and moving-asymptote methods; fixed-mesh SIMP compliance design;
+  implicit solution derivatives; continuation stability events; explicit status,
+  diagnostics, certificates, and provenance.
 - **Sequence mixing**: `DiagonalStateSpaceMixer` is the input-independent
   continuous-time baseline; `SelectiveStateSpaceMixer` adds input-dependent
   step, injection, and readout maps while preserving exact irregular-time
   affine recurrence and serial/associative parity.
+- **Deployment**: deterministic learned inference boundaries export to ONNX or
+  checksummed, pickle-free StableHLO/IREE artifacts with explicit static ABI and
+  native parity evidence.
 - **Constraints**: scalar loss terms built from residuals on components.
 - **Objectives**: raw scalar terms, including signed integral energies for Ritz minimization.
 - **Model losses**: optional parameter-space penalties attached directly to models.
 - **Parameter geometry**: `phx.nn.parameters` maps raw optimizer coordinates to
-  constrained physical values and selects explicit model PyTree subspaces.
+  constrained physical values, selects explicit model PyTree subspaces, and
+  provides standard or rank-stabilized low-rank adaptation with base-bound
+  artifacts and exact deployment merging.
 - **FunctionalSolver**: sums constraints, raw objectives, and model losses into a differentiable scalar functional and runs optimization.
 
 Optional (but central in many PDE problems):

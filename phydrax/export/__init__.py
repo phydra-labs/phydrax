@@ -12,6 +12,14 @@ from ._complex_parameters import (
     frame_coefficients_to_complex,
     import_complex_parameters,
 )
+from ._iree import (
+    IREEArtifactManifest,
+    IREEExecutable,
+    IREEExportPolicy,
+    IREEExportResult,
+    load_iree,
+    save_iree,
+)
 from ._neutral import (
     NeutralAdapterBoundary,
     NeutralFieldSchema,
@@ -28,6 +36,10 @@ __all__ = [
     "ComplexInterchangeEntry",
     "ComplexInterchangeSemantics",
     "ComplexInterchangeState",
+    "IREEArtifactManifest",
+    "IREEExecutable",
+    "IREEExportPolicy",
+    "IREEExportResult",
     "NeutralAdapterBoundary",
     "NeutralFieldSchema",
     "NeutralGeometrySchema",
@@ -37,7 +49,9 @@ __all__ = [
     "complex_coefficients_to_frame",
     "export_complex_parameters",
     "frame_coefficients_to_complex",
+    "load_iree",
     "import_complex_parameters",
     "OnnxExportResult",
     "save_onnx",
+    "save_iree",
 ]

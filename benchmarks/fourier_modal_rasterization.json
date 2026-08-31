@@ -1,0 +1,9 @@
+{
+  "compile_seconds": 0.06327333301305771,
+  "fill_fraction": 0.12582832693051912,
+  "parameter_differentiable": true,
+  "points_per_axis": 48,
+  "radius_gradient": 1.256778013735064,
+  "samples_per_axis": 3,
+  "warm_seconds": 0.0005242920015007257
+}

@@ -138,6 +138,15 @@ independently implements explicit native affine updates, exact parameter
 subspaces, trainer integration, base-bound artifacts, and deployment merging;
 no Lorax or Qax source or runtime dependency is copied or redistributed.
 
+The differentiable-methods design study also inspected FhG-IISB/jNO at commit
+56a53eca2f3777e670dcda8ca2bc3348ca0e6a1a, licensed under EPL-2.0, together
+with the original rank-stabilized LoRA, Fourier-modal Maxwell, and moving
+asymptote publications. Phydrax independently implements its immutable adapter
+coordinates, native Fourier-modal geometry rasterization, certified
+optimization/state-design methods, topology application, and export contracts;
+no jNO or foundax source, tests, fixtures, runtime types, or generated data are
+copied, translated, linked, imported, or redistributed.
+
 The direct-collocation design study considered csu-hmc/opty at commit
 fdad07d0f0ae149e2eedb479e7a87298fd6722ef, Copyright (c) 2014-2025,
 opty authors, licensed under the BSD 2-Clause License, together with Moore and
@@ -221,6 +230,15 @@ e13d422cbb8b77820a5e375eb9f5c415be01b81e. Phydrax reimplements these methods
 against its own discretization, linear-operator, boundary-cascade, diagnostic,
 refresh, and provenance contracts and does not depend on the upstream package.
 See LICENSES/FMMAX-MIT.txt.
+
+IREE
+Copyright 2019-2026 The IREE Authors.
+Licensed under the Apache License, Version 2.0.
+The optional matched `iree-base-compiler` and `iree-base-runtime` provider
+compiles JAX-exported StableHLO and executes the resulting checksummed VMFB
+artifact through IREE's public in-process Python APIs. Phydrax retains its own
+inference-boundary, ABI, manifest, parity, and artifact-validation contracts.
+See LICENSES/IREE-APACHE-2.0.txt.
 
 High-order and spectral finite elements
 The spectral-element design study considered Nek5000, nekRS, Neko, Nekbone,
