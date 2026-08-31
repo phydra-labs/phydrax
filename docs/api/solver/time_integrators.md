@@ -138,3 +138,35 @@ Ito- or Stratonovich-marked solver because both interpretations coincide.
 solver/controller/adjoint/event configuration identity, backend, equation form,
 adaptivity, dense-output choice, and step capacity. Runtime parameter values remain
 ordinary JAX leaves rather than being folded into static identities.
+
+## Particle conversion and reactive scheduling
+
+::: phydrax.solver.ParticleConversionBackend
+
+---
+
+::: phydrax.solver.ParticleConversionSolverPlan
+
+---
+
+::: phydrax.solver.advance_particle_conversion
+
+---
+
+::: phydrax.solver.HybridEventPlan
+
+---
+
+::: phydrax.solver.localize_hybrid_event
+
+---
+
+::: phydrax.solver.ParticleConversionSensitivityPolicy
+
+---
+
+::: phydrax.solver.ReactiveParticleCouplingSchedulePlan
+
+---
+
+::: phydrax.solver.advance_reactive_cfd_dem_window

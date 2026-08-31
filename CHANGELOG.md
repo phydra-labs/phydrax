@@ -35,6 +35,19 @@
   multi-RHS and Brillouin source semantics, interior field reconstruction,
   diffraction-order far fields, explicit refresh, convergence, resource, diagnostic,
   status, and provenance contracts.
+- Extended native low-rank adaptation with rank-stabilized scaling, exact
+  adapter-artifact reconstruction, and composition with frozen random-weight
+  factorization coordinates.
+- Added field-certificate-aware geometry-to-material rasterization for
+  Fourier-modal Maxwell, with sharp and differentiable compact-Heaviside paths,
+  fixed subpixel sampling, fill-fraction evidence, and material identities.
+- Added certified finite-box Method of Moving Asymptotes, constrained
+  reduced-adjoint state/design optimization, sparse physical-radius density
+  filtering, SIMP compliance topology optimization, and independent
+  reference-discretization reanalysis.
+- Added pickle-free StableHLO/IREE inference export with matched optional
+  compiler/runtime versions, in-process compilation and loading, exact
+  shape/dtype ABI checks, checksummed manifests, and native parity evidence.
 - Added full-rank Euclidean VP/VE score diffusion with structured diagonal Gaussian
   laws, exact perturbation marginals, weighted denoising score matching, replayable
   reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
@@ -120,18 +133,27 @@
   pair reductions, radius-class filtering, replay/checkpointed VJPs, sharp and
   smooth sensitivity contracts, inverse/UQ qualification, and transverse
   hybrid-event saltation.
-- Added rolling resistance, prescribed and servo barriers, certified analytic
-  contact curvature and curved Hertz walls, finite-range DMT adhesion,
-  bilinear elasto-plastic normal contact, and conservative lumped contact heat
-  transfer.
-- Added SO(2)/SO(3) rigid bodies, immutable sphere-clump templates, common rigid
-  contact geometry, triangle walls, elastic/damageable fixed bond graphs,
-  fixed-pool topology events, convex SAT contact, and certified
-  sphere-to-implicit contact.
-- Added conservative particle-grid transfer, unresolved Stokes CFD--DEM,
-  atomic multirate coupling windows, work-adjoint resolved immersed-boundary
-  coupling, thermal CFD--DEM energy exchange, expanded examples, qualification
-  campaign artifacts, and performance evidence.
+- Added compositional normal/cohesion/tangential/rotational DEM contact history,
+  elastic rolling–torsional resistance, finite-range DMT cohesion, conservative
+  capillary bridge lifecycle, near-contact lubrication, bilinear elasto-plastic
+  normal response, elastic half-space multicontact correction, and conservative
+  contact heat exchange.
+- Added prescribed force/torque servo barriers, certified analytic contact
+  curvature, curved Hertz walls, facet traction/work/heat observables, Finnie
+  wear accumulation and geometry commits, SO(2)/SO(3) rigid bodies, immutable
+  sphere-clump templates, triangle walls, elastic/damageable bond graphs,
+  fixed-pool topology events, convex SAT contact, certified sphere-to-implicit
+  contact, and support-map superquadric contact and dynamics.
+- Added conservative slab/cylindrical/spherical internal shell meshes, typed
+  species/phase/element thermochemistry, polynomial heat-capacity inversion,
+  heat/species transport, stoichiometric Arrhenius networks, evaporation,
+  shrinking-core conversion, reference Rosenbrock and structured tridiagonal
+  solvers, morphology, fragmentation, radiation, and process operations.
+- Added conservative particle-grid transfer, unresolved Stokes CFD–DEM,
+  work-adjoint resolved immersed-boundary coupling, reactive continuum heat and
+  species exchange, atomic Strang/iterated reactive CFD–DEM windows, generic
+  hybrid-event sensitivity, replay/checkpointed VJPs, UQ, compositional support
+  claims, executable examples, qualification campaigns, and performance evidence.
 - Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
   while preserving the existing array-valued SSPRK contract.
 - Added all-coordinate tensor spectral PDE residual compilation with explicit
@@ -145,6 +167,12 @@
   mass-policy-aware rates, tensor SBP and periodic mapped DGSEM conservation,
   p-multigrid, Schwarz/FDM and auxiliary preconditioning, two-sided mortars,
   fixed-capacity hp transactions, and backend-neutral distributed ownership.
+- Added operational nonconforming tensor-hp epochs with stable refinement forests,
+  isotropic quad/hex h-refinement and coarsening, 2:1 closure, anisotropic p
+  buckets, curved parent-map inheritance, H1 master-trace constraints, asymmetric
+  DG mortar worksets, role-correct h/p transfers, atomic solver transactions,
+  adaptive indicators and budgets, hp condensation/multigrid, inherited
+  partition ownership, and certified entropy-compatible DGSEM mortars.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct

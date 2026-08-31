@@ -112,13 +112,22 @@ particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
 route moments, and fast/deterministic/compensated reductions. DEM adds stable
-contact history, accepted-step work/energy ledgers, cached and fused
-neighborhoods, rolling/adhesive/plastic/thermal laws, SO(2)/SO(3) bodies,
-clumps, triangle/convex/implicit geometry, bonds/topology events, certified
-sensitivity modes, and conservative unresolved/resolved CFD coupling. See
+compositional normal/cohesion/tangential/rotational history, accepted-step
+work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
+elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
+bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
+and wear, bonds/topology events, and certified sensitivity modes. Radial
+particle conversion adds typed thermochemistry, reactions, evaporation,
+shrinking-core conversion, morphology, conservative continuum/contact/radiative
+exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
+[Guide → Wet granular contact](guides_wet_granular_contact.md),
+[Guide → Superquadric DEM](guides_superquadric_dem.md),
+[Guide → Particle internal transport](guides_particle_internal_transport.md),
+[Guide → Particle thermochemistry](guides_particle_thermochemistry.md),
+[Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
@@ -253,6 +262,10 @@ a shared dense base. The factor-only `ParameterSubspace` is the complete
 gradient and optimizer-state boundary for `fit_operator` and Optax
 `FunctionalSolver` runs; merging returns an ordinary dense deployment model,
 while adapter-only archives verify the complete base content before loading.
+Standard and rank-stabilized scaling are explicit per site. RWF layers adapt
+their unscaled `V` coordinate before the frozen row scale and remain RWF after
+deployment merging.
+
 The checked transfer campaign improves its frozen baseline with 53 selected
 parameters versus 197 for full fine-tuning, and the resource campaign reduces
 Adam state from 4,194,308 to 131,076 bytes with merged/factorized disagreement
@@ -552,6 +565,10 @@ and filter/SOC SQP with BFGS/SR1/exact Hessians. BOBYQA, COBYQA,
 deterministic multistart, and explicitly recertified SciPy/NLopt/Ipopt/Ceres
 boundaries cover black-box and specialist routes. Residual graphs retain block
 sparsity, Schur ordering, manifold retractions, and incremental factor versions.
+Method of Moving Asymptotes adds a finite-box, feasible-start route for very
+large designs with few inequalities. Its reduced state/design form reuses exact
+adjoints and supports fixed-mesh SIMP compliance optimization with sparse
+physical-radius filtering and mandatory independent reanalysis evidence.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,

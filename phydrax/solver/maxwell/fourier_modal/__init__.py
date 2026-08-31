@@ -55,6 +55,13 @@ from ._layer import (
     recover_longitudinal_fields,
 )
 from ._modal import ModalLayerResult, ModalPropagationPolicy, prepare_modal_boundary
+from ._rasterization import (
+    FourierModalRasterizationEvidence,
+    FourierModalRasterizationPlan,
+    FourierModalRasterizationPolicy,
+    FourierModalRasterizationResult,
+    rasterize_fourier_modal_material,
+)
 from ._runtime import (
     fourier_modal_convergence_report,
     FourierModalCapabilities,
@@ -121,6 +128,10 @@ __all__ = [
     "FourierModalMaxwellProblem",
     "FourierModalProvenance",
     "FourierModalRefreshSpec",
+    "FourierModalRasterizationEvidence",
+    "FourierModalRasterizationPlan",
+    "FourierModalRasterizationPolicy",
+    "FourierModalRasterizationResult",
     "FourierModalResourcePolicy",
     "FourierModalSolvePlan",
     "FourierModalSolvePolicy",
@@ -173,6 +184,7 @@ __all__ = [
     "prepare_modal_boundary",
     "recover_longitudinal_fields",
     "redheffer_star_product",
+    "rasterize_fourier_modal_material",
     "refresh_fourier_modal_maxwell",
     "shift_scattering_reference_planes",
     "solve_fourier_modal_case_batch",

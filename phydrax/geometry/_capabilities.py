@@ -20,6 +20,7 @@ class GeometryCapability(str, Enum):
     SIGNED_DISTANCE = "signed_distance"
     BOUNDARY_NORMAL = "boundary_normal"
     CONTACT_CURVATURE = "contact_curvature"
+    SUPPORT_MAP = "support_map"
     MEASURE = "measure"
     INTERIOR_SAMPLING = "interior_sampling"
     BOUNDARY_SAMPLING = "boundary_sampling"
@@ -33,6 +34,13 @@ class ContactCurvatureProvider(Protocol):
     """Provider of certified principal boundary curvatures."""
 
     def contact_curvature(self, state: Any, points: Array, /) -> Any: ...
+
+
+@runtime_checkable
+class SupportMapProvider(Protocol):
+    """Provider of support points for convex contact geometry."""
+
+    def support_map(self, state: Any, directions: Array, /) -> Array: ...
 
 
 @runtime_checkable
@@ -57,5 +65,6 @@ __all__ = [
     "ContactCurvatureProvider",
     "CubatureAtlasProvider",
     "GeometryCapability",
+    "SupportMapProvider",
     "SeamDiagnosticsProvider",
 ]

@@ -118,6 +118,7 @@ PUBLIC_TERM_API = {
     "EigenspaceAction",
     "FactorizedVariationalEigenspaceResult",
     "FormDensity",
+    "FrozenTopologyTerm",
     "InvariantSubspaceResidual",
     "InvariantSubspaceResidualEvaluation",
     "InvariantSubspaceResidualResult",

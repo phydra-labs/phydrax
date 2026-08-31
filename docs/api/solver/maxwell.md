@@ -45,6 +45,18 @@ Phydrax provides complementary Maxwell substrates.
 
 ::: phydrax.solver.maxwell.fourier_modal.FourierModalSourcePlane
 
+## Geometry rasterization
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalRasterizationPolicy
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalRasterizationPlan
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalRasterizationResult
+
+::: phydrax.solver.maxwell.fourier_modal.FourierModalRasterizationEvidence
+
+::: phydrax.solver.maxwell.fourier_modal.rasterize_fourier_modal_material
+
 ## Factorization and propagation
 
 ::: phydrax.solver.maxwell.fourier_modal.DirectFourierFactorizationPlan

@@ -54,7 +54,7 @@ dY_r/dr = -f(Y_r, T-r) + 0.5 g(T-r)^2 s(Y_r, T-r).
 external input layout. Compose it explicitly with `DiffraxEvolution`,
 `ContinuousTransport`, and `ContinuousFlowLaw`:
 
-```python
+```text
 system = phx.transport.probability_flow_system(
     process,
     score,

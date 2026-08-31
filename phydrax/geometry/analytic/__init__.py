@@ -28,6 +28,7 @@ from ._operations import (
     SharpCSG,
 )
 from ._primitives import Box, Circle, Cube, Sphere
+from ._superquadric import Superquadric
 
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "Scaling",
     "SharpCSG",
     "Sphere",
+    "Superquadric",
     "Square",
     "Torus",
     "Translation",
