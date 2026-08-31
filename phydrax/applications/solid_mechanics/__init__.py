@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import member_network
+from . import member_network, standards
 from ._force_density import (
     BatchedForceDensityResult,
     force_density_equilibrium,
@@ -183,6 +183,7 @@ __all__ = [
     "solve_force_density_design",
     "solve_structured_force_density_design",
     "solve_topology_optimization",
+    "standards",
     "surface_cell_areas",
     "surface_planarity_residual",
     "surface_rectangularity_residual",
