@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added advanced cosmology contracts: curved/CPL FLRW geometry and distances,
+  realization-safe semantic transfer/power products, process-isolated linear-theory
+  interoperation, neutrino component algebra, model-card power corrections,
+  adiabatic gas--particle shared gravity, analytic halo foundations, Limber/RSD
+  predictions, canonical CMB spectra, and bounded periodic force qualification.
+  Periodic LPT/PM remains flat-only; complete Boltzmann/CMB evolution and production
+  tree gravity remain explicit external or unsupported boundaries.
 - Added fixed-population compatible particle-in-cell dynamics over stable charged
   particle supports: measure-aware endpoint charge, physical cochain E/B gather,
   matrix-free compatible electrostatics, relativistic Boris stepping, periodic
