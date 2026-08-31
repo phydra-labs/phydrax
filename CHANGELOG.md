@@ -169,6 +169,11 @@
   DG mortar worksets, role-correct h/p transfers, atomic solver transactions,
   adaptive indicators and budgets, hp condensation/multigrid, inherited
   partition ownership, and certified entropy-compatible DGSEM mortars.
+- Completed the single-host spectral-hp stack with native epoch compilation,
+  anisotropic h and geometry-order adaptation, robust viscous/shock/ALE policies,
+  tensor de Rham complexes, simplex/prism/pyramid references, nonlinear hp
+  solvers, CAD/unfitted geometry, frozen-schedule adjoints, semantic caches,
+  high-order output/import adapters, and complete public examples and guidance.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct

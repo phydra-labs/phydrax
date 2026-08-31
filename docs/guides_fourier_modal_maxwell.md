@@ -109,7 +109,7 @@ discrete derivative boundary. A positive smoothing width applies Phydrax's compa
 regularized Heaviside to the geometry boundary field. Geometry parameters are then
 differentiable only when the geometry's `FieldCertificate` says they are.
 
-```python
+```text
 raster_plan = fm.FourierModalRasterizationPlan(
     harmonics,
     fm.FourierModalRasterizationPolicy(

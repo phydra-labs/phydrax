@@ -861,6 +861,19 @@ from ._spectral_forcing import (
     SpectralOUForcingDiagnostics,
     SpectralOUForcingPlan,
 )
+from ._spectral_hp_completion import (
+    BDDCFETIDPTracePlan,
+    FrozenHPAdjointSchedule,
+    goal_oriented_eigen_indicators,
+    HPEigenspaceTransfer,
+    HPFASMultigrid,
+    HPNewtonKrylovBuilder,
+    HPNewtonKrylovResult,
+    HPRestrictedSchwarz,
+    MeshVaryingUQAggregator,
+    NonlinearLocalCondensation,
+    RelaxedHPMarking,
+)
 from ._split_differential import (
     split_differential_problem,
     SplitDifferentialProblem,
@@ -1676,4 +1689,15 @@ __all__ = [
     "solve_characteristic_projection",
     "solve_neural_galerkin",
     "trace_characteristics",
+    "goal_oriented_eigen_indicators",
+    "BDDCFETIDPTracePlan",
+    "FrozenHPAdjointSchedule",
+    "HPEigenspaceTransfer",
+    "HPFASMultigrid",
+    "HPNewtonKrylovBuilder",
+    "HPNewtonKrylovResult",
+    "HPRestrictedSchwarz",
+    "MeshVaryingUQAggregator",
+    "NonlinearLocalCondensation",
+    "RelaxedHPMarking",
 ]
