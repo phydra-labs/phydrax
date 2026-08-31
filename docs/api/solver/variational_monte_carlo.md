@@ -1,13 +1,16 @@
 # Variational Monte Carlo
 
-Phydrax variational Monte Carlo optimizes a user-supplied discrete amplitude model
-against a matrix-free connected operator. It composes the shared fixed-kernel Markov
-sampler, weighted empirical-measure reduction, parameter subspaces, empirical Gram
-operators, and the existing linear solve runtime.
+Phydrax variational Monte Carlo optimizes a user-supplied canonical
+`LogAmplitude` against any `AbstractLocalQuantumOperator`. Connected discrete
+operators and continuum molecular Coulomb Hamiltonians therefore share the fixed
+Markov kernel, weighted empirical-measure reduction, explicit trainable parameter
+subspaces, matrix-free score Jacobian, empirical Gram operator, shared training
+lifecycle, and `phydrax.linalg` solve runtime.
 
-The sampler targets the real density `2 log |ψ|`. Samples are treated as correlated;
-training never differentiates through accept/reject decisions and never reports an IID
-standard error.
+The sampler targets the real density `2 log |ψ|`. Samples are correlated; training
+does not differentiate through accept/reject decisions or report an IID standard
+error. The score and Gram actions do not materialize a dense
+sample-by-parameter Jacobian.
 
 ## Problem and policy
 
@@ -29,6 +32,11 @@ The parameter mode is explicit:
 No mode is inferred from output dtype. The policy uses a fixed proposal, persistent
 walkers, centered score geometry, explicit damping, and the existing
 `LinearSolvePolicy`/`NullspacePolicy` contracts.
+
+The operator result is a `LocalOperatorEstimate`. Its status is folded into the
+existing VMC status without losing its operator/method/dtype/work evidence in
+`VariationalMonteCarloEstimate.local`. Discrete connection work and exact
+electronic coordinate-Hessian work have method-specific meanings.
 
 ## State and results
 

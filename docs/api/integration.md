@@ -29,6 +29,56 @@ See [Integrals and measures](../guides_integrals.md) for target semantics,
 normalization, method selection, uncertainty contracts, external weighted
 measures, and composed space/time/stochastic reductions.
 
+## Fixed-design Bayesian quadrature
+
+Bayesian quadrature conditions a zero-mean Gaussian-process prior at one fixed
+`PointSampling` design. Initial analytic support is deliberately narrow:
+a normalized scalar `ProbabilityTarget` backed by `phydrax.uq.Normal`, and
+a `SquaredExponentialKernel` optionally wrapped once in `ScaleKernel`. The
+`GaussianKernelMean` is bound to the target identity, probability label, and
+Gaussian location/scale content; reuse with a different measure is rejected.
+
+```python
+import phydrax as phx
+
+z = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
+target = phx.integration.expectation(z, target_id="standard-normal")
+kernel = phx.kernels.SquaredExponentialKernel(length_scale=0.8)
+kernel_mean = phx.integration.GaussianKernelMean(target, kernel)
+plan = phx.integration.BayesianQuadraturePlan(
+    kernel_mean,
+    phx.domain.PointSampling(32, design="hammersley"),
+    observation_noise=0.0,
+    solve_regularization=1e-10,
+)
+realization = phx.integration.materialize(target, plan)
+estimate = phx.integration.reduce(
+    z.Function("z")(lambda value: value**2),
+    realization,
+)
+```
+
+`estimate.value` is the GP posterior integral mean.
+`estimate.error_estimate` is the posterior standard deviation and its
+`error_kind` is exactly `bayesian-posterior-standard-deviation`. This posterior
+standard deviation is model-based uncertainty under the selected kernel,
+observation-noise model, and fixed design. **It is not a deterministic or
+frequentist error bound.** Observation noise changes the GP conditioning model;
+`solve_regularization` is separate numerical regularization, and diagnostics
+retain both values plus the complete child `phydrax.linalg` dense-LU solve result.
+
+Unsupported targets, kernel algebra, and non-`DenseLU` solve routes fail during
+construction or materialization. Failed solves, non-finite integrands or final
+contractions, and posterior variance outside a dtype-aware roundoff envelope
+produce explicit non-success statuses; no positive posterior-variance floor is
+applied. Kernel and integrand operands are cast before evaluation, and variance
+decisions include evaluation, accumulation, decision, and effective factorization
+roundoff. Dense-LU operator, residual, and linear-accumulation dtypes must match
+the integration accumulation dtype. `max_points` and the delegated linear-solve
+resource policy guard allocations before execution. This is a
+fixed-design capability only: active acquisition, WSABI, unnormalized evidence,
+and arbitrary measures or kernels are not implemented.
+
 ## Callable adaptive engines
 
 Specialized evaluators can reuse the bounded adaptive integration substrate without
@@ -85,10 +135,10 @@ error-status implementations.
 
 `IntegrationPrecisionPolicy` independently controls integrand evaluation,
 reduction accumulation, adaptive/statistical decisions, and returned output.
-Fixed, mapped, cubature, sparse-grid, product, weighted, Monte Carlo, adaptive
-interval, adaptive triangle, MLMC, atlas-patch, weighted Riemannian, and
-projective Calabi--Yau reductions all consume the same policy. Rule, atlas,
-measure, and cubature identities remain mathematical identities and do not
+Fixed, mapped, cubature, sparse-grid, product, weighted, Bayesian quadrature,
+Monte Carlo, adaptive interval, adaptive triangle, MLMC, atlas-patch, weighted
+Riemannian, and projective Calabi--Yau reductions all consume the same policy.
+Rule, atlas, measure, and cubature identities remain mathematical identities and do not
 change with execution precision.
 
 Every `IntegrationEstimate` carries a content-addressed
@@ -306,6 +356,14 @@ Use `mean_over(condition.on)` for normalized pointwise residual means and
 ::: phydrax.integration.WeightedSampleTarget
 
 ## Plans
+
+::: phydrax.integration.GaussianKernelMean
+
+---
+
+::: phydrax.integration.BayesianQuadraturePlan
+
+---
 
 ::: phydrax.integration.FixedQuadraturePlan
 
@@ -537,6 +595,10 @@ implementation.
 ::: phydrax.integration.IntegrationProvenance
 
 ## Diagnostics
+
+::: phydrax.integration.BayesianQuadratureDiagnostics
+
+---
 
 ::: phydrax.integration.FixedQuadratureDiagnostics
 

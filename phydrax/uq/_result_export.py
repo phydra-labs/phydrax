@@ -51,6 +51,7 @@ from ._particle import (
 )
 from ._particle_genealogical_score import ParticleGenealogicalScoreResult
 from ._pathfinder import PathfinderResult
+from ._polynomial_chaos import PolynomialChaosFitResult
 from ._rao_blackwellized import RaoBlackwellizedFilterResult
 from ._rao_blackwellized_smoothing import (
     RaoBlackwellizedBackwardSimulationResult,
@@ -62,6 +63,7 @@ from ._sing import SINGResult
 from ._smc import TemperedSMCResult
 from ._state_space_amortized import AmortizedStateSpaceVariationalResult
 from ._state_space_buffered import BufferedStateSpaceVariationalResult
+from ._state_space_gp import StateSpaceGaussianProcessResult
 from ._state_space_variational import StateSpaceVariationalResult
 from ._variational import VariationalResult
 
@@ -390,6 +392,46 @@ def _adapt_result(result, arrays, fields, trees):
             "rank_tolerance": result.state.information.rank_tolerance,
         }
         return "sing_smoother", metadata, ("state.expectation_key",)
+
+    if isinstance(result, StateSpaceGaussianProcessResult):
+        for name, value in (
+            ("posterior_times", result.posterior_times),
+            ("posterior_mean", result.posterior_mean),
+            ("posterior_variance", result.posterior_variance),
+            ("predictive_mean", result.predictive_mean),
+            ("predictive_variance", result.predictive_variance),
+            ("log_marginal_likelihood", result.log_marginal_likelihood),
+            ("active_observation_count", result.active_observation_count),
+            ("valid", result.valid),
+            ("status", result.status),
+            ("query_valid", result.query_valid),
+            ("train_mask", result.train_mask),
+            ("schedule_times", result.schedule_times),
+            ("schedule_observation_mask", result.schedule_observation_mask),
+            ("evaluated_length_scale", result.evaluated_length_scale),
+            ("evaluated_scale", result.evaluated_scale),
+            (
+                "incremental_log_likelihood",
+                result.filter_result.incremental_log_likelihood,
+            ),
+            ("filter_status", result.filter_result.status),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = {
+            "state_dimension": result.state_dimension,
+            "kernel_id": result.kernel_id,
+            "kernel_content_id": result.kernel_content_id,
+            "prepared_kernel_content_id": result.prepared_kernel_content_id,
+            "schedule_id": result.schedule_id,
+            "method_id": result.method_id,
+            "repeated_time_policy": result.repeated_time_policy,
+            "precision_evidence": result.precision_evidence.to_dict(),
+        }
+        return (
+            "state_space_gaussian_process",
+            metadata,
+            ("filter_result", "smoother_result"),
+        )
 
     if isinstance(result, KalmanFilterResult):
         metadata = _put_kalman_filter_result(result, arrays, fields, prefix="")
@@ -1495,6 +1537,46 @@ def _adapt_result(result, arrays, fields, trees):
             "nested_sampling",
             metadata,
             ("problem", "final_state.static"),
+        )
+
+    if isinstance(result, PolynomialChaosFitResult):
+        expansion = result.expansion
+        _put_tree(trees, arrays, "coefficients", expansion.coefficients)
+        _put_tree(trees, arrays, "mean", expansion.mean)
+        _put_tree(trees, arrays, "variance", expansion.variance)
+        for label, value in expansion.first_order_sobol.items():
+            _put_tree(trees, arrays, f"first_order_sobol.{label}", value)
+        for label, value in expansion.total_order_sobol.items():
+            _put_tree(trees, arrays, f"total_order_sobol.{label}", value)
+        if result.residual_norm is not None:
+            _put_tree(trees, arrays, "residual_norm", result.residual_norm)
+        if result.relative_residual_norm is not None:
+            _put_tree(
+                trees,
+                arrays,
+                "relative_residual_norm",
+                result.relative_residual_norm,
+            )
+        for index, status in enumerate(result.solver_statuses):
+            _put_field(fields, arrays, f"solver_statuses.{index}", status)
+        metadata = {
+            "method": result.method,
+            "sample_count": result.sample_count,
+            "model_evaluations": result.model_evaluations,
+            "rank": result.rank,
+            "successful": result.successful,
+            "basis_id": expansion.basis.basis_id,
+            "expansion_id": expansion.expansion_id,
+            "degree": expansion.basis.degree,
+            "feature_count": expansion.basis.feature_count,
+            "labels": list(expansion.basis.labels),
+            "evidence": dict(result.evidence),
+            "provenance": dict(result.provenance),
+        }
+        return (
+            "polynomial_chaos_fit",
+            metadata,
+            ("expansion.basis.factors", "solver_diagnostics"),
         )
 
     if isinstance(result, PathfinderResult):
