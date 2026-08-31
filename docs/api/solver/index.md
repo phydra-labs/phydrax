@@ -23,6 +23,8 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and
   global collocation for future arguments.
+- [Maxwell solvers](maxwell.md) distinguishes compatible cochain evolution,
+  cochain frequency solves, and periodic layered Fourier-modal scattering.
 - [Functional solver](functional_solver.md) assembles training terms, evaluation
   terms, exact enforcement, and model-attached losses for optimization.
 - [Variational Monte Carlo](variational_monte_carlo.md) combines persistent Markov

@@ -210,6 +210,18 @@ or import their solver source, generated tables, runtime types, templates, fixtu
 or executables. GPL/CC projects remain outside the distribution; neutral adapters
 accept data schemas only.
 
+FMMAX
+Copyright 2023 Meta Platforms, Inc. and affiliates.
+Copyright 2025 invrs.io LLC.
+Licensed under the MIT License.
+The reciprocal-lattice harmonic layout, Fourier material factorization, stable
+scattering composition, translated-layer covariance, source batching, and
+Brillouin-zone semantics are informed by FMMAX v1.7.1 at commit
+e13d422cbb8b77820a5e375eb9f5c415be01b81e. Phydrax reimplements these methods
+against its own discretization, linear-operator, boundary-cascade, diagnostic,
+refresh, and provenance contracts and does not depend on the upstream package.
+See LICENSES/FMMAX-MIT.txt.
+
 High-order and spectral finite elements
 The spectral-element design study considered Nek5000, nekRS, Neko, Nekbone,
 gslib, NekCEM, nekStab, Nektar++, ITHACA-SEM, SOD2D, HORSES2D, pySEMTools,

@@ -3,6 +3,7 @@
 *.txt
 !LICENSES/MODEPY-MIT.txt
 !LICENSES/SCIPY-BSD-3-CLAUSE.txt
+!LICENSES/FMMAX-MIT.txt
 *.log
 *.egg-info
 *.cache
@@ -40,6 +41,8 @@ benchmarks/*
 !benchmarks/direct_collocation_qualification.json
 !benchmarks/integral_physics.json
 !benchmarks/map_gp_search.json
+!benchmarks/fourier_modal_maxwell.json
+!benchmarks/fourier_modal_maxwell_qualification.json
 !benchmarks/maxwell_amoeba.json
 !benchmarks/incompressible_spectral.json
 !benchmarks/structured_flow.json

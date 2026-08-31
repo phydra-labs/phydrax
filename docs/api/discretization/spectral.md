@@ -36,6 +36,26 @@
 
 ::: phydrax.discretization.TensorSpectralDiscretization
 
+## Reciprocal-lattice harmonics
+
+::: phydrax.discretization.LatticeHarmonicLayout
+
+---
+
+::: phydrax.discretization.LatticeHarmonicPlan
+
+---
+
+::: phydrax.discretization.LatticeHarmonicDiscretization
+
+---
+
+::: phydrax.discretization.BrillouinZonePlan
+
+---
+
+::: phydrax.discretization.PreparedBrillouinZone
+
 ## Exact-sampling spherical spaces
 
 ::: phydrax.discretization.SphericalModeLayout

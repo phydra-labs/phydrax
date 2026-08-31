@@ -94,6 +94,10 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Electromagnetics**: compatible cochain Maxwell and a reciprocal-lattice
+  Fourier-modal substrate cover general time-domain topology and periodic layered
+  frequency-domain scattering, respectively, with full-tensor finite layers,
+  boundary cascades, current planes, Brillouin-zone sources, and diffraction orders.
 - **Variational quantum dynamics**: stable complex log amplitudes, connected discrete
   operators, validated finite symmetry sectors, persistent-chain local energies,
   damped SR, frozen R-hat/ESS diagnostics, portable exact-resume checkpoints, and
@@ -153,6 +157,7 @@ area measures, and SFNO interoperability. See the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
 [particle qualification guide](docs/guides_particle_qualification.md), the
 [global spectral guide](docs/guides_spectral_methods.md), the
+[Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).
 
