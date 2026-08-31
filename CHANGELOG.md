@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added fixed-capacity two- and three-dimensional vortex methods with
+  Gaussian free-space direct fields, periodic vortex-in-cell inversion,
+  conservative particle-strength exchange, classic stretching, regularized
+  filaments, steady and unsteady lifting surfaces, rigid polygonal vortex
+  panels, boundary-sheet transfer, conservative remeshing, explicit rVPM and
+  relaxation operators, nonlinear polar closure, fixed-tree acceleration,
+  actuator/rigid/stochastic/learned workflows, qualification evidence, and
+  fixed-topology differentiation contracts.
 - Added fixed-population compatible particle-in-cell dynamics over stable charged
   particle supports: measure-aware endpoint charge, physical cochain E/B gather,
   matrix-free compatible electrostatics, relativistic Boris stepping, periodic

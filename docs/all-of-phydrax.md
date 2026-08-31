@@ -131,6 +131,17 @@ discrete continuity. Fixed-population free-surface FLIP separately binds cell an
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
+Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
+to stable particle supports without reinterpreting material mass. Qualified
+routes include Gaussian free-space direct evaluation, periodic
+particle-to-grid Fourier inversion, conservative Gaussian strength exchange,
+classic 3-D stretching, regularized filaments, steady and fixed-capacity
+unsteady lifting wakes, polygonal vortex panels, rigid panel motion,
+boundary-sheet transfer, conservative remeshing, explicit advanced
+formulations, and fixed-tree/workflow evidence. See
+[Guide → Vortex methods](guides_vortex_methods.md),
+[Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
+[Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle and transfer identities rather than
 introducing a separate simulation substrate. Flat differentiable FLRW backgrounds,
 first/second Lagrangian growth, unit-bearing expansion and linear-power products,

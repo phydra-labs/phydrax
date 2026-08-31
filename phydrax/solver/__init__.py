@@ -1125,6 +1125,14 @@ from .maxwell import (
     CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
 )
+from ._uvlm import *  # noqa: F403
+from ._uvlm import __all__ as _uvlm_all
+from ._vortex_lattice import *  # noqa: F403
+from ._vortex_lattice import __all__ as _vortex_lattice_all
+from ._vortex_panels import *  # noqa: F403
+from ._vortex_panels import __all__ as _vortex_panels_all
+from ._vortex_step import *  # noqa: F403
+from ._vortex_step import __all__ as _vortex_step_all
 
 
 __all__ = [
@@ -1966,4 +1974,15 @@ __all__ = [
     "MPMRetainedTrajectory",
     "MPMRolloutResult",
     "ScheduledMPMRolloutPlan",
+]
+
+__all__ += [
+    name
+    for name in (
+        *_uvlm_all,
+        *_vortex_lattice_all,
+        *_vortex_panels_all,
+        *_vortex_step_all,
+    )
+    if name not in __all__
 ]

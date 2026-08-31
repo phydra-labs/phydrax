@@ -262,6 +262,8 @@ from .integral import (  # noqa: F401
     SurfaceTargetReport3D,
     time_convolution,
 )
+from .integral.vortex import *  # noqa: F401,F403
+from .integral.vortex import __all__ as _vortex_all
 from .interpolation import (  # noqa: F401
     BSplineBoundaryConstraint,
     BSplineBoundaryMode,
@@ -682,3 +684,5 @@ __all__ = [
     "real_part",
     "trace",
 ]
+
+__all__ += [name for name in _vortex_all if name not in __all__]

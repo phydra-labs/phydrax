@@ -17,6 +17,7 @@ from . import (
     pic,
     spectral,
     splatting,
+    vortex,
     vem,
 )
 from ._axis import (
@@ -1220,6 +1221,8 @@ from .spectral import (
     TensorSpectralPlan,
     TensorSpectralSymmetry,
 )
+from .vortex import *  # noqa: F403
+from .vortex import __all__ as _vortex_all
 from .splatting import (
     AbstractStructuredSplatAssignment,
     MultilinearSplatAssignment,
@@ -2472,6 +2475,6 @@ __all__ = [
 
 __all__ += [
     name
-    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all)
+    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all, *_vortex_all)
     if name not in __all__
 ]

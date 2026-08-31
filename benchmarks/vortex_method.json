@@ -1,0 +1,53 @@
+{
+  "maturity": "experimental",
+  "phydrax_version": "0.2.2",
+  "jax_version": "0.9.1",
+  "device": "TFRT_CPU_0",
+  "cases": [
+    {
+      "backend": "direct-2d",
+      "dimension": 2,
+      "source_count": 512,
+      "target_count": 512,
+      "compile_and_first_ms": 217.10429200174985,
+      "steady_ms": 2.7397707499403623,
+      "interactions_per_second": 95680998.12938954,
+      "scientific_defect": 0.0,
+      "successful": true
+    },
+    {
+      "backend": "direct-3d",
+      "dimension": 3,
+      "source_count": 256,
+      "target_count": 256,
+      "compile_and_first_ms": 203.76691700221272,
+      "steady_ms": 4.026260499813361,
+      "interactions_per_second": 16277138.551526397,
+      "scientific_defect": 0.0,
+      "successful": true
+    },
+    {
+      "backend": "periodic-vic-2d",
+      "dimension": 2,
+      "source_count": 512,
+      "target_count": 512,
+      "compile_and_first_ms": 339.57283400013694,
+      "steady_ms": 0.22042699947633082,
+      "interactions_per_second": 20904880.12333898,
+      "scientific_defect": 3.065346513698346e-14,
+      "successful": true
+    },
+    {
+      "backend": "gaussian-pse-2d",
+      "dimension": 2,
+      "source_count": 256,
+      "target_count": 256,
+      "compile_and_first_ms": 83.8143749970186,
+      "steady_ms": 0.40991674995893845,
+      "interactions_per_second": 79625924.05230956,
+      "scientific_defect": 3.552713678800501e-15,
+      "successful": true
+    }
+  ],
+  "passed": true
+}
