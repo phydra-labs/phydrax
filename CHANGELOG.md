@@ -122,6 +122,12 @@
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
   deployment merging, and checksum-validated adapter artifacts bound to the
   complete base model content and structure.
+- Added advanced computational topology: exact cellular and filtered maps,
+  induced maps and cone audits, extended and temporal field topology, diagram
+  features and certified matching, rational and integral class algebra,
+  harmonic-period constraints, exact Morse cancellation, structured cubical
+  analysis, local homology, certified implicit covers, and Conley homology
+  index-pair workflows.
 - Added `phydrax.pgm`: immutable finite-discrete factor graphs over native
   bipartite `GraphIR` topology; dense, enumerated, Ising, Potts, logical, and
   cardinality factors; explicitly capped exact enumeration; exact-forest and loopy

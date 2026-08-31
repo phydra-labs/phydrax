@@ -420,6 +420,7 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._harmonic_constraints import HarmonicConstraint, preserve_magnetic_periods
 from ._helmholtz import (
     ExteriorHelmholtzDirichletResult2D,
     solve_exterior_helmholtz_dirichlet_2d,
@@ -843,6 +844,8 @@ from .maxwell import (
 
 
 __all__ = [
+    "HarmonicConstraint",
+    "preserve_magnetic_periods",
     "CalabiYauCampaign",
     "CalabiYauMetricArtifact",
     "CalabiYauMetricProblem",
