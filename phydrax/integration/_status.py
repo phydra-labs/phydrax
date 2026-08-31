@@ -20,6 +20,8 @@ class IntegrationStatus(IntEnum):
     INVALID_WEIGHTS = 9
     NO_VALID_SAMPLES = 10
     MAXIMUM_CELLS_REACHED = 11
+    LINEAR_SOLVE_FAILED = 12
+    INVALID_POSTERIOR_VARIANCE = 13
 
 
 _STATUS_MESSAGES = {
@@ -35,6 +37,10 @@ _STATUS_MESSAGES = {
     IntegrationStatus.INVALID_WEIGHTS: "integration weights are invalid",
     IntegrationStatus.NO_VALID_SAMPLES: "no valid samples remain after masking",
     IntegrationStatus.MAXIMUM_CELLS_REACHED: "maximum triangle cells reached",
+    IntegrationStatus.LINEAR_SOLVE_FAILED: "bayesian quadrature linear solve failed",
+    IntegrationStatus.INVALID_POSTERIOR_VARIANCE: (
+        "bayesian quadrature posterior variance is invalid"
+    ),
 }
 
 
