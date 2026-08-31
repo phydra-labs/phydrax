@@ -142,6 +142,7 @@ nav:
         - Particle-grid splatting: "guides_particle_splatting.md"
         - Particle-in-cell methods: "guides_particle_in_cell.md"
         - Free-surface FLIP: "guides_flip.md"
+        - Advanced particle-grid physics: "guides_advanced_particle_grid.md"
         - Material point method: "guides_material_point_method.md"
         - MPM schedules and adaptive time: "guides_mpm_schedules.md"
         - MPM constitutive extensions: "guides_mpm_constitutive_extensions.md"

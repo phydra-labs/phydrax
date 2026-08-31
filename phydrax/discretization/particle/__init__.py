@@ -368,6 +368,16 @@ from ._particle_surface_exchange import (
 )
 from ._periodic_cell import ParticleCell
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
+from ._population import (
+    ParticleAllocationRequest,
+    ParticleAllocationResult,
+    ParticleDeactivationResult,
+    ParticlePopulationPlan,
+    ParticlePopulationState,
+    ParticlePopulationStatus,
+    ParticleSlotReusePolicy,
+    update_particle_population,
+)
 from ._production_boundaries import (
     BoundaryFeatureKind,
     BoundaryFeatureState,
@@ -857,6 +867,14 @@ __all__ = [
     "ParticlePairGeometry",
     "ParticlePairRelation",
     "ParticlePrecisionPolicy",
+    "ParticleAllocationRequest",
+    "ParticleAllocationResult",
+    "ParticleDeactivationResult",
+    "ParticlePopulationPlan",
+    "ParticlePopulationState",
+    "ParticlePopulationStatus",
+    "ParticleSlotReusePolicy",
+    "update_particle_population",
     "MorrisViscosityPlan",
     "ParticleSetPlan",
     "ParticleNeighborhoodState",

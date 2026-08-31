@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Added
+- Added one fixed-capacity runtime particle-population authority with activity,
+  mass, incarnation-safe slot reuse, deterministic allocation/deactivation, DEM
+  lifecycle migration, and runtime particle-splat masks.
+- Added advanced PIC capabilities: integer charge states, conservative binary and
+  background collisions, impact/field ionization, 1D3V/2D3V compatible Maxwell,
+  reduced PIC current projection, open particle ledgers, CPML compatibility,
+  integer moving windows, affine simplicial electrostatic/Whitney-current PIC,
+  conductor KKT coupling, unstructured electromagnetic PIC, and matrix-free
+  semi-implicit particle response with bounded Gauss correction.
+- Added advanced FLIP capabilities: deterministic fixed-pool reseeding, particle
+  level-set and ghost-fluid geometry, sharp capillary pressure jumps, moving-solid
+  cut-cell and particle collision ledgers, free-surface viscous measures,
+  variational symmetric-strain viscosity, and two-phase one-velocity FLIP.
 - Added fixed-geometry 3D Laplace DP0 surface Galerkin capacitance solves with
   explicit weak/strong maps, bounded singular and near-pair quadrature,
   nonmaterializable blocked actions, immutable conductor selections, physical

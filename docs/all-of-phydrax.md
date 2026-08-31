@@ -131,6 +131,14 @@ discrete continuity. Fixed-population free-surface FLIP separately binds cell an
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
+Advanced particle-grid methods preserve those authorities while adding runtime
+population/incarnation state, integer PIC charge and microphysics events,
+one/two-dimensional mixed Maxwell blocks, open-boundary and moving-window
+ledgers, affine simplicial ownership and Whitney current, and a matrix-free
+semi-implicit response. Advanced FLIP derives one particle interface geometry
+for ghost pressure, capillarity, free-surface viscosity and multiphase material
+reconstruction, with moving-solid cut measures and fixed-pool reseeding treated
+as explicit accepted-step transactions.
 Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
 to stable particle supports without reinterpreting material mass. Qualified
 routes include Gaussian free-space direct evaluation, periodic

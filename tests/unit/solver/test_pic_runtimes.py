@@ -62,7 +62,7 @@ def test_electromagnetic_pic_preserves_zero_current_constraints():
     )
     maxwell = phx.solver.CompatibleMaxwellPlan(
         bridge,
-        current_source=phx.discretization.pic.PICMaxwellCurrentSource(),
+        sources=(phx.solver.PICMaxwellCurrentSourcePlan(),),
         plan_id="test-pic-maxwell",
     ).prepare()
     electrostatic = phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic")
