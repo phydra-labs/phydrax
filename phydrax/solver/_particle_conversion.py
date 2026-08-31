@@ -19,20 +19,28 @@ from ..discretization.particle import (
     ParticleConversionLedger,
     ParticleConversionState,
 )
+from ..discretization.particle._particle_internal_unstructured import (
+    PreparedUnstructuredParticleInternalMesh,
+)
 from ..dynamics import TimeGrid
 from ..equations._particle_conversion import (
     ParticleConversionEvaluation,
     ParticleConversionRejectionReason,
     PreparedParticleConversionDynamics,
 )
-from ..linalg import LinearSystem, solve, TridiagonalLinearOperator
+from ..linalg import (
+    DenseLinearOperator,
+    LinearSystem,
+    solve,
+    TridiagonalLinearOperator,
+)
 from ._differential import DifferentialProblem
 from ._rosenbrock import solve_rosenbrock
 
 
 class ParticleConversionBackend(StrEnum):
     REFERENCE_ROSENBROCK = "reference_rosenbrock"
-    STRUCTURED_TRIDIAGONAL = "structured_tridiagonal"
+    STRUCTURED_NATIVE = "structured_native"
 
 
 class ParticleConversionSolverPlan(StrictModule, NonTrainableState):
@@ -387,6 +395,10 @@ def _structured_step(dynamics, state, boundaries, step_size, substeps):
 
 
 def _implicit_transport_step(prepared, state, material, boundary, step_size):
+    if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+        return _implicit_unstructured_transport_step(
+            prepared, state, material, boundary, step_size
+        )
     metrics = prepared.mesh.metrics(state.outer_scale)
     thermo = material.thermodynamics.state(
         state.internal_energy,
@@ -446,7 +458,7 @@ def _implicit_transport_step(prepared, state, material, boundary, step_size):
                 boundary.mass_transfer_coefficient[particle, species_index]
                 * metrics.surface_measure[particle]
             )
-            diagonal = jnp.ones((prepared.shell_count,), dtype=energy.dtype) / step_size
+            diagonal = jnp.ones((prepared.cell_capacity,), dtype=energy.dtype) / step_size
             diagonal = diagonal.at[:-1].add(face / volume[:-1])
             diagonal = diagonal.at[1:].add(face / volume[1:])
             diagonal = diagonal.at[-1].add(boundary_conductance / volume[-1])
@@ -462,6 +474,141 @@ def _implicit_transport_step(prepared, state, material, boundary, step_size):
                 LinearSystem(TridiagonalLinearOperator(lower, diagonal, upper)),
                 right,
             )
+            species = species.at[particle, :, species_index].set(result.value)
+            linear_successful = linear_successful & result.successful
+    candidate = eqx.tree_at(
+        lambda value: (value.internal_energy, value.species_amount),
+        state,
+        (energy, species),
+    )
+    successful = (
+        linear_successful
+        & jnp.all(jnp.isfinite(energy))
+        & jnp.all(jnp.isfinite(species) & (species >= 0.0))
+        & metrics.successful
+    )
+    return candidate, successful
+
+
+def _implicit_unstructured_transport_step(
+    prepared,
+    state,
+    material,
+    boundary,
+    step_size,
+):
+    active_cells = jnp.broadcast_to(
+        state.active[:, None], (prepared.particle_count, prepared.cell_capacity)
+    )
+    metrics = prepared.mesh.metrics(state.outer_scale, active_cells=active_cells)
+    thermo = material.thermodynamics.state(
+        state.internal_energy,
+        state.species_amount,
+        metrics.cell_measures,
+        state.porosity,
+    )
+    owner = metrics.owner_cells
+    neighbour = metrics.neighbour_cells
+    safe_neighbour = jnp.maximum(neighbour, 0)
+    interior = (~metrics.boundary_faces)[None, :] & metrics.active_faces
+    amount_sum = jnp.sum(state.species_amount, axis=-1, keepdims=True)
+    fraction = state.species_amount / jnp.maximum(amount_sum, 1.0e-30)
+    conductivity = jnp.sum(fraction * material.transport.thermal_conductivity, axis=-1)
+    face_conductivity = _harmonic_mean(
+        conductivity[:, owner], conductivity[:, safe_neighbour]
+    )
+    heat_conductance = (
+        face_conductivity * metrics.face_measures / metrics.center_distances
+    )
+    temperature_values = []
+    linear_successful = jnp.asarray(True)
+    for particle in range(prepared.particle_count):
+        capacity = thermo.heat_capacity[particle]
+        matrix = jnp.diag(capacity / step_size)
+        face = jnp.where(interior[particle], heat_conductance[particle], 0.0)
+        matrix = matrix.at[owner, owner].add(face)
+        matrix = matrix.at[safe_neighbour, safe_neighbour].add(face)
+        matrix = matrix.at[owner, safe_neighbour].add(-face)
+        matrix = matrix.at[safe_neighbour, owner].add(-face)
+        boundary_face = metrics.boundary_faces & metrics.active_faces[particle]
+        boundary_conductance = jnp.where(
+            boundary_face,
+            boundary.heat_transfer_coefficient[particle]
+            * metrics.face_measures[particle],
+            0.0,
+        )
+        matrix = matrix.at[owner, owner].add(boundary_conductance)
+        area_fraction = metrics.face_measures[particle] / jnp.maximum(
+            metrics.surface_measure[particle], 1.0e-30
+        )
+        right = capacity / step_size * thermo.temperature[particle]
+        right = right.at[owner].add(
+            boundary_conductance * boundary.temperature[particle]
+            + jnp.where(
+                boundary_face,
+                boundary.prescribed_heat_rate[particle] * area_fraction,
+                0.0,
+            )
+        )
+        result = solve(LinearSystem(DenseLinearOperator(matrix)), right)
+        temperature_values.append(result.value)
+        linear_successful = linear_successful & result.successful
+    temperature = jnp.stack(temperature_values)
+    energy = state.internal_energy + thermo.heat_capacity * (
+        temperature - thermo.temperature
+    )
+    effective_diffusivity = (
+        material.transport.species_diffusivity[None, None, :]
+        * state.porosity[:, :, None] ** material.transport.tortuosity_exponent
+    )
+    face_diffusivity = _harmonic_mean(
+        effective_diffusivity[:, owner, :],
+        effective_diffusivity[:, safe_neighbour, :],
+    )
+    species_conductance = (
+        face_diffusivity
+        * metrics.face_measures[:, :, None]
+        / metrics.center_distances[:, :, None]
+    )
+    species = jnp.zeros_like(state.species_amount)
+    for particle in range(prepared.particle_count):
+        volume = metrics.cell_measures[particle]
+        boundary_face = metrics.boundary_faces & metrics.active_faces[particle]
+        area_fraction = metrics.face_measures[particle] / jnp.maximum(
+            metrics.surface_measure[particle], 1.0e-30
+        )
+        for species_index in range(prepared.species_count):
+            face = jnp.where(
+                interior[particle],
+                species_conductance[particle, :, species_index],
+                0.0,
+            )
+            matrix = jnp.eye(prepared.cell_capacity, dtype=energy.dtype) / step_size
+            matrix = matrix.at[owner, owner].add(face / volume[owner])
+            matrix = matrix.at[safe_neighbour, safe_neighbour].add(
+                face / volume[safe_neighbour]
+            )
+            matrix = matrix.at[owner, safe_neighbour].add(-face / volume[owner])
+            matrix = matrix.at[safe_neighbour, owner].add(-face / volume[safe_neighbour])
+            boundary_conductance = jnp.where(
+                boundary_face,
+                boundary.mass_transfer_coefficient[particle, species_index]
+                * metrics.face_measures[particle],
+                0.0,
+            )
+            matrix = matrix.at[owner, owner].add(boundary_conductance / volume[owner])
+            right = state.species_amount[particle, :, species_index] / step_size
+            right = right.at[owner].add(
+                boundary_conductance
+                * boundary.species_concentration[particle, species_index]
+                + jnp.where(
+                    boundary_face,
+                    boundary.prescribed_species_rate[particle, species_index]
+                    * area_fraction,
+                    0.0,
+                )
+            )
+            result = solve(LinearSystem(DenseLinearOperator(matrix)), right)
             species = species.at[particle, :, species_index].set(result.value)
             linear_successful = linear_successful & result.successful
     candidate = eqx.tree_at(

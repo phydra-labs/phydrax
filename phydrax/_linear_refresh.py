@@ -10,6 +10,7 @@ from jaxtyping import Array
 
 from ._strict import StrictModule
 from .linalg import (
+    AbstractLinearOperator,
     AbstractLinearProblem,
     AbstractPreconditioner,
     LinearSolvePolicy,
@@ -114,9 +115,15 @@ class LinearRefreshState(StrictModule):
         self,
         problem: AbstractLinearProblem,
         /,
-    ) -> tuple[PreparedLinearSolve, "LinearRefreshState"]:
+        *,
+        setup_operator: AbstractLinearOperator | None = None,
+    ) -> tuple[PreparedLinearSolve, LinearRefreshState]:
         if not isinstance(problem, AbstractLinearProblem):
             raise TypeError("problem must be an AbstractLinearProblem.")
+        if setup_operator is not None and not isinstance(
+            setup_operator, AbstractLinearOperator
+        ):
+            raise TypeError("setup_operator must be an AbstractLinearOperator or None.")
         seed = PreparedLinearSolve(
             problem,
             self.template,
@@ -124,7 +131,7 @@ class LinearRefreshState(StrictModule):
             preconditioning_state=self._previous_preconditioner(problem),
             numeric_version=self.numeric_version,
         )
-        prepared = refresh_linear(seed, problem)
+        prepared = refresh_linear(seed, problem, setup_operator=setup_operator)
         return prepared, LinearRefreshState(
             prepared,
             template=self.template,
@@ -136,8 +143,19 @@ def prepare_refresh_state(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
     /,
+    *,
+    setup_operator: AbstractLinearOperator | None = None,
 ) -> tuple[PreparedLinearSolve, LinearRefreshState]:
     """Prepare one numerical solve and retain only loop-safe refresh state."""
+    if setup_operator is not None:
+        preconditioning = policy.preconditioning
+        if preconditioning is None:
+            raise ValueError("setup_operator requires a preconditioning policy.")
+        policy = eqx.tree_at(
+            lambda selected: selected.preconditioning,
+            policy,
+            preconditioning.with_setup_operator(setup_operator),
+        )
     prepared = prepare_linear(problem, policy)
     return prepared, LinearRefreshState(prepared)
 

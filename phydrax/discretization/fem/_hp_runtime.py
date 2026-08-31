@@ -4,13 +4,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -1330,6 +1329,9 @@ class FiniteElementHPTraceConstraintPlan(StrictModule, NonTrainableState):
     """One linear master-trace parameterization of broken cell coordinates."""
 
     prolongation: Array
+    row_columns: Array
+    row_weights: Array
+    row_valid: Array
     full_dof_count: int = eqx.field(static=True)
     reduced_dof_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -1344,12 +1346,27 @@ class FiniteElementHPTraceConstraintPlan(StrictModule, NonTrainableState):
             or np.any(np.count_nonzero(matrix, axis=1) == 0)
         ):
             raise ValueError("hp trace prolongation matrix is invalid.")
+        width = int(np.max(np.count_nonzero(matrix, axis=1)))
+        columns = np.zeros((matrix.shape[0], width), dtype=np.int32)
+        weights = np.zeros((matrix.shape[0], width), dtype=matrix.dtype)
+        valid = np.zeros((matrix.shape[0], width), dtype=bool)
+        for row in range(matrix.shape[0]):
+            local = np.flatnonzero(matrix[row])
+            columns[row, : local.size] = local
+            weights[row, : local.size] = matrix[row, local]
+            valid[row, : local.size] = True
         self.prolongation = jnp.asarray(matrix)
+        self.row_columns = jnp.asarray(columns)
+        self.row_weights = jnp.asarray(weights)
+        self.row_valid = jnp.asarray(valid)
         self.full_dof_count, self.reduced_dof_count = matrix.shape
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-element-hp-trace-constraint",
                 "prolongation": array_tree_fingerprint(matrix),
+                "row_columns": array_tree_fingerprint(columns),
+                "row_weights": array_tree_fingerprint(weights),
+                "row_valid": array_tree_fingerprint(valid),
             }
         )
 
@@ -1357,13 +1374,40 @@ class FiniteElementHPTraceConstraintPlan(StrictModule, NonTrainableState):
         value = jnp.asarray(reduced)
         if value.shape[0] != self.reduced_dof_count:
             raise ValueError("Reduced trace values have incompatible shape.")
-        return oe.contract("ij,j...->i...", self.prolongation, value)
+        gathered = value[self.row_columns]
+        weights = self.row_weights.reshape(
+            self.row_weights.shape + (1,) * (gathered.ndim - 2)
+        )
+        valid = self.row_valid.reshape(self.row_valid.shape + (1,) * (gathered.ndim - 2))
+        return jnp.sum(jnp.where(valid, weights * gathered, 0.0), axis=1)
+
+    def affine_lift(self, reduced_lift: ArrayLike, /) -> Array:
+        """Expand nonzero master/Dirichlet data through every hanging trace route."""
+
+        return self.expand(reduced_lift)
 
     def pullback_raw(self, full_dual: ArrayLike, /) -> Array:
         value = jnp.asarray(full_dual)
         if value.shape[0] != self.full_dof_count:
             raise ValueError("Full trace dual has incompatible shape.")
-        return oe.contract("ij,i...->j...", self.prolongation, value)
+        result = jnp.zeros(
+            (self.reduced_dof_count,) + value.shape[1:],
+            dtype=value.dtype,
+        )
+        for column in range(self.row_columns.shape[1]):
+            routes = self.row_columns[:, column]
+            weights = self.row_weights[:, column].reshape(
+                self.row_weights[:, column].shape + (1,) * (value.ndim - 1)
+            )
+            contribution = jnp.where(
+                self.row_valid[:, column].reshape(
+                    self.row_valid[:, column].shape + (1,) * (value.ndim - 1)
+                ),
+                weights * value,
+                0.0,
+            )
+            result = result.at[routes].add(contribution)
+        return result
 
 
 def finite_element_hp_trace_constraint_plan(
@@ -1445,7 +1489,10 @@ def tensor_trace_interpolation(
         exact = np.isclose(delta, 0.0, rtol=0.0, atol=32.0 * np.finfo(float).eps)
         safe = np.where(exact, 1.0, delta)
         raw = barycentric[None, :] / safe
-        values = raw / np.sum(raw, axis=1, keepdims=True)
+        denominator = np.sum(raw, axis=1, keepdims=True)
+        values = raw / np.where(
+            np.abs(denominator) > np.finfo(float).tiny, denominator, 1.0
+        )
         for row in np.flatnonzero(np.any(exact, axis=1)):
             values[row] = 0.0
             values[row, int(np.argmax(exact[row]))] = 1.0
@@ -2241,6 +2288,98 @@ def prepare_finite_element_hp_epoch(
     )
 
 
+def prepare_multi_field_finite_element_hp_epoch(
+    topology: FiniteElementHPTopology,
+    geometry: FiniteElementHPGeometry,
+    fields: Mapping[
+        str,
+        tuple[Literal["H1", "L2"], Sequence[int], Sequence[int]],
+    ],
+    /,
+) -> FiniteElementHPEpoch:
+    """Prepare one hp epoch with independent fieldwise p offsets and components."""
+
+    if not fields:
+        raise ValueError("Multi-field hp epochs require at least one field.")
+    mesh, degree_tuples, _ = hp_active_cell_mesh(topology, geometry)
+    field_specs = []
+    for field_name, (conformity, component_shape, degree_offset) in fields.items():
+        offsets = tuple(int(value) for value in degree_offset)
+        if conformity not in ("H1", "L2") or len(offsets) != topology.dimension:
+            raise ValueError("Multi-field hp conformity or degree offsets are invalid.")
+        elements = {}
+        for block, degree in zip(mesh.blocks, degree_tuples, strict=True):
+            field_degree = tuple(
+                max(1, value + offset)
+                for value, offset in zip(degree, offsets, strict=True)
+            )
+            element = ReferenceNodalFamily(
+                topology.cell_kind, field_degree
+            ).finite_element()
+            if conformity == "L2":
+                entities: list[tuple[tuple[int, ...], ...]] = [
+                    tuple(() for _ in dimension_entities)
+                    for dimension_entities in element.entity_dofs
+                ]
+                entities[-1] = (tuple(range(element.local_dof_count)),)
+                element = FiniteElementSpec(
+                    "DiscontinuousTensorProductLagrange",
+                    element.cell_kind,
+                    element.degree,
+                    element.reference_nodes,
+                    tuple(entities),
+                    conformity="L2",
+                    representation=element.representation,
+                    tabulator=element.tabulate,
+                    tabulator_id=f"discontinuous:{element.element_id}",
+                )
+            elements[block.name] = element
+        field_specs.append(
+            FiniteElementFieldSpec(
+                field_name,
+                elements,
+                component_shape=component_shape,
+            )
+        )
+    discretization = FiniteElementPlan(mesh, tuple(field_specs)).prepare()
+    interfaces = finite_element_hp_interface_plan(topology, geometry)
+    slot_by_global_id = {
+        int(value): slot
+        for slot, value in enumerate(np.asarray(topology.cell_global_ids))
+        if bool(np.asarray(topology.active)[slot])
+    }
+    mesh_global_ids = np.concatenate(
+        tuple(np.asarray(block.global_ids, dtype=np.int64) for block in mesh.blocks)
+    )
+    active_slots = np.asarray(
+        [slot_by_global_id[int(value)] for value in mesh_global_ids],
+        dtype=np.int32,
+    )
+    constraints = []
+    for field_index, (field_name, (conformity, _, _)) in enumerate(fields.items()):
+        if conformity == "H1":
+            constraints.append(
+                (
+                    field_name,
+                    _hp_trace_constraint_for_field(
+                        topology,
+                        interfaces,
+                        discretization,
+                        active_slots,
+                        field_index,
+                    ),
+                )
+            )
+    return FiniteElementHPEpoch(
+        mesh,
+        topology,
+        geometry,
+        interfaces,
+        discretization=discretization,
+        constraints=constraints,
+    )
+
+
 def finite_element_hp_domains(
     epoch: FiniteElementHPEpoch,
     /,
@@ -2326,6 +2465,7 @@ __all__ = [
     "hp_active_cell_mesh",
     "initial_finite_element_hp_topology",
     "prepare_finite_element_hp_epoch",
+    "prepare_multi_field_finite_element_hp_epoch",
     "refine_tensor_hp_cells",
     "tensor_modal_decay_estimate",
     "tensor_trace_interpolation",

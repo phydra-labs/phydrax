@@ -80,7 +80,7 @@ def test_reference_and_structured_conversion_backends_agree_and_replay_balance()
     structured = phx.solver.advance_particle_conversion(
         compiled.dynamics,
         phx.solver.ParticleConversionSolverPlan(
-            phx.solver.ParticleConversionBackend.STRUCTURED_TRIDIAGONAL,
+            phx.solver.ParticleConversionBackend.STRUCTURED_NATIVE,
             substeps=2,
         ),
         state,

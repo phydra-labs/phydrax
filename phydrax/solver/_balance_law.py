@@ -23,6 +23,7 @@ from ..stochastic._realization import (
     is_stochastic_realization,
     StochasticRealization,
 )
+from ._balance_law_composition import BalanceLawCompositionPlan
 from ._balance_law_transport import (
     AbstractPreparedBalanceLawTransport,
     BalanceLawSourceView,
@@ -75,6 +76,35 @@ class BalanceLawProcessAdvance(StrictModule):
     successful: Array
     source_change: Array
     diagnostics: Any
+
+
+class BalanceLawAcceptedStepContext(StrictModule):
+    start_time: Array
+    end_time: Array
+    incoming_cell_average: Array
+    provisional_cell_average: Array
+    accepted_integrals: Any
+    transport_id: str = eqx.field(static=True)
+
+
+class BalanceLawAcceptedStepCouplingAdvance(StrictModule):
+    cell_average: Array
+    successful: Array
+    diagnostics: Any
+
+
+class AbstractPreparedAcceptedStepCoupling(StrictModule, NonTrainableState):
+    coupling_id: str = eqx.field(static=True)
+    modified_components: tuple[str, ...] = eqx.field(static=True)
+
+    @abc.abstractmethod
+    def apply(
+        self,
+        context: BalanceLawAcceptedStepContext,
+        args: Any = None,
+        /,
+    ) -> BalanceLawAcceptedStepCouplingAdvance:
+        raise NotImplementedError
 
 
 class AbstractPreparedBalanceLawProcess(StrictModule, NonTrainableState):
@@ -183,8 +213,13 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
 
     transport: AbstractPreparedBalanceLawTransport
     processes: tuple[AbstractPreparedBalanceLawProcess, ...]
+    accepted_step_couplings: tuple[AbstractPreparedAcceptedStepCoupling, ...]
+    composition: BalanceLawCompositionPlan
     process_ids: tuple[str, ...] = eqx.field(static=True)
     process_forbidden_component_indices: tuple[tuple[int, ...], ...] = eqx.field(
+        static=True
+    )
+    coupling_forbidden_component_indices: tuple[tuple[int, ...], ...] = eqx.field(
         static=True
     )
     runtime_id: str = eqx.field(static=True)
@@ -194,6 +229,9 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         transport: AbstractPreparedBalanceLawTransport,
         processes: tuple[AbstractPreparedBalanceLawProcess, ...],
         /,
+        *,
+        accepted_step_couplings: tuple[AbstractPreparedAcceptedStepCoupling, ...] = (),
+        composition: BalanceLawCompositionPlan | None = None,
     ):
         if not isinstance(transport, AbstractPreparedBalanceLawTransport):
             raise TypeError("transport must be a prepared balance-law transport.")
@@ -208,6 +246,17 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         identifiers = tuple(process.process_id for process in prepared)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Prepared balance-law process IDs must be unique.")
+        couplings = tuple(accepted_step_couplings)
+        if any(
+            not isinstance(coupling, AbstractPreparedAcceptedStepCoupling)
+            for coupling in couplings
+        ):
+            raise TypeError(
+                "accepted_step_couplings must contain prepared coupling values."
+            )
+        coupling_ids = tuple(coupling.coupling_id for coupling in couplings)
+        if len(set(coupling_ids)) != len(coupling_ids):
+            raise ValueError("Accepted-step coupling IDs must be unique.")
         forbidden_indices = []
         available = set(transport.component_names)
         mutable = set(transport.mutable_component_names)
@@ -232,6 +281,24 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                     if name not in modified
                 )
             )
+        coupling_forbidden_indices = []
+        for coupling in couplings:
+            modified = tuple(coupling.modified_components)
+            if any(not name for name in modified) or len(set(modified)) != len(modified):
+                raise ValueError(
+                    "Coupling modified components must be unique and non-empty."
+                )
+            if not set(modified) <= mutable:
+                raise ValueError(
+                    f"Coupling {coupling.coupling_id!r} cannot modify these components."
+                )
+            coupling_forbidden_indices.append(
+                tuple(
+                    index
+                    for index, name in enumerate(transport.component_names)
+                    if name not in modified
+                )
+            )
         realization_names = tuple(
             process.realization_name
             for process in prepared
@@ -243,15 +310,31 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             raise ValueError(
                 "Stochastic processes require unique non-empty realization names."
             )
+        composition_ = (
+            BalanceLawCompositionPlan(tuple(1 for _ in prepared))
+            if composition is None
+            else composition
+        )
+        if not isinstance(composition_, BalanceLawCompositionPlan) or len(
+            composition_.process_subcycles
+        ) != len(prepared):
+            raise ValueError(
+                "Balance-law composition must align with prepared processes."
+            )
         self.transport = transport
         self.processes = prepared
+        self.accepted_step_couplings = couplings
+        self.composition = composition_
         self.process_ids = identifiers
         self.process_forbidden_component_indices = tuple(forbidden_indices)
+        self.coupling_forbidden_component_indices = tuple(coupling_forbidden_indices)
         self.runtime_id = canonical_fingerprint(
             {
                 "kind": "prepared-balance-law-runtime",
                 "transport": transport.transport_id,
                 "processes": list(identifiers),
+                "accepted_step_couplings": list(coupling_ids),
+                "composition": composition_.composition_id,
                 "splitting": "symmetric-declared-order",
             }
         )
@@ -287,6 +370,28 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             "Multiple stochastic processes require CompositeStochasticRealization."
         )
 
+    @staticmethod
+    def _accepted_candidate_average(
+        incoming: Array,
+        candidate: Array,
+        reported_success: Array,
+        forbidden: tuple[int, ...],
+        /,
+    ) -> tuple[Array, Array, Array]:
+        candidate_ = jnp.asarray(candidate)
+        if candidate_.shape != incoming.shape:
+            raise ValueError("Balance-law update changed the source-view shape.")
+        ownership_valid = (
+            jnp.all(
+                candidate_[..., jnp.asarray(forbidden, dtype=jnp.int32)]
+                == incoming[..., jnp.asarray(forbidden, dtype=jnp.int32)]
+            )
+            if forbidden
+            else jnp.asarray(True)
+        )
+        accepted = reported_success & ownership_valid
+        return jnp.where(accepted, candidate_, incoming), accepted, ownership_valid
+
     def _accepted_process_average(
         self,
         index: int,
@@ -294,20 +399,12 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         result: BalanceLawProcessAdvance,
         /,
     ) -> tuple[Array, Array, Array]:
-        candidate = jnp.asarray(result.cell_average)
-        if candidate.shape != incoming.shape:
-            raise ValueError("Balance-law process changed the source-view shape.")
-        forbidden = self.process_forbidden_component_indices[index]
-        ownership_valid = (
-            jnp.all(
-                candidate[..., jnp.asarray(forbidden, dtype=jnp.int32)]
-                == incoming[..., jnp.asarray(forbidden, dtype=jnp.int32)]
-            )
-            if forbidden
-            else jnp.asarray(True)
+        return self._accepted_candidate_average(
+            incoming,
+            result.cell_average,
+            result.successful,
+            self.process_forbidden_component_indices[index],
         )
-        accepted = result.successful & ownership_valid
-        return jnp.where(accepted, candidate, incoming), accepted, ownership_valid
 
     def advance_prescribed(
         self,
@@ -341,7 +438,10 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         del current_time
         stochastic_count = sum(process.requires_realization for process in self.processes)
         original = runtime_state
-        average = self.transport.source_view(runtime_state.transport_state).cell_average
+        original_average = self.transport.source_view(
+            runtime_state.transport_state
+        ).cell_average
+        average = original_average
         states = list(runtime_state.process_states)
         limits = tuple(
             jnp.asarray(process.step_limit(start, average, state, args)).reshape(())
@@ -351,7 +451,11 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         limit_valid = jnp.all(
             jnp.isfinite(limits_array) | jnp.isinf(limits_array)
         ) & jnp.all(limits_array > 0.0)
-        within_limits = limit_valid & jnp.all(step_size <= limits_array)
+        subcycles_array = jnp.asarray(
+            self.composition.process_subcycles,
+            dtype=limits_array.dtype,
+        )
+        within_limits = limit_valid & jnp.all(step_size <= limits_array * subcycles_array)
         midpoint = start + 0.5 * step_size
         successful = within_limits
         ownership_valid = jnp.asarray(True)
@@ -360,21 +464,31 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             component = self._realization_component(
                 process, realization, stochastic_count
             )
-            result = process.advance(
-                start,
-                midpoint,
-                average,
-                states[index],
-                component,
-                args,
+            count = self.composition.process_subcycles[index]
+            process_diagnostics = []
+            for subcycle in range(count):
+                fraction_start = subcycle / count
+                fraction_end = (subcycle + 1) / count
+                substart = start + fraction_start * (midpoint - start)
+                subend = start + fraction_end * (midpoint - start)
+                result = process.advance(
+                    substart,
+                    subend,
+                    average,
+                    states[index],
+                    component,
+                    args,
+                )
+                average, process_successful, component_ownership = (
+                    self._accepted_process_average(index, average, result)
+                )
+                states[index] = result.process_state
+                successful = successful & process_successful
+                ownership_valid = ownership_valid & component_ownership
+                process_diagnostics.append(result.diagnostics)
+            first_diagnostics.append(
+                process_diagnostics[0] if count == 1 else tuple(process_diagnostics)
             )
-            average, process_successful, component_ownership = (
-                self._accepted_process_average(index, average, result)
-            )
-            states[index] = result.process_state
-            successful = successful & process_successful
-            ownership_valid = ownership_valid & component_ownership
-            first_diagnostics.append(result.diagnostics)
 
         source_updated = self.transport.with_source_view(
             runtime_state.transport_state, average
@@ -388,21 +502,53 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             component = self._realization_component(
                 process, realization, stochastic_count
             )
-            result = process.advance(
-                midpoint,
-                end,
-                average,
-                states[index],
-                component,
-                args,
+            count = self.composition.process_subcycles[index]
+            process_diagnostics = []
+            for subcycle in range(count):
+                fraction_start = subcycle / count
+                fraction_end = (subcycle + 1) / count
+                substart = midpoint + fraction_start * (end - midpoint)
+                subend = midpoint + fraction_end * (end - midpoint)
+                result = process.advance(
+                    substart,
+                    subend,
+                    average,
+                    states[index],
+                    component,
+                    args,
+                )
+                average, process_successful, component_ownership = (
+                    self._accepted_process_average(index, average, result)
+                )
+                states[index] = result.process_state
+                successful = successful & process_successful
+                ownership_valid = ownership_valid & component_ownership
+                process_diagnostics.append(result.diagnostics)
+            second_diagnostics.append(
+                process_diagnostics[0] if count == 1 else tuple(process_diagnostics)
             )
-            average, process_successful, component_ownership = (
-                self._accepted_process_average(index, average, result)
+        coupling_diagnostics = []
+        for index, coupling in enumerate(self.accepted_step_couplings):
+            context = BalanceLawAcceptedStepContext(
+                start_time=start,
+                end_time=end,
+                incoming_cell_average=original_average,
+                provisional_cell_average=average,
+                accepted_integrals=transport.accepted_integrals,
+                transport_id=self.transport.transport_id,
             )
-            states[index] = result.process_state
-            successful = successful & process_successful
+            result = coupling.apply(context, args)
+            average, coupling_successful, component_ownership = (
+                self._accepted_candidate_average(
+                    average,
+                    result.cell_average,
+                    result.successful,
+                    self.coupling_forbidden_component_indices[index],
+                )
+            )
+            successful = successful & coupling_successful
             ownership_valid = ownership_valid & component_ownership
-            second_diagnostics.append(result.diagnostics)
+            coupling_diagnostics.append(result.diagnostics)
 
         candidate_transport = self.transport.with_source_view(transport.state, average)
         candidate = BalanceLawRuntimeState(candidate_transport, tuple(states))
@@ -424,7 +570,11 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                 jnp.where(within_limits, 2, 1),
             ),
         ).astype(jnp.int32)
-        diagnostics = tuple(first_diagnostics) + tuple(reversed(second_diagnostics))
+        diagnostics = (
+            tuple(first_diagnostics)
+            + tuple(reversed(second_diagnostics))
+            + tuple(coupling_diagnostics)
+        )
         return BalanceLawAdvanceResult(
             runtime_state=committed,
             transport=transport,
@@ -576,6 +726,9 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "AbstractPreparedAcceptedStepCoupling",
+    "BalanceLawAcceptedStepContext",
+    "BalanceLawAcceptedStepCouplingAdvance",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
     "BalanceLawAdvanceResult",

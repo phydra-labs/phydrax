@@ -5,7 +5,9 @@
 """Executable scientific application workflows built on Phydrax substrates."""
 
 from . import (
+    astrophysics,
     contact,
+    cosmology,
     crystal_plasticity,
     fracture,
     free_boundary,
@@ -16,7 +18,9 @@ from . import (
 
 
 __all__ = [
+    "astrophysics",
     "contact",
+    "cosmology",
     "crystal_plasticity",
     "fracture",
     "free_boundary",

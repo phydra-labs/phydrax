@@ -230,11 +230,17 @@ class TensorEntityLayout(StrictModule, NonTrainableState):
         for dimension, (axis, entity) in enumerate(zip(axes_, entities, strict=True)):
             lower = jnp.zeros(shape, dtype=bool)
             upper = jnp.zeros(shape, dtype=bool)
-            if entity == "point" and axis.lower_endpoint_included:
+            if entity == "point" and (
+                axis.lower_endpoint_included
+                or (axis.primary_entity == "interval" and not axis.periodic)
+            ):
                 lower_index: list[slice | int] = [slice(None)] * len(shape)
                 lower_index[dimension] = 0
                 lower = lower.at[tuple(lower_index)].set(True)
-            if entity == "point" and axis.upper_endpoint_included:
+            if entity == "point" and (
+                axis.upper_endpoint_included
+                or (axis.primary_entity == "interval" and not axis.periodic)
+            ):
                 upper_index: list[slice | int] = [slice(None)] * len(shape)
                 upper_index[dimension] = shape[dimension] - 1
                 upper = upper.at[tuple(upper_index)].set(True)

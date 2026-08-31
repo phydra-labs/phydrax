@@ -4,7 +4,7 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
-from . import fem, trefftz
+from . import advanced, fem, trefftz
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
@@ -195,6 +195,16 @@ from ._manufactured import (
     ManufacturedPDECase,
     ManufacturedSpatialOperator,
 )
+from ._material_point import (
+    AbstractMPMConstitutivePlan,
+    compile_material_point_problem,
+    CompiledMaterialPointProblem,
+    ExternalMPMAcceleration,
+    MaterialPointArguments,
+    MaterialPointProblemIR,
+    MPMConstitutiveResponse,
+    MPMKinematics,
+)
 from ._materials import (
     AbstractThermodynamicMaterial,
     IdealGasMaterial,
@@ -257,6 +267,15 @@ from ._reactive_cfd_dem import (
     ParticleContinuumExchangeEvaluation,
     ParticleContinuumExchangePlan,
     ReactiveCFDDEMCouplingPlan,
+)
+from ._reactive_monolithic import (
+    CellwiseReactiveFluidImplicitPlan,
+    ReactiveFluidImplicitState,
+    ReactiveMonolithicCouplingPlan,
+    ReactiveMonolithicResidualEvaluation,
+    ReactiveMonolithicRouteCertificate,
+    ReactiveMonolithicStage,
+    ReactiveMonolithicUnknown,
 )
 from ._semidiscrete import (
     BoundaryLift,
@@ -394,6 +413,7 @@ from .trefftz import (
 
 
 __all__ = [
+    "advanced",
     "AbstractAdmissibleSystem",
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
@@ -420,6 +440,14 @@ __all__ = [
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
+    "AbstractMPMConstitutivePlan",
+    "MPMConstitutiveResponse",
+    "MPMKinematics",
+    "compile_material_point_problem",
+    "CompiledMaterialPointProblem",
+    "ExternalMPMAcceleration",
+    "MaterialPointArguments",
+    "MaterialPointProblemIR",
     "ConstitutiveResponse",
     "FiniteElementMaterialState",
     "FiniteElementMaterialTransaction",
@@ -710,4 +738,11 @@ __all__ = [
     "ParticleContinuumExchangeEvaluation",
     "ParticleContinuumExchangePlan",
     "ReactiveCFDDEMCouplingPlan",
+    "CellwiseReactiveFluidImplicitPlan",
+    "ReactiveFluidImplicitState",
+    "ReactiveMonolithicCouplingPlan",
+    "ReactiveMonolithicResidualEvaluation",
+    "ReactiveMonolithicRouteCertificate",
+    "ReactiveMonolithicStage",
+    "ReactiveMonolithicUnknown",
 ]

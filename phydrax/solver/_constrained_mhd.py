@@ -37,6 +37,19 @@ class ConstrainedMHDState(StrictModule):
     status: Array
 
 
+class ConstrainedMHDAcceptedIntegralLedger(StrictModule):
+    """Accepted SSPRK-integrated face fluxes and edge electromotive circulation."""
+
+    face_flux_integrals: tuple[Array, ...]
+    edge_electromotive_integrals: Array
+    cell_content_change: Array
+    magnetic_flux_change: Array
+    start_time: Array
+    end_time: Array
+    accepted: Array
+    transport_plan_id: str = eqx.field(static=True)
+
+
 class ConstrainedMHDDiagnostics(StrictModule):
     stage_stable_steps: Array
     stability_margin: Array
@@ -52,6 +65,7 @@ class ConstrainedMHDStepResult(StrictModule):
     state: ConstrainedMHDState
     accepted: Array
     diagnostics: ConstrainedMHDDiagnostics
+    accepted_integrals: ConstrainedMHDAcceptedIntegralLedger
 
 
 class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
@@ -61,6 +75,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
     cfl: float = eqx.field(static=True)
     positivity_iterations: int = eqx.field(static=True)
     divergence_tolerance: float = eqx.field(static=True)
+    ctu_predictor: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -71,6 +86,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         cfl: float = 0.35,
         positivity_iterations: int = 32,
         divergence_tolerance: float = 1e-10,
+        ctu_predictor: bool = False,
     ):
         if not isinstance(spatial, UpwindConstrainedTransportPlan):
             raise TypeError("spatial must be UpwindConstrainedTransportPlan.")
@@ -89,6 +105,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         self.cfl = cfl_
         self.positivity_iterations = iterations
         self.divergence_tolerance = tolerance
+        self.ctu_predictor = bool(ctu_predictor)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "constrained-mhd-ssprk3",
@@ -96,6 +113,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
                 "cfl": cfl_,
                 "positivity_iterations": iterations,
                 "divergence_tolerance": tolerance,
+                "ctu_predictor": self.ctu_predictor,
             }
         )
 
@@ -113,7 +131,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         if full.shape != expected:
             raise ValueError(f"Full MHD state must have shape {expected}.")
         magnetic = self.spatial.validate_magnetic_flux(magnetic_flux)
-        reduced = full[..., :5]
+        reduced = self.spatial.layout.reduce_full_state(full)
         synchronized = self.spatial.full_state(reduced, magnetic)
         magnetic_mismatch = jnp.max(jnp.abs(synchronized[..., 5:8] - full[..., 5:8]))
         constraint = self.spatial.magnetic_constraint(magnetic)
@@ -193,13 +211,33 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         args: Any,
         /,
     ):
-        rate = self.spatial.rate(
-            time,
-            evaluation_cell,
-            evaluation_magnetic,
-            args,
-            cfl=self.cfl,
-        )
+        if self.ctu_predictor:
+            predictor = self.spatial.rate(
+                time,
+                evaluation_cell,
+                evaluation_magnetic,
+                args,
+                cfl=self.cfl,
+            )
+            predicted_cell = evaluation_cell + 0.5 * increment * predictor.cell_rate
+            predicted_magnetic = (
+                evaluation_magnetic + 0.5 * increment * predictor.magnetic_rate
+            )
+            rate = self.spatial.rate(
+                time + 0.5 * increment,
+                predicted_cell,
+                predicted_magnetic,
+                args,
+                cfl=self.cfl,
+            )
+        else:
+            rate = self.spatial.rate(
+                time,
+                evaluation_cell,
+                evaluation_magnetic,
+                args,
+                cfl=self.cfl,
+            )
         candidate_cell = base_cell + increment * rate.cell_rate
         candidate_magnetic = base_magnetic + increment * rate.magnetic_rate
         cell, magnetic, factor = self._blend(
@@ -319,6 +357,46 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
             lambda _: rejected,
             operand=None,
         )
+        face_flux_integrals = tuple(
+            step
+            * (
+                (factor_1 * first + factor_2 * second) / 6.0
+                + (2.0 / 3.0) * factor_3 * third
+            )
+            for first, second, third in zip(
+                rate_1.integrated_normal_fluxes,
+                rate_2.integrated_normal_fluxes,
+                rate_3.integrated_normal_fluxes,
+                strict=True,
+            )
+        )
+        edge_integrals = step * (
+            (
+                factor_1 * rate_1.edge_electromotive_circulation
+                + factor_2 * rate_2.edge_electromotive_circulation
+            )
+            / 6.0
+            + (2.0 / 3.0) * factor_3 * rate_3.edge_electromotive_circulation
+        )
+        accepted_integrals = ConstrainedMHDAcceptedIntegralLedger(
+            face_flux_integrals=tuple(
+                jnp.where(successful, value, jnp.zeros_like(value))
+                for value in face_flux_integrals
+            ),
+            edge_electromotive_integrals=jnp.where(
+                successful, edge_integrals, jnp.zeros_like(edge_integrals)
+            ),
+            cell_content_change=jnp.where(
+                successful, cell_3 - cell_0, jnp.zeros_like(cell_0)
+            ),
+            magnetic_flux_change=jnp.where(
+                successful, magnetic_3 - magnetic_0, jnp.zeros_like(magnetic_0)
+            ),
+            start_time=state.time,
+            end_time=end,
+            accepted=successful,
+            transport_plan_id=self.plan_id,
+        )
         diagnostics = ConstrainedMHDDiagnostics(
             stage_stable_steps=stable_steps,
             stability_margin=stable / step - 1.0,
@@ -333,11 +411,14 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
             ),
             successful=successful,
         )
-        return ConstrainedMHDStepResult(accepted_state, successful, diagnostics)
+        return ConstrainedMHDStepResult(
+            accepted_state, successful, diagnostics, accepted_integrals
+        )
 
 
 __all__ = [
     "ConstrainedMHDDiagnostics",
+    "ConstrainedMHDAcceptedIntegralLedger",
     "ConstrainedMHDRunStatus",
     "ConstrainedMHDSSPRK3Plan",
     "ConstrainedMHDState",

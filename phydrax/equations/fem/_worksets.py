@@ -444,6 +444,47 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         )
 
 
+class CompiledMortarWorksetBatch(StrictModule, NonTrainableState):
+    worksets: tuple[CompiledWorkset, ...]
+    signature_id: str = eqx.field(static=True)
+    entity_count: int = eqx.field(static=True)
+    batch_id: str = eqx.field(static=True)
+
+    def __init__(self, worksets: Sequence[CompiledWorkset], /):
+        values = tuple(worksets)
+        if (
+            not values
+            or any(value.mortar is None for value in values)
+            or len({value.signature.signature_id for value in values}) != 1
+        ):
+            raise ValueError(
+                "Mortar batches require one or more equal-signature mortar worksets."
+            )
+        self.worksets = values
+        self.signature_id = values[0].signature.signature_id
+        self.entity_count = sum(int(value.entity_indices.size) for value in values)
+        self.batch_id = canonical_fingerprint(
+            {
+                "kind": "compiled-mortar-workset-batch",
+                "signature": self.signature_id,
+                "worksets": [value.workset_id for value in values],
+            }
+        )
+
+
+def batch_mortar_worksets(
+    worksets: Sequence[CompiledWorkset],
+    /,
+) -> tuple[CompiledMortarWorksetBatch, ...]:
+    groups: dict[str, list[CompiledWorkset]] = {}
+    for workset in worksets:
+        if workset.mortar is not None:
+            groups.setdefault(workset.signature.signature_id, []).append(workset)
+    return tuple(
+        CompiledMortarWorksetBatch(groups[identifier]) for identifier in sorted(groups)
+    )
+
+
 class WorksetProgram(StrictModule, NonTrainableState):
     ir: LocalActionIR
     worksets: tuple[CompiledWorkset, ...]
@@ -469,4 +510,10 @@ class WorksetProgram(StrictModule, NonTrainableState):
         )
 
 
-__all__ = ["CompiledWorkset", "WorksetProgram", "WorksetSignature"]
+__all__ = [
+    "CompiledMortarWorksetBatch",
+    "CompiledWorkset",
+    "WorksetProgram",
+    "WorksetSignature",
+    "batch_mortar_worksets",
+]

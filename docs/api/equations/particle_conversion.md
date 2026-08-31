@@ -67,3 +67,27 @@
 ---
 
 ::: phydrax.equations.ReactiveCFDDEMCouplingPlan
+
+## Monolithic coupling
+
+::: phydrax.equations.CellwiseReactiveFluidImplicitPlan
+
+---
+
+::: phydrax.equations.ReactiveFluidImplicitState
+
+---
+
+::: phydrax.equations.ReactiveMonolithicCouplingPlan
+
+---
+
+::: phydrax.solver.ReactiveMonolithicSolverPlan
+
+---
+
+::: phydrax.solver.prepare_reactive_monolithic_step
+
+---
+
+::: phydrax.solver.solve_reactive_monolithic_step

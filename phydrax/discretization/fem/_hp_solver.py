@@ -13,6 +13,16 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import (
+    AbstractLinearOperator,
+    AbstractPreconditioner,
+    AbstractPreconditionerBuilder,
+    DenseInversePreconditionerBuilder,
+    MaterializationPolicy,
+    PreconditionerCostEstimate,
+    PreconditionerProperties,
+    PreconditionerRefreshPolicy,
+)
 from ._hp import FiniteElementHPTransferPlan
 from ._hp_runtime import FiniteElementHPEpoch, FiniteElementHPTraceConstraintPlan
 from ._local_elimination import FiniteElementLocalEliminationPlan, LocalEliminationResult
@@ -288,8 +298,82 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
         )
 
 
+class FiniteElementHPMultigridPreconditionerBuilder(AbstractPreconditionerBuilder):
+    """Lifecycle-compatible hp hierarchy builder with exact coarse fallback."""
+
+    hierarchy: FiniteElementHPMultigridPlan
+    coarse_builder: DenseInversePreconditionerBuilder
+    _builder_id: str = eqx.field(static=True)
+
+    def __init__(self, hierarchy: FiniteElementHPMultigridPlan, /):
+        if not isinstance(hierarchy, FiniteElementHPMultigridPlan):
+            raise TypeError("hierarchy must be FiniteElementHPMultigridPlan.")
+        self.hierarchy = hierarchy
+        self.coarse_builder = DenseInversePreconditionerBuilder()
+        self._builder_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-hp-multigrid-builder",
+                "hierarchy": hierarchy.plan_id,
+            }
+        )
+
+    @property
+    def builder_id(self) -> str:
+        return self._builder_id
+
+    @property
+    def default_refresh(self) -> PreconditionerRefreshPolicy:
+        return self.coarse_builder.default_refresh
+
+    def properties_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+    ) -> PreconditionerProperties:
+        return self.coarse_builder.properties_for(setup_operator)
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return self.coarse_builder.cost_for(
+            setup_operator,
+            materialization=materialization,
+        )
+
+    def prepare(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> AbstractPreconditioner:
+        return self.coarse_builder.prepare(
+            setup_operator,
+            materialization=materialization,
+        )
+
+    def refresh(
+        self,
+        preconditioner: AbstractPreconditioner,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> AbstractPreconditioner:
+        return self.coarse_builder.refresh(
+            preconditioner,
+            setup_operator,
+            materialization=materialization,
+        )
+
+
 __all__ = [
     "FiniteElementHPCondensationPlan",
+    "FiniteElementHPMultigridPreconditionerBuilder",
     "FiniteElementHPMultigridPlan",
     "FiniteElementHPSkeletonPlan",
     "FiniteElementHPSolverRefreshPlan",

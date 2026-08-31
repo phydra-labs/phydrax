@@ -85,13 +85,13 @@ def initialize_particle_internal_batch(
     pore = jnp.asarray(porosity, dtype=energy.dtype)
     area = jnp.asarray(internal_surface_area, dtype=energy.dtype)
     scale = jnp.asarray(outer_scale, dtype=energy.dtype)
-    expected_cells = (batch.particle_count, batch.shell_count)
+    expected_cells = (batch.particle_count, batch.cell_capacity)
     if energy.shape != expected_cells:
-        raise ValueError("internal_energy must have particle-shell shape.")
+        raise ValueError("internal_energy must have particle-cell shape.")
     if species.shape != expected_cells + (batch.species_count,):
-        raise ValueError("species_amount must have particle-shell-species shape.")
+        raise ValueError("species_amount must have particle-cell-species shape.")
     if pore.shape != expected_cells or area.shape != expected_cells:
-        raise ValueError("Porosity and internal area must have particle-shell shape.")
+        raise ValueError("Porosity and internal area must have particle-cell shape.")
     if scale.shape != (batch.particle_count,):
         raise ValueError("outer_scale must have internal particle shape.")
     front = (
