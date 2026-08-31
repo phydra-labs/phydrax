@@ -131,13 +131,27 @@ discrete continuity. Fixed-population free-surface FLIP separately binds cell an
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
+Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
+to stable particle supports without reinterpreting material mass. Qualified
+routes include Gaussian free-space direct evaluation, periodic
+particle-to-grid Fourier inversion, conservative Gaussian strength exchange,
+classic 3-D stretching, regularized filaments, steady and fixed-capacity
+unsteady lifting wakes, polygonal vortex panels, rigid panel motion,
+boundary-sheet transfer, conservative remeshing, explicit advanced
+formulations, and fixed-tree/workflow evidence. See
+[Guide → Vortex methods](guides_vortex_methods.md),
+[Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
+[Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle and transfer identities rather than
-introducing a separate simulation substrate. Flat differentiable FLRW backgrounds,
-first/second Lagrangian growth, unit-bearing expansion and linear-power products,
-state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose the
-existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
-as an explicit table; transfer, Boltzmann, halo, survey, and CMB calculations remain
-external capability boundaries.
+introducing a separate simulation substrate. Differentiable curved/CPL FLRW geometry,
+fixed-quadrature distances, realization-safe named transfer and matter-power products,
+state-ready flat 1LPT/2LPT, collisionless PM, and adiabatic gas--DM gravity compose the
+existing splat, self-gravity, finite-volume, and transactional KDK operations. Precision
+Boltzmann, massive-neutrino perturbation, and complete CMB evolution remain isolated
+external products. Native downstream contracts cover explicit power corrections,
+analytic halo foundations, compact Limber/RSD predictions, canonical CMB spectra, and
+small-N force qualification without claiming calibrated fits, survey likelihoods, or
+production tree gravity.
 Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
 transactional adaptive realization and replay, plane-strain/plane-stress/3-D
 hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
@@ -673,6 +687,15 @@ evidence; construction stages transfer immutable external IDs and reference
 states; and continuous or finite-catalog sizing reports governing members and
 cases. Required evidence aggregates to certified, failed, or incomplete—absence
 never becomes structural safety.
+
+Advanced evidence adds named generalized channels, sourced section frames,
+connection/support mechanics, extensible catenaries, contact/friction,
+nonuniform warping, fiber plasticity transactions, thin-walled GBT/finite-strip
+modes, shell escalation, physical collapse events, dynamic stepping, exact
+precedence search, standards clauses, reliability, calibration, evidence
+acquisition, and immutable structural-twin ancestry. Each layer retains model
+fidelity, applicability, generalized derivative, optimality-gap, uncertainty,
+and data provenance rather than collapsing them into one safety Boolean.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
@@ -1215,6 +1238,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   then aggregate equilibrium, prestress, sequence, and capacity evidence. See
   [Guides → Member-network structural verification](guides_member_network_structures.md)
   and [API → Member-network structural verification](api/member_network.md).
+- **Advanced structural evidence**: analyze catenary/contact regimes, sourced
+  section orientation, joint and support mechanics, warping and fiber plasticity,
+  local/distortional buckling, collapse events, construction-order optimality,
+  standards clauses, reliability, calibration, and evidence acquisition. See
+  [Guides → Advanced structural evidence](guides_advanced_structural_evidence.md)
+  and [API → Advanced structural evidence](api/advanced_structural.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

@@ -17,6 +17,7 @@ from . import (
     pic,
     spectral,
     splatting,
+    vortex,
     vem,
 )
 from ._axis import (
@@ -65,6 +66,11 @@ from ._core import (
     PreparationReport,
 )
 from ._integration_domain import IntegrationDomain
+from ._lagrangian_marker import (
+    LagrangianMarkerDiscretization,
+    LagrangianMarkerKinematics,
+    LagrangianMarkerSetPlan,
+)
 from ._lifecycle import (
     AbstractDiscretizationPlan,
     AbstractPreparedDiscretization,
@@ -206,6 +212,7 @@ from .fem import (
     FiniteElementErrorEstimate,
     FiniteElementFieldSpec,
     FiniteElementHaloPlan,
+    FiniteElementImmersedMarkerMapPlan,
     FiniteElementPlan,
     FiniteElementPrecisionPolicy,
     FiniteElementRuntimeData,
@@ -224,6 +231,7 @@ from .fem import (
     PartitionedFiniteElementDofMap,
     prepare_finite_element_point_interpolation,
     prepare_mixed_volumetric_constraint,
+    PreparedFiniteElementImmersedMarkerMap,
     PreparedFiniteElementPointInterpolation,
     PressureGaugeEvidence,
     PressureGaugePlan,
@@ -438,13 +446,6 @@ from .finite_volume import (
     FixedConnectivityMotionPlan,
     flux_register_from_accepted_steps,
     FluxPositivityPlan,
-    PreparedShallowWaterBathymetry,
-    shallow_water_observables,
-    ShallowWaterAcceptedFaceIntegrals,
-    ShallowWaterBalancedFaceResult,
-    ShallowWaterHydrostaticHLLPlan,
-    ShallowWaterObservables,
-    ShallowWaterWetDryPolicy,
     HighResolutionMethod,
     HighResolutionReconstructionPlan,
     HLLCFluxPlan,
@@ -529,6 +530,7 @@ from .finite_volume import (
     PreparedMACScalarTransport,
     PreparedMACVariableDensityOperators,
     PreparedMappedMACGeometry,
+    PreparedShallowWaterBathymetry,
     PreparedTriangleFiniteVolumeDynamics,
     PreparedTriangleQuadratic,
     PreparedTriangleWLSQ,
@@ -547,6 +549,12 @@ from .finite_volume import (
     RoeFluxPlan,
     RoeWavePropagationPlan,
     RusanovFluxPlan,
+    shallow_water_observables,
+    ShallowWaterAcceptedFaceIntegrals,
+    ShallowWaterBalancedFaceResult,
+    ShallowWaterHydrostaticHLLPlan,
+    ShallowWaterObservables,
+    ShallowWaterWetDryPolicy,
     SlipWallBoundary,
     SuperbeeLimiter,
     SupersonicInflowBoundary,
@@ -1080,6 +1088,7 @@ from .particle import (
     PreparedRigidJointEffortMotor,
     PreparedRigidJointGraph,
     PreparedRigidJointPDServo,
+    PreparedRigidMarkerMap,
     PreparedRigidSphereClumpSet,
     PreparedRigidSphereSet,
     PreparedRigidTopology,
@@ -1120,7 +1129,9 @@ from .particle import (
     rescale_pressure_warm_start,
     RestitutionClassification,
     rigid_body_angular_acceleration,
+    rigid_body_drift,
     rigid_body_kick_drift_kick,
+    rigid_body_world_inertia,
     rigid_joint_maximum_residual,
     RigidBodyKinematics,
     RigidBodyLoad,
@@ -1135,6 +1146,7 @@ from .particle import (
     RigidConstraintState,
     RigidConstraintStepResult,
     RigidContactGeometry,
+    RigidGeneralizedVelocity,
     RigidJointCoordinate,
     RigidJointCoordinates,
     RigidJointCoordinateState,
@@ -1151,6 +1163,7 @@ from .particle import (
     RigidJointPDServoPlan,
     RigidJointResiduals,
     RigidJointRowLayout,
+    RigidMarkerMapPlan,
     RigidSphereClumpSetPlan,
     RigidSphereKinematics,
     RigidSphereLoad,
@@ -1353,6 +1366,8 @@ from .spectral import (
     TensorSpectralPlan,
     TensorSpectralSymmetry,
 )
+from .vortex import *  # noqa: F403
+from .vortex import __all__ as _vortex_all
 from .splatting import (
     AbstractStructuredSplatAssignment,
     AffineCPDISplatAssignment,
@@ -1527,6 +1542,9 @@ __all__ = [
     "CosineAxisSpec",
     "DiscreteFieldSpace",
     "DiscreteMeasure",
+    "LagrangianMarkerDiscretization",
+    "LagrangianMarkerKinematics",
+    "LagrangianMarkerSetPlan",
     "DiscreteSupport",
     "DiscreteTopology",
     "DiscretizationBundle",
@@ -1877,9 +1895,11 @@ __all__ = [
     "FiniteElementTransferBundle",
     "FiniteElementFieldSpec",
     "FiniteElementHaloPlan",
+    "FiniteElementImmersedMarkerMapPlan",
     "FiniteElementPlan",
     "FiniteElementPrecisionPolicy",
     "FiniteElementRuntimeData",
+    "PreparedFiniteElementImmersedMarkerMap",
     "maximum_mark",
     "local_dual_weighted_residual",
     "refine_triangles_local",
@@ -2500,6 +2520,7 @@ __all__ = [
     "PreparedRigidConstraintDynamics",
     "PreparedRigidJointGraph",
     "PreparedRigidBodySet",
+    "PreparedRigidMarkerMap",
     "PreparedRigidSphereClumpSet",
     "PreparedTriangleWall",
     "PreparedVerletParticleNeighborhood",
@@ -2519,8 +2540,12 @@ __all__ = [
     "RigidBodySetPlan",
     "RigidBodyStateGeometry",
     "RigidBodyStepResult",
+    "RigidGeneralizedVelocity",
+    "RigidMarkerMapPlan",
     "RigidContactGeometry",
     "RigidSphereClumpSetPlan",
+    "rigid_body_drift",
+    "rigid_body_world_inertia",
     "ServoDEMBarrierMotionPlan",
     "ServoDEMBarrierState",
     "SmoothCoulombTangentialPlan",
@@ -2750,6 +2775,6 @@ __all__ = [
 
 __all__ += [
     name
-    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all)
+    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all, *_vortex_all)
     if name not in __all__
 ]

@@ -34,8 +34,10 @@ def main() -> None:
         jnp.asarray([0.1, 1.0]),
         k,
         jnp.stack((first_growth**2 * base, base)),
+        phx.applications.cosmology.MatterPowerDescriptor("cold_baryon", "cold_baryon"),
         background.scale,
         provenance,
+        background.realization,
     )
 
     initial_function = jax.jit(
@@ -54,8 +56,10 @@ def main() -> None:
             power.scale_factors,
             power.wavenumbers,
             values,
+            power.descriptor,
             power.scale,
             power.provenance,
+            power.realization,
         )
         state = lpt.realize(background, growth, scaled, white_noise, 0.1).state
         result = rollout.rollout(background, state)

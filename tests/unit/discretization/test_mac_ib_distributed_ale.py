@@ -23,8 +23,14 @@ def _finite_volume(*, periodic, count=4):
 def test_mac_marker_transfer_is_dual_measure_adjoint():
     finite_volume = _finite_volume(periodic=True)
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(operators, 0.4, 8).prepare()
-    relation = transfer.relation(jnp.asarray([[0.25, 0.25], [0.75, 0.75]]))
+    marker_position = jnp.asarray([[0.25, 0.25], [0.75, 0.75]])
+    markers = phx.discretization.LagrangianMarkerSetPlan(
+        jnp.asarray([3, 7]), marker_position, jnp.asarray([0.4, 0.6])
+    ).prepare()
+    transfer = phx.discretization.MACMarkerTransferPlan(
+        operators, markers
+    ).prepare()
+    relation = transfer.relation(marker_position)
     velocity = tuple(
         jnp.full(layout.shape, 0.2 * (axis + 1))
         for axis, layout in enumerate(finite_volume.face_layouts)
@@ -36,6 +42,8 @@ def test_mac_marker_transfer_is_dual_measure_adjoint():
     assert diagnostics.successful
     assert jnp.abs(diagnostics.work_adjoint_residual) < 1e-10
     assert jnp.max(jnp.abs(diagnostics.force_residual)) < 1e-10
+    assert diagnostics.maximum_first_moment_residual < 1e-10
+    assert jnp.max(jnp.abs(diagnostics.torque_residual)) < 1e-10
 
 
 def test_single_device_distributed_projection_preserves_global_contract():

@@ -82,8 +82,10 @@ def build_workflow():
     provenance = phx.applications.cosmology.CosmologyProductProvenance(
         producer="phydrax-example",
         producer_version="native",
-        model_id=background.model_id,
+        model_form_id=background.model_form_id,
+        request_id="native-example-linear-power",
         numerical_policy_id="example-linear-power",
+        physics_policy_id="linear-cold-baryon-power",
         scale_id=scale.scale_id,
         source_kind="native",
         differentiability="native-parameter",
@@ -110,8 +112,12 @@ def main() -> None:
             jnp.asarray([0.1, 1.0]),
             wavenumbers,
             jnp.stack((first_growth**2 * base_power, base_power)),
+            phx.applications.cosmology.MatterPowerDescriptor(
+                "cold_baryon", "cold_baryon"
+            ),
             background.scale,
             provenance,
+            background.realization,
         )
         initial = lpt.realize(background, growth, power, white_noise, 0.1)
         evolved = rollout.rollout(background, initial.state)
