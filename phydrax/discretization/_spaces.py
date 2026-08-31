@@ -32,6 +32,7 @@ FieldRepresentation: TypeAlias = Literal[
     "modal_coefficient",
     "particle_value",
     "cochain",
+    "functional",
     "custom",
 ]
 FieldConformity: TypeAlias = Literal[
@@ -361,6 +362,7 @@ class DiscreteFieldSpace(StrictModule, NonTrainableState):
             "modal_coefficient",
             "particle_value",
             "cochain",
+            "functional",
             "custom",
         ):
             raise ValueError("Unknown field representation.")

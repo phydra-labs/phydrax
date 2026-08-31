@@ -331,6 +331,20 @@ reflections, conforming interfaces, and nested 2:1 traces.
 restriction. `MultiblockSATCoupling` uses these transfers for energy-conserving central
 or dissipative upwind scalar-advection coupling.
 
+## Polygonal virtual elements
+
+The virtual-element substrate separates polygon topology, functional field
+coordinates, computable polynomial projections, form consistency,
+projector-kernel stabilization, and the downstream algebraic solver. Enhanced
+conforming H1 spaces of qualified degree one through three expose full L2 and
+energy projectors without presenting virtual interior basis values.
+
+Matrix-free execution retains factorized projection actions; sparse execution
+materializes the same local tensors into canonical coordinate storage.
+Constraints, nullspaces, DAEs, eigenproblems, precision, geometry refresh, and
+provenance reuse their ordinary Phydrax contracts. See
+[Virtual elements](guides_virtual_elements.md).
+
 ## AMR and multigrid
 
 The AMR substrate remains fixed-capacity and masks inactive payload before arithmetic.

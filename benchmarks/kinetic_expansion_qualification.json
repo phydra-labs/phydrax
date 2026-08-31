@@ -1,0 +1,209 @@
+{
+  "cases": {
+    "amr_transfer": {
+      "coarse_shape": [
+        4,
+        4,
+        9
+      ],
+      "passed": true,
+      "prolongation_mass_defect": 1.0658141036401503e-13,
+      "prolongation_momentum_defect": 0.0,
+      "restriction_mass_defect": 1.0658141036401503e-13,
+      "restriction_momentum_defect": 0.0,
+      "round_trip_residual": 0.0
+    },
+    "boundary_ownership": {
+      "expected_stream_count": 80,
+      "passed": true,
+      "stream_written_count": 80,
+      "topology_id": "kinetic-expansion-qualification",
+      "wall_link_unwritten_before_wall_stage": true
+    },
+    "collisions": {
+      "conservation_tolerance": 2e-12,
+      "families": {
+        "central_moment": {
+          "entropy_residual_maximum": -2.9739911922010975e-11,
+          "mass_error": 2.220446049250313e-16,
+          "minimum_population": 0.02447117416263888,
+          "momentum_error": 5.551115123125783e-17,
+          "root_residual": 0.0,
+          "successful": true
+        },
+        "cumulant": {
+          "entropy_residual_maximum": -2.973993967758659e-11,
+          "mass_error": 2.220446049250313e-16,
+          "minimum_population": 0.02447117416278625,
+          "momentum_error": 4.85722573273506e-17,
+          "root_residual": 0.0,
+          "successful": true
+        },
+        "entropic": {
+          "entropy_residual_maximum": -3.0232476244673734e-11,
+          "mass_error": 2.220446049250313e-16,
+          "minimum_population": 0.024471153391323476,
+          "momentum_error": 6.938893903907228e-18,
+          "root_residual": 2.42861286636753e-17,
+          "successful": true
+        },
+        "kbc": {
+          "entropy_residual_maximum": -2.9474998830547605e-11,
+          "mass_error": 0.0,
+          "minimum_population": 0.024471176388888887,
+          "momentum_error": 3.469446951953614e-18,
+          "root_residual": 0.0,
+          "successful": true
+        },
+        "mrt": {
+          "entropy_residual_maximum": -2.9474978013865893e-11,
+          "mass_error": 0.0,
+          "minimum_population": 0.024471176388888887,
+          "momentum_error": 2.7755575615628914e-17,
+          "root_residual": 0.0,
+          "successful": true
+        },
+        "regularized": {
+          "entropy_residual_maximum": -2.9474998830547605e-11,
+          "mass_error": 0.0,
+          "minimum_population": 0.024471176388888887,
+          "momentum_error": 3.469446951953614e-18,
+          "root_residual": 0.0,
+          "successful": true
+        },
+        "smagorinsky": {
+          "entropy_residual_maximum": -2.94749918916537e-11,
+          "mass_error": 1.1102230246251565e-16,
+          "minimum_population": 0.024471176388443764,
+          "momentum_error": 1.0408340855860843e-17,
+          "root_residual": 0.0,
+          "successful": true
+        }
+      },
+      "passed": true
+    },
+    "discrete_velocity": {
+      "d2v17": {
+        "maximum_residual": 1.1102230246251565e-16,
+        "transport_kind": "integer_lattice"
+      },
+      "d2v37": {
+        "maximum_residual": 1.7763568394002505e-15,
+        "transport_kind": "off_lattice"
+      },
+      "passed": true
+    },
+    "execution": {
+      "checkpoint_identity_distinguishes_parity": true,
+      "device_count": 4,
+      "even_parity_residual": 0.0,
+      "fused_maximum_absolute_error": 0.0,
+      "fused_reference_equivalent": true,
+      "odd_parity_residual": 0.0,
+      "partition_shape": [
+        2,
+        2
+      ],
+      "passed": true,
+      "population_axis_partitioned": false,
+      "replay_block_size": 4,
+      "replay_mode": "block",
+      "sharded_diagnostics_equivalent": true,
+      "sharded_failure_equivalent": true,
+      "sharded_maximum_absolute_error": 0.0,
+      "sharded_population_equivalent": true,
+      "sharded_reference_equivalent": true
+    },
+    "geometry_transfer": {
+      "covered_count": 1,
+      "mass_residual": 1.4210854715202004e-13,
+      "minimum_population": 0.028218694885361554,
+      "momentum_residual": 0.0,
+      "passed": true,
+      "uncovered_count": 0
+    },
+    "immersed_boundary": {
+      "converged": true,
+      "force_balance_residual": 1.3877787807814457e-17,
+      "iteration_count": 12,
+      "maximum_velocity_residual": 1.4552074822926642e-13,
+      "partition_of_unity_residual": 0.0,
+      "passed": true
+    },
+    "lattice": {
+      "capability_evidence_id": "56dce5e84f398e3333f668d6d55b7b7c05a6f3448672a7fe14604ed5bc2f8f32",
+      "lattice": "D3Q27",
+      "opposite_residual": 0,
+      "passed": true,
+      "population_count": 27
+    },
+    "moments": {
+      "basis_id": "ddbcfaa023e124401ab20df3726a8a3b51bf708d92efa0ba20c4c551d1c47fcc",
+      "passed": true,
+      "round_trip_residual": 2.7755575615628914e-17,
+      "tolerance": 2e-13
+    },
+    "multiphysics_moments": {
+      "passed": true,
+      "recolouring_closure_residual": 1.3877787807814457e-17,
+      "species_moment_residual": 1.1102230246251565e-16,
+      "thermal_moment_residual": 2.220446049250313e-16,
+      "tolerance": 2e-13
+    }
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "a65342a8e36faa167394c1099132107b342b13971b9c289fb21956577e10ca23",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        },
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.1",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.1",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "79b81a6dbcc23cb1341242cf5f4615f9f74d80c5275fc4837797953a6407594e",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "passed": true,
+  "scope": {
+    "gradient_export": "JAX only",
+    "iree": "forward inference only",
+    "stability_claim": false,
+    "status": "advanced invariant qualification"
+  }
+}

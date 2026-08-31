@@ -288,6 +288,11 @@ from ._diffrax_state_packing import (
     DiffraxComplexStatePolicy,
     DiffraxComplexStateStrategy,
 )
+from ._discrete_velocity import (
+    ConservativeFiniteVolumeDVMPlan,
+    FiniteVolumeDVMResidualEvidence,
+    PreparedConservativeFiniteVolumeDVM,
+)
 from ._driving_path import (
     AbstractDifferentiableDrivingPath,
     CallableDrivingPath,
@@ -425,7 +430,13 @@ from ._fixed_step import (
     CallableFixedStepMethod,
     CompositeAcceptedStepTransform,
     FixedStepProblem,
+    FixedStepReplayMode,
+    FixedStepReplayPolicy,
     FixedStepResult,
+    FixedStepRetentionPolicy,
+    FixedStepRolloutPlan,
+    FixedStepRolloutResult,
+    FixedStepScalarDiagnostics,
     FixedStepSolution,
     IdentityAcceptedStepTransform,
     solve_fixed_step,
@@ -544,6 +555,7 @@ from ._jump_delay import (
     JumpDelayProblem,
     solve_jump_delay,
 )
+from ._lattice_boltzmann import LatticeBoltzmannFixedStepMethod
 from ._levy import (
     LevySDEProblem,
     LevySDEScheme,
@@ -862,6 +874,14 @@ from ._reactive_cfd_dem import (
     ReactiveCouplingMode,
     ReactiveFluidFields,
     ReactiveParticleCouplingSchedulePlan,
+)
+from ._reactive_lattice_boltzmann import (
+    ReactiveLocalStepper,
+    ReactiveLocalStepResult,
+    ReactiveSpeciesCouplingSchedulePlan,
+    ReactiveSpeciesLatticeBoltzmannDiagnostics,
+    ReactiveSpeciesLatticeBoltzmannState,
+    ReactiveSpeciesLatticeBoltzmannStepResult,
 )
 from ._reactive_monolithic import (
     initialize_reactive_monolithic_state,
@@ -1790,12 +1810,28 @@ __all__ = [
     "CompositeAcceptedStepTransform",
     "CallableFixedStepMethod",
     "FixedStepProblem",
+    "FixedStepReplayMode",
+    "FixedStepReplayPolicy",
+    "FixedStepRetentionPolicy",
+    "FixedStepRolloutPlan",
+    "FixedStepRolloutResult",
+    "FixedStepScalarDiagnostics",
     "FixedStepResult",
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",
     "SSPRK33FixedStepMethod",
     "SSPRK54FixedStepMethod",
     "solve_fixed_step",
+    "LatticeBoltzmannFixedStepMethod",
+    "ConservativeFiniteVolumeDVMPlan",
+    "FiniteVolumeDVMResidualEvidence",
+    "PreparedConservativeFiniteVolumeDVM",
+    "ReactiveLocalStepResult",
+    "ReactiveLocalStepper",
+    "ReactiveSpeciesCouplingSchedulePlan",
+    "ReactiveSpeciesLatticeBoltzmannDiagnostics",
+    "ReactiveSpeciesLatticeBoltzmannState",
+    "ReactiveSpeciesLatticeBoltzmannStepResult",
     "DEMFixedStepMethod",
     "DFSPHFixedStepMethod",
     "IISPHFixedStepMethod",

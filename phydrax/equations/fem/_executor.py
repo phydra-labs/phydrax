@@ -11,13 +11,14 @@ import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from ..._numerics._compensated import compensated_sum
 from ...discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization.fem import FiniteElementDiscretization, IntegrationDomain
 from ...discretization.fem._high_order import SumFactorizationPlan
 from ...discretization.fem._sbp import MappedTensorMetrics
 from ...linalg import DualSpace
+from ...sparse import scatter_local as _scatter_local
+from .._variational import VariationalCoefficient
 from .._finite_element_variational import (
     _action_domain,
     _action_rule,
@@ -30,7 +31,6 @@ from .._finite_element_variational import (
     CellResidualAction,
     DiffusionAction,
     ExteriorFacetAction,
-    FiniteElementCoefficient,
     FiniteElementExecutionContext,
     FiniteElementForm,
     InteriorFacetAction,
@@ -89,7 +89,7 @@ def execute_finite_element_mortar_flux(
 
 
 def _coefficient_values(
-    coefficient_: FiniteElementCoefficient,
+    coefficient_: VariationalCoefficient,
     points: Array,
     context: FiniteElementExecutionContext,
     /,
@@ -137,48 +137,6 @@ def _coefficient_values(
     return values
 
 
-def _scatter_local(
-    residual: Array,
-    dofs: Array,
-    local: Array,
-    accumulation: str,
-    /,
-) -> Array:
-    if accumulation == "fast":
-        return residual.at[dofs].add(local)
-    flat_dofs = dofs.reshape((-1,))
-    component_shape = residual.shape[1:]
-    component_count = int(np.prod(component_shape, dtype=int)) if component_shape else 1
-    flat_local = local.reshape((flat_dofs.size, component_count))
-    if accumulation == "deterministic":
-        grouped = jax.ops.segment_sum(
-            flat_local,
-            flat_dofs,
-            residual.shape[0],
-            indices_are_sorted=False,
-            unique_indices=False,
-        )
-    elif accumulation == "compensated":
-        grouped_components = []
-        for component in range(component_count):
-            grouped_components.append(
-                jnp.stack(
-                    tuple(
-                        compensated_sum(
-                            jnp.where(
-                                flat_dofs == index,
-                                flat_local[:, component],
-                                jnp.zeros((), dtype=flat_local.dtype),
-                            )
-                        )
-                        for index in range(residual.shape[0])
-                    )
-                )
-            )
-        grouped = jnp.stack(tuple(grouped_components), axis=-1)
-    else:
-        raise ValueError("Unknown finite-element accumulation policy.")
-    return residual + grouped.reshape(residual.shape)
 
 
 def _cell_metric(
@@ -364,7 +322,7 @@ def _pairwise_volume_residual(
 
 
 def _cell_coefficient_values(
-    coefficient_: FiniteElementCoefficient,
+    coefficient_: VariationalCoefficient,
     discretization: FiniteElementDiscretization,
     block_index: int,
     workset,

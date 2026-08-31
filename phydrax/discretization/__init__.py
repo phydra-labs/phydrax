@@ -14,6 +14,7 @@ from . import (
     multiblock,
     particle,
     spectral,
+    vem,
     splatting,
 )
 from ._axis import (
@@ -61,6 +62,7 @@ from ._core import (
     DiscretizationRole,
     PreparationReport,
 )
+from ._integration_domain import IntegrationDomain
 from ._lifecycle import (
     AbstractDiscretizationPlan,
     AbstractPreparedDiscretization,
@@ -92,6 +94,16 @@ from ._point_cloud_pde import (
     PointConormalInterface,
     PointSBPReport,
     solve_point_cloud_poisson,
+)
+from ._polygon_geometry import (
+    PolygonAdmissibilityPolicy,
+    PolygonCubature,
+    PolygonGeometry,
+    PolygonGeometryEvidence,
+    PolygonTriangulation,
+    evaluate_polygon_geometry,
+    polygon_cubature,
+    prepare_polygon_triangulation,
 )
 from ._spaces import (
     AbstractDofLayout,
@@ -168,6 +180,8 @@ from .amr import (
     RefinementDecision,
 )
 from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
+from .discrete_velocity import *  # noqa: F403
+from .discrete_velocity import __all__ as _discrete_velocity_all
 from .fem import (
     affine_dof_constraint,
     coarsen_triangles_local,
@@ -188,7 +202,6 @@ from .fem import (
     FiniteElementErrorEstimate,
     FiniteElementFieldSpec,
     FiniteElementHaloPlan,
-    FiniteElementLocalEliminationPlan,
     FiniteElementPlan,
     FiniteElementPrecisionPolicy,
     FiniteElementRuntimeData,
@@ -196,10 +209,8 @@ from .fem import (
     FiniteElementTransferBundle,
     HDGCondensationPlan,
     HDGTraceSpace,
-    IntegrationDomain,
     lagrange_element,
     local_dual_weighted_residual,
-    LocalEliminationResult,
     maximum_mark,
     MultiscaleFiniteElementBasis,
     nedelec_element,
@@ -570,6 +581,31 @@ from .finite_volume import (
     WENOReconstructionPlan,
     write_triangle_fv_archive,
     write_unstructured_fv_archive,
+)
+from .lattice_boltzmann import *  # noqa: F403
+from .lattice_boltzmann import (
+    __all__ as _lattice_boltzmann_all,
+    BGKCollisionPlan,
+    D2Q9,
+    D3Q19,
+    GuoForcingPlan,
+    LatticeAcceleration,
+    LatticeBoltzmannBoundaryPlan,
+    LatticeBoltzmannCollisionPlan,
+    LatticeBoltzmannDiagnostics,
+    LatticeBoltzmannDiscretization,
+    LatticeBoltzmannGeometrySnapshot,
+    LatticeBoltzmannMacroscopicState,
+    LatticeBoltzmannMethodPlan,
+    LatticeBoltzmannPlan,
+    LatticeBoltzmannPrecisionPolicy,
+    LatticeBoltzmannRuntimeParameters,
+    LatticeBoltzmannScaling,
+    LatticeBoltzmannStepResult,
+    LatticeBoltzmannVelocitySet,
+    PreparedLatticeBoltzmannBoundary,
+    PreparedLatticeBoltzmannDynamics,
+    TRTCollisionPlan,
 )
 from .mpm import (
     APICGatherResult,
@@ -1146,6 +1182,27 @@ from .spectral import (
     TensorSpectralPlan,
     TensorSpectralSymmetry,
 )
+from .vem import (
+    FactorizedVirtualElementOperator,
+    StabilizedVirtualElementTensor,
+    VirtualElementDirichletConstraint,
+    VirtualElementDiscretization,
+    VirtualElementDofMap,
+    VirtualElementFieldSpec,
+    VirtualElementPlan,
+    VirtualElementPrecisionPolicy,
+    VirtualElementProjectionData,
+    VirtualElementProjectionEvidence,
+    VirtualElementResourceBudget,
+    VirtualElementRuntimeData,
+    VirtualElementSpec,
+    VirtualElementStabilizationEvidence,
+    VirtualElementStabilizationPolicy,
+    conforming_h1_virtual_element,
+    prepare_virtual_element_projections,
+    stabilize_virtual_element_tensor,
+    virtual_element_dirichlet_constraint,
+)
 from .splatting import (
     AbstractStructuredSplatAssignment,
     MultilinearSplatAssignment,
@@ -1168,6 +1225,34 @@ from .splatting import (
 
 
 __all__ = [
+    "vem",
+    "PolygonAdmissibilityPolicy",
+    "PolygonCubature",
+    "PolygonGeometry",
+    "PolygonGeometryEvidence",
+    "PolygonTriangulation",
+    "evaluate_polygon_geometry",
+    "polygon_cubature",
+    "prepare_polygon_triangulation",
+    "FactorizedVirtualElementOperator",
+    "StabilizedVirtualElementTensor",
+    "VirtualElementDirichletConstraint",
+    "VirtualElementDiscretization",
+    "VirtualElementDofMap",
+    "VirtualElementFieldSpec",
+    "VirtualElementPlan",
+    "VirtualElementPrecisionPolicy",
+    "VirtualElementProjectionData",
+    "VirtualElementProjectionEvidence",
+    "VirtualElementResourceBudget",
+    "VirtualElementRuntimeData",
+    "VirtualElementSpec",
+    "VirtualElementStabilizationEvidence",
+    "VirtualElementStabilizationPolicy",
+    "conforming_h1_virtual_element",
+    "prepare_virtual_element_projections",
+    "stabilize_virtual_element_tensor",
+    "virtual_element_dirichlet_constraint",
     "CellBlock",
     "CellMesh",
     "AMRAxisEntity",
@@ -1292,6 +1377,27 @@ __all__ = [
     "FiniteVolumeAcceptedFluxIntegralLedger",
     "FiniteVolumeStageFluxRateBlock",
     "FiniteVolumeStageFluxRateLedger",
+    "BGKCollisionPlan",
+    "D2Q9",
+    "D3Q19",
+    "GuoForcingPlan",
+    "LatticeAcceleration",
+    "LatticeBoltzmannBoundaryPlan",
+    "LatticeBoltzmannCollisionPlan",
+    "LatticeBoltzmannDiagnostics",
+    "LatticeBoltzmannDiscretization",
+    "LatticeBoltzmannGeometrySnapshot",
+    "LatticeBoltzmannMacroscopicState",
+    "LatticeBoltzmannMethodPlan",
+    "LatticeBoltzmannPlan",
+    "LatticeBoltzmannPrecisionPolicy",
+    "LatticeBoltzmannRuntimeParameters",
+    "LatticeBoltzmannScaling",
+    "LatticeBoltzmannStepResult",
+    "LatticeBoltzmannVelocitySet",
+    "PreparedLatticeBoltzmannBoundary",
+    "PreparedLatticeBoltzmannDynamics",
+    "TRTCollisionPlan",
     "UnstructuredFiniteVolumeDiscretization",
     "UnstructuredFiniteVolumePlan",
     "UnstructuredFiniteVolumeQualityReport",
@@ -1586,7 +1692,6 @@ __all__ = [
     "FiniteElementDWRIndicators",
     "FiniteElementErrorEstimate",
     "FiniteElementTransferBundle",
-    "FiniteElementLocalEliminationPlan",
     "FiniteElementFieldSpec",
     "FiniteElementHaloPlan",
     "FiniteElementPlan",
@@ -1599,7 +1704,6 @@ __all__ = [
     "IntegrationDomain",
     "nedelec_element",
     "raviart_thomas_element",
-    "LocalEliminationResult",
     "HDGCondensationPlan",
     "HDGTraceSpace",
     "PartitionedFiniteElementDofMap",
@@ -2292,4 +2396,10 @@ __all__ = [
     "PreparedMPMDynamics",
     "PrescribedGridVelocityPlan",
     "PrescribedGridVelocityResult",
+]
+
+__all__ += [
+    name
+    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all)
+    if name not in __all__
 ]
