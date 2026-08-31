@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added fixed-geometry 3D Laplace DP0 surface Galerkin capacitance solves with
+  explicit weak/strong maps, bounded singular and near-pair quadrature,
+  nonmaterializable blocked actions, immutable conductor selections, physical
+  charge integration, and reuse of the existing direct and QBX layer evaluators.
 - Added fixed-population compatible particle-in-cell dynamics over stable charged
   particle supports: measure-aware endpoint charge, physical cochain E/B gather,
   matrix-free compatible electrostatics, relativistic Boris stepping, periodic

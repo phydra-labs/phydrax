@@ -111,6 +111,22 @@ PDE-certificate and operator-approximation guarantee split.
 
 ---
 
+::: phydrax.operators.LaplaceSingleLayerDP0GalerkinPolicy3D
+
+---
+
+::: phydrax.operators.LaplaceSingleLayerDP0AssemblyReport3D
+
+---
+
+::: phydrax.operators.LaplaceSingleLayerDP0Galerkin3D
+
+---
+
+::: phydrax.operators.prepare_laplace_single_layer_dp0_3d
+
+---
+
 ::: phydrax.operators.AbstractLayerBackend
 
 ---
