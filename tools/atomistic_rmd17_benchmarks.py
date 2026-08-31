@@ -151,7 +151,7 @@ def _parameter_count(potential, /) -> int:
     )
 
 
-def _rotation_evidence(potential, batch):
+def _rotation_evidence(potential, batch, execution):
     one = phx.atomistic.AtomisticBatch(
         np.asarray(batch.atomic_numbers[:1]),
         np.asarray(batch.positions[:1]),
@@ -176,8 +176,8 @@ def _rotation_evidence(potential, batch):
         structure_ids=(one.structure_ids[0] + "/rotated",),
         coordinate_dtype=one.positions.dtype,
     )
-    reference = phx.atomistic.energy_and_forces(potential, one)
-    observed = phx.atomistic.energy_and_forces(potential, rotated)
+    reference = phx.atomistic.energy_and_forces(potential, one, execution)
+    observed = phx.atomistic.energy_and_forces(potential, rotated, execution)
     force_reference = reference.forces @ rotation.T
     return {
         "energy_rotation_defect": float(
@@ -221,8 +221,6 @@ def _gates(metrics):
 def _potential(model_name, dataset, arguments, seed):
     common = {
         "cutoff": arguments.cutoff,
-        "maximum_neighbors": arguments.maximum_neighbors,
-        "maximum_dense_atoms": arguments.maximum_dense_atoms,
         "feature_count": arguments.features,
         "interaction_count": arguments.interactions,
         "radial_basis_count": arguments.radial_basis,
@@ -260,18 +258,18 @@ def _run_model(
     potential = result.best_potential
     compiled = eqx.filter_jit(phx.atomistic.energy_and_forces)
     first_started = time.perf_counter()
-    prediction = compiled(potential, test_batch)
+    prediction = compiled(potential, test_batch, problem.graph_execution)
     jax.block_until_ready(prediction.energy)
     compile_first_seconds = time.perf_counter() - first_started
     steady_started = time.perf_counter()
     for _ in range(arguments.timing_repeats):
-        prediction = compiled(potential, test_batch)
+        prediction = compiled(potential, test_batch, problem.graph_execution)
         jax.block_until_ready(prediction.energy)
     steady_seconds = (time.perf_counter() - steady_started) / arguments.timing_repeats
     metrics = _prediction_metrics(
         prediction, test_energy, test_forces, test_batch.atom_mask
     )
-    metrics.update(_rotation_evidence(potential, test_batch))
+    metrics.update(_rotation_evidence(potential, test_batch, problem.graph_execution))
     metrics.update(
         {
             "training_success": bool(result.successful),
@@ -328,8 +326,13 @@ def _run_seed(dataset, arguments, seed):
         split.validation_indices
     )
     test_batch, test_energy, test_forces = dataset.take(split.test_indices)
+    execution = phx.atomistic.AtomisticGraphExecutionPlan(
+        arguments.maximum_neighbors,
+        maximum_dense_atoms=arguments.maximum_dense_atoms,
+    )
     problem = phx.atomistic.AtomisticTrainingProblem(
         train_batch,
+        execution,
         training_energy=train_energy,
         training_forces=train_forces,
         validation_batch=validation_batch,
@@ -344,9 +347,8 @@ def _run_seed(dataset, arguments, seed):
     )
     graph = phx.atomistic.realize_atomistic_graph(
         test_batch,
+        execution,
         cutoff=arguments.cutoff,
-        maximum_neighbors=arguments.maximum_neighbors,
-        maximum_dense_atoms=arguments.maximum_dense_atoms,
     )
     candidate_per_case = test_batch.atom_capacity * (test_batch.atom_capacity - 1)
     active_total = int(jnp.sum(graph.graph.edge_mask))

@@ -8,6 +8,7 @@ import pytest
 from phydrax.atomistic import (
     AtomicStructure,
     AtomisticBatch,
+    AtomisticGraphExecutionPlan,
     AtomisticScaleContract,
     AtomisticStatus,
     energy_and_forces,
@@ -18,12 +19,17 @@ from phydrax.nn.atomistic import NequIPPotential
 SCALE = AtomisticScaleContract("angstrom", "electronvolt")
 
 
-def _model(*, maximum_neighbors=3, interaction_count=2):
+def _execution(maximum_neighbors=3):
+    return AtomisticGraphExecutionPlan(
+        maximum_neighbors,
+        maximum_dense_atoms=4,
+    )
+
+
+def _model(*, interaction_count=2):
     return NequIPPotential(
         SCALE,
         cutoff=2.5,
-        maximum_neighbors=maximum_neighbors,
-        maximum_dense_atoms=4,
         feature_count=3,
         interaction_count=interaction_count,
         radial_basis_count=4,
@@ -40,7 +46,7 @@ def _structure(positions=None):
 def test_energy_is_rigid_motion_invariant_and_force_is_equivariant():
     model = _model()
     structure = _structure()
-    reference = energy_and_forces(model, structure)
+    reference = energy_and_forces(model, structure, _execution())
     rotation = jnp.asarray([[0.36, -0.48, 0.80], [0.80, 0.60, 0.00], [-0.48, 0.64, 0.60]])
     transformed = AtomicStructure(
         structure.atomic_numbers,
@@ -48,7 +54,7 @@ def test_energy_is_rigid_motion_invariant_and_force_is_equivariant():
         structure.masses,
         SCALE,
     )
-    observed = energy_and_forces(model, transformed)
+    observed = energy_and_forces(model, transformed, _execution())
     np.testing.assert_allclose(observed.energy, reference.energy, rtol=3e-10, atol=3e-10)
     np.testing.assert_allclose(
         observed.forces[0], reference.forces[0] @ rotation.T, rtol=3e-9, atol=3e-9
@@ -61,11 +67,15 @@ def test_energy_is_rigid_motion_invariant_and_force_is_equivariant():
 def test_conservative_force_matches_energy_finite_difference():
     model = _model(interaction_count=1)
     batch = AtomisticBatch.from_structure(_structure())
-    prediction = energy_and_forces(model, batch)
+    prediction = energy_and_forces(model, batch, _execution())
     step = 1e-5
     direction = jnp.zeros_like(batch.positions).at[0, 1, 2].set(1.0)
-    plus = model.energy(batch, positions=batch.positions + step * direction)[0]
-    minus = model.energy(batch, positions=batch.positions - step * direction)[0]
+    plus = model.energy(
+        batch, _execution(), positions=batch.positions + step * direction
+    )[0]
+    minus = model.energy(
+        batch, _execution(), positions=batch.positions - step * direction
+    )[0]
     finite_difference = -(plus - minus) / (2.0 * step)
     np.testing.assert_allclose(
         finite_difference, prediction.forces[0, 1, 2], rtol=3e-4, atol=3e-5
@@ -84,7 +94,7 @@ def test_three_atom_energy_is_continuous_when_one_edge_crosses_cutoff():
             [1.0, 12.0, 16.0],
             SCALE,
         )
-        return model(structure)
+        return model(structure, _execution())
 
     step = 1e-7
     below = energy(2.5 - step)
@@ -105,8 +115,8 @@ def test_atom_and_species_permutation_preserves_energy_and_permutes_force():
         SCALE,
         particle_ids=np.asarray(structure.particle_ids)[permutation],
     )
-    reference = energy_and_forces(model, structure)
-    observed = energy_and_forces(model, permuted)
+    reference = energy_and_forces(model, structure, _execution())
+    observed = energy_and_forces(model, permuted, _execution())
     np.testing.assert_allclose(observed.energy, reference.energy, rtol=3e-10, atol=3e-10)
     np.testing.assert_allclose(
         observed.forces[0], reference.forces[0][permutation], rtol=3e-9, atol=3e-9
@@ -118,19 +128,23 @@ def test_padding_is_masked_and_neighbor_overflow_fails_closed_without_truncation
     hydrogen = AtomicStructure([1], [[0.0, 0.0, 0.0]], [1.0], SCALE)
     water = _structure()
     batch = AtomisticBatch.from_structures((hydrogen, water), atom_capacity=4)
-    batched = energy_and_forces(model, batch)
-    np.testing.assert_allclose(batched.energy[0], model(hydrogen), rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(batched.energy[1], model(water), rtol=1e-12, atol=1e-12)
+    batched = energy_and_forces(model, batch, _execution())
+    np.testing.assert_allclose(
+        batched.energy[0], model(hydrogen, _execution()), rtol=1e-12, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        batched.energy[1], model(water, _execution()), rtol=1e-12, atol=1e-12
+    )
     np.testing.assert_allclose(batched.atom_energy[~batch.atom_mask], 0.0, atol=0.0)
     np.testing.assert_allclose(batched.forces[~batch.atom_mask], 0.0, atol=0.0)
 
-    overflow_model = _model(maximum_neighbors=0)
-    overflow = energy_and_forces(overflow_model, water)
+    overflow_model = _model()
+    overflow = energy_and_forces(overflow_model, water, _execution(0))
     assert not bool(overflow.valid[0])
     assert int(overflow.status[0]) == int(AtomisticStatus.NEIGHBOR_OVERFLOW)
     assert bool(jnp.isnan(overflow.energy[0]))
     with pytest.raises(Exception, match="overflow"):
-        overflow_model(water)
+        overflow_model(water, _execution(0))
 
 
 def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps():
@@ -150,8 +164,8 @@ def test_nonfinite_padding_geometry_is_sanitized_before_radial_and_angular_maps(
         SCALE,
         active_mask=[True, True, False, False],
     )
-    observed = energy_and_forces(model, padded)
-    expected = energy_and_forces(model, reference)
+    observed = energy_and_forces(model, padded, _execution())
+    expected = energy_and_forces(model, reference, _execution())
     assert bool(observed.valid[0])
     assert bool(jnp.all(jnp.isfinite(observed.energy)))
     assert bool(jnp.all(jnp.isfinite(observed.forces)))
@@ -178,17 +192,20 @@ def test_radial_modulation_has_one_output_per_actual_tensor_product_weight():
 def test_jit_position_vjp_and_second_parameter_derivative_are_finite():
     model = _model(interaction_count=1)
     batch = AtomisticBatch.from_structure(_structure())
-    compiled = jax.jit(lambda position: model.energy(batch, positions=position))
+    compiled = jax.jit(
+        lambda position: model.energy(batch, _execution(), positions=position)
+    )
     energy = compiled(batch.positions)
     assert energy.shape == (1,)
     _, pullback = jax.vjp(
-        lambda position: model.energy(batch, positions=position), batch.positions
+        lambda position: model.energy(batch, _execution(), positions=position),
+        batch.positions,
     )
     assert pullback(jnp.ones_like(energy))[0].shape == batch.positions.shape
 
     def embedding_energy(embedding):
         candidate = eqx.tree_at(lambda value: value.embedding, model, embedding)
-        return jnp.sum(candidate.energy(batch))
+        return jnp.sum(candidate.energy(batch, _execution()))
 
     gradient = jax.grad(embedding_energy)
     first = gradient(model.embedding)
@@ -207,13 +224,11 @@ def test_periodic_metadata_and_tensor_product_resource_overflow_are_rejected():
         periodic_axes=[True, False, False],
     )
     with pytest.raises(ValueError, match="nonperiodic"):
-        energy_and_forces(_model(), periodic)
+        energy_and_forces(_model(), periodic, _execution())
     with pytest.raises(ValueError, match="parameters"):
         NequIPPotential(
             SCALE,
             cutoff=2.5,
-            maximum_neighbors=3,
-            maximum_dense_atoms=4,
             feature_count=3,
             interaction_count=1,
             radial_basis_count=4,
