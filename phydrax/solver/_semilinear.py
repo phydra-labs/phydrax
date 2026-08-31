@@ -293,6 +293,8 @@ def _resolved_specialization(
     )
     if reason is not None:
         return None, reason
+    if any(term.representation != "dense" for term in spde.problem.wiener_terms):
+        return None, "semilinear specialization requires dense Wiener coefficients"
     if scheme == "exponential_euler":
         return scheme, None
     if not spde.problem.stochastic:
@@ -314,7 +316,7 @@ def _diffusion_columns(
     state_shape = tuple(state.shape)
     columns = []
     for term in problem.wiener_terms:
-        value = jnp.asarray(term.coefficient(time, state, problem.args))
+        value = term.coefficient_array(time, state, problem.args)
         expected = state_shape + term.noise_shape
         if tuple(value.shape) != expected:
             raise ValueError(

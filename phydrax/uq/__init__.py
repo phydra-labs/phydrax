@@ -48,7 +48,7 @@ from .._likelihoods import (
     ScalarNaturalExponentialFamilyLikelihood,
     StudentTLikelihood,
 )
-from .._probability import AbstractProbabilityLaw
+from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
 from ..linalg._gaussian_chain import (
     combine_gaussian_filter_elements,
     combine_gaussian_information_elements,
@@ -919,6 +919,7 @@ __all__ = [
     "Normal",
     "Uniform",
     "AbstractProbabilityLaw",
+    "DiagonalNormalLaw",
     "DirichletFamily",
     "AbstractExponentialFamily",
     "BernoulliFamily",

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added full-rank Euclidean VP/VE score diffusion with structured diagonal Gaussian
+  laws, exact perturbation marginals, weighted denoising score matching, replayable
+  reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
+  initial states, and memory-linear diagonal Wiener coefficients. Replaced the
+  flow-specific `FlowMatchingPolicy` with shared `UniformTimeSamplingPolicy`.
 - Generalized matrix-free quantum local actions through
   `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
   a clean migration of discrete VMC/TDVP while preserving the connected-action

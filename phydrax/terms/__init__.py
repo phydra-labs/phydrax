@@ -40,6 +40,14 @@ from ._deep_splitting import (
     DeepSplittingRegressionDiagnostics,
     DeepSplittingRegressionTerm,
 )
+from ._denoising_score_matching import (
+    DenoisingScoreDataProvider,
+    DenoisingScoreMatchingBatch,
+    DenoisingScoreMatchingDiagnostics,
+    DenoisingScoreMatchingTerm,
+    DenoisingScoreSamplingMode,
+    DenoisingScoreWeighting,
+)
 from ._dense_classification import (
     DenseOverlapClassificationTerm,
     DenseSiteClassificationBatch,
@@ -60,7 +68,6 @@ from ._flow_matching import (
     FlowEndpointProvider,
     FlowMatchingBatch,
     FlowMatchingDiagnostics,
-    FlowMatchingPolicy,
     FlowMatchingSamplingMode,
     FlowMatchingTerm,
     ManifoldFlowMatchingMetric,
@@ -134,6 +141,7 @@ from ._score_matching import (
     ScoreSampleProvider,
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
+from ._time_sampling import UniformTimeSamplingPolicy
 from ._topology import FrozenTopologyTerm
 from ._trajectory_classification import (
     RaggedTimeSeriesClassificationBatch,
@@ -190,6 +198,12 @@ __all__ = [
     "DeepSplittingPredictor",
     "DeepSplittingRegressionDiagnostics",
     "DeepSplittingRegressionTerm",
+    "DenoisingScoreDataProvider",
+    "DenoisingScoreMatchingBatch",
+    "DenoisingScoreMatchingDiagnostics",
+    "DenoisingScoreMatchingTerm",
+    "DenoisingScoreSamplingMode",
+    "DenoisingScoreWeighting",
     "DifferentialPhysicsInformedOperatorTerm",
     "EmpiricalSinkhornDivergenceTerm",
     "FactorizedVariationalEigenspaceResult",
@@ -207,7 +221,6 @@ __all__ = [
     "DenseSiteClassificationTerm",
     "FlowMatchingBatch",
     "FlowMatchingDiagnostics",
-    "FlowMatchingPolicy",
     "FlowMatchingSamplingMode",
     "FlowMatchingTerm",
     "free_boundary_term_suite",
@@ -258,6 +271,7 @@ __all__ = [
     "ScoreMatchingPolicy",
     "ScoreMatchingSamplingMode",
     "ScoreMatchingTerm",
+    "UniformTimeSamplingPolicy",
     "SlicedWassersteinTerm",
     "VariationalEigenspace",
     "VariationalEigenspaceEvaluation",
