@@ -574,6 +574,10 @@ from ._jump_delay import (
     JumpDelayProblem,
     solve_jump_delay,
 )
+from ._laplace_capacitance import (
+    LaplaceCapacitanceResult3D,
+    solve_laplace_capacitance_3d,
+)
 from ._lattice_boltzmann import LatticeBoltzmannFixedStepMethod
 from ._levy import (
     LevySDEProblem,
@@ -1818,6 +1822,8 @@ __all__ = [
     "weak_observable_estimate",
     "FunctionalSolver",
     "InteriorLaplaceDirichletResult",
+    "LaplaceCapacitanceResult3D",
+    "solve_laplace_capacitance_3d",
     "LinearTrialSpaceResult",
     "solve_linear_trial_space",
     "solve_interior_laplace_dirichlet_2d",

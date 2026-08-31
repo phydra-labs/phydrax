@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Added fixed-geometry 3D Laplace DP0 surface Galerkin capacitance solves with
+  explicit weak/strong maps, bounded singular and near-pair quadrature,
+  nonmaterializable blocked actions, immutable conductor selections, physical
+  charge integration, and reuse of the existing direct and QBX layer evaluators.
 - Added fixed-capacity two- and three-dimensional vortex methods with
   Gaussian free-space direct fields, periodic vortex-in-cell inversion,
   conservative particle-strength exchange, classic stretching, regularized

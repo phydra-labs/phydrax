@@ -422,6 +422,7 @@ nav:
             - Balance laws and constrained flow: "api/solver/balance_laws.md"
             - Advanced multiphysics: "api/solver/advanced_multiphysics.md"
             - Maxwell: "api/solver/maxwell.md"
+            - 3D Laplace capacitance: "api/solver/laplace_capacitance.md"
             - Non-Markovian and many-body quantum systems: "api/solver/nonmarkov_manybody.md"
             - Production open quantum systems: "api/solver/production_open_quantum.md"
             - Hardened open quantum systems: "api/solver/hardened_open_quantum.md"

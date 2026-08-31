@@ -1,6 +1,7 @@
 *.html
 *.csv
 *.txt
+!LICENSES/BEMPP-CL-MIT.txt
 !LICENSES/FMMAX-MIT.txt
 !LICENSES/IREE-APACHE-2.0.txt
 !LICENSES/MODEPY-MIT.txt
@@ -41,6 +42,7 @@ benchmarks/*
 !benchmarks/direct_collocation_ipopt.json
 !benchmarks/direct_collocation_qualification.json
 !benchmarks/integral_physics.json
+!benchmarks/laplace_capacitance.json
 !benchmarks/hp_spectral_element.json
 !benchmarks/spectral_hp_completion.json
 !benchmarks/map_gp_search.json

@@ -1,0 +1,123 @@
+{
+  "backend": "cpu",
+  "benchmark": "laplace-capacitance-3d",
+  "jax_version": "0.9.1",
+  "passed": true,
+  "records": [
+    {
+      "action_seconds": 0.9766772500006482,
+      "action_workspace_bytes_per_rhs": 135584,
+      "capacitance": [
+        [
+          5.055348438373338
+        ]
+      ],
+      "case": "tetrahedron",
+      "components": 1,
+      "conductors": 1,
+      "dense_action_error": 1.1102230246251565e-16,
+      "dense_oracle_bytes": 128,
+      "exception_count": 16,
+      "faces": 4,
+      "linear_statuses": [
+        0
+      ],
+      "pair_counts": [
+        4,
+        12,
+        0,
+        0,
+        0
+      ],
+      "passed": true,
+      "preparation_seconds": 13.488569583001663,
+      "preparation_workspace_bytes": 150832,
+      "reciprocity_defect": 0.0,
+      "relative_residuals": [
+        1.9229626863835638e-16
+      ],
+      "resident_bytes": 2496,
+      "solve_seconds": 4.598850999998831,
+      "sphere_relative_capacitance_error": null
+    },
+    {
+      "action_seconds": 1.397919750001165,
+      "action_workspace_bytes_per_rhs": 534080,
+      "capacitance": [
+        [
+          5.149097161309369,
+          -0.690543336635014
+        ],
+        [
+          -0.6905445784091293,
+          5.149052405821537
+        ]
+      ],
+      "case": "two-tetrahedra",
+      "components": 2,
+      "conductors": 2,
+      "dense_action_error": 0.0,
+      "dense_oracle_bytes": 512,
+      "exception_count": 32,
+      "faces": 8,
+      "linear_statuses": [
+        0,
+        0
+      ],
+      "pair_counts": [
+        8,
+        24,
+        0,
+        0,
+        32
+      ],
+      "passed": true,
+      "preparation_seconds": 14.0542407920002,
+      "preparation_workspace_bytes": 151664,
+      "reciprocity_defect": 2.4116346544076365e-07,
+      "relative_residuals": [
+        6.567729976069755e-15,
+        6.173037640148417e-15
+      ],
+      "resident_bytes": 4992,
+      "solve_seconds": 5.891188459001569,
+      "sphere_relative_capacitance_error": null
+    },
+    {
+      "action_seconds": 0.4596332920009445,
+      "action_workspace_bytes_per_rhs": 534176,
+      "capacitance": [
+        [
+          10.72520351923021
+        ]
+      ],
+      "case": "icosphere",
+      "components": 1,
+      "conductors": 1,
+      "dense_action_error": 2.220446049250313e-16,
+      "dense_oracle_bytes": 3200,
+      "exception_count": 376,
+      "faces": 20,
+      "linear_statuses": [
+        0
+      ],
+      "pair_counts": [
+        20,
+        60,
+        120,
+        176,
+        24
+      ],
+      "passed": true,
+      "preparation_seconds": 22.957640333999734,
+      "preparation_workspace_bytes": 166000,
+      "reciprocity_defect": 0.0,
+      "relative_residuals": [
+        6.050929501616002e-09
+      ],
+      "resident_bytes": 20768,
+      "solve_seconds": 3.9914650000027905,
+      "sphere_relative_capacitance_error": 0.14651542212396018
+    }
+  ]
+}
