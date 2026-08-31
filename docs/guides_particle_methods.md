@@ -84,6 +84,15 @@ to nodal, cell, face, or edge layouts. Extensive deposition, intensive
 reconstruction, grid-to-particle gather, route moments, support truncation,
 balance evidence, and piecewise routing derivatives share one prepared contract.
 
+## Material point method
+
+[Explicit MPM](guides_material_point_method.md) binds a prepared nodal quadratic
+B-spline splat to fixed material particles. Matched APIC transfer, first-Piola
+reference-volume forces, transactional USL state, prescribed grid velocities,
+stability evidence, and fixed-temporal replay form one method-specific contract.
+Splatting remains the reusable data plane and does not independently claim MPM
+solver semantics.
+
 ## Fluid method families
 
 Conservative barotropic SPH compiles position and canonical momentum to a

@@ -58,8 +58,9 @@ gradient sum   = sum_r d(weight[r]) / d(position)
 ```
 
 On a complete periodic assignment, partition defect, first moment, and gradient sum vanish up to the
-declared precision. These quantities are evidence and building blocks for later PIC, MPM, APIC, and
-immersed-boundary methods; splatting does not itself claim those solver semantics.
+declared precision. These quantities support PIC, APIC, immersed-boundary methods,
+and the qualified [Material Point Method](guides_material_point_method.md); splatting
+does not itself claim those solver semantics.
 
 ## Extensive content and density
 
@@ -96,6 +97,26 @@ used explicitly to derive density.
 defect, partition defect, route count, tolerance, and the exact policy and support/measure identities
 behind the claim. `require_closed_conservation` fails unless the result has complete support and
 satisfies the numerical balance contract.
+
+## Unweighted route payloads
+
+`scatter_route_payload` reduces one already weighted value per particle route:
+
+```text
+target[j] = sum_(i,r: route(i,r)=j) payload[i,r].
+```
+
+The payload must begin with `(particle_capacity, route_width)`. The caller owns every
+coefficient in that payload; splatting does not multiply by assignment weights a second
+time. This is the low-level prepared operation needed by affine particle momentum,
+shape-gradient force, and similar methods whose contribution varies across one
+particle's routes.
+
+The result retains valid-route count, execution-policy identity, precision-policy
+identity, and success. It does not fabricate extensive-balance evidence: arbitrary
+route payloads need a method-specific conservation or action/reaction ledger.
+Fast, deterministic, and compensated modes use the same reduction semantics as
+ordinary content deposition.
 
 ## Intensive reconstruction
 

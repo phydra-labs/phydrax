@@ -33,6 +33,8 @@ class ParticleSplatBenchmarkCase:
     actual_workspace_bytes: int
     compile_and_first_ms: float
     steady_ms: float
+    route_scatter_steady_ms: float | None
+    route_scatter_parity_error: float | None
     contributions_per_second: float
     payload_values_per_second: float
     maximum_balance_defect: float
@@ -61,6 +63,12 @@ class ParticleSplatBenchmarkReport:
             and max(case.maximum_first_moment_defect for case in self.cases) < 1e-9
             and max(case.maximum_gradient_sum_defect for case in self.cases) < 1e-9
             and max(case.parity_error for case in self.cases) < 1e-9
+            and max(
+                case.route_scatter_parity_error
+                for case in self.cases
+                if case.route_scatter_parity_error is not None
+            )
+            < 1e-9
         )
 
 
@@ -140,6 +148,12 @@ def _run_case(
         state = prepared.build(current_position)
         return prepared.deposit_content(state, current_content), state
 
+    @jax.jit
+    def scatter_routes(current_position, current_content):
+        state = prepared.build(current_position)
+        payload = state.stencil.weights[..., None] * current_content[:, None, :]
+        return prepared.scatter_route_payload(state, payload)
+
     started = perf_counter()
     first, first_state = apply(position, content)
     jax.block_until_ready(first.content)
@@ -151,6 +165,17 @@ def _run_case(
         result, state = apply(position, content)
     jax.block_until_ready(result.content)
     steady_ms = (perf_counter() - started) * 1e3 / repetitions
+    route_scatter_ms = None
+    route_scatter_parity = None
+    if accumulation != "compensated":
+        scattered = scatter_routes(position, content)
+        jax.block_until_ready(scattered.values)
+        started = perf_counter()
+        for _ in range(repetitions):
+            scattered = scatter_routes(position, content)
+        jax.block_until_ready(scattered.values)
+        route_scatter_ms = (perf_counter() - started) * 1e3 / repetitions
+        route_scatter_parity = float(jnp.max(jnp.abs(scattered.values - result.content)))
     parity = (
         0.0 if reference is None else float(jnp.max(jnp.abs(result.content - reference)))
     )
@@ -174,6 +199,8 @@ def _run_case(
         steady_ms=steady_ms,
         contributions_per_second=route_count / (steady_ms * 1e-3),
         payload_values_per_second=(route_count * payload_width) / (steady_ms * 1e-3),
+        route_scatter_steady_ms=route_scatter_ms,
+        route_scatter_parity_error=route_scatter_parity,
         maximum_balance_defect=float(result.balance.maximum_absolute_balance_defect),
         maximum_partition_defect=float(result.balance.maximum_partition_defect),
         maximum_first_moment_defect=float(
@@ -205,6 +232,9 @@ def run_particle_splat_benchmark(*, smoke: bool = False):
             (3, 8192, 64, "bspline3", 4, True),
         )
     )
+    accumulation_modes = (
+        ("fast", "deterministic", "compensated") if smoke else ("fast", "deterministic")
+    )
     cases = []
     for (
         dimension,
@@ -215,7 +245,7 @@ def run_particle_splat_benchmark(*, smoke: bool = False):
         cell_primary,
     ) in configurations:
         reference = None
-        for accumulation in ("fast", "deterministic", "compensated"):
+        for accumulation in accumulation_modes:
             case, output = _run_case(
                 dimension,
                 particle_count,
@@ -229,6 +259,18 @@ def run_particle_splat_benchmark(*, smoke: bool = False):
             if reference is None:
                 reference = output
             cases.append(case)
+    if not smoke:
+        compensated, _ = _run_case(
+            1,
+            64,
+            32,
+            "multilinear",
+            1,
+            "compensated",
+            None,
+            cell_primary=False,
+        )
+        cases.append(compensated)
     return ParticleSplatBenchmarkReport(
         maturity="experimental",
         phydrax_version=version("phydrax"),

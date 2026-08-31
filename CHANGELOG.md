@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added fixed-capacity explicit Material Point Method dynamics for plane-strain and
+  three-dimensional Neo-Hookean solids: nodal quadratic B-splines, matched APIC
+  transfer, first-Piola reference-volume forces, transactional USL updates,
+  support-halo and prescribed-velocity boundaries, acoustic/advective/force step
+  evidence, full/step/block replay, final/checkpoint/trajectory retention, and
+  piecewise-versus-frozen gradient reports. Corrected logarithmic Neo-Hookean
+  parameter naming so its volumetric coefficient is Lamé lambda, with an explicit
+  physical shear/bulk constructor.
 - Added bounded and periodic unit-density MAC incompressible dynamics with static
   no-slip wall closure, face-dual velocity coordinates, symmetry-preserving momentum
   transport, conservative explicit viscosity, transform-or-iterative stage

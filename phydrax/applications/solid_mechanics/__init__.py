@@ -36,6 +36,7 @@ from ._force_density_loads import (
     SurfacePressureLoadModel,
 )
 from ._force_density_topology import ForceDensityStructure
+from ._material_point import NeoHookeanMPMConstitutivePlan
 from ._models import (
     j2_radial_return,
     J2PlasticityParameters,
@@ -43,6 +44,7 @@ from ._models import (
     J2PlasticityUpdate,
     neo_hookean_first_piola,
     neo_hookean_form,
+    neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
 from ._topology import (
@@ -85,6 +87,7 @@ __all__ = [
     "J2PlasticityState",
     "J2PlasticityUpdate",
     "NeoHookeanParameters",
+    "NeoHookeanMPMConstitutivePlan",
     "PreparedDensityFilter",
     "PreparedForceDensitySolve",
     "SIMPInterpolation",
@@ -95,6 +98,7 @@ __all__ = [
     "force_density_load_path",
     "j2_radial_return",
     "neo_hookean_first_piola",
+    "neo_hookean_reference_energy",
     "neo_hookean_form",
     "plan_force_density",
     "prepare_force_density",
