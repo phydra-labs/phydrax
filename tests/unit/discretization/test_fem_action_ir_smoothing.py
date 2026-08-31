@@ -173,7 +173,7 @@ def test_time_law_schedule_and_uniform_refinement_are_transactional():
 def test_element_partial_and_p_transfer_operators_are_consistent():
     local_matrix = jnp.asarray([[[2.0, -1.0], [-1.0, 2.0]], [[2.0, -1.0], [-1.0, 2.0]]])
     gathers = jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32)
-    element = phx.equations.fem.ElementTensorOperator(
+    element = phx.sparse.ElementTensorOperator(
         local_matrix, gathers, gathers, 3, 3
     )
     value = jnp.asarray([1.0, 2.0, 3.0])

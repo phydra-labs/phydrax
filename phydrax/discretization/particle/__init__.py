@@ -57,6 +57,7 @@ from ._cell_list import (
     CellListParticleNeighborhoodPlan,
     PreparedCellListParticleNeighborhood,
 )
+from ._charged import ChargedParticlePlan, PreparedChargedParticles
 from ._convex_contact import (
     convex_sat_contact,
     ConvexContactResult,
@@ -438,10 +439,30 @@ from ._rigid_body import (
     RigidBodyStateGeometry,
     RigidBodyStepResult,
 )
+from ._rigid_constraint_dynamics import (
+    PreparedRigidConstraintDynamics,
+    RigidConstraintDiagnostics,
+    RigidConstraintDynamicsPlan,
+    RigidConstraintEvaluation,
+    RigidConstraintRejectionReason,
+    RigidConstraintSolverPlan,
+    RigidConstraintState,
+    RigidConstraintStepResult,
+)
 from ._rigid_contact import (
     clump_component_contact_geometry,
     RigidContactGeometry,
     sphere_contact_adapter,
+)
+from ._rigid_joints import (
+    BallJointSetPlan,
+    FixedJointSetPlan,
+    HingeJointSetPlan,
+    PreparedRigidJointGraph,
+    rigid_joint_maximum_residual,
+    RigidJointGraphPlan,
+    RigidJointMultipliers,
+    RigidJointResiduals,
 )
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
@@ -733,6 +754,8 @@ __all__ = [
     "ParticleBox",
     "ParticleCell",
     "ParticleDiscretization",
+    "ChargedParticlePlan",
+    "PreparedChargedParticles",
     "ParticleExecutionPolicy",
     "ParticlePairGeometry",
     "ParticlePairRelation",
@@ -872,6 +895,21 @@ __all__ = [
     "PreparedFixedBondGraph",
     "PreparedHierarchicalRadiusParticleNeighborhood",
     "PreparedParticleGridTransfer",
+    "BallJointSetPlan",
+    "FixedJointSetPlan",
+    "HingeJointSetPlan",
+    "PreparedRigidConstraintDynamics",
+    "PreparedRigidJointGraph",
+    "RigidConstraintDiagnostics",
+    "RigidConstraintDynamicsPlan",
+    "RigidConstraintEvaluation",
+    "RigidConstraintRejectionReason",
+    "RigidConstraintSolverPlan",
+    "RigidConstraintState",
+    "RigidConstraintStepResult",
+    "RigidJointGraphPlan",
+    "RigidJointMultipliers",
+    "RigidJointResiduals",
     "PreparedRigidBodySet",
     "PreparedRigidSphereClumpSet",
     "PreparedTriangleWall",
@@ -909,6 +947,7 @@ __all__ = [
     "quaternion_rotation_matrix",
     "reduce_clump_component_loads",
     "rigid_body_angular_acceleration",
+    "rigid_joint_maximum_residual",
     "rigid_body_kick_drift_kick",
     "sphere_contact_adapter",
     "sphere_implicit_contact",
