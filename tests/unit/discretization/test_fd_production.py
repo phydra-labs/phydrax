@@ -179,17 +179,19 @@ def test_prepared_maxwell_preserves_constraints_and_material_gradients():
         jnp.cos(jnp.arange(degree_zero, dtype=float) / 5.0),
     )
 
-    def current_source(time, coordinates, args):
-        del coordinates
-        return args["amplitude"] * jnp.cos(time) * current
-
+    source = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
+        jnp.arange(degree_one),
+        current,
+        envelope=lambda time, args: jnp.cos(time),
+        control_key="amplitude",
+    )
     maxwell = phx.solver.CompatibleMaxwellPlan(
         bridge,
         constitutive=phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(
             permittivity=permittivity,
             permeability=permeability,
         ),
-        current_source=current_source,
+        sources=(source,),
     ).prepare()
     state = maxwell.pack(permittivity * electric, magnetic, charge)
     step_size = 0.1 * maxwell.stable_dt

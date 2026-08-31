@@ -35,6 +35,7 @@ from ._evolution import (
 )
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import InputLayout, InputRole, StateLayout
+from ._linear_descriptor import DescriptorSystemEvidence, LinearDescriptorSystem
 from ._linearization import EvolutionJacobianAction
 from ._model_system import (
     continuous_model_system,
@@ -91,6 +92,7 @@ __all__ = [
     "DAEStructure",
     "DifferentialAlgebraicResidual",
     "DifferentialAlgebraicSystem",
+    "DescriptorSystemEvidence",
     "DiscreteEvolution",
     "DiscreteModelTransition",
     "DiscreteSystem",
@@ -107,6 +109,7 @@ __all__ = [
     "InputContinuousVectorField",
     "InputDiscreteTransition",
     "InputLayout",
+    "LinearDescriptorSystem",
     "InputAlignment",
     "InputRole",
     "IterationGrid",
