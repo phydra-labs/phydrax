@@ -180,6 +180,8 @@ from ._lattice_boltzmann_free_energy import *  # noqa: F403
 from ._lattice_boltzmann_free_energy import (
     __all__ as _lattice_boltzmann_free_energy_all,
 )
+from ._lattice_boltzmann_profiles import *  # noqa: F403
+from ._lattice_boltzmann_profiles import __all__ as _lattice_boltzmann_profiles_all
 from ._lattice_boltzmann_species import *  # noqa: F403
 from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
 from ._lattice_boltzmann_thermal import *  # noqa: F403
@@ -356,6 +358,13 @@ from ._stencil_compile import (
     CompiledStencilDynamics,
     StencilStateLayout,
 )
+from ._thermodynamics import (
+    AbstractKineticThermodynamicClosure,
+    BinaryPhaseThermodynamicClosure,
+    BinaryThermodynamicLocalFields,
+    BinaryThermodynamicParameters,
+    ThermodynamicForceRepresentation,
+)
 from ._tokens import (
     pad_pde_tokens,
     PDE_OPERATOR_VOCABULARY,
@@ -381,15 +390,15 @@ from ._variational import (
     SourceAction,
     VariationalCoefficient,
 )
-from ._weakly_compressible import (
-    compile_weakly_compressible_sph_problem,
-    CompiledWeaklyCompressibleSPHProblem,
-    WeaklyCompressibleFluidProblemIR,
-)
 from ._vortex_particles import (
     compile_vortex_particle_flow,
     CompiledVortexParticleFlow,
     VortexParticleFlowProblem,
+)
+from ._weakly_compressible import (
+    compile_weakly_compressible_sph_problem,
+    CompiledWeaklyCompressibleSPHProblem,
+    WeaklyCompressibleFluidProblemIR,
 )
 from .fem import FiniteElementMassPolicy
 from .trefftz import (
@@ -844,6 +853,7 @@ __all__ += [
         *_discrete_velocity_all,
         *_lattice_boltzmann_colour_gradient_all,
         *_lattice_boltzmann_free_energy_all,
+        *_lattice_boltzmann_profiles_all,
         *_lattice_boltzmann_species_all,
         *_lattice_boltzmann_thermal_all,
     )
@@ -875,6 +885,11 @@ __all__ += [
     "double_well_chemical_derivative",
     "double_well_free_energy_density",
     "evaluate_binary_free_energy",
+    "AbstractKineticThermodynamicClosure",
+    "BinaryPhaseThermodynamicClosure",
+    "BinaryThermodynamicLocalFields",
+    "BinaryThermodynamicParameters",
+    "ThermodynamicForceRepresentation",
 ]
 
 __all__ += [

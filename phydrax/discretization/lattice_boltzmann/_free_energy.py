@@ -13,29 +13,28 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._phase_field import (
-    double_well_chemical_derivative,
-    double_well_free_energy_density,
-)
 from ..._strict import StrictModule
+from ..._thermodynamics import (
+    AbstractKineticThermodynamicClosure,
+    BinaryThermodynamicParameters,
+    ThermodynamicForceRepresentation,
+)
 from ..._trainable import NonTrainableState
 from ._boundary import PreparedLatticeBoltzmannBoundary
 from ._collision import macroscopic_raw_moments, quadratic_equilibrium
 from ._discretization import LatticeBoltzmannDiscretization
-from ._interfacial import (
-    isotropic_divergence,
-    isotropic_gradient,
-    isotropic_laplacian,
-    korteweg_stress,
-    natural_wetting_gradient,
-)
 from ._lattice import LatticeBoltzmannVelocitySet
 from ._method import (
     LatticeBoltzmannMethodPlan,
     PreparedLatticeBoltzmannMethodPlan,
 )
 from ._precision import LatticeBoltzmannPrecisionPolicy
+from ._program import coupled_population_manifest, KineticProgramManifest
 from ._scaling import LatticeBoltzmannScaling
+from ._thermodynamics import (
+    BinaryKineticThermodynamicFields,
+    PreparedBinaryKineticThermodynamics,
+)
 
 
 class FreeEnergyLBMState(StrictModule):
@@ -46,17 +45,15 @@ class FreeEnergyLBMState(StrictModule):
 
 
 class FreeEnergyLBMRuntimeParameters(StrictModule):
-    """Differentiable free-energy, mobility, viscosity, and wetting controls.
+    """Differentiable transport, thermodynamic, wetting, and wall controls.
 
-    The free-energy coefficients and phase mobility use lattice units. Viscosity
-    and moving-wall velocity use physical units through the compiled scaling.
+    Thermodynamic coefficients and phase mobility use lattice units. Viscosity
+    and moving-wall velocity use physical units through the prepared scaling.
     """
 
     kinematic_viscosity: Array
     phase_mobility: Array
-    bulk_coefficient: Array
-    gradient_coefficient: Array
-    wetting_strength: Array
+    thermodynamics: BinaryThermodynamicParameters
     moving_wall_velocities: Array
     wall_normal: Array
     wetting_mask: Array
@@ -65,36 +62,30 @@ class FreeEnergyLBMRuntimeParameters(StrictModule):
         self,
         kinematic_viscosity: ArrayLike,
         phase_mobility: ArrayLike,
-        bulk_coefficient: ArrayLike,
-        gradient_coefficient: ArrayLike,
+        thermodynamics: BinaryThermodynamicParameters,
         /,
         *,
-        wetting_strength: ArrayLike = 0.0,
         moving_wall_velocities: ArrayLike | None = None,
         wall_normal: ArrayLike | None = None,
         wetting_mask: ArrayLike | None = None,
     ):
         viscosity = jnp.asarray(kinematic_viscosity)
-        if viscosity.shape != () or not jnp.issubdtype(viscosity.dtype, jnp.inexact):
-            raise ValueError("kinematic_viscosity must be one inexact scalar array.")
-        mobility, bulk, gradient, wetting = tuple(
-            jnp.asarray(value, dtype=viscosity.dtype)
-            for value in (
-                phase_mobility,
-                bulk_coefficient,
-                gradient_coefficient,
-                wetting_strength,
+        mobility = jnp.asarray(phase_mobility, dtype=viscosity.dtype)
+        if (
+            viscosity.shape != ()
+            or mobility.shape != ()
+            or not jnp.issubdtype(viscosity.dtype, jnp.inexact)
+        ):
+            raise ValueError(
+                "kinematic_viscosity and phase_mobility must be inexact scalars."
             )
-        )
-        if any(value.shape != () for value in (mobility, bulk, gradient, wetting)):
-            raise ValueError("Free-energy coefficients must be scalar arrays.")
+        if not isinstance(thermodynamics, BinaryThermodynamicParameters):
+            raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
         if (wall_normal is None) != (wetting_mask is None):
             raise ValueError("wall_normal and wetting_mask must be supplied together.")
         self.kinematic_viscosity = viscosity
         self.phase_mobility = mobility
-        self.bulk_coefficient = bulk
-        self.gradient_coefficient = gradient
-        self.wetting_strength = wetting
+        self.thermodynamics = thermodynamics
         self.moving_wall_velocities = (
             jnp.empty((0,), dtype=viscosity.dtype)
             if moving_wall_velocities is None
@@ -116,6 +107,8 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
     """Coupled hydrodynamic and conservative Cahn-Hilliard population method."""
 
     hydrodynamic_method: LatticeBoltzmannMethodPlan
+    thermodynamic_closure: AbstractKineticThermodynamicClosure
+    force_representation: ThermodynamicForceRepresentation = eqx.field(static=True)
     density_floor: float = eqx.field(static=True)
     maximum_absolute_phase: float = eqx.field(static=True)
     minimum_interface_cells: float = eqx.field(static=True)
@@ -128,6 +121,8 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
     def __init__(
         self,
         hydrodynamic_method: LatticeBoltzmannMethodPlan,
+        thermodynamic_closure: AbstractKineticThermodynamicClosure,
+        force_representation: ThermodynamicForceRepresentation,
         /,
         *,
         density_floor: float = 1.0e-12,
@@ -142,6 +137,14 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
             raise TypeError("hydrodynamic_method must be LatticeBoltzmannMethodPlan.")
         if hydrodynamic_method.forcing is None:
             raise ValueError("Free-energy chemical forcing requires a forced LBM method.")
+        if not isinstance(thermodynamic_closure, AbstractKineticThermodynamicClosure):
+            raise TypeError(
+                "thermodynamic_closure must implement AbstractKineticThermodynamicClosure."
+            )
+        if not isinstance(force_representation, ThermodynamicForceRepresentation):
+            raise TypeError(
+                "force_representation must be ThermodynamicForceRepresentation."
+            )
         values = tuple(
             float(value)
             for value in (
@@ -162,6 +165,8 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
         if mach >= 1.0:
             raise ValueError("maximum_mach must be smaller than one.")
         self.hydrodynamic_method = hydrodynamic_method
+        self.thermodynamic_closure = thermodynamic_closure
+        self.force_representation = force_representation
         self.density_floor = rho_floor
         self.maximum_absolute_phase = max_phase
         self.minimum_interface_cells = min_width
@@ -173,6 +178,8 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
             {
                 "kind": "free-energy-lattice-boltzmann-method",
                 "hydrodynamic_method": hydrodynamic_method.method_id,
+                "thermodynamic_closure": thermodynamic_closure.closure_id,
+                "force_representation": force_representation.value,
                 "density_floor": rho_floor,
                 "maximum_absolute_phase": max_phase,
                 "minimum_interface_cells": min_width,
@@ -182,17 +189,6 @@ class FreeEnergyLBMMethod(StrictModule, NonTrainableState):
                 "relative_energy_tolerance": energy_tol,
             }
         )
-
-
-class FreeEnergyPhaseFields(StrictModule):
-    phase: Array
-    gradient: Array
-    laplacian: Array
-    bulk_energy_density: Array
-    gradient_energy_density: Array
-    chemical_potential: Array
-    chemical_force_density: Array
-    korteweg_stress: Array
 
 
 class PhasePopulationMoments(StrictModule):
@@ -215,7 +211,7 @@ class FreeEnergyMacroscopicState(StrictModule):
     density: Array
     velocity: Array
     pressure: Array
-    phase_fields: FreeEnergyPhaseFields
+    phase_fields: BinaryKineticThermodynamicFields
     ledger: FreeEnergyLedger
 
 
@@ -246,7 +242,7 @@ class _FreeEnergyFields(StrictModule):
     density: Array
     raw_momentum: Array
     velocity: Array
-    phase_fields: FreeEnergyPhaseFields
+    phase_fields: BinaryKineticThermodynamicFields
 
 
 def phase_population_moments(
@@ -311,82 +307,18 @@ def phase_relaxation_rate(phase_mobility: ArrayLike, /) -> Array:
     )
 
 
-def free_energy_phase_fields(
-    phase: ArrayLike,
-    velocity_set: LatticeBoltzmannVelocitySet,
-    bulk_coefficient: ArrayLike,
-    gradient_coefficient: ArrayLike,
-    /,
-    *,
-    wall_normal: ArrayLike | None = None,
-    wetting_mask: ArrayLike | None = None,
-    wetting_strength: ArrayLike = 0.0,
-) -> FreeEnergyPhaseFields:
-    """Evaluate bulk energy, natural wetting, chemical potential, force, and stress."""
-
-    phi = jnp.asarray(phase)
-    bulk = jnp.asarray(bulk_coefficient, dtype=phi.dtype)
-    kappa = jnp.asarray(gradient_coefficient, dtype=phi.dtype)
-    if bulk.shape != () or kappa.shape != ():
-        raise ValueError("Free-energy coefficients must be scalar.")
-    bulk = eqx.error_if(
-        bulk,
-        ~jnp.isfinite(bulk) | (bulk <= 0.0),
-        "bulk_coefficient must be finite and positive.",
-    )
-    kappa = eqx.error_if(
-        kappa,
-        ~jnp.isfinite(kappa) | (kappa <= 0.0),
-        "gradient_coefficient must be finite and positive.",
-    )
-    gradient = isotropic_gradient(phi, velocity_set, 1.0)
-    if (wall_normal is None) != (wetting_mask is None):
-        raise ValueError("wall_normal and wetting_mask must be supplied together.")
-    if wall_normal is None:
-        laplacian = isotropic_laplacian(phi, velocity_set, 1.0)
-    elif wetting_mask is not None:
-        gradient = natural_wetting_gradient(
-            phi,
-            gradient,
-            wall_normal,
-            wetting_strength,
-            kappa,
-            wetting_mask,
-        )
-        laplacian = isotropic_divergence(gradient, velocity_set, 1.0)
-    bulk_density = double_well_free_energy_density(phi, bulk)
-    gradient_squared = oe.contract("...d,...d->...", gradient, gradient)
-    gradient_density = 0.5 * kappa * gradient_squared
-    chemical = double_well_chemical_derivative(phi, bulk) - kappa * laplacian
-    force = -phi[..., None] * isotropic_gradient(chemical, velocity_set, 1.0)
-    stress = korteweg_stress(phi, chemical, gradient, bulk, kappa)
-    return FreeEnergyPhaseFields(
-        phi,
-        gradient,
-        laplacian,
-        bulk_density,
-        gradient_density,
-        chemical,
-        force,
-        stress,
-    )
-
-
 def free_energy_surface_tension(
-    bulk_coefficient: ArrayLike, gradient_coefficient: ArrayLike, /
+    closure: AbstractKineticThermodynamicClosure,
+    parameters: BinaryThermodynamicParameters,
+    /,
 ) -> Array:
-    """Return the planar-interface surface tension in lattice units."""
+    """Return the closure-consistent planar surface tension in lattice units."""
 
-    bulk = jnp.asarray(bulk_coefficient)
-    gradient = jnp.asarray(gradient_coefficient, dtype=bulk.dtype)
-    if bulk.shape != () or gradient.shape != ():
-        raise ValueError("Free-energy coefficients must be scalar.")
-    value = 2.0 * jnp.sqrt(2.0 * bulk * gradient) / 3.0
-    return eqx.error_if(
-        value,
-        ~jnp.isfinite(bulk) | ~jnp.isfinite(gradient) | (bulk <= 0.0) | (gradient <= 0.0),
-        "Free-energy coefficients must be finite and positive.",
-    )
+    if not isinstance(closure, AbstractKineticThermodynamicClosure):
+        raise TypeError("closure must implement AbstractKineticThermodynamicClosure.")
+    if not isinstance(parameters, BinaryThermodynamicParameters):
+        raise TypeError("parameters must be BinaryThermodynamicParameters.")
+    return closure.planar_surface_tension(parameters)
 
 
 class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
@@ -396,6 +328,8 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
     scaling: LatticeBoltzmannScaling
     method: FreeEnergyLBMMethod
     hydrodynamic_method: PreparedLatticeBoltzmannMethodPlan
+    thermodynamics: PreparedBinaryKineticThermodynamics
+    program_manifest: KineticProgramManifest
     boundary: PreparedLatticeBoltzmannBoundary
     prepared_id: str = eqx.field(static=True)
 
@@ -428,10 +362,26 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             discretization.velocity_set,
             discretization.precision,
         )
+        thermodynamics = PreparedBinaryKineticThermodynamics(
+            method.thermodynamic_closure,
+            discretization.velocity_set,
+            method.force_representation,
+        )
+        program_manifest = coupled_population_manifest(
+            "free_energy_lattice_boltzmann",
+            discretization.velocity_set.lattice_id,
+            discretization.precision.policy_id,
+            discretization.velocity_set.population_count,
+            discretization.velocity_set.dimension,
+            ("hydrodynamic_populations", "phase_populations"),
+            (("mixture_mass", "momentum"), ("phase_mass",)),
+        )
         self.discretization = discretization
         self.scaling = scaling
         self.method = method
         self.hydrodynamic_method = hydrodynamic_method
+        self.thermodynamics = thermodynamics
+        self.program_manifest = program_manifest
         self.boundary = boundary
         self.prepared_id = canonical_fingerprint(
             {
@@ -440,6 +390,8 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
                 "scaling": scaling.scaling_id,
                 "method": method.method_id,
                 "prepared_hydrodynamic_method": hydrodynamic_method.method_id,
+                "thermodynamics": thermodynamics.prepared_id,
+                "program_manifest": program_manifest.manifest_id,
                 "boundary": boundary.boundary_id,
             }
         )
@@ -461,12 +413,9 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
 
     def _wetting_data(
         self, parameters: FreeEnergyLBMRuntimeParameters, dtype, /
-    ) -> tuple[Array | None, Array | None, Array, Array]:
-        strength = jnp.asarray(parameters.wetting_strength, dtype=dtype)
-        strength_valid = jnp.isfinite(strength)
-        safe_strength = jnp.where(strength_valid, strength, 0.0)
+    ) -> tuple[Array | None, Array | None, Array]:
         if parameters.wetting_mask.size == 0:
-            return None, None, safe_strength, strength_valid
+            return None, None, jnp.asarray(True)
         shape = self.discretization.grid.shape
         dimension = self.discretization.velocity_set.dimension
         if parameters.wetting_mask.shape != shape:
@@ -479,18 +428,28 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
         normal_valid = jnp.all(jnp.isfinite(wall), axis=-1) & (norm > 0.0)
         fallback = jnp.zeros_like(wall).at[..., 0].set(1.0)
         safe_wall = jnp.where((~mask | normal_valid)[..., None], wall, fallback)
-        valid = strength_valid & jnp.all(~mask | normal_valid)
-        return safe_wall, mask, safe_strength, valid
+        return safe_wall, mask, jnp.all(~mask | normal_valid)
 
-    def _safe_coefficients(
+    def _safe_thermodynamics(
         self, parameters: FreeEnergyLBMRuntimeParameters, dtype, /
-    ) -> tuple[Array, Array, Array]:
-        bulk = jnp.asarray(parameters.bulk_coefficient, dtype=dtype)
-        gradient = jnp.asarray(parameters.gradient_coefficient, dtype=dtype)
+    ) -> tuple[BinaryThermodynamicParameters, Array]:
+        values = parameters.thermodynamics
+        bulk = jnp.asarray(values.bulk_scale, dtype=dtype)
+        gradient = jnp.asarray(values.gradient_coefficient, dtype=dtype)
+        wetting = jnp.asarray(values.wetting_strength, dtype=dtype)
         valid = (
-            jnp.isfinite(bulk) & (bulk > 0.0) & jnp.isfinite(gradient) & (gradient > 0.0)
+            jnp.isfinite(bulk)
+            & (bulk > 0.0)
+            & jnp.isfinite(gradient)
+            & (gradient > 0.0)
+            & jnp.isfinite(wetting)
         )
-        return jnp.where(valid, bulk, 1.0), jnp.where(valid, gradient, 1.0), valid
+        safe = BinaryThermodynamicParameters(
+            jnp.where(valid, bulk, 1.0),
+            jnp.where(valid, gradient, 1.0),
+            wetting_strength=jnp.where(valid, wetting, 0.0),
+        )
+        return safe, valid
 
     def _fields(
         self,
@@ -508,24 +467,21 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             self.discretization.velocity_set,
             self.discretization.precision,
         )
-        wall, mask, wetting, wetting_valid = self._wetting_data(
+        wall, mask, wetting_valid = self._wetting_data(
             parameters, state.hydrodynamic_populations.dtype
         )
-        bulk, gradient, coefficient_valid = self._safe_coefficients(
+        thermodynamic_parameters, coefficient_valid = self._safe_thermodynamics(
             parameters, state.hydrodynamic_populations.dtype
         )
-        phase_fields = free_energy_phase_fields(
+        phase_fields = self.thermodynamics.evaluate(
             phase_moments.phase,
-            self.discretization.velocity_set,
-            bulk,
-            gradient,
+            thermodynamic_parameters,
             wall_normal=wall,
             wetting_mask=mask,
-            wetting_strength=wetting,
         )
         safe_density = jnp.maximum(density, self.method.density_floor)
         velocity = (
-            raw_momentum + 0.5 * phase_fields.chemical_force_density
+            raw_momentum + 0.5 * phase_fields.selected_force_density
         ) / safe_density[..., None]
         return (
             _FreeEnergyFields(density, raw_momentum, velocity, phase_fields),
@@ -585,23 +541,22 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             raise ValueError(
                 "Initial velocity must be one vector or one vector per cell."
             )
-        wall, mask, wetting, wetting_valid = self._wetting_data(parameters_, dtype)
-        bulk, gradient, coefficient_valid = self._safe_coefficients(parameters_, dtype)
-        phase_fields = free_energy_phase_fields(
+        wall, mask, wetting_valid = self._wetting_data(parameters_, dtype)
+        thermodynamic_parameters, coefficient_valid = self._safe_thermodynamics(
+            parameters_, dtype
+        )
+        phase_fields = self.thermodynamics.evaluate(
             phase_field,
-            self.discretization.velocity_set,
-            bulk,
-            gradient,
+            thermodynamic_parameters,
             wall_normal=wall,
             wetting_mask=mask,
-            wetting_strength=wetting,
         )
         lattice_density = self.scaling.lattice_density(physical_density)
         lattice_velocity = self.scaling.lattice_velocity(physical_velocity)
         safe_density = jnp.maximum(lattice_density, self.method.density_floor)
         raw_velocity = (
             lattice_velocity
-            - 0.5 * phase_fields.chemical_force_density / safe_density[..., None]
+            - 0.5 * phase_fields.selected_force_density / safe_density[..., None]
         )
         hydrodynamic = quadratic_equilibrium(
             lattice_density,
@@ -631,7 +586,11 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             self.discretization.precision.population(hydrodynamic),
             self.discretization.precision.population(phase_populations),
         )
-        interface_cells = jnp.sqrt(2.0 * gradient / bulk)
+        interface_cells = (
+            self.method.thermodynamic_closure.characteristic_interface_width(
+                thermodynamic_parameters
+            )
+        )
         valid = (
             coefficient_valid
             & wetting_valid
@@ -695,10 +654,17 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
                 dtype=speed.dtype,
             )
         )
-        bulk, gradient, _ = self._safe_coefficients(parameters, speed.dtype)
-        interface_cells = jnp.sqrt(2.0 * gradient / bulk)
+        thermodynamics, _ = self._safe_thermodynamics(parameters, speed.dtype)
+        interface_cells = (
+            self.method.thermodynamic_closure.characteristic_interface_width(
+                thermodynamics
+            )
+        )
         physical_tension = self._physical_surface_tension(
-            free_energy_surface_tension(bulk, gradient)
+            free_energy_surface_tension(
+                self.method.thermodynamic_closure,
+                thermodynamics,
+            )
         )
         capillary = (
             self.scaling.physical_density(fields.density)
@@ -767,7 +733,7 @@ class PreparedFreeEnergyLBMDynamics(StrictModule, NonTrainableState):
             self.discretization.precision.compute(values.hydrodynamic_populations),
             fields.density,
             fields.velocity,
-            fields.phase_fields.chemical_force_density,
+            fields.phase_fields.selected_force_density,
             hydro_rate,
             self.discretization.velocity_set,
             self.discretization.precision,
@@ -921,11 +887,9 @@ __all__ = [
     "FreeEnergyLBMState",
     "FreeEnergyLedger",
     "FreeEnergyMacroscopicState",
-    "FreeEnergyPhaseFields",
     "FreeEnergyStepResult",
     "PhasePopulationMoments",
     "PreparedFreeEnergyLBMDynamics",
-    "free_energy_phase_fields",
     "free_energy_surface_tension",
     "phase_field_equilibrium",
     "phase_population_moments",

@@ -35,6 +35,10 @@ from ._method import (
     LatticeBoltzmannMethodPlan,
     PreparedLatticeBoltzmannMethodPlan,
 )
+from ._program import (
+    athermal_lattice_boltzmann_manifest,
+    KineticProgramManifest,
+)
 from ._scaling import LatticeBoltzmannScaling
 
 
@@ -117,6 +121,7 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
     scaling: LatticeBoltzmannScaling
     method: PreparedLatticeBoltzmannMethodPlan
     boundary: PreparedLatticeBoltzmannBoundary | PreparedStagedLatticeBoltzmannBoundary
+    program_manifest: KineticProgramManifest
     acceleration: LatticeAcceleration | None
     acceleration_id: str | None = eqx.field(static=True)
     implicit_acceleration: VelocityDependentAccelerationPlan | None
@@ -191,10 +196,17 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
         lattice_cs2 = float(discretization.velocity_set.sound_speed_squared)
         if not jnp.isclose(scaling.sound_speed_squared, lattice_cs2):
             raise ValueError("Scaling and velocity-set sound speeds do not match.")
+        program_manifest = athermal_lattice_boltzmann_manifest(
+            discretization.velocity_set.lattice_id,
+            discretization.precision.policy_id,
+            discretization.velocity_set.population_count,
+            discretization.velocity_set.dimension,
+        )
         self.discretization = discretization
         self.scaling = scaling
         self.method = prepared_method
         self.boundary = boundary
+        self.program_manifest = program_manifest
         self.acceleration = acceleration
         self.acceleration_id = acceleration_identifier
         self.implicit_acceleration = implicit_acceleration
@@ -205,6 +217,7 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
                 "scaling": scaling.scaling_id,
                 "method": prepared_method.method_id,
                 "boundary": boundary.boundary_id,
+                "program_manifest": program_manifest.manifest_id,
                 "acceleration": acceleration_identifier,
                 "implicit_acceleration": (
                     None
@@ -450,7 +463,11 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
         expected_dt = jnp.asarray(self.scaling.time_step, dtype=values.dtype)
         fields = self._lattice_fields(time_, values, parameters)
         fluid = self.boundary.geometry.fluid_mask
-        even_rate = self.scaling.relaxation_rate(parameters.kinematic_viscosity)
+        viscosity = jnp.asarray(parameters.kinematic_viscosity, dtype=values.dtype)
+        viscosity_valid = jnp.isfinite(viscosity) & (viscosity > 0.0)
+        even_rate = self.scaling.relaxation_rate(
+            jnp.where(viscosity_valid, viscosity, 1.0)
+        )
         collision_result = self.method.collide(
             self.discretization.precision.compute(values),
             fields.density,
@@ -521,6 +538,7 @@ class PreparedLatticeBoltzmannDynamics(StrictModule, NonTrainableState):
         mass_defect = jnp.abs(candidate_mass - previous_mass) / scale
         successful = (
             collision_result.successful
+            & viscosity_valid
             & fields.force_successful
             & candidate_fields.force_successful
             & jnp.isclose(dt, expected_dt, rtol=1e-12, atol=1e-12)

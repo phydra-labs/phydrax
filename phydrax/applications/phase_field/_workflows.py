@@ -8,8 +8,11 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from ..._phase_field import AbstractBulkFreeEnergy, DoubleWellFreeEnergy
 from ..._strict import StrictModule
+from ..._thermodynamics import (
+    BinaryPhaseThermodynamicClosure,
+    BinaryThermodynamicParameters,
+)
 from ..._trainable import NonTrainableState
 from ...discretization import FiniteElementDiscretization
 from ...equations import (
@@ -27,62 +30,54 @@ from ...solver import (
 
 class AllenCahnParameters(StrictModule, NonTrainableState):
     mobility: Array
-    gradient_coefficient: Array
-    free_energy: AbstractBulkFreeEnergy
+    thermodynamics: BinaryThermodynamicParameters
+    closure: BinaryPhaseThermodynamicClosure
 
     def __init__(
         self,
         mobility: ArrayLike,
-        gradient_coefficient: ArrayLike,
+        thermodynamics: BinaryThermodynamicParameters,
         /,
         *,
-        free_energy: AbstractBulkFreeEnergy | None = None,
+        closure: BinaryPhaseThermodynamicClosure | None = None,
     ):
         mobility_ = jnp.asarray(mobility)
-        gradient = jnp.asarray(gradient_coefficient)
-        if (
-            mobility_.shape != ()
-            or gradient.shape != ()
-            or not bool(jnp.isfinite(mobility_))
-            or not bool(jnp.isfinite(gradient))
-            or mobility_ <= 0.0
-            or gradient <= 0.0
-        ):
-            raise ValueError("Allen-Cahn coefficients must be positive finite scalars.")
+        if mobility_.shape != () or not bool(jnp.isfinite(mobility_)) or mobility_ <= 0.0:
+            raise ValueError("Allen-Cahn mobility must be a positive finite scalar.")
+        if not isinstance(thermodynamics, BinaryThermodynamicParameters):
+            raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
+        selected = BinaryPhaseThermodynamicClosure() if closure is None else closure
+        if not isinstance(selected, BinaryPhaseThermodynamicClosure):
+            raise TypeError("closure must be BinaryPhaseThermodynamicClosure.")
         self.mobility = mobility_
-        self.gradient_coefficient = gradient
-        self.free_energy = DoubleWellFreeEnergy() if free_energy is None else free_energy
+        self.thermodynamics = thermodynamics
+        self.closure = selected
 
 
 class CahnHilliardParameters(StrictModule, NonTrainableState):
     mobility: Array
-    gradient_coefficient: Array
-    free_energy: AbstractBulkFreeEnergy
+    thermodynamics: BinaryThermodynamicParameters
+    closure: BinaryPhaseThermodynamicClosure
 
     def __init__(
         self,
         mobility: ArrayLike,
-        gradient_coefficient: ArrayLike,
+        thermodynamics: BinaryThermodynamicParameters,
         /,
         *,
-        free_energy: AbstractBulkFreeEnergy | None = None,
+        closure: BinaryPhaseThermodynamicClosure | None = None,
     ):
         mobility_ = jnp.asarray(mobility)
-        gradient = jnp.asarray(gradient_coefficient)
-        if (
-            mobility_.shape != ()
-            or gradient.shape != ()
-            or not bool(jnp.isfinite(mobility_))
-            or not bool(jnp.isfinite(gradient))
-            or mobility_ <= 0.0
-            or gradient <= 0.0
-        ):
-            raise ValueError(
-                "Cahn-Hilliard coefficients must be positive finite scalars."
-            )
+        if mobility_.shape != () or not bool(jnp.isfinite(mobility_)) or mobility_ <= 0.0:
+            raise ValueError("Cahn-Hilliard mobility must be a positive finite scalar.")
+        if not isinstance(thermodynamics, BinaryThermodynamicParameters):
+            raise TypeError("thermodynamics must be BinaryThermodynamicParameters.")
+        selected = BinaryPhaseThermodynamicClosure() if closure is None else closure
+        if not isinstance(selected, BinaryPhaseThermodynamicClosure):
+            raise TypeError("closure must be BinaryPhaseThermodynamicClosure.")
         self.mobility = mobility_
-        self.gradient_coefficient = gradient
-        self.free_energy = DoubleWellFreeEnergy() if free_energy is None else free_energy
+        self.thermodynamics = thermodynamics
+        self.closure = selected
 
 
 class PhaseFieldStepResult(StrictModule):
@@ -137,8 +132,12 @@ def phase_field_energy(
         local = _field_local_data(discretization, field_name, value, block_index)
         reconstructed = oe.contract("qi,ci->cq", geometry.basis_values, local)
         gradient = oe.contract("cqid,ci->cqd", geometry.physical_gradients, local)
-        density = parameters.free_energy.density(reconstructed) + 0.5 * (
-            parameters.gradient_coefficient * jnp.sum(gradient**2, axis=-1)
+        density = (
+            parameters.thermodynamics.bulk_scale
+            * parameters.closure.free_energy.density(reconstructed)
+            + 0.5
+            * parameters.thermodynamics.gradient_coefficient
+            * jnp.sum(gradient**2, axis=-1)
         )
         total = total + jnp.sum(density * geometry.physical_weights)
     return total
@@ -168,12 +167,13 @@ def allen_cahn_form(
         gradient = gradients[0]
         previous_value = oe.contract("qi,ci->cq", test_basis, previous_local[0])
         local_drive = (value - previous_value) / dt + parameters.mobility * (
-            parameters.free_energy.derivative(value)
+            parameters.thermodynamics.bulk_scale
+            * parameters.closure.free_energy.derivative(value)
         )
-        return oe.contract(
-            "cq,cq,qi->ci", weights, local_drive, test_basis
-        ) + parameters.mobility * parameters.gradient_coefficient * oe.contract(
-            "cq,cqid,cqd->ci", weights, test_gradients, gradient
+        return oe.contract("cq,cq,qi->ci", weights, local_drive, test_basis) + (
+            parameters.mobility
+            * parameters.thermodynamics.gradient_coefficient
+            * oe.contract("cq,cqid,cqd->ci", weights, test_gradients, gradient)
         )
 
     return FiniteElementForm(
@@ -229,9 +229,11 @@ def cahn_hilliard_form(
         return oe.contract(
             "cq,cq,qi->ci",
             weights,
-            potential - parameters.free_energy.derivative(concentration),
+            potential
+            - parameters.thermodynamics.bulk_scale
+            * parameters.closure.free_energy.derivative(concentration),
             test_basis,
-        ) - parameters.gradient_coefficient * oe.contract(
+        ) - parameters.thermodynamics.gradient_coefficient * oe.contract(
             "cq,cqid,cqd->ci",
             weights,
             test_gradients,

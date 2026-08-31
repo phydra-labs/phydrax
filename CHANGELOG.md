@@ -82,6 +82,12 @@
   scale-factor particle-mesh rollout. The cosmological path reuses the existing
   particle discretization, splat, self-gravity, and typed PM force evaluation;
   synchronized baryon/particle orchestration remains distinct from physical coupling.
+- Consolidated kinetic multiphysics around one thermodynamic closure for energy,
+  variational derivative, symmetric stress, and explicit force representation.
+  Added auditable kinetic field/stage manifests, exact portable checkpoints,
+  production prepared sharding, signed-distance geometry-to-link compilation,
+  parabolic and Womersley targets, collision-aware ratio-two AMR transfer with
+  half-time interface data, and graduated scientific qualification evidence.
 - Added enhanced conforming scalar virtual elements of qualified degree one
   through three on arbitrary-arity polygonal cell blocks, including certified
   H1/L2 projectors, explicit stabilization, functional trace constraints,
