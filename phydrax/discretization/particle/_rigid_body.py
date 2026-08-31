@@ -289,6 +289,40 @@ def _quaternion_relative_rotation_vector(reference: Array, point: Array, /) -> A
     return scale * vector
 
 
+def _principal_angle(value: Array, /) -> Array:
+    return jnp.arctan2(jnp.sin(value), jnp.cos(value))
+
+
+def _planar_rotation_matrix(angle: Array, /) -> Array:
+    cosine = jnp.cos(angle[..., 0])
+    sine = jnp.sin(angle[..., 0])
+    return jnp.stack(
+        (cosine, -sine, sine, cosine),
+        axis=-1,
+    ).reshape(angle.shape[:-1] + (2, 2))
+
+
+def _rigid_body_rotation_matrix(
+    bodies: PreparedRigidBodySet,
+    orientation: Array,
+    /,
+) -> Array:
+    if bodies.ambient_dimension == 2:
+        return _planar_rotation_matrix(orientation)
+    return quaternion_rotation_matrix(orientation)
+
+
+def _rigid_body_relative_rotation(
+    bodies: PreparedRigidBodySet,
+    reference: Array,
+    point: Array,
+    /,
+) -> Array:
+    if bodies.ambient_dimension == 2:
+        return _principal_angle(point - reference)
+    return _quaternion_relative_rotation_vector(reference, point)
+
+
 def _rigid_body_world_inertia(
     bodies: PreparedRigidBodySet,
     orientation: Array,
@@ -390,14 +424,14 @@ def _rigid_body_retract_pose(
     /,
 ) -> RigidBodyKinematics:
     mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
+    if bodies.ambient_dimension == 2:
+        orientation = _principal_angle(kinematics.orientation + rotation)
+    else:
+        orientation = _quaternion_retract(kinematics.orientation, rotation)
     return RigidBodyKinematics(
         jnp.where(mobile, kinematics.position + translation, kinematics.position),
         kinematics.velocity,
-        jnp.where(
-            mobile,
-            _quaternion_retract(kinematics.orientation, rotation),
-            kinematics.orientation,
-        ),
+        jnp.where(mobile, orientation, kinematics.orientation),
         kinematics.angular_velocity,
     )
 
@@ -501,7 +535,7 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
         velocity = state.velocity + local_tangent.velocity
         angular = state.angular_velocity + local_tangent.angular_velocity
         if self.bodies.ambient_dimension == 2:
-            orientation = state.orientation + local_tangent.orientation
+            orientation = _principal_angle(state.orientation + local_tangent.orientation)
         else:
             orientation = _quaternion_retract(
                 state.orientation,
@@ -511,7 +545,7 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
 
     def inverse_retract(self, state, point, /):
         if self.bodies.ambient_dimension == 2:
-            orientation = point.orientation - state.orientation
+            orientation = _principal_angle(point.orientation - state.orientation)
         else:
             rotation = _quaternion_relative_rotation_vector(
                 state.orientation, point.orientation

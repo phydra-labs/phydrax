@@ -1,0 +1,12 @@
+{
+  "maturity": "experimental",
+  "capability": "plasticity",
+  "metrics": {
+    "successful": true,
+    "branch": 1,
+    "plastic_multiplier": 0.09260930743686785,
+    "plastic_determinant": 1.0,
+    "dissipation": 0.013891396115530178
+  },
+  "passed": true
+}
