@@ -227,6 +227,50 @@
 
 ::: phydrax.discretization.MACOperatorReport
 
+---
+
+::: phydrax.discretization.MACBoundaryPlan
+
+---
+
+::: phydrax.discretization.MACMomentumPlan
+
+---
+
+::: phydrax.discretization.PreparedMACMomentumOperators
+
+---
+
+::: phydrax.discretization.MACMomentumReport
+
+---
+
+::: phydrax.discretization.MACMomentumDiagnostics
+
+---
+
+::: phydrax.discretization.MACScalarProblem
+
+---
+
+::: phydrax.discretization.PreparedMACScalarTransport
+
+---
+
+::: phydrax.discretization.MACVariableDensityPlan
+
+---
+
+::: phydrax.discretization.MACMarkerTransferPlan
+
+---
+
+::: phydrax.discretization.MACDistributedTopologyPlan
+
+---
+
+::: phydrax.discretization.MappedMACGeometryPlan
+
 ## Multiblock and AMR
 
 ::: phydrax.discretization.ConservativeMultiblockInterfacePlan

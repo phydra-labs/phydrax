@@ -97,10 +97,15 @@ cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
 resource identities. Exact-sampling round-sphere spaces separately expose S2FFT mode
 layouts, physical area measure, scalar Laplace--Beltrami actions, complete-degree noise
 bases, and the prepared discretization consumed by SFNO.
-Local stencil programs, structured compact line solves, periodic/bounded SBP
-calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
-WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose
-without treating quadrature sites, mesh entities, and field DOFs as interchangeable.
+Local stencil programs, structured compact and transform-line solves,
+periodic/bounded SBP calculus, entropy-conservative SBP flux differencing, and
+compatible finite-volume MAC flow compose without conflating quadrature sites, mesh
+entities, and field DOFs. The MAC substrate includes dynamic wall/inflow/open
+closures, symmetry-preserving momentum, named scalar/Boussinesq and conservative
+variable-density dynamics, implicit diffusion, resolved face-marker coupling,
+sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
+certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
+and distributed halo plans remain available to the wider finite-volume family.
 Material particles retain stable entity IDs and a physical mass measure while
 current positions remain temporal state. Fixed-h conservative barotropic SPH
 uses canonical unordered pairs, normalized compact kernels, energy-derived

@@ -514,6 +514,15 @@ from ._subspace_correction import (
     SubspaceCorrectionTerm,
 )
 from ._subspaces import LinearSubspace, NullspacePolicy
+from ._transform_line import (
+    PreparedTransformLineSolve,
+    TransformLineFactors,
+    TransformLineReport,
+    TransformLineRepresentation,
+    TransformLineResourceEstimate,
+    TransformLineSolvePlan,
+    TransformLineSolveResult,
+)
 from ._transform_operators import (
     OrthogonalTransformKind,
     SpectralProperty,
@@ -835,6 +844,13 @@ __all__ = [
     "SpectralBoundsEstimate",
     "SpectralInterval",
     "SpectralEstimate",
+    "PreparedTransformLineSolve",
+    "TransformLineFactors",
+    "TransformLineReport",
+    "TransformLineRepresentation",
+    "TransformLineResourceEstimate",
+    "TransformLineSolvePlan",
+    "TransformLineSolveResult",
     "TransformDiagonalRepresentation",
     "TransformDiagonalSolvePlan",
     "TransformDiagonalSolveResult",
