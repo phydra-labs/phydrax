@@ -18,6 +18,11 @@
   prepared balance-law transport contract. Gravity, cooling, and OU forcing now compose
   with face-flux MHD under the same adaptive realization, scheduled replay, rollback,
   component-ownership checks, and portable checkpoint semantics.
+- Added dimension-generic constrained-MHD layouts, primitive PLM/WENO/TENO/MP5
+  reconstruction, HLL-UCT, accepted face/edge integral ledgers, physical boundary
+  policies, dual-energy and CTU support, non-ideal and AMR cochain operators, bounded
+  gravity, exact cooling coordinates, modal forcing, thermochemistry, radiation
+  moments, cosmological workflows, field inference, and structure-preserving closures.
 - Added fixed-rank randomized Nyström preconditioning with auditable sketch and
   refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
   field metrics with rectangular or Gram tangent solves and saved-node audits;

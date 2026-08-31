@@ -4,7 +4,7 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
-from . import fem, trefftz
+from . import advanced, fem, trefftz
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
@@ -363,6 +363,7 @@ from .trefftz import (
 
 
 __all__ = [
+    "advanced",
     "AbstractAdmissibleSystem",
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
