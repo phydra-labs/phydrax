@@ -45,6 +45,7 @@ from . import (
     terms,
     transport,
     uq,
+    velocimetry,
     weighting,
 )
 
@@ -88,6 +89,7 @@ __all__ = [
     "pgm",
     "sampling",
     "sparse",
+    "velocimetry",
     "special",
     "solver",
     "stochastic",

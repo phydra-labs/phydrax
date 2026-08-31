@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added native experimental velocimetry with mask-aware multipass and ensemble
+  PIV, explicit peak/validation/replacement evidence, calibrated physical
+  conversion, pinhole/distorted/refractive camera rigs, robust calibration and
+  triangulation, conflict-free multi-view particle reconstruction, streaming and
+  globally refined PTV tracks, frozen-association smoothing, radiometric
+  particle-image formation, residual-image Lagrangian refinement, deterministic
+  synthetic qualification, optional learned dense displacement, canonical
+  archives, and explicit-loss ecosystem adapters.
 - Added enhanced conforming scalar virtual elements of qualified degree one
   through three on arbitrary-arity polygonal cell blocks, including certified
   H1/L2 projectors, explicit stabilization, functional trace constraints,

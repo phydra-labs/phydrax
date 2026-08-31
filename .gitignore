@@ -55,6 +55,8 @@ benchmarks/*
 !benchmarks/particle_splat.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json
+!benchmarks/velocimetry.json
+!benchmarks/velocimetry_qualification.json
 !benchmarks/iree_export.json
 !benchmarks/mma.json
 !benchmarks/topology.json
