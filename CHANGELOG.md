@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
+  globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
+  implicit root derivatives, physical position/velocity residual certification,
+  multiplier warm starts, and fail-closed candidate/accepted transitions. Contact,
+  friction, compliance, motors, dynamic topology, two-dimensional joints, and PBD
+  compatibility remain outside this contract.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional

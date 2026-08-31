@@ -137,6 +137,7 @@ nav:
         - Superquadric wall contact: "guides_superquadric_wall_contact.md"
         - DEM multicontact and wall wear: "guides_dem_multicontact_and_wear.md"
         - DEM rigid bodies and shapes: "guides_dem_rigid_bodies.md"
+        - Constrained rigid-body dynamics: "guides_constrained_rigid_bodies.md"
         - DEM bonds and fracture: "guides_dem_bonds_and_fracture.md"
         - Differentiable DEM: "guides_differentiable_dem.md"
         - CFD-DEM coupling: "guides_cfd_dem.md"
