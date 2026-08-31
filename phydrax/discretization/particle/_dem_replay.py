@@ -18,6 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
 from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
+from ._dem_cohesion import DEMCohesionComponentHistory
 
 
 class DEMCheckpointPolicy(StrictModule, NonTrainableState):
@@ -64,8 +65,22 @@ def _route_digest(state: DEMRuntimeState, /) -> Array:
     slots = jnp.arange(history.pair_keys.shape[0], dtype=jnp.int64)
     keys = jnp.where(history.valid, history.pair_keys + 1, 0)
     active = history.active.astype(jnp.int64)
-    sliding = history.sliding.astype(jnp.int64)
-    return jnp.sum(keys * (slots + 17) + 31 * active + 47 * sliding)
+    sliding = history.tangential.sliding.astype(jnp.int64)
+    cohesion = jnp.zeros_like(active)
+    for index, component in enumerate(history.cohesion.components):
+        if not isinstance(component, DEMCohesionComponentHistory):
+            raise TypeError("Unsupported cohesion history in DEM replay digest.")
+        cohesion = cohesion + (index + 1) * component.active.astype(jnp.int64)
+    rolling_yielded = history.rotational.rolling_yielded.astype(jnp.int64)
+    torsional_yielded = history.rotational.torsional_yielded.astype(jnp.int64)
+    return jnp.sum(
+        keys * (slots + 17)
+        + 31 * active
+        + 47 * sliding
+        + 59 * cohesion
+        + 71 * rolling_yielded
+        + 83 * torsional_yielded
+    )
 
 
 def checkpointed_dem_rollout(

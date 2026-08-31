@@ -98,13 +98,22 @@ particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
 route moments, and fast/deterministic/compensated reductions. DEM adds stable
-contact history, accepted-step work/energy ledgers, cached and fused
-neighborhoods, rolling/adhesive/plastic/thermal laws, SO(2)/SO(3) bodies,
-clumps, triangle/convex/implicit geometry, bonds/topology events, certified
-sensitivity modes, and conservative unresolved/resolved CFD coupling. See
+compositional normal/cohesion/tangential/rotational history, accepted-step
+work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
+elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
+bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
+and wear, bonds/topology events, and certified sensitivity modes. Radial
+particle conversion adds typed thermochemistry, reactions, evaporation,
+shrinking-core conversion, morphology, conservative continuum/contact/radiative
+exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
+[Guide → Wet granular contact](guides_wet_granular_contact.md),
+[Guide → Superquadric DEM](guides_superquadric_dem.md),
+[Guide → Particle internal transport](guides_particle_internal_transport.md),
+[Guide → Particle thermochemistry](guides_particle_thermochemistry.md),
+[Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),

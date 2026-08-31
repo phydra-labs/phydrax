@@ -31,7 +31,7 @@ def test_cached_rolling_curved_wall_rollout_preserves_replay_and_energy_evidence
     contact = phx.discretization.DEMContactModelPlan(
         phx.discretization.HertzNormalContactPlan(),
         tangential=phx.discretization.MindlinTangentialContactPlan(),
-        rolling=phx.discretization.ConstantRollingResistancePlan(),
+        rotational=phx.discretization.ConstantRollingResistancePlan(),
     )
     method = phx.discretization.SoftSphereDEMMethodPlan(
         contact, maximum_overlap_fraction=0.3

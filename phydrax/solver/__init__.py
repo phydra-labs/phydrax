@@ -44,6 +44,7 @@ term evaluation.
     ```
 """
 
+from .._hybrid_sensitivity import HybridSensitivityMode
 from . import maxwell
 from ._bdf_method import BDFMethod
 from ._boundary_integral import (
@@ -460,6 +461,11 @@ from ._heom_scaled import (
     prepare_scaled_heom_topology,
     ScaledHEOMTopology,
 )
+from ._hybrid_event import (
+    HybridEventPlan,
+    HybridEventSensitivityResult,
+    localize_hybrid_event,
+)
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -575,6 +581,23 @@ from ._nonmarkov_campaign import (
     SpinBosonComparisonResult,
 )
 from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
+from ._particle_conversion import (
+    advance_particle_conversion,
+    ParticleConversionBackend,
+    ParticleConversionReplayRecord,
+    ParticleConversionSolverPlan,
+    ParticleConversionStepResult,
+)
+from ._particle_conversion_sensitivity import (
+    particle_conversion_surrogate_bias,
+    particle_conversion_validity_certificate,
+    ParticleConversionSensitivityPolicy,
+    ParticleConversionSensitivityResult,
+    ParticleConversionSurrogateBiasCertificate,
+    ParticleConversionValidityCertificate,
+    sharp_particle_conversion_jvp,
+    sharp_particle_conversion_vjp,
+)
 from ._particle_methods import (
     DEMFixedStepMethod,
     DFSPHFixedStepMethod,
@@ -671,6 +694,27 @@ from ._quantum_trajectory_contract import (
     QuantumTrajectoryEventTable,
     QuantumTrajectoryPlan,
     QuantumTrajectoryStatus,
+)
+from ._reactive_cfd_dem import (
+    advance_reactive_cfd_dem_window,
+    initialize_reactive_cfd_dem,
+    ReactiveCFDDEMCouplingState,
+    ReactiveCFDDEMEvaluation,
+    ReactiveCFDDEMMacroStepResult,
+    ReactiveCouplingMode,
+    ReactiveFluidFields,
+    ReactiveParticleCouplingSchedulePlan,
+)
+from ._reactive_replay import (
+    checkpointed_reactive_rollout,
+    checkpointed_reactive_vjp,
+    evaluate_reactive_parameter_ensemble,
+    reactive_replay_matches,
+    ReactiveCheckpointPolicy,
+    ReactiveCheckpointVJPResult,
+    ReactiveParameterEnsembleResult,
+    ReactiveReplayRecord,
+    ReactiveReplayResult,
 )
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
@@ -1463,4 +1507,38 @@ __all__ = [
     "CFDEMCouplingState",
     "CFDEMMacroStepResult",
     "advance_cfd_dem_window",
+    "advance_particle_conversion",
+    "ParticleConversionBackend",
+    "ParticleConversionReplayRecord",
+    "ParticleConversionSolverPlan",
+    "ParticleConversionStepResult",
+    "advance_reactive_cfd_dem_window",
+    "initialize_reactive_cfd_dem",
+    "ReactiveCFDDEMCouplingState",
+    "ReactiveCFDDEMEvaluation",
+    "ReactiveCFDDEMMacroStepResult",
+    "ReactiveCouplingMode",
+    "ReactiveFluidFields",
+    "ReactiveParticleCouplingSchedulePlan",
+    "HybridEventPlan",
+    "HybridEventSensitivityResult",
+    "localize_hybrid_event",
+    "HybridSensitivityMode",
+    "particle_conversion_surrogate_bias",
+    "particle_conversion_validity_certificate",
+    "ParticleConversionSensitivityPolicy",
+    "ParticleConversionSensitivityResult",
+    "ParticleConversionSurrogateBiasCertificate",
+    "ParticleConversionValidityCertificate",
+    "sharp_particle_conversion_jvp",
+    "sharp_particle_conversion_vjp",
+    "checkpointed_reactive_rollout",
+    "checkpointed_reactive_vjp",
+    "evaluate_reactive_parameter_ensemble",
+    "reactive_replay_matches",
+    "ReactiveCheckpointPolicy",
+    "ReactiveCheckpointVJPResult",
+    "ReactiveParameterEnsembleResult",
+    "ReactiveReplayRecord",
+    "ReactiveReplayResult",
 ]
