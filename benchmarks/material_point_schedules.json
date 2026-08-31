@@ -1,0 +1,31 @@
+{
+  "maturity": "experimental",
+  "capability": "schedules",
+  "metrics": {
+    "usl-minus": {
+      "successful": true,
+      "mass_defect": 0.0,
+      "momentum_defect": 1.0842021724855044e-19,
+      "energy_defect": 0.0,
+      "second_mass_defect": 0.0,
+      "second_momentum_defect": 0.0
+    },
+    "usf": {
+      "successful": true,
+      "mass_defect": 0.0,
+      "momentum_defect": 1.0842021724855044e-19,
+      "energy_defect": 0.0,
+      "second_mass_defect": 0.0,
+      "second_momentum_defect": 0.0
+    },
+    "musl": {
+      "successful": true,
+      "mass_defect": 0.0,
+      "momentum_defect": 1.0842021724855044e-19,
+      "energy_defect": 0.0,
+      "second_mass_defect": 2.220446049250313e-18,
+      "second_momentum_defect": 2.168404344971009e-19
+    }
+  },
+  "passed": true
+}

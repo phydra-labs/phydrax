@@ -157,6 +157,10 @@ from ._lagrangian_fluid import (
     compile_barotropic_sph_problem,
     CompiledBarotropicSPHProblem,
 )
+from ._local_constitutive_root import (
+    LocalConstitutiveRootDiagnostics,
+    LocalConstitutiveRootPlan,
+)
 from ._mac_ib_cfd_dem import (
     evaluate_resolved_mac_ib_cfd_dem,
     ResolvedMACIBCFDEMCouplingPlan,
@@ -196,14 +200,17 @@ from ._manufactured import (
     ManufacturedSpatialOperator,
 )
 from ._material_point import (
+    AbstractImplicitMPMConstitutivePlan,
     AbstractMPMConstitutivePlan,
     compile_material_point_problem,
     CompiledMaterialPointProblem,
     ExternalMPMAcceleration,
     MaterialPointArguments,
     MaterialPointProblemIR,
+    MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
     MPMKinematics,
+    MPMLinearizedConstitutiveResponse,
 )
 from ._materials import (
     AbstractThermodynamicMaterial,
@@ -440,8 +447,13 @@ __all__ = [
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
+    "LocalConstitutiveRootDiagnostics",
+    "LocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
+    "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",
+    "MPMConstitutiveCapabilities",
+    "MPMLinearizedConstitutiveResponse",
     "MPMKinematics",
     "compile_material_point_problem",
     "CompiledMaterialPointProblem",

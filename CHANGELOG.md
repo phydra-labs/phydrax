@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Extended Material Point Method with explicit USF/USL-minus/MUSL schedules,
+  fixed-capacity adaptive realization and scheduled replay, constitutive capability
+  and algorithmic-tangent contracts, isotropic plane stress, multiplicative
+  finite-strain J2 plasticity, uGIMP/cpGIMP/CPDI/CPDI2 particle domains, rigid and
+  two-field Coulomb contact, material/velocity-field identity state, active-block
+  semantics, compact block storage, dense matrix-free implicit roots, AT2 diffuse
+  fracture, and separate field-partition/CPIC sharp-fracture paths. Each family
+  carries transactional rollback, branch/topology evidence, qualification artifacts,
+  compatibility limits, and explicit differentiation semantics.
 - Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
   globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
   implicit root derivatives, physical position/velocity residual certification,

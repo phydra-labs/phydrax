@@ -1,0 +1,11 @@
+{
+  "maturity": "experimental",
+  "capability": "multifield",
+  "metrics": {
+    "successful": true,
+    "contact": true,
+    "action_reaction_defect": 0.0,
+    "dissipation": 0.10666666666666667
+  },
+  "passed": true
+}

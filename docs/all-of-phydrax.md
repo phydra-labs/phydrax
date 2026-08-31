@@ -116,11 +116,13 @@ energy/dissipation ledgers, and native SSPRK integration. Structured
 particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
-route moments, and fast/deterministic/compensated reductions. Explicit material
-point dynamics compose that transfer with quadratic nodal B-splines, matched
-APIC momentum, first-Piola reference-volume forces, transactional USL updates,
-stability evidence, and fixed-temporal replay for plane-strain and
-three-dimensional Neo-Hookean solids. DEM adds stable compositional
+route moments, and fast/deterministic/compensated reductions. Material point
+dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
+transactional adaptive realization and replay, plane-strain/plane-stress/3-D
+hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
+rigid and two-field Coulomb contact, matrix-free implicit roots, diffuse and
+sharp fracture alternatives, active-block masks, and compact block storage.
+DEM adds stable compositional
 normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
 elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
@@ -136,6 +138,12 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Material point method](guides_material_point_method.md),
+[Guide → MPM schedules](guides_mpm_schedules.md),
+[Guide → MPM constitutive extensions](guides_mpm_constitutive_extensions.md),
+[Guide → MPM contact and fields](guides_mpm_contact_fields.md),
+[Guide → MPM particle domains](guides_mpm_particle_domains.md),
+[Guide → MPM adaptive and implicit](guides_mpm_adaptive_implicit.md),
+[Guide → MPM fracture and sparse storage](guides_mpm_fracture_sparse.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
 [Guide → Wet granular contact](guides_wet_granular_contact.md),
 [Guide → Superquadric DEM](guides_superquadric_dem.md),

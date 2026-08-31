@@ -88,6 +88,16 @@ from ._models import (
     neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
+from ._mpm_fracture import (
+    MPMPhaseFieldParameters,
+    PhaseFieldNeoHookeanMPMConstitutivePlan,
+)
+from ._mpm_plane_stress import IsotropicPlaneStressMPMConstitutivePlan
+from ._mpm_plasticity import (
+    finite_strain_j2_plane_stress_plan,
+    FiniteStrainJ2MPMConstitutivePlan,
+    FiniteStrainJ2Parameters,
+)
 from ._topology import (
     ComplianceTopologyProblem,
     DensityFilterPlan,
@@ -132,6 +142,11 @@ __all__ = [
     "J2PlasticityParameters",
     "J2PlasticityState",
     "J2PlasticityUpdate",
+    "FiniteStrainJ2MPMConstitutivePlan",
+    "FiniteStrainJ2Parameters",
+    "IsotropicPlaneStressMPMConstitutivePlan",
+    "MPMPhaseFieldParameters",
+    "PhaseFieldNeoHookeanMPMConstitutivePlan",
     "NeoHookeanMPMConstitutivePlan",
     "NeoHookeanParameters",
     "PneumaticPressureLoadModel",
@@ -158,6 +173,7 @@ __all__ = [
     "force_density_status_message",
     "force_density_tangent_matrix",
     "graph_fairness_residual",
+    "finite_strain_j2_plane_stress_plan",
     "j2_radial_return",
     "member_angle_residual",
     "member_direction_residual",

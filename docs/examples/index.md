@@ -21,6 +21,11 @@ The repository includes directly runnable scripts for the fixed-capacity particl
 ```text
 python examples/discrete_element_method.py
 python examples/material_point_method.py
+python examples/material_point_schedules.py
+python examples/material_point_materials.py
+python examples/material_point_domains_sparse.py
+python examples/material_point_contact_fracture.py
+python examples/material_point_implicit.py
 python examples/wet_granular_bridge.py
 python examples/superquadric_collision.py
 python examples/particle_internal_heating.py
@@ -28,6 +33,5 @@ python examples/particle_radial_drying.py
 python examples/reactive_cfd_dem.py
 ```
 
-Each script prints its acceptance flag and the balance or geometry residuals
-that qualify the exercised route. The material-point example additionally
-reports transfer mass defect and minimum deformation Jacobian.
+Each script prints its acceptance flag and balance, geometry, constitutive,
+contact, nonlinear, or topology evidence for the exercised route.
