@@ -154,6 +154,110 @@ def test_integral_functional_rejects_complex_and_failed_estimates():
         jax.block_until_ready(failed_objective.loss({"u": discontinuity}))
 
 
+def test_integral_functional_nonfinite_integrand_policy_is_narrow():
+    domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    nonfinite = domain.Function()(jnp.nan)
+    target = phx.integration.over(domain.component())
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4))
+
+    strict = phx.terms.IntegralFunctional(
+        target=target,
+        plan=plan,
+        integrand=nonfinite,
+        materialization_policy="fixed",
+    )
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
+        jax.block_until_ready(strict.loss({"u": nonfinite}))
+
+    propagated = phx.terms.IntegralFunctional(
+        target=target,
+        plan=plan,
+        integrand=nonfinite,
+        materialization_policy="fixed",
+        nonfinite_integrand="propagate",
+    )
+    assert not bool(jnp.isfinite(propagated.loss({"u": nonfinite})))
+
+    discontinuity = domain.Function("x")(lambda x: jnp.where(x < 0.123, 1.0, 0.0))
+    failed_for_budget = phx.terms.IntegralFunctional(
+        target=target,
+        plan=phx.integration.AdaptiveQuadraturePlan(
+            absolute_tolerance=0.0,
+            relative_tolerance=0.0,
+            max_intervals=1,
+            throw=False,
+        ),
+        integrand=discontinuity,
+        nonfinite_integrand="propagate",
+    )
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
+        jax.block_until_ready(failed_for_budget.loss({"u": discontinuity}))
+
+    with pytest.raises(ValueError, match="nonfinite_integrand"):
+        phx.terms.IntegralFunctional(
+            target=target,
+            plan=plan,
+            integrand=nonfinite,
+            nonfinite_integrand="ignore",
+        )
+
+
+def test_integral_functional_from_operator_forwards_nonfinite_policy():
+    domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    parameter = domain.Parameter(1.0)
+    objective = phx.terms.IntegralFunctional.from_operator(
+        target=phx.integration.over(domain.component()),
+        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+        operator=lambda value: value,
+        objective_vars="u",
+        nonfinite_integrand="propagate",
+    )
+    assert objective.nonfinite_integrand == "propagate"
+
+
+def test_lbfgs_rejects_nonfinite_neo_hookean_trial():
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+    coordinate = domain.Function("x")(lambda x: x)
+    displacement = domain.Parameter(0.0) * coordinate
+
+    def density(functions):
+        current = functions["u"]
+        stored_energy = phx.operators.neo_hookean_reference_energy(
+            current,
+            mu=1.0,
+            lambda_=2.0,
+        )
+        compression = 20.0 * phx.operators.einsum("...i,...i->...", current, coordinate)
+        return stored_energy + compression
+
+    objective = phx.terms.IntegralFunctional(
+        target=phx.integration.over(domain.component()),
+        plan=phx.integration.MonteCarloPlan(128),
+        integrand=density,
+        materialization_policy="fixed",
+        fixed_key=jr.key(91),
+        nonfinite_integrand="propagate",
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": displacement},
+        terms=(objective,),
+    )
+    trained = solver.solve(
+        num_iter=12,
+        optim=optax.lbfgs(learning_rate=1.0),
+        seed=92,
+        jit=True,
+        keep_best=False,
+        log_every=0,
+    )
+    probe = trained["u"].func(jnp.asarray((1.0, 0.0)))
+    stretch = 1.0 + probe[0]
+    assert jnp.isfinite(trained.loss())
+    assert 0.0 < stretch < 1.0
+
+
 def test_deep_ritz_energy_optimizes_with_fixed_realization():
     domain = phx.domain.Interval1d(0.0, 1.0)
     coordinate = domain.Function("x")(lambda x: x[0])

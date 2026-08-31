@@ -11,6 +11,9 @@
   relaxation operators, nonlinear polar closure, fixed-tree acceleration,
   actuator/rigid/stochastic/learned workflows, qualification evidence, and
   fixed-topology differentiation contracts.
+- Added field-valued logarithmic compressible Neo-Hookean reference energy,
+  line-search-safe nonfinite integral propagation, and an experimental matched
+  neural-variational/finite-element hyperelastic qualification.
 - Added advanced cosmology contracts: curved/CPL FLRW geometry and distances,
   realization-safe semantic transfer/power products, process-isolated linear-theory
   interoperation, neutrino component algebra, model-card power corrections,
@@ -1091,6 +1094,9 @@
   resource accounting.
 
 ### Changed
+- Neo-Hookean field stress operators now name Lamé's first parameter `lambda_`
+  instead of incorrectly describing the same coefficient as bulk modulus
+  `kappa`; the old keyword is removed in one clean cutover.
 - Neural-operator autoregression now requires a task-bound physical state route
   and the deployed normalization/constraint pipeline. The raw callable/advance
   rollout, standalone autoregressive loss, and teacher-forcing schedule were
@@ -1173,6 +1179,9 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Neo-Hookean finite-element forms now derive their residual from cell energy
+  and support explicit two-dimensional plane strain as well as three-dimensional
+  kinematics.
 - Causal interval clustering now uses the Jacobian of the original reference
   coordinate, and zero-duration convolution and Caputo evaluations return exact
   zeros without evaluating singular kernels.
