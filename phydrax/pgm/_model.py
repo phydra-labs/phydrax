@@ -18,6 +18,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..graph import HypergraphBipartiteGraph, incidence_to_bipartite_graph
+from ._kernel import AbstractDiscreteFactorKernel, FactorKernelCapabilities
 
 
 def _integer_array(name: str, value: Any, /) -> Array:
@@ -349,6 +350,47 @@ class BinaryCardinalityFactorGroup(StrictModule):
         )
 
 
+class KernelFactorGroup(StrictModule):
+    """Batch of factors driven by one open local-score kernel and parameter PyTree."""
+
+    selections: tuple[VariableSelection, ...]
+    kernel: AbstractDiscreteFactorKernel
+    parameters: Any
+    factor_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        selections: Sequence[VariableSelection],
+        kernel: AbstractDiscreteFactorKernel,
+        parameters: Any,
+        /,
+    ):
+        scope = _selection_tuple(selections)
+        if not isinstance(kernel, AbstractDiscreteFactorKernel):
+            raise TypeError("kernel must implement AbstractDiscreteFactorKernel.")
+        leaves = tuple(
+            jnp.asarray(leaf) for leaf in jax.tree_util.tree_leaves(parameters)
+        )
+        if not leaves:
+            raise ValueError("Kernel factor parameters must contain array leaves.")
+        if any(jnp.iscomplexobj(leaf) for leaf in leaves):
+            raise TypeError("Kernel factor parameters must be real-valued.")
+        signature = [
+            {"shape": list(leaf.shape), "dtype": str(leaf.dtype)} for leaf in leaves
+        ]
+        self.selections = scope
+        self.kernel = kernel
+        self.parameters = parameters
+        self.factor_id = _factor_id(
+            f"kernel-{kernel.kernel_id}",
+            scope,
+            {
+                "parameter_signature": signature,
+                "capability_id": kernel.capabilities.capability_id,
+            },
+        )
+
+
 FactorGroup: TypeAlias = (
     DenseTableFactorGroup
     | EnumeratedFactorGroup
@@ -356,6 +398,7 @@ FactorGroup: TypeAlias = (
     | PottsFactorGroup
     | LogicalFactorGroup
     | BinaryCardinalityFactorGroup
+    | KernelFactorGroup
 )
 
 
@@ -369,6 +412,7 @@ def factor_selections(group: FactorGroup, /) -> tuple[VariableSelection, ...]:
             PottsFactorGroup,
             LogicalFactorGroup,
             BinaryCardinalityFactorGroup,
+            KernelFactorGroup,
         ),
     ):
         raise TypeError("Unsupported factor group.")
@@ -392,7 +436,50 @@ def factor_kernel_id(group: FactorGroup, /) -> str:
         return f"logical-{group.kind}"
     if isinstance(group, BinaryCardinalityFactorGroup):
         return "binary-cardinality"
+    if isinstance(group, KernelFactorGroup):
+        return group.kernel.kernel_id
     raise TypeError("Unsupported factor group.")
+
+
+def factor_group_capabilities(group: FactorGroup, /) -> FactorKernelCapabilities:
+    """Return explicit inference, conditioning, support, and batching capabilities."""
+    if isinstance(group, KernelFactorGroup):
+        return group.kernel.capabilities
+    if not isinstance(
+        group,
+        (
+            DenseTableFactorGroup,
+            EnumeratedFactorGroup,
+            IsingFactorGroup,
+            PottsFactorGroup,
+            LogicalFactorGroup,
+            BinaryCardinalityFactorGroup,
+        ),
+    ):
+        raise TypeError("Unsupported factor group.")
+    hard_constraints = isinstance(
+        group,
+        (
+            DenseTableFactorGroup,
+            EnumeratedFactorGroup,
+            PottsFactorGroup,
+            LogicalFactorGroup,
+            BinaryCardinalityFactorGroup,
+        ),
+    )
+    return FactorKernelCapabilities(
+        sum_product=True,
+        max_product=True,
+        factor_beliefs=True,
+        scalar_conditional=True,
+        joint_conditional=True,
+        sparse_support=isinstance(group, EnumeratedFactorGroup),
+        hard_constraints=hard_constraints,
+        smooth_parameters=not isinstance(group, LogicalFactorGroup),
+        prepared_refresh=True,
+        batched=True,
+        shardable=True,
+    )
 
 
 def _factor_parameter_signature(group: FactorGroup, /) -> tuple[tuple[int, ...], str]:
@@ -406,6 +493,14 @@ def _factor_parameter_signature(group: FactorGroup, /) -> tuple[tuple[int, ...],
         value = group.log_count_potentials
     elif isinstance(group, LogicalFactorGroup):
         return (), "none"
+    elif isinstance(group, KernelFactorGroup):
+        leaves = tuple(
+            jnp.asarray(leaf) for leaf in jax.tree_util.tree_leaves(group.parameters)
+        )
+        return (
+            tuple(int(leaf.size) for leaf in leaves),
+            "pytree:" + ",".join(str(leaf.dtype) for leaf in leaves),
+        )
     else:
         raise TypeError("Unsupported factor group.")
     return tuple(int(size) for size in value.shape), str(value.dtype)
@@ -465,6 +560,7 @@ class DiscreteFactorGraph(StrictModule):
                     PottsFactorGroup,
                     LogicalFactorGroup,
                     BinaryCardinalityFactorGroup,
+                    KernelFactorGroup,
                 ),
             )
             for group in factors
@@ -628,6 +724,8 @@ def _empty_scope_cardinality(group: FactorGroup, position: int, /) -> int:
         group, (IsingFactorGroup, LogicalFactorGroup, BinaryCardinalityFactorGroup)
     ):
         return 2
+    if isinstance(group, KernelFactorGroup):
+        raise ValueError("An empty KernelFactorGroup cannot infer scope cardinalities.")
     raise TypeError("Unsupported factor group.")
 
 
@@ -653,6 +751,14 @@ def _validate_factor_signature(group: FactorGroup, signature: tuple[int, ...], /
             raise ValueError(
                 f"{factor_kernel_id(group)} factors require binary variables."
             )
+    elif isinstance(group, KernelFactorGroup):
+        sample = jax.ShapeDtypeStruct((factor_count(group), len(signature)), jnp.int32)
+        output = jax.eval_shape(
+            lambda states: group.kernel.log_scores(group.parameters, states),
+            sample,
+        )
+        if output.shape != (factor_count(group),):
+            raise ValueError("Kernel factor score shape must be (factor,).")
     else:
         raise TypeError("Unsupported factor group.")
 
@@ -712,6 +818,12 @@ def factor_group_dense_tables(
     elif isinstance(group, BinaryCardinalityFactorGroup):
         counts = jnp.sum(configurations, axis=-1).astype(jnp.int32)
         values = group.log_count_potentials[:, counts]
+    elif isinstance(group, KernelFactorGroup):
+        states = jnp.broadcast_to(
+            configurations[None, :, :],
+            (count, int(configurations.shape[0]), len(signature)),
+        )
+        values = group.kernel.log_scores(group.parameters, states)
     else:
         raise TypeError("Unsupported factor group.")
     return values.reshape((count,) + signature)
@@ -785,6 +897,8 @@ def factor_group_scores(
 
         values = jax.vmap(one_batch)(flat_counts)
         return values.reshape(counts.shape)
+    if isinstance(group, KernelFactorGroup):
+        return group.kernel.log_scores(group.parameters, scope_states)
     raise TypeError("Unsupported factor group.")
 
 
@@ -840,6 +954,11 @@ def _graph_score_dtype(graph: DiscreteFactorGraph, /):
             dtypes.append(group.weights.dtype)
         elif isinstance(group, BinaryCardinalityFactorGroup):
             dtypes.append(group.log_count_potentials.dtype)
+        elif isinstance(group, KernelFactorGroup):
+            dtypes.extend(
+                jnp.asarray(leaf).dtype
+                for leaf in jax.tree_util.tree_leaves(group.parameters)
+            )
     return jnp.result_type(*dtypes) if dtypes else jnp.dtype(float)
 
 
@@ -951,6 +1070,7 @@ __all__ = [
     "DiscreteVariableGroup",
     "EnumeratedFactorGroup",
     "FactorGroup",
+    "KernelFactorGroup",
     "IsingFactorGroup",
     "LogicalFactorGroup",
     "PottsFactorGroup",
@@ -960,6 +1080,7 @@ __all__ = [
     "factor_graph_contains",
     "factor_graph_log_score",
     "factor_group_cardinality_signature",
+    "factor_group_capabilities",
     "factor_group_dense_tables",
     "factor_kernel_id",
     "pack_assignments",

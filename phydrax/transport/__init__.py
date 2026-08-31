@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import continuous, diffusion, dynamic
+from . import continuous, diffusion, discrete, dynamic
 from ._barycenters import (
     BarycenterDiagnostics,
     BarycenterProblemProvenance,
@@ -119,6 +119,17 @@ from .diffusion import (
     ReverseDiffusionRealization,
     ReverseDiffusionResult,
 )
+from .discrete import (
+    AbstractDiscreteNoisingKernel,
+    AdaptiveMixingPenalty,
+    AdaptiveMixingState,
+    CategoricalNoisingKernel,
+    DiscreteDenoisingProcess,
+    DiscreteForwardProcess,
+    FactorGraphReverseKernel,
+    HybridDiscreteEmbedding,
+    RecoveryLikelihoodObjective,
+)
 from .dynamic import (
     bridge_path_law_diagnostics,
     bridge_path_log_prob,
@@ -144,6 +155,16 @@ from .dynamic import (
 
 
 __all__ = [
+    "discrete",
+    "AbstractDiscreteNoisingKernel",
+    "AdaptiveMixingPenalty",
+    "AdaptiveMixingState",
+    "CategoricalNoisingKernel",
+    "DiscreteDenoisingProcess",
+    "DiscreteForwardProcess",
+    "FactorGraphReverseKernel",
+    "HybridDiscreteEmbedding",
+    "RecoveryLikelihoodObjective",
     "AbstractBalancedTransportPlan",
     "AbstractBalancedTransportSolver",
     "AbstractGroundCost",

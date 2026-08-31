@@ -104,6 +104,7 @@ call `require_converged` and fail rather than optimize through an invalid solve.
 - [Ground costs](costs.md)
 - [Continuous learned transport and flow matching](continuous.md)
 - [Score-based diffusion transport](diffusion.md)
+- [Discrete factor-graph denoising transport](discrete.md)
 - [Sinkhorn solving and divergence](sinkhorn.md)
 - [Positive-feature scalable balanced transport](scalable.md)
 - [Unbalanced Sinkhorn and unequal physical mass](unbalanced.md)
