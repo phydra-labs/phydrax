@@ -106,7 +106,7 @@ def run_spectral_pde_benchmark(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2),
     )

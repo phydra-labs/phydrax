@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
+from ._axis_domain import AxisDomain
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -26,83 +27,96 @@ from ._lifecycle import AbstractDiscretizationPlan
 
 
 AxisPrimaryEntity = Literal["point", "interval"]
+AxisBasis = Literal[
+    "uniform",
+    "fourier",
+    "sine",
+    "cosine",
+    "chebyshev",
+    "legendre",
+    "nested",
+    "rational_chebyshev_line",
+    "rational_chebyshev_half_line",
+]
 
 
 class AxisDiscretization(StrictModule):
-    r"""Materialized 1D discretization data for a single coordinate axis.
-
-    This bundles:
-
-    - `nodes`: 1D coordinates \(x_j\) along an axis.
-    - `quad_weights`: optional 1D quadrature weights \(w_j\) for approximating 1D integrals.
-    - `basis`: a hint describing how the axis was constructed (`"fourier"`, `"sine"`,
-      `"cosine"`, `"legendre"`, `"uniform"`),
-    - `periodic`: whether the axis should be treated as periodic (useful for FFT/Fourier methods).
-
-    When `quad_weights` are present, they approximate
-
-    $$
-    \int_a^b f(x)\,dx \approx \sum_j w_j f(x_j),
-    $$
-    """
+    """Materialized one-dimensional nodes, measure, support, and topology."""
 
     nodes: Array
     quad_weights: Array | None
-    basis: Literal["uniform", "fourier", "sine", "cosine", "legendre", "nested"]
-    periodic: bool
-    primary_entity: AxisPrimaryEntity = eqx.field(static=True)
-    bounds: Array | None
+    domain: AxisDomain
     active: Array | None
     level: Array | None
     parent_interval: Array | None
+    basis: AxisBasis = eqx.field(static=True)
+    primary_entity: AxisPrimaryEntity = eqx.field(static=True)
+    lower_endpoint_included: bool = eqx.field(static=True)
+    upper_endpoint_included: bool = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        nodes: Array,
-        quad_weights: Array | None,
-        basis: Literal["uniform", "fourier", "sine", "cosine", "legendre", "nested"],
-        periodic: bool,
+        nodes: ArrayLike,
+        quad_weights: ArrayLike | None,
+        basis: AxisBasis,
+        domain: AxisDomain,
         primary_entity: AxisPrimaryEntity = "point",
-        bounds: ArrayLike | None = None,
-        active: Array | None = None,
-        level: Array | None = None,
-        parent_interval: Array | None = None,
+        lower_endpoint_included: bool,
+        upper_endpoint_included: bool,
+        active: ArrayLike | None = None,
+        level: ArrayLike | None = None,
+        parent_interval: ArrayLike | None = None,
     ):
+        if not isinstance(domain, AxisDomain):
+            raise TypeError("domain must be an AxisDomain.")
+        if basis not in (
+            "uniform",
+            "fourier",
+            "sine",
+            "cosine",
+            "chebyshev",
+            "legendre",
+            "nested",
+            "rational_chebyshev_line",
+            "rational_chebyshev_half_line",
+        ):
+            raise ValueError("Unknown axis basis.")
         nodes_ = jnp.asarray(nodes, dtype=float).reshape((-1,))
         if nodes_.size == 0:
             raise ValueError("AxisDiscretization.nodes must be non-empty.")
-        if quad_weights is not None:
-            w = jnp.asarray(quad_weights, dtype=float).reshape((-1,))
-            if w.shape != nodes_.shape:
+        nodes_ = eqx.error_if(
+            nodes_,
+            jnp.any(~jnp.isfinite(nodes_)),
+            "AxisDiscretization nodes must be finite.",
+        )
+        weights = (
+            None
+            if quad_weights is None
+            else jnp.asarray(quad_weights, dtype=float).reshape((-1,))
+        )
+        if weights is not None:
+            if weights.shape != nodes_.shape:
                 raise ValueError(
                     "AxisDiscretization.quad_weights must have the same shape as nodes."
                 )
-            self.quad_weights = w
-        else:
-            self.quad_weights = None
-        self.nodes = nodes_
-        self.basis = basis
-        self.periodic = bool(periodic)
+            weights = eqx.error_if(
+                weights,
+                jnp.any(~jnp.isfinite(weights)) | jnp.any(weights < 0.0),
+                "AxisDiscretization quadrature weights must be finite and non-negative.",
+            )
         if primary_entity not in ("point", "interval"):
             raise ValueError("primary_entity must be 'point' or 'interval'.")
-        bounds_ = (
-            None if bounds is None else jnp.asarray(bounds, dtype=float).reshape((-1,))
-        )
-        if bounds_ is not None:
-            if bounds_.shape != (2,):
-                raise ValueError(
-                    "AxisDiscretization bounds must be increasing with shape (2,)."
-                )
-            bounds_ = eqx.error_if(
-                bounds_,
-                ~(jnp.all(jnp.isfinite(bounds_)) & (bounds_[1] > bounds_[0])),
-                "AxisDiscretization bounds must be increasing with shape (2,).",
+        if primary_entity == "interval" and domain.finite_bounds is None:
+            raise ValueError("Interval-primary axes require a finite domain.")
+        lower = bool(lower_endpoint_included)
+        upper = bool(upper_endpoint_included)
+        if domain.periodic_axis and (lower or upper):
+            raise ValueError("Periodic axes cannot include physical boundary endpoints.")
+        if primary_entity == "interval" and (lower or upper):
+            raise ValueError(
+                "Interval-primary nodes are not physical boundary endpoints."
             )
-        if primary_entity == "interval" and bounds_ is None:
-            raise ValueError("Interval-primary axes require explicit bounds.")
-        self.primary_entity = primary_entity
-        self.bounds = bounds_
 
         def normalize_metadata(name, value, dtype):
             if value is None:
@@ -114,6 +128,9 @@ class AxisDiscretization(StrictModule):
                 )
             return normalized
 
+        self.nodes = nodes_
+        self.quad_weights = weights
+        self.domain = domain
         self.active = normalize_metadata("active", active, bool)
         self.level = normalize_metadata("level", level, jnp.int32)
         self.parent_interval = normalize_metadata(
@@ -121,6 +138,18 @@ class AxisDiscretization(StrictModule):
             parent_interval,
             jnp.int32,
         )
+        self.basis = basis
+        self.primary_entity = primary_entity
+        self.lower_endpoint_included = lower
+        self.upper_endpoint_included = upper
+
+    @property
+    def periodic(self) -> bool:
+        return self.domain.periodic_axis
+
+    @property
+    def bounds(self) -> Array | None:
+        return self.domain.finite_bounds
 
     def with_active(self, active: Array, /) -> "AxisDiscretization":
         """Return a nested discretization with updated active nodes and weights."""
@@ -134,10 +163,11 @@ class AxisDiscretization(StrictModule):
             nodes=self.nodes,
             quad_weights=weights,
             basis=self.basis,
-            periodic=self.periodic,
+            domain=self.domain,
             active=active_,
             primary_entity=self.primary_entity,
-            bounds=self.bounds,
+            lower_endpoint_included=self.lower_endpoint_included,
+            upper_endpoint_included=self.upper_endpoint_included,
             level=self.level,
             parent_interval=self.parent_interval,
         )
@@ -283,13 +313,17 @@ class UniformAxisSpec(AbstractAxisSpec):
                 w = w.at[0].set(0.5 * dx)
                 w = w.at[-1].set(0.5 * dx)
 
+        periodic = self.periodic or (not self.endpoint)
         return AxisDiscretization(
             nodes=nodes,
             quad_weights=w,
             basis="uniform",
-            periodic=self.periodic or (not self.endpoint),
+            domain=(
+                AxisDomain.periodic(a_, b_) if periodic else AxisDomain.interval(a_, b_)
+            ),
             primary_entity="point",
-            bounds=jnp.stack((a_, b_)),
+            lower_endpoint_included=bool(self.endpoint) and not periodic,
+            upper_endpoint_included=bool(self.endpoint) and n > 1 and not periodic,
         )
 
 
@@ -312,9 +346,14 @@ class UniformCellAxisSpec(AbstractAxisSpec):
             nodes=centers,
             quad_weights=jnp.full((count,), width),
             basis="uniform",
-            periodic=self.periodic,
+            domain=(
+                AxisDomain.periodic(a_, b_)
+                if self.periodic
+                else AxisDomain.interval(a_, b_)
+            ),
             primary_entity="interval",
-            bounds=jnp.stack((a_, b_)),
+            lower_endpoint_included=False,
+            upper_endpoint_included=False,
         )
 
 
@@ -364,9 +403,10 @@ class NestedDyadicAxisSpec(AbstractAxisSpec):
             nodes=nodes,
             quad_weights=weights,
             basis="nested",
-            periodic=False,
+            domain=AxisDomain.interval(a_, b_),
             primary_entity="point",
-            bounds=jnp.stack((a_, b_)),
+            lower_endpoint_included=True,
+            upper_endpoint_included=True,
             active=active,
             level=level_arr,
             parent_interval=jnp.asarray(parents, dtype=jnp.int32),
@@ -420,9 +460,10 @@ class FourierAxisSpec(AbstractAxisSpec):
             nodes=nodes,
             quad_weights=w,
             basis="fourier",
-            periodic=True,
+            domain=AxisDomain.periodic(a_, b_),
             primary_entity="point",
-            bounds=jnp.stack((a_, b_)),
+            lower_endpoint_included=False,
+            upper_endpoint_included=False,
         )
 
 
@@ -448,9 +489,10 @@ class SineAxisSpec(AbstractAxisSpec):
             nodes=nodes,
             quad_weights=w,
             basis="sine",
-            periodic=False,
+            domain=AxisDomain.interval(a_, b_),
             primary_entity="interval",
-            bounds=jnp.stack((a_, b_)),
+            lower_endpoint_included=False,
+            upper_endpoint_included=False,
         )
 
 
@@ -485,9 +527,10 @@ class CosineAxisSpec(AbstractAxisSpec):
             nodes=nodes,
             quad_weights=w,
             basis="cosine",
-            periodic=False,
+            domain=AxisDomain.interval(a_, b_),
             primary_entity="point",
-            bounds=jnp.stack((a_, b_)),
+            lower_endpoint_included=True,
+            upper_endpoint_included=n > 1,
         )
 
 
@@ -529,9 +572,10 @@ class LegendreAxisSpec(AbstractAxisSpec):
             nodes=nodes,
             quad_weights=weights,
             basis="legendre",
-            periodic=False,
+            domain=AxisDomain.interval(a_, b_),
             primary_entity="point",
-            bounds=jnp.stack((a_, b_)),
+            lower_endpoint_included=self.kind in ("radau", "lobatto"),
+            upper_endpoint_included=self.kind == "lobatto",
         )
 
 
@@ -656,6 +700,7 @@ def cut_cell_geometry_weight_from_adf(
 
 __all__ = [
     "AbstractAxisSpec",
+    "AxisBasis",
     "AxisDiscretization",
     "AxisPrimaryEntity",
     "CosineAxisSpec",

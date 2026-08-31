@@ -80,9 +80,12 @@ approximation bundles. Tensor support is independent of finite-difference,
 spectral, or collocation calculus. Global tensor spectral spaces separate mathematical
 modes, physical grids, modal DOFs, dealiasing, constrained/Galerkin/tau formulations,
 periodic Leray projection, channel Stokes constraints, and temporal integration.
-Exact-sampling round-sphere spaces instead expose S2FFT mode layouts, physical area
-measure, scalar Laplace--Beltrami actions, complete-degree noise bases, and the
-prepared discretization consumed by SFNO.
+Axis domains cover bounded, periodic, half-line, and real-line support; rational
+Chebyshev bases, canonical modal transfers, physical modal-tail diagnostics, and
+cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
+resource identities. Exact-sampling round-sphere spaces separately expose S2FFT mode
+layouts, physical area measure, scalar Laplace--Beltrami actions, complete-degree noise
+bases, and the prepared discretization consumed by SFNO.
 Local stencil programs, structured compact line solves, periodic/bounded SBP
 calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
 WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose

@@ -801,6 +801,30 @@ generally orthogonal. `spectral_projector_derivative` solves the differentiated
 Sylvester equations and returns commutator and projector-tangent residuals.
 Refresh preserves the selected dimension and rejects eigenvalue crossings.
 
+### Cross-resolution spectra, resolvents, and operator polynomials
+
+`compare_general_eigen_resolutions` matches homogeneous `(alpha, beta)` pairs
+with scale-invariant chordal distance and one-to-one assignment. Finite,
+infinite, and indeterminate modes remain distinct. Residuals, local separation,
+conditioning, convergence, and repeated clusters contribute independent
+evidence; ordinal position alone never certifies a mode.
+
+`ResolventScanProblem` prepares one pairing-canonical dense Schur form and
+computes the smallest singular value of `A - z I` at every declared shift.
+Singular shifts return an explicit mask and infinite resolvent norm. The initial
+contract is a standard dense endomorphism with Euclidean or positive diagonal
+pairing; generalized-pencil pseudospectra remain unsupported because their
+perturbation model is not unique.
+
+`PolynomialEigenproblem` represents `A0 + lambda*A1 + ... + lambda**d*Ad`.
+The prepared lifecycle builds a first Frobenius companion pencil from canonical
+block operators and routes it through the general homogeneous eigensolver.
+Physical right vectors are selected from the largest homogeneous companion block,
+so an infinite mode cannot collapse to the zero first block. Diagnostics record
+the selected block and its pre-normalization norm. Results verify the original
+homogeneous polynomial residual, including infinite modes; a small residual is
+never inferred from the companion-pencil residual.
+
 ## Reusable projections, shifted systems, and rational actions
 
 `prepare_krylov_projection(A, v, policy)` binds one fixed-capacity Arnoldi or
@@ -2249,6 +2273,60 @@ authoritative eigensolver.
 ---
 
 ::: phydrax.linalg.eigen.schur_spectral_observables
+
+### Resolution, resolvent, and polynomial evidence
+
+::: phydrax.linalg.eigen.GeneralEigenResolutionPolicy
+
+---
+
+::: phydrax.linalg.eigen.GeneralEigenResolutionReport
+
+---
+
+::: phydrax.linalg.eigen.compare_general_eigen_resolutions
+
+---
+
+::: phydrax.linalg.eigen.ResolventScanProblem
+
+---
+
+::: phydrax.linalg.eigen.ResolventScanPolicy
+
+---
+
+::: phydrax.linalg.eigen.PreparedResolventScan
+
+---
+
+::: phydrax.linalg.eigen.ResolventScanResult
+
+---
+
+::: phydrax.linalg.eigen.resolvent_scan
+
+---
+
+::: phydrax.linalg.eigen.PolynomialEigenproblem
+
+---
+
+::: phydrax.linalg.eigen.PolynomialEigenSolvePolicy
+
+---
+
+::: phydrax.linalg.eigen.PreparedPolynomialEigenSolve
+
+---
+
+::: phydrax.linalg.eigen.PolynomialEigenSolveResult
+
+---
+
+::: phydrax.linalg.eigen.polynomial_eigensolve
+
+---
 
 ---
 

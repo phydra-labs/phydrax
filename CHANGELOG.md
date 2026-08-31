@@ -54,6 +54,12 @@
   ordinary and induced-relative persistent homology, natural and fixed-capacity
   diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
   and exact-nullity validation of metric cochain harmonic kernels.
+- Added explicit bounded, periodic, half-line, and real-line spectral domains;
+  endpoint-correct tensor measures; canonical modal transfers; rational
+  Chebyshev line and half-line bases; linear trace constraints; exact periodic
+  Hilbert transforms; physical modal-tail diagnostics; homogeneous
+  cross-resolution eigen and eigenspace evidence; pairing-aware resolvent scans;
+  and original-residual-certified polynomial eigenproblems.
 - Added a native linear-combinatorial substrate with separate logical decisions
   and objective features, content-addressed plans, deterministic ties, portable
   statuses, and independent certificates. Added exact streamed finite,

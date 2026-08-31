@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ...linalg import ArraySpace, DiagonalPairing
 from .._axis import AxisDiscretization
+from .._axis_domain import AxisDomain
 from .._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -156,22 +157,19 @@ class TensorSpectralPlan(AbstractDiscretizationPlan):
 
     def prepare(
         self,
-        bounds: ArrayLike,
+        domains: Sequence[AxisDomain],
         /,
         *,
         numeric_version: str = "0",
     ) -> "TensorSpectralDiscretization":
-        limits = jnp.asarray(bounds, dtype=jnp.dtype(self.precision.physical_dtype))
-        expected = (2, len(self.bases))
-        if limits.shape != expected:
-            raise ValueError(f"bounds must have shape {expected}; got {limits.shape}.")
+        domains_ = tuple(domains)
+        if len(domains_) != len(self.bases) or not all(
+            isinstance(domain, AxisDomain) for domain in domains_
+        ):
+            raise TypeError("domains must contain one AxisDomain per spectral basis.")
         axes = tuple(
-            basis.prepare(
-                limits[0, index],
-                limits[1, index],
-                precision=self.precision,
-            )
-            for index, basis in enumerate(self.bases)
+            basis.prepare(domain, precision=self.precision)
+            for basis, domain in zip(self.bases, domains_, strict=True)
         )
         return TensorSpectralDiscretization(
             self,
@@ -355,10 +353,8 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
                 "derives additional field spaces."
             )
         plans = []
-        bounds = []
+        domains = []
         for axis in axes_:
-            if axis.bounds is None:
-                raise ValueError("Spectral numerical axes require explicit bounds.")
             count = int(axis.nodes.size)
             if axis.basis == "fourier":
                 plans.append(FourierBasisPlan(count))
@@ -374,10 +370,10 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             else:
                 raise ValueError(
                     "Axis migration supports Fourier, sine, and cosine bases; "
-                    "polynomial families require an explicit spectral basis plan "
-                    "so their node rule is preserved."
+                    "polynomial and rational families require an explicit spectral "
+                    "basis plan so their node rule and mapping are preserved."
                 )
-            bounds.append(axis.bounds)
+            domains.append(axis.domain)
         precision = SpectralPrecisionPolicy(dtype)
         plan = TensorSpectralPlan(
             tuple(plans),
@@ -388,7 +384,7 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
             plan_id=plan_id,
         )
         return plan.prepare(
-            jnp.stack(tuple(bounds), axis=1),
+            tuple(domains),
             numeric_version=numeric_version,
         )
 
@@ -489,9 +485,9 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         derivative_order = int(order)
         if derivative_order < 0:
             raise ValueError("Spectral derivative order must be non-negative.")
-        if prepared.family in ("chebyshev", "legendre"):
-            if prepared.derivative_matrix is None:
-                raise RuntimeError("Polynomial basis has no prepared derivative matrix.")
+        if derivative_order == 0:
+            return result
+        if prepared.derivative_matrix is not None:
             output = result
             for _ in range(derivative_order):
                 output = _apply_axis_transform(
@@ -516,20 +512,43 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
         axis_ = int(axis)
         if axis_ < 0 or axis_ >= len(self.axes):
             raise ValueError(f"axis must lie in [0, {len(self.axes)}).")
+        derivative_order = int(order)
+        if derivative_order < 0:
+            raise ValueError("Spectral derivative order must be non-negative.")
+        if derivative_order == 0:
+            return self.reconstruct(coefficients)
         prepared = self.axes[axis_]
-        if prepared.family in ("fourier", "chebyshev", "legendre") or int(order) % 2 == 0:
+        if (
+            prepared.derivative_matrix is not None
+            or prepared.family == "fourier"
+            or (prepared.family in ("sine", "cosine") and derivative_order % 2 == 0)
+        ):
             return self.reconstruct(
-                self.modal_derivative(coefficients, axis=axis_, order=order)
+                self.modal_derivative(
+                    coefficients,
+                    axis=axis_,
+                    order=derivative_order,
+                )
             )
+        if prepared.family in (
+            "rational_chebyshev_line",
+            "rational_chebyshev_half_line",
+        ):
+            raise ValueError(
+                "This constrained rational basis lacks a prepared derivative action."
+            )
+        if prepared.family not in ("sine", "cosine", "chebyshev", "legendre"):
+            raise ValueError("This basis does not expose physical derivative values.")
         from ...operators.differential._array_ops import _basis_nth_derivative
 
         values = self.reconstruct(coefficients)
+        basis = prepared.family if prepared.family in ("sine", "cosine") else "poly"
         return _basis_nth_derivative(
             values,
             prepared.nodes,
             axis=axis_,
-            order=int(order),
-            basis=prepared.family,
+            order=derivative_order,
+            basis=basis,
         )
 
     def partial_derivative_values(
@@ -630,6 +649,16 @@ class TensorSpectralDiscretization(AbstractStrongFormDiscretization):
     ) -> Array:
         value = self._validate_leading(values, self.physical_shape, "Physical values")
         selected = self._selected_axes(axes)
+        diagonal_families = ("fourier", "sine", "cosine")
+        if any(
+            self.axes[axis].derivative_matrix is None
+            and self.axes[axis].family not in diagonal_families
+            for axis in selected
+        ):
+            output = jnp.zeros_like(value)
+            for axis in selected:
+                output = output + self.partial_derivative(value, axis=axis, order=2)
+            return output
         return self.reconstruct(self.modal_laplacian(self.project(value), axes=selected))
 
     def integral(

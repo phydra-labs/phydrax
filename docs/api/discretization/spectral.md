@@ -2,6 +2,10 @@
 
 ## Basis and tensor spaces
 
+::: phydrax.discretization.AxisDomain
+
+---
+
 ::: phydrax.discretization.AbstractSpectralBasisPlan
 
 ---
@@ -25,6 +29,13 @@
 ::: phydrax.discretization.LegendreBasisPlan
 
 ---
+::: phydrax.discretization.RationalChebyshevLineBasisPlan
+
+---
+
+::: phydrax.discretization.RationalChebyshevHalfLineBasisPlan
+
+---
 
 ::: phydrax.discretization.ConstrainedBasisPlan
 
@@ -35,6 +46,43 @@
 ---
 
 ::: phydrax.discretization.TensorSpectralDiscretization
+## Transfer and diagnostics
+
+::: phydrax.discretization.SpectralModalTransferPlan
+
+---
+
+::: phydrax.discretization.PreparedSpectralModalTransfer
+
+---
+
+::: phydrax.discretization.SpectralModalTransferReport
+
+---
+
+::: phydrax.discretization.SpectralModalDiagnosticsPlan
+
+---
+
+::: phydrax.discretization.PreparedSpectralModalDiagnostics
+
+---
+
+::: phydrax.discretization.ModalDecayReport
+
+---
+
+::: phydrax.discretization.SpectralEigenResolutionPolicy
+
+---
+
+::: phydrax.discretization.SpectralEigenResolutionReport
+
+---
+
+::: phydrax.discretization.compare_spectral_eigen_resolutions
+
+---
 
 ## Exact-sampling spherical spaces
 
@@ -87,6 +135,10 @@
 
 ---
 
+::: phydrax.discretization.spectral_hilbert_operator
+
+---
+
 ::: phydrax.equations.CompiledSpectralDynamics
 
 ---
@@ -120,6 +172,14 @@
 ## Bounded formulations
 
 ::: phydrax.discretization.SpectralBoundaryConditionPlan
+
+---
+
+::: phydrax.discretization.SpectralTraceTerm
+
+---
+
+::: phydrax.discretization.SpectralTraceConstraint
 
 ---
 
