@@ -123,6 +123,11 @@ from ._characteristic_projection import (
     solve_characteristic_projection,
     trace_characteristics,
 )
+from ._cochain_electrostatic import (
+    CochainElectrostaticPlan,
+    CochainElectrostaticResult,
+    ElectrostaticBoundaryKind,
+)
 from ._cochain_multirate import (
     CochainMultirateDiagnostics,
     CochainMultiratePlan,
@@ -303,6 +308,20 @@ from ._driving_path import (
     PiecewiseLinearDrivingPath,
 )
 from ._dynamics_evolution import DiffraxEvolution
+from ._electromagnetic_pic import (
+    ElectromagneticPICDiagnostics,
+    ElectromagneticPICFixedStepMethod,
+    ElectromagneticPICPlan,
+    ElectromagneticPICState,
+    ElectromagneticPICStepResult,
+)
+from ._electrostatic_pic import (
+    ElectrostaticPICDiagnostics,
+    ElectrostaticPICFixedStepMethod,
+    ElectrostaticPICPlan,
+    ElectrostaticPICState,
+    ElectrostaticPICStepResult,
+)
 from ._etdrk import ETDRKMethod, solve_etdrk
 from ._evolution_observation import (
     BoundedEvolutionObservation,
@@ -598,6 +617,10 @@ from ._mac_distributed_projection import (
     MACDistributedProjectionPlan,
     MACDistributedProjectionResult,
 )
+from ._mac_free_surface import (
+    MACFreeSurfaceProjectionPlan,
+    MACFreeSurfaceProjectionResult,
+)
 from ._mac_resolved_ib_cfd_dem import (
     advance_mac_resolved_ib_window,
     MACResolvedIBCouplingSchedulePlan,
@@ -766,6 +789,7 @@ from ._particle_mesh_gravity import (
 from ._particle_methods import (
     DEMFixedStepMethod,
     DFSPHFixedStepMethod,
+    FLIPFixedStepMethod,
     IISPHFixedStepMethod,
     TransportVelocityFixedStepMethod,
 )
@@ -1272,6 +1296,19 @@ __all__ = [
     "CochainMultirateDiagnostics",
     "CochainMultiratePlan",
     "CochainRatePartition",
+    "CochainElectrostaticPlan",
+    "CochainElectrostaticResult",
+    "ElectrostaticBoundaryKind",
+    "ElectromagneticPICDiagnostics",
+    "ElectromagneticPICFixedStepMethod",
+    "ElectromagneticPICPlan",
+    "ElectromagneticPICState",
+    "ElectromagneticPICStepResult",
+    "ElectrostaticPICDiagnostics",
+    "ElectrostaticPICFixedStepMethod",
+    "ElectrostaticPICPlan",
+    "ElectrostaticPICState",
+    "ElectrostaticPICStepResult",
     "CompatibleElasticityDynamics",
     "CompatibleElasticityState",
     "CompatibleIdealMHDInductionDynamics",
@@ -1493,6 +1530,8 @@ __all__ = [
     "MACPressureProjectionPlan",
     "MACPressureProjectionResult",
     "MACPressureSolveMethod",
+    "MACFreeSurfaceProjectionPlan",
+    "MACFreeSurfaceProjectionResult",
     "MACReplayCertification",
     "MACResolvedIBCouplingSchedulePlan",
     "MACResolvedIBCouplingState",
@@ -1833,6 +1872,7 @@ __all__ = [
     "ReactiveSpeciesLatticeBoltzmannState",
     "ReactiveSpeciesLatticeBoltzmannStepResult",
     "DEMFixedStepMethod",
+    "FLIPFixedStepMethod",
     "DFSPHFixedStepMethod",
     "IISPHFixedStepMethod",
     "ShepardDensityRenormalizationTransform",

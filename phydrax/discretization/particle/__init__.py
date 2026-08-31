@@ -57,6 +57,7 @@ from ._cell_list import (
     CellListParticleNeighborhoodPlan,
     PreparedCellListParticleNeighborhood,
 )
+from ._charged import ChargedParticlePlan, PreparedChargedParticles
 from ._convex_contact import (
     convex_sat_contact,
     ConvexContactResult,
@@ -753,6 +754,8 @@ __all__ = [
     "ParticleBox",
     "ParticleCell",
     "ParticleDiscretization",
+    "ChargedParticlePlan",
+    "PreparedChargedParticles",
     "ParticleExecutionPolicy",
     "ParticlePairGeometry",
     "ParticlePairRelation",

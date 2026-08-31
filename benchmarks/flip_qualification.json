@@ -1,0 +1,9 @@
+{
+  "liquid_cells": 99,
+  "mass_balance_defect": 8.673617379884035e-19,
+  "momentum_balance_defect": 4.440892098500626e-16,
+  "divergence_norm": 0.0,
+  "air_pressure_defect": 0.0,
+  "maximum_displacement_fraction": 8.000000000000001e-07,
+  "successful": true
+}
