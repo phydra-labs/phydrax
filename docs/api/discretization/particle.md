@@ -191,6 +191,60 @@
 
 ---
 
+#### Holonomic rigid-body constraints
+
+::: phydrax.discretization.BallJointSetPlan
+
+---
+
+::: phydrax.discretization.FixedJointSetPlan
+
+---
+
+::: phydrax.discretization.HingeJointSetPlan
+
+---
+
+::: phydrax.discretization.RigidJointGraphPlan
+
+---
+
+::: phydrax.discretization.PreparedRigidJointGraph
+
+---
+
+::: phydrax.discretization.RigidConstraintSolverPlan
+
+---
+
+::: phydrax.discretization.RigidConstraintDynamicsPlan
+
+---
+
+::: phydrax.discretization.PreparedRigidConstraintDynamics
+
+---
+
+::: phydrax.discretization.RigidConstraintState
+
+---
+
+::: phydrax.discretization.RigidConstraintDiagnostics
+
+---
+
+::: phydrax.discretization.RigidConstraintEvaluation
+
+---
+
+::: phydrax.discretization.RigidConstraintStepResult
+
+---
+
+::: phydrax.discretization.RigidConstraintRejectionReason
+
+---
+
 ::: phydrax.discretization.SphereClumpTemplatePlan
 
 ---

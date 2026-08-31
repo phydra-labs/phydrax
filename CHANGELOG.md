@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
+  globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
+  implicit root derivatives, physical position/velocity residual certification,
+  multiplier warm starts, and fail-closed candidate/accepted transitions. Contact,
+  friction, compliance, motors, dynamic topology, two-dimensional joints, and PBD
+  compatibility remain outside this contract.
 - Added bounded and periodic unit-density MAC incompressible dynamics with static
   no-slip wall closure, face-dual velocity coordinates, symmetry-preserving momentum
   transport, conservative explicit viscosity, transform-or-iterative stage

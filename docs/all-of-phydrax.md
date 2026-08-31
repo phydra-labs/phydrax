@@ -121,8 +121,12 @@ compositional normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
 elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
 bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
-and wear, bonds/topology events, and certified sensitivity modes. Radial
-particle conversion adds typed thermochemistry, reactions, evaporation,
+and wear, bonds/topology events, and certified sensitivity modes. Static
+three-dimensional rigid-body graphs additionally provide globally coupled fixed,
+ball, and hinge constraints with SO(3) pose projection, velocity KKT projection,
+physical residual certification, and transactional rollback; contact, joint limits,
+compliance, and dynamic topology remain separate contracts. Radial particle
+conversion adds typed thermochemistry, reactions, evaporation,
 shrinking-core conversion, morphology, conservative continuum/contact/radiative
 exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
@@ -134,6 +138,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Particle thermochemistry](guides_particle_thermochemistry.md),
 [Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
+[Guide → Constrained rigid-body dynamics](guides_constrained_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
