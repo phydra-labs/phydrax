@@ -1,5 +1,11 @@
 """Finite nonperiodic molecular structures, predictions, data, and training."""
 
+from ._diffusion import (
+    atomistic_score_equivariance,
+    AtomisticCoordinateDiffusion,
+    AtomisticEquivarianceReport,
+    AtomisticHybridDiffusion,
+)
 from ._graph import AtomisticGraph, realize_atomistic_graph
 from ._potential import AbstractAtomisticPotential, checkpoint_atomistic_potential
 from ._prediction import AtomisticPrediction, AtomisticProvenance, energy_and_forces
@@ -22,6 +28,10 @@ from ._types import (
 
 __all__ = [
     "AbstractAtomisticPotential",
+    "AtomisticCoordinateDiffusion",
+    "AtomisticEquivarianceReport",
+    "AtomisticHybridDiffusion",
+    "atomistic_score_equivariance",
     "AtomicStructure",
     "AtomisticBatch",
     "AtomisticGraph",

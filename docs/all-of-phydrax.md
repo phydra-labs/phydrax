@@ -996,10 +996,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `ReverseDiffusion` or `probability_flow_system`. Reverse samples retain distinct
   terminal states, global Wiener paths, solver status, and terminal-reference
   semantics. Probability flow composes with `ContinuousFlowLaw` instead of creating a
-  second density implementation. The initial contract is full-rank real Euclidean
-  vector state only; singular, manifold, and field diffusion remain explicit future
-  contracts. See [API → Gaussian score diffusions](api/stochastic/diffusion.md) and
-  [API → Score diffusion transport](api/transport/diffusion.md).
+  second density implementation. Structured extensions add matrix and
+  state-dependent Itô reversal, exactness-labeled conditioning, discrete Gaussian and
+  categorical chains, Hausdorff subspace laws, coefficient-space field/path
+  diffusion, intrinsic manifold and complex-coordinate semantics, and
+  latent/graph/atomistic composition without erasing their distinct measures.
+  See [API → Gaussian score diffusions](api/stochastic/diffusion.md),
+  [API → Score diffusion transport](api/transport/diffusion.md), and
+  [API → Advanced generative transport](api/transport/generative_expansion.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
   `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
   and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density

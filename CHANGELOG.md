@@ -8,6 +8,14 @@
   reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
   initial states, and memory-linear diagonal Wiener coefficients. Replaced the
   flow-specific `FlowMatchingPolicy` with shared `UniformTimeSamplingPolicy`.
+- Extended generative transport with stable array/PyTree/complex event coordinates,
+  block-operator Wiener noise, full and Hausdorff Gaussian factor laws,
+  matrix/state-dependent Itô reversal, exactness-labeled guidance, discrete Gaussian
+  and categorical diffusion, coefficient-space field/path diffusion, intrinsic
+  manifold and complex diffusion, latent/graph/atomistic compositions, persistent
+  energy training, normalized autoregressive laws, and sample-only adversarial
+  objectives. Every family retains explicit measure, geometry, approximation, and
+  density capabilities rather than sharing a universal model facade.
 - Generalized matrix-free quantum local actions through
   `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
   a clean migration of discrete VMC/TDVP while preserving the connected-action

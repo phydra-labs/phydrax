@@ -130,6 +130,13 @@ PUBLIC_TERM_API = {
     "free_boundary_term_suite",
     "implicit_interface_penalty",
     "implicit_phase_penalty",
+    "AdversarialEvaluation",
+    "EnergyTarget",
+    "ImplicitGenerator",
+    "FrozenTopologyTerm",
+    "PersistentContrastiveDivergence",
+    "PersistentEnergyState",
+    "wasserstein_adversarial_evaluation",
 }
 
 LEGACY_TERMS = {

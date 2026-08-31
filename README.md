@@ -75,8 +75,10 @@ Most workflows are composing a few primitives:
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
 - **Learned probability transport**: endpoint flow matching, deterministic continuous
-  flows, VP/VE denoising score matching, replayable reverse-time diffusion, and
-  probability-flow densities reuse explicit laws and differential-solver evidence.
+  flows, scalar/matrix/state-dependent score diffusion, discrete Gaussian and
+  categorical diffusion, exactness-labeled guidance, coefficient-space field/path
+  laws, manifold/complex transport, and latent/graph/atomistic compositions reuse
+  explicit measures, event coordinates, and differential-solver evidence.
 - **Combinatorial optimization**: native exact finite, cardinality, assignment,
   and DAG path oracles preserve logical decisions, linear objective features,
   deterministic ties, independent certificates, JIT batching, and explicit

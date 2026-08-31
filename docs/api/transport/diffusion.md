@@ -80,13 +80,45 @@ the existing continuous-flow restrictions and diagnostics.
 
 ::: phydrax.transport.probability_flow_system
 
-## Semantics and exclusions
+## General Itô reversal and guidance
 
-- The score is the coordinate gradient of a Lebesgue log density.
-- The score field must return exactly the state shape and be deterministic for its
-  fixed evaluation key.
-- A Gaussian terminal reference remains marked exact, asymptotic, or external.
-- The initial implementation rejects nontrivial state geometry, complex packing,
-  multiple Wiener terms, and non-vector state events.
-- Projecting or clipping reverse steps would change the represented process and is not
-  performed implicitly.
+`general_reverse_diffusion_problem` lowers matrix or state-dependent diffusion factors
+as operator-valued Wiener terms. `general_probability_flow_system` includes the exact
+covariance-divergence correction. Named contexts are filtered to each score or
+guidance dependency; classifier-free composition requires its unconditional field to
+be the base score.
+
+::: phydrax.transport.ScoreContext
+
+---
+
+::: phydrax.transport.GuidedScoreField
+
+---
+
+::: phydrax.transport.TimeConditionedLikelihoodGuidance
+
+---
+
+::: phydrax.transport.PotentialGuidance
+
+---
+
+::: phydrax.transport.ClassifierFreeGuidance
+
+---
+
+::: phydrax.transport.general_reverse_diffusion_problem
+
+---
+
+::: phydrax.transport.general_probability_flow_system
+
+The original `ReverseDiffusion` path remains the memory-linear diagonal, real-vector
+specialization. It rejects nontrivial state geometry and complex packing. Every path
+retains explicit terminal-reference semantics, and no reverse step is projected or
+clipped implicitly.
+
+See [Advanced generative transport](generative_expansion.md) for the distinct
+discrete, subspace, field, manifold, complex, path, and scientific-composition
+contracts.
