@@ -14,7 +14,13 @@ def _compiled_channel():
         ),
         axis_names=("x", "y", "z"),
         field_name="velocity",
-    ).prepare(jnp.asarray([[0.0, -1.0, 0.0], [2.0 * jnp.pi, 1.0, 2.0 * jnp.pi]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.periodic(0.0, 2.0 * jnp.pi),
+            phx.discretization.AxisDomain.interval(-1.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 2.0 * jnp.pi),
+        )
+    )
     plan = phx.discretization.ChannelStokesPlan(
         space,
         0.1,
@@ -70,7 +76,9 @@ def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancin
     )
 
     assert not bool(solution.successful)
-    assert int(solution.diagnostics.status[0]) == phx.solver.CHANNEL_FLOW_INITIAL_CONSTRAINT
+    assert (
+        int(solution.diagnostics.status[0]) == phx.solver.CHANNEL_FLOW_INITIAL_CONSTRAINT
+    )
     assert jnp.all(~solution.diagnostics.valid)
     np.testing.assert_allclose(solution.velocity, 0.0, atol=0.0)
 

@@ -1,0 +1,18 @@
+{
+  "mode_count": 16,
+  "refined_mode_count": 24,
+  "line_prepared_id": "227894d01d7397396549279533369722c44a11e1c4fa48494961108ed3a59380",
+  "transform_error": 2.2065682614424986e-15,
+  "derivative_error": 4.440892098500626e-15,
+  "half_line_quadrature_error": 3.200227526312105e-07,
+  "derivative_closure_residual": 0.5755937888178397,
+  "modal_tail_ratio": 4.855807485857391e-15,
+  "first_jit_ms": 52.37587500596419,
+  "steady_wall_ms": 0.16247199770684043,
+  "oscillator_first_eigenvalue_error": 1.619043111755758e-05,
+  "oscillator_trusted_modes": 2,
+  "resolvent_amplification": 20.04987562112089,
+  "polynomial_residual": 1.1102230246251568e-16,
+  "finite": true,
+  "passed": true
+}

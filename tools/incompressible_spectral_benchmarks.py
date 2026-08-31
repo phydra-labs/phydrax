@@ -92,7 +92,12 @@ def run_incompressible_spectral_benchmark(
         ),
         axis_names=("x", "y"),
         field_name="velocity",
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+        )
+    )
     periodic = phx.equations.compile_periodic_incompressible_flow(
         phx.equations.IncompressibleFlowProblem(2, 1e-2),
         periodic_space,
@@ -125,7 +130,13 @@ def run_incompressible_spectral_benchmark(
         ),
         axis_names=("x", "y", "z"),
         field_name="velocity",
-    ).prepare(jnp.asarray([[0.0, -1.0, 0.0], [2.0 * jnp.pi, 1.0, 2.0 * jnp.pi]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.periodic(0.0, 2.0 * jnp.pi),
+            phx.discretization.AxisDomain.interval(-1.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 2.0 * jnp.pi),
+        )
+    )
     y_channel = channel_space.axes[1].nodes
     couette = (
         jnp.zeros(channel_space.physical_shape + (3,))

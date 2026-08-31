@@ -39,12 +39,10 @@ def _axis_basis_values(discretization: TensorSpectralDiscretization, axis: int, 
         dtype=jnp.dtype(discretization.plan.precision.coefficient_dtype),
     )
     values = jax.vmap(prepared.synthesize)(identity).T
-    if prepared.family in ("chebyshev", "legendre"):
-        derivatives = (
-            barycentric_differentiation_matrix(prepared.nodes) @ values
-            if prepared.derivative_matrix is None
-            else values @ prepared.derivative_matrix
-        )
+    if prepared.derivative_matrix is not None:
+        derivatives = values @ prepared.derivative_matrix
+    elif prepared.family in ("chebyshev", "legendre"):
+        derivatives = barycentric_differentiation_matrix(prepared.nodes) @ values
     elif prepared.family == "fourier":
         derivatives = jax.vmap(
             lambda coefficient: prepared.synthesize(
