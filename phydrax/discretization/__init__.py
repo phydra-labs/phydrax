@@ -168,6 +168,8 @@ from .amr import (
     RefinementDecision,
 )
 from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
+from .discrete_velocity import *  # noqa: F403
+from .discrete_velocity import __all__ as _discrete_velocity_all
 from .fem import (
     affine_dof_constraint,
     coarsen_triangles_local,
@@ -570,6 +572,31 @@ from .finite_volume import (
     WENOReconstructionPlan,
     write_triangle_fv_archive,
     write_unstructured_fv_archive,
+)
+from .lattice_boltzmann import *  # noqa: F403
+from .lattice_boltzmann import (
+    __all__ as _lattice_boltzmann_all,
+    BGKCollisionPlan,
+    D2Q9,
+    D3Q19,
+    GuoForcingPlan,
+    LatticeAcceleration,
+    LatticeBoltzmannBoundaryPlan,
+    LatticeBoltzmannCollisionPlan,
+    LatticeBoltzmannDiagnostics,
+    LatticeBoltzmannDiscretization,
+    LatticeBoltzmannGeometrySnapshot,
+    LatticeBoltzmannMacroscopicState,
+    LatticeBoltzmannMethodPlan,
+    LatticeBoltzmannPlan,
+    LatticeBoltzmannPrecisionPolicy,
+    LatticeBoltzmannRuntimeParameters,
+    LatticeBoltzmannScaling,
+    LatticeBoltzmannStepResult,
+    LatticeBoltzmannVelocitySet,
+    PreparedLatticeBoltzmannBoundary,
+    PreparedLatticeBoltzmannDynamics,
+    TRTCollisionPlan,
 )
 from .mpm import (
     APICGatherResult,
@@ -1292,6 +1319,27 @@ __all__ = [
     "FiniteVolumeAcceptedFluxIntegralLedger",
     "FiniteVolumeStageFluxRateBlock",
     "FiniteVolumeStageFluxRateLedger",
+    "BGKCollisionPlan",
+    "D2Q9",
+    "D3Q19",
+    "GuoForcingPlan",
+    "LatticeAcceleration",
+    "LatticeBoltzmannBoundaryPlan",
+    "LatticeBoltzmannCollisionPlan",
+    "LatticeBoltzmannDiagnostics",
+    "LatticeBoltzmannDiscretization",
+    "LatticeBoltzmannGeometrySnapshot",
+    "LatticeBoltzmannMacroscopicState",
+    "LatticeBoltzmannMethodPlan",
+    "LatticeBoltzmannPlan",
+    "LatticeBoltzmannPrecisionPolicy",
+    "LatticeBoltzmannRuntimeParameters",
+    "LatticeBoltzmannScaling",
+    "LatticeBoltzmannStepResult",
+    "LatticeBoltzmannVelocitySet",
+    "PreparedLatticeBoltzmannBoundary",
+    "PreparedLatticeBoltzmannDynamics",
+    "TRTCollisionPlan",
     "UnstructuredFiniteVolumeDiscretization",
     "UnstructuredFiniteVolumePlan",
     "UnstructuredFiniteVolumeQualityReport",
@@ -2292,4 +2340,10 @@ __all__ = [
     "PreparedMPMDynamics",
     "PrescribedGridVelocityPlan",
     "PrescribedGridVelocityResult",
+]
+
+__all__ += [
+    name
+    for name in (*_discrete_velocity_all, *_lattice_boltzmann_all)
+    if name not in __all__
 ]

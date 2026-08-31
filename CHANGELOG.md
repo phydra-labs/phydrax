@@ -77,6 +77,22 @@
   backward Diffrax characteristic tracing with macro-step neural projection; and
   mass-preserving fixed-support residual-attention collocation with explicit ESS,
   KFAC, and controlled-policy contracts.
+- Added native athermal lattice-Boltzmann flow on uniform isotropic cell grids:
+  certified D2Q9/D3Q19 velocity sets, BGK/TRT collision with collision-coupled
+  Guo forcing, periodic and frozen halfway-wall link routing, fixed tangential
+  moving walls, explicit physical/lattice scaling and precision evidence,
+  fail-closed fixed-step integration, differentiable runtime controls, and a
+  memory-bounded generic fixed-step rollout with final/checkpoint/trajectory
+  retention.
+- Expanded kinetic methods with D3Q27, prepared moment bases and advanced collision
+  families, staged open/curved/moving-wall ownership, explicit local implicit forcing,
+  geometry epochs and conservative transfers, multiblock and ratio-2 refinement
+  contracts, colour-gradient/free-energy/thermal/species/reactive distributions,
+  certified D2V17 and off-lattice D2V37 smooth-compressible methods, fixed FV/kinetic
+  interfaces, sharded and AA/fused execution, block reverse replay, and a forward-only
+  stable-tuple IREE export contract. Advanced paths report capability, conservation,
+  realizability, equivalence, and qualification evidence without extending the
+  qualified low-Mach baseline by implication.
 - Added reciprocal-lattice harmonic discretization with true one-dimensional and
   oblique two-dimensional periodicity, selected FFT analysis/synthesis,
   pairwise-difference material convolution, translation covariance, resource
