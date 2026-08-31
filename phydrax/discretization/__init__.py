@@ -16,8 +16,8 @@ from . import (
     particle,
     pic,
     spectral,
-    vem,
     splatting,
+    vem,
 )
 from ._axis import (
     AbstractAxisSpec,
@@ -98,13 +98,13 @@ from ._point_cloud_pde import (
     solve_point_cloud_poisson,
 )
 from ._polygon_geometry import (
+    evaluate_polygon_geometry,
+    polygon_cubature,
     PolygonAdmissibilityPolicy,
     PolygonCubature,
     PolygonGeometry,
     PolygonGeometryEvidence,
     PolygonTriangulation,
-    evaluate_polygon_geometry,
-    polygon_cubature,
     prepare_polygon_triangulation,
 )
 from ._spaces import (
@@ -1220,27 +1220,6 @@ from .spectral import (
     TensorSpectralPlan,
     TensorSpectralSymmetry,
 )
-from .vem import (
-    FactorizedVirtualElementOperator,
-    StabilizedVirtualElementTensor,
-    VirtualElementDirichletConstraint,
-    VirtualElementDiscretization,
-    VirtualElementDofMap,
-    VirtualElementFieldSpec,
-    VirtualElementPlan,
-    VirtualElementPrecisionPolicy,
-    VirtualElementProjectionData,
-    VirtualElementProjectionEvidence,
-    VirtualElementResourceBudget,
-    VirtualElementRuntimeData,
-    VirtualElementSpec,
-    VirtualElementStabilizationEvidence,
-    VirtualElementStabilizationPolicy,
-    conforming_h1_virtual_element,
-    prepare_virtual_element_projections,
-    stabilize_virtual_element_tensor,
-    virtual_element_dirichlet_constraint,
-)
 from .splatting import (
     AbstractStructuredSplatAssignment,
     MultilinearSplatAssignment,
@@ -1259,6 +1238,27 @@ from .splatting import (
     SplatReconstructionResult,
     SplatRouteScatterResult,
     TensorBSplineSplatAssignment,
+)
+from .vem import (
+    conforming_h1_virtual_element,
+    FactorizedVirtualElementOperator,
+    prepare_virtual_element_projections,
+    stabilize_virtual_element_tensor,
+    StabilizedVirtualElementTensor,
+    virtual_element_dirichlet_constraint,
+    VirtualElementDirichletConstraint,
+    VirtualElementDiscretization,
+    VirtualElementDofMap,
+    VirtualElementFieldSpec,
+    VirtualElementPlan,
+    VirtualElementPrecisionPolicy,
+    VirtualElementProjectionData,
+    VirtualElementProjectionEvidence,
+    VirtualElementResourceBudget,
+    VirtualElementRuntimeData,
+    VirtualElementSpec,
+    VirtualElementStabilizationEvidence,
+    VirtualElementStabilizationPolicy,
 )
 
 
