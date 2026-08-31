@@ -1,14 +1,15 @@
-# Gaussian score diffusions
+# Gaussian and structured score diffusions
 
 `phydrax.stochastic` provides prescribed variance-preserving and variance-exploding
 Itô processes for continuous-time score learning. These objects are forward stochastic
 processes, not neural models and not samplers from a learned law.
 
-The initial public contract is deliberately narrow: real vector states, trivial
-Euclidean coordinates, and scalar state-independent full-rank noise. The transition
-marginal is represented by `DiagonalGaussianProcessDistribution`, so sampling and log
-density remain linear in the state dimension and never materialize an identity
-covariance matrix.
+The core VP/VE contract uses real vector states, trivial Euclidean coordinates, and
+scalar state-independent full-rank noise. Its transition marginal is represented by
+`DiagonalGaussianProcessDistribution`, so sampling and log density remain linear in
+the state dimension and never materialize an identity covariance matrix. Structured
+event, covariance, geometry, and discrete extensions remain separate typed contracts
+rather than weakening that core.
 
 ## Probability laws and process marginals
 
@@ -59,16 +60,63 @@ certificate about an unknown data law.
 
 ::: phydrax.stochastic.DiffusionTerminalReference
 
-## Deliberate exclusions
+## Structured and discrete extensions
 
-The current Gaussian score process does not claim support for:
+General Euclidean Itô diffusion exposes factor, covariance action, covariance
+divergence, reverse drift, and probability-flow drift. Constant matrix coefficients
+retain exact affine Gaussian transitions; state-dependent coefficients use exact
+automatic differentiation of the covariance divergence.
 
-- matrix-valued or state-dependent diffusion;
-- singular or retained-subspace noise;
-- Riemannian or embedded-manifold scores;
-- complex, discrete, categorical, or path-valued events;
-- mesh-independent random fields.
+::: phydrax.stochastic.AbstractItoScoreDiffusion
 
-A low-rank Gaussian has no ambient Lebesgue density. Physical-field diffusion also
-requires an explicit mass metric and spatial covariance contract; IID nodal noise is
-not silently labeled physical white noise.
+---
+
+::: phydrax.stochastic.MatrixGaussianDiffusion
+
+---
+
+::: phydrax.stochastic.StateDependentItoDiffusion
+
+Finite schedules and geometric laws have their own reference measures and terminal
+semantics.
+
+::: phydrax.stochastic.DiscreteGaussianDiffusionSchedule
+
+---
+
+::: phydrax.stochastic.AncestralGaussianDiffusion
+
+---
+
+::: phydrax.stochastic.DDIMTransport
+
+---
+
+::: phydrax.stochastic.CategoricalDiffusionSchedule
+
+---
+
+::: phydrax.stochastic.CategoricalReverseDiffusion
+
+---
+
+::: phydrax.stochastic.SubspaceGaussianLaw
+
+---
+
+::: phydrax.stochastic.FieldGaussianDiffusion
+
+---
+
+::: phydrax.stochastic.IsotropicRiemannianDiffusion
+
+---
+
+::: phydrax.stochastic.ComplexVariancePreservingDiffusion
+
+---
+
+::: phydrax.stochastic.PathCoefficientDiffusion
+
+See [Advanced generative transport](../transport/generative_expansion.md) for measure,
+conditioning, transfer, and composition semantics.

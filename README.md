@@ -43,6 +43,11 @@ Most workflows are composing a few primitives:
   measures, transfers, fixed-temporal differentiable replay, transactional
   gravity/cooling/stochastic source processes, compatible constrained MHD,
   temporal/stochastic composition, and auditable plan/preparation identities.
+- **Discrete structural form-finding**: sparse pin-jointed force-density
+  equilibrium supports full or componentwise coordinate restraints, tension,
+  compression, mixed signs, fixed and shape-dependent loads, mathematical
+  solution derivatives, and force/support/load state-design optimization with
+  physical residual, reaction, status, and provenance evidence.
 - **Finite-molecule atomistic learning**: scale-identified atomic structures and
   padded case-isolated batches reuse material-particle identities and `GraphIR`;
   PaiNN scalar/vector interactions produce invariant molecular energies and
@@ -76,8 +81,10 @@ Most workflows are composing a few primitives:
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
 - **Learned probability transport**: endpoint flow matching, deterministic continuous
-  flows, VP/VE denoising score matching, replayable reverse-time diffusion, and
-  probability-flow densities reuse explicit laws and differential-solver evidence.
+  flows, scalar/matrix/state-dependent score diffusion, discrete Gaussian and
+  categorical diffusion, exactness-labeled guidance, coefficient-space field/path
+  laws, manifold/complex transport, and latent/graph/atomistic compositions reuse
+  explicit measures, event coordinates, and differential-solver evidence.
 - **Combinatorial optimization**: native exact finite, cardinality, assignment,
   and DAG path oracles preserve logical decisions, linear objective features,
   deterministic ties, independent certificates, JIT batching, and explicit
@@ -282,6 +289,9 @@ Can be found [here](https://phydra-labs.github.io/phydrax).
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
 [quantum operators and dynamics](docs/guides_quantum.md).
+The [force-density form-finding guide](docs/guides_force_density.md) covers
+pin-jointed equilibrium, follower loads, implicit derivatives, and inverse
+structural design while keeping these distinct from constitutive FEM analysis.
 The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
 demonstrates correlated empirical integration outside quantum mechanics, while the
 [VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian

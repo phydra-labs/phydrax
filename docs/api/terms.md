@@ -359,6 +359,27 @@ endpoint-provider and refresh contracts for flow matching.
 
 ::: phydrax.terms.ScoreMatchingBatch
 
+## Energy and adversarial objectives
+
+`EnergyTarget` is explicitly unnormalized. Persistent contrastive divergence returns
+one immutable particle state per update and never clips Langevin trajectories.
+`ImplicitGenerator` is sample-only; Wasserstein adversarial evaluation therefore
+provides critic and generator objectives without fabricating a log density.
+
+::: phydrax.terms.EnergyTarget
+
+---
+
+::: phydrax.terms.PersistentContrastiveDivergence
+
+---
+
+::: phydrax.terms.ImplicitGenerator
+
+---
+
+::: phydrax.terms.wasserstein_adversarial_evaluation
+
 ## Base term types
 
 ::: phydrax.terms.AbstractScalarTerm

@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Added
+- Added bounded and periodic unit-density MAC incompressible dynamics with static
+  no-slip wall closure, face-dual velocity coordinates, symmetry-preserving momentum
+  transport, conservative explicit viscosity, transform-or-iterative stage
+  projection, fixed-step SSPRK composition, short-horizon differentiation, step
+  restrictions, and complete constraint and kinetic-energy diagnostics. Hardened
+  singular transform solves so masked pressure nullspaces retain finite reverse-mode
+  derivatives.
+- Extended the MAC flow substrate with dynamic no-slip/free-slip/inflow/pressure/open
+  boundary closures, named conservative scalars and Boussinesq exchange, iterative,
+  transform, hybrid-line and IMEX/SBDF2 viscous solves, conservative variable-density
+  face momentum, dual-measure resolved IB–DEM coupling, transactional adaptivity and
+  replay, short-horizon and least-squares-shadowing sensitivities, explicit sharded
+  pressure CG, compatible mapped/ALE geometry, and conservative nondifferentiable
+  remesh epochs. Every path exposes its mass, momentum, energy, residual, topology,
+  differentiation, resource, and fail-closed acceptance evidence.
 - Added exact fixed-temporal finite-volume replay with full, step, or block
   rematerialization; transactional balance-law source composition and persistence;
   periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral
@@ -50,6 +65,11 @@
   reduced-adjoint state/design optimization, sparse physical-radius density
   filtering, SIMP compliance topology optimization, and independent
   reference-discretization reanalysis.
+- Added native sparse force-density form-finding for pin-jointed tension,
+  compression, and mixed-sign structures with componentwise coordinate restraints,
+  fixed and shape-dependent edge/surface loads, prepared numeric refresh,
+  mathematically implicit linear/root derivatives, physical residual and reaction
+  certification, and force/support/load state-design optimization.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.
@@ -58,6 +78,14 @@
   reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
   initial states, and memory-linear diagonal Wiener coefficients. Replaced the
   flow-specific `FlowMatchingPolicy` with shared `UniformTimeSamplingPolicy`.
+- Extended generative transport with stable array/PyTree/complex event coordinates,
+  block-operator Wiener noise, full and Hausdorff Gaussian factor laws,
+  matrix/state-dependent Itô reversal, exactness-labeled guidance, discrete Gaussian
+  and categorical diffusion, coefficient-space field/path diffusion, intrinsic
+  manifold and complex diffusion, latent/graph/atomistic compositions, persistent
+  energy training, normalized autoregressive laws, and sample-only adversarial
+  objectives. Every family retains explicit measure, geometry, approximation, and
+  density capabilities rather than sharing a universal model facade.
 - Generalized matrix-free quantum local actions through
   `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
   a clean migration of discrete VMC/TDVP while preserving the connected-action
@@ -202,11 +230,17 @@
   analysis, local homology, certified implicit covers, and Conley homology
   index-pair workflows.
 - Added `phydrax.pgm`: immutable finite-discrete factor graphs over native
-  bipartite `GraphIR` topology; dense, enumerated, Ising, Potts, logical, and
-  cardinality factors; explicitly capped exact enumeration; exact-forest and loopy
-  sum/max-product belief propagation with honest normalizer/MAP semantics; validated
-  persistent chromatic Gibbs sampling; correlated-chain integration; structured
-  constructors; and exact-likelihood, moment, and contrastive-divergence primitives.
+  bipartite `GraphIR` topology; dense, sparse-enumerated, structured, and open
+  capability-declared kernels; explicit precision/resource evidence; directed linear
+  forest propagation; synchronous, Gauss--Seidel, accelerated, and qualified implicit
+  loopy BP; same-topology and heterogeneous graph batches; bounded variable
+  elimination, junction trees, normalized laws, smooth dual MAP bounds, and
+  perturb-and-MAP estimates; systematic/random/block/tempered/qualified-cluster
+  sampling with online reducers; persistent CD/SML, pseudolikelihood, Bethe, and exact
+  EM objectives; and pickle-free graph/BP/Gibbs checkpoints. Added general PyTree
+  conditional update programs under `phydrax.sampling.conditional` and factor-graph
+  reverse denoising, adaptive mixing control, and hybrid embeddings under
+  `phydrax.transport.discrete`.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

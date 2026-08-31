@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
+import opt_einsum as oe
 import optimistix as optx
 from jaxtyping import Array, ArrayLike
 
@@ -188,28 +189,66 @@ def _combined_diffusion(
     state_adapter: _PreparedDiffraxStateAdapter,
     /,
 ):
-    diagonal = problem.wiener_terms[0].representation == "diagonal"
+    structured = any(
+        term.representation != "dense" for term in problem.wiener_terms
+    )
 
     def evaluate(time, state, args):
         public_state = state_adapter.unpack_state(state)
         public_args = state_adapter.unpack_args(args)
         state_shape = tuple(jnp.shape(public_state))
-        if diagonal:
-            term = problem.wiener_terms[0]
-            value = term.coefficient_array(time, public_state, public_args)
-            return lx.DiagonalLinearOperator(path_sign * value)
-        columns = []
-        for term in problem.wiener_terms:
-            value = term.coefficient_array(time, public_state, public_args)
-            expected_shape = state_shape + term.noise_shape
-            if tuple(value.shape) != expected_shape:
-                raise ValueError(
-                    f"WienerTerm {term.name!r} coefficient must return shape "
-                    f"{expected_shape}; got {value.shape}."
-                )
-            columns.append(value.reshape(state_shape + (term.noise_size,)))
-        combined = path_sign * jnp.concatenate(columns, axis=-1)
-        return state_adapter.pack_diffusion(combined, problem.noise_shape)
+        if not structured:
+            columns = []
+            for term in problem.wiener_terms:
+                value = term.coefficient_array(time, public_state, public_args)
+                expected_shape = state_shape + term.noise_shape
+                if tuple(value.shape) != expected_shape:
+                    raise ValueError(
+                        f"WienerTerm {term.name!r} coefficient must return shape "
+                        f"{expected_shape}; got {value.shape}."
+                    )
+                columns.append(value.reshape(state_shape + (term.noise_size,)))
+            combined = path_sign * jnp.concatenate(columns, axis=-1)
+            return state_adapter.pack_diffusion(combined, problem.noise_shape)
+
+        if problem.noise_layout is None:
+            raise RuntimeError("Structured Wiener terms require a noise layout.")
+        coefficients = tuple(
+            term.coefficient_operator(time, public_state, public_args)
+            if term.representation == "operator"
+            else term.coefficient_array(time, public_state, public_args)
+            for term in problem.wiener_terms
+        )
+
+        def apply(control):
+            flat_control = jnp.asarray(control).reshape(problem.noise_shape)
+            total = jnp.zeros_like(public_state)
+            for term, block, coefficient in zip(
+                problem.wiener_terms,
+                problem.noise_layout.blocks,
+                coefficients,
+                strict=True,
+            ):
+                local = flat_control[block.start : block.stop].reshape(block.shape)
+                if term.representation == "operator":
+                    contribution = coefficient.mv(local)
+                elif term.representation == "diagonal":
+                    contribution = coefficient * local
+                else:
+                    matrix = coefficient.reshape(
+                        (int(public_state.size), term.noise_size)
+                    )
+                    contribution = oe.contract(
+                        "ij,j->i", matrix, local.reshape((term.noise_size,))
+                    ).reshape(state_shape)
+                total = total + contribution
+            return state_adapter.pack_state(path_sign * total, owner="Diffusion action")
+
+        return lx.FunctionLinearOperator(
+            apply,
+            jax.ShapeDtypeStruct(problem.noise_shape, public_state.real.dtype),
+            closure_convert=False,
+        )
 
     return evaluate
 
@@ -219,15 +258,18 @@ def _validate_wiener_representation(
     state_adapter: _PreparedDiffraxStateAdapter,
     /,
 ) -> None:
-    if not problem.wiener_terms or problem.wiener_terms[0].representation != "diagonal":
+    structured = any(
+        term.representation != "dense" for term in problem.wiener_terms
+    )
+    if not structured:
         return
     if state_adapter.active:
         raise ValueError(
-            "Diagonal Wiener coefficients initially require native real state packing."
+            "Structured Wiener coefficients initially require native real state packing."
         )
     if problem.state_geometry is not None and not problem.state_geometry.trivial:
         raise ValueError(
-            "Diagonal Wiener coefficients initially require trivial state geometry."
+            "Structured Wiener coefficients initially require trivial state geometry."
         )
 
 

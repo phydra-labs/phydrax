@@ -97,10 +97,15 @@ cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
 resource identities. Exact-sampling round-sphere spaces separately expose S2FFT mode
 layouts, physical area measure, scalar Laplace--Beltrami actions, complete-degree noise
 bases, and the prepared discretization consumed by SFNO.
-Local stencil programs, structured compact line solves, periodic/bounded SBP
-calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
-WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose
-without treating quadrature sites, mesh entities, and field DOFs as interchangeable.
+Local stencil programs, structured compact and transform-line solves,
+periodic/bounded SBP calculus, entropy-conservative SBP flux differencing, and
+compatible finite-volume MAC flow compose without conflating quadrature sites, mesh
+entities, and field DOFs. The MAC substrate includes dynamic wall/inflow/open
+closures, symmetry-preserving momentum, named scalar/Boussinesq and conservative
+variable-density dynamics, implicit diffusion, resolved face-marker coupling,
+sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
+certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
+and distributed halo plans remain available to the wider finite-volume family.
 Material particles retain stable entity IDs and a physical mass measure while
 current positions remain temporal state. Fixed-h conservative barotropic SPH
 uses canonical unordered pairs, normalized compact kernels, energy-derived
@@ -569,6 +574,19 @@ Method of Moving Asymptotes adds a finite-box, feasible-start route for very
 large designs with few inequalities. Its reduced state/design form reuses exact
 adjoints and supports fixed-mesh SIMP compliance optimization with sparse
 physical-radius filtering and mandatory independent reanalysis evidence.
+
+Pin-jointed structural form-finding lives in
+`phydrax.applications.solid_mechanics`. `ForceDensityStructure` compiles member
+topology and full or componentwise coordinate restraints into one sparse reduced
+equilibrium relation. Sign-definite tension and compression expose certified
+positive-definite linear systems; mixed signs retain only self-adjoint evidence.
+Fixed nodal and reference line loads remain linear, while current line loads and
+oriented T3/Q4 pressure become physical nonlinear roots with implicit derivatives.
+The same state/design runtime optimizes force densities, support coordinates, and
+load parameters without a parallel goal or optimizer hierarchy. Results retain
+member forces, reactions, physical residuals, nested solver evidence, and stable
+plan identities; they do not claim constitutive stiffness, buckling, bending, or
+stability.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
@@ -1049,10 +1067,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `ReverseDiffusion` or `probability_flow_system`. Reverse samples retain distinct
   terminal states, global Wiener paths, solver status, and terminal-reference
   semantics. Probability flow composes with `ContinuousFlowLaw` instead of creating a
-  second density implementation. The initial contract is full-rank real Euclidean
-  vector state only; singular, manifold, and field diffusion remain explicit future
-  contracts. See [API → Gaussian score diffusions](api/stochastic/diffusion.md) and
-  [API → Score diffusion transport](api/transport/diffusion.md).
+  second density implementation. Structured extensions add matrix and
+  state-dependent Itô reversal, exactness-labeled conditioning, discrete Gaussian and
+  categorical chains, Hausdorff subspace laws, coefficient-space field/path
+  diffusion, intrinsic manifold and complex-coordinate semantics, and
+  latent/graph/atomistic composition without erasing their distinct measures.
+  See [API → Gaussian score diffusions](api/stochastic/diffusion.md),
+  [API → Score diffusion transport](api/transport/diffusion.md), and
+  [API → Advanced generative transport](api/transport/generative_expansion.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
   `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
   and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density
@@ -1087,6 +1109,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
+- **Force-density structural form-finding**: build sparse pin-jointed tension,
+  compression, or mixed-sign equilibrium problems; add fixed or follower loads;
+  and optimize force densities, support positions, or load parameters through the
+  native state/design runtime. See
+  [Guides → Force-density form-finding](guides_force_density.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

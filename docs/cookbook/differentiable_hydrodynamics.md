@@ -1,7 +1,7 @@
 # Differentiable hydrodynamics inference
 
 The complete runnable workflow is
-[`examples/differentiable_hydrodynamics_inference.py`](../../examples/differentiable_hydrodynamics_inference.py).
+[`examples/differentiable_hydrodynamics_inference.py`](https://github.com/phydra-labs/phydrax/blob/dev/examples/differentiable_hydrodynamics_inference.py).
 It demonstrates a whitened latent initial field, a fixed finite-volume temporal mesh,
 block rematerialization, a physical observation map, and a normalized posterior.
 
