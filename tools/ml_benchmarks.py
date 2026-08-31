@@ -11,11 +11,8 @@ import argparse
 import hashlib
 import importlib.metadata
 import json
-import os
-import platform
 import statistics
 import sys
-import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -24,9 +21,10 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import jaxlib
 import numpy as np
 
+from benchmarks._io import write_json_atomic
+from benchmarks._runtime import capture_environment, measure_synchronized, synchronize
 from phydrax.kernels import SquaredExponentialKernel
 from phydrax.ml import fit, ML_SUCCESS
 from phydrax.ml.clustering import KMeans
@@ -372,21 +370,11 @@ _CASE_BUILDERS = (
 )
 
 
-def _block_tree(value: Any) -> Any:
-    """Synchronize every device-backed leaf and return the original pytree."""
-    jax.block_until_ready(value)
-    return value
-
-
 def _timed_call(
     operation: Operation, arguments: tuple[Any, ...]
 ) -> tuple[tuple[Any, Any, Any], float]:
-    _block_tree(arguments)
-    start_ns = time.perf_counter_ns()
-    result = operation(*arguments)
-    _block_tree(result)
-    elapsed_seconds = (time.perf_counter_ns() - start_ns) / 1_000_000_000.0
-    return result, elapsed_seconds
+    synchronize(arguments)
+    return measure_synchronized(lambda: operation(*arguments))
 
 
 def _output_evidence(prediction: Any) -> dict[str, Any]:
@@ -496,47 +484,6 @@ def _distribution_version() -> str:
         return "source-tree"
 
 
-def _environment() -> dict[str, Any]:
-    devices = []
-    for device in jax.devices():
-        devices.append(
-            {
-                "id": int(device.id),
-                "platform": str(device.platform),
-                "device_kind": str(device.device_kind),
-                "process_index": int(device.process_index),
-            }
-        )
-    return {
-        "python": {
-            "version": platform.python_version(),
-            "implementation": platform.python_implementation(),
-            "executable": sys.executable,
-        },
-        "platform": {
-            "system": platform.system(),
-            "release": platform.release(),
-            "machine": platform.machine(),
-            "processor": platform.processor(),
-        },
-        "packages": {
-            "phydrax": _distribution_version(),
-            "jax": jax.__version__,
-            "jaxlib": jaxlib.__version__,
-            "numpy": np.__version__,
-        },
-        "jax": {
-            "default_backend": jax.default_backend(),
-            "enable_x64": bool(jax.config.read("jax_enable_x64")),
-            "process_index": int(jax.process_index()),
-            "process_count": int(jax.process_count()),
-            "local_device_count": int(jax.local_device_count()),
-            "device_count": int(jax.device_count()),
-            "devices": devices,
-        },
-    }
-
-
 def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark representative native phydrax.ml fit-and-inference workflows."
@@ -591,19 +538,11 @@ def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def _write_document(output: str, document: dict[str, Any]) -> None:
-    serialized = json.dumps(document, indent=2, sort_keys=True, allow_nan=False) + "\n"
     if output == "-":
-        sys.stdout.write(serialized)
+        serialized = json.dumps(document, indent=2, sort_keys=True, allow_nan=False)
+        sys.stdout.write(serialized + "\n")
         return
-    path = Path(output).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    try:
-        temporary.write_text(serialized, encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+    write_json_atomic(Path(output).expanduser(), document)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -613,7 +552,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for scale in arguments.scales
         for builder in _CASE_BUILDERS
     ]
-    _block_tree(tuple(case.arguments for case in cases))
+    synchronize(tuple(case.arguments for case in cases))
     started = datetime.now(timezone.utc)
     case_results = [
         _run_case(case, warmup=arguments.warmup, repeat=arguments.repeat)
@@ -625,7 +564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "benchmark": "phydrax.ml native scientific workflows",
         "generated_at_utc": finished.isoformat(),
         "elapsed_wall_seconds": (finished - started).total_seconds(),
-        "environment": _environment(),
+        "environment": capture_environment().to_dict(),
         "run_configuration": {
             "repeat": arguments.repeat,
             "warmup": arguments.warmup,

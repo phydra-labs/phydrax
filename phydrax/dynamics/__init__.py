@@ -5,6 +5,13 @@
 """Dynamical-system, pathwise-evolution, analysis, and identification contracts."""
 
 from . import analysis, identification
+from ._cell_enclosure import CellMapEnclosure
+from ._conley import (
+    compute_conley_homology_index,
+    compute_conley_index,
+    ConleyHomologyIndex,
+    ConleyIndexResult,
+)
 from ._differential_algebraic import (
     AutonomousDifferentialAlgebraicResidual,
     DAERole,
@@ -64,6 +71,11 @@ from ._trajectory import (
 __all__ = [
     "analysis",
     "identification",
+    "CellMapEnclosure",
+    "ConleyHomologyIndex",
+    "compute_conley_homology_index",
+    "ConleyIndexResult",
+    "compute_conley_index",
     "AbstractDifferentiableEvolution",
     "AbstractEvolution",
     "AbstractInputPolicy",

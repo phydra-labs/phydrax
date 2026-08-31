@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from collections.abc import Sequence
 from typing import Literal
 
-import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated
 
 
 def _problem(num_steps: int, state_size: int) -> phx.stochastic.StateSpaceProblem:
@@ -65,22 +64,21 @@ def _measure(
     method: Literal["sequential", "parallel", "auto"],
     repeats: int,
 ) -> dict[str, float | str]:
-    filtered = phx.uq.kalman_filter(problem, method=method)
-    smoothed = phx.uq.rts_smoother(filtered, method=method)
-    jax.block_until_ready(smoothed.means)
-    durations = []
-    for _ in range(repeats):
-        started = time.perf_counter()
+    def operation():
         filtered = phx.uq.kalman_filter(problem, method=method)
-        smoothed = phx.uq.rts_smoother(filtered, method=method)
-        jax.block_until_ready(smoothed.means)
-        durations.append(time.perf_counter() - started)
+        return filtered, phx.uq.rts_smoother(filtered, method=method)
+
+    (filtered, smoothed), distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
+    )
     return {
         "requested_method": method,
         "resolved_filter_method": filtered.execution_method,
         "resolved_smoother_method": smoothed.execution_method,
-        "minimum_seconds": min(durations),
-        "mean_seconds": sum(durations) / len(durations),
+        "minimum_seconds": float(distribution.minimum_seconds),
+        "mean_seconds": float(distribution.mean_seconds),
     }
 
 

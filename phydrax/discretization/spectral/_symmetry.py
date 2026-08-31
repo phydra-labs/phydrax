@@ -66,9 +66,15 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         for axis, shift, sign in zip(discretization.axes, shifts, signs, strict=True):
             if axis.family != "fourier" and shift != 0.0:
                 raise ValueError("Translations are supported only on Fourier axes.")
-            if sign == -1 and axis.family not in ("fourier", "chebyshev", "legendre"):
+            if sign == -1 and axis.family not in (
+                "fourier",
+                "chebyshev",
+                "legendre",
+                "rational_chebyshev_line",
+            ):
                 raise ValueError(
-                    "Reflections require Fourier, Chebyshev, or Legendre axes."
+                    "Reflections require Fourier, bounded polynomial, or full-line "
+                    "rational Chebyshev axes."
                 )
         if isinstance(component_count, bool):
             raise TypeError("component_count must be an integer.")

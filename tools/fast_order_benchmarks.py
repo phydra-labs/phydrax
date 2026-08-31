@@ -8,7 +8,6 @@ import argparse
 import json
 import platform
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,12 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import (
+    measure_host,
+    measure_repeated,
+    measure_synchronized,
+    synchronize,
+)
 
 
 _DTYPES = {"float32": jnp.float32, "float64": jnp.float64}
@@ -168,31 +173,25 @@ def _hard_output(case: _Case, values: jax.Array) -> jax.Array:
     )
 
 
-def _block(value: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, value)
-
-
 def _compile(function, *arguments):
-    started = time.perf_counter_ns()
-    compiled = jax.jit(function).lower(*arguments).compile()
-    elapsed_ms = (time.perf_counter_ns() - started) / 1e6
-    return compiled, elapsed_ms
+    compiled, elapsed = measure_host(
+        lambda: jax.jit(function).lower(*arguments).compile()
+    )
+    return compiled, 1_000.0 * elapsed
 
 
 def _execute(compiled, *arguments):
-    started = time.perf_counter_ns()
-    output = _block(compiled(*arguments))
-    elapsed_ms = (time.perf_counter_ns() - started) / 1e6
-    return output, elapsed_ms
+    output, elapsed = measure_synchronized(lambda: compiled(*arguments))
+    return output, 1_000.0 * elapsed
 
 
 def _steady(compiled, arguments, *, warmups: int, repeats: int) -> float:
-    for _ in range(warmups):
-        _block(compiled(*arguments))
-    started = time.perf_counter_ns()
-    for _ in range(repeats):
-        _block(compiled(*arguments))
-    return (time.perf_counter_ns() - started) / (1e6 * repeats)
+    _, distribution = measure_repeated(
+        lambda: compiled(*arguments),
+        warmup=warmups,
+        repeats=repeats,
+    )
+    return 1_000.0 * float(distribution.mean_seconds)
 
 
 def _memory(compiled) -> dict[str, int | str]:
@@ -273,7 +272,7 @@ def _convergence(
             solver=solver,
         )
     )
-    result = _block(solve(values))
+    result = synchronize(solve(values))
     diagnostics = result.diagnostics
     return {
         "status": "available",

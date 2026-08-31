@@ -176,6 +176,21 @@ endpoint constraints, Galerkin solves, boundary lifts, and generalized tau block
 systems also route through `phydrax.linalg`; no parallel polynomial or solve substrate
 is introduced. Eligible diagonal semilinear systems integrate with `ETDRKMethod`.
 
+`AxisDomain` makes bounded, periodic, half-line, and real-line support part of
+the discretization identity. Rational Chebyshev transforms use endpoint-free
+Fejér nodes and mapped physical weights; their derivative actions report
+overresolved closure residuals rather than claiming finite-mode closure.
+`SpectralModalTransferPlan` is the sole resolution-change authority used by
+padding and eigen verification.
+
+General eigensolve convergence is local numerical evidence, not a resolution
+certificate. `compare_general_eigen_resolutions` matches homogeneous finite and
+infinite modes one-to-one. The spectral wrapper transfers modes into a common
+field space and compares physical subspaces. `ResolventScanProblem` reuses one
+pairing-canonical Schur form across declared shifts. `PolynomialEigenproblem`
+uses block companion pencils but accepts modes only against the original
+homogeneous operator-polynomial residual.
+
 Periodic one-dimensional FD stencils expose a certified FFT representation via
 `PreparedFiniteDifferenceDiscretization.transform_diagonalization`.
 `diagonalize_fd_laplacian` additionally certifies tensor FD2 operators on uniform point
@@ -224,6 +239,14 @@ use basis-invariant spectral-projector derivatives. Checkpointed PyTree, two-run
 DFT-field, frequency-domain, and reversible adjoints have distinct eligibility
 contracts; reversible execution rejects PML, dispersion, conductivity, active media,
 and other noninvertible state.
+
+`phydrax.solver.maxwell.fourier_modal` is a separate frequency-domain substrate for
+one- or two-dimensionally periodic layer stacks. It uses reciprocal-lattice harmonic
+convolution, full-tensor finite-layer operators, eigendecomposition-free boundary
+cascades, homogeneous ports, diffraction orders, named current planes, and
+Brillouin-zone source integration. It reuses `phydrax.linalg` solves and spectral
+precision but does not reinterpret cochain material arrays or replace compatible
+Maxwell. See [Fourier-modal Maxwell](guides_fourier_modal_maxwell.md).
 
 The same degree-safe calculus applies full tetrahedral Whitney Hodge matrices and their
 inverse actions directly in codifferentials, energy pairings, frequency solves, and

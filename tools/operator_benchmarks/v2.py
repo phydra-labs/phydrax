@@ -18,6 +18,7 @@ import opt_einsum as oe
 import polars as pl
 
 import phydrax as phx
+from benchmarks._io import atomic_write, write_json_atomic
 
 from .external import ExternalCandidateAudit
 from .matrix import (
@@ -396,7 +397,7 @@ class PromotionCriteria:
     maximum_seed_std: float = 0.05
     maximum_inference_seconds: float = 0.1
     maximum_parameter_count: int = 10_000_000
-    maximum_peak_memory_bytes: int | None = 8 * 1024**3
+    maximum_compiler_estimated_memory_bytes: int | None = 8 * 1024**3
     minimum_seeds: int = 5
     minimum_capacity_ratio: float = 1.0 / 1.1
     maximum_capacity_ratio: float = 1.1
@@ -442,10 +443,12 @@ class PromotionCriteria:
         if int(self.minimum_seeds) < 5:
             raise ValueError("Validated promotion requires at least five seeds.")
         if (
-            self.maximum_peak_memory_bytes is not None
-            and int(self.maximum_peak_memory_bytes) <= 0
+            self.maximum_compiler_estimated_memory_bytes is not None
+            and int(self.maximum_compiler_estimated_memory_bytes) <= 0
         ):
-            raise ValueError("maximum_peak_memory_bytes must be positive when supplied.")
+            raise ValueError(
+                "maximum_compiler_estimated_memory_bytes must be positive when supplied."
+            )
         if not 0.0 < self.minimum_capacity_ratio <= self.maximum_capacity_ratio:
             raise ValueError("Capacity ratio bounds must be positive and ordered.")
         if not 0.0 < self.minimum_compute_ratio <= self.maximum_compute_ratio:
@@ -480,7 +483,7 @@ class ArchitecturePromotionReport:
     maximum_seed_std: float
     maximum_inference_seconds: float
     parameter_count_mean: float
-    peak_memory_bytes_mean: float | None
+    compiler_estimated_memory_bytes_mean: float | None
     seed_count: int
     promoted: bool
     reasons: tuple[str, ...]
@@ -509,7 +512,7 @@ class BenchmarkParetoPoint:
     shifted_relative_l2: float | None
     training_flops: int | None
     inference_seconds: float | None
-    peak_memory_bytes: float | None
+    compiler_estimated_memory_bytes: float | None
     parameter_count: float
     complete: bool
     dominated_by: tuple[str, ...]
@@ -547,7 +550,7 @@ class OperatorBenchmarkV2Result:
 
     def to_dict(self):
         return {
-            "metadata": asdict(self.metadata),
+            "metadata": self.metadata.to_dict(),
             "protocol": asdict(self.protocol),
             "ladders": [
                 {
@@ -2701,9 +2704,9 @@ def _pareto_fronts(
                 for trial in selected_trials
             ]
             memory_values = [
-                row.peak_memory_bytes_mean
+                row.compiler_estimated_memory_bytes_mean
                 for row in rows
-                if row.peak_memory_bytes_mean is not None
+                if row.compiler_estimated_memory_bytes_mean is not None
             ]
             validation_error = (
                 None
@@ -2794,7 +2797,7 @@ def _pareto_fronts(
                     shifted_relative_l2=candidate.shifted,
                     training_flops=candidate.training_flops,
                     inference_seconds=candidate.inference,
-                    peak_memory_bytes=candidate.memory,
+                    compiler_estimated_memory_bytes=candidate.memory,
                     parameter_count=candidate.parameters,
                     complete=candidate_metrics is not None,
                     nondominated=nondominated,
@@ -2882,9 +2885,9 @@ def _promotion_reports(
         maximum_inference = max(row.inference_seconds_mean for row in rows)
         parameters = max(row.parameter_count_mean for row in rows)
         memory_values = [
-            row.peak_memory_bytes_mean
+            row.compiler_estimated_memory_bytes_mean
             for row in rows
-            if row.peak_memory_bytes_mean is not None
+            if row.compiler_estimated_memory_bytes_mean is not None
         ]
         maximum_memory = None if not memory_values else max(memory_values)
         accuracy_passed = base_error <= criteria.maximum_relative_l2
@@ -2899,11 +2902,11 @@ def _promotion_reports(
             maximum_inference <= criteria.maximum_inference_seconds
             and parameters <= criteria.maximum_parameter_count
         )
-        if criteria.maximum_peak_memory_bytes is not None:
+        if criteria.maximum_compiler_estimated_memory_bytes is not None:
             efficiency_passed = (
                 efficiency_passed
                 and maximum_memory is not None
-                and maximum_memory <= criteria.maximum_peak_memory_bytes
+                and maximum_memory <= criteria.maximum_compiler_estimated_memory_bytes
             )
         integrity_passed = audit_lookup[scenario].passed
         difficulty_audit = difficulty_lookup.get(scenario)
@@ -3011,7 +3014,7 @@ def _promotion_reports(
                 maximum_seed_std=maximum_std,
                 maximum_inference_seconds=maximum_inference,
                 parameter_count_mean=parameters,
-                peak_memory_bytes_mean=maximum_memory,
+                compiler_estimated_memory_bytes_mean=maximum_memory,
                 seed_count=seed_count,
                 promoted=promoted,
                 reasons=tuple(reasons),
@@ -3397,10 +3400,19 @@ def run_operator_benchmark_v2(
                         architecture,
                         protocol,
                     )
-                    step_flops, step_bytes = training_step_cost(
+                    step_evidence = training_step_cost(
                         probe,
                         training_scenario,
                     )
+                    if (
+                        step_evidence.flops is None
+                        or step_evidence.bytes_accessed is None
+                    ):
+                        raise ValueError(
+                            "Compute matching requires compiler FLOP and byte estimates."
+                        )
+                    step_flops = step_evidence.flops
+                    step_bytes = step_evidence.bytes_accessed
                 profiles.append(
                     (
                         architecture,
@@ -3707,13 +3719,6 @@ def save_benchmark_v2_artifacts(
     portfolio_path = root / "operator_portfolio_promotions_v2.parquet"
     difficulty_path = root / "operator_scenario_difficulty_v2.parquet"
     pareto_path = root / "operator_pareto_fronts_v2.parquet"
-    json_path.write_text(
-        json.dumps(result.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    pl.DataFrame(_rows(result.aggregates)).write_parquet(aggregate_path)
-    pl.DataFrame(_rows(result.trials)).write_parquet(trial_path)
-    pl.DataFrame(_rows(result.sample_efficiency)).write_parquet(sample_efficiency_path)
     symmetry_rows = _rows(result.symmetry_results)
     symmetry_frame = (
         pl.DataFrame(symmetry_rows)
@@ -3739,14 +3744,45 @@ def save_benchmark_v2_artifacts(
             }
         )
     )
-    symmetry_frame.write_parquet(symmetry_path)
-    pl.DataFrame(_rows(result.difficulty_audits)).write_parquet(difficulty_path)
+    atomic_write(symmetry_path, symmetry_frame.write_parquet)
+    atomic_write(
+        aggregate_path,
+        lambda temporary: pl.DataFrame(_rows(result.aggregates)).write_parquet(temporary),
+    )
+    atomic_write(
+        trial_path,
+        lambda temporary: pl.DataFrame(_rows(result.trials)).write_parquet(temporary),
+    )
+    atomic_write(
+        sample_efficiency_path,
+        lambda temporary: pl.DataFrame(_rows(result.sample_efficiency)).write_parquet(
+            temporary
+        ),
+    )
+    atomic_write(
+        difficulty_path,
+        lambda temporary: pl.DataFrame(_rows(result.difficulty_audits)).write_parquet(
+            temporary
+        ),
+    )
     pareto_rows = [
         asdict(point) for front in result.pareto_fronts for point in front.points
     ]
-    pl.DataFrame(pareto_rows).write_parquet(pareto_path)
-    pl.DataFrame(_rows(result.promotions)).write_parquet(promotion_path)
-    pl.DataFrame(_rows(result.portfolio_promotions)).write_parquet(portfolio_path)
+    atomic_write(
+        pareto_path,
+        lambda temporary: pl.DataFrame(pareto_rows).write_parquet(temporary),
+    )
+    atomic_write(
+        promotion_path,
+        lambda temporary: pl.DataFrame(_rows(result.promotions)).write_parquet(temporary),
+    )
+    atomic_write(
+        portfolio_path,
+        lambda temporary: pl.DataFrame(_rows(result.portfolio_promotions)).write_parquet(
+            temporary
+        ),
+    )
+    write_json_atomic(json_path, result.to_dict())
     return (
         json_path,
         aggregate_path,

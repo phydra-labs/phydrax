@@ -8,7 +8,6 @@ import argparse
 import json
 import platform
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,12 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import (
+    measure_host,
+    measure_repeated,
+    measure_synchronized,
+    synchronize,
+)
 
 
 _OPERATIONS = ("sort", "rank", "topk", "quantile")
@@ -253,31 +258,23 @@ def _operation(
     return apply
 
 
-def _block(value: Any) -> Any:
-    return jax.tree.map(lambda leaf: leaf.block_until_ready(), value)
-
-
 def _compile(function, example: jax.Array):
-    started = time.perf_counter_ns()
-    compiled = jax.jit(function).lower(example).compile()
-    elapsed_ms = (time.perf_counter_ns() - started) / 1e6
-    return compiled, elapsed_ms
+    compiled, elapsed = measure_host(lambda: jax.jit(function).lower(example).compile())
+    return compiled, 1_000.0 * elapsed
 
 
 def _execute(compiled, example: jax.Array):
-    started = time.perf_counter_ns()
-    result = _block(compiled(example))
-    elapsed_ms = (time.perf_counter_ns() - started) / 1e6
-    return result, elapsed_ms
+    result, elapsed = measure_synchronized(lambda: compiled(example))
+    return result, 1_000.0 * elapsed
 
 
 def _steady_ms(compiled, example: jax.Array, warmups: int, repeats: int) -> float:
-    for _ in range(warmups):
-        _block(compiled(example))
-    started = time.perf_counter_ns()
-    for _ in range(repeats):
-        _block(compiled(example))
-    return (time.perf_counter_ns() - started) / (1e6 * repeats)
+    _, distribution = measure_repeated(
+        lambda: compiled(example),
+        warmup=warmups,
+        repeats=repeats,
+    )
+    return 1_000.0 * float(distribution.mean_seconds)
 
 
 def _memory(compiled) -> dict[str, int | str]:
@@ -459,7 +456,7 @@ def _convergence(
             )
         )
     )
-    result = _block(solve(values, weights))
+    result = synchronize(solve(values, weights))
     diagnostics = result.diagnostics
     return {
         "all_converged": bool(jnp.all(result.converged)),

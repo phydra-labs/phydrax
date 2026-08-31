@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import DomainFunction
 
+from .._score_field import require_score_field
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
 from ..operators.differential._stochastic_estimators import (
@@ -240,24 +241,6 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             batch_id=self.label or self.policy.policy_id,
         )
 
-    def _score_function(
-        self,
-        functions: Mapping[str, DomainFunction],
-        samples: TrajectoryStateTimeSamples,
-        /,
-    ) -> DomainFunction:
-        if self.score_name not in functions:
-            raise KeyError(f"Missing score field {self.score_name!r}.")
-        score = functions[self.score_name]
-        if not isinstance(score, DomainFunction):
-            raise TypeError("score field must be a DomainFunction.")
-        allowed = {samples.state_label, samples.time_label}
-        unknown = tuple(label for label in score.deps if label not in allowed)
-        if unknown or samples.state_label not in score.deps:
-            raise ValueError(
-                "score field must depend on the state label and optionally the time label."
-            )
-        return score
 
     def _evaluate_nodes(
         self,
@@ -268,7 +251,12 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         if not isinstance(batch, ScoreMatchingBatch):
             raise TypeError("batch must be a ScoreMatchingBatch.")
         samples = batch.samples
-        score = self._score_function(functions, samples)
+        score = require_score_field(
+            functions,
+            self.score_name,
+            state_label=samples.state_label,
+            time_label=samples.time_label,
+        )
         sample_rank = len(samples.leading_axes) + 1
         sample_shape = samples.log_weights.shape
         node_count = prod(sample_shape)
@@ -291,11 +279,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         node_keys = jr.split(batch.probe_key, node_count)
 
         def score_at(state, time, key):
-            arguments = tuple(
-                state if dependency == samples.state_label else time
-                for dependency in score.deps
-            )
-            return jnp.asarray(score.func(*arguments, key=key))
+            return score(state, time, key=key)
 
         def exact_node(state, time, key):
             value = score_at(state, time, key)

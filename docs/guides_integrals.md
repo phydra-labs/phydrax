@@ -7,9 +7,9 @@ Phydrax integration is organized around three explicit objects:
 3. an **estimate** returns the value, status, diagnostics, provenance, and only a
    method-valid error estimate.
 
-The same execution path supports fixed and adaptive quadrature, Monte Carlo,
-randomized quasi-Monte Carlo, importance sampling, sparse grids, mapped cells, and
-mixed product plans.
+The same execution path supports fixed and adaptive quadrature, fixed-design
+Bayesian quadrature, Monte Carlo, randomized quasi-Monte Carlo, importance
+sampling, sparse grids, mapped cells, and mixed product plans.
 
 For named analytic primitives such as Dawson's integral, the Faddeeva function,
 and Voigt profiles, use [`phydrax.special`](guides_special_functions.md). Those
@@ -372,6 +372,65 @@ triangle rules are not nested, the result reports
 `NONFINITE_INTEGRAND` remain distinct terminal statuses. Refinement is
 differentiable through the chosen partition but its selection decisions are
 discrete; fixed cubature remains preferable for repeatedly optimized objectives.
+
+## Fixed-design Bayesian quadrature
+
+Use Bayesian quadrature when a fixed set of evaluations should be interpreted
+through a Gaussian-process prior rather than an IID sampling model. The initial
+contract is intentionally closed: one normalized scalar Gaussian
+`ProbabilityTarget`, one `SquaredExponentialKernel` optionally wrapped in
+`ScaleKernel`, and one fixed `PointSampling` design.
+
+```python
+normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
+gaussian_target = phx.integration.expectation(normal, target_id="standard-normal")
+kernel_mean = phx.integration.GaussianKernelMean(
+    gaussian_target,
+    phx.kernels.SquaredExponentialKernel(length_scale=0.75),
+)
+plan = phx.integration.BayesianQuadraturePlan(
+    kernel_mean,
+    phx.domain.PointSampling(32, design="hammersley"),
+    observation_noise=0.0,
+    solve_regularization=1e-10,
+)
+realization = phx.integration.materialize(gaussian_target, plan)
+mean = phx.integration.reduce(
+    normal.Function("z")(lambda z: jnp.exp(0.2 * z)),
+    realization,
+)
+```
+
+Materialization evaluates the analytic Gaussian kernel mean and kernel double
+mean in the requested evaluation dtype, prepares the normalized dense-LU
+`phydrax.linalg` solve, and retains the solve result. Reduction casts
+`DomainFunction` points before invoking the integrand and applies the resulting
+weights to scalar, array, `coordax.Field`, or PyTree outputs. Reusing the
+realization shares exactly the same points, kernel system, and weights.
+
+`observation_noise` is part of the GP observation model.
+`solve_regularization` is a separate numerical diagonal shift; neither is
+silently inferred from the other. With both set to zero, a singular design
+returns `LINEAR_SOLVE_FAILED`. Non-finite outputs and posterior variance below
+the dtype-aware roundoff envelope also fail explicitly. A tiny negative
+variance within that envelope represents numerical zero; no positive variance
+floor is introduced.
+
+The estimate value is the posterior integral mean. Its error estimate has
+`error_kind="bayesian-posterior-standard-deviation"`. **The posterior standard
+deviation is not a deterministic or frequentist error bound.** It quantifies
+uncertainty only under the declared GP prior, kernel hyperparameters,
+observation noise, and fixed design. It must not be used as a stopping
+certificate without an external calibration argument.
+
+The kernel mean is bound to the target's stable `target_id`, probability label,
+and Gaussian location/scale content; every part must match before reduction.
+Only the preflighted `DenseLU` route is accepted. Its operator, residual, and
+linear-accumulation dtypes must match integration accumulation; a lower
+factorization dtype remains explicit and contributes to the posterior-variance
+roundoff envelope. Unsupported density targets, non-Gaussian measures, kernel
+sums/products, active acquisition, WSABI, and unnormalized evidence are outside
+this capability rather than approximated by a fallback.
 
 ## Monte Carlo and variance reduction
 

@@ -183,6 +183,10 @@ class EulerMaruyamaTransitionKernel(AbstractTransitionKernel):
         terms = tuple(wiener_terms)
         if not terms or any(not isinstance(term, WienerTerm) for term in terms):
             raise TypeError("wiener_terms must contain one or more WienerTerm objects.")
+        if any(term.representation != "dense" for term in terms):
+            raise ValueError(
+                "EulerMaruyamaTransitionKernel currently requires dense Wiener terms."
+            )
         names = tuple(term.name for term in terms)
         if len(set(names)) != len(names):
             raise ValueError(

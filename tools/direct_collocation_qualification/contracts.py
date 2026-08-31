@@ -25,6 +25,41 @@ def _finite_json(value: Any, owner: str, /) -> None:
             _finite_json(item, f"{owner}[{index}]")
 
 
+def _validate_metadata(metadata: dict[str, Any], /) -> None:
+    required = (
+        "qualification",
+        "source_id",
+        "package_fingerprint",
+        "platform",
+        "python",
+        "jax",
+        "numpy",
+        "dtype",
+        "backends",
+    )
+    missing = tuple(name for name in required if name not in metadata)
+    if missing:
+        raise ValueError(f"Qualification metadata is missing fields: {missing}.")
+    for name in required[:-1]:
+        if not isinstance(metadata[name], str) or not metadata[name]:
+            raise ValueError(f"Qualification metadata {name!r} must be non-empty.")
+    if "runtime" in metadata:
+        runtime = metadata["runtime"]
+        if not isinstance(runtime, dict) or not isinstance(
+            runtime.get("fingerprint"), str
+        ):
+            raise ValueError("Qualification runtime metadata requires a fingerprint.")
+    backends = metadata["backends"]
+    if (
+        not isinstance(backends, list)
+        or not backends
+        or any(not isinstance(value, str) or not value for value in backends)
+        or len(set(backends)) != len(backends)
+    ):
+        raise ValueError("Qualification backends must be unique non-empty strings.")
+    _finite_json(metadata, "qualification metadata")
+
+
 @dataclass(frozen=True)
 class DirectCollocationQualificationCase:
     case_id: str
@@ -79,7 +114,9 @@ class DirectCollocationQualificationRecord:
         observed = payload.pop("record_id")
         _finite_json(payload, f"record {self.case_id}")
         if canonical_fingerprint(payload) != observed:
-            raise ValueError(f"Qualification record {self.case_id!r} fingerprint mismatch.")
+            raise ValueError(
+                f"Qualification record {self.case_id!r} fingerprint mismatch."
+            )
 
 
 @dataclass(frozen=True)
@@ -99,6 +136,7 @@ class DirectCollocationQualificationArtifact:
         records: tuple[DirectCollocationQualificationRecord, ...],
         graduation: dict[str, Any],
     ):
+        _validate_metadata(metadata)
         payload = {
             "metadata": metadata,
             "cases": [asdict(case) for case in cases],
@@ -118,15 +156,12 @@ class DirectCollocationQualificationArtifact:
     def from_dict(cls, value: dict[str, Any], /):
         expected = {"metadata", "cases", "records", "graduation", "artifact_id"}
         if set(value) != expected:
-            raise ValueError(
-                f"Qualification artifact keys must be {sorted(expected)}."
-            )
+            raise ValueError(f"Qualification artifact keys must be {sorted(expected)}.")
         cases = tuple(
             DirectCollocationQualificationCase(**case) for case in value["cases"]
         )
         records = tuple(
-            DirectCollocationQualificationRecord(**record)
-            for record in value["records"]
+            DirectCollocationQualificationRecord(**record) for record in value["records"]
         )
         artifact = cls(
             dict(value["metadata"]),
@@ -148,6 +183,7 @@ class DirectCollocationQualificationArtifact:
         }
 
     def verify(self, *, required_case_ids: tuple[str, ...]) -> None:
+        _validate_metadata(self.metadata)
         identifiers = [case.case_id for case in self.cases]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Qualification artifact contains duplicate cases.")
@@ -155,7 +191,9 @@ class DirectCollocationQualificationArtifact:
             raise ValueError("Qualification artifact case coverage is incomplete.")
         record_keys = [(record.case_id, record.backend) for record in self.records]
         if len(set(record_keys)) != len(record_keys):
-            raise ValueError("Qualification artifact contains duplicate case/backend records.")
+            raise ValueError(
+                "Qualification artifact contains duplicate case/backend records."
+            )
         unknown = sorted({record.case_id for record in self.records} - set(identifiers))
         if unknown:
             raise ValueError(f"Qualification records reference unknown cases: {unknown}.")

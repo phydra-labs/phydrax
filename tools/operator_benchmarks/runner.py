@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -12,6 +11,14 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
+from benchmarks._runtime import (
+    compiler_evidence,
+    CompilerEvidence,
+    DurationDistribution,
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+)
 from phydrax._trainable import combine_trainable, partition_trainable
 from phydrax.nn.operator import (
     AbstractOperatorModel,
@@ -114,9 +121,11 @@ class OperatorEvaluationResult:
     spectral: float | None
     conservation_error: float
     maximum_absolute_error: float
-    compile_seconds: float
-    inference_seconds: float
-    peak_memory_bytes: int | None
+    lowering_seconds: float
+    compilation_seconds: float
+    first_execution_seconds: float
+    inference_timing: DurationDistribution
+    compiler_evidence: CompilerEvidence
     field_metrics: tuple[OperatorFieldEvaluationResult, ...] = ()
 
 
@@ -173,16 +182,6 @@ def parameter_count(model) -> int:
         for leaf in jax.tree_util.tree_leaves(trainable)
         if isinstance(leaf, jax.Array)
     )
-
-
-def _memory_bytes() -> int | None:
-    statistics = jax.devices()[0].memory_stats()
-    if statistics is None:
-        return None
-    for key in ("peak_bytes_in_use", "bytes_in_use"):
-        if key in statistics:
-            return int(statistics[key])
-    return None
 
 
 def _target_batch(
@@ -281,10 +280,18 @@ def training_step_cost(
     model,
     scenario: OperatorBenchmarkScenario,
     /,
-) -> tuple[int, int]:
-    """Return XLA-estimated FLOPs and accessed bytes for one loss/gradient step."""
+) -> CompilerEvidence:
+    """Return official XLA cost and executable-memory estimates for one gradient step."""
     if parameter_count(model) == 0:
-        return 0, 0
+        return CompilerEvidence(
+            flops=0,
+            bytes_accessed=0,
+            argument_bytes=0,
+            output_bytes=0,
+            temporary_bytes=0,
+            generated_code_bytes=0,
+            source="not-applicable",
+        )
     parameters, fixed = partition_trainable(model)
 
     @eqx.filter_jit
@@ -301,10 +308,19 @@ def training_step_cost(
 
     lowerable: Any = value_and_gradient
     compiled = lowerable.lower(parameters).compile().compiled
-    analysis = compiled.cost_analysis()
-    flops = int(round(float(analysis.get("flops", 0.0))))
-    accessed_bytes = int(round(float(analysis.get("bytes accessed", 0.0))))
-    return flops, accessed_bytes
+    cost = compiled.cost_analysis()
+    memory = compiled.memory_analysis()
+    reason = (
+        "compiler did not expose cost or memory analysis"
+        if cost is None and memory is None
+        else None
+    )
+    return compiler_evidence(
+        cost,
+        memory,
+        source="xla-cost-analysis",
+        unavailable_reason=reason,
+    )
 
 
 def _train_operator_with_trace(
@@ -763,13 +779,32 @@ def evaluate_operator(
     def predict(current_model):
         return _predict_evaluation(current_model, evaluation)
 
-    compile_started = time.perf_counter()
-    prediction = jax.block_until_ready(predict(model))
-    compile_seconds = time.perf_counter() - compile_started
-    started = time.perf_counter()
-    for _ in range(int(repeats)):
-        prediction = jax.block_until_ready(predict(model))
-    inference_seconds = (time.perf_counter() - started) / float(repeats)
+    compiled_predict, compilation = measure_lower_and_compile(
+        lambda: predict.lower(model),
+        lambda lowered: lowered.compile(),
+    )
+    prediction, first_execution_seconds = measure_synchronized(
+        lambda: compiled_predict(model)
+    )
+    prediction, inference_timing = measure_repeated(
+        lambda: compiled_predict(model),
+        warmup=0,
+        repeats=int(repeats),
+    )
+    executable = compiled_predict.compiled
+    cost = executable.cost_analysis()
+    memory = executable.memory_analysis()
+    unavailable_reason = (
+        "compiler did not expose cost or memory analysis"
+        if cost is None and memory is None
+        else None
+    )
+    prediction_compiler_evidence = compiler_evidence(
+        cost,
+        memory,
+        source="xla-cost-analysis",
+        unavailable_reason=unavailable_reason,
+    )
     field_results = []
     per_case_metrics = []
     for name, query_name, field_prediction, field_target in _field_arrays_from_prediction(
@@ -866,9 +901,11 @@ def evaluate_operator(
         spectral=None if not spectral_values else max(spectral_values),
         conservation_error=conservation,
         maximum_absolute_error=maximum_absolute_error,
-        compile_seconds=compile_seconds,
-        inference_seconds=inference_seconds,
-        peak_memory_bytes=_memory_bytes(),
+        lowering_seconds=compilation.lowering_seconds,
+        compilation_seconds=compilation.compilation_seconds,
+        first_execution_seconds=first_execution_seconds,
+        inference_timing=inference_timing,
+        compiler_evidence=prediction_compiler_evidence,
         field_metrics=tuple(field_results),
     )
 

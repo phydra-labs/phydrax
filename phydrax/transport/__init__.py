@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import continuous, dynamic
+from . import continuous, diffusion, dynamic
 from ._barycenters import (
     BarycenterDiagnostics,
     BarycenterProblemProvenance,
@@ -112,6 +112,13 @@ from .continuous import (
     ManifoldTransportGeometry,
     transport_plan_endpoint_coupling,
 )
+from .diffusion import (
+    probability_flow_system,
+    ProbabilityFlowVectorField,
+    ReverseDiffusion,
+    ReverseDiffusionRealization,
+    ReverseDiffusionResult,
+)
 from .dynamic import (
     bridge_path_law_diagnostics,
     bridge_path_log_prob,
@@ -174,6 +181,10 @@ __all__ = [
     "PreparedSinkhornReference",
     "PreparedUnbalancedSinkhornReference",
     "PositiveFeatureSinkhorn",
+    "ProbabilityFlowVectorField",
+    "ReverseDiffusion",
+    "ReverseDiffusionRealization",
+    "ReverseDiffusionResult",
     "PositiveFeatureSinkhornResult",
     "LinearEndpointInterpolant",
     "PositiveKernelApproximationDiagnostics",
@@ -215,6 +226,7 @@ __all__ = [
     "bridge_path_log_prob",
     "discrete_problem",
     "continuous",
+    "diffusion",
     "dynamic",
     "fast_soft_rank",
     "independent_endpoint_coupling",
@@ -237,6 +249,7 @@ __all__ = [
     "require_unbalanced_converged",
     "reference_path_log_prob",
     "require_converged_bridge",
+    "probability_flow_system",
     "sinkhorn_divergence",
     "sinkhorn_divergence_against",
     "sample_bridge",

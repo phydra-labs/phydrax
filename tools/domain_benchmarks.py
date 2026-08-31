@@ -6,41 +6,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-
-
-def _block(tree: Any, /) -> None:
-    for leaf in jax.tree_util.tree_leaves(tree):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
+from benchmarks._runtime import logical_array_bytes, measure_repeated
 
 
 def _measure(operation: Callable[[], Any], /, *, repeats: int) -> tuple[Any, float]:
-    result = operation()
-    _block(result)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        result = operation()
-        _block(result)
-    elapsed_ms = 1e3 * (time.perf_counter() - started) / repeats
-    return result, elapsed_ms
-
-
-def _array_bytes(tree: Any, /) -> int:
-    return sum(
-        int(leaf.nbytes)
-        for leaf in jax.tree_util.tree_leaves(tree)
-        if isinstance(leaf, jax.Array)
+    result, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
     )
+    return result, 1_000.0 * float(distribution.mean_seconds)
 
 
 def run_benchmarks(
@@ -109,14 +92,14 @@ def run_benchmarks(
         },
         "point": {
             "value_shape": list(point_values.shape),
-            "working_set_bytes": _array_bytes(point_batch),
+            "working_set_bytes": logical_array_bytes(point_batch),
             "sampling_mean_ms": point_sampling_ms,
             "evaluation_mean_ms": point_evaluation_ms,
             "checksum": float(jnp.sum(point_values)),
         },
         "grid": {
             "value_shape": list(grid_values.shape),
-            "working_set_bytes": _array_bytes(grid_batch),
+            "working_set_bytes": logical_array_bytes(grid_batch),
             "sampling_mean_ms": grid_sampling_ms,
             "evaluation_mean_ms": grid_evaluation_ms,
             "checksum": float(jnp.sum(grid_values)),

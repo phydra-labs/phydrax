@@ -10,7 +10,7 @@ def _fourier_space(count=12):
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
 def _quadratic_problem(*, condition=False):
@@ -100,7 +100,7 @@ def test_all_coordinate_chebyshev_time_derivative_is_exact_and_differentiable():
         (phx.discretization.ChebyshevBasisPlan(8),),
         axis_names=("t",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.interval(0.0, 1.0),))
     compiled = phx.equations.compile_spectral_residual(
         problem,
         space,
@@ -170,7 +170,7 @@ def test_closure_plan_rejects_unsupported_capacity_and_basis():
     sine = phx.discretization.TensorSpectralPlan(
         (phx.discretization.SineBasisPlan(8),),
         axis_names=("x",),
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.interval(0.0, 1.0),))
     with pytest.raises(ValueError, match="sine basis"):
         phx.discretization.PolynomialClosureDealiasingPlan(2).prepare(
             sine,

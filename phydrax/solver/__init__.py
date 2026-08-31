@@ -196,6 +196,7 @@ from ._differential import (
     DifferentialSolution,
     DifferentialVectorField,
     NoiseStructure,
+    WienerCoefficientRepresentation,
     WienerTerm,
 )
 from ._differential_algebraic import (
@@ -419,6 +420,7 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._harmonic_constraints import HarmonicConstraint, preserve_magnetic_periods
 from ._helmholtz import (
     ExteriorHelmholtzDirichletResult2D,
     solve_exterior_helmholtz_dirichlet_2d,
@@ -842,6 +844,8 @@ from .maxwell import (
 
 
 __all__ = [
+    "HarmonicConstraint",
+    "preserve_magnetic_periods",
     "CalabiYauCampaign",
     "CalabiYauMetricArtifact",
     "CalabiYauMetricProblem",
@@ -1190,6 +1194,7 @@ __all__ = [
     "StochasticCollocationResult",
     "StochasticVolterraProblem",
     "WeakObservableEstimate",
+    "WienerCoefficientRepresentation",
     "WienerTerm",
     "SplitDifferentialProblem",
     "SSPRK33",

@@ -35,6 +35,21 @@ def _covariance(factor: Array, /) -> Array:
     return factor @ _adjoint(factor)
 
 
+def _covariance_assembly_roundoff(covariance: Array, /) -> Array:
+    """Bound backward error from assembling an algebraically PSD block matrix."""
+    real_dtype = jnp.real(covariance).dtype
+    precision = jnp.finfo(real_dtype)
+    operation_bound = jnp.asarray(
+        4 * covariance.shape[-1],
+        dtype=real_dtype,
+    )
+    scale = jnp.maximum(
+        jnp.max(jnp.abs(covariance)),
+        jnp.asarray(precision.tiny, dtype=real_dtype),
+    )
+    return operation_bound * jnp.asarray(precision.eps, dtype=real_dtype) * scale
+
+
 def _qr_lower_factor(columns: Array, /) -> Array:
     """Compress covariance columns without forming their Gram matrix."""
     _, upper = jnp.linalg.qr(_adjoint(columns), mode="reduced")
@@ -446,11 +461,21 @@ def _smoothing_factor(
         ),
         axis=-2,
     )
-    joint_factor = gaussian_factor_from_covariance(
-        joint_covariance,
-        factor_id="rts-joint-factor",
-    )
-    joint_root = _qr_lower_factor(joint_factor.factor)
+
+    def factor_one(covariance: Array, /) -> Array:
+        return gaussian_factor_from_covariance(
+            covariance,
+            rank_tolerance=_covariance_assembly_roundoff(covariance),
+            factor_id="rts-joint-factor",
+        ).factor
+
+    if joint_covariance.ndim == 2:
+        joint_factor = factor_one(joint_covariance)
+    else:
+        event_size = joint_covariance.shape[-1]
+        flattened = joint_covariance.reshape((-1, event_size, event_size))
+        joint_factor = jax.vmap(factor_one)(flattened).reshape(joint_covariance.shape)
+    joint_root = _qr_lower_factor(joint_factor)
     conditional_root = joint_root[..., state_size:, state_size:]
     gain = current_next @ _psd_pseudoinverse(predicted.covariance)
     transported_root = gain @ next_smoothed.factor
@@ -482,44 +507,46 @@ def _square_root_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRe
         filtered_covariance,
         factor_id="rts-filtered-factor",
     )
-    valid = (
+    base_valid = (
         result.valid.reshape((case_count, num_steps)) & active & filtered_factors.valid
     )
-    means = filtered_mean
-    roots = filtered_factors.factor
-    gains = jnp.zeros(
-        (case_count, max(num_steps - 1, 0), state_size, state_size),
-        dtype=filtered_mean.dtype,
-    )
-    for index in range(num_steps - 2, -1, -1):
+
+    def step(carry, inputs):
+        next_mean, next_root, next_valid = carry
+        (
+            current_mean,
+            current_root,
+            current_factor_valid,
+            next_predicted_mean,
+            next_predicted_covariance,
+            next_transition,
+            current_valid,
+        ) = inputs
         filtered_factor = GaussianFactor(
-            filtered_factors.factor[:, index],
+            current_root,
             factor_id="rts-filtered-factor",
             resolved_method=filtered_factors.resolved_method,
         )
         predicted_factor = gaussian_factor_from_covariance(
-            predicted_covariance[:, index + 1],
+            next_predicted_covariance,
             factor_id="rts-predicted-factor",
         )
         next_factor = GaussianFactor(
-            roots[:, index + 1],
+            next_root,
             factor_id="rts-next-smoothed-factor",
             resolved_method="qr-square-root-smoothing",
         )
         proposed_factor, gain = _smoothing_factor(
             filtered_factor,
             predicted_factor,
-            transitions[:, index + 1],
+            next_transition,
             next_factor,
         )
         proposed_mean = (
-            filtered_mean[:, index]
-            + (gain @ (means[:, index + 1] - predicted_mean[:, index + 1])[..., None])[
-                ..., 0
-            ]
+            current_mean + (gain @ (next_mean - next_predicted_mean)[..., None])[..., 0]
         )
         factor_valid = (
-            filtered_factors.valid[:, index]
+            current_factor_valid
             & filtered_factor.valid
             & predicted_factor.valid
             & next_factor.valid
@@ -529,22 +556,50 @@ def _square_root_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRe
             jnp.isfinite(proposed_factor.covariance),
             axis=(-2, -1),
         )
-        pair_valid = (
-            valid[:, index] & valid[:, index + 1] & factor_valid & proposed_finite
+        pair_valid = current_valid & next_valid & factor_valid & proposed_finite
+        mean = jnp.where(pair_valid[:, None], proposed_mean, current_mean)
+        root = jnp.where(
+            pair_valid[:, None, None],
+            proposed_factor.factor,
+            current_root,
         )
-        valid = valid.at[:, index].set(pair_valid)
-        means = means.at[:, index].set(
-            jnp.where(pair_valid[:, None], proposed_mean, means[:, index])
-        )
-        roots = roots.at[:, index].set(
-            jnp.where(
-                pair_valid[:, None, None],
-                proposed_factor.factor,
-                roots[:, index],
-            )
-        )
-        gains = gains.at[:, index].set(jnp.where(pair_valid[:, None, None], gain, 0.0))
+        accepted_gain = jnp.where(pair_valid[:, None, None], gain, 0.0)
+        next_carry = (mean, root, pair_valid)
+        return next_carry, (mean, root, accepted_gain, pair_valid)
+
+    scan_inputs = (
+        jnp.swapaxes(filtered_mean[:, :-1], 0, 1),
+        jnp.swapaxes(filtered_factors.factor[:, :-1], 0, 1),
+        jnp.swapaxes(filtered_factors.valid[:, :-1], 0, 1),
+        jnp.swapaxes(predicted_mean[:, 1:], 0, 1),
+        jnp.swapaxes(predicted_covariance[:, 1:], 0, 1),
+        jnp.swapaxes(transitions[:, 1:], 0, 1),
+        jnp.swapaxes(base_valid[:, :-1], 0, 1),
+    )
+    initial = (
+        filtered_mean[:, -1],
+        filtered_factors.factor[:, -1],
+        base_valid[:, -1],
+    )
+    _, history = jax.lax.scan(step, initial, scan_inputs, reverse=True)
+    history_mean, history_root, gains, history_valid = history
+    means = jnp.swapaxes(
+        jnp.concatenate((history_mean, initial[0][None, ...]), axis=0),
+        0,
+        1,
+    )
+    roots = jnp.swapaxes(
+        jnp.concatenate((history_root, initial[1][None, ...]), axis=0),
+        0,
+        1,
+    )
+    valid = jnp.swapaxes(
+        jnp.concatenate((history_valid, initial[2][None, ...]), axis=0),
+        0,
+        1,
+    )
     covariances = _covariance(roots)
+    gains = jnp.swapaxes(gains, 0, 1)
     return KalmanSmootherResult(
         means=means.reshape(case_shape + (num_steps,) + result.state_shape),
         covariances=covariances.reshape(case_shape + (num_steps, state_size, state_size)),
