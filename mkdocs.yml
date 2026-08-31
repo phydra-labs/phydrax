@@ -193,6 +193,7 @@ nav:
             - Exact PDE trial spaces: "api/equations/trefftz.md"
             - Holomorphic potential fields: "api/equations/holomorphic.md"
             - Particle conversion and reactive coupling: "api/equations/particle_conversion.md"
+        - Force-density structural design: "api/force_density.md"
         - Linear algebra runtime: "api/linalg.md"
         - Algebra coordinate runtime: "api/linalg/algebra_coordinates.md"
         - External solver backends: "api/backends.md"

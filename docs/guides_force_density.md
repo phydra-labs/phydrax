@@ -255,12 +255,15 @@ members.
 node, member, coordinate, or observable.
 
 - `ReducedAdjoint` handles unconstrained and box-bounded soft objectives;
-- `ReducedMMA` handles scalar inequalities;
+- `ReducedMMA` handles scalar inequalities when selected explicitly;
 - vector constraints, equalities, and large elementwise constraint sets use
-  `compile_structured_state_design` and a structured nonlinear method.
+  `compile_structured_force_density_design` followed by
+  `solve_structured_force_density_design`.
 
-Structured state/design compilation includes both the equilibrium equality and
-every declared physical constraint.
+The force-density wrapper lowers equilibrium and every physical constraint,
+retains the structured KKT result, reconstructs final physical inputs, and
+recertifies the accepted equilibrium. A constrained problem never silently
+selects an optimization method.
 
 ## Differentiable layer use
 
@@ -270,6 +273,86 @@ The mathematical solve derivative includes operator-coefficient, support, and
 load dependence. A neural model can therefore emit force-density magnitudes or
 load parameters and call the same prepared solve; no separate neural-layer API
 is required.
+
+## Prepared nonlinear refresh and preconditioning
+
+Position-dependent problems prepare one native nonlinear solve and retain its
+symbolic Jacobian linear template. `refresh_force_density` calls
+`refresh_nonlinear`, preserves derivative structure, and increments numeric
+versions. Sign-definite problems use a Jacobi approximate inverse assembled from
+the signed weighted-Laplacian equilibrium operator as the default Newton right
+preconditioner. Newton still applies the exact root Jacobian
+`Pᵀ[A(q) - ∂p/∂X]P`; the weighted operator changes conditioning, not the solved
+problem.
+
+`ForceDensityPlan.input_signature` freezes the complete load-parameter PyTree,
+leaf paths, shapes, and dtypes. Refresh rejects structural drift before numerical
+execution. Plan identity also includes nonlinear termination, precision,
+implicit-derivative policy, preconditioner structure, and initial-state dtype.
+
+## Load evidence and physical load laws
+
+`ForceDensityState.load_state` retains aggregate nodal load, individual named
+components, validity, and the minimum geometric regularity margin.
+
+- `ReferenceMemberSelfWeightModel` converts reference line mass and gravity to
+  endpoint loads.
+- `SurfaceTractionLoadModel` integrates global vector traction over current or
+  reference T3/Q4 area.
+- `SurfacePressureLoadModel` integrates scalar follower pressure and rejects
+  degenerate or locally folded Q4 geometry.
+- `PneumaticPressureLoadModel` supports fixed pressure or the volume law
+  `p Vᵏ = constant` on a closed oriented T3/Q4 surface.
+- `CompositeForceDensityLoadModel` preserves every child component rather than
+  exposing only an anonymous sum.
+
+`enclosed_surface_volume` returns signed volume and therefore makes surface
+orientation part of the physical contract.
+
+## Structural observables
+
+The application exports pure functions rather than one goal subclass per
+observable:
+
+- scaled target and uniformity residuals;
+- member directions and angles;
+- point, line, plane, and segment geometry;
+- reaction direction;
+- collinearity and graph fairness;
+- cell area, Q4 planarity, and rectangularity;
+- signed-distance target geometry.
+
+Every dimensional residual requires an explicit physical scale.
+
+## Mechanisms and stability
+
+`analyze_force_density_mechanisms` constructs the restrained rigidity operator
+and returns both infinitesimal mechanism and axial self-stress eigenspaces. This
+is algebraic evidence; it does not assert stability.
+
+`analyze_force_density_tangent_stability` requires positive member axial
+rigidities and assembles separate material and prestress contributions before
+certifying the constrained tangent spectrum. Stability is never inferred from
+force density alone.
+
+`force_density_continuation_problem` exposes a scalar force/load/support path to
+the native continuation runtime for branch tracking and singularity detection.
+
+## Batching, graph evidence, and affine restraints
+
+`solve_force_density_batch` vmaps numeric cases over one prepared topology and
+returns one status and diagnostic record per case. Disjoint GraphIR structures
+also report residual and balance norms per stored graph.
+
+`ForceDensityStructure.from_affine_constraints` accepts an orthonormal free and
+prescribed coordinate basis. This covers oblique rollers, symmetry relations,
+and multipoint positional constraints while preserving support-coordinate design.
+The coordinate-mask path remains the sparse fast path; general affine constraints
+assemble a reduced dense operator.
+
+`from_graph(..., edge_semantics=\"reciprocal-pairs\")` canonicalizes paired
+directed graph routes into physical members. Optional stable node and member IDs
+remain attached to the structure and do not become numeric JAX leaves.
 
 ## Scope and limitations
 
@@ -289,5 +372,13 @@ null direction. Use explicit bounds, regularization, spectral analysis, or
 continuation evidence rather than numerical perturbations that change the
 problem.
 
-See `examples/force_density_form_finding.py` and
-`examples/force_density_inverse_design.py` for runnable workflows.
+Runnable workflows:
+
+- `examples/force_density_form_finding.py`;
+- `examples/force_density_inverse_design.py`;
+- `examples/force_density_equal_force_truss.py`;
+- `examples/force_density_gridshell_planarization.py`;
+- `examples/force_density_vault_shape_matching.py`;
+- `examples/force_density_support_load_finding.py`;
+- `examples/force_density_structured_design.py`;
+- `examples/force_density_pneumatic_membrane.py`.

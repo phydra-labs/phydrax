@@ -45,11 +45,15 @@
   reduced-adjoint state/design optimization, sparse physical-radius density
   filtering, SIMP compliance topology optimization, and independent
   reference-discretization reanalysis.
-- Added native sparse force-density form-finding for pin-jointed tension,
-  compression, and mixed-sign structures with componentwise coordinate restraints,
-  fixed and shape-dependent edge/surface loads, prepared numeric refresh,
-  mathematically implicit linear/root derivatives, physical residual and reaction
-  certification, and force/support/load state-design optimization.
+- Added native force-density structural design for tension, compression, and
+  mixed-sign pin-jointed systems with sparse coordinate or orthonormal affine
+  restraints, reciprocal GraphIR conversion, stable external IDs, prepared
+  linear/nonlinear refresh, weighted-Laplacian Newton preconditioning, fixed,
+  line, self-weight, traction, follower-pressure, and pneumatic load laws with a
+  component ledger, mathematical solution derivatives, reduced and structured
+  force/support/load design, pure geometry/force observables, same-topology
+  batches, per-graph evidence, mechanism/self-stress spectra, supplied-rigidity
+  tangent stability, and continuation bridges.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.

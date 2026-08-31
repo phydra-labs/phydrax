@@ -18,7 +18,7 @@ from jaxtyping import Array, PyTree
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._tree_math import tree_allfinite, validate_inexact_tree
-from ..linalg import AbstractVectorSpace, PyTreeSpace
+from ..linalg import AbstractLinearOperator, AbstractVectorSpace, PyTreeSpace
 
 
 class NonlinearStatus(IntEnum):
@@ -182,6 +182,7 @@ class NonlinearSystemProblem(StrictModule):
 
     residual_function: Callable[[PyTree[Any], Any], Any]
     validity_function: Callable[[PyTree[Any], PyTree[Any], Any, Any], Any] | None
+    linear_setup_function: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None
     state_space: AbstractVectorSpace | None
     residual_space: AbstractVectorSpace | None
     has_aux: bool = eqx.field(static=True)
@@ -196,6 +197,7 @@ class NonlinearSystemProblem(StrictModule):
         residual_space: AbstractVectorSpace | None = None,
         has_aux: bool = False,
         validity: Callable[[PyTree[Any], PyTree[Any], Any, Any], Any] | None = None,
+        linear_setup: Callable[[PyTree[Any], Any], AbstractLinearOperator] | None = None,
         problem_id: str = "nonlinear-system",
     ):
         if not callable(residual):
@@ -208,11 +210,14 @@ class NonlinearSystemProblem(StrictModule):
             raise TypeError("residual_space must be an AbstractVectorSpace or None.")
         if validity is not None and not callable(validity):
             raise TypeError("validity must be callable or None.")
+        if linear_setup is not None and not callable(linear_setup):
+            raise TypeError("linear_setup must be callable or None.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
         self.residual_function = residual
         self.validity_function = validity
+        self.linear_setup_function = linear_setup
         self.state_space = state_space
         self.residual_space = residual_space
         self.has_aux = bool(has_aux)
@@ -266,6 +271,19 @@ class NonlinearSystemProblem(StrictModule):
             self.validity_function(state_, residual_, auxiliary, args), dtype=bool
         )
 
+    def linear_setup(
+        self,
+        state: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> AbstractLinearOperator | None:
+        if self.linear_setup_function is None:
+            return None
+        operator = self.linear_setup_function(self.validate_state(state), args)
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("linear_setup must return an AbstractLinearOperator.")
+        return operator
+
     def bind_spaces(
         self,
         initial_state: PyTree[Any],
@@ -294,6 +312,7 @@ class NonlinearSystemProblem(StrictModule):
             ),
             has_aux=self.has_aux,
             validity=self.validity_function,
+            linear_setup=self.linear_setup_function,
             problem_id=self.problem_id,
         )
 
@@ -595,10 +614,10 @@ __all__ = [
     "NonlinearCapabilities",
     "NonlinearDiagnostics",
     "NonlinearProvenance",
-    "NonlinearTransformationEvidence",
     "NonlinearResult",
     "NonlinearStatus",
     "NonlinearSystemProblem",
     "NonlinearTermination",
+    "NonlinearTransformationEvidence",
     "nonlinear_status_message",
 ]
