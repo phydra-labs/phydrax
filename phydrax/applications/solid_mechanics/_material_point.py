@@ -18,6 +18,7 @@ from ...equations import (
 )
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ._models import (
+    _embed_neo_hookean_deformation,
     neo_hookean_first_piola,
     neo_hookean_reference_energy,
     NeoHookeanParameters,
@@ -58,12 +59,7 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         )
 
     def _embed(self, deformation):
-        if self.dimension == 3:
-            return deformation
-        shape = deformation.shape[:-2] + (3, 3)
-        embedded = jnp.zeros(shape, dtype=deformation.dtype)
-        embedded = embedded.at[..., :2, :2].set(deformation)
-        return embedded.at[..., 2, 2].set(1.0)
+        return _embed_neo_hookean_deformation(deformation)
 
     def initialize_state(self, batch_shape, dtype, /):
         return jnp.empty(tuple(batch_shape) + (0,), dtype=dtype)

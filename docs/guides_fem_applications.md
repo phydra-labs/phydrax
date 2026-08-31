@@ -42,6 +42,20 @@ Heaviside enrichment evaluation. Crack classification and enrichment activation
 are discrete topology events; derivatives apply only for a fixed crack and
 active enrichment layout.
 
+## Static hyperelasticity
+
+`phydrax.applications.solid_mechanics.neo_hookean_form` constructs a
+`CellEnergyAction` for the logarithmic compressible Neo-Hookean reference energy.
+The finite-element executor differentiates that scalar energy into the internal
+residual, so the residual and stored-energy definitions cannot drift.
+
+A two-component field on a two-dimensional mesh is embedded as plane strain with
+unit out-of-plane stretch. A three-component field is fully three-dimensional.
+Compose conservative dead loads separately with `BoundaryLoadAction`, apply strong
+Dirichlet constraints through the finite-element constraint map, and solve the
+compiled nonlinear residual. Plane stress and exact incompressibility are not
+implicit modes.
+
 ## Fixed-mesh topology optimization
 
 `phydrax.applications.solid_mechanics` provides a fixed-topology compliance

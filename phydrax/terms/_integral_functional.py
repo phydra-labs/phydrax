@@ -38,6 +38,7 @@ class IntegralFunctional(AbstractSamplingTerm):
     materialization_policy: Literal["fixed", "per_step", "caller"] = eqx.field(
         static=True
     )
+    nonfinite_integrand: Literal["raise", "propagate"] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -50,6 +51,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         weight: ArrayLike = 1.0,
         label: str | None = None,
         materialization_policy: Literal["fixed", "per_step", "caller"] = "per_step",
+        nonfinite_integrand: Literal["raise", "propagate"] = "raise",
         fixed_realization: IntegrationRealization | None = None,
         fixed_key: Key[Array, ""] | None = None,
     ):
@@ -60,6 +62,9 @@ class IntegralFunctional(AbstractSamplingTerm):
             raise ValueError(
                 "materialization_policy must be 'fixed', 'per_step', or 'caller'."
             )
+        nonfinite_policy = str(nonfinite_integrand).lower()
+        if nonfinite_policy not in ("raise", "propagate"):
+            raise ValueError("nonfinite_integrand must be 'raise' or 'propagate'.")
         if policy == "fixed":
             if fixed_realization is None:
                 if _requires_random_key(plan):
@@ -89,6 +94,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         self.weight = weight_value
         self.label = None if label is None else str(label)
         self.materialization_policy = policy
+        self.nonfinite_integrand = nonfinite_policy
         self.fixed_realization = fixed_realization
 
     @classmethod
@@ -102,6 +108,7 @@ class IntegralFunctional(AbstractSamplingTerm):
         weight: ArrayLike = 1.0,
         label: str | None = None,
         materialization_policy: Literal["fixed", "per_step", "caller"] = "per_step",
+        nonfinite_integrand: Literal["raise", "propagate"] = "raise",
         fixed_realization: IntegrationRealization | None = None,
         fixed_key: Key[Array, ""] | None = None,
     ) -> "IntegralFunctional":
@@ -123,6 +130,7 @@ class IntegralFunctional(AbstractSamplingTerm):
             weight=weight,
             label=label,
             materialization_policy=materialization_policy,
+            nonfinite_integrand=nonfinite_integrand,
             fixed_realization=fixed_realization,
             fixed_key=fixed_key,
         )
@@ -189,11 +197,21 @@ class IntegralFunctional(AbstractSamplingTerm):
                 "IntegralFunctional requires a real scalar integrand; "
                 "use real_part(...) to select an explicitly real objective."
             )
-        value = eqx.error_if(
-            value,
-            estimate.status != int(IntegrationStatus.CONVERGED),
-            "IntegralFunctional integration did not converge.",
-        )
+        nonfinite = estimate.status == int(IntegrationStatus.NONFINITE_INTEGRAND)
+        if self.nonfinite_integrand == "propagate":
+            failed = (estimate.status != int(IntegrationStatus.CONVERGED)) & ~nonfinite
+            value = eqx.error_if(
+                value,
+                failed,
+                "IntegralFunctional integration did not converge.",
+            )
+            value = jnp.where(nonfinite, jnp.nan, value)
+        else:
+            value = eqx.error_if(
+                value,
+                estimate.status != int(IntegrationStatus.CONVERGED),
+                "IntegralFunctional integration did not converge.",
+            )
         return self.weight * value
 
 

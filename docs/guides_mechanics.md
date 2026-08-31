@@ -205,6 +205,22 @@ respect to those parameters. Identifiability still belongs to the model and data
 Hamiltonians may be ambiguous up to constants, and learned Lagrangians may have gauge
 freedom.
 
+## Neural variational continuum mechanics
+
+`DomainFunction`, differential operators, `IntegralFunctional`, and
+`FunctionalSolver` also express static conservative continuum mechanics by
+minimizing total potential. Essential conditions define the trial field; body and
+traction work are negative terms over volume and boundary measures. This is a
+Deep Ritz or neural variational solve, not a strong-residual PINN and not the
+Discrete Element Method.
+
+The current finite-strain field operators cover logarithmic compressible
+Neo-Hookean plane strain and three-dimensional kinematics. They do not imply
+plane stress, exact incompressibility, contact, follower loads, branch selection,
+or stability. Low sampled potential is not a certificate: use independent
+quadrature, minimum-J checks, strong equilibrium, reactions, and a converged
+discretization reference.
+
 ## Discrete continuum mechanics
 
 The [Material Point Method](guides_material_point_method.md) is a separate
