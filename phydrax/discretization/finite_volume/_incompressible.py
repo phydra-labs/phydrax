@@ -12,7 +12,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import ArraySpace, DiagonalPairing
+from ...linalg import ArraySpace, BlockSpace, DiagonalPairing
 from ._structured import FiniteVolumeDiscretization
 
 
@@ -35,6 +35,7 @@ class MACOperatorReport(StrictModule, NonTrainableState):
     weighted_adjoint_residual: Array
     constant_laplacian_residual: Array
     transform_eligible: bool = eqx.field(static=True)
+    finite: Array
     passed: Array
     report_id: str = eqx.field(static=True)
 
@@ -65,6 +66,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
 
     discretization: FiniteVolumeDiscretization
     pressure_space: ArraySpace
+    velocity_space: BlockSpace
     face_dual_measures: FaceVelocity
     report: MACOperatorReport
     prepared_id: str = eqx.field(static=True)
@@ -101,20 +103,37 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
             reshape = [1] * len(discretization.cell_shape)
             reshape[axis] = int(distance.size)
             dual_measures.append(
-                discretization.face_measures[axis]
-                * distance.reshape(reshape)
+                discretization.face_measures[axis] * distance.reshape(reshape)
             )
+        dual_measures_ = tuple(dual_measures)
+        velocity_space = BlockSpace(
+            tuple(
+                ArraySpace(
+                    layout.shape,
+                    dtype=volumes.dtype,
+                    pairing=DiagonalPairing(measure),
+                )
+                for layout, measure in zip(
+                    discretization.face_layouts,
+                    dual_measures_,
+                    strict=True,
+                )
+            ),
+            names=discretization.grid.axis_names,
+        )
         identifier = canonical_fingerprint(
             {
                 "kind": "prepared-mac-operators-v1",
                 "plan": plan.plan_id,
                 "pressure_space": pressure_space.space_id,
+                "velocity_space": velocity_space.space_id,
                 "transform_eligible": transform_eligible,
             }
         )
         self.discretization = discretization
         self.pressure_space = pressure_space
-        self.face_dual_measures = tuple(dual_measures)
+        self.velocity_space = velocity_space
+        self.face_dual_measures = dual_measures_
         self.prepared_id = identifier
 
         pressure = jnp.arange(
@@ -146,11 +165,13 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
         constant_residual = jnp.max(
             jnp.abs(self.positive_laplacian(jnp.ones(discretization.cell_shape)))
         )
-        passed = (adjoint_residual <= 5e-10) & (constant_residual <= 5e-12)
+        finite = jnp.isfinite(adjoint_residual) & jnp.isfinite(constant_residual)
+        passed = finite & (adjoint_residual <= 5e-10) & (constant_residual <= 5e-12)
         self.report = MACOperatorReport(
             weighted_adjoint_residual=adjoint_residual,
             constant_laplacian_residual=constant_residual,
             transform_eligible=transform_eligible,
+            finite=finite,
             passed=passed,
             report_id=canonical_fingerprint(
                 {
@@ -170,12 +191,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
         values = tuple(jnp.asarray(component) for component in velocity)
         if len(values) != len(self.discretization.cell_shape):
             raise ValueError("MAC velocity requires one normal component per axis.")
-        for axis, component in enumerate(values):
-            if component.shape != self.discretization.face_layouts[axis].shape:
-                raise ValueError("MAC velocity component must match its face layout.")
-            if component.dtype != self.pressure_space.dtype:
-                raise TypeError("MAC velocity and pressure coordinates must share dtype.")
-        return values
+        return tuple(self.velocity_space.validate(values))
 
     def gauge_project(self, pressure: ArrayLike, /) -> Array:
         value = self.validate_pressure(pressure)
@@ -194,12 +210,21 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
         )
         for axis, component in enumerate(values):
             integrated = component * self.discretization.face_measures[axis]
-            divergence = divergence + _difference(
-                integrated,
-                axis,
-                self.discretization.grid.structured_axes[axis].periodic,
-            ) / self.discretization.cell_volumes
+            divergence = (
+                divergence
+                + _difference(
+                    integrated,
+                    axis,
+                    self.discretization.grid.structured_axes[axis].periodic,
+                )
+                / self.discretization.cell_volumes
+            )
         return divergence
+
+    def integrated_mass_flux(self, velocity: FaceVelocity, /) -> Array:
+        divergence = self.divergence(velocity)
+        volumes = self.discretization.cell_volumes.astype(divergence.dtype)
+        return jnp.sum(volumes * divergence)
 
     def gradient(self, pressure: ArrayLike, /) -> FaceVelocity:
         value = self.validate_pressure(pressure)

@@ -5,6 +5,10 @@ finite-element form, nonlinear, accepted-step, material-state, and adaptation
 substrates. Application packages do not implement independent assemblers or
 linear/nonlinear/time solvers.
 
+Pin-jointed force-density form-finding is a discrete algebraic application, not a
+finite-element constitutive workflow. See the
+[force-density guide](guides_force_density.md).
+
 ## Phase field
 
 `phydrax.applications.phase_field` provides backward-Euler Allen–Cahn and mixed
