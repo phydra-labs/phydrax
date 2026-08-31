@@ -13,8 +13,13 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ._amplitude import amplitude_ratio, LogAmplitude
+from ._local import (
+    AbstractLocalQuantumOperator,
+    LocalOperatorEstimate,
+    LocalOperatorStatus,
+)
 
 
 class ConnectedConfigurations(StrictModule):
@@ -64,11 +69,11 @@ class ConnectedConfigurations(StrictModule):
         return tuple(int(size) for size in self.matrix_elements.shape[:-1])
 
 
-class AbstractDiscreteQuantumOperator(StrictModule):
+class AbstractDiscreteQuantumOperator(AbstractLocalQuantumOperator):
     """Matrix-free discrete operator exposing diagonal and connected configurations."""
 
-    configuration_shape: AbstractAttribute[tuple[int, ...]]
-    operator_id: AbstractAttribute[str]
+    def estimate(self, model, configurations, /) -> LocalOperatorEstimate:
+        return _discrete_operator_estimate(model, self, configurations)
 
     @abstractmethod
     def diagonal(self, configurations: Array, /) -> Array:
@@ -141,14 +146,6 @@ class CallableDiscreteQuantumOperator(AbstractDiscreteQuantumOperator):
         return result
 
 
-class LocalEstimate(StrictModule):
-    """Per-configuration local operator value and connection validity evidence."""
-
-    value: Array
-    valid: Array
-    active_connections: Array
-
-
 def _evaluate_amplitudes(model: Callable[[Array], LogAmplitude], configs: Array):
     values = jax.vmap(model)(configs)
     if not isinstance(values, LogAmplitude):
@@ -156,17 +153,13 @@ def _evaluate_amplitudes(model: Callable[[Array], LogAmplitude], configs: Array)
     return values
 
 
-def local_estimate(
+def _discrete_operator_estimate(
     model: Callable[[Array], LogAmplitude],
     operator: AbstractDiscreteQuantumOperator,
     configurations: ArrayLike,
     /,
-) -> LocalEstimate:
-    """Evaluate ``sum_x' H[x, x'] psi(x') / psi(x)`` without a dense matrix."""
-    if not callable(model):
-        raise TypeError("model must be callable.")
-    if not isinstance(operator, AbstractDiscreteQuantumOperator):
-        raise TypeError("operator must implement AbstractDiscreteQuantumOperator.")
+) -> LocalOperatorEstimate:
+    """Evaluate a connected discrete action without materializing a dense matrix."""
     configs = jnp.asarray(configurations)
     rank = len(operator.configuration_shape)
     if (
@@ -204,6 +197,8 @@ def local_estimate(
     )
     connection_mask = connected.valid.reshape((batch_count, connected.max_connections))
     finite_elements = jnp.isfinite(matrix_elements)
+    invalid_amplitude = jnp.any(connection_mask & ~ratios.valid, axis=-1)
+    invalid_element = jnp.any(connection_mask & ~finite_elements, axis=-1)
     active_valid = ratios.valid & finite_elements
     invalid_active = jnp.any(connection_mask & ~active_valid, axis=-1)
     safe_mask = connection_mask & active_valid
@@ -216,14 +211,27 @@ def local_estimate(
     terms = safe_elements * safe_ratios
     values = diagonal + jnp.sum(terms, axis=-1)
     diagonal_valid = jnp.isfinite(diagonal)
-    valid = current.valid & current.nonzero & diagonal_valid & ~invalid_active
-    values = jnp.where(valid, values, jnp.asarray(jnp.nan, dtype=values.dtype))
-    return LocalEstimate(
-        value=values.reshape(batch_shape),
-        valid=valid.reshape(batch_shape),
-        active_connections=jnp.sum(connection_mask, axis=-1, dtype=jnp.int32).reshape(
-            batch_shape
+    current_valid = current.valid & current.nonzero
+    valid = current_valid & diagonal_valid & ~invalid_active
+    status = jnp.where(
+        ~current_valid | invalid_amplitude,
+        int(LocalOperatorStatus.INVALID_AMPLITUDE),
+        jnp.where(
+            ~diagonal_valid | invalid_element,
+            int(LocalOperatorStatus.NONFINITE),
+            int(LocalOperatorStatus.SUCCESS),
         ),
+    ).astype(jnp.int32)
+    values = jnp.where(valid, values, jnp.asarray(jnp.nan, dtype=values.dtype))
+    return LocalOperatorEstimate(
+        values.reshape(batch_shape),
+        valid.reshape(batch_shape),
+        status.reshape(batch_shape),
+        jnp.sum(connection_mask, axis=-1, dtype=jnp.int32).reshape(batch_shape),
+        configuration_shape=operator.configuration_shape,
+        operator_id=operator.operator_id,
+        method_id="connected-configurations",
+        compute_dtype=str(values.dtype),
     )
 
 
@@ -231,6 +239,4 @@ __all__ = [
     "AbstractDiscreteQuantumOperator",
     "CallableDiscreteQuantumOperator",
     "ConnectedConfigurations",
-    "LocalEstimate",
-    "local_estimate",
 ]

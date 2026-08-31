@@ -44,7 +44,15 @@ def test_sipg_nitsche_reproduces_affine_solution_with_reversed_neighbour():
 
 def test_sipg_operator_is_symmetric_with_harmonic_cell_coefficient():
     discretization = _sipg_discretization()
-    coefficient = phx.equations.coefficient(jnp.asarray([1.0, 10.0]), location="cell")
+    cells = discretization.mesh.topology.entity_sets[
+        discretization.mesh.topological_dimension
+    ]
+    coefficient = phx.equations.coefficient(
+        jnp.asarray([1.0, 10.0]),
+        location="cell",
+        support_id=discretization.support.support_id,
+        entity_set_id=cells.entity_set_id,
+    )
     form = phx.equations.fem.sipg_poisson_form(
         "u",
         coefficient,

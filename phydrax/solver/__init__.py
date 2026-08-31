@@ -65,6 +65,12 @@ from ._calabi_yau_campaigns import (
     prepare_fermat_quintic,
     prepare_quartic_k3,
 )
+from ._cfd_dem import (
+    advance_cfd_dem_window,
+    CFDEMCouplingSchedulePlan,
+    CFDEMCouplingState,
+    CFDEMMacroStepResult,
+)
 from ._channel_flow import (
     CHANNEL_FLOW_INITIAL_CONSTRAINT,
     CHANNEL_FLOW_STOKES_FAILURE,
@@ -253,6 +259,12 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._fem_multirate import (
+    conservative_multirate_flux,
+    DGInterfaceFluxResult,
+    DGMultirateTracePlan,
+    DGTraceHistory,
+)
 from ._fermionic_gaussian import (
     damped_fermionic_mode,
     FermionicGaussianProblem,
@@ -407,6 +419,7 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._harmonic_constraints import HarmonicConstraint, preserve_magnetic_periods
 from ._helmholtz import (
     ExteriorHelmholtzDirichletResult2D,
     solve_exterior_helmholtz_dirichlet_2d,
@@ -562,6 +575,7 @@ from ._nonmarkov_campaign import (
 )
 from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
 from ._particle_methods import (
+    DEMFixedStepMethod,
     DFSPHFixedStepMethod,
     IISPHFixedStepMethod,
     TransportVelocityFixedStepMethod,
@@ -829,6 +843,8 @@ from .maxwell import (
 
 
 __all__ = [
+    "HarmonicConstraint",
+    "preserve_magnetic_periods",
     "CalabiYauCampaign",
     "CalabiYauMetricArtifact",
     "CalabiYauMetricProblem",
@@ -1012,6 +1028,10 @@ __all__ = [
     "DAEAttemptHistory",
     "DAEAttemptStatus",
     "DAEContinuation",
+    "conservative_multirate_flux",
+    "DGInterfaceFluxResult",
+    "DGMultirateTracePlan",
+    "DGTraceHistory",
     "DAEFailureMode",
     "DAERegularityEvidence",
     "DAERegularityFailureMode",
@@ -1432,8 +1452,13 @@ __all__ = [
     "SSPRK33FixedStepMethod",
     "SSPRK54FixedStepMethod",
     "solve_fixed_step",
+    "DEMFixedStepMethod",
     "DFSPHFixedStepMethod",
     "IISPHFixedStepMethod",
     "ShepardDensityRenormalizationTransform",
     "TransportVelocityFixedStepMethod",
+    "CFDEMCouplingSchedulePlan",
+    "CFDEMCouplingState",
+    "CFDEMMacroStepResult",
+    "advance_cfd_dem_window",
 ]

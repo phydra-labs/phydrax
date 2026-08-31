@@ -469,8 +469,11 @@ def _sample_values(
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[Array, Array, Array | None, Array, tuple[Any, ...]]:
     domain = _target_domain(target)
-    function = _as_domain_function(integrand, domain)
-    value_field = function(batch.points, key=key, **kwargs)
+    if isinstance(integrand, cx.Field):
+        value_field = integrand
+    else:
+        function = _as_domain_function(integrand, domain)
+        value_field = function(batch.points, key=key, **kwargs)
     if not isinstance(value_field, cx.Field):
         raise TypeError("Monte Carlo integrands must evaluate to coordax.Field.")
     values, output_dims = _expand_and_flatten(value_field, batch)

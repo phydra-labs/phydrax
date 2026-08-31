@@ -15,6 +15,31 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
       to use a scan-over-depth execution path when topology is compatible.
     - `scan=True` is primarily a compile-time optimization for deeper repeated blocks.
 
+## Continuum-electron amplitudes
+
+`FermiNet` is a finite, nonperiodic molecular amplitude with a static spin
+partition, rotation-invariant one/two-electron distance streams, full generalized
+determinants, sparsity-aware scaled log envelopes with higher-order-correct
+signed-log products and polynomial singular-term derivatives, a positive
+physical decay floor, and stable signed linear determinant combination. It
+returns `phydrax.operators.LogAmplitude` for
+one configuration or a leading
+batch. Same-spin exchanges are antisymmetric.
+
+The exact continuum-electron path is limited to
+`phydrax.operators.ELECTRONIC_MAX_ELECTRONS == 4`. `FermiNet` rejects larger
+systems; this conservative ceiling bounds the polynomial determinant required for
+honest singular-term derivatives across supported dtypes.
+
+::: phydrax.nn.quantum.FermiNet
+    options:
+        members:
+            - __init__
+            - __call__
+            - envelope_decay
+
+---
+
 ::: phydrax.nn.models.MLP
     options:
         members:
@@ -1368,6 +1393,29 @@ existing lattice callable and costs one model evaluation per group element.
 cross-dimensional embeddings and rejects a projected kernel whose discarded
 relative residual exceeds the configured tolerance.
 
+#### Low-degree Cartesian O(3) tensor products
+
+`O3TensorProductPlan` uses the existing `O3Representation` packing for ordinary
+and pseudo scalars, vectors, and symmetric-traceless rank-two tensors. It
+enumerates legal degree/parity paths through degree two, canonical `uvw`
+multiplicity connections, component normalization, parameter count, contraction
+work, coefficient storage, resource limits, and content identity before
+allocation. `O3TensorProduct` prepares independently derived Cartesian
+Clebsch--Gordan maps and accepts either internal trainable weights or one
+externally supplied weight per planned multiplicity connection.
+
+::: phydrax.nn.operator.layers.O3TensorProductPlan
+
+---
+
+::: phydrax.nn.operator.layers.O3TensorProduct
+
+`phydrax.nn.atomistic.NequIPPotential` uses external radial weights for every
+actual planned instruction. This is continuous O(3) equivariance in three
+dimensions, not the finite lattice-group contract above. Its supported research
+scope is degree at most two and finite nonperiodic molecules; it is neither an
+arbitrary irreps layer nor a high-degree or MACE implementation.
+
 #### Clifford grade fields
 
 `CliffordGradeRepresentation` packs complete exterior grades under one explicit
@@ -2559,6 +2607,14 @@ output pipeline. `OperatorFitResult.execution_model` and
 and all callable schedules require stable identities for exact-resume
 compatibility.
 
+`parameter_subspace=` restricts differentiation, gradient accumulation, and
+optimizer state to exact selected model leaves. The subspace is validated
+against the caller model, then rebased after parameter-dtype casting and model
+replication. Its effective paths, shapes, dtypes, and total dimension are part
+of the exact-resume fit contract. Low-rank adapted models require
+`low_rank_parameter_subspace(model)`; omitting it or selecting anything other
+than every adapter factor fails before optimizer initialization.
+
 Operator fit checkpoints use a versioned semantic fit schema rather than the
 concrete shape of the batch used to construct the fit. On resume, PhydraX
 validates manifest fields, format version, state checksum, loader content and
@@ -2622,7 +2678,10 @@ that choice is recorded in the plan fingerprint guarding prepared inputs.
 `WeakOperatorLoss` evaluates residual moments against one or more test
 functions. `CochainResidualLoss` scatters typed prediction/source samples onto
 their canonical cell complex, evaluates a `CochainResidualProgram`, and applies
-a segmented Hodge-aware reduction. Every generic term declares
+a segmented Hodge-aware reduction. `SpectralPDEResidualLoss` projects physical
+predictions onto one fixed tensor spectral trial space and evaluates an
+all-coordinate `CompiledSpectralResidual`; unlike `operator_spectral_loss`, it
+does not require solution targets. Every generic term declares
 `space="physical"` or `"execution"`; physical is the default.
 `OperatorLossContext` carries paired predictions, batches, and targets for both
 spaces. `OperatorOutputPipeline` applies exact hard-constraint and conservation
@@ -2654,6 +2713,10 @@ and explicit or previously fitted output scaling.
 ---
 
 ::: phydrax.nn.operator.training.CochainResidualLoss
+
+---
+
+::: phydrax.nn.operator.training.SpectralPDEResidualLoss
 ---
 
 ::: phydrax.nn.operator.training.HardConstraintTransform

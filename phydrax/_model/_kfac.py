@@ -16,7 +16,9 @@ class KFACAffineBlock:
     name: str
     weight: Any
     bias: Any | None
-    parameterization: Literal["direct", "rwf", "transformed"] = "direct"
+    parameterization: Literal["direct", "low_rank_update", "rwf", "transformed"] = (
+        "direct"
+    )
 
 
 class KFACLayoutProvider(abc.ABC):

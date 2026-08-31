@@ -26,7 +26,7 @@ cell must also be selected. `CellComplexPair(K, A)` represents relative chains o
 representative may therefore have nonzero ambient boundary, provided that boundary is
 supported entirely in `A`.
 
-```python
+```text
 K = phx.topology.CellSubcomplex.full(mesh.topology)
 A = phx.topology.CellSubcomplex.from_subsets(mesh.topology, "boundary")
 pair = phx.topology.CellComplexPair(K, A)
@@ -38,7 +38,7 @@ Coefficient domains are mandatory. `PrimeField(p)` validates that `p` is prime a
 uses exact host arithmetic. `RationalField()` is the rank-only exact path used for
 field-independent Betti dimensions and Hodge-nullity comparison.
 
-```python
+```text
 homology = phx.topology.compute_homology(
     K,
     coefficients=phx.topology.PrimeField(2),
@@ -64,7 +64,7 @@ Boundary incidence does not, by itself, certify the geometric vertex closure of 
 nonregular cell complex. Lower- and upper-star builders therefore require an explicit
 `CellVertexSupport`.
 
-```python
+```text
 support = phx.topology.cell_vertex_support(
     mesh.topology,
     (vertex_vertices, edge_vertices, face_vertices),
@@ -92,7 +92,7 @@ preserves leading batch dimensions. Exact persistence remains a host preparation
 with `A_t = A ∩ K_t`. It does not silently implement extended persistence or a pair
 whose cells enter `A_t` at independent times.
 
-```python
+```text
 persistence = phx.topology.compute_persistence(
     filtration,
     coefficients=phx.topology.PrimeField(2),
@@ -115,7 +115,7 @@ The exact reduction pairing is discontinuous when filtration order changes. A fr
 pairing exposes only the valid local derivative: birth and death endpoints are gathers
 from dynamic values while the complete frozen order remains admissible.
 
-```python
+```text
 frozen = phx.topology.freeze_persistence_pairing(persistence, filtration)
 evaluation = frozen.evaluate(dynamic_cell_values)
 ```

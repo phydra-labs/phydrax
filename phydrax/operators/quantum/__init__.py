@@ -36,14 +36,20 @@ from ._discrete import (
     AbstractDiscreteQuantumOperator,
     CallableDiscreteQuantumOperator,
     ConnectedConfigurations,
-    local_estimate,
-    LocalEstimate,
 )
 from ._dynamics import (
     HamiltonianAction,
     heisenberg_residual,
     schrodinger_residual,
     von_neumann_residual,
+)
+from ._electronic import (
+    electronic_initial_walkers,
+    ELECTRONIC_MAX_ELECTRONS,
+    ElectronicCoulombHamiltonian,
+    ElectronicKineticPolicy,
+    ElectronicTraceMethod,
+    harmonic_mean_electron_proposal,
 )
 from ._fock import (
     BosonicFockSpace,
@@ -57,6 +63,12 @@ from ._information import (
     state_fidelity,
     trace_distance,
     von_neumann_entropy,
+)
+from ._local import (
+    AbstractLocalQuantumOperator,
+    evaluate_local_operator,
+    LocalOperatorEstimate,
+    LocalOperatorStatus,
 )
 from ._nonmarkovianity import (
     analyze_dynamical_map_series,
@@ -100,6 +112,7 @@ from ._symmetry import FiniteSignedPermutationSymmetry, SymmetryProjectedAmplitu
 
 
 __all__ = [
+    "AbstractLocalQuantumOperator",
     "AbstractDiscreteQuantumOperator",
     "AmplitudeRatio",
     "HamiltonianAction",
@@ -111,16 +124,23 @@ __all__ = [
     "density_expectation",
     "density_fidelity",
     "density_from_factor",
+    "ELECTRONIC_MAX_ELECTRONS",
+    "ElectronicCoulombHamiltonian",
+    "ElectronicKineticPolicy",
+    "ElectronicTraceMethod",
+    "electronic_initial_walkers",
+    "evaluate_local_operator",
     "FiniteSignedPermutationSymmetry",
     "embed_operator",
     "heisenberg_residual",
     "hermiticity_residual",
     "lindblad_dissipator",
-    "LocalEstimate",
+    "LocalOperatorEstimate",
+    "LocalOperatorStatus",
     "LogAmplitude",
     "lindblad_residual",
     "amplitude_ratio",
-    "local_estimate",
+    "harmonic_mean_electron_proposal",
     "quantum_bracket",
     "observable_variance",
     "purity",

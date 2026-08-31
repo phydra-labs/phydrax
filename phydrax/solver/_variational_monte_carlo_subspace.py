@@ -24,6 +24,7 @@ from .._sampling import (
     sample_markov,
 )
 from .._strict import StrictModule
+from .._trainable import partition_trainable
 from ..linalg import (
     ArraySpace,
     EmpiricalGramLinearOperator,
@@ -83,8 +84,7 @@ def _scalar_amplitude(model: Any, configuration: Array, /) -> LogAmplitude:
         raise TypeError("Every subspace VMC model must return LogAmplitude.")
     if value.log_abs.shape != ():
         raise ValueError(
-            "Every subspace VMC model must return one scalar amplitude per "
-            "configuration."
+            "Every subspace VMC model must return one scalar amplitude per configuration."
         )
     return value
 
@@ -105,8 +105,7 @@ def _batched_amplitude(model: Any, configurations: Array, /) -> LogAmplitude:
 def _parameter_mode(value: ComplexParameterMode, /) -> ComplexParameterMode:
     if value not in ("real", "holomorphic", "nonholomorphic"):
         raise ValueError(
-            "complex parameter modes must be 'real', 'holomorphic', or "
-            "'nonholomorphic'."
+            "complex parameter modes must be 'real', 'holomorphic', or 'nonholomorphic'."
         )
     return value
 
@@ -164,10 +163,11 @@ def _resolve_modes(
 
 
 def _default_parameter_subspace(model: Any, /) -> ParameterSubspace | None:
-    leaves = jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_inexact_array))
-    if not leaves:
+    trainable, _non_trainable = partition_trainable(model)
+    paths = ParameterSubspace.array_leaf_paths(trainable)
+    if not paths:
         return None
-    return ParameterSubspace(model, eqx.is_inexact_array)
+    return ParameterSubspace.from_leaf_paths(model, paths)
 
 
 def _mixture_components(
@@ -280,8 +280,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
             if len(subspaces) != len(models_):
                 raise ValueError("parameter_subspaces must have one entry per model.")
             if any(
-                subspace is not None
-                and not isinstance(subspace, ParameterSubspace)
+                subspace is not None and not isinstance(subspace, ParameterSubspace)
                 for subspace in subspaces
             ):
                 raise TypeError(
@@ -292,12 +291,8 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
             for subspace in subspaces
         )
         coordinates = tuple(
-            vector
-            if subspace is None
-            else _coordinates_from_vector(vector, mode)
-            for vector, mode, subspace in zip(
-                vectors, modes, subspaces, strict=True
-            )
+            vector if subspace is None else _coordinates_from_vector(vector, mode)
+            for vector, mode, subspace in zip(vectors, modes, subspaces, strict=True)
         )
         identifier = (
             canonical_fingerprint(
@@ -353,9 +348,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
         )
         return subspace.reconstruct_vector(vector)
 
-    def models_from_coordinates(
-        self, coordinates: Sequence[Array], /
-    ) -> tuple[Any, ...]:
+    def models_from_coordinates(self, coordinates: Sequence[Array], /) -> tuple[Any, ...]:
         coordinates_ = tuple(coordinates)
         if len(coordinates_) != self.state_count:
             raise ValueError("coordinates must have one entry per model.")
@@ -529,9 +522,7 @@ def _relative_amplitudes_and_actions(
         & connection_mask[..., None]
         & finite_elements[..., None]
     )
-    safe_connected_log_abs = jnp.where(
-        active_amplitude, connected_log_abs, -jnp.inf
-    )
+    safe_connected_log_abs = jnp.where(active_amplitude, connected_log_abs, -jnp.inf)
     safe_current_log_norm = jnp.where(current_valid, log_norm, 0.0)
     relative_connected = jnp.where(
         active_amplitude,
@@ -546,9 +537,7 @@ def _relative_amplitudes_and_actions(
     invalid_active_connection = jnp.any(
         connection_mask & (~finite_elements | ~valid_connected_models), axis=-1
     )
-    sample_valid = (
-        current_valid & jnp.isfinite(diagonal) & ~invalid_active_connection
-    )
+    sample_valid = current_valid & jnp.isfinite(diagonal) & ~invalid_active_connection
     return relative, action, sample_valid
 
 
@@ -852,9 +841,7 @@ def _score_corrected_objective(
     models = problem.models_from_coordinates(coordinates)
     mixture_log_weight = _batched_mixture_log_weight(models, configurations)
     zero_value_score = mixture_log_weight - jax.lax.stop_gradient(mixture_log_weight)
-    score_correction = contract(
-        "n,n->", distribution_cotangent, zero_value_score
-    )
+    score_correction = contract("n,n->", distribution_cotangent, zero_value_score)
     return pathwise_objective + score_correction
 
 
@@ -890,9 +877,7 @@ def _validate_state(
         )
         if len(actual_arrays) != len(expected_arrays) or any(
             not bool(jnp.array_equal(actual, expected))
-            for actual, expected in zip(
-                actual_arrays, expected_arrays, strict=True
-            )
+            for actual, expected in zip(actual_arrays, expected_arrays, strict=True)
         ):
             raise ValueError(
                 "Subspace VMC state models and parameter coordinates are inconsistent."
@@ -903,8 +888,7 @@ def _validate_state(
 
 def _raise_subspace_vmc(status: Array, role: str, /) -> None:
     raise RuntimeError(
-        f"{role} failed with subspace VMC status "
-        f"{vmc_subspace_status_name(status)}."
+        f"{role} failed with subspace VMC status {vmc_subspace_status_name(status)}."
     )
 
 
@@ -934,9 +918,7 @@ def solve_variational_monte_carlo_subspace(
         current = problem.initial_state(key=resolved_key)
     else:
         if not isinstance(state, VariationalMonteCarloSubspaceState):
-            raise TypeError(
-                "state must be a VariationalMonteCarloSubspaceState or None."
-            )
+            raise TypeError("state must be a VariationalMonteCarloSubspaceState or None.")
         resolved_key = state.root_key if key is None else key
         if not jnp.array_equal(jr.key_data(resolved_key), jr.key_data(state.root_key)):
             raise ValueError("Resume key does not match the subspace VMC state key.")
@@ -1011,9 +993,7 @@ def solve_variational_monte_carlo_subspace(
                 directions.append(jnp.empty((0,), dtype=coordinates.dtype))
                 iteration_linear_results.append(None)
                 continue
-            responsibilities = jnp.abs(
-                estimate.relative_amplitudes[:, model_index]
-            ) ** 2
+            responsibilities = jnp.abs(estimate.relative_amplitudes[:, model_index]) ** 2
             metric = _score_geometry(
                 problem,
                 model_index,
@@ -1051,10 +1031,7 @@ def solve_variational_monte_carlo_subspace(
                 _raise_subspace_vmc(status, "Subspace VMC metric solve")
             break
         norm = jnp.sqrt(
-            sum(
-                jnp.real(jnp.vdot(direction, direction))
-                for direction in directions
-            )
+            sum(jnp.real(jnp.vdot(direction, direction)) for direction in directions)
         )
         scale = jnp.asarray(1.0)
         if policy.max_update_norm is not None:
@@ -1098,9 +1075,7 @@ def solve_variational_monte_carlo_subspace(
     return VariationalMonteCarloSubspaceResult(
         final_state=current,
         final_estimate=final_estimate,
-        objective_history=jnp.stack(objectives)
-        if objectives
-        else jnp.empty((0,)),
+        objective_history=jnp.stack(objectives) if objectives else jnp.empty((0,)),
         state_energy_history=jnp.stack(energies)
         if energies
         else jnp.empty((0, state_count)),
@@ -1113,12 +1088,8 @@ def solve_variational_monte_carlo_subspace(
         hamiltonian_hermiticity_history=jnp.stack(hamiltonian_defects)
         if hamiltonian_defects
         else jnp.empty((0,)),
-        acceptance_history=jnp.stack(acceptances)
-        if acceptances
-        else jnp.empty((0,)),
-        update_norm_history=jnp.stack(update_norms)
-        if update_norms
-        else jnp.empty((0,)),
+        acceptance_history=jnp.stack(acceptances) if acceptances else jnp.empty((0,)),
+        update_norm_history=jnp.stack(update_norms) if update_norms else jnp.empty((0,)),
         status_history=jnp.stack(statuses)
         if statuses
         else jnp.empty((0,), dtype=jnp.int32),

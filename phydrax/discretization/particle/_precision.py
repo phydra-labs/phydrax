@@ -23,6 +23,9 @@ from ..._trainable import NonTrainableState
 
 ParticleRealization: TypeAlias = Literal["dense_pairs", "cell_edge_list"]
 ParticleAccumulation: TypeAlias = Literal["fast", "deterministic", "compensated"]
+ParticleKernelBackend: TypeAlias = Literal[
+    "reference", "dense_fused", "cell_fused", "verlet_fused"
+]
 
 
 class ParticleExecutionPolicy(StrictModule, NonTrainableState):
@@ -30,6 +33,7 @@ class ParticleExecutionPolicy(StrictModule, NonTrainableState):
 
     realization: ParticleRealization = eqx.field(static=True)
     accumulation: ParticleAccumulation = eqx.field(static=True)
+    kernel_backend: ParticleKernelBackend = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
     def __init__(
@@ -37,6 +41,7 @@ class ParticleExecutionPolicy(StrictModule, NonTrainableState):
         *,
         realization: ParticleRealization = "dense_pairs",
         accumulation: ParticleAccumulation = "deterministic",
+        kernel_backend: ParticleKernelBackend = "reference",
     ):
         if realization not in ("dense_pairs", "cell_edge_list"):
             raise ValueError("realization must be 'dense_pairs' or 'cell_edge_list'.")
@@ -44,13 +49,22 @@ class ParticleExecutionPolicy(StrictModule, NonTrainableState):
             raise ValueError(
                 "accumulation must be 'fast', 'deterministic', or 'compensated'."
             )
+        if kernel_backend not in (
+            "reference",
+            "dense_fused",
+            "cell_fused",
+            "verlet_fused",
+        ):
+            raise ValueError("Unknown particle kernel backend.")
         self.realization = realization
         self.accumulation = accumulation
+        self.kernel_backend = kernel_backend
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "particle-execution-policy",
                 "realization": realization,
                 "accumulation": accumulation,
+                "kernel_backend": kernel_backend,
             }
         )
 

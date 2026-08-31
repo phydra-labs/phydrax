@@ -1,0 +1,17 @@
+{
+  "cone_acyclic": true,
+  "cone_seconds": 0.035321125003974885,
+  "extended_intervals": 3,
+  "extended_seconds": 1.0133719169534743,
+  "integral_free_ranks": [
+    1,
+    0,
+    0
+  ],
+  "integral_seconds": 0.011669541010633111,
+  "integral_torsion_counts": [
+    0,
+    0,
+    0
+  ]
+}

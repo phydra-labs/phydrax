@@ -42,6 +42,11 @@ Most workflows are composing a few primitives:
   particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
   measures, transfers, temporal/stochastic
   composition, and auditable plan/preparation identities.
+- **Finite-molecule atomistic learning**: scale-identified atomic structures and
+  padded case-isolated batches reuse material-particle identities and `GraphIR`;
+  PaiNN scalar/vector interactions produce invariant molecular energies and
+  conservative forces with fail-closed neighborhood capacity, typed diagnostics,
+  local rMD17 parsing, and domain-specific energy/force training.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -152,6 +157,16 @@ area measures, and SFNO interoperability. See the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).
+
+Finite nonperiodic molecular learning lives in `phx.atomistic`, with the
+equivariant energy model in `phx.nn.atomistic`. The implementation covers typed
+atomic structures and batches, resource-guarded dense molecular graphs, PaiNN
+energies, forces derived from one scalar energy, typed energy/force fitting, and
+offline local rMD17 data. It does not claim periodic systems, stress, long-range
+electrostatics, or molecular-dynamics stability. See the
+[atomistic guide](docs/guides_atomistic.md), the
+[atomistic cookbook](docs/cookbook/atomistic.md), and the
+[atomistic API](docs/api/atomistic.md).
 
 ## Example
 

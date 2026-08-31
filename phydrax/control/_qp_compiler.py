@@ -102,12 +102,11 @@ def _positive_semidefinite_symmetric_part(
 ) -> Array:
     symmetric = 0.5 * (value + jnp.swapaxes(value, -1, -2))
     eigenvalues = jnp.linalg.eigvalsh(symmetric)
-    indefinite = jnp.any(jnp.isfinite(eigenvalues) & (eigenvalues < -tolerance))
-    return eqx.error_if(
-        symmetric,
-        indefinite,
-        f"{name} must be positive semidefinite; indefinite costs are unsupported.",
-    )
+    if bool(jnp.any(jnp.isfinite(eigenvalues) & (eigenvalues < -tolerance))):
+        raise ValueError(
+            f"{name} must be positive semidefinite; indefinite costs are unsupported."
+        )
+    return symmetric
 
 
 class LinearQuadraticControlProblem(StrictModule):

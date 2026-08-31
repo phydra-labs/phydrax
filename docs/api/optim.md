@@ -1535,7 +1535,7 @@ Preparation and Clarabel execution remain host operations. Once prepared,
 not make the forward Clarabel solve device-resident. The API provides first-order
 mathematical solution sensitivity only; higher-order differentiation is unsupported.
 
-```python
+```text
 import equinox
 import phydrax
 
@@ -1699,6 +1699,12 @@ Phydrax KFAC and Riemannian optimizers, and native scalar, least-squares, and co
 iterative methods. Operator fitting accepts supplied Optax transformations.
 Resumable `fit_operator` runs require a stable `optimizer_id` whenever the transformation
 is supplied externally so checkpoint identity does not depend on an opaque Python object.
+
+An explicit `ParameterSubspace` may be supplied to `FunctionalSolver.solve` or
+`fit_operator`. In the initial contract this restriction is supported only by
+standard and extra-argument Optax transformations. KFAC, Evosax, mirror,
+Riemannian, scalar, least-squares, and composite backends reject it rather than
+silently optimizing the complete ambient PyTree.
 
 Evosax distribution-based algorithms remain accepted by `FunctionalSolver`; its
 population-based algorithms require an explicit finite search-space contract and are

@@ -15,6 +15,7 @@
 .notes
 .prompts
 .testmon*
+.tia/
 __pycache__
 .DS_Store
 .pytest_cache
@@ -30,6 +31,7 @@ site/
 _gitignore/
 benchmarks/*
 !benchmarks/combinatorial_native.py
+!benchmarks/pgm_native.py
 !benchmarks/dae_benchmark_artifact.json
 !benchmarks/direct_collocation.json
 !benchmarks/direct_collocation_ipopt.json
@@ -41,8 +43,10 @@ benchmarks/*
 !benchmarks/maxwell_amoeba.json
 !benchmarks/incompressible_spectral.json
 !benchmarks/structured_flow.json
+!benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/topology.json
+!benchmarks/advanced_topology.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/

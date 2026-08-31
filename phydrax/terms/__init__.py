@@ -88,6 +88,11 @@ from ._interface import (
     implicit_phase_penalty,
 )
 from ._likelihood import SupervisedLikelihoodTerm
+from ._modal import (
+    CompiledModalResidualTerm,
+    ModalObservationTerm,
+    ModalTimeProvider,
+)
 from ._moment import MomentPenalty
 from ._observation import ObservationPenalty
 from ._operator_dataset import (
@@ -129,6 +134,7 @@ from ._score_matching import (
     ScoreSampleProvider,
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
+from ._topology import FrozenTopologyTerm
 from ._trajectory_classification import (
     RaggedTimeSeriesClassificationBatch,
     RaggedTimeSeriesClassificationTerm,
@@ -168,10 +174,12 @@ __all__ = [
     "AbstractFlowMatchingMetric",
     "AbstractSamplingTerm",
     "AbstractScalarTerm",
+    "FrozenTopologyTerm",
     "BSDETerm",
     "BarycenterObjectiveTerm",
     "BatchSampler",
     "CochainResidualTerm",
+    "CompiledModalResidualTerm",
     "DeepBSDEPredictor",
     "DeepBSDERollout",
     "DeepBSDESamplingMode",
@@ -222,6 +230,8 @@ __all__ = [
     "InvariantSubspaceResidualEvaluation",
     "InvariantSubspaceResidualResult",
     "LabelProvider",
+    "ModalObservationTerm",
+    "ModalTimeProvider",
     "MomentPenalty",
     "ObservationPenalty",
     "OperatorDatasetTerm",

@@ -1,0 +1,38 @@
+{
+  "quadrilateral": [
+    {
+      "order": 2,
+      "global_dofs": 9,
+      "dense_first_seconds": 0.17274925002129748,
+      "factorized_first_seconds": 0.1570532500045374,
+      "dense_steady_seconds": 0.00014694794954266398,
+      "factorized_steady_seconds": 0.00014852289750706406,
+      "dense_factorized_defect": 1.7763568394002505e-15,
+      "finite": true,
+      "passed": true
+    },
+    {
+      "order": 3,
+      "global_dofs": 16,
+      "dense_first_seconds": 0.1343272079830058,
+      "factorized_first_seconds": 0.1430778750218451,
+      "dense_steady_seconds": 0.0001383479015203193,
+      "factorized_steady_seconds": 0.00014976664970163257,
+      "dense_factorized_defect": 8.881784197001252e-16,
+      "finite": true,
+      "passed": true
+    },
+    {
+      "order": 5,
+      "global_dofs": 36,
+      "dense_first_seconds": 0.1366314580081962,
+      "factorized_first_seconds": 0.148449125001207,
+      "dense_steady_seconds": 0.00015275414916686713,
+      "factorized_steady_seconds": 0.00015956045244820417,
+      "dense_factorized_defect": 6.661338147750939e-16,
+      "finite": true,
+      "passed": true
+    }
+  ],
+  "passed": true
+}

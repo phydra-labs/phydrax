@@ -1297,7 +1297,7 @@ residual `DomainFunction` at the query coordinates. Ordinary PhydraX
 differential operators therefore remain the single derivative implementation.
 For direct inspection:
 
-```python
+```text
 context = phx.nn.operator.adapters.bind_operator_context(model, fine_physics_batch)
 u_for_this_source = context.domain_function(geom, "x")
 laplacian_u = phx.operators.laplacian(u_for_this_source, var="x")
@@ -1305,6 +1305,56 @@ laplacian_u = phx.operators.laplacian(u_for_this_source, var="x")
 
 Each loss first reduces coordinates for one physical case and then averages
 cases. This avoids changing the objective merely by changing points per case.
+
+### Targetless spectral PDE residuals
+
+For smooth tensor-product problems, the physical operator prediction can be
+projected once into a global trial space and differentiated spectrally. The
+training dataset contains parameter functions but no solution targets:
+
+```text
+space = phx.discretization.TensorSpectralPlan(
+    (phx.discretization.FourierBasisPlan(32),),
+    axis_names=("x",),
+    field_name="u",
+).prepare(jnp.asarray([[0.0], [1.0]]))
+method = phx.discretization.PseudospectralMethodPlan(
+    dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
+)
+compiled_residual = phx.equations.compile_spectral_residual(
+    problem,
+    space,
+    method,
+    scope="full",
+)
+physics_loss = phx.nn.operator.training.SpectralPDEResidualLoss(
+    "spectral_pde",
+    compiled_residual,
+    {"u": "output"},
+    {"forcing": "forcing_samples"},
+)
+result = phx.nn.operator.training.fit_operator(
+    model,
+    targetless_dataset,
+    loss_terms=(physics_loss,),
+    normalization=None,
+    batch_size=16,
+    steps=2_000,
+)
+```
+
+Prediction fields and functional parameter inputs must use the compiler's
+complete fixed tensor grid. Coordinates are reduced before cases, and the loss
+fingerprint includes the PDE, spaces, realization, field/input bindings,
+equation scales, scope, and exactness policy. Targetless fitting requires
+explicit physical scaling; it cannot infer output normalization from absent
+solution targets.
+
+This route is distinct from `operator_spectral_loss`, which compares sampled
+predictions and targets after an FFT. `SpectralPDEResidualLoss` constructs the
+governing equation through modal differential operators. For problems carrying
+initial or boundary conditions, apply an `OperatorOutputPipeline` and compile
+with `condition_handling="external"`.
 
 ## Operator field classification
 
@@ -1427,6 +1477,46 @@ fit_result = phx.nn.operator.training.fit_operator(
 training_model = fit_result.execution_model
 assert fit_result.completed_steps == 1
 ```
+
+For parameter-efficient transfer, adapt explicit native affine sites and pass
+only their factors to the same production fitting control plane:
+
+```text
+base_model = training_model
+paths = phx.nn.parameters.low_rank_sites(base_model)
+adapted, adaptation = phx.nn.parameters.adapt_low_rank(
+    base_model,
+    {
+        path: phx.nn.parameters.LowRankSpec(rank=8)
+        for path in paths
+    },
+    key=jr.key(12),
+)
+adapter_parameters = phx.nn.parameters.low_rank_parameter_subspace(adapted)
+adapted_fit = phx.nn.operator.training.fit_operator(
+    adapted,
+    split.train,
+    validation=split.validation,
+    parameter_subspace=adapter_parameters,
+    epochs=10,
+    batch_size=16,
+)
+phx.nn.parameters.save_low_rank_adapter(
+    "adapted-task.phxadapter",
+    adapted_fit.execution_model,
+    provenance={"task": "downstream-operator"},
+)
+restored = phx.nn.parameters.read_low_rank_adapter(
+    "adapted-task.phxadapter",
+    base_model,
+)
+deployment_model = phx.nn.parameters.merge_low_rank(restored.model)
+```
+
+The adapter archive contains no base arrays. Loading binds it to the exact base
+model content and static architecture, not merely compatible shapes. Keep the
+factorized model while training or swapping tasks; merge only when ordinary
+dense deployment and zero adapter inference overhead are required.
 
 Pass an `OperatorTask` plus matching `OperatorTrainingEvidence` to bind physical
 dimensions, source/query roles, output fields, and the admissible deployment
@@ -1608,7 +1698,7 @@ thread may call the adapter safely and every read finishes in finite time.
 Encoded operators can evaluate query sets in fixed-capacity chunks without
 re-encoding the source:
 
-```python
+```text
 query_source = phx.nn.operator.training.ArrayOperatorQuerySource(
     measured_batch.query("query"),
     case_shape=measured_batch.case_shape,

@@ -168,6 +168,7 @@ from ._reconstruction import (
     VanLeerLimiter,
 )
 from ._riemann import (
+    AbstractArbitraryNormalNumericalFluxPlan,
     AbstractNumericalFluxPlan,
     AbstractSymmetricTwoPointFluxPlan,
     EntropyConservativeEulerFluxPlan,
@@ -416,6 +417,7 @@ __all__ = [
     "PreparedConservativeDiffusion",
     "AbstractFaceReconstructionPlan",
     "AbstractFiniteVolumeBoundary",
+    "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",
     "AbstractSlopeLimiter",

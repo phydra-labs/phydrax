@@ -1,9 +1,10 @@
 # Variational TDVP
 
-Variational TDVP evolves the same discrete amplitude models and persistent Markov state
-used by variational Monte Carlo. Each fixed time step samples the current target,
-evaluates connected local energies, builds centered score geometry, solves one damped
-matrix-free system, and advances the selected parameter coordinates.
+Variational TDVP evolves the same canonical amplitude models and persistent Markov
+state used by variational Monte Carlo. Each fixed time step samples the current
+target, evaluates a generalized local quantum action, builds centered score
+geometry, solves one damped matrix-free system, and advances the selected parameter
+coordinates.
 
 ## Policy
 
