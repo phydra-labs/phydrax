@@ -8,7 +8,6 @@ import argparse
 import importlib
 import importlib.util
 import json
-import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from types import ModuleType
@@ -19,6 +18,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from benchmarks._runtime import measure_lower_and_compile, measure_repeated
 
 
 _Result = TypeVar("_Result")
@@ -46,11 +46,6 @@ def _integers(value: str, /) -> tuple[int, ...]:
     return values
 
 
-def _block_until_ready(value: Any, /) -> None:
-    for leaf in jax.tree.leaves(value):
-        leaf.block_until_ready()
-
-
 def _measure(
     function: Callable[..., _Result],
     arguments: tuple[Any, ...],
@@ -58,18 +53,18 @@ def _measure(
     *,
     repeats: int,
 ) -> tuple[float, float, _Result]:
-    compiled = jax.jit(function)
-    start = time.perf_counter()
-    value = compiled(*arguments)
-    _block_until_ready(value)
-    compile_seconds = time.perf_counter() - start
-    samples = []
-    for _ in range(repeats):
-        start = time.perf_counter()
-        value = compiled(*arguments)
-        _block_until_ready(value)
-        samples.append(time.perf_counter() - start)
-    return compile_seconds, float(jnp.median(jnp.asarray(samples))), value
+    jitted = jax.jit(function)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(*arguments),
+        lambda lowered: lowered.compile(),
+    )
+    value, distribution = measure_repeated(
+        lambda: compiled(*arguments),
+        warmup=1,
+        repeats=repeats,
+    )
+    compile_seconds = compilation.lowering_seconds + compilation.compilation_seconds
+    return compile_seconds, float(distribution.median_seconds), value
 
 
 def _measure_eager(
@@ -79,13 +74,12 @@ def _measure_eager(
     *,
     repeats: int,
 ) -> tuple[float, _Result]:
-    value = function(*arguments)
-    samples = []
-    for _ in range(repeats):
-        start = time.perf_counter()
-        value = function(*arguments)
-        samples.append(time.perf_counter() - start)
-    return float(np.median(np.asarray(samples))), value
+    value, distribution = measure_repeated(
+        lambda: function(*arguments),
+        warmup=1,
+        repeats=repeats,
+    )
+    return float(distribution.median_seconds), value
 
 
 def _paths(

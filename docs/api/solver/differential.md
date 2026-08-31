@@ -19,13 +19,20 @@ dY_t = f(t,Y_t,a)\,dt + \sum_k g_k(t,Y_t,a)\,dW_t^{(k)}.
 $$
 
 Omit `wiener_terms` for an ODE. Each named `WienerTerm` declares one independent
-Wiener source: its coefficient, native noise shape, optional basis identity, and
-mathematical structure (`additive`, `commutative`, or `general`). For a state of shape
-`state_shape`, the coefficient must return `state_shape + noise_shape`.
-`coefficient_matrix(time, state, args)` validates that contract and returns the
-canonical `(state_size, noise_size)` view without transposing physical axes. The
-backend flattens and concatenates terms in declared order; `DifferentialSolution`
-retains the corresponding named column slices.
+Wiener source: its coefficient, native noise shape, optional basis identity,
+mathematical structure (`additive`, `commutative`, or `general`), and coefficient
+representation.
+
+The default `representation="dense"` requires a coefficient with shape
+`state_shape + noise_shape`. `coefficient_matrix(time, state, args)` validates that
+contract and returns the canonical `(state_size, noise_size)` view. A sole
+`representation="diagonal"` term instead requires matching vector state and noise
+shapes and returns only its state-shaped diagonal. The canonical Diffrax backend
+lowers this to `lineax.DiagonalLinearOperator`; it never materializes an identity
+matrix. Backends without structured-noise support reject the term explicitly.
+
+Dense terms are flattened and concatenated in declared order. `DifferentialSolution`
+retains the corresponding named control slices.
 
 A `WienerRealization` defines one global Brownian path or coupled path batch. Its
 `support` is independent of any one solve interval, so solving adjacent subintervals
@@ -54,6 +61,7 @@ common randomness is required.
         members:
             - __init__
             - noise_size
+            - coefficient_array
             - coefficient_matrix
 
 ---
@@ -584,10 +592,14 @@ predictive = ensemble.to_predictive(
 ```
 
 The realization owns the sample shape; `solve_diffrax_ensemble` does not accept a
-separate path count. Results have shape
-`sample_shape + (num_times,) + state_shape`. `to_predictive` currently requires one
-sample axis and labels it as `process` uncertainty by default. It does not reinterpret
-discretization or solver error as process uncertainty.
+separate path count. By default every realization starts at
+`DifferentialProblem.initial_state`. Optional `initial_states` may instead supply one
+state per path with exact shape `sample_shape + state_shape`; it does not create a
+second uncertainty axis or alter the Wiener identities.
+
+Results have shape `sample_shape + (num_times,) + state_shape`. `to_predictive`
+currently requires one sample axis and labels it as `process` uncertainty by default.
+It does not reinterpret discretization or solver error as process uncertainty.
 
 ::: phydrax.solver.solve_diffrax_ensemble
 

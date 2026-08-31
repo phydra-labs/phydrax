@@ -20,12 +20,7 @@ import numpy as np
 import optax
 
 import phydrax as phx
-
-
-def _block(tree: Any, /) -> None:
-    for leaf in jax.tree_util.tree_leaves(tree):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
+from benchmarks._runtime import logical_array_bytes, measure_repeated, synchronize
 
 
 def _measure(
@@ -34,23 +29,13 @@ def _measure(
     *,
     repeats: int,
 ) -> tuple[Any, float, float]:
-    result = operation()
-    _block(result)
-    samples = []
-    for _ in range(repeats):
-        started = time.perf_counter()
-        result = operation()
-        _block(result)
-        samples.append(1e3 * (time.perf_counter() - started))
-    return result, float(np.mean(samples)), float(np.std(samples))
-
-
-def _array_bytes(tree: Any, /) -> int:
-    return sum(
-        int(leaf.nbytes)
-        for leaf in jax.tree_util.tree_leaves(tree)
-        if isinstance(leaf, jax.Array)
+    result, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
     )
+    samples = 1_000.0 * np.asarray(distribution.samples_seconds)
+    return result, float(np.mean(samples)), float(np.std(samples))
 
 
 def _parameter_count(tree: Any, /) -> int:
@@ -80,13 +65,13 @@ def _compile_and_train(
     compiled_update = eqx.filter_jit(update)
     started = time.perf_counter()
     model, optimizer_state, initial_loss = compiled_update(model, optimizer_state)
-    _block((model, optimizer_state, initial_loss))
+    synchronize((model, optimizer_state, initial_loss))
     compilation_ms = 1e3 * (time.perf_counter() - started)
     started = time.perf_counter()
     final_loss = initial_loss
     for _ in range(max(steps - 1, 0)):
         model, optimizer_state, final_loss = compiled_update(model, optimizer_state)
-    _block((model, optimizer_state, final_loss))
+    synchronize((model, optimizer_state, final_loss))
     training_ms = 1e3 * (time.perf_counter() - started)
     return (
         model,
@@ -194,7 +179,7 @@ def _sparse_recovery_benchmark(
         "outputs": result.design.output_size,
         "mean_ms": mean_ms,
         "standard_deviation_ms": standard_deviation_ms,
-        "working_set_bytes": _array_bytes((data, result)),
+        "working_set_bytes": logical_array_bytes((data, result)),
         "valid": bool(result.valid),
         "status": np.asarray(result.status).tolist(),
         "support_size": int(jnp.sum(recovered_support)),
@@ -297,7 +282,7 @@ def _matrix_free_benchmark(
         "spectrum": {
             "mean_ms": spectrum_mean_ms,
             "standard_deviation_ms": spectrum_standard_deviation_ms,
-            "working_set_bytes": _array_bytes(spectrum),
+            "working_set_bytes": logical_array_bytes(spectrum),
             "valid": bool(spectrum.valid),
             "status": int(spectrum.status),
             "maximum_exponent_error": exponent_error,
@@ -305,7 +290,7 @@ def _matrix_free_benchmark(
         "covariant_directions": {
             "mean_ms": directions_mean_ms,
             "standard_deviation_ms": directions_standard_deviation_ms,
-            "working_set_bytes": _array_bytes(directions),
+            "working_set_bytes": logical_array_bytes(directions),
             "valid": bool(directions.valid),
             "converged": bool(directions.converged),
             "maximum_backward_convergence_drift": maximum_convergence_drift,

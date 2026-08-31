@@ -14,20 +14,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
-
-
-def _block(tree: Any, /) -> None:
-    for leaf in jax.tree_util.tree_leaves(tree):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
-
-
-def _array_bytes(tree: Any, /) -> int:
-    return sum(
-        int(leaf.nbytes)
-        for leaf in jax.tree_util.tree_leaves(tree)
-        if isinstance(leaf, jax.Array)
-    )
+from benchmarks._runtime import logical_array_bytes, synchronize
 
 
 def _checksum(tree: Any, /) -> float:
@@ -51,16 +38,16 @@ def _benchmark(
     compile_ms = 1e3 * (time.perf_counter() - started)
 
     result = executable(*arguments)
-    _block(result)
+    synchronize(result)
     started = time.perf_counter()
     for _ in range(repeats):
         result = executable(*arguments)
-        _block(result)
+        synchronize(result)
     execution_ms = 1e3 * (time.perf_counter() - started) / repeats
     return {
         "compile_ms": compile_ms,
         "execution_mean_ms": execution_ms,
-        "output_bytes": _array_bytes(result),
+        "output_bytes": logical_array_bytes(result),
         "checksum": _checksum(result),
     }
 

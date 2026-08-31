@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
-import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,6 +14,14 @@ import numpy as np
 import polars as pl
 
 import phydrax as phx
+from benchmarks._io import atomic_write, write_json_atomic
+from benchmarks._runtime import (
+    compiler_evidence,
+    CompilerEvidence,
+    DurationDistribution,
+    measure_lower_and_compile,
+    measure_synchronized,
+)
 from phydrax.nn.operator import AbstractOperatorModel
 
 from .matrix import benchmark_metadata, BenchmarkRunMetadata
@@ -47,9 +54,11 @@ class OperatorUQEvaluationResult:
     interval_width: float
     valid_draw_count: int
     total_draw_count: int
-    compile_seconds: float
-    inference_seconds: float
-    peak_memory_bytes: int | None
+    lowering_seconds: float
+    compilation_seconds: float
+    first_execution_seconds: float
+    inference_timing: DurationDistribution
+    compiler_evidence: CompilerEvidence
     coverage_confidence_lower: float | None
     coverage_confidence_upper: float | None
     nominal_coverage_compatible: bool | None
@@ -92,7 +101,13 @@ class OperatorUQBenchmarkSuite:
     results: tuple[OperatorUQBenchmarkResult, ...]
 
     def to_dict(self):
-        return asdict(self)
+        return {
+            "metadata": self.metadata.to_dict(),
+            "calibration_case_checksums": [
+                list(value) for value in self.calibration_case_checksums
+            ],
+            "results": [asdict(result) for result in self.results],
+        }
 
 
 def run_operator_uq_benchmark(
@@ -306,10 +321,6 @@ def save_operator_uq_artifacts(
     root.mkdir(parents=True, exist_ok=True)
     json_path = root / "operator_uq_benchmarks.json"
     parquet_path = root / "operator_uq_benchmarks.parquet"
-    json_path.write_text(
-        json.dumps(suite.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
     rows = []
     for result in suite.results:
         common = {
@@ -330,7 +341,11 @@ def save_operator_uq_artifacts(
         }
         for evaluation in result.evaluations:
             rows.append(common | asdict(evaluation))
-    pl.DataFrame(rows).write_parquet(parquet_path)
+    atomic_write(
+        parquet_path,
+        lambda temporary: pl.DataFrame(rows).write_parquet(temporary),
+    )
+    write_json_atomic(json_path, suite.to_dict())
     return json_path, parquet_path
 
 
@@ -384,20 +399,44 @@ def _evaluate_operator_uq(
         raise TypeError(
             "Operator UQ benchmarks currently require one anonymous array target."
         )
-    compile_started = time.perf_counter()
-    prediction = _predict_ensemble_evaluation(ensemble, members, evaluation, key=key)
-    jax.block_until_ready(prediction.predictive.samples.data)
-    compile_seconds = time.perf_counter() - compile_started
-    started = time.perf_counter()
-    for repeat in range(int(repeats)):
-        prediction = _predict_ensemble_evaluation(
+
+    @eqx.filter_jit
+    def predict(current_key):
+        return _predict_ensemble_evaluation(
             ensemble,
             members,
             evaluation,
-            key=jr.fold_in(key, repeat),
+            key=current_key,
         )
-        jax.block_until_ready(prediction.predictive.samples.data)
-    inference_seconds = (time.perf_counter() - started) / float(repeats)
+
+    compiled_predict, compilation = measure_lower_and_compile(
+        lambda: predict.lower(key),
+        lambda lowered: lowered.compile(),
+    )
+    prediction, first_execution_seconds = measure_synchronized(
+        lambda: compiled_predict(key)
+    )
+    inference_samples = []
+    for repeat in range(int(repeats)):
+        prediction, elapsed = measure_synchronized(
+            lambda repeat=repeat: compiled_predict(jr.fold_in(key, repeat))
+        )
+        inference_samples.append(elapsed)
+    inference_timing = DurationDistribution(tuple(inference_samples))
+    executable = compiled_predict.compiled
+    cost = executable.cost_analysis()
+    memory = executable.memory_analysis()
+    unavailable_reason = (
+        "compiler did not expose cost or memory analysis"
+        if cost is None and memory is None
+        else None
+    )
+    prediction_compiler_evidence = compiler_evidence(
+        cost,
+        memory,
+        source="xla-cost-analysis",
+        unavailable_reason=unavailable_reason,
+    )
 
     center = prediction.mean()
     center_field = center.field("output")
@@ -478,9 +517,11 @@ def _evaluate_operator_uq(
         interval_width=float(jax.block_until_ready(width)),
         valid_draw_count=valid_draw_count,
         total_draw_count=total_draw_count,
-        compile_seconds=compile_seconds,
-        inference_seconds=inference_seconds,
-        peak_memory_bytes=_memory_bytes(),
+        lowering_seconds=compilation.lowering_seconds,
+        compilation_seconds=compilation.compilation_seconds,
+        first_execution_seconds=first_execution_seconds,
+        inference_timing=inference_timing,
+        compiler_evidence=prediction_compiler_evidence,
         coverage_confidence_lower=confidence_lower,
         coverage_confidence_upper=confidence_upper,
         nominal_coverage_compatible=compatible,
@@ -687,16 +728,6 @@ def _wilson_interval(successes: int, total: int, /) -> tuple[float, float]:
         / denominator
     )
     return max(0.0, center - radius), min(1.0, center + radius)
-
-
-def _memory_bytes() -> int | None:
-    statistics = jax.devices()[0].memory_stats()
-    if statistics is None:
-        return None
-    for name in ("peak_bytes_in_use", "bytes_in_use"):
-        if name in statistics:
-            return int(statistics[name])
-    return None
 
 
 def _case_count(case_shape: tuple[int, ...], /) -> int:

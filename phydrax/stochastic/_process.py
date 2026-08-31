@@ -17,6 +17,7 @@ import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+from .._probability import DiagonalNormalLaw
 from .._strict import AbstractAttribute, StrictModule
 from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
@@ -225,6 +226,58 @@ class GaussianProcessDistribution(AbstractProcessDistribution):
         return -0.5 * (
             quadratic + log_determinant + self.event_size * jnp.log(2.0 * jnp.pi)
         )
+
+
+class DiagonalGaussianProcessDistribution(AbstractProcessDistribution):
+    """Nonsingular diagonal Gaussian marginal without dense covariance storage."""
+
+    law: DiagonalNormalLaw
+    event_shape: tuple[int, ...] = eqx.field(static=True)
+    batch_shape: tuple[int, ...] = eqx.field(static=True)
+    uncertainty_source: Literal["process"] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mean: ArrayLike,
+        scale: ArrayLike,
+        /,
+        *,
+        event_shape: Sequence[int],
+    ):
+        law = DiagonalNormalLaw(mean, scale, event_shape=event_shape)
+        self.law = law
+        self.event_shape = law.event_shape
+        self.batch_shape = law.batch_shape
+        self.uncertainty_source = "process"
+
+    @property
+    def location(self) -> Array:
+        return self.law.location
+
+    @property
+    def mean(self) -> Array:
+        return self.law.mean
+
+    @property
+    def scale(self) -> Array:
+        return self.law.scale
+
+    @property
+    def variance(self) -> Array:
+        return self.law.variance
+
+    def sample(
+        self,
+        key: Key[Array, ""],
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        return self.law.sample(key, sample_shape)
+
+    def log_prob(self, value: ArrayLike, /) -> Array:
+        return self.law.log_prob(value)
+
+    def score(self, value: ArrayLike, /) -> Array:
+        return self.law.score(value)
 
 
 class AbstractPathwiseTransition(StrictModule):
@@ -881,6 +934,7 @@ __all__ = [
     "AbstractProcessDistribution",
     "GaussianProcessDiagnostics",
     "GaussianProcessDistribution",
+    "DiagonalGaussianProcessDistribution",
     "LatentGaussianCoefficientProcess",
     "ProcessQueryDiagnostics",
     "ProcessRealization",

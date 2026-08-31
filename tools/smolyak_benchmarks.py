@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import logical_array_bytes
 from phydrax._numerics import (
     smolyak_terms,
     SmolyakAxisRule,
@@ -72,14 +73,6 @@ def _target(domain, dimension: int, output_size: int):
         return jnp.sin(frequencies * signal)
 
     return domain.Function(*labels)(observable)
-
-
-def _array_bytes(tree) -> int:
-    return sum(
-        int(leaf.size * leaf.dtype.itemsize)
-        for leaf in jax.tree_util.tree_leaves(tree)
-        if isinstance(leaf, jax.Array)
-    )
 
 
 def _interpolation_record(
@@ -184,7 +177,7 @@ def _interpolation_record(
         "tensor_entries": tensor_entries,
         "num_blocks": interpolant.num_blocks,
         "maximum_active_dimension": interpolant.maximum_active_dimension,
-        "fitted_bytes": _array_bytes(interpolant),
+        "fitted_bytes": logical_array_bytes(interpolant),
         "index_ms": index_ms,
         "topology_ms": topology_ms,
         "fit_ms": fit_ms,

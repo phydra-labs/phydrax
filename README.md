@@ -74,6 +74,9 @@ Most workflows are composing a few primitives:
 - **Optimal transport**: integration measures lower into balanced finite transport
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
+- **Learned probability transport**: endpoint flow matching, deterministic continuous
+  flows, VP/VE denoising score matching, replayable reverse-time diffusion, and
+  probability-flow densities reuse explicit laws and differential-solver evidence.
 - **Combinatorial optimization**: native exact finite, cardinality, assignment,
   and DAG path oracles preserve logical decisions, linear objective features,
   deterministic ties, independent certificates, JIT batching, and explicit

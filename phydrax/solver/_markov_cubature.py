@@ -267,6 +267,10 @@ def solve_markov_cubature(
         raise NotImplementedError(
             "Markov cubature currently requires trivial Euclidean state geometry."
         )
+    if any(term.representation != "dense" for term in problem.wiener_terms):
+        raise NotImplementedError(
+            "Markov cubature currently requires dense Wiener coefficients."
+        )
     if problem.noise_shape != (plan.increment_rule.dimension,):
         raise ValueError(
             "Gaussian cubature dimension must match the problem's flattened noise size."

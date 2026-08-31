@@ -18,6 +18,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 
 import phydrax as phx
+from benchmarks._runtime import synchronize
 
 
 _METHODS = ("hard-quantile", "soft-quantile", "logsumexp", "hard-cvar")
@@ -250,10 +251,6 @@ def _memory(compiled) -> dict[str, int | str]:
     }
 
 
-def _block(value: Any) -> Any:
-    return jax.tree.map(lambda leaf: leaf.block_until_ready(), value)
-
-
 def _adam_step(objective, learning_rate: float):
     beta1 = 0.9
     beta2 = 0.999
@@ -373,17 +370,17 @@ def _train(
     compile_ms = (time.perf_counter_ns() - started) / 1e6
 
     started = time.perf_counter_ns()
-    state, value, gradient = _block(compiled(state))
+    state, value, gradient = synchronize(compiled(state))
     first_step_ms = (time.perf_counter_ns() - started) / 1e6
     started = time.perf_counter_ns()
     for _ in range(steps - 1):
-        state, value, gradient = _block(compiled(state))
+        state, value, gradient = synchronize(compiled(state))
     remaining_ms = (time.perf_counter_ns() - started) / 1e6
 
     parameters = state[0]
-    final_value, final_gradient = _block(jax.value_and_grad(objective)(parameters))
-    residuals = _block(problem.residuals(parameters))
-    initial_residuals = _block(problem.residuals(initial_parameters))
+    final_value, final_gradient = synchronize(jax.value_and_grad(objective)(parameters))
+    residuals = synchronize(problem.residuals(parameters))
+    initial_residuals = synchronize(problem.residuals(initial_parameters))
     hard_cvar = _hard_cvar(residuals, quantile)
     initial_hard_cvar = _hard_cvar(initial_residuals, quantile)
     physical_metrics = {

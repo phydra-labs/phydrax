@@ -6,16 +6,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import platform
-import time
 from pathlib import Path
 
 import cyipopt
-import jax
 import jax.numpy as jnp
-import numpy as np
 
 import phydrax as phx
+from benchmarks._io import write_json_atomic
+from benchmarks._runtime import capture_environment, measure_synchronized
 
 
 def _problem():
@@ -75,12 +73,12 @@ def _solve(intervals: int, hessian: str, *, warm_start=None):
             maximum_steps=200,
         ),
     )
-    started = time.perf_counter()
-    result = phx.control.solve_prepared_direct_collocation(
-        prepared,
-        warm_start=warm_start,
+    result, elapsed = measure_synchronized(
+        lambda: phx.control.solve_prepared_direct_collocation(
+            prepared,
+            warm_start=warm_start,
+        )
     )
-    elapsed = time.perf_counter() - started
     evidence = result.optimization_result.method_evidence
     if not isinstance(evidence, phx.optim.StructuredIpoptEvidence):
         raise TypeError("structured Ipopt returned no typed evidence")
@@ -106,9 +104,7 @@ def _solve(intervals: int, hessian: str, *, warm_start=None):
         "dual_feasibility": float(
             result.optimization_result.diagnostics.dual_feasibility
         ),
-        "complementarity": float(
-            result.optimization_result.diagnostics.complementarity
-        ),
+        "complementarity": float(result.optimization_result.diagnostics.complementarity),
         "variables": compilation.structured_program.num_variables,
         "constraints": compilation.structured_program.num_constraints,
         "jacobian_nonzeros": evidence.jacobian_nonzeros,
@@ -157,18 +153,14 @@ def main() -> None:
             records.append(warm_record)
     artifact = {
         "qualification": "structured-ipopt-direct-collocation",
-        "platform": platform.platform(),
-        "python": platform.python_version(),
-        "jax": jax.__version__,
-        "numpy": np.__version__,
+        "runtime": capture_environment().to_dict(),
         "cyipopt": cyipopt.__version__,
         "ipopt": ".".join(str(value) for value in cyipopt.IPOPT_VERSION),
         "dtype": str(jnp.asarray(0.0).dtype),
         "records": records,
         "passed": all(record["successful"] for record in records),
     }
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(artifact, indent=2) + "\n")
+    write_json_atomic(arguments.output, artifact)
     print(json.dumps(artifact, indent=2))
 
 

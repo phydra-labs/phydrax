@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 import statistics
 from collections.abc import Mapping, Sequence
 from typing import Any
+
+from benchmarks._runtime import DurationDistribution
+from phydrax._fingerprint import canonical_fingerprint
 
 
 SCHEMA_VERSION = "advanced-solvers/v3"
@@ -32,27 +33,8 @@ class SchemaError(ValueError):
     """A benchmark report is incomplete, internally inconsistent, or invalid."""
 
 
-def stable_fingerprint(value: Any, /) -> str:
-    """Return a stable SHA-256 fingerprint for JSON-compatible evidence."""
-    payload = json.dumps(
-        value,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
 def empty_distribution() -> dict[str, Any]:
-    return {
-        "count": 0,
-        "samples_ms": [],
-        "min_ms": None,
-        "median_ms": None,
-        "mean_ms": None,
-        "std_ms": None,
-        "max_ms": None,
-    }
+    return DurationDistribution(()).to_milliseconds_dict()
 
 
 def skip_certificate(kind: str, /) -> dict[str, Any]:
@@ -626,7 +608,7 @@ def row_identity(row: Mapping[str, Any], /) -> str:
     """Return the comparison identity for a benchmark row."""
     problem = _mapping(row["problem"], "row.problem")
     implementation = _mapping(row["implementation"], "row.implementation")
-    return stable_fingerprint(
+    return canonical_fingerprint(
         {
             "schema_version": row["schema_version"],
             "case_id": row["case_id"],
@@ -647,29 +629,68 @@ def _validate_environment(environment: Mapping[str, Any], path: str) -> None:
         (
             "fingerprint",
             "python_version",
+            "phydrax_version",
             "platform",
             "machine",
             "processor",
             "logical_cpus",
             "numpy_version",
+            "jaxlib_version",
+            "default_float_dtype",
+            "package_fingerprint",
             "jax",
-            "thread_environment",
+            "performance_environment",
         ),
         path=path,
     )
     for field in (
         "fingerprint",
         "python_version",
+        "phydrax_version",
         "platform",
         "machine",
         "numpy_version",
+        "jaxlib_version",
+        "default_float_dtype",
+        "package_fingerprint",
     ):
         _nonempty_string(environment[field], f"{path}.{field}")
     if not isinstance(environment["processor"], str):
         raise SchemaError(f"{path}.processor must be a string")
     _positive_integer(environment["logical_cpus"], f"{path}.logical_cpus")
-    _mapping(environment["jax"], f"{path}.jax")
-    _mapping(environment["thread_environment"], f"{path}.thread_environment")
+    jax_evidence = _mapping(environment["jax"], f"{path}.jax")
+    _require_keys(
+        jax_evidence,
+        ("version", "backend", "x64_enabled", "devices"),
+        path=f"{path}.jax",
+    )
+    _nonempty_string(jax_evidence["version"], f"{path}.jax.version")
+    _nonempty_string(jax_evidence["backend"], f"{path}.jax.backend")
+    if not isinstance(jax_evidence["x64_enabled"], bool):
+        raise SchemaError(f"{path}.jax.x64_enabled must be a boolean")
+    devices = jax_evidence["devices"]
+    if not isinstance(devices, list) or not devices:
+        raise SchemaError(f"{path}.jax.devices must be a non-empty list")
+    for index, raw_device in enumerate(devices):
+        device_path = f"{path}.jax.devices[{index}]"
+        device = _mapping(raw_device, device_path)
+        _require_keys(device, ("platform", "kind"), path=device_path)
+        _nonempty_string(device["platform"], f"{device_path}.platform")
+        _nonempty_string(device["kind"], f"{device_path}.kind")
+    performance_environment = _mapping(
+        environment["performance_environment"],
+        f"{path}.performance_environment",
+    )
+    for key, value in performance_environment.items():
+        _nonempty_string(key, f"{path}.performance_environment key")
+        if value is not None and not isinstance(value, str):
+            raise SchemaError(
+                f"{path}.performance_environment[{key!r}] must be a string or null"
+            )
+    fingerprint_payload = dict(environment)
+    observed_fingerprint = fingerprint_payload.pop("fingerprint")
+    if canonical_fingerprint(fingerprint_payload) != observed_fingerprint:
+        raise SchemaError(f"{path}.fingerprint does not match environment evidence")
 
 
 def _validate_distribution(distribution: Mapping[str, Any], path: str) -> None:
@@ -761,7 +782,6 @@ __all__ = [
     "empty_distribution",
     "row_identity",
     "skip_certificate",
-    "stable_fingerprint",
     "validate_report",
     "validate_row",
 ]

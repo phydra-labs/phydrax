@@ -14,6 +14,11 @@
   multi-RHS and Brillouin source semantics, interior field reconstruction,
   diffraction-order far fields, explicit refresh, convergence, resource, diagnostic,
   status, and provenance contracts.
+- Added full-rank Euclidean VP/VE score diffusion with structured diagonal Gaussian
+  laws, exact perturbation marginals, weighted denoising score matching, replayable
+  reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
+  initial states, and memory-linear diagonal Wiener coefficients. Replaced the
+  flow-specific `FlowMatchingPolicy` with shared `UniformTimeSamplingPolicy`.
 - Generalized matrix-free quantum local actions through
   `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
   a clean migration of discrete VMC/TDVP while preserving the connected-action
@@ -830,6 +835,12 @@
   resource accounting.
 
 ### Changed
+- Benchmark tooling now shares one synchronized PyTree timing runtime, normalized
+  software/hardware fingerprints, raw duration distributions, official XLA
+  cost/memory evidence, atomic artifact writes, and environment-checked bootstrap
+  comparisons. Operator reports separate lowering, compilation, first execution,
+  and steady samples and no longer relabel process allocator high-water state as
+  operation-local peak memory.
 - Compatible Maxwell state now stores electric displacement `D`, magnetic flux `B`,
   charge, material/boundary auxiliary state, and observer state. `E` and `H` are
   constitutive outputs. Construction uses `CompatibleMaxwellPlan(...).prepare()` and

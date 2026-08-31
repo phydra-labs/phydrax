@@ -1673,10 +1673,13 @@ identities. Peer runners reject runtime-identity, revision, and
 initial-fingerprint mismatches before comparison.
 `best_nonlinear_campaigns.py` writes ordinary flat JSON rows. Backend outcomes
 and independent mathematical certificates remain separate; unavailable
-evidence uses `null` rather than non-finite sentinels, and cold, warmup, and
-repeated steady timing remain distinct. Performance profiles are formed per
-family and compatible work unit. Global rows certify a known global target gap
-rather than relabeling local stationarity as global evidence.
+evidence uses `null` rather than non-finite sentinels, and lowering, compilation,
+first execution, warmup, and every repeated steady sample remain distinct where
+the backend exposes those phases. Performance comparisons require identical runtime
+fingerprints and combine a declared practical threshold with uncertainty over raw
+samples. Performance profiles are formed per family and compatible work unit. Global
+rows certify a known global target gap rather than relabeling local stationarity as
+global evidence.
 
 ## External optimizer compatibility
 

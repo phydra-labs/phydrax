@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .schema import stable_fingerprint
+from phydrax._fingerprint import canonical_fingerprint
 
 
 Capability = Literal[
@@ -931,7 +931,7 @@ def _identity(
         "variant": variant,
         "seed": seed,
         "dtype": str(dtype),
-        "fingerprint": stable_fingerprint(evidence),
+        "fingerprint": canonical_fingerprint(evidence),
         "parameters": parameters,
     }
 
