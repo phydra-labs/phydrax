@@ -36,7 +36,12 @@ from ._evolution import (
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import InputLayout, InputRole, StateLayout
 from ._linearization import EvolutionJacobianAction
-from ._model_system import continuous_model_system, ContinuousModelVectorField
+from ._model_system import (
+    continuous_model_system,
+    ContinuousModelVectorField,
+    discrete_model_system,
+    DiscreteModelTransition,
+)
 from ._second_order import (
     SecondOrderDifferentialProblem,
     SecondOrderDifferentialSystem,
@@ -87,6 +92,7 @@ __all__ = [
     "DifferentialAlgebraicResidual",
     "DifferentialAlgebraicSystem",
     "DiscreteEvolution",
+    "DiscreteModelTransition",
     "DiscreteSystem",
     "EVOLUTION_BACKEND_FAILED",
     "EVOLUTION_NONFINITE",
@@ -114,5 +120,6 @@ __all__ = [
     "TrajectoryData",
     "TrajectoryTransitions",
     "continuous_model_system",
+    "discrete_model_system",
     "evolve",
 ]

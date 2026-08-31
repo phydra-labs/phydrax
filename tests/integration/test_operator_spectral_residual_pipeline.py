@@ -12,7 +12,12 @@ def test_hard_initial_condition_precedes_all_coordinate_spectral_residual():
         ),
         axis_names=("t", "x"),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.interval(0.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+        )
+    )
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     x = phx.equations.PDECoordinate(
         "x",

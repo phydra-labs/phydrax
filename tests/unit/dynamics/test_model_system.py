@@ -5,13 +5,48 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax._model import AbstractArrayModel
+from phydrax._model import AbstractArrayModel, ModelBinding
 
 
 class _ScaledField(AbstractArrayModel):
     scale: jax.Array
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
+
+    def __init__(self, scale):
+        self.scale = jnp.asarray(scale)
+        self.in_size = 2
+        self.out_size = 2
+
+    def __call__(self, state, /, *, key=None):
+        del key
+        return self.scale * state
+
+
+class _ControlledStep(AbstractArrayModel):
+    gain: jax.Array
+    in_size: tuple[int, int] = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    _input_binding = ModelBinding.pointwise("structured")
+
+    def __init__(self, gain):
+        self.gain = jnp.asarray(gain)
+        self.in_size = (2, 1)
+        self.out_size = 2
+
+    def __call__(self, values, /, *, key=None):
+        del key
+        state, control = values
+        return state + self.gain * control[0]
+
+
+class _AxisStep(AbstractArrayModel):
+    scale: jax.Array
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+
+    _input_binding = ModelBinding.axis("flat")
 
     def __init__(self, scale):
         self.scale = jnp.asarray(scale)
@@ -76,4 +111,57 @@ def test_controlled_model_system_rejects_flat_input_binding():
             state_layout=phx.dynamics.StateLayout((2,)),
             input_layout=phx.dynamics.InputLayout((1,)),
             system_id="invalid-flat-model",
+        )
+
+
+def test_discrete_model_system_binds_complete_autonomous_next_state():
+    model = _ScaledField(0.5)
+    system = phx.dynamics.discrete_model_system(
+        model,
+        state_layout=phx.dynamics.StateLayout((2,)),
+        system_id="scaled-step",
+        step_size=0.25,
+    )
+    state = jnp.asarray([2.0, -4.0])
+
+    assert isinstance(system.transition, phx.dynamics.DiscreteModelTransition)
+    assert system.step_size == 0.25
+    assert jnp.array_equal(system(1.0, state), model(state))
+    assert jnp.array_equal(jax.jit(system)(1.0, state), model(state))
+
+
+def test_discrete_model_system_uses_structured_interval_control():
+    model = _ControlledStep(2.0)
+    system = phx.dynamics.discrete_model_system(
+        model,
+        state_layout=phx.dynamics.StateLayout((2,)),
+        input_layout=phx.dynamics.InputLayout((1,)),
+        system_id="controlled-step",
+        step_size=1.0,
+    )
+    state = jnp.asarray([1.0, 3.0])
+    control = jnp.asarray([0.5])
+
+    assert jnp.array_equal(
+        system(0.0, state, inputs=control),
+        model((state, control)),
+    )
+
+
+def test_discrete_model_system_rejects_axis_models_and_invalid_step_contracts():
+    layout = phx.dynamics.StateLayout((2,))
+
+    with pytest.raises(ValueError, match="pointwise"):
+        phx.dynamics.discrete_model_system(
+            _AxisStep(1.0),
+            state_layout=layout,
+            system_id="axis-step",
+            step_size=1.0,
+        )
+    with pytest.raises(ValueError, match="step_size"):
+        phx.dynamics.discrete_model_system(
+            _ScaledField(1.0),
+            state_layout=layout,
+            system_id="invalid-step",
+            step_size=0.0,
         )

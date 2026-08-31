@@ -77,7 +77,9 @@ from ._losses import (
     CochainResidualLoss,
     OperatorLossContext,
     OperatorLossTerm,
+    ResidualOperatorRolloutLoss,
     SupervisedOperatorLoss,
+    SupervisedOperatorRolloutLoss,
 )
 from ._normalization import (
     AffineNormalizer,
@@ -106,11 +108,10 @@ from ._pod import (
     OperatorPODFit,
 )
 from ._rollout import (
-    autoregressive_operator_loss,
     autoregressive_operator_rollout,
     OperatorRollout,
-    RolloutHorizonSchedule,
-    TeacherForcingSchedule,
+    OperatorRolloutPolicy,
+    OperatorRolloutRoute,
 )
 from ._semigroup import (
     conditioned_distributional_semigroup_loss,
@@ -216,13 +217,14 @@ __all__ = [
     "OperatorLossScalePolicy",
     "OperatorLossScaleState",
     "OperatorRollout",
+    "OperatorRolloutPolicy",
+    "OperatorRolloutRoute",
+    "ResidualOperatorRolloutLoss",
+    "SupervisedOperatorRolloutLoss",
     "OperatorSplitPolicy",
     "OperatorEpochPlan",
     "OperatorTrainingBatch",
     "OperatorTrainingCheckpoint",
-    "RolloutHorizonSchedule",
-    "TeacherForcingSchedule",
-    "autoregressive_operator_loss",
     "autoregressive_operator_rollout",
     "conditioned_distributional_semigroup_loss",
     "conditioned_semigroup_consistency_loss",

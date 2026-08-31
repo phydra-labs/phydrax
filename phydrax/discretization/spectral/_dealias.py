@@ -13,10 +13,13 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._spectral._fourier import resize_fourier_axis
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
+from ._transfer import (
+    prepare_spectral_modal_transfer,
+    PreparedSpectralModalTransfer,
+)
 
 
 DealiasingKind: TypeAlias = Literal["none", "padding", "closure", "filter"]
@@ -172,9 +175,10 @@ class PaddingDealiasingPlan(AbstractDealiasingPlan):
             field_name=discretization.plan.field_name,
             precision=discretization.plan.precision,
         )
-        bounds = jnp.stack(tuple(axis.bounds for axis in discretization.axes), axis=1)
+        domains = tuple(axis.domain for axis in discretization.axes)
         padded = padded_plan.prepare(
-            bounds, numeric_version=discretization.numeric_version
+            domains,
+            numeric_version=discretization.numeric_version,
         )
         exact = all(axis.family != "sine" for axis in discretization.axes)
         return PreparedDealiasingPlan(
@@ -270,9 +274,9 @@ class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
             field_name=discretization.plan.field_name,
             precision=discretization.plan.precision,
         )
-        bounds = jnp.stack(tuple(axis.bounds for axis in discretization.axes), axis=1)
+        domains = tuple(axis.domain for axis in discretization.axes)
         closure = closure_plan.prepare(
-            bounds,
+            domains,
             numeric_version=discretization.numeric_version,
         )
         return PreparedDealiasingPlan(
@@ -331,28 +335,14 @@ class ModalFilterPlan(AbstractDealiasingPlan):
         )
 
 
-def _resize_nonfourier_axis(
-    coefficients: Array,
-    axis: int,
-    target_size: int,
-    /,
-) -> Array:
-    source_size = int(coefficients.shape[axis])
-    if source_size == target_size:
-        return coefficients
-    if target_size > source_size:
-        padding = [(0, 0)] * coefficients.ndim
-        padding[axis] = (0, target_size - source_size)
-        return jnp.pad(coefficients, tuple(padding))
-    return jnp.take(coefficients, jnp.arange(target_size), axis=axis)
-
-
 class PreparedDealiasingPlan(StrictModule, NonTrainableState):
     """Prepared modal embedding, evaluation, projection, and filtering actions."""
 
     plan: AbstractDealiasingPlan
     retained: TensorSpectralDiscretization
     evaluation: TensorSpectralDiscretization
+    embedding: PreparedSpectralModalTransfer
+    restriction: PreparedSpectralModalTransfer
     modal_masks: tuple[Array, ...]
     report: DealiasingReport
     prepared_id: str = eqx.field(static=True)
@@ -386,17 +376,23 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
             raise ValueError("modal_masks must align with retained modal axes.")
         if not isinstance(report, DealiasingReport):
             raise TypeError("report must be a DealiasingReport.")
+        embedding = prepare_spectral_modal_transfer(retained, evaluation)
+        restriction = prepare_spectral_modal_transfer(evaluation, retained)
         self.plan = plan
         self.retained = retained
         self.evaluation = evaluation
         self.modal_masks = masks
         self.report = report
+        self.embedding = embedding
+        self.restriction = restriction
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-spectral-dealiasing",
                 "plan": plan.plan_id,
                 "retained": retained.prepared_id,
                 "evaluation": evaluation.prepared_id,
+                "embedding": embedding.prepared_id,
+                "restriction": restriction.prepared_id,
                 "report": report.report_id,
             }
         )
@@ -414,15 +410,7 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
         return result
 
     def embed(self, coefficients: ArrayLike, /) -> Array:
-        result = self.filter(coefficients)
-        for axis, (source, target) in enumerate(
-            zip(self.retained.axes, self.evaluation.axes, strict=True)
-        ):
-            if source.family == "fourier":
-                result = resize_fourier_axis(result, axis, target.mode_count)
-            else:
-                result = _resize_nonfourier_axis(result, axis, target.mode_count)
-        return result
+        return self.embedding(self.filter(coefficients))
 
     def restrict(self, coefficients: ArrayLike, /) -> Array:
         result = self.evaluation._validate_leading(
@@ -430,14 +418,7 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
             self.evaluation.modal_shape,
             "Evaluation modal coefficients",
         )
-        for axis, (source, target) in enumerate(
-            zip(self.evaluation.axes, self.retained.axes, strict=True)
-        ):
-            if source.family == "fourier":
-                result = resize_fourier_axis(result, axis, target.mode_count)
-            else:
-                result = _resize_nonfourier_axis(result, axis, target.mode_count)
-        return self.filter(result)
+        return self.filter(self.restriction(result))
 
     def reconstruct(self, coefficients: ArrayLike, /) -> Array:
         return self.evaluation.reconstruct(self.embed(coefficients))

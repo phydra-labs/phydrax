@@ -207,6 +207,24 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         target = jnp.asarray(target_coordinate)
         if source.shape != () or target.shape != ():
             raise ValueError("Evolution segment coordinates must be scalar.")
+        if self.system.step_size is not None:
+            interval = target - source
+            interval_valid = (
+                jnp.isfinite(source)
+                & jnp.isfinite(target)
+                & jnp.isclose(
+                    interval,
+                    self.system.step_size,
+                    rtol=self.system.step_rtol,
+                    atol=self.system.step_atol,
+                )
+            )
+            source = eqx.error_if(
+                source,
+                ~interval_valid,
+                "Evolution interval must be finite and match the declared "
+                "DiscreteSystem step_size.",
+            )
         final_state = self._map(source, state_array, args)
         finite = jnp.all(jnp.isfinite(final_state))
         membership = jnp.asarray(

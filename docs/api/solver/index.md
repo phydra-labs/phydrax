@@ -15,6 +15,9 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   differentiable CDE and neural-CDE training, probabilistic ODE filtering,
   finite-time Lyapunov spectra, finite-activity jump and hybrid trajectories,
   finite-rank semidiscrete SPDEs, and process ensembles.
+- Diffrax-backed neural Galerkin evolves a fixed-measure model manifold through
+  tangent least squares and saved-node projection audits. Characteristic tracing
+  uses the same differential backend before optional field projection.
 - [Differential-algebraic equation integration](differential_algebraic.md) defines
   consistent initialization, prepared fixed/adaptive BDF1--BDF5, endpoint theta,
   segmented continuation, frozen-grid replay derivatives, local regularity evidence,
@@ -52,6 +55,12 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
     - Use `VariationalTDVPPolicy` and `solve_variational_tdvp` when the same amplitude
       manifold must evolve under projected Schrödinger or imaginary-time dynamics.
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.
+    - Use `NeuralGalerkinProblem`, fixed `FieldProjectionMetric` realizations, and
+      `solve_neural_galerkin` when the temporal state is a learned field manifold.
+      Diffrax owns the parameter ODE; `NeuralFieldEvolutionResult` reconstructs
+      valid saved or dense parameter states as named fields.
+    - Use `trace_characteristics` for a backward Diffrax foot map, or
+      `solve_characteristic_projection` to fit a sequence of pulled-back field slices.
     - Use `DifferentialAlgebraicProblem`, a `TimeGrid`, and `solve_dae` for regular
       fixed-grid or adaptive index-one residuals `F(t, y, ydot, args) = 0`.
     - Use `AbstractDifferentiableDrivingPath` plus `solve_diffrax_cde` for smooth

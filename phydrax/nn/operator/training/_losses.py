@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from ...._frozendict import frozendict
+from ...._training_objective import _ObjectiveContribution
 from ....graph import (
     broadcast_operator_topology,
     cochain_metric_reduce,
@@ -103,6 +105,36 @@ class AbstractOperatorLossTerm(ABC):
         context: OperatorLossContext,
     ) -> Array:
         raise NotImplementedError
+
+    def contribution(
+        self,
+        model: Any,
+        prediction: OperatorPrediction,
+        batch: OperatorBatch,
+        targets: OperatorTargetBatch,
+        /,
+        *,
+        key: Key[Array, ""],
+        step: Array,
+        training: bool,
+        context: OperatorLossContext,
+    ) -> _ObjectiveContribution:
+        """Return the additive case-supported form of this scalar term."""
+        support_count = 1
+        for size in batch.case_shape:
+            support_count *= int(size)
+        value = self(
+            model,
+            prediction,
+            batch,
+            targets,
+            key=key,
+            step=step,
+            training=training,
+            context=context,
+        )
+        support = jnp.asarray(support_count, dtype=jnp.asarray(value).real.dtype)
+        return _ObjectiveContribution(jnp.asarray(value) * support, support)
 
     @property
     @abstractmethod
@@ -471,10 +503,16 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
                 f"Prediction {prediction_name!r} and target {target_name!r} "
                 "must use the same query."
             )
+        query = selected_batch.query(predicted.query_name)
+        mask = query.mask_array(case_shape=selected_batch.case_shape)
+        trailing = (1,) * (predicted.values.ndim - mask.ndim)
+        expanded_mask = mask.reshape(mask.shape + trailing)
+        predicted_values = jnp.where(expanded_mask, predicted.values, 0.0)
+        target_values = jnp.where(expanded_mask, truth.values, 0.0)
         value = operator_l2_loss(
-            predicted.values,
-            truth.values,
-            selected_batch.query(predicted.query_name),
+            predicted_values,
+            target_values,
+            query,
             relative=self.relative,
             squared=self.squared,
             reduction=self.reduction,
@@ -504,11 +542,158 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class SupervisedOperatorRolloutLoss(AbstractOperatorLossTerm):
+    """Ordered future-state aliases for one supervised recurrent objective."""
+
+    target_fields: tuple[str, ...]
+    time_weights: tuple[float, ...]
+    name: str = "supervised_rollout_l2"
+    weight: float = 1.0
+    reduction: Literal["mean"] = "mean"
+
+    def __post_init__(self):
+        fields = tuple(str(field) for field in self.target_fields)
+        weights = tuple(float(value) for value in self.time_weights)
+        if not self.name:
+            raise ValueError("Operator rollout loss names must be non-empty.")
+        if not fields or any(not field for field in fields):
+            raise ValueError("Supervised rollout target aliases must be non-empty.")
+        if len(set(fields)) != len(fields):
+            raise ValueError("Supervised rollout target aliases must be unique.")
+        if len(weights) != len(fields):
+            raise ValueError("time_weights must provide one value per target alias.")
+        if any(not math.isfinite(value) or value < 0.0 for value in weights):
+            raise ValueError("Rollout time weights must be finite and nonnegative.")
+        if not math.isfinite(float(self.weight)) or float(self.weight) < 0.0:
+            raise ValueError(
+                "Operator rollout loss weight must be finite and nonnegative."
+            )
+        if self.reduction != "mean":
+            raise ValueError("Rollout reduction must be 'mean'.")
+        object.__setattr__(self, "target_fields", fields)
+        object.__setattr__(self, "time_weights", weights)
+        object.__setattr__(self, "weight", float(self.weight))
+
+    def __call__(
+        self,
+        model: Any,
+        prediction: OperatorPrediction,
+        batch: OperatorBatch,
+        targets: OperatorTargetBatch,
+        /,
+        *,
+        key: Key[Array, ""],
+        step: Array,
+        training: bool,
+        context: OperatorLossContext,
+    ) -> Array:
+        del model, prediction, batch, targets, key, step, training, context
+        raise ValueError(
+            "SupervisedOperatorRolloutLoss must be evaluated by task-bound "
+            "fit_operator with a rollout route and policy."
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            {
+                "kind": "supervised_operator_rollout",
+                "name": self.name,
+                "target_fields": self.target_fields,
+                "time_weights": self.time_weights,
+                "weight": self.weight,
+                "reduction": self.reduction,
+            },
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
+    """Recurrently evaluate one existing target-independent operator residual."""
+
+    residual_term: AbstractOperatorLossTerm
+    time_weights: tuple[float, ...]
+    name: str = "residual_rollout"
+    weight: float = 1.0
+    reduction: Literal["mean"] = "mean"
+
+    def __post_init__(self):
+        weights = tuple(float(value) for value in self.time_weights)
+        if not self.name:
+            raise ValueError("Operator rollout loss names must be non-empty.")
+        if not isinstance(self.residual_term, AbstractOperatorLossTerm):
+            raise TypeError("residual_term must be an AbstractOperatorLossTerm.")
+        if isinstance(
+            self.residual_term,
+            (
+                SupervisedOperatorLoss,
+                SupervisedOperatorRolloutLoss,
+                ResidualOperatorRolloutLoss,
+            ),
+        ):
+            raise TypeError("residual_term must be target-independent and non-recurrent.")
+        if not weights:
+            raise ValueError("Residual rollout time_weights must be non-empty.")
+        if any(not math.isfinite(value) or value < 0.0 for value in weights):
+            raise ValueError("Rollout time weights must be finite and nonnegative.")
+        if not math.isfinite(float(self.weight)) or float(self.weight) < 0.0:
+            raise ValueError(
+                "Operator rollout loss weight must be finite and nonnegative."
+            )
+        if self.reduction != "mean":
+            raise ValueError("Rollout reduction must be 'mean'.")
+        object.__setattr__(self, "time_weights", weights)
+        object.__setattr__(self, "weight", float(self.weight))
+
+    def __call__(
+        self,
+        model: Any,
+        prediction: OperatorPrediction,
+        batch: OperatorBatch,
+        targets: OperatorTargetBatch,
+        /,
+        *,
+        key: Key[Array, ""],
+        step: Array,
+        training: bool,
+        context: OperatorLossContext,
+    ) -> Array:
+        del model, prediction, batch, targets, key, step, training, context
+        raise ValueError(
+            "ResidualOperatorRolloutLoss must be evaluated by task-bound "
+            "fit_operator with a rollout route and policy."
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            {
+                "kind": "residual_operator_rollout",
+                "name": self.name,
+                "residual_term": self.residual_term.fingerprint,
+                "time_weights": self.time_weights,
+                "weight": self.weight,
+                "reduction": self.reduction,
+            },
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 __all__ = [
     "AbstractOperatorLossTerm",
     "CochainResidualInput",
     "CochainResidualLoss",
     "OperatorLossContext",
     "OperatorLossTerm",
+    "ResidualOperatorRolloutLoss",
     "SupervisedOperatorLoss",
+    "SupervisedOperatorRolloutLoss",
 ]

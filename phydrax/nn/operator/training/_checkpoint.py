@@ -4,20 +4,23 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import equinox as eqx
-import jax.numpy as jnp
-import jax.random as jr
-import numpy as np
 from jaxtyping import Array, Key
 
+from ...._training_checkpoint import (
+    _deserialize_root_key,
+    _prune_state_files,
+    _publish_manifest,
+    _publish_state,
+    _read_manifest,
+    _serialize_root_key,
+    _state_checksum,
+)
 from ._dtype import OperatorDTypePolicy
 from ._fingerprint import operator_batch_schema
 from ._normalization import OperatorNormalizationPolicy
@@ -25,21 +28,6 @@ from ._normalization import OperatorNormalizationPolicy
 
 _OPERATOR_TRAINING_CHECKPOINT_FORMAT = "phydrax-operator-training-checkpoint"
 _OPERATOR_TRAINING_CHECKPOINT_VERSION = 3
-
-
-def _sha256(path: Path, /) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _prune_superseded_states(directory: Path, current_state_name: str, /) -> None:
-    for stale_state in directory.glob("state-*.eqx"):
-        if stale_state.name != current_state_name:
-            stale_state.unlink(missing_ok=True)
-    (directory / "state.tmp.eqx").unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -73,33 +61,28 @@ def save_operator_training_checkpoint(
     if int(step) < 0:
         raise ValueError("step must be non-negative.")
     destination = Path(path)
-    destination.mkdir(parents=True, exist_ok=True)
-    temporary_state = destination / "state.tmp.eqx"
-    eqx.tree_serialise_leaves(temporary_state, (model, optimizer_state))
-    checksum = _sha256(temporary_state)
-    state_name = f"state-{checksum[:16]}.eqx"
-    state_path = destination / state_name
-    os.replace(temporary_state, state_path)
+    state_path, checksum = _publish_state(
+        destination,
+        lambda target: eqx.tree_serialise_leaves(
+            target,
+            (model, optimizer_state),
+        ),
+    )
+    state_name = state_path.name
     manifest = {
         "format": _OPERATOR_TRAINING_CHECKPOINT_FORMAT,
         "version": _OPERATOR_TRAINING_CHECKPOINT_VERSION,
         "state_file": state_name,
         "state_sha256": checksum,
         "step": int(step),
-        "key_data": np.asarray(jr.key_data(key)).tolist(),
-        "key_impl": str(jr.key_impl(key)),
+        **_serialize_root_key(key),
         "normalization": None if normalization is None else normalization.to_dict(),
         "dtype_policy": None if dtype_policy is None else dtype_policy.to_dict(),
         "schema": None if schema is None else dict(schema),
         "metadata": {} if metadata is None else dict(metadata),
     }
-    temporary_manifest = destination / "manifest.tmp.json"
-    temporary_manifest.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary_manifest, destination / "manifest.json")
-    _prune_superseded_states(destination, state_name)
+    _publish_manifest(destination / "manifest.json", manifest)
+    _prune_state_files(destination, state_name)
     return destination
 
 
@@ -109,7 +92,7 @@ def _read_operator_training_manifest(
 ) -> tuple[dict[str, Any], Path]:
     """Validate one current checkpoint manifest and its state checksum."""
     source = Path(path)
-    manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    manifest = _read_manifest(source / "manifest.json")
     expected = {
         "format",
         "version",
@@ -144,7 +127,7 @@ def _read_operator_training_manifest(
     if not isinstance(state_name, str) or not state_name:
         raise ValueError("Operator training checkpoint state_file must be non-empty.")
     state_path = source / state_name
-    actual_checksum = _sha256(state_path)
+    actual_checksum = _state_checksum(state_path)
     if actual_checksum != manifest["state_sha256"]:
         raise ValueError("Operator training checkpoint state checksum mismatch.")
     return manifest, state_path
@@ -167,11 +150,8 @@ def load_operator_training_checkpoint(
         state_path,
         (model_like, optimizer_state_like),
     )
-    _prune_superseded_states(source, state_path.name)
-    key = jr.wrap_key_data(
-        jnp.asarray(manifest["key_data"], dtype=jnp.uint32),
-        impl=manifest["key_impl"],
-    )
+    _prune_state_files(source, state_path.name)
+    key = _deserialize_root_key(manifest["key_data"], manifest["key_impl"])
     normalization = manifest["normalization"]
     dtype_policy = manifest["dtype_policy"]
     return OperatorTrainingCheckpoint(

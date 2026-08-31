@@ -208,6 +208,11 @@ from ._particle_thermochemistry import (
     ParticleTransportEvaluation,
     ParticleTransportMaterialPlan,
 )
+from ._radiative import (
+    RadiativeCoolingBoundsPolicy,
+    TabulatedCoolingCurve,
+    TabulatedCoolingEvaluation,
+)
 from ._randomized_compile import (
     analyze_randomized_compilation,
     compile_pde_randomized_term,
@@ -502,6 +507,9 @@ __all__ = [
     "TwoMaterialVOFDiagnostics",
     "TwoMaterialVOFStateLayout",
     "TwoMaterialVOFSystem",
+    "RadiativeCoolingBoundsPolicy",
+    "TabulatedCoolingCurve",
+    "TabulatedCoolingEvaluation",
     "SutherlandTransport",
     "TransportProperties",
     "couette_velocity_profile",

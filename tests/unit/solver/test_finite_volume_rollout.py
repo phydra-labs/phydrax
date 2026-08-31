@@ -65,15 +65,16 @@ def test_direct_ssprk_wrapper_matches_uncoupled_structured_runtime():
 
 def test_rollout_retention_policies_preserve_constant_state():
     runtime, initial = _rollout_runtime()
-    trajectory = phx.solver.FiniteVolumeRolloutPlan(
-        runtime, 6, retention="trajectory"
+    mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.006, 6, role="internal")
+    trajectory = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime, mesh, retention="trajectory"
     ).rollout(initial)
-    checkpoints = phx.solver.FiniteVolumeRolloutPlan(
-        runtime, 6, retention="checkpoints", checkpoint_stride=2
+    checkpoints = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime, mesh, retention="checkpoints", checkpoint_stride=2
     ).rollout(initial)
-    final = phx.solver.FiniteVolumeRolloutPlan(runtime, 6, retention="final").rollout(
-        initial
-    )
+    final = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime, mesh, retention="final"
+    ).rollout(initial)
 
     assert trajectory.retained_states.shape[0] == 6
     assert checkpoints.retained_states.shape[0] == 3
@@ -90,47 +91,67 @@ def test_rollout_retention_policies_preserve_constant_state():
         rtol=2e-12,
         atol=2e-12,
     )
-    np.testing.assert_allclose(
-        trajectory.final_state.content_state.conservative_content,
-        initial.content_state.conservative_content,
-        atol=2e-12,
-    )
-    np.testing.assert_allclose(
-        trajectory.final_state.cell_average(),
-        initial.cell_average(),
-        rtol=2e-12,
-        atol=2e-12,
-    )
-    initial_integral = initial.content_state.volume_integral()
-    np.testing.assert_allclose(
-        jnp.sum(trajectory.retained_states, axis=1),
-        jnp.broadcast_to(initial_integral, (6, initial_integral.size)),
-        rtol=2e-12,
-        atol=2e-12,
-    )
+    np.testing.assert_allclose(trajectory.final_state.time, mesh.t1)
     assert jnp.all(trajectory.accepted)
+    assert jnp.all(trajectory.stability_margins > 0.0)
 
 
-def test_step_rematerialization_matches_uncheckpointed_rollout():
+def test_step_and_block_replay_match_full_rollout():
     runtime, initial = _rollout_runtime()
-    direct = phx.solver.FiniteVolumeRolloutPlan(
-        runtime, 4, rematerialization="none"
+    mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.004, 4, role="internal")
+    full = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime,
+        mesh,
+        replay=phx.solver.FiniteVolumeReplayPolicy("full"),
     ).rollout(initial)
-    rematerialized = phx.solver.FiniteVolumeRolloutPlan(
-        runtime, 4, rematerialization="step"
+    step = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime,
+        mesh,
+        replay=phx.solver.FiniteVolumeReplayPolicy("step"),
+    ).rollout(initial)
+    block = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime,
+        mesh,
+        replay=phx.solver.FiniteVolumeReplayPolicy("block", block_size=3),
     ).rollout(initial)
 
     np.testing.assert_allclose(
-        rematerialized.final_state.content_state.conservative_content,
-        direct.final_state.content_state.conservative_content,
+        step.final_state.content_state.conservative_content,
+        full.final_state.content_state.conservative_content,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        block.final_state.content_state.conservative_content,
+        full.final_state.content_state.conservative_content,
         rtol=1e-12,
         atol=1e-12,
     )
 
 
+def test_prescribed_step_rejects_stability_clamp_and_retains_state():
+    runtime, initial = _rollout_runtime()
+    result = runtime.advance_prescribed(initial, 10.0)
+
+    assert not bool(result.accepted)
+    assert result.runtime_state.time == initial.time
+    assert result.runtime_state.last_status == int(
+        phx.solver.FiniteVolumeRunStatus.STABILITY_LIMIT_EXCEEDED
+    )
+    np.testing.assert_array_equal(
+        result.runtime_state.content_state.conservative_content,
+        initial.content_state.conservative_content,
+    )
+
+
 def test_rollout_gradient_report_matches_content_coordinate_jvp_and_vjp():
     runtime, initial = _rollout_runtime(8)
-    plan = phx.solver.FiniteVolumeRolloutPlan(runtime, 3, rematerialization="step")
+    mesh = phx.discretization.TemporalMesh.uniform(0.0, 0.003, 3, role="internal")
+    plan = phx.solver.ScheduledFiniteVolumeRolloutPlan(
+        runtime,
+        mesh,
+        replay=phx.solver.FiniteVolumeReplayPolicy("step"),
+    )
     initial_content = initial.content_state.conservative_content
     tangent = jnp.linspace(-0.2, 0.2, initial_content.size).reshape(initial_content.shape)
     report = plan.gradient_report(

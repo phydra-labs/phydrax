@@ -33,7 +33,9 @@ def _array_bytes(tree: Any, /) -> int:
     )
 
 
-def _resource_benchmark(*, dimension: int, rank: int, batch_size: int) -> dict[str, Any]:
+def _resource_benchmark(
+    *, dimension: int, rank: int, batch_size: int, scaling: str
+) -> dict[str, Any]:
     base = phx.nn.layers.Linear(
         in_size=dimension,
         out_size=dimension,
@@ -43,7 +45,12 @@ def _resource_benchmark(*, dimension: int, rank: int, batch_size: int) -> dict[s
     )
     adapted, report = phx.nn.parameters.adapt_low_rank(
         base,
-        {".weight": phx.nn.parameters.LowRankSpec(rank)},
+        {
+            ".weight": phx.nn.parameters.LowRankSpec(
+                rank,
+                scaling=scaling,
+            )
+        },
         key=jr.key(1),
     )
     subspace = phx.nn.parameters.low_rank_parameter_subspace(adapted)
@@ -117,6 +124,7 @@ def _resource_benchmark(*, dimension: int, rank: int, batch_size: int) -> dict[s
         "dimension": dimension,
         "rank": rank,
         "batch_size": batch_size,
+        "scaling": scaling,
         "dense_parameter_count": _array_count(dense_parameters),
         "adapter_parameter_count": _array_count(adapter_parameters),
         "reported_adapter_parameter_count": report.adapter_parameter_count,
@@ -206,7 +214,7 @@ def _transfer_benchmark() -> dict[str, Any]:
     paths = phx.nn.parameters.low_rank_sites(pretrained)
     adapted, report = phx.nn.parameters.adapt_low_rank(
         pretrained,
-        {path: phx.nn.parameters.LowRankSpec(1) for path in paths},
+        {path: phx.nn.parameters.LowRankSpec(1, scaling="sqrt_rank") for path in paths},
         key=jr.key(11),
     )
     subspace = phx.nn.parameters.low_rank_parameter_subspace(adapted)
@@ -230,6 +238,7 @@ def _transfer_benchmark() -> dict[str, Any]:
         "low_rank_trainable_parameters": subspace.total_dimension,
         "adapted_site_count": len(report.sites),
         "rank": 1,
+        "scaling": "sqrt_rank",
     }
 
 
@@ -243,12 +252,18 @@ def main() -> None:
     parser.add_argument("--dimension", type=int, default=512)
     parser.add_argument("--rank", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument(
+        "--scaling",
+        choices=("rank", "sqrt_rank"),
+        default="sqrt_rank",
+    )
     args = parser.parse_args()
     result = {
         "resource": _resource_benchmark(
             dimension=args.dimension,
             rank=args.rank,
             batch_size=args.batch_size,
+            scaling=args.scaling,
         ),
         "operator_transfer": _transfer_benchmark(),
     }

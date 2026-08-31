@@ -366,6 +366,25 @@ def clenshaw_curtis_data(order: int) -> QuadratureRuleData:
     return QuadratureRuleData(jnp.asarray(nodes), jnp.asarray(weights), None, order_ - 1)
 
 
+def fejer_first_data(order: int) -> QuadratureRuleData:
+    """Return the endpoint-free first Fejér rule on ``[-1, 1]``."""
+    order_ = int(order)
+    if order_ < 1:
+        raise ValueError("First Fejér order must be positive.")
+    theta = (2.0 * np.arange(order_, dtype=float) + 1.0) * np.pi / (2.0 * float(order_))
+    nodes = np.cos(theta)
+    values = np.ones((order_,), dtype=float)
+    for mode in range(1, order_ // 2 + 1):
+        values -= 2.0 * np.cos(2.0 * mode * theta) / (4.0 * mode * mode - 1.0)
+    weights = 2.0 * values / float(order_)
+    return QuadratureRuleData(
+        jnp.asarray(nodes[::-1].copy()),
+        jnp.asarray(weights[::-1].copy()),
+        None,
+        order_ - 1,
+    )
+
+
 def tanh_sinh_data(order: int) -> QuadratureRuleData:
     """Return a finite double-exponential trapezoidal rule on ``[-1, 1]``."""
     order_ = int(order)
@@ -385,6 +404,7 @@ def tanh_sinh_data(order: int) -> QuadratureRuleData:
 __all__ = [
     "QuadratureRuleData",
     "clenshaw_curtis_data",
+    "fejer_first_data",
     "gauss_kronrod_data",
     "gauss_legendre_data",
     "tanh_sinh_data",
