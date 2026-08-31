@@ -409,6 +409,54 @@ class PreparedVariationalInequalitySolve(StrictModule):
 
 
 def _bound_topology_id(problem: VariationalInequalityProblem, state, /) -> str:
+    lower_metadata = problem.bounds._lower_metadata
+    upper_metadata = problem.bounds._upper_metadata
+    state_leaves = jax.tree.leaves(state)
+    if lower_metadata is not None and upper_metadata is not None:
+
+        def broadcast_metadata(metadata):
+            if len(metadata) == 1 and metadata[0][0] == () and len(metadata[0][2]) == 1:
+                scalar = metadata[0][2][0]
+                return tuple(np.full(tuple(leaf.shape), scalar) for leaf in state_leaves)
+            if len(metadata) != len(state_leaves):
+                raise ValueError(
+                    "Bound metadata does not match variational-inequality state."
+                )
+            values = []
+            for item, leaf in zip(metadata, state_leaves, strict=True):
+                shape, dtype, flattened = item
+                value = np.asarray(flattened, dtype=np.dtype(dtype)).reshape(shape)
+                values.append(np.broadcast_to(value, tuple(leaf.shape)))
+            return tuple(values)
+
+        lower_values = broadcast_metadata(lower_metadata)
+        upper_values = broadcast_metadata(upper_metadata)
+        roles = []
+        for lower_host, upper_host in zip(lower_values, upper_values, strict=True):
+            role = (
+                np.isfinite(lower_host).astype(np.int8)
+                + 2 * np.isfinite(upper_host).astype(np.int8)
+                + 4
+                * (
+                    np.isfinite(lower_host)
+                    & np.isfinite(upper_host)
+                    & (lower_host == upper_host)
+                ).astype(np.int8)
+            )
+            roles.append(
+                {
+                    "shape": list(role.shape),
+                    "roles": role.reshape(-1).tolist(),
+                }
+            )
+        return canonical_fingerprint(
+            {
+                "kind": "variational-inequality-bound-topology",
+                "problem": problem.problem_id,
+                "roles": roles,
+            }
+        )
+
     lower, upper = problem.bounds.materialize(state)
     roles = []
     for lower_leaf, upper_leaf in zip(

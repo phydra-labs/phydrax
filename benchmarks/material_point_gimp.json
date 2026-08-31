@@ -1,0 +1,11 @@
+{
+  "maturity": "experimental",
+  "capability": "gimp",
+  "metrics": {
+    "partition_defect": 2.220446049250313e-15,
+    "gradient_defect": 2.3151619510386467e-14,
+    "first_moment_defect": 3.652406068560543e-17,
+    "successful": true
+  },
+  "passed": true
+}

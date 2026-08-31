@@ -130,70 +130,6 @@ class RoeWavePropagationPlan(AbstractWavePropagationPlan):
         return WaveDecomposition(waves, speeds, left_fluctuation, right_fluctuation)
 
 
-class FWaveShallowWaterPlan(AbstractWavePropagationPlan):
-    """Well-balanced one-dimensional shallow-water f-wave decomposition."""
-
-    def __init__(self):
-        self.conservative = True
-        self.fwave = True
-        self.differentiability = "almost_everywhere"
-        self.wave_plan_id = canonical_fingerprint({"kind": "shallow-water-fwave"})
-
-    def decompose(
-        self,
-        system: Any,
-        left: Array,
-        right: Array,
-        axis: int,
-        args: Any = None,
-        /,
-        *,
-        auxiliary_left: Array | None = None,
-        auxiliary_right: Array | None = None,
-    ) -> WaveDecomposition:
-        del args
-        if system.dimension != 1 or int(axis) != 0:
-            raise ValueError("Initial shallow-water f-wave support is one-dimensional.")
-        if auxiliary_left is None or auxiliary_right is None:
-            raise ValueError("f-wave shallow water requires left/right bathymetry.")
-        depth_left = left[..., 0]
-        depth_right = right[..., 0]
-        velocity_left = left[..., 1] / depth_left
-        velocity_right = right[..., 1] / depth_right
-        root_left = jnp.sqrt(depth_left)
-        root_right = jnp.sqrt(depth_right)
-        velocity = (root_left * velocity_left + root_right * velocity_right) / (
-            root_left + root_right
-        )
-        sound = jnp.sqrt(0.5 * system.gravity * (depth_left + depth_right))
-        speeds = jnp.stack((velocity - sound, velocity + sound), axis=-1)
-        flux_jump = system.physical_flux(right, 0) - system.physical_flux(left, 0)
-        bathymetry_jump = jnp.asarray(auxiliary_right) - jnp.asarray(auxiliary_left)
-        adjusted = flux_jump.at[..., 1].add(
-            0.5 * system.gravity * (depth_left + depth_right) * bathymetry_jump
-        )
-        first_amplitude = ((velocity + sound) * adjusted[..., 0] - adjusted[..., 1]) / (
-            2.0 * sound
-        )
-        second_amplitude = (adjusted[..., 1] - (velocity - sound) * adjusted[..., 0]) / (
-            2.0 * sound
-        )
-        first = first_amplitude[..., None] * jnp.stack(
-            (jnp.ones_like(velocity), velocity - sound), axis=-1
-        )
-        second = second_amplitude[..., None] * jnp.stack(
-            (jnp.ones_like(velocity), velocity + sound), axis=-1
-        )
-        waves = jnp.stack((first, second), axis=-1)
-        left_fluctuation = jnp.sum(
-            jnp.where((speeds < 0.0)[..., None, :], waves, 0.0), axis=-1
-        )
-        right_fluctuation = jnp.sum(
-            jnp.where((speeds > 0.0)[..., None, :], waves, 0.0), axis=-1
-        )
-        return WaveDecomposition(waves, speeds, left_fluctuation, right_fluctuation)
-
-
 class WaveFamilyLimiterPlan(StrictModule, NonTrainableState):
     """Upwind wave-family limiter for a line of interface decompositions."""
 
@@ -275,7 +211,6 @@ class TransverseWaveSolverPlan(StrictModule, NonTrainableState):
 
 __all__ = [
     "AbstractWavePropagationPlan",
-    "FWaveShallowWaterPlan",
     "RoeWavePropagationPlan",
     "TransverseWaveSolverPlan",
     "WaveDecomposition",

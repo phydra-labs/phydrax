@@ -1,0 +1,10 @@
+{
+  "maturity": "experimental",
+  "capability": "sharp_fracture",
+  "metrics": {
+    "successful": true,
+    "topology_generation": 1,
+    "field_count": 2
+  },
+  "passed": true
+}

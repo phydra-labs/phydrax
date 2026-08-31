@@ -44,9 +44,9 @@ from ...nonlinear import (
     refresh_nonlinear,
 )
 from ._rigid_body import (
-    _quaternion_relative_rotation_vector,
     _rigid_body_close_kick,
     _rigid_body_half_kick,
+    _rigid_body_relative_rotation,
     PreparedRigidBodySet,
     rigid_body_drift,
     rigid_body_world_inertia,
@@ -346,6 +346,9 @@ def _scaled_residuals(
         residuals.ball_anchor / length_scale,
         residuals.hinge_anchor / length_scale,
         residuals.hinge_axis,
+        residuals.prismatic_translation / length_scale,
+        residuals.prismatic_rotation,
+        residuals.distance / length_scale,
     )
 
 
@@ -356,6 +359,9 @@ def _multipliers_to_residuals(value: RigidJointMultipliers, /) -> RigidJointResi
         value.ball_anchor,
         value.hinge_anchor,
         value.hinge_axis,
+        value.prismatic_translation,
+        value.prismatic_rotation,
+        value.distance,
     )
 
 
@@ -366,6 +372,9 @@ def _residuals_to_multipliers(value: RigidJointResiduals, /) -> RigidJointMultip
         value.ball_anchor,
         value.hinge_anchor,
         value.hinge_axis,
+        value.prismatic_translation,
+        value.prismatic_rotation,
+        value.distance,
     )
 
 
@@ -377,6 +386,31 @@ def _maximum_increment(value: _RigidMobileIncrement, /) -> Array:
     translation = jnp.max(jnp.abs(value.translation), initial=0.0)
     rotation = jnp.max(jnp.abs(value.rotation), initial=0.0)
     return jnp.maximum(translation, rotation)
+
+
+def _orientation_defect(
+    bodies: PreparedRigidBodySet,
+    orientation: Array,
+    /,
+) -> Array:
+    if bodies.ambient_dimension == 2:
+        return jnp.asarray(0.0, dtype=orientation.dtype)
+    return jnp.max(
+        jnp.abs(jnp.linalg.norm(orientation, axis=-1) - 1.0),
+        initial=0.0,
+    )
+
+
+def _projection_inertia(
+    bodies: PreparedRigidBodySet,
+    orientation: Array,
+    mobile_indices: Array,
+    /,
+) -> Array:
+    if bodies.ambient_dimension == 2:
+        return bodies.inertia_body[mobile_indices, None, None]
+    inertia_world, _ = rigid_body_world_inertia(bodies, orientation)
+    return inertia_world[mobile_indices]
 
 
 class _PositionProjectionFunction(StrictModule, NonTrainableState):
@@ -430,14 +464,21 @@ class _PositionProjectionFunction(StrictModule, NonTrainableState):
 
 class _PositionProjectionValidity(StrictModule, NonTrainableState):
     solver: RigidConstraintSolverPlan
+    dimension: int = eqx.field(static=True)
 
     def __call__(self, state, residual, auxiliary, args, /):
         del residual, args
-        quaternion_norm = jnp.linalg.norm(auxiliary.kinematics.orientation, axis=-1)
+        if self.dimension == 3:
+            orientation_valid = jnp.all(
+                jnp.abs(jnp.linalg.norm(auxiliary.kinematics.orientation, axis=-1) - 1.0)
+                <= self.solver.quaternion_tolerance
+            )
+        else:
+            orientation_valid = jnp.all(jnp.isfinite(auxiliary.kinematics.orientation))
         return (
             tree_allfinite(state)
             & tree_allfinite(auxiliary)
-            & jnp.all(jnp.abs(quaternion_norm - 1.0) <= self.solver.quaternion_tolerance)
+            & orientation_valid
             & (
                 auxiliary.maximum_rotation_increment
                 < pi - self.solver.rotation_chart_margin
@@ -477,13 +518,13 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             problem = NonlinearSystemProblem(
                 residual,
                 has_aux=True,
-                validity=_PositionProjectionValidity(solver),
+                validity=_PositionProjectionValidity(solver, bodies.ambient_dimension),
                 problem_id=f"rigid-position-projection/{joints.prepared_id}",
             )
-            _, inertia_world = rigid_body_world_inertia(bodies, reference.orientation)
+
             args = _PositionProjectionArguments(
                 reference,
-                inertia_world[joints.mobile_indices],
+                _projection_inertia(bodies, reference.orientation, joints.mobile_indices),
             )
             initial = _PositionProjectionUnknown(
                 joints.empty_increment(reference.position.dtype),
@@ -551,10 +592,12 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     ) -> NonlinearResult:
         if self.position_problem is None or self.position_template is None:
             raise ValueError("An empty joint graph has no position projection solve.")
-        inertia_world, _ = rigid_body_world_inertia(self.bodies, predicted.orientation)
+
         arguments = _PositionProjectionArguments(
             predicted,
-            inertia_world[self.joints.mobile_indices],
+            _projection_inertia(
+                self.bodies, predicted.orientation, self.joints.mobile_indices
+            ),
         )
         initial = _PositionProjectionUnknown(
             self.joints.empty_increment(predicted.position.dtype),
@@ -571,13 +614,13 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     def _kinetic_energy(self, kinematics: RigidBodyKinematics, /) -> Array:
         mobile = self.joints.mobile_indices
         masses = self.bodies.particles.safe_masses[mobile]
-        inertia_world, _ = rigid_body_world_inertia(self.bodies, kinematics.orientation)
+        inertia = _projection_inertia(self.bodies, kinematics.orientation, mobile)
         linear = 0.5 * jnp.sum(masses[:, None] * kinematics.velocity[mobile] ** 2)
         angular = 0.5 * jnp.sum(
             kinematics.angular_velocity[mobile]
             * contract(
                 "...ij,...j->...i",
-                inertia_world[mobile],
+                inertia,
                 kinematics.angular_velocity[mobile],
             )
         )
@@ -598,8 +641,7 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         constraint_space = PyTreeSpace(constraint_template)
         mobile = graph.mobile_indices
         masses = self.bodies.particles.safe_masses[mobile]
-        inertia_world, _ = rigid_body_world_inertia(self.bodies, kinematics.orientation)
-        inertia = inertia_world[mobile]
+        inertia = _projection_inertia(self.bodies, kinematics.orientation, mobile)
 
         mass = FunctionLinearOperator(
             lambda value: _RigidMobileIncrement(
@@ -704,9 +746,8 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
     ):
         residuals = self.joints.residuals(candidate.kinematics)
         multipliers = self.joints.empty_multipliers(candidate.kinematics.position.dtype)
-        quaternion_defect = jnp.max(
-            jnp.abs(jnp.linalg.norm(candidate.kinematics.orientation, axis=-1) - 1.0),
-            initial=0.0,
+        quaternion_defect = _orientation_defect(
+            self.bodies, candidate.kinematics.orientation
         )
         diagnostics = RigidConstraintDiagnostics(
             jnp.asarray(0.0, dtype=candidate.kinematics.position.dtype),
@@ -754,9 +795,8 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
         step_ = jnp.asarray(step_size, dtype=state.kinematics.position.dtype)
         valid_step = jnp.isfinite(time_) & jnp.isfinite(step_) & (step_ > 0.0)
         safe_step = jnp.where(valid_step, step_, 1.0)
-        input_quaternion_defect = jnp.max(
-            jnp.abs(jnp.linalg.norm(state.kinematics.orientation, axis=-1) - 1.0),
-            initial=0.0,
+        input_quaternion_defect = _orientation_defect(
+            self.bodies, state.kinematics.orientation
         )
         input_valid = tree_allfinite(state) & (
             input_quaternion_defect <= self.solver.quaternion_tolerance
@@ -779,9 +819,8 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
                 state.velocity_multiplier_guess,
             )
             finite = tree_allfinite(candidate) & tree_allfinite(closing_load)
-            candidate_quaternion_defect = jnp.max(
-                jnp.abs(jnp.linalg.norm(candidate_kinematics.orientation, axis=-1) - 1.0),
-                initial=0.0,
+            candidate_quaternion_defect = _orientation_defect(
+                self.bodies, candidate_kinematics.orientation
             )
             quaternion_valid = (
                 candidate_quaternion_defect <= self.solver.quaternion_tolerance
@@ -835,8 +874,10 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             projected_pose.position - state.kinematics.position
         ) / safe_step
         angular_velocity = (
-            _quaternion_relative_rotation_vector(
-                state.kinematics.orientation, projected_pose.orientation
+            _rigid_body_relative_rotation(
+                self.bodies,
+                state.kinematics.orientation,
+                projected_pose.orientation,
             )
             / safe_step
         )
@@ -887,9 +928,8 @@ class PreparedRigidConstraintDynamics(StrictModule, NonTrainableState):
             position_multipliers,
             velocity_multipliers,
         )
-        quaternion_defect = jnp.max(
-            jnp.abs(jnp.linalg.norm(candidate_kinematics.orientation, axis=-1) - 1.0),
-            initial=0.0,
+        quaternion_defect = _orientation_defect(
+            self.bodies, candidate_kinematics.orientation
         )
         fixed = self.bodies.fixed_mask[:, None]
         fixed_pose_defect = jnp.maximum(

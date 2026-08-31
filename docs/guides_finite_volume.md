@@ -143,11 +143,14 @@ Wave propagation is a separate interface family, not an optional extension of a 
 result:
 
 - `RoeWavePropagationPlan` returns waves, speeds, and left/right fluctuations;
-- `FWaveShallowWaterPlan` decomposes a bathymetry-balanced flux jump;
 - `WaveFamilyLimiterPlan` limits each wave family;
 - `TransverseWaveSolverPlan` splits a normal fluctuation in a transverse direction.
 
-The initial f-wave implementation is one-dimensional and preserves lake-at-rest states.
+Bathymetric wet/dry shallow water is a separate balanced-face family.
+`ShallowWaterHydrostaticHLLPlan` returns one shared transport flux plus one-sided
+hydrostatic bed corrections. `PreparedFiniteVolumeRuntime` blends the complete face
+contribution against the piecewise-constant fallback at every SSPRK stage. See
+[Shallow water](guides_shallow_water.md).
 
 ## Boundaries
 
@@ -413,9 +416,10 @@ topology remain static.
 
 ## Current limitations
 
-- No unstructured or polyhedral meshes.
-- No moving mapped grids.
-- Initial shallow-water f-wave support is one-dimensional.
+- Bathymetric shallow water currently requires static Cartesian structured geometry;
+  mapped, triangle, unstructured, moving, SBP, spectral, and DGSEM beds are rejected.
+- Wet/dry shallow water supports piecewise-constant and equilibrium-aware MUSCL
+  reconstruction; balanced WENO is not yet supported.
 - Initial transverse solver support is a primitive building block, not a complete
   three-dimensional CTU implementation.
 - Mapped fluxes currently use Rusanov or HLL.

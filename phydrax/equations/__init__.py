@@ -184,6 +184,10 @@ from ._lattice_boltzmann_species import *  # noqa: F403
 from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
 from ._lattice_boltzmann_thermal import *  # noqa: F403
 from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_all
+from ._local_constitutive_root import (
+    LocalConstitutiveRootDiagnostics,
+    LocalConstitutiveRootPlan,
+)
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
     CompiledMACIncompressibleDynamics,
@@ -224,14 +228,17 @@ from ._manufactured import (
     ManufacturedSpatialOperator,
 )
 from ._material_point import (
+    AbstractImplicitMPMConstitutivePlan,
     AbstractMPMConstitutivePlan,
     compile_material_point_problem,
     CompiledMaterialPointProblem,
     ExternalMPMAcceleration,
     MaterialPointArguments,
     MaterialPointProblemIR,
+    MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
     MPMKinematics,
+    MPMLinearizedConstitutiveResponse,
 )
 from ._materials import (
     AbstractThermodynamicMaterial,
@@ -331,6 +338,7 @@ from ._serialize import (
     pde_ir_to_dict,
     pde_ir_to_json,
 )
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._spectral_compile import (
     compile_spectral_pde,
     CompiledSpectralDynamics,
@@ -510,8 +518,13 @@ __all__ = [
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
+    "LocalConstitutiveRootDiagnostics",
+    "LocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
+    "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",
+    "MPMConstitutiveCapabilities",
+    "MPMLinearizedConstitutiveResponse",
     "MPMKinematics",
     "compile_flip_problem",
     "FLIPProblemIR",
@@ -653,6 +666,7 @@ __all__ = [
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
+    "ShallowWaterCoriolisSource",
     "PrandtlTransport",
     "StiffenedGasMaterial",
     "ideal_gas_euler_entropy_pair",

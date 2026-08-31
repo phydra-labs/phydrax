@@ -18,7 +18,7 @@ from .._numerics._checkpointed_scan import checkpointed_scan
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization import TemporalMesh
+from ..discretization import RealizedTemporalMesh, TemporalMesh
 from ..discretization.mpm import (
     MPMParticleState,
     MPMRejectionReason,
@@ -210,6 +210,40 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
             }
         )
 
+    @classmethod
+    def from_realized(
+        cls,
+        dynamics: PreparedMPMDynamics,
+        realized: RealizedTemporalMesh,
+        /,
+        *,
+        retention: MPMRetentionMode = "final",
+        checkpoint_stride: int = 1,
+        replay: MPMReplayPolicy | None = None,
+    ) -> "ScheduledMPMRolloutPlan":
+        if not isinstance(realized, RealizedTemporalMesh):
+            raise TypeError("realized must be RealizedTemporalMesh.")
+        count = int(np.asarray(realized.count))
+        if count <= 0:
+            raise ValueError("Scheduled MPM replay requires at least one accepted step.")
+        accepted = np.asarray(realized.accepted_times)[:count]
+        nodes = np.concatenate(
+            (np.asarray(realized.initial_time).reshape((1,)), accepted)
+        )
+        temporal = TemporalMesh(
+            nodes,
+            role="internal",
+            realized=True,
+            source_plan_id=realized.source_plan_id,
+        )
+        return cls(
+            dynamics,
+            temporal,
+            retention=retention,
+            checkpoint_stride=checkpoint_stride,
+            replay=replay,
+        )
+
     def rollout(
         self,
         initial_state: MPMRuntimeState,
@@ -296,6 +330,12 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                     runtime_state.time,
                     runtime_state.accepted_step,
                     common[2],
+                    runtime_state.topology_generation,
+                    runtime_state.assignment_input,
+                    runtime_state.material_slots,
+                    runtime_state.body_ids,
+                    runtime_state.velocity_field_slots,
+                    runtime_state.storage_state,
                 )
                 return (skipped, active), output
 
@@ -414,6 +454,12 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                 initial_state.time,
                 initial_state.accepted_step,
                 initial_state.last_status,
+                initial_state.topology_generation,
+                initial_state.assignment_input,
+                initial_state.material_slots,
+                initial_state.body_ids,
+                initial_state.velocity_field_slots,
+                initial_state.storage_state,
             )
             final = self.rollout(runtime, argument_values).final_state
             return jnp.asarray(loss(final, argument_values))
@@ -442,12 +488,24 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                 initial_state.time,
                 initial_state.accepted_step,
                 initial_state.last_status,
+                initial_state.topology_generation,
+                initial_state.assignment_input,
+                initial_state.material_slots,
+                initial_state.body_ids,
+                initial_state.velocity_field_slots,
+                initial_state.storage_state,
             )
             minus_runtime = MPMRuntimeState(
                 minus_state,
                 initial_state.time,
                 initial_state.accepted_step,
                 initial_state.last_status,
+                initial_state.topology_generation,
+                initial_state.assignment_input,
+                initial_state.material_slots,
+                initial_state.body_ids,
+                initial_state.velocity_field_slots,
+                initial_state.storage_state,
             )
             plus = self.rollout(plus_runtime, plus_args)
             minus = self.rollout(minus_runtime, minus_args)

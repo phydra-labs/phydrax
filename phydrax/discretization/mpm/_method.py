@@ -10,6 +10,7 @@ import numpy as np
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._schedule import AbstractExplicitMPMSchedule, USLMPMSchedule
 
 
 class APICTransferPlan(StrictModule, NonTrainableState):
@@ -64,6 +65,7 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
     """Explicit updated-Lagrangian USL MPM with APIC transfer."""
 
     transfer: APICTransferPlan
+    schedule: AbstractExplicitMPMSchedule
     acoustic_cfl: float = eqx.field(static=True)
     advective_cfl: float = eqx.field(static=True)
     force_cfl: float = eqx.field(static=True)
@@ -75,6 +77,7 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         transfer: APICTransferPlan | None = None,
         /,
         *,
+        schedule: AbstractExplicitMPMSchedule | None = None,
         acoustic_cfl: float = 0.4,
         advective_cfl: float = 0.4,
         force_cfl: float = 0.25,
@@ -83,6 +86,9 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         transfer_ = APICTransferPlan() if transfer is None else transfer
         if not isinstance(transfer_, APICTransferPlan):
             raise TypeError("transfer must be APICTransferPlan or None.")
+        schedule_ = USLMPMSchedule() if schedule is None else schedule
+        if not isinstance(schedule_, AbstractExplicitMPMSchedule):
+            raise TypeError("schedule must be AbstractExplicitMPMSchedule or None.")
         values = tuple(
             float(value)
             for value in (
@@ -95,6 +101,7 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         if any(not np.isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("MPM CFL and mass-tolerance factors must be positive.")
         self.transfer = transfer_
+        self.schedule = schedule_
         self.acoustic_cfl = values[0]
         self.advective_cfl = values[1]
         self.force_cfl = values[2]
@@ -102,7 +109,8 @@ class ExplicitMPMMethodPlan(StrictModule, NonTrainableState):
         self.method_id = canonical_fingerprint(
             {
                 "kind": "explicit-mpm-method",
-                "stress_update": "usl",
+                "stress_update": schedule_.stress_update,
+                "schedule": schedule_.schedule_id,
                 "deformation_update": "forward-euler",
                 "transfer": transfer_.plan_id,
                 "acoustic_cfl": values[0],

@@ -1,18 +1,20 @@
 # Constrained rigid-body dynamics
 
-`RigidConstraintDynamicsPlan` advances one static three-dimensional rigid-body population with globally coupled fixed, ball, and hinge constraints. The implementation is a mass-metric projected kick--drift--kick method. It is not a contact solver, an XPBD compatibility layer, or a claim of symplectic/RATTLE equivalence.
+`RigidConstraintDynamicsPlan` advances one fixed-capacity two- or three-dimensional rigid-body population with globally coupled bilateral joints. The implementation is a mass-metric projected kick--drift--kick method. It is not a contact solver, an XPBD compatibility layer, or a claim of symplectic/RATTLE equivalence.
 
 ## Configuration and topology
 
-Bodies come from a prepared `RigidBodySetPlan`. Three-dimensional orientations are scalar-first Hamilton quaternions mapping body vectors to world vectors; angular velocity and torque are world-frame vectors. A fixed body is an ordinary active body whose `fixed_mask` entry is true. Joints to the world use such a fixed body rather than a sentinel index.
+Bodies come from a prepared `RigidBodySetPlan`. Spatial orientations are scalar-first Hamilton quaternions mapping body vectors to world vectors; planar orientations are scalar principal angles. Angular velocity and torque use the corresponding world-frame convention. A fixed body is an ordinary active body whose `fixed_mask` entry is true. Joints to the world use such a fixed body rather than a sentinel index.
 
-Joint plans use the stable particle IDs owned by the rigid bodies:
+Joint plans use stable particle IDs:
 
-- `BallJointSetPlan` stores reference world anchors and removes three relative translational degrees of freedom.
-- `FixedJointSetPlan` stores the complete relative transform from the reference kinematics and removes six degrees of freedom.
-- `HingeJointSetPlan` stores reference world anchors and directed axes. It removes anchor translation and the two transverse relative rotations while leaving axial rotation free.
+- `BallJointSetPlan` stores reference world anchors. In two dimensions it is the native revolute anchor relation.
+- `FixedJointSetPlan` stores the complete relative transform.
+- `HingeJointSetPlan` is spatial-only and leaves axial rotation free.
+- `PrismaticJointSetPlan` leaves one axial translation free.
+- `DistanceJointSetPlan` enforces one positive reference length.
 
-`RigidJointGraphPlan.prepare(bodies, reference)` resolves IDs and converts reference geometry to body-local data once. Topology, endpoint IDs, reference anchors, and reference axes are not runtime-differentiable state. The first implementation is three-dimensional, fixed-capacity, and static-topology only.
+`RigidJointGraphPlan.prepare(bodies, reference)` resolves IDs, converts reference geometry to body-local data, and builds a canonical stable row layout. Topology and reference data are immutable within the prepared epoch.
 
 ## One constrained step
 
@@ -66,4 +68,4 @@ A successful step requires all of the following:
 
 ## Scope boundaries
 
-The current contract deliberately excludes contact, friction, restitution, joint limits, motors, compliance, damping, breakage, dynamic topology, two-dimensional joints, and deformable bodies. DEM contact remains under the particle contact APIs. Constraint forces or impulses should not be fed into contact or control code without a separately derived coupling contract.
+Compliance, damping, motors, limits, hard contact, restitution, Coulomb friction, breakage, fixed-capacity topology, rods, shells, transient FEM, and rigid--deformable/MPM coupling use separate physical plans described in the [extended mechanics guide](guides_extended_mechanics.md). They share geometry, solver, and candidate/accepted substrates without changing the bilateral joint model into a universal constraint type.
