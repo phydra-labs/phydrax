@@ -92,8 +92,8 @@ def test_joint_plan_validation_and_static_scope():
             jnp.asarray([1]), jnp.asarray([100]), jnp.asarray([101])
         )
     )
-    with pytest.raises(ValueError, match="three-dimensional"):
-        graph.prepare(bodies_2d, reference_2d)
+    prepared_2d = graph.prepare(bodies_2d, reference_2d)
+    assert prepared_2d.constraint_count == 3
 
     _, fixed_bodies = _prepared_bodies(2, fixed_mask=[True, True])
     fixed_reference = _reference(fixed_bodies, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])

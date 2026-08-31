@@ -39,10 +39,12 @@ Most workflows are composing a few primitives:
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,
-  measure-aware particle-grid splatting, WENO fluxes, fixed-capacity AMR, field
-  spaces, measures, transfers, fixed-temporal differentiable replay, transactional
-  gravity/cooling/stochastic source processes, compatible constrained MHD,
-  temporal/stochastic composition, and auditable plan/preparation identities.
+  measure-aware particle-grid splatting, compatible electrostatic and
+  electromagnetic particle-in-cell dynamics, fixed-population free-surface FLIP,
+  WENO fluxes, fixed-capacity AMR, field spaces, measures, transfers,
+  fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
+  source processes, compatible constrained MHD, temporal/stochastic composition,
+  and auditable plan/preparation identities.
 - **Virtual elements**: enhanced conforming degree-one-through-three polygonal
   functional spaces expose certified H1/L2 projectors, explicit stabilization,
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
@@ -55,6 +57,12 @@ Most workflows are composing a few primitives:
   force/support/load optimization, mechanism/self-stress analysis, constitutive
   tangent stability, and continuation with physical residual, reaction, status,
   load-component, and provenance evidence.
+- **Member-network structural verification**: constitutive stress-free lengths,
+  exact cable unilateral sets, corotational frames, discrete rods, hinge bending,
+  local/global buckling, nonlinear continuation, prestress realizability,
+  construction-stage replay, physical section catalogs, sizing, and explicit
+  certified/failed/incomplete evidence build on force-density geometry without
+  relabeling form-finding as structural safety.
 - **Atomistic learning and dynamics**: scale-identified atomic structures,
   position-independent systems, stable-ID molecular topology, classical and learned
   scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
@@ -305,6 +313,10 @@ Mathematical guides include
 The [force-density form-finding guide](docs/guides_force_density.md) covers
 pin-jointed equilibrium, follower loads, implicit derivatives, and inverse
 structural design while keeping these distinct from constitutive FEM analysis.
+The [member-network structural verification guide](docs/guides_member_network_structures.md)
+adds constitutive compatibility, slackness, bending, buckling, staged construction,
+prestress realizability, and material sizing while retaining explicit evidence
+boundaries.
 The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
 demonstrates correlated empirical integration outside quantum mechanics, while the
 [VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian

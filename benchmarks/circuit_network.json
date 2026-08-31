@@ -1,0 +1,48 @@
+{
+  "backend": "cpu",
+  "dtype": "complex128",
+  "jax": "0.9.1",
+  "kind": "circuit-network-benchmark",
+  "python": "3.12.8",
+  "rows": [
+    {
+      "channels": 16,
+      "connection_residual": 0.0,
+      "constitutive_residual": 0.0,
+      "factor_bytes": 4096,
+      "first_solve_seconds": 1.321558167,
+      "instances": 8,
+      "matrix_bytes": 4096,
+      "prepare_seconds": 1.165329709,
+      "relative_residual": 0.0,
+      "successful": true,
+      "warm_solve_seconds": 0.22368016699999999
+    },
+    {
+      "channels": 64,
+      "connection_residual": 0.0,
+      "constitutive_residual": 0.0,
+      "factor_bytes": 65536,
+      "first_solve_seconds": 0.559715459,
+      "instances": 32,
+      "matrix_bytes": 65536,
+      "prepare_seconds": 1.159045584,
+      "relative_residual": 0.0,
+      "successful": true,
+      "warm_solve_seconds": 0.22342702050000002
+    },
+    {
+      "channels": 256,
+      "connection_residual": 0.0,
+      "constitutive_residual": 0.0,
+      "factor_bytes": 1048576,
+      "first_solve_seconds": 0.5382655,
+      "instances": 128,
+      "matrix_bytes": 1048576,
+      "prepare_seconds": 1.249676834,
+      "relative_residual": 0.0,
+      "successful": true,
+      "warm_solve_seconds": 0.2301545625
+    }
+  ]
+}

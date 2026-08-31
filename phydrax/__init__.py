@@ -45,6 +45,7 @@ from . import (
     terms,
     transport,
     uq,
+    circuit,
     weighting,
 )
 
@@ -60,6 +61,7 @@ __all__ = [
     "applications",
     "backends",
     "combinatorial",
+    "circuit",
     "conditions",
     "control",
     "continuation",

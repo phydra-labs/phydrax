@@ -9,6 +9,36 @@
   positivity, accepted one-sided bed-integral evidence, f/beta-plane Coriolis forcing,
   renderer-neutral observables, output support, qualification cases, and benchmarks.
   Removed the unqualified one-dimensional shallow-water f-wave path.
+- Added fixed-population compatible particle-in-cell dynamics over stable charged
+  particle supports: measure-aware endpoint charge, physical cochain E/B gather,
+  matrix-free compatible electrostatics, relativistic Boris stepping, periodic
+  cubical-Whitney trajectory current with discrete-continuity evidence, and
+  transactional coupling to the existing compatible Maxwell runtime.
+- Added constant-density fixed-population free-surface FLIP over prepared
+  particle splats and MAC grids: cell and staggered-face mass/momentum transfer,
+  runtime atmospheric pressure projection, bounded velocity extrapolation,
+  explicit PIC/FLIP grid-delta blending, problem compilation, fixed-step
+  rollback, and complete transfer/projection/energy evidence.
+- Added `phydrax.circuit`: block-valued typed wave ports, dense and matrix-free
+  hierarchical scattering, grounded dense/sparse MNA, causal implicit element laws,
+  native DAE/DC/continuation/descriptor analysis, rational macromodels, periodic
+  analysis, correlated noise, metrology/de-embedding, field/electrothermal coupling,
+  SPICE and restricted behavioral interchange, certified learned dissipative laws,
+  Touchstone I/O, and thin native optimization/UQ adapters.
+- Generalized compatible time-domain Maxwell to explicit full-3D, TEz, and TMz
+  cochain roles; added resource-preflighted final-state runs, sparse magnetic
+  constraint projection with proved elision, boundary-packed CPML, prepared paired
+  electric/magnetic sources and mode ports, harmonic-defect evidence, scalar
+  geometry material assembly, and independent case batching.
+- Added sparse metric-aware conic density filtering with explicit fixed-region
+  semantics, finite-beta tanh projection, differentiable composed transforms, and
+  separate forward-only hard thresholding.
+- Added explicit cosmological length/mass/time scales, parameter-differentiable flat
+  FLRW backgrounds, native first/second Lagrangian growth, immutable expansion/growth
+  and linear-power products, state-ready 1LPT/2LPT, and transactional periodic
+  scale-factor particle-mesh rollout. The cosmological path reuses the existing
+  particle discretization, splat, self-gravity, and typed PM force evaluation;
+  synchronized baryon/particle orchestration remains distinct from physical coupling.
 - Added enhanced conforming scalar virtual elements of qualified degree one
   through three on arbitrary-arity polygonal cell blocks, including certified
   H1/L2 projectors, explicit stabilization, functional trace constraints,
@@ -20,6 +50,16 @@
   multiplier warm starts, and fail-closed candidate/accepted transitions. Contact,
   friction, compliance, motors, dynamic topology, two-dimensional joints, and PBD
   compatibility remain outside this contract.
+- Extended constrained mechanics with native planar fixed/ball joints, dimension-aware
+  prismatic and distance joints, canonical stable row/coordinate layouts, physical
+  compliant/dissipative laws, bounded effort motors and servos, unilateral joint
+  limits, hard velocity restitution, exact planar/spatial Coulomb-cone impulses,
+  irreversible joint breakage, and fixed-capacity topology transactions. Added
+  transactional implicit Newmark volumetric FEM, mixed pressure gauges,
+  rigid--deformable attachment KKT operators, objective two-/three-dimensional
+  Cosserat rods, triangular membrane/bending shells, fixed-capacity deformable
+  contact, and explicit rigid--MPM weld/penalty/impulse coupling with branch,
+  rank, energy, route, and rollback certificates.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional
@@ -134,6 +174,12 @@
   force/support/load design, pure geometry/force observables, same-topology
   batches, per-graph evidence, mechanism/self-stress spectra, supplied-rigidity
   tangent stability, and continuation bridges.
+- Added member-network constitutive verification over force-density topology:
+  stress-free reference states, exact tension-only cable active sets,
+  corotational frame and discrete-rod bending, surface hinges, local and global
+  buckling, nonlinear continuation bridges, prestress fabrication/actuation
+  evidence, staged construction replay, continuous and catalog sizing, and
+  explicit certified/failed/incomplete structural verdicts.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.

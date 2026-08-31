@@ -31,6 +31,7 @@ from ._maxwell import (
     AbstractMaxwellConstitutivePlan,
     AbstractPreparedMaxwellConstitutive,
     MaxwellCapabilities,
+    MaxwellCochainLayout,
 )
 
 
@@ -98,9 +99,10 @@ class MatrixMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
     def prepare(
         self,
         cochain: CochainDiscretization,
+        layout: MaxwellCochainLayout,
         /,
     ) -> PreparedMatrixMaxwellConstitutive:
-        return PreparedMatrixMaxwellConstitutive(self, cochain)
+        return PreparedMatrixMaxwellConstitutive(self, cochain, layout)
 
 
 def _metric_spectrum(
@@ -173,25 +175,25 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
     magnetic_solver: Any
     evidence: MaxwellConstitutiveEvidence
     capabilities: MaxwellCapabilities
+    layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         plan: MatrixMaxwellConstitutivePlan,
         cochain: CochainDiscretization,
+        layout: MaxwellCochainLayout,
         /,
     ):
-        if cochain.max_degree != 3:
-            raise ValueError("Maxwell constitutive preparation requires dimension three.")
         _, electric_minimum, electric_condition = _metric_spectrum(
             "electric",
             plan.electric_matrix,
-            cochain.hodge_metric(1),
+            cochain.hodge_metric(layout.electric_degree),
         )
         _, magnetic_minimum, magnetic_condition = _metric_spectrum(
             "magnetic",
             plan.magnetic_matrix,
-            cochain.hodge_metric(2),
+            cochain.hodge_metric(layout.magnetic_degree),
         )
         evidence_id = canonical_fingerprint(
             {
@@ -205,6 +207,7 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
             }
         )
         self.electric_matrix = plan.electric_matrix
+        self.layout_id = layout.layout_id
         self.magnetic_matrix = plan.magnetic_matrix
         policy = LinearSolvePolicy(
             DenseLU(),
@@ -248,6 +251,7 @@ class PreparedMatrixMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
                 "plan": plan.plan_id,
                 "cochain": cochain.prepared_id,
                 "evidence": evidence_id,
+                "layout": layout.layout_id,
             }
         )
 
@@ -387,9 +391,10 @@ class ConductiveMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
     def prepare(
         self,
         cochain: CochainDiscretization,
+        layout: MaxwellCochainLayout,
         /,
     ) -> PreparedConductiveMaxwellConstitutive:
-        return PreparedConductiveMaxwellConstitutive(self, cochain)
+        return PreparedConductiveMaxwellConstitutive(self, cochain, layout)
 
 
 def _nonnegative_material(name: str, value: ArrayLike, count: int, /) -> Array:
@@ -414,32 +419,35 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
     electric_conductivity: Array
     magnetic_conductivity: Array
     capabilities: MaxwellCapabilities
+    layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         plan: ConductiveMaxwellConstitutivePlan,
         cochain: CochainDiscretization,
+        layout: MaxwellCochainLayout,
         /,
     ):
         from ._maxwell import _positive_material
 
         self.permittivity = _positive_material(
-            "permittivity", plan.permittivity, cochain.cell_counts[1]
+            "permittivity", plan.permittivity, layout.electric_count
         )
         self.permeability = _positive_material(
-            "permeability", plan.permeability, cochain.cell_counts[2]
+            "permeability", plan.permeability, layout.magnetic_count
         )
         self.electric_conductivity = _nonnegative_material(
             "electric_conductivity",
             plan.electric_conductivity,
-            cochain.cell_counts[1],
+            layout.electric_count,
         )
         self.magnetic_conductivity = _nonnegative_material(
             "magnetic_conductivity",
             plan.magnetic_conductivity,
-            cochain.cell_counts[2],
+            layout.magnetic_count,
         )
+        self.layout_id = layout.layout_id
         lossless = bool(
             jnp.all(self.electric_conductivity == 0.0)
             & jnp.all(self.magnetic_conductivity == 0.0)
@@ -450,12 +458,16 @@ class PreparedConductiveMaxwellConstitutive(AbstractPreparedMaxwellConstitutive)
             reversible=lossless,
             structured_only=False,
             frequency_domain=lossless,
+            magnetic_closedness_preserving=bool(
+                jnp.all(self.magnetic_conductivity == 0.0)
+            ),
         )
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-conductive-maxwell-constitutive",
                 "plan": plan.plan_id,
                 "cochain": cochain.prepared_id,
+                "layout": layout.layout_id,
             }
         )
 
@@ -638,9 +650,10 @@ class LorentzDrudeMaxwellConstitutivePlan(AbstractMaxwellConstitutivePlan):
     def prepare(
         self,
         cochain: CochainDiscretization,
+        layout: MaxwellCochainLayout,
         /,
     ) -> PreparedLorentzDrudeMaxwellConstitutive:
-        return PreparedLorentzDrudeMaxwellConstitutive(self, cochain)
+        return PreparedLorentzDrudeMaxwellConstitutive(self, cochain, layout)
 
 
 class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutive):
@@ -651,17 +664,19 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
     oscillator_strength: Array
     electric_count: int = eqx.field(static=True)
     capabilities: MaxwellCapabilities
+    layout_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         plan: LorentzDrudeMaxwellConstitutivePlan,
         cochain: CochainDiscretization,
+        layout: MaxwellCochainLayout,
         /,
     ):
         from ._maxwell import _positive_material
 
-        self.electric_count = cochain.cell_counts[1]
+        self.electric_count = layout.electric_count
         self.permittivity_infinity = _positive_material(
             "permittivity_infinity",
             plan.permittivity_infinity,
@@ -670,8 +685,9 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
         self.permeability = _positive_material(
             "permeability",
             plan.permeability,
-            cochain.cell_counts[2],
+            layout.magnetic_count,
         )
+        self.layout_id = layout.layout_id
         self.resonance_frequency = plan.resonance_frequency
         self.damping = plan.damping
         self.oscillator_strength = plan.oscillator_strength
@@ -688,6 +704,7 @@ class PreparedLorentzDrudeMaxwellConstitutive(AbstractPreparedMaxwellConstitutiv
                 "kind": "prepared-lorentz-drude-maxwell",
                 "plan": plan.plan_id,
                 "cochain": cochain.prepared_id,
+                "layout": layout.layout_id,
             }
         )
 
