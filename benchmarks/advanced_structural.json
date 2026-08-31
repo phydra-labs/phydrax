@@ -1,0 +1,29 @@
+{
+  "catenary": {
+    "count": 20,
+    "maximum_sag": 1.4005181498867059,
+    "minimum_tension": 18.37978076816099,
+    "successful": 20,
+    "wall_seconds": 39.681589332998556
+  },
+  "finite_strip": {
+    "critical_half_wavelength": 0.9953962309984237,
+    "critical_stress": 72.30633372080037,
+    "successful": true,
+    "wall_seconds": 2.5869285830012814,
+    "wavelength_count": 500
+  },
+  "reliability": {
+    "failure_probability": 0.15711,
+    "sample_count": 100000,
+    "standard_error": 0.0011507669090654283,
+    "wall_seconds": 0.3113877079995291
+  },
+  "sequence": {
+    "explored_nodes": 21,
+    "operation_count": 20,
+    "pruned_nodes": 0,
+    "successful": true,
+    "wall_seconds": 0.013012790997890988
+  }
+}
