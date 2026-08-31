@@ -99,10 +99,10 @@ the same kernels, pair relations, dense authority, cell-list execution, and
 
 ## Internal conversion and process operations
 
-[Particle internal transport](guides_particle_internal_transport.md) maps selected owners to homogeneous radial finite-volume batches with extensive energy and species state. [Particle thermochemistry](guides_particle_thermochemistry.md) adds typed phases, elements, reactions, evaporation, shrinking-core conversion, and morphology.
+[Particle internal transport](guides_particle_internal_transport.md) maps selected owners to conservative radial or multidimensional finite-volume batches with extensive energy and species state. [Adaptive particle interiors](guides_particle_internal_amr.md) adds per-particle leaf masks, conservative coarse/fine remap, and flux correction. [Particle thermochemistry](guides_particle_thermochemistry.md) adds typed phases, elements, reactions, evaporation, shrinking-core conversion, and morphology.
 
-[Reactive CFD–DEM](guides_reactive_cfd_dem.md) composes conversion and mechanics through conservative particle-grid exchange and atomic macro windows. Fixed-pool insertion, removal, residence, mass-flow, fragmentation, and deactivation use explicit process events without changing array shape.
+[Reactive CFD–DEM](guides_reactive_cfd_dem.md) composes conversion and mechanics through conservative particle-grid exchange and atomic macro windows. [Monolithic reactive coupling](guides_reactive_monolithic.md) solves fluid storage, particle momentum, and conversion in one matrix-free root. Fixed-pool insertion and fragmentation may trigger [transactional capacity growth](guides_particle_capacity_growth.md); removal, residence, mass-flow, and deactivation remain explicit process events.
 
 ## Current limits
 
-The substrate supports fixed-capacity populations, dense or cell-list pairs, certified cached Verlet neighborhoods, periodic or nonperiodic boxes, fused reductions, persistent same-set pair state, wall/contact history, radial internal conversion, fixed-pool process events, and prepared particle-grid transfer. Distributed ownership, dynamic memory growth, and general adaptive intraparticle meshes remain future method families over these contracts.
+The substrate supports fixed-shape compiled epochs with automatic capacity growth between accepted windows, dense or cell-list pairs, cached Verlet neighborhoods, persistent structured interaction identities, superquadric wall contact, multidimensional adaptive particle interiors, conservative particle-grid transfer, and staggered or monolithic coupling. Distributed ownership and topology changes inside one compiled Newton solve remain unsupported.

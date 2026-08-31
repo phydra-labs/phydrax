@@ -10,7 +10,11 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
-from ._pair_state import ParticlePairRemap, remap_particle_pair_values
+from ._pair_state import (
+    INTERACTION_KEY_WIDTH,
+    ParticlePairRemap,
+    remap_particle_pair_values,
+)
 
 
 class DEMNormalHistory(StrictModule):
@@ -76,7 +80,7 @@ class DEMContactHistory(StrictModule):
         vector = jnp.zeros((count, dimension), dtype=dtype)
         angular = jnp.zeros((count, angular_dimension), dtype=dtype)
         return cls(
-            -jnp.ones((count,), dtype=jnp.int64),
+            -jnp.ones((count, INTERACTION_KEY_WIDTH), dtype=jnp.int64),
             mask,
             mask,
             DEMNormalHistory(scalar, scalar, scalar),

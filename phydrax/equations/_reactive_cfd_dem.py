@@ -21,6 +21,9 @@ from ..discretization.particle import (
     PreparedSoftSphereDEMDynamics,
     ReciprocalPairRadiationPlan,
 )
+from ..discretization.particle._particle_internal_unstructured import (
+    PreparedUnstructuredParticleInternalMesh,
+)
 from ._cfd_dem import UnresolvedCFDEMCouplingPlan
 from ._particle_conversion import PreparedParticleConversionDynamics
 from ._particle_thermochemistry import ParticleThermodynamicMaterialPlan
@@ -107,6 +110,8 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         fluid_temperature: ArrayLike,
         fluid_species_concentration: ArrayLike,
         /,
+        *,
+        active_mask: ArrayLike | None = None,
     ) -> ParticleContinuumExchangeEvaluation:
         batches = tuple(conversion_batches)
         materials = tuple(thermodynamics)
@@ -120,7 +125,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
             for value in materials
         ):
             raise ValueError("Continuum exchange requires one common species schema.")
-        relation = self.transfer.relation(positions)
+        relation = self.transfer.relation(positions, active_mask=active_mask)
         fluid_temperature_ = jnp.asarray(fluid_temperature)
         fluid_species = jnp.asarray(
             fluid_species_concentration, dtype=fluid_temperature_.dtype
@@ -141,6 +146,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         )
         owner_surface_measure = jnp.zeros((capacity,), dtype=fluid_temperature_.dtype)
         owner_coverage = jnp.zeros((capacity,), dtype=jnp.int32)
+        surface_routes = []
         for prepared, state, material in zip(
             batches, conversion_state.batches, materials, strict=True
         ):
@@ -151,11 +157,32 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
                 metrics.cell_measures,
                 state.porosity,
             )
-            surface_species = (
-                state.species_amount[:, -1, :] / metrics.cell_measures[:, -1, None]
-            )
+            if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+                boundary_mask = metrics.boundary_faces[None, :] & metrics.active_faces
+                owner_cells = metrics.owner_cells
+                face_weight = jnp.where(
+                    boundary_mask,
+                    metrics.face_measures
+                    / jnp.maximum(metrics.surface_measure[:, None], 1.0e-30),
+                    0.0,
+                )
+                surface_temperature = jnp.sum(
+                    face_weight * thermo.temperature[:, owner_cells], axis=1
+                )
+                concentration = state.species_amount / metrics.cell_measures[:, :, None]
+                surface_species = jnp.sum(
+                    face_weight[:, :, None] * concentration[:, owner_cells, :],
+                    axis=1,
+                )
+                surface_routes.append((owner_cells, face_weight))
+            else:
+                surface_temperature = thermo.temperature[:, -1]
+                surface_species = (
+                    state.species_amount[:, -1, :] / metrics.cell_measures[:, -1, None]
+                )
+                surface_routes.append(None)
             owner_temperature = owner_temperature.at[prepared.owner_indices].set(
-                thermo.temperature[:, -1]
+                surface_temperature
             )
             owner_species = owner_species.at[prepared.owner_indices].set(surface_species)
             owner_surface_measure = owner_surface_measure.at[prepared.owner_indices].set(
@@ -164,7 +191,7 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
             owner_coverage = owner_coverage.at[prepared.owner_indices].add(
                 state.active.astype(jnp.int32)
             )
-        active = self.transfer.particles.active_mask
+        active = relation.active
         heat_rate = (
             self.heat_transfer_coefficient
             * owner_surface_measure
@@ -183,17 +210,30 @@ class ParticleContinuumExchangePlan(StrictModule, NonTrainableState):
         )
         batch_energy = []
         batch_species = []
-        for prepared, state in zip(batches, conversion_state.batches, strict=True):
-            energy = (
-                jnp.zeros_like(state.internal_energy)
-                .at[:, -1]
-                .set(heat_rate[prepared.owner_indices])
-            )
-            species = (
-                jnp.zeros_like(state.species_amount)
-                .at[:, -1, :]
-                .set(species_rate[prepared.owner_indices])
-            )
+        for prepared, state, route in zip(
+            batches, conversion_state.batches, surface_routes, strict=True
+        ):
+            owner_heat = heat_rate[prepared.owner_indices]
+            owner_species_exchange = species_rate[prepared.owner_indices]
+            if route is None:
+                energy = jnp.zeros_like(state.internal_energy).at[:, -1].set(owner_heat)
+                species = (
+                    jnp.zeros_like(state.species_amount)
+                    .at[:, -1, :]
+                    .set(owner_species_exchange)
+                )
+            else:
+                owner_cells, face_weight = route
+                energy = (
+                    jnp.zeros_like(state.internal_energy)
+                    .at[:, owner_cells]
+                    .add(owner_heat[:, None] * face_weight)
+                )
+                species = (
+                    jnp.zeros_like(state.species_amount)
+                    .at[:, owner_cells, :]
+                    .add(owner_species_exchange[:, None, :] * face_weight[:, :, None])
+                )
             batch_energy.append(energy)
             batch_species.append(species)
         energy_residual = jnp.sum(heat_rate) + jnp.sum(fluid_energy)

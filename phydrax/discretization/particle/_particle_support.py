@@ -23,9 +23,12 @@ class ParticlePhysicsSupportStatus(StrEnum):
 
 class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
     mechanics: str = eqx.field(static=True)
+    population_topology: str = eqx.field(static=True)
     geometry: str = eqx.field(static=True)
     internal_geometry: str = eqx.field(static=True)
+    internal_adaptivity: str = eqx.field(static=True)
     thermodynamics: str = eqx.field(static=True)
+    wall_contact: str = eqx.field(static=True)
     transport: str = eqx.field(static=True)
     reaction: str = eqx.field(static=True)
     phase_change: str = eqx.field(static=True)
@@ -33,6 +36,7 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
     surface_exchange: str = eqx.field(static=True)
     continuum_exchange: str = eqx.field(static=True)
     coupling_schedule: str = eqx.field(static=True)
+    coupling_solver: str = eqx.field(static=True)
     backend: str = eqx.field(static=True)
     precision: str = eqx.field(static=True)
     sensitivity: str = eqx.field(static=True)
@@ -44,9 +48,12 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
         self,
         *,
         mechanics: str = "none",
+        population_topology: str = "fixed_capacity",
         geometry: str = "none",
         internal_geometry: str = "none",
+        internal_adaptivity: str = "fixed",
         thermodynamics: str = "none",
+        wall_contact: str = "none",
         transport: str = "none",
         reaction: str = "none",
         phase_change: str = "none",
@@ -54,6 +61,7 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
         surface_exchange: str = "none",
         continuum_exchange: str = "none",
         coupling_schedule: str = "standalone",
+        coupling_solver: str = "staggered",
         backend: str = "reference",
         precision: str = "float64",
         sensitivity: str = "forward",
@@ -66,9 +74,12 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
             str(value)
             for value in (
                 mechanics,
+                population_topology,
                 geometry,
                 internal_geometry,
+                internal_adaptivity,
                 thermodynamics,
+                wall_contact,
                 transport,
                 reaction,
                 phase_change,
@@ -76,6 +87,7 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
                 surface_exchange,
                 continuum_exchange,
                 coupling_schedule,
+                coupling_solver,
                 backend,
                 precision,
                 sensitivity,
@@ -97,9 +109,12 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
             raise ValueError("Qualified and production claims require evidence.")
         (
             self.mechanics,
+            self.population_topology,
             self.geometry,
             self.internal_geometry,
+            self.internal_adaptivity,
             self.thermodynamics,
+            self.wall_contact,
             self.transport,
             self.reaction,
             self.phase_change,
@@ -107,6 +122,7 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
             self.surface_exchange,
             self.continuum_exchange,
             self.coupling_schedule,
+            self.coupling_solver,
             self.backend,
             self.precision,
             self.sensitivity,
@@ -126,9 +142,12 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
     def configuration(self):
         return (
             self.mechanics,
+            self.population_topology,
             self.geometry,
             self.internal_geometry,
+            self.internal_adaptivity,
             self.thermodynamics,
+            self.wall_contact,
             self.transport,
             self.reaction,
             self.phase_change,
@@ -136,6 +155,7 @@ class ParticlePhysicsSupportClaim(StrictModule, NonTrainableState):
             self.surface_exchange,
             self.continuum_exchange,
             self.coupling_schedule,
+            self.coupling_solver,
             self.backend,
             self.precision,
             self.sensitivity,

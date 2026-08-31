@@ -28,6 +28,7 @@ from ._precision import ParticleRealization
 class ParticleVerletState(StrictModule, NonTrainableState):
     neighborhood: ParticleNeighborhoodState
     reference_position: Array
+    reference_active_mask: Array
     epoch: Array
     rebuilt: Array
     rebuild_count: Array
@@ -110,6 +111,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
     backend: ParticleRealization = eqx.field(static=True)
     pair_capacity: int = eqx.field(static=True)
     particle_capacity: int = eqx.field(static=True)
+    default_active_mask: Array
     particle_discretization_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
     artifact_kind: str = eqx.field(static=True)
@@ -149,6 +151,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         self.backend = plan.backend
         self.pair_capacity = base.pair_capacity
         self.particle_capacity = particles.capacity
+        self.default_active_mask = particles.active_mask
         self.particle_discretization_id = particles.prepared_id
         self.numeric_version = particles.numeric_version
         self.artifact_kind = "verlet-particle-neighborhood"
@@ -163,17 +166,24 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             }
         )
 
-    def build(self, positions: ArrayLike, /) -> ParticleNeighborhoodState:
+    def build(
+        self, positions: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
         """Build authority routes without cache reuse."""
-        return self.base.build(positions)
+        active = self._active(active_mask)
+        return self.base.build(positions, active_mask=active)
 
-    def initialize(self, positions: ArrayLike, /) -> ParticleVerletState:
+    def initialize(
+        self, positions: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleVerletState:
         value = self._positions(positions)
-        neighborhood = self.base.build(value)
+        active = self._active(active_mask)
+        neighborhood = self.base.build(value, active_mask=active)
         successful = neighborhood.successful & jnp.all(jnp.isfinite(value))
         return ParticleVerletState(
             neighborhood,
             value,
+            active,
             jnp.zeros((), dtype=jnp.int32),
             jnp.asarray(True),
             jnp.asarray(1, dtype=jnp.int32),
@@ -184,13 +194,19 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         )
 
     def update(
-        self, positions: ArrayLike, previous: ParticleVerletState, /
+        self,
+        positions: ArrayLike,
+        previous: ParticleVerletState,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
     ) -> ParticleVerletState:
         if not isinstance(previous, ParticleVerletState):
             raise TypeError("previous must be a ParticleVerletState.")
         if previous.prepared_verlet_id != self.prepared_id:
             raise ValueError("Verlet state belongs to another prepared neighborhood.")
         value = self._positions(positions)
+        active = self._active(active_mask)
         displacement = value - previous.reference_position
         if self.box is not None:
             displacement = self.box.minimum_image(displacement)
@@ -198,14 +214,20 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         maximum = jnp.max(distance)
         threshold = jnp.asarray(0.5 * self.plan.skin, dtype=value.dtype)
         finite = jnp.all(jnp.isfinite(value)) & jnp.isfinite(maximum)
-        rebuild = (~previous.successful) | (~finite) | (maximum > threshold)
+        rebuild = (
+            (~previous.successful)
+            | (~finite)
+            | (maximum > threshold)
+            | jnp.any(active != previous.reference_active_mask)
+        )
 
         def rebuild_routes(_):
-            neighborhood = self.base.build(value)
+            neighborhood = self.base.build(value, active_mask=active)
             successful = neighborhood.successful & finite
             return ParticleVerletState(
                 neighborhood,
                 value,
+                active,
                 previous.epoch + jnp.asarray(1, dtype=jnp.int32),
                 jnp.asarray(True),
                 previous.rebuild_count + jnp.asarray(1, dtype=jnp.int32),
@@ -219,6 +241,7 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             return ParticleVerletState(
                 previous.neighborhood,
                 previous.reference_position,
+                previous.reference_active_mask,
                 previous.epoch,
                 jnp.asarray(False),
                 previous.rebuild_count,
@@ -229,6 +252,14 @@ class PreparedVerletParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             )
 
         return jax.lax.cond(rebuild, rebuild_routes, reuse_routes, operand=None)
+
+    def _active(self, active_mask: ArrayLike | None, /) -> Array:
+        if active_mask is None:
+            return self.default_active_mask
+        value = jnp.asarray(active_mask, dtype=bool)
+        if value.shape != (self.particle_capacity,):
+            raise ValueError("active_mask must have particle-capacity shape.")
+        return self.default_active_mask & value
 
     def _positions(self, positions: ArrayLike, /) -> Array:
         value = jnp.asarray(positions)

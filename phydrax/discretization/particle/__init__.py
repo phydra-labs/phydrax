@@ -148,8 +148,12 @@ from ._dem_multicontact import (
     ElasticHalfSpaceMulticontactPlan,
 )
 from ._dem_process_events import (
+    fragment_particle_with_growth,
     insert_reactive_particles,
+    insert_reactive_particles_with_growth,
     MassFlowSurfacePlan,
+    ParticleEpochFragmentationResult,
+    ParticleEpochInsertionResult,
     ParticleInsertionPlan,
     ParticleInsertionResult,
     ParticleRegionPlan,
@@ -274,12 +278,32 @@ from ._pairwise import (
     scatter_pair_exchange,
     scatter_pair_sum,
 )
+from ._particle_epoch import (
+    grow_particle_execution_epoch,
+    initialize_particle_execution_epoch,
+    ParticleCapacityGrowthPolicy,
+    ParticleCapacityRequest,
+    ParticleCapacityStatus,
+    ParticleEpochTransition,
+    ParticleExecutionEpoch,
+)
 from ._particle_grid_transfer import (
     ConservativeParticleGridTransferPlan,
     ParticleGridRelation,
     PreparedParticleGridTransfer,
 )
+from ._particle_internal_amr import (
+    adapt_particle_internal_mesh,
+    apply_particle_internal_flux_correction,
+    initialize_particle_internal_amr,
+    ParticleInternalAdaptationEvidence,
+    ParticleInternalAdaptationPolicy,
+    ParticleInternalAdaptationResult,
+    ParticleInternalAMRState,
+)
 from ._particle_internal_mesh import (
+    AbstractParticleInternalMeshPlan,
+    AbstractPreparedParticleInternalMesh,
     ParticleInternalBatchPlan,
     ParticleInternalGeometry,
     ParticleShellMetrics,
@@ -299,6 +323,12 @@ from ._particle_internal_state import (
     ParticleConversionStateGeometry,
     ParticleInternalBatchState,
     ParticleSurfaceState,
+)
+from ._particle_internal_unstructured import (
+    ParticleBoundaryTrace,
+    ParticleInternalMeshMetrics,
+    PreparedUnstructuredParticleInternalMesh,
+    UnstructuredParticleInternalMeshPlan,
 )
 from ._particle_morphology import (
     deactivate_particle_internal_state,
@@ -468,6 +498,12 @@ from ._superquadric_dynamics import (
     SuperquadricDEMPlan,
     SuperquadricDEMState,
     SuperquadricDEMStepResult,
+    SuperquadricWallResponse,
+)
+from ._superquadric_wall import (
+    superquadric_triangle_contact_geometry,
+    SuperquadricTriangleContactPlan,
+    SuperquadricWallContactResult,
 )
 from ._topology_events import (
     initialize_topology_event_record,
@@ -934,4 +970,32 @@ __all__ = [
     "ParticlePhysicsSupportClaim",
     "ParticlePhysicsSupportMatrix",
     "ParticlePhysicsSupportStatus",
+    "AbstractParticleInternalMeshPlan",
+    "AbstractPreparedParticleInternalMesh",
+    "ParticleBoundaryTrace",
+    "ParticleCapacityGrowthPolicy",
+    "ParticleCapacityRequest",
+    "ParticleCapacityStatus",
+    "ParticleEpochInsertionResult",
+    "ParticleEpochTransition",
+    "ParticleExecutionEpoch",
+    "ParticleInternalAdaptationEvidence",
+    "ParticleInternalAdaptationPolicy",
+    "ParticleInternalAdaptationResult",
+    "ParticleInternalAMRState",
+    "ParticleInternalMeshMetrics",
+    "PreparedUnstructuredParticleInternalMesh",
+    "SuperquadricTriangleContactPlan",
+    "SuperquadricWallContactResult",
+    "SuperquadricWallResponse",
+    "UnstructuredParticleInternalMeshPlan",
+    "adapt_particle_internal_mesh",
+    "apply_particle_internal_flux_correction",
+    "grow_particle_execution_epoch",
+    "initialize_particle_execution_epoch",
+    "initialize_particle_internal_amr",
+    "insert_reactive_particles_with_growth",
+    "superquadric_triangle_contact_geometry",
+    "ParticleEpochFragmentationResult",
+    "fragment_particle_with_growth",
 ]

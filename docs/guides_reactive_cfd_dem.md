@@ -28,7 +28,7 @@
 ```text
 schedule = phx.solver.ReactiveParticleCouplingSchedulePlan(
     phx.solver.ParticleConversionSolverPlan(
-        phx.solver.ParticleConversionBackend.STRUCTURED_TRIDIAGONAL
+        phx.solver.ParticleConversionBackend.STRUCTURED_NATIVE
     ),
     dem_substeps=4,
     mode=phx.solver.ReactiveCouplingMode.STRANG_FROZEN_FLUID,

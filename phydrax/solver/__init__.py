@@ -652,6 +652,13 @@ from ._particle_conversion_sensitivity import (
     sharp_particle_conversion_jvp,
     sharp_particle_conversion_vjp,
 )
+from ._particle_epoch import (
+    advance_particle_epoch_segments,
+    ParticleEpochSegmentRecord,
+    ParticleEpochTrajectory,
+    pullback_particle_epoch_transition,
+    segmented_particle_epoch_vjp,
+)
 from ._particle_mesh_gravity import (
     ParticleMeshGravityDiagnostics,
     ParticleMeshGravityPlan,
@@ -769,6 +776,19 @@ from ._reactive_cfd_dem import (
     ReactiveCouplingMode,
     ReactiveFluidFields,
     ReactiveParticleCouplingSchedulePlan,
+)
+from ._reactive_monolithic import (
+    initialize_reactive_monolithic_state,
+    make_reactive_monolithic_stage,
+    prepare_reactive_monolithic_step,
+    PreparedReactiveMonolithicStep,
+    reactive_monolithic_vjp,
+    ReactiveMonolithicPreconditionerEvidence,
+    ReactiveMonolithicPreconditionerMode,
+    ReactiveMonolithicSolverPlan,
+    ReactiveMonolithicState,
+    ReactiveMonolithicStepResult,
+    solve_reactive_monolithic_step,
 )
 from ._reactive_replay import (
     checkpointed_reactive_rollout,
@@ -1670,4 +1690,20 @@ __all__ = [
     "solve_characteristic_projection",
     "solve_neural_galerkin",
     "trace_characteristics",
+    "ParticleEpochSegmentRecord",
+    "ParticleEpochTrajectory",
+    "PreparedReactiveMonolithicStep",
+    "ReactiveMonolithicPreconditionerEvidence",
+    "ReactiveMonolithicPreconditionerMode",
+    "ReactiveMonolithicSolverPlan",
+    "ReactiveMonolithicState",
+    "ReactiveMonolithicStepResult",
+    "advance_particle_epoch_segments",
+    "initialize_reactive_monolithic_state",
+    "make_reactive_monolithic_stage",
+    "prepare_reactive_monolithic_step",
+    "pullback_particle_epoch_transition",
+    "reactive_monolithic_vjp",
+    "segmented_particle_epoch_vjp",
+    "solve_reactive_monolithic_step",
 ]

@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added epochal particle-capacity growth with stable structured interaction
+  identities, transactional state migration, fixed-pool insertion and fragmentation
+  retries, segmented replay, and transition pullbacks. Added multidimensional
+  body-frame particle interiors, conservative unstructured transport, local
+  coarse/fine AMR, boundary-face exchange, and native sparse implicit conversion.
+  Added feature-certified superquadric triangle-wall contact with canonical shared
+  feature ownership, wall histories, reactions, wear observables, and explicit
+  feature curvature. Added matrix-free monolithic fluid-particle Newton coupling
+  with momentum, heat, species, reaction, contact/radiative sources, route
+  certificates, block preconditioning, atomic rollback, and implicit sensitivity.
 - Added exact fixed-temporal finite-volume replay with full, step, or block
   rematerialization; transactional balance-law source composition and persistence;
   periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral

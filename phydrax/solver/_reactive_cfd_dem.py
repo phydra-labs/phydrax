@@ -276,6 +276,7 @@ def _advance_once(
         thermodynamics,
         fields.temperature,
         fields.species_concentration,
+        active_mask=state.dem_state.body_properties.active,
     )
     conversion = _kick_conversion(
         state.conversion_state,
@@ -412,6 +413,7 @@ def _advance_once(
         thermodynamics,
         fields.temperature,
         fields.species_concentration,
+        active_mask=dem.body_properties.active,
     )
     conversion = _kick_conversion(
         conversion,

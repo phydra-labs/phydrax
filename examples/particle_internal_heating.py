@@ -60,7 +60,7 @@ boundary = phx.equations.ParticleTransportBoundary(
     jnp.zeros((1, 1)),
 )
 solver = phx.solver.ParticleConversionSolverPlan(
-    phx.solver.ParticleConversionBackend.STRUCTURED_TRIDIAGONAL,
+    phx.solver.ParticleConversionBackend.STRUCTURED_NATIVE,
     substeps=2,
 )
 result = None

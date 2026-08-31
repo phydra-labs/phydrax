@@ -96,7 +96,7 @@ def _conversion_case(shells, step_size):
     structured = phx.solver.advance_particle_conversion(
         compiled.dynamics,
         phx.solver.ParticleConversionSolverPlan(
-            phx.solver.ParticleConversionBackend.STRUCTURED_TRIDIAGONAL,
+            phx.solver.ParticleConversionBackend.STRUCTURED_NATIVE,
             substeps=2,
         ),
         initial,
