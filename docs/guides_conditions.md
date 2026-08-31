@@ -105,6 +105,22 @@ batch is shared across several diagnostics. Adaptive collocation runs through a
 normal `ResidualPenalty` whose source is `AdaptiveIntegration`; the source and
 policy, not a separate residual type, own the changing point population.
 
+Residual attention is another source-owned policy:
+
+```python
+attention = phx.sampling.collocation.ResidualAttentionCollocation(
+    refresh_every=5,
+    decay=0.99,
+    minimum_ess_fraction=0.35,
+)
+attention_source = phx.integration.adaptive(residual_target, plan, attention)
+```
+
+It retains the original points and updates mass-preserving local multipliers from
+detached residual scores. The resulting objective is a changing training measure,
+not an unbiased estimate of the original mean. Keep a fixed unweighted
+`evaluation_term` for model selection and reporting.
+
 ## Terms produce scalars
 
 `ResidualPenalty` integrates the Hermitian squared Frobenius norm

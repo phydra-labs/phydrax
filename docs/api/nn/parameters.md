@@ -112,17 +112,21 @@ spd = phx.nn.parameters.PositiveDefiniteTransform()(raw)
 ## Low-rank adaptation
 
 `LowRankUpdate` represents a real affine weight as
-`W_eff = W_0 + (alpha / rank) * left @ right`. The base has shape
-`(out, in)`, `left` has shape `(out, rank)`, and `right` has shape
-`(rank, in)`. `Linear` evaluates the two factor contractions directly; it does
-not construct the dense update during training. `merge_low_rank(...)` performs
-that construction explicitly for deployment.
+`W_eff = W_0 + scale * left @ right`. The base has shape `(out, in)`,
+`left` has shape `(out, rank)`, and `right` has shape `(rank, in)`.
+`LowRankSpec.scaling="rank"` uses `scale = alpha / rank`; `"sqrt_rank"`
+uses the rank-stabilized `scale = alpha / sqrt(rank)`. `Linear` evaluates the
+two factor contractions directly; it does not construct the dense update during
+training. `merge_low_rank(...)` performs that construction explicitly for
+deployment.
 
 `adapt_low_rank(...)` accepts exact native `Linear.weight` paths only. It
 initializes `left` to zero and `right` from a Gaussian, so the adapted model is
 exactly the base model before optimization. `alpha=None` resolves to
-`alpha=rank`, giving unit effective scaling. RWF, weight transforms, complex
-weights, aliased layers, and already adapted weights fail before model surgery.
+`alpha=rank`. On an RWF layer the adapter updates the unscaled `V` coordinate
+before the frozen row scale `exp(s)`; merging materializes the updated `V` and
+preserves RWF. Weight transforms, complex weights, aliased layers, and already
+adapted weights fail before model surgery.
 
 ```text
 import jax.random as jr

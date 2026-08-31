@@ -191,6 +191,7 @@ from ._measure_change import (
     PathMeasureChange,
     wiener_measure_change,
 )
+from ._ou import OrnsteinUhlenbeckRealization
 from ._path_dependent_bsde import ReflectedPathDependentBSDEProblem
 from ._path_diffusion import (
     PathCoefficientDiffusion,
@@ -389,6 +390,7 @@ __all__ = [
     "AbstractProcessDistribution",
     "AbstractGaussianDiffusion",
     "AtomicStochasticRealization",
+    "OrnsteinUhlenbeckRealization",
     "AtomicPathEvent",
     "AutoregressiveComponent",
     "autodiff_bsde_control",

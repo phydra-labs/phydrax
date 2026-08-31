@@ -17,11 +17,13 @@ from .._strict import StrictModule
 from ._fractional import FractionalGaussianRealization
 from ._jump import PoissonClockRealization
 from ._levy import LevyProcessRealization
+from ._ou import OrnsteinUhlenbeckRealization
 from ._wiener import WienerRealization
 
 
 AtomicStochasticRealization: TypeAlias = (
     WienerRealization
+    | OrnsteinUhlenbeckRealization
     | PoissonClockRealization
     | LevyProcessRealization
     | FractionalGaussianRealization
@@ -38,7 +40,7 @@ def _digest(parts: tuple[str, ...], /, *, prefix: bytes) -> str:
 
 def _atomic_path_labels(realization: AtomicStochasticRealization, /) -> tuple[str, ...]:
     indices = np.asarray(realization.path_indices).reshape((-1,))
-    if isinstance(realization, WienerRealization):
+    if isinstance(realization, (WienerRealization, OrnsteinUhlenbeckRealization)):
         signs = np.asarray(realization.path_signs).reshape((-1,))
         return tuple(
             f"{realization.realization_id}:path:{int(index)}:sign:{float(sign):g}"
@@ -82,6 +84,7 @@ class CompositeStochasticRealization(StrictModule):
                 value,
                 (
                     WienerRealization,
+                    OrnsteinUhlenbeckRealization,
                     PoissonClockRealization,
                     LevyProcessRealization,
                     FractionalGaussianRealization,
@@ -90,7 +93,7 @@ class CompositeStochasticRealization(StrictModule):
             for value in values
         ):
             raise TypeError(
-                "Composite components must be Wiener, Poisson, Lévy, or "
+                "Composite components must be Wiener, OU, Poisson, Lévy, or "
                 "fractional Gaussian realizations."
             )
         sample_shape = values[0].sample_shape
@@ -155,6 +158,7 @@ class CompositeStochasticRealization(StrictModule):
 
 StochasticRealization: TypeAlias = (
     WienerRealization
+    | OrnsteinUhlenbeckRealization
     | PoissonClockRealization
     | LevyProcessRealization
     | FractionalGaussianRealization
@@ -167,6 +171,7 @@ def is_stochastic_realization(value: object, /) -> bool:
         value,
         (
             WienerRealization,
+            OrnsteinUhlenbeckRealization,
             PoissonClockRealization,
             LevyProcessRealization,
             FractionalGaussianRealization,
@@ -219,8 +224,8 @@ def realization_independence_labels(
 __all__ = [
     "AtomicStochasticRealization",
     "CompositeStochasticRealization",
-    "is_stochastic_realization",
-    "realization_path_labels",
-    "realization_independence_labels",
     "StochasticRealization",
+    "is_stochastic_realization",
+    "realization_independence_labels",
+    "realization_path_labels",
 ]

@@ -13,6 +13,7 @@ from ._adaptive import (
     R3,
     RARD,
 )
+from ._attention import ResidualAttentionCollocation, ResidualAttentionPopulation
 from ._control import (
     AdaptationBudget,
     COLLOCATION_POLICY_SUPPORT,
@@ -65,6 +66,8 @@ __all__ = [
     "R3",
     "RARD",
     "RECOMMENDED_COLLOCATION_DEFAULTS",
+    "ResidualAttentionCollocation",
+    "ResidualAttentionPopulation",
     "RefreshGuard",
     "RefreshSchedule",
     "ResidualMonitor",

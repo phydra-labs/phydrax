@@ -20,12 +20,7 @@ import numpy as np
 import optax
 
 import phydrax as phx
-
-
-def _block(tree: Any, /) -> None:
-    for leaf in jax.tree_util.tree_leaves(tree):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
+from benchmarks._runtime import logical_array_bytes, measure_repeated, synchronize
 
 
 def _measure(
@@ -34,23 +29,13 @@ def _measure(
     *,
     repeats: int,
 ) -> tuple[Any, float, float]:
-    result = operation()
-    _block(result)
-    samples = []
-    for _ in range(repeats):
-        started = time.perf_counter()
-        result = operation()
-        _block(result)
-        samples.append(1e3 * (time.perf_counter() - started))
-    return result, float(np.mean(samples)), float(np.std(samples))
-
-
-def _array_bytes(tree: Any, /) -> int:
-    return sum(
-        int(leaf.nbytes)
-        for leaf in jax.tree_util.tree_leaves(tree)
-        if isinstance(leaf, jax.Array)
+    result, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
     )
+    samples = 1_000.0 * np.asarray(distribution.samples_seconds)
+    return result, float(np.mean(samples)), float(np.std(samples))
 
 
 def _parameter_count(tree: Any, /) -> int:
@@ -80,13 +65,13 @@ def _compile_and_train(
     compiled_update = eqx.filter_jit(update)
     started = time.perf_counter()
     model, optimizer_state, initial_loss = compiled_update(model, optimizer_state)
-    _block((model, optimizer_state, initial_loss))
+    synchronize((model, optimizer_state, initial_loss))
     compilation_ms = 1e3 * (time.perf_counter() - started)
     started = time.perf_counter()
     final_loss = initial_loss
     for _ in range(max(steps - 1, 0)):
         model, optimizer_state, final_loss = compiled_update(model, optimizer_state)
-    _block((model, optimizer_state, final_loss))
+    synchronize((model, optimizer_state, final_loss))
     training_ms = 1e3 * (time.perf_counter() - started)
     return (
         model,
@@ -194,7 +179,7 @@ def _sparse_recovery_benchmark(
         "outputs": result.design.output_size,
         "mean_ms": mean_ms,
         "standard_deviation_ms": standard_deviation_ms,
-        "working_set_bytes": _array_bytes((data, result)),
+        "working_set_bytes": logical_array_bytes((data, result)),
         "valid": bool(result.valid),
         "status": np.asarray(result.status).tolist(),
         "support_size": int(jnp.sum(recovered_support)),
@@ -297,7 +282,7 @@ def _matrix_free_benchmark(
         "spectrum": {
             "mean_ms": spectrum_mean_ms,
             "standard_deviation_ms": spectrum_standard_deviation_ms,
-            "working_set_bytes": _array_bytes(spectrum),
+            "working_set_bytes": logical_array_bytes(spectrum),
             "valid": bool(spectrum.valid),
             "status": int(spectrum.status),
             "maximum_exponent_error": exponent_error,
@@ -305,7 +290,7 @@ def _matrix_free_benchmark(
         "covariant_directions": {
             "mean_ms": directions_mean_ms,
             "standard_deviation_ms": directions_standard_deviation_ms,
-            "working_set_bytes": _array_bytes(directions),
+            "working_set_bytes": logical_array_bytes(directions),
             "valid": bool(directions.valid),
             "converged": bool(directions.converged),
             "maximum_backward_convergence_drift": maximum_convergence_drift,
@@ -876,6 +861,121 @@ def _stochastic_thermodynamic_benchmark(
     }
 
 
+def _learned_discrete_benchmark(
+    *,
+    repeats: int,
+    seed: int,
+    quick: bool,
+) -> dict[str, Any]:
+    cases = 8 if quick else 32
+    capacity = 6
+    layout = phx.dynamics.StateLayout((1,), component_names=("x",))
+    initial = jnp.linspace(-1.0, 1.0, cases, dtype=jnp.float64)[:, None]
+    snapshots = [initial]
+    for _ in range(capacity - 1):
+        snapshots.append(0.9 * snapshots[-1] + 0.1)
+    states = jnp.stack(tuple(snapshots), axis=1)
+    coordinates = jnp.broadcast_to(
+        jnp.arange(capacity, dtype=jnp.float64),
+        (cases, capacity),
+    )
+    data = phx.dynamics.TrajectoryData(
+        coordinates,
+        states,
+        state_layout=layout,
+        source_id="learned-discrete-benchmark",
+    )
+    model = phx.nn.models.MLP(
+        in_size=1,
+        out_size=1,
+        width_size=8 if quick else 16,
+        depth=1,
+        key=jax.random.key(seed),
+    )
+    policy = phx.dynamics.identification.DiscreteModelRolloutPolicy(
+        max_horizon=3,
+    )
+    fit = phx.dynamics.identification.fit_discrete_model(
+        model,
+        data,
+        state_layout=layout,
+        system_id="learned-affine-map",
+        step_size=1.0,
+        rollout_policy=policy,
+        objectives=(phx.dynamics.identification.SupervisedDiscreteModelObjective(),),
+        learning_rate=2e-2,
+        steps=4 if quick else 100,
+        batch_size=cases,
+        key=jax.random.key(seed + 1),
+    )
+    predicted = jax.vmap(lambda value: fit.system.evaluate(0.0, value, None))(
+        states[:, 0]
+    )
+    one_step_error = float(
+        jnp.linalg.norm(predicted - states[:, 1])
+        / jnp.maximum(jnp.linalg.norm(states[:, 1]), 1e-12)
+    )
+
+    evolution = phx.dynamics.DiscreteEvolution(fit.system)
+    whole = phx.dynamics.evolve(
+        evolution,
+        states[0, 0],
+        phx.dynamics.IterationGrid(
+            jnp.arange(5),
+            iteration_id="learned-map-whole",
+        ),
+    )
+    prefix = phx.dynamics.evolve(
+        evolution,
+        states[0, 0],
+        phx.dynamics.IterationGrid(
+            jnp.arange(3),
+            iteration_id="learned-map-prefix",
+        ),
+    )
+    suffix = phx.dynamics.evolve(
+        evolution,
+        prefix.final_state,
+        phx.dynamics.IterationGrid(
+            jnp.arange(2, 5),
+            iteration_id="learned-map-suffix",
+        ),
+    )
+    chunked = jnp.concatenate((prefix.states, suffix.states[1:]), axis=0)
+    chunk_error = float(jnp.max(jnp.abs(whole.states - chunked)))
+    _, inference_mean, inference_std = _measure(
+        lambda: phx.dynamics.evolve(
+            evolution,
+            states[0, 0],
+            phx.dynamics.IterationGrid(
+                jnp.arange(5),
+                iteration_id="learned-map-timing",
+            ),
+        ),
+        repeats=repeats,
+    )
+    finite = _finite_record(
+        fit.initial_loss,
+        fit.final_loss,
+        fit.training_seconds,
+        one_step_error,
+        chunk_error,
+        inference_mean,
+        inference_std,
+    )
+    return {
+        "initial_loss": fit.initial_loss,
+        "final_loss": fit.final_loss,
+        "training_seconds": fit.training_seconds,
+        "one_step_relative_l2": one_step_error,
+        "chunk_equivalence_max_error": chunk_error,
+        "inference_seconds_mean": inference_mean,
+        "inference_seconds_std": inference_std,
+        "completed_steps": fit.completed_steps,
+        "passed": bool(finite and chunk_error <= 1e-12),
+    }
+
+
 def run_benchmarks(
     *,
     sparse_samples: int,
@@ -892,7 +992,7 @@ def run_benchmarks(
     """Benchmark baseline and opt-in thermodynamic dynamics scenarios."""
     requested_scenarios = tuple(str(value) for value in scenarios)
     if "all" in requested_scenarios:
-        resolved_scenarios = ("baseline", "deterministic", "stochastic")
+        resolved_scenarios = ("baseline", "deterministic", "stochastic", "learned")
     elif "thermodynamic" in requested_scenarios:
         resolved_scenarios = tuple(
             dict.fromkeys(
@@ -907,12 +1007,12 @@ def run_benchmarks(
         )
     else:
         resolved_scenarios = requested_scenarios
-    valid_scenarios = {"baseline", "deterministic", "stochastic"}
+    valid_scenarios = {"baseline", "deterministic", "stochastic", "learned"}
     if not resolved_scenarios or any(
         scenario not in valid_scenarios for scenario in resolved_scenarios
     ):
         raise ValueError(
-            "scenarios must select baseline, deterministic, stochastic, "
+            "scenarios must select baseline, deterministic, stochastic, learned, "
             "thermodynamic, or all."
         )
     supported_architectures = (
@@ -975,6 +1075,14 @@ def run_benchmarks(
         result["sparse_recovery"] = sparse
         result["matrix_free_analysis"] = matrix_free
         passed = passed and sparse["passed"] and matrix_free["passed"]
+    if "learned" in resolved_scenarios:
+        learned = _learned_discrete_benchmark(
+            repeats=repeats,
+            seed=seed,
+            quick=quick,
+        )
+        result["learned_discrete_map"] = learned
+        passed = passed and learned["passed"]
     thermodynamic: dict[str, Any] = {}
     if "deterministic" in resolved_scenarios:
         deterministic = _deterministic_thermodynamic_benchmark(
@@ -1005,6 +1113,7 @@ def run_benchmarks(
             if isinstance(scenario, dict)
         )
         result["thermodynamic_dynamics"] = thermodynamic
+    configuration["scenarios"] = list(resolved_scenarios)
     result["passed"] = bool(passed)
     return result
 
@@ -1034,7 +1143,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--scenarios",
         type=_comma_values,
         default=("baseline",),
-        help="Comma-separated: baseline, deterministic, stochastic, thermodynamic, all.",
+        help=(
+            "Comma-separated: baseline, deterministic, stochastic, learned, "
+            "thermodynamic, all."
+        ),
     )
     parser.add_argument(
         "--architectures",

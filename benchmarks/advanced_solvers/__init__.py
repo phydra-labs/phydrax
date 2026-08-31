@@ -7,7 +7,7 @@
 from .adapters.base import CaseSpec, Tolerances
 from .campaign import build_cases, CampaignConfig, PRESETS
 from .compare import compare_reports, IncomparableReportsError
-from .harness import capture_environment, execute_case, run_campaign, synchronize
+from .harness import execute_case, run_campaign
 from .problems import default_problems
 from .schema import SCHEMA_VERSION, SchemaError, validate_report, validate_row
 
@@ -21,12 +21,10 @@ __all__ = [
     "SchemaError",
     "Tolerances",
     "build_cases",
-    "capture_environment",
     "compare_reports",
     "default_problems",
     "execute_case",
     "run_campaign",
-    "synchronize",
     "validate_report",
     "validate_row",
 ]

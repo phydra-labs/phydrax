@@ -42,8 +42,7 @@ from ..integration import (
     SeparableIntegrationBatch,
     WeightedSampleBatch,
 )
-from ..integration._fixed import _as_domain_function, _component_reduction_weights
-from ..integration._lowering import sum_over
+from ..integration._fixed import _target_reduction_weights
 from ..sampling.collocation._adaptive import AbstractCollocationPolicy
 from ._data_metrics import supervised_data_metrics
 from ._integrated import (
@@ -172,80 +171,6 @@ class _QuadraticResidualData(NamedTuple):
     residuals: tuple[cx.Field, ...]
     coefficients: tuple[cx.Field, ...]
     loss: Array
-
-
-def _target_reduction_weights(
-    target: ComponentTarget | DensityTarget,
-    batch: PointIntegrationBatch
-    | SeparableIntegrationBatch
-    | tuple[PointIntegrationBatch | SeparableIntegrationBatch, ...],
-    /,
-    *,
-    key: Key[Array, ""],
-    kwargs: dict[str, Any],
-) -> cx.Field | tuple[cx.Field, ...]:
-    base = target.base if isinstance(target, DensityTarget) else target
-    if not isinstance(base, ComponentTarget):
-        raise TypeError(
-            "Quadratic residual data requires a component integration target."
-        )
-    weights = _component_reduction_weights(
-        base,
-        batch,
-        key=key,
-        kwargs=kwargs,
-    )
-    if not isinstance(target, DensityTarget):
-        return weights
-
-    if isinstance(base.component, ComponentSum):
-        if not isinstance(batch, tuple) or not isinstance(weights, tuple):
-            raise RuntimeError("Component-sum integration data must be tuples.")
-        components = base.component.terms
-        batches = batch
-        base_weights = weights
-        keys = tuple(jr.split(key, len(components)))
-    else:
-        if isinstance(batch, tuple) or isinstance(weights, tuple):
-            raise RuntimeError("Single-component integration data must not be tuples.")
-        components = (base.component,)
-        batches = (batch,)
-        base_weights = (weights,)
-        keys = (key,)
-
-    density_weights: list[cx.Field] = []
-    for component, term_batch, base_weight, term_key in zip(
-        components, batches, base_weights, keys, strict=True
-    ):
-        log_density = _as_domain_function(target.log_density, component)(
-            term_batch.points,
-            key=term_key,
-            **kwargs,
-        )
-        if not isinstance(log_density, cx.Field):
-            raise TypeError("Integration log density must return a coordax.Field.")
-        log_data = jnp.asarray(log_density.data)
-        if jnp.iscomplexobj(log_data):
-            raise TypeError("Integration log density must be real.")
-        density_weights.append(
-            base_weight * cx.Field(jnp.exp(log_data), dims=log_density.dims)
-        )
-
-    if target.normalized:
-        denominators: list[cx.Field] = []
-        for coefficient, term_batch in zip(density_weights, batches, strict=True):
-            denominator = coefficient
-            for axis in term_batch.axes:
-                denominator = sum_over(denominator, axis)
-            denominators.append(denominator)
-        normalization = denominators[0]
-        for denominator in denominators[1:]:
-            normalization = normalization + denominator
-        density_weights = [coefficient / normalization for coefficient in density_weights]
-
-    if isinstance(base.component, ComponentSum):
-        return tuple(density_weights)
-    return density_weights[0]
 
 
 def _checked_quadratic_coefficient(coefficient: cx.Field, /) -> cx.Field:

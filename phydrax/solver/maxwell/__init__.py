@@ -104,6 +104,7 @@ from .._maxwell_unstructured import (
     TetrahedralMaxwellQuality,
     UnstructuredMaxwellPlan,
 )
+from . import fourier_modal
 
 
 __all__ = [
@@ -124,6 +125,7 @@ __all__ = [
     "DFTObserverState",
     "DiagonalMaxwellConstitutivePlan",
     "DirectionalDerivativeReport",
+    "fourier_modal",
     "DispersiveMaxwellState",
     "FieldProbePlan",
     "FrequencyMaxwellAdjointResult",

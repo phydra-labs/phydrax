@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 
 import coordax as cx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -27,13 +27,13 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _timed(operation, ready, repeats):
-    result = operation()
-    jax.block_until_ready(ready(result))
-    started = time.perf_counter()
-    for _ in range(repeats):
-        result = operation()
-        jax.block_until_ready(ready(result))
-    return result, 1e3 * (time.perf_counter() - started) / repeats
+    result, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
+        synchronizer=lambda value: jax.block_until_ready(ready(value)),
+    )
+    return result, 1_000.0 * float(distribution.mean_seconds)
 
 
 def _spatial_density_record(size: int, repeats: int):

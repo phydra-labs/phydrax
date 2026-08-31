@@ -22,6 +22,7 @@ from ._boundary import (
     FiniteVolumeBoundarySet,
     PrescribedNormalFluxBoundary,
 )
+from ._closure import ConservativeFaceClosurePlan
 from ._entropy import (
     _evaluate_finite_volume_entropy_diagnostics,
     FiniteVolumeEntropyDiagnostics,
@@ -107,6 +108,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
     positivity: ConvexStateLimiterPlan | None
     wave_limiter: WaveFamilyLimiterPlan | None
     viscous: ViscousFluxPlan | None
+    closure: ConservativeFaceClosurePlan | None
     differentiability: DifferentiabilityPolicy = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
@@ -123,6 +125,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         positivity: ConvexStateLimiterPlan | None = None,
         wave_limiter: WaveFamilyLimiterPlan | None = None,
         viscous: ViscousFluxPlan | None = None,
+        closure: ConservativeFaceClosurePlan | None = None,
         differentiability: DifferentiabilityPolicy = "branchwise",
     ):
         if not isinstance(
@@ -154,6 +157,8 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             )
         if viscous is not None and not isinstance(viscous, ViscousFluxPlan):
             raise TypeError("viscous must be ViscousFluxPlan or None.")
+        if closure is not None and not isinstance(closure, ConservativeFaceClosurePlan):
+            raise TypeError("closure must be ConservativeFaceClosurePlan or None.")
         if differentiability not in (
             "smooth_discrete",
             "branchwise",
@@ -172,6 +177,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         self.positivity = positivity
         self.wave_limiter = wave_limiter
         self.viscous = viscous
+        self.closure = closure
         self.differentiability = differentiability
         self.method_id = canonical_fingerprint(
             {
@@ -181,6 +187,7 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
                 "positivity": None if positivity is None else positivity.limiter_id,
                 "wave_limiter": None if wave_limiter is None else wave_limiter.limiter_id,
                 "viscous": None if viscous is None else viscous.plan_id,
+                "closure": None if closure is None else closure.closure_id,
                 "differentiability": differentiability,
             }
         )
@@ -524,13 +531,27 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     axis,
                     args,
                 )
+            normal_flux = result.normal_flux
+            if self.method.closure is not None:
+                if isinstance(self.discretization, MappedFiniteVolumeDiscretization):
+                    raise ValueError(
+                        "Face closures are unsupported on mapped finite volumes."
+                    )
+                normal_flux = self.method.closure.apply(
+                    self.system,
+                    self.precision.flux(left),
+                    self.precision.flux(right),
+                    normal_flux,
+                    axis,
+                    args,
+                )
             fluxes.append(
                 self.precision.flux(
                     self._override_boundary_flux(
                         time,
                         value,
                         axis,
-                        result.normal_flux,
+                        normal_flux,
                         args,
                     )
                 )
@@ -827,8 +848,7 @@ class PreparedFiniteVolumeDynamics(StrictModule):
                     )
                 )
                 boundary_chunks_list.append(
-                    upper * upper_measure[..., None]
-                    - lower * lower_measure[..., None]
+                    upper * upper_measure[..., None] - lower * lower_measure[..., None]
                 )
             boundary_chunks = tuple(boundary_chunks_list)
             boundary_flux = (

@@ -117,6 +117,12 @@ not couple a continuation policy to either abstraction.
 sharp, fixed-width blend, and width-annealed training while evaluating all terminal
 scientific metrics on the sharp geometry.
 
+### Superquadrics
+
+::: phydrax.geometry.Superquadric
+
+`Superquadric` exposes analytic volume, principal inertia moments, support points, normals, and contact curvature for smooth convex three-dimensional shapes. The DEM-specific prepared set and pair oracle are documented in the particle API.
+
 ## Simplicial geometry
 
 `TriangleMesh` and `SegmentMesh` own canonical validated arrays and topology.

@@ -102,7 +102,7 @@ def test_cundall_strack_history_advances_and_respects_coulomb_limit():
     assert detail.successful
     assert (
         jnp.linalg.norm(
-            detail.candidate_state.particle_history.tangential_displacement[0]
+            detail.candidate_state.particle_history.tangential.displacement[0]
         )
         > 0.0
     )
@@ -200,8 +200,8 @@ def test_periodic_dense_and_cell_contacts_have_identical_force_and_history():
         atol=1.0e-12,
     )
     assert jnp.allclose(
-        dense_step.candidate_state.particle_history.tangential_displacement,
-        cell_step.candidate_state.particle_history.tangential_displacement,
+        dense_step.candidate_state.particle_history.tangential.displacement,
+        cell_step.candidate_state.particle_history.tangential.displacement,
         rtol=1.0e-12,
         atol=1.0e-12,
     )

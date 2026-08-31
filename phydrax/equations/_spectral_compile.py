@@ -936,7 +936,11 @@ def _linear_symbol(
         else:
             axis = axes[expression.axis]
         prepared = discretization.axes[axis]
-        if prepared.family != "fourier" and expression.order % 2:
+        if (
+            prepared.derivative_matrix is not None
+            or prepared.family not in ("fourier", "sine", "cosine")
+            or (prepared.family != "fourier" and expression.order % 2)
+        ):
             return None
         multiplier = prepared.derivative_multiplier(expression.order)
         shape = [1] * len(discretization.modal_shape)
@@ -951,6 +955,13 @@ def _linear_symbol(
             return None
         symbol = zero
         for axis in coordinate_axes[expression.coordinate]:
+            prepared = discretization.axes[axis]
+            if prepared.derivative_matrix is not None or prepared.family not in (
+                "fourier",
+                "sine",
+                "cosine",
+            ):
+                return None
             multiplier = discretization.axes[axis].derivative_multiplier(2)
             shape = [1] * len(discretization.modal_shape)
             shape[axis] = multiplier.size
@@ -987,13 +998,16 @@ def _coordinate_axes(
                     f"PDE coordinate {coordinate.name!r} periodicity does not match "
                     f"spectral basis {prepared.family!r}."
                 )
-            if coordinate.bounds is not None and not jnp.allclose(
-                jnp.asarray(coordinate.bounds), prepared.bounds
-            ):
-                raise ValueError(
-                    f"PDE coordinate {coordinate.name!r} bounds do not match "
-                    "the spectral basis."
-                )
+            if coordinate.bounds is not None:
+                actual_bounds = prepared.bounds
+                if actual_bounds is None or not jnp.allclose(
+                    jnp.asarray(coordinate.bounds),
+                    actual_bounds,
+                ):
+                    raise ValueError(
+                        f"PDE coordinate {coordinate.name!r} bounds do not match "
+                        "the spectral axis domain."
+                    )
         output.append((coordinate.name, axes))
         offset += coordinate.size
     return temporal[0].name, tuple(output)

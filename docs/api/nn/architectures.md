@@ -1326,7 +1326,42 @@ promotion still requires benchmark evidence.
 
 `CNO` uses oversampled nonlinearities and band-limited resampling to prevent
 ordinary CNN aliasing. `UNO` adds a U-shaped multiresolution topology over the
-same representation-aware blocks. `SFNO` consumes a prepared
+same representation-aware blocks. Both are periodic-Fourier operators on
+coincident endpoint-exclusive uniform tensor axes. Every source and query axis
+must be periodic, have finite distinct uniform nodes, and declare a `"uniform"`
+or `"fourier"` basis. Tuple calls construct the same periodic axes. Bounded,
+mixed-periodic, sine/cosine-basis, and nonuniform grids are rejected rather than
+silently passed through a periodic FFT.
+
+Periodic coordinate embedding uses `sin(2πi/N)` and `cos(2πi/N)` per axis, so
+the first and last sites remain circular neighbors without the seam introduced
+by a linear coordinate ramp. Local CNO convolutions circularly extend measured
+values and observed measure before a valid convolution; masks, quadrature, and
+values therefore wrap together. This latent extension is not physical
+Dirichlet, Neumann, or Robin enforcement. Physical boundary values belong to
+boundary lifts, prepared boundary runtimes, and output constraints.
+
+Every CNO convolution consumes source observation masks and non-negative
+physical quadrature through `MeasureNormalizedConvND`. The learned signed
+kernel appears only in the numerator; a separate all-ones stencil measures
+observed support. Uniform full support is exactly periodic ordinary
+convolution, while missing sensors are renormalized without treating a learned
+signed denominator as physical measure. Invalid query nodes are restored to
+zero after every block.
+`OperatorBatch` CNO calls require explicit physical source quadrature. Tuple
+calls have no mask or quadrature channel and therefore mean all-valid equal
+measure; the constant physical cell scale cancels from normalized convolution.
+UNO does not consume masks and rejects a masked source or query.
+
+
+`operator_dependency_support(model, axes)` reports instance-authoritative
+pointwise, finite, global, or unknown support. A CNO with oversampling disabled
+has finite directional convolution reach until it saturates the periodic axis;
+oversampled CNO, UNO, and FNO are global because Fourier resampling or spectral
+mixing couples the complete axis. Support composition is explicit and does not
+claim a graph-level causality proof.
+
+`SFNO` consumes a prepared
 `phydrax.discretization.SphericalSpectralDiscretization`, shares one channel map
 across every order of a spherical-harmonic degree, and is not a planar FFT over
 an equirectangular image. The discretization fixes bandlimit, exact sampling
@@ -1335,14 +1370,11 @@ and execution provenance. Current SFNO models require real spin-zero fields,
 exact plan nodes and quadrature, and all-valid samples; they do not claim
 arbitrary spherical grids or resolution transfer.
 
-Every CNO convolution consumes source observation masks and non-negative physical
-quadrature through `MeasureNormalizedConvND`. The learned signed kernel appears
-only in the numerator; a separate all-ones stencil measures observed support.
-Uniform full support is therefore exactly the ordinary convolution path, while
-missing sensors are renormalized without treating a learned signed denominator
-as physical measure. Invalid query nodes are restored to zero after every block.
-Geometry masks and quadrature are distinct inputs and are never inferred from
-zero-valued observations.
+::: phydrax.nn.operator.AxisDependencyReach
+
+::: phydrax.nn.operator.OperatorDependencySupport
+
+::: phydrax.nn.operator.operator_dependency_support
 
 ::: phydrax.nn.operator.architectures.CNO
     options:
@@ -2311,14 +2343,16 @@ Three comparison modes are available:
 - **capacity matched** selects the closest architecture-specific size only when
   the target lies in the common feasible parameter range;
 - **compute matched** compiles a normalized loss-and-gradient step and matches
-  measured JAX/XLA FLOPs while recording accessed bytes;
+  compiler-reported JAX/XLA FLOPs while recording compiler-reported accessed bytes;
 - **Pareto** sweeps every requested size scale and reports validation error,
-  worst shifted error, training FLOPs, inference latency, backend peak memory,
-  and parameter count.
+  worst shifted error, training FLOPs, synchronized steady inference latency,
+  compiler-estimated executable memory, and parameter count.
 
-An unmeasurable objective remains `None`; the corresponding Pareto point is
-incomplete and has no dominance label. In particular, CPU runs do not pretend
-to provide accelerator peak-memory measurements.
+Every evaluation records lowering, compilation, first execution, and every steady
+inference sample separately. Compiler memory is the explicit argument + output +
+temporary estimate for that executable; it is not the process allocator high-water mark.
+An unavailable compiler objective remains `None`, making the Pareto point incomplete
+with no dominance label.
 
 Every learning-rate/seed/size trial persists its full training curve, periodic
 validation curve, best checkpoint, optimizer state, PRNG key, elapsed time, and
@@ -2390,12 +2424,13 @@ and nearest held-out realization distance 0.677.
 | `LocalIntegralOperator` | 2,641 | 0.2 | 0.9955 | 0.9960 | 0.9955 | 0.9973 | 0.9974 |
 
 Neither learned model beats the constant reference materially, and neither
-converges for all five seeds. No candidate is promoted. Peak device memory is
-unavailable on the CPU backend, so every Pareto point is explicitly incomplete
-and no dominance label is emitted. POD-ROM is structurally inapplicable because
-the evaluation changes query geometry; requested architectures that are absent
-from every selected scenario now fail before training instead of disappearing
-from the report.
+converges for all five seeds. No candidate is promoted. These historical artifacts
+predate explicit lowering/compilation/first-execution separation and recorded the
+process-level peak-memory field as unavailable on CPU. They remain historical
+diagnostics rather than inputs to the current promotion contract. POD-ROM is
+structurally inapplicable because the evaluation changes query geometry; requested
+architectures that are absent from every selected scenario now fail before training
+instead of disappearing from the report.
 
 
 A separate five-seed `DeepONet` run applies 20% mask-aware sensor dropout to

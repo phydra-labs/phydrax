@@ -729,6 +729,14 @@ The sparse mode consumes a prepared `StructuredNonlinearProgram`, retains one
 bound-form slack per non-equality constraint component, and reuses one KKT
 factorization across affine predictor and centering-corrector right-hand sides.
 
+`MethodOfMovingAsymptotes` targets a different regime: a very large bounded
+design vector and relatively few smooth inequalities. It requires finite
+positive-width bounds and a feasible initial point, keeps the separable
+subproblem matrix-free in design dimension, and solves only the small
+constraint dual. Equality constraints are rejected. Final success is based on
+the original objective and constraints through an active-KKT certificate, not
+on convergence of the convex approximation alone.
+
 `prepare_constrained_model` remains the canonical dense equality/lower/upper
 model. `SQP(hessian_update=...)` supports damped BFGS, SR1, and exact Lagrangian
 Hessians. `FilterGlobalization` owns fixed-capacity objective-feasibility filter
@@ -893,13 +901,18 @@ the barrier route differentiates positive slack-multiplier complementarity.
 
 ### State/design optimization
 
-`StateDesignProblem` keeps the state equation, design objective, and design bounds
-separate. `ReducedAdjoint` solves the state to convergence for each accepted design,
-computes the reduced gradient with one transpose linear solve, and uses the bound solver
-contract for the outer step. `SimultaneousKKT` instead solves the coupled state,
-adjoint, and stationarity system. Both return `StateDesignResult`, retaining state and
-design separately plus state-residual, optimality, feasibility, and linear-solve
-diagnostics. No method silently differentiates through an unconverged state solve.
+`StateDesignProblem` keeps the state equation, design objective, design bounds,
+and optional `StateDesignConstraint` values separate. `ReducedAdjoint` solves the
+state to convergence for each accepted unconstrained design, computes the reduced
+gradient with one transpose linear solve, and uses the bound solver contract for
+the outer step. `ReducedMMA` adds inequality constraints: it reuses the state
+linearization, computes one objective adjoint and only the adjoints required by
+state-dependent constraints, and shrinks its move limit when a candidate state
+solve fails. `SimultaneousKKT` instead solves the unconstrained coupled state,
+adjoint, and stationarity system. Every method returns `StateDesignResult`,
+retaining state and design separately plus state-residual, optimality,
+feasibility, and linear-solve diagnostics. No method silently differentiates
+through an unconverged state solve or ignores unsupported constraints.
 
 ### Stochastic objectives and decomposition
 
@@ -1190,6 +1203,18 @@ single-process measurements, not backend-independent performance claims.
 ::: phydrax.optim.PrimalDualInteriorPoint
 
 ---
+::: phydrax.optim.MethodOfMovingAsymptotes
+
+---
+
+::: phydrax.optim.MMAPolicy
+
+---
+
+::: phydrax.optim.MMAEvidence
+
+---
+
 
 ::: phydrax.optim.implicit_minimize
 
@@ -1206,6 +1231,14 @@ single-process measurements, not backend-independent performance claims.
 ::: phydrax.optim.StateDesignProblem
 
 ---
+::: phydrax.optim.StateDesignConstraint
+
+---
+
+::: phydrax.optim.ReducedMMA
+
+---
+
 
 ::: phydrax.optim.StochasticProblem
 
@@ -1673,10 +1706,13 @@ identities. Peer runners reject runtime-identity, revision, and
 initial-fingerprint mismatches before comparison.
 `best_nonlinear_campaigns.py` writes ordinary flat JSON rows. Backend outcomes
 and independent mathematical certificates remain separate; unavailable
-evidence uses `null` rather than non-finite sentinels, and cold, warmup, and
-repeated steady timing remain distinct. Performance profiles are formed per
-family and compatible work unit. Global rows certify a known global target gap
-rather than relabeling local stationarity as global evidence.
+evidence uses `null` rather than non-finite sentinels, and lowering, compilation,
+first execution, warmup, and every repeated steady sample remain distinct where
+the backend exposes those phases. Performance comparisons require identical runtime
+fingerprints and combine a declared practical threshold with uncertainty over raw
+samples. Performance profiles are formed per family and compatible work unit. Global
+rows certify a known global target gap rather than relabeling local stationarity as
+global evidence.
 
 ## External optimizer compatibility
 

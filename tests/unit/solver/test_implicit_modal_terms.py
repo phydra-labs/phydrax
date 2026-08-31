@@ -20,9 +20,7 @@ class _HeatModeModel(eqx.Module):
             jnp.where(mode == -1.0, 0.5j, 0.0j),
         )
         wave_number = 2.0 * jnp.pi * mode
-        return self.scale * amplitude * jnp.exp(
-            -self.diffusivity * wave_number**2 * time
-        )
+        return self.scale * amplitude * jnp.exp(-self.diffusivity * wave_number**2 * time)
 
 
 def _compiled_heat(count=4, diffusivity=0.05):
@@ -50,7 +48,7 @@ def _compiled_heat(count=4, diffusivity=0.05):
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
     compiled = phx.equations.compile_semidiscrete_pde(
         problem,
         space,

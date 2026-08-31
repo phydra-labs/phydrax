@@ -257,6 +257,38 @@
 
 ---
 
+::: phydrax.discretization.fem.FiniteElementHPEpoch
+
+---
+
+::: phydrax.discretization.fem.FiniteElementHPInterfacePlan
+
+---
+
+::: phydrax.discretization.fem.FiniteElementHPDecision
+
+---
+
+::: phydrax.discretization.fem.FiniteElementHPCondensationPlan
+
+---
+
+::: phydrax.discretization.fem.FiniteElementHPMultigridPlan
+
+---
+
+::: phydrax.discretization.fem.FiniteElementHPPartitionPlan
+
+---
+
+::: phydrax.equations.fem.DGSEMMortarCompatibilityCertificate
+
+---
+
+::: phydrax.equations.fem.certify_dgsem_mortar_compatibility
+
+---
+
 ::: phydrax.discretization.fem.FiniteElementPartitionWorksetPlan
 
 ---

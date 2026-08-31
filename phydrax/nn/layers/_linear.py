@@ -178,9 +178,9 @@ class Linear(_AbstractBaseModel):
                 x_flat = x_arr.reshape(leading_shape + (1,))
 
         if isinstance(self.weight, LowRankUpdate):
-            if self.weight_transform is not None or self.random_weight_factorization:
+            if self.weight_transform is not None:
                 raise ValueError(
-                    "Low-rank weights are incompatible with weight transforms and RWF."
+                    "Low-rank weights are incompatible with weight transforms."
                 )
             x_flat = self.weight.apply(x_flat)
         else:
@@ -193,9 +193,8 @@ class Linear(_AbstractBaseModel):
             # Support both vector input (in,) and batched input (..., in).
             # Weight is shaped (out, in); contract over the last dim of x.
             x_flat = contract("oi,...i->...o", w, x_flat)
-            if self.random_weight_factorization and self.rwf_log_scales is not None:
-                # Equivalent to (diag(exp(s)) @ (weight @ x)) = exp(s) * (weight @ x)
-                x_flat = jnp.exp(self.rwf_log_scales) * x_flat
+        if self.random_weight_factorization and self.rwf_log_scales is not None:
+            x_flat = jnp.exp(self.rwf_log_scales) * x_flat
         if self.bias is not None:
             x_flat = x_flat + self.bias
 

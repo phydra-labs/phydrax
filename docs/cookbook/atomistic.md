@@ -5,7 +5,7 @@ assumes units from array shape. The archive must contain nuclear charges,
 coordinates, molecular energies, and Cartesian forces under one of the field
 names accepted by `load_rmd17_npz`.
 
-```python
+```text
 from pathlib import Path
 
 import jax.random as jr
@@ -37,7 +37,7 @@ acceptance boundary, not a hint: a batch whose padded atom capacity exceeds it
 is rejected. The neighbor limit is also fail-closed and is never implemented by
 truncation.
 
-```python
+```text
 atom_capacity = train_batch.atom_capacity
 potential = phx.nn.atomistic.PaiNNPotential(
     scale,
@@ -54,7 +54,7 @@ potential = phx.nn.atomistic.PaiNNPotential(
 To use degree-zero-through-two Cartesian NequIP without changing the graph,
 prediction, training, or result path, replace only the model construction:
 
-```python
+```text
 potential = phx.nn.atomistic.NequIPPotential(
     scale,
     cutoff=5.0,
@@ -77,7 +77,7 @@ Construct a typed joint problem. The default fitted scales use only training
 energy and forces. The validation values are used for model selection, not
 normalization.
 
-```python
+```text
 problem = phx.atomistic.AtomisticTrainingProblem(
     train_batch,
     training_energy=train_energy,
@@ -110,7 +110,7 @@ At least one available target kind must have positive weight.
 
 Evaluate the test split through the conservative prediction surface:
 
-```python
+```text
 prediction = phx.atomistic.energy_and_forces(selected, test_batch)
 if not bool(prediction.valid.all()):
     raise RuntimeError("Test prediction failed neighborhood or finite checks")
@@ -129,7 +129,7 @@ dynamics stability from this finite nonperiodic workflow.
 To continue the exact optimizer and selection state to a higher total step
 ceiling:
 
-```python
+```text
 continued_policy = phx.atomistic.AtomisticTrainingPolicy(
     maximum_steps=1_000,
     learning_rate=1e-3,

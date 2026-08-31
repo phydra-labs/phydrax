@@ -50,6 +50,44 @@ from ._operators import (
 from ._worksets import WorksetProgram
 
 
+def execute_finite_element_mortar_flux(
+    workset,
+    owner_trace: ArrayLike,
+    neighbour_trace: ArrayLike,
+    kernel,
+    context: FiniteElementExecutionContext,
+    /,
+) -> tuple[Array, Array]:
+    """Evaluate one asymmetric mortar flux and return conservative side lifts."""
+
+    mortar = workset.mortar
+    metric = workset.mortar_metric
+    if mortar is None or metric is None:
+        raise ValueError("Mortar execution requires reference and metric data.")
+    owner = mortar.interpolate_left(owner_trace)
+    neighbour = mortar.interpolate_right(neighbour_trace)
+    normal_scale = jnp.linalg.norm(metric.owner_scaled_normals, axis=-1)
+    normal = metric.owner_scaled_normals / normal_scale[:, None]
+    result = kernel(
+        owner,
+        neighbour,
+        metric.physical_coordinates,
+        metric.physical_weights,
+        normal,
+        context,
+    )
+    if isinstance(result, tuple):
+        owner_flux, neighbour_flux = result
+        weights = metric.physical_weights.reshape(
+            metric.physical_weights.shape + (1,) * (jnp.asarray(owner_flux).ndim - 1)
+        )
+        return (
+            mortar.pullback_left_raw(weights * owner_flux),
+            mortar.pullback_right_raw(weights * neighbour_flux),
+        )
+    return mortar.conservative_flux_contributions(result, metric)
+
+
 def _coefficient_values(
     coefficient_: FiniteElementCoefficient,
     points: Array,
@@ -410,6 +448,31 @@ def _workset_domain(
     )
 
 
+def _mortar_facet_residual(
+    state: Array,
+    action: InteriorFacetAction,
+    workset,
+    context: FiniteElementExecutionContext,
+    /,
+) -> Array:
+    if workset.entity_indices.shape[0] != 1:
+        raise ValueError("Each compiled mortar workset currently owns one patch.")
+    owner_routes = dict(workset.gathers)[action.field_name][0]
+    neighbour_routes = dict(workset.neighbour_gathers)[action.field_name][0]
+    owner_trace = state[owner_routes]
+    neighbour_trace = state[neighbour_routes]
+    owner_lift, neighbour_lift = execute_finite_element_mortar_flux(
+        workset,
+        owner_trace,
+        neighbour_trace,
+        action.kernel,
+        context,
+    )
+    result = jnp.zeros_like(state)
+    result = result.at[owner_routes].add(owner_lift)
+    return result.at[neighbour_routes].add(neighbour_lift)
+
+
 def _full_residual(
     form: FiniteElementForm,
     discretization: FiniteElementDiscretization,
@@ -514,9 +577,15 @@ def _full_residual(
                 )
                 continue
             if isinstance(action, InteriorFacetAction):
-                residual_by_field[output_field] = (
-                    output_residual
-                    + _interior_facet_residual(
+                facet_residual = (
+                    _mortar_facet_residual(
+                        output_state,
+                        action,
+                        workset,
+                        context,
+                    )
+                    if workset.mortar is not None
+                    else _interior_facet_residual(
                         discretization,
                         output_field_index,
                         output_state,
@@ -527,6 +596,7 @@ def _full_residual(
                         accumulation,
                     )
                 )
+                residual_by_field[output_field] = output_residual + facet_residual
                 continue
             rule = _action_rule(action, block.name, block.cell_kind)
             rule_data = _reference_rule_data(rule)

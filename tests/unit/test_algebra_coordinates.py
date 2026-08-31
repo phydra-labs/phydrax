@@ -41,7 +41,7 @@ def test_hermitian_spectral_coordinates_implement_shared_map_without_id_change()
     space = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(8),),
         axis_names=("x",),
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
     coordinates = phx.discretization.HermitianSpectralCoordinates(space)
     state = space.project(jnp.sin(2.0 * jnp.pi * space.axes[0].nodes))
     real = coordinates.to_real_coordinates(state)
@@ -51,7 +51,7 @@ def test_hermitian_spectral_coordinates_implement_shared_map_without_id_change()
     assert coordinates.evidence.norm_relation == "isometry"
     assert (
         coordinates.coordinate_id
-        == "640385aa11eec59bde842286dc5f73423b831c33f72b86201e223d6bf9d0d7b3"
+        == "804eac8f734f64684aab741bd2ed155c539dc9e3d2275f09ea59de6b1edf70ab"
     )
     assert jnp.allclose(coordinates.from_real_coordinates(real), state, atol=1e-12)
 

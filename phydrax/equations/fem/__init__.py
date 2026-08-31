@@ -4,10 +4,15 @@
 
 from ._conservation import (
     certify_dgsem_flux_compatibility,
+    certify_dgsem_mortar_compatibility,
+    dgsem_mortar_flux_ledger,
     DGSEMConservationDiagnostics,
     DGSEMConservationMethodPlan,
     DGSEMFaceFluxes,
     DGSEMFluxCompatibilityCertificate,
+    DGSEMMortarCompatibilityCertificate,
+    DGSEMMortarFluxLedger,
+    DGSEMNonconformingMortarPlan,
     DGSEMPreparationReport,
     DGSEMStableStepEvidence,
     PreparedDGSEMConservationDynamics,
@@ -91,10 +96,15 @@ from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 __all__ = [
     "certify_dgsem_flux_compatibility",
+    "certify_dgsem_mortar_compatibility",
     "DGSEMConservationDiagnostics",
+    "dgsem_mortar_flux_ledger",
     "DGSEMConservationMethodPlan",
     "DGSEMFaceFluxes",
     "DGSEMFluxCompatibilityCertificate",
+    "DGSEMMortarCompatibilityCertificate",
+    "DGSEMMortarFluxLedger",
+    "DGSEMNonconformingMortarPlan",
     "DGSEMPreparationReport",
     "DGSEMStableStepEvidence",
     "PreparedDGSEMConservationDynamics",

@@ -16,8 +16,15 @@ internal steps.
 | Slow/fast partition | `PartitionedDifferentialProblem` | Native fixed-ratio partitioned RK |
 | SDE | `DifferentialProblem` plus `WienerTerm` | Diffrax |
 | Manifold ODE/SDE | `DifferentialProblem` plus state geometry | Phydrax Diffrax solvers |
+| Neural field manifold | `NeuralGalerkinProblem` lowered to a parameter `DifferentialProblem` | Diffrax with fixed field metric |
 
 Phydrax never inverts a mass matrix or discards an additive split implicitly.
+
+Neural Galerkin accepts the ordinary deterministic Diffrax catalog after lowering
+selected model leaves to one parameter vector. Its integration realization and
+evaluation key remain fixed for the complete solve so embedded error estimates see
+one deterministic vector field. Saved-node audits, not hidden RK stages, retain the
+tangent linear status and projection defect.
 Unsupported problem/method/controller combinations fail before numerical execution.
 
 ## Method catalog
@@ -131,3 +138,35 @@ Ito- or Stratonovich-marked solver because both interpretations coincide.
 solver/controller/adjoint/event configuration identity, backend, equation form,
 adaptivity, dense-output choice, and step capacity. Runtime parameter values remain
 ordinary JAX leaves rather than being folded into static identities.
+
+## Particle conversion and reactive scheduling
+
+::: phydrax.solver.ParticleConversionBackend
+
+---
+
+::: phydrax.solver.ParticleConversionSolverPlan
+
+---
+
+::: phydrax.solver.advance_particle_conversion
+
+---
+
+::: phydrax.solver.HybridEventPlan
+
+---
+
+::: phydrax.solver.localize_hybrid_event
+
+---
+
+::: phydrax.solver.ParticleConversionSensitivityPolicy
+
+---
+
+::: phydrax.solver.ReactiveParticleCouplingSchedulePlan
+
+---
+
+::: phydrax.solver.advance_reactive_cfd_dem_window

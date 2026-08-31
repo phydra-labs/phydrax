@@ -177,25 +177,25 @@ class CompatibleIdealMHDInductionDynamics(StrictModule):
     """Constrained magnetic induction B'=-dE with caller-supplied ideal Ohm field."""
 
     bridge: StructuredCochainBridge
-    electric_field: Any
+    electromotive_circulation: Any
     dynamics_id: str = eqx.field(static=True)
 
-    def __init__(self, bridge: StructuredCochainBridge, electric_field, /):
+    def __init__(self, bridge: StructuredCochainBridge, electromotive_circulation, /):
         if (
             not isinstance(bridge, StructuredCochainBridge)
             or bridge.dimension != 3
-            or not callable(electric_field)
+            or not callable(electromotive_circulation)
         ):
             raise ValueError(
                 "Compatible ideal-MHD induction requires a 3D bridge and electric field."
             )
         self.bridge = bridge
-        self.electric_field = electric_field
+        self.electromotive_circulation = electromotive_circulation
         self.dynamics_id = canonical_fingerprint(
             {
                 "kind": "compatible-ideal-mhd-induction",
                 "bridge": bridge.bridge_id,
-                "electric_field": repr(electric_field),
+                "electric_field": repr(electromotive_circulation),
             }
         )
 
@@ -211,7 +211,7 @@ class CompatibleIdealMHDInductionDynamics(StrictModule):
         state: CompatibleIdealMHDState,
         args: Any = None,
     ) -> CompatibleIdealMHDState:
-        electric = jnp.asarray(self.electric_field(time, state.magnetic, args))
+        electric = jnp.asarray(self.electromotive_circulation(time, state.magnetic, args))
         if electric.shape != (self.bridge.cochain.cell_counts[1],):
             raise ValueError("Ideal Ohm electric field must be a degree-one cochain.")
         return self.pack(-self.bridge.exterior_derivative(1, electric))

@@ -38,7 +38,9 @@ def test_structured_finite_volume_has_exact_cell_and_face_geometry():
     np.testing.assert_allclose(discretization.face_measures[1], 1.0 / 4.0)
     np.testing.assert_allclose(jnp.sum(discretization.cell_volumes), 1.0)
     assert discretization.cell_space.representation == "cell_average"
-    assert all(space.representation == "flux_moment" for space in discretization.face_spaces)
+    assert all(
+        space.representation == "flux_moment" for space in discretization.face_spaces
+    )
 
 
 def test_periodic_faces_are_unique_and_one_dimensional_measure_is_one():
@@ -55,14 +57,17 @@ def test_interval_quadrature_weights_define_nonuniform_cell_edges():
         nodes=jnp.asarray([0.1, 0.45, 0.85]),
         quad_weights=jnp.asarray([0.2, 0.5, 0.3]),
         basis="uniform",
-        periodic=False,
+        domain=phx.discretization.AxisDomain.interval(0.0, 1.0),
         primary_entity="interval",
-        bounds=jnp.asarray([0.0, 1.0]),
+        lower_endpoint_included=False,
+        upper_endpoint_included=False,
     )
     grid = phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()
 
-    np.testing.assert_allclose(grid.structured_axes[0].point_coordinates, [0.0, 0.2, 0.7, 1.0])
+    np.testing.assert_allclose(
+        grid.structured_axes[0].point_coordinates, [0.0, 0.2, 0.7, 1.0]
+    )
     np.testing.assert_allclose(discretization.cell_volumes, [0.2, 0.5, 0.3])
     np.testing.assert_allclose(discretization.cell_centers[:, 0], [0.1, 0.45, 0.85])
 
@@ -72,9 +77,10 @@ def test_nonuniform_cell_axis_rejects_inconsistent_centers():
         nodes=jnp.asarray([0.1, 0.4]),
         quad_weights=jnp.asarray([0.2, 0.8]),
         basis="uniform",
-        periodic=False,
+        domain=phx.discretization.AxisDomain.interval(0.0, 1.0),
         primary_entity="interval",
-        bounds=jnp.asarray([0.0, 1.0]),
+        lower_endpoint_included=False,
+        upper_endpoint_included=False,
     )
     with pytest.raises(ValueError, match="cell centers"):
         phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
@@ -88,6 +94,4 @@ def test_finite_volume_rejects_point_primary_support_and_duplicate_components():
         phx.discretization.FiniteVolumePlan(point_grid)
 
     with pytest.raises(ValueError, match="component_names"):
-        phx.discretization.FiniteVolumePlan(
-            _cell_grid((4,)), component_names=("u", "u")
-        )
+        phx.discretization.FiniteVolumePlan(_cell_grid((4,)), component_names=("u", "u"))

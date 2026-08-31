@@ -3,6 +3,47 @@
 ## Unreleased
 
 ### Added
+- Added exact fixed-temporal finite-volume replay with full, step, or block
+  rematerialization; transactional balance-law source composition and persistence;
+  periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral
+  Ornstein--Uhlenbeck forcing; implicitly differentiated tabulated cooling;
+  conservative trainable face closures; and periodic Cartesian constrained MHD with
+  integrated cochain face fluxes, edge circulations, coupled stage positivity, and
+  HLLD-to-HLL fallback evidence.
+- Added bounded adaptive balance-law realization with process-aware step limits,
+  transactional retry rollback, fixed-capacity decision journals, and exact scheduled
+  replay of accepted temporal meshes. Added global OU realizations whose innovations
+  obey the OU semigroup under interval subdivision, including antithetic coupling.
+- Added fixed-rank randomized Nyström preconditioning with auditable sketch and
+  refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
+  field metrics with rectangular or Gram tangent solves and saved-node audits;
+  backward Diffrax characteristic tracing with macro-step neural projection; and
+  mass-preserving fixed-support residual-attention collocation with explicit ESS,
+  KFAC, and controlled-policy contracts.
+- Added reciprocal-lattice harmonic discretization with true one-dimensional and
+  oblique two-dimensional periodicity, selected FFT analysis/synthesis,
+  pairwise-difference material convolution, translation covariance, resource
+  preflight, and Gamma-containing Brillouin-zone rules.
+- Added `phydrax.solver.maxwell.fourier_modal`: full-tensor periodic finite layers,
+  homogeneous ports, differentiable boundary-field cascade propagation, direct,
+  inverse, and local-frame Fourier factorization, a nondifferentiable modal reference
+  backend, stable scattering composition, named electric/magnetic current planes,
+  multi-RHS and Brillouin source semantics, interior field reconstruction,
+  diffraction-order far fields, explicit refresh, convergence, resource, diagnostic,
+  status, and provenance contracts.
+- Extended native low-rank adaptation with rank-stabilized scaling, exact
+  adapter-artifact reconstruction, and composition with frozen random-weight
+  factorization coordinates.
+- Added field-certificate-aware geometry-to-material rasterization for
+  Fourier-modal Maxwell, with sharp and differentiable compact-Heaviside paths,
+  fixed subpixel sampling, fill-fraction evidence, and material identities.
+- Added certified finite-box Method of Moving Asymptotes, constrained
+  reduced-adjoint state/design optimization, sparse physical-radius density
+  filtering, SIMP compliance topology optimization, and independent
+  reference-discretization reanalysis.
+- Added pickle-free StableHLO/IREE inference export with matched optional
+  compiler/runtime versions, in-process compilation and loading, exact
+  shape/dtype ABI checks, checksummed manifests, and native parity evidence.
 - Added full-rank Euclidean VP/VE score diffusion with structured diagonal Gaussian
   laws, exact perturbation marginals, weighted denoising score matching, replayable
   reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
@@ -96,18 +137,27 @@
   pair reductions, radius-class filtering, replay/checkpointed VJPs, sharp and
   smooth sensitivity contracts, inverse/UQ qualification, and transverse
   hybrid-event saltation.
-- Added rolling resistance, prescribed and servo barriers, certified analytic
-  contact curvature and curved Hertz walls, finite-range DMT adhesion,
-  bilinear elasto-plastic normal contact, and conservative lumped contact heat
-  transfer.
-- Added SO(2)/SO(3) rigid bodies, immutable sphere-clump templates, common rigid
-  contact geometry, triangle walls, elastic/damageable fixed bond graphs,
-  fixed-pool topology events, convex SAT contact, and certified
-  sphere-to-implicit contact.
-- Added conservative particle-grid transfer, unresolved Stokes CFD--DEM,
-  atomic multirate coupling windows, work-adjoint resolved immersed-boundary
-  coupling, thermal CFD--DEM energy exchange, expanded examples, qualification
-  campaign artifacts, and performance evidence.
+- Added compositional normal/cohesion/tangential/rotational DEM contact history,
+  elastic rolling–torsional resistance, finite-range DMT cohesion, conservative
+  capillary bridge lifecycle, near-contact lubrication, bilinear elasto-plastic
+  normal response, elastic half-space multicontact correction, and conservative
+  contact heat exchange.
+- Added prescribed force/torque servo barriers, certified analytic contact
+  curvature, curved Hertz walls, facet traction/work/heat observables, Finnie
+  wear accumulation and geometry commits, SO(2)/SO(3) rigid bodies, immutable
+  sphere-clump templates, triangle walls, elastic/damageable bond graphs,
+  fixed-pool topology events, convex SAT contact, certified sphere-to-implicit
+  contact, and support-map superquadric contact and dynamics.
+- Added conservative slab/cylindrical/spherical internal shell meshes, typed
+  species/phase/element thermochemistry, polynomial heat-capacity inversion,
+  heat/species transport, stoichiometric Arrhenius networks, evaporation,
+  shrinking-core conversion, reference Rosenbrock and structured tridiagonal
+  solvers, morphology, fragmentation, radiation, and process operations.
+- Added conservative particle-grid transfer, unresolved Stokes CFD–DEM,
+  work-adjoint resolved immersed-boundary coupling, reactive continuum heat and
+  species exchange, atomic Strang/iterated reactive CFD–DEM windows, generic
+  hybrid-event sensitivity, replay/checkpointed VJPs, UQ, compositional support
+  claims, executable examples, qualification campaigns, and performance evidence.
 - Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
   while preserving the existing array-valued SSPRK contract.
 - Added all-coordinate tensor spectral PDE residual compilation with explicit
@@ -121,6 +171,12 @@
   mass-policy-aware rates, tensor SBP and periodic mapped DGSEM conservation,
   p-multigrid, Schwarz/FDM and auxiliary preconditioning, two-sided mortars,
   fixed-capacity hp transactions, and backend-neutral distributed ownership.
+- Added operational nonconforming tensor-hp epochs with stable refinement forests,
+  isotropic quad/hex h-refinement and coarsening, 2:1 closure, anisotropic p
+  buckets, curved parent-map inheritance, H1 master-trace constraints, asymmetric
+  DG mortar worksets, role-correct h/p transfers, atomic solver transactions,
+  adaptive indicators and budgets, hp condensation/multigrid, inherited
+  partition ownership, and certified entropy-compatible DGSEM mortars.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct
@@ -130,6 +186,14 @@
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
   deployment merging, and checksum-validated adapter artifacts bound to the
   complete base model content and structure.
+- Added deterministic fixed-step learned discrete systems with lazy
+  mask/reset/control-aware trajectory windows, supervised, reference-branch,
+  and residual rollout objectives, evidence-weighted gradient accumulation,
+  exact update-boundary resume, and full/prefix/chunk causal equivalence.
+- Added task-bound recurrent neural-operator training with one pipeline-safe
+  physical state route, named future targets, supervised and residual rollout
+  losses, route-aware deployed continuation, and instance-authoritative
+  pointwise/finite/global/unknown dependency-support evidence.
 - Added advanced computational topology: exact cellular and filtered maps,
   induced maps and cone audits, extended and temporal field topology, diagram
   features and certified matching, rational and integral class algebra,
@@ -148,6 +212,12 @@
   ordinary and induced-relative persistent homology, natural and fixed-capacity
   diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
   and exact-nullity validation of metric cochain harmonic kernels.
+- Added explicit bounded, periodic, half-line, and real-line spectral domains;
+  endpoint-correct tensor measures; canonical modal transfers; rational
+  Chebyshev line and half-line bases; linear trace constraints; exact periodic
+  Hilbert transforms; physical modal-tail diagnostics; homogeneous
+  cross-resolution eigen and eigenspace evidence; pairing-aware resolvent scans;
+  and original-residual-certified polynomial eigenproblems.
 - Added a native linear-combinatorial substrate with separate logical decisions
   and objective features, content-addressed plans, deterministic ties, portable
   statuses, and independent certificates. Added exact streamed finite,
@@ -832,6 +902,20 @@
   resource accounting.
 
 ### Changed
+- Neural-operator autoregression now requires a task-bound physical state route
+  and the deployed normalization/constraint pipeline. The raw callable/advance
+  rollout, standalone autoregressive loss, and teacher-forcing schedule were
+  removed in one clean cutover.
+- CNO and UNO now have periodic-Fourier semantics: circular measure-aware local
+  convolution, endpoint-exclusive sine/cosine coordinate features, periodic
+  uniform axes, and new semantic architecture identities. Nonperiodic and
+  legacy artifact routes are rejected rather than reinterpreted.
+- Benchmark tooling now shares one synchronized PyTree timing runtime, normalized
+  software/hardware fingerprints, raw duration distributions, official XLA
+  cost/memory evidence, atomic artifact writes, and environment-checked bootstrap
+  comparisons. Operator reports separate lowering, compilation, first execution,
+  and steady samples and no longer relabel process allocator high-water state as
+  operation-local peak memory.
 - Compatible Maxwell state now stores electric displacement `D`, magnetic flux `B`,
   charge, material/boundary auxiliary state, and observer state. `E` and `H` are
   constitutive outputs. Construction uses `CompatibleMaxwellPlan(...).prepare()` and

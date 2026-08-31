@@ -29,9 +29,7 @@ def _transport(order=5, points=64):
         phx.discretization.WENOReconstructionPlan(order),
         phx.discretization.RusanovFluxPlan(),
     )
-    return phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
 def test_weno_rusanov_flux_difference_preserves_constants_and_global_conservation():
@@ -68,39 +66,10 @@ def test_ssprk3_step_preserves_constant_transport_state():
     dynamics = _transport().dynamics
     state = jnp.ones((64, 1))
 
-    result = phx.solver.UnsplitFiniteVolumeSSPRK3Plan(dynamics).advance(
-        jnp.asarray(0.0), state, 0.005
-    ).state
+    result = (
+        phx.solver.UnsplitFiniteVolumeSSPRK3Plan(dynamics)
+        .advance(jnp.asarray(0.0), state, 0.005)
+        .state
+    )
 
     assert jnp.allclose(result, state)
-
-
-def test_local_implicit_source_matches_backward_euler_for_linear_decay():
-    plan = phx.solver.LocalImplicitSourcePlan(
-        lambda state, args: -args["rate"] * state,
-        iterations=3,
-        tolerance=1e-10,
-    )
-    state = jnp.asarray([[1.0, 2.0], [3.0, 4.0]])
-
-    result = plan.step(state, 0.1, {"rate": 2.0})
-
-    assert jnp.allclose(result, state / 1.2, atol=1e-7)
-
-
-def test_strang_split_composes_source_transport_source_in_order():
-    split = phx.solver.StrangSplitPlan(
-        lambda time, state, dt, args: state + dt * args["transport"],
-        lambda time, state, dt, args: state * jnp.exp(-args["rate"] * dt),
-    )
-    state = jnp.asarray([1.0, 2.0])
-
-    result = split.step(
-        jnp.asarray(0.0),
-        state,
-        0.2,
-        {"transport": 3.0, "rate": 0.5},
-    )
-    expected = (state * jnp.exp(-0.05) + 0.6) * jnp.exp(-0.05)
-
-    assert jnp.allclose(result, expected)

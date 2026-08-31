@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_lower_and_compile, measure_synchronized
 from phydrax._data_plane import StatelessIndexPermutation
 
 
@@ -22,7 +23,9 @@ class OperatorDataPlaneBenchmark:
     prefetch: int
     read_latency_seconds: float
     consumer_latency_seconds: float
-    ordering_compile_seconds: float
+    ordering_lowering_seconds: float
+    ordering_compilation_seconds: float
+    ordering_first_execution_seconds: float
     fingerprint_cold_seconds: float
     fingerprint_warm_seconds: float
     fingerprint_case_reads: int
@@ -155,10 +158,13 @@ def run_data_plane_benchmark(
     dataset = _dataset(int(cases), int(resolution))
     positions = jnp.arange(int(cases), dtype=jnp.int32)
     permutation = StatelessIndexPermutation(int(cases), 1729, 0)
-    compile_started = time.perf_counter()
-    compiled_order = jax.jit(jax.vmap(permutation.jax)).lower(positions).compile()
-    jax.block_until_ready(compiled_order(positions))
-    ordering_compile_seconds = time.perf_counter() - compile_started
+    compiled_order, ordering_compilation = measure_lower_and_compile(
+        lambda: jax.jit(jax.vmap(permutation.jax)).lower(positions),
+        lambda lowered: lowered.compile(),
+    )
+    _, ordering_first_execution_seconds = measure_synchronized(
+        lambda: compiled_order(positions)
+    )
 
     fingerprint_source = phx.nn.operator.InMemoryOperatorCaseSource(dataset)
     fingerprint_started = time.perf_counter()
@@ -249,7 +255,9 @@ def run_data_plane_benchmark(
         prefetch=int(prefetch),
         consumer_latency_seconds=float(consumer_latency_seconds),
         read_latency_seconds=float(read_latency_seconds),
-        ordering_compile_seconds=ordering_compile_seconds,
+        ordering_lowering_seconds=ordering_compilation.lowering_seconds,
+        ordering_compilation_seconds=ordering_compilation.compilation_seconds,
+        ordering_first_execution_seconds=ordering_first_execution_seconds,
         fingerprint_cold_seconds=fingerprint_cold_seconds,
         fingerprint_warm_seconds=fingerprint_warm_seconds,
         fingerprint_case_reads=len(fingerprint_reads),

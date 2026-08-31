@@ -11,7 +11,7 @@ def test_periodic_spectral_conservation_and_entropy_diagnostics():
         (phx.discretization.FourierBasisPlan(24),),
         axis_names=("x",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: state,
@@ -51,7 +51,10 @@ def test_periodic_spectral_conservation_and_entropy_diagnostics():
     physical_residual = space.reconstruct(residual)
     balance_terms = np.asarray(space.quadrature_weights[..., None] * physical_residual)
     expected_rate = np.asarray(
-        [math.fsum(balance_terms[:, index].tolist()) for index in range(balance_terms.shape[1])]
+        [
+            math.fsum(balance_terms[:, index].tolist())
+            for index in range(balance_terms.shape[1])
+        ]
     )
     np.testing.assert_allclose(
         diagnostics.semidiscrete_integral_rate,
@@ -90,7 +93,7 @@ def test_spectral_conservation_honors_widened_reduction_precision():
         axis_names=("x",),
         field_name="u",
         precision=precision,
-    ).prepare(jnp.asarray([[0.0], [1.0]], dtype=jnp.float32))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: state,

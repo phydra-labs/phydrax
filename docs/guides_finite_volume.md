@@ -129,6 +129,7 @@ speed:
 - `RusanovFluxPlan`;
 - `HLLFluxPlan`;
 - `HLLCFluxPlan` for Euler;
+- `HLLDFluxPlan` for canonical ideal MHD, with explicit HLL fallback evidence;
 - `RoeFluxPlan` for characteristic systems;
 - `EntropyConservativeEulerFluxPlan`;
 - `EntropyStableEulerFluxPlan`.
@@ -197,7 +198,7 @@ Attach a pair through the standard compiler:
 ```text
 compiled = phx.equations.compile_conservation_problem(
     problem,
-    discretization,
+    finite_volume,
     method,
     entropy_pair=phx.equations.ideal_gas_euler_entropy_pair(problem.system),
 )
@@ -322,8 +323,9 @@ topology remain static.
 - Initial transverse solver support is a primitive building block, not a complete
   three-dimensional CTU implementation.
 - Mapped fluxes currently use Rusanov or HLL.
-- MHD constrained transport remains owned by the compatible cochain substrate rather
-  than the cell-centered hyperbolic update.
+- Periodic Cartesian constrained MHD is executed by
+  `UpwindConstrainedTransportPlan` and `ConstrainedMHDSSPRK3Plan`; physical MHD
+  boundaries, AMR reflux-curl, mapped grids, and distributed CT remain unsupported.
 - Hard shock-capturing decisions produce branchwise, not globally smooth, sensitivities.
 
 Runtime, material, boundary, positivity, checkpoint, rollout, and sharding contracts are

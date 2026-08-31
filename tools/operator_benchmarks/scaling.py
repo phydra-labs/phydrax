@@ -12,9 +12,11 @@ from .scenarios import OperatorBenchmarkEvaluation
 class OperatorScalingPoint:
     sample_shape: tuple[int, ...]
     sample_count: int
-    compile_seconds: float
+    lowering_seconds: float
+    compilation_seconds: float
+    first_execution_seconds: float
     inference_seconds: float
-    peak_memory_bytes: int | None
+    compiler_estimated_memory_bytes: int | None
 
 
 @dataclass(frozen=True)
@@ -57,16 +59,26 @@ def profile_resolution_scaling(
             OperatorScalingPoint(
                 sample_shape=sample_shape,
                 sample_count=int(np.prod(sample_shape)),
-                compile_seconds=result.compile_seconds,
-                inference_seconds=result.inference_seconds,
-                peak_memory_bytes=result.peak_memory_bytes,
+                lowering_seconds=result.lowering_seconds,
+                compilation_seconds=result.compilation_seconds,
+                first_execution_seconds=result.first_execution_seconds,
+                inference_seconds=_inference_median(
+                    result.inference_timing.median_seconds
+                ),
+                compiler_estimated_memory_bytes=(
+                    result.compiler_evidence.estimated_device_memory_bytes
+                ),
             )
         )
     memory_counts = [
-        point.sample_count for point in points if point.peak_memory_bytes is not None
+        point.sample_count
+        for point in points
+        if point.compiler_estimated_memory_bytes is not None
     ]
     memory_values = [
-        point.peak_memory_bytes for point in points if point.peak_memory_bytes is not None
+        point.compiler_estimated_memory_bytes
+        for point in points
+        if point.compiler_estimated_memory_bytes is not None
     ]
     return OperatorScalingProfile(
         architecture=str(architecture),
@@ -78,6 +90,12 @@ def profile_resolution_scaling(
         ),
         memory_exponent=_scaling_exponent(memory_counts, memory_values),
     )
+
+
+def _inference_median(value: float | None, /) -> float:
+    if value is None:
+        raise ValueError("Operator scaling requires measured inference samples.")
+    return value
 
 
 def assert_resolution_independent_parameters(

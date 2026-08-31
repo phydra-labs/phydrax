@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import platform
 import time
 from collections.abc import Callable
 from typing import Any
@@ -17,50 +16,30 @@ import jax.random as jr
 import jax.scipy as jsp
 
 import phydrax as phx
+from benchmarks._runtime import capture_environment, measure_repeated, synchronize
 
 
 la = phx.linalg
 eig = la.eigen
 
 
-def _block(tree: Any, /) -> None:
-    for leaf in jax.tree.leaves(tree):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
-
-
 def _measure(
     operation: Callable[[], Any], /, *, repeats: int
 ) -> tuple[Any, float, float]:
-    result = operation()
-    _block(result)
-    durations = []
-    for _ in range(repeats):
-        started = time.perf_counter()
-        result = operation()
-        _block(result)
-        durations.append(1e3 * (time.perf_counter() - started))
-    values = jnp.asarray(durations)
+    result, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
+    )
+    values = 1_000.0 * jnp.asarray(distribution.samples_seconds)
     return result, float(jnp.mean(values)), float(jnp.std(values))
 
 
 def _prepare(operation: Callable[[], Any], /) -> tuple[Any, float]:
     started = time.perf_counter()
     result = operation()
-    _block(result)
+    synchronize(result)
     return result, 1e3 * (time.perf_counter() - started)
-
-
-def _environment() -> dict[str, Any]:
-    device = jax.devices()[0]
-    return {
-        "backend": jax.default_backend(),
-        "device": str(device),
-        "jax_version": jax.__version__,
-        "machine": platform.machine(),
-        "platform": platform.platform(),
-        "python": platform.python_version(),
-    }
 
 
 def _properties() -> la.OperatorProperties:
@@ -509,9 +488,7 @@ def _differentiable_spectral_benchmark(
         self_adjoint=True,
         evidence={"self_adjoint": "construction"},
     )
-    problem = eig.Eigenproblem(
-        la.DenseLinearOperator(matrices, properties=properties)
-    )
+    problem = eig.Eigenproblem(la.DenseLinearOperator(matrices, properties=properties))
     prepared, preparation_ms = _prepare(
         lambda: eig.prepare_self_adjoint_spectrum(problem)
     )
@@ -532,9 +509,7 @@ def _differentiable_spectral_benchmark(
         repeats=repeats,
     )
 
-    function_policy = eig.SelfAdjointSpectralOperatorPolicy(
-        differentiation="frechet"
-    )
+    function_policy = eig.SelfAdjointSpectralOperatorPolicy(differentiation="frechet")
 
     def squared_operator(current: jax.Array, /) -> jax.Array:
         current_problem = eig.Eigenproblem(
@@ -576,9 +551,7 @@ def _differentiable_spectral_benchmark(
         lambda: training_step(coefficients),
         repeats=repeats,
     )
-    maximum_derivative_residual = float(
-        jnp.max(derivative.diagnostics.relative_residual)
-    )
+    maximum_derivative_residual = float(jnp.max(derivative.diagnostics.relative_residual))
     passed = bool(
         jnp.all(subspace.successful)
         & jnp.all(derivative.successful)
@@ -713,12 +686,10 @@ def run_benchmarks(
         repeats=repeats,
     )
     passed.append(status)
-    records["differentiable_spectral"], status = (
-        _differentiable_spectral_benchmark(
-            size,
-            keys[4],
-            repeats=repeats,
-        )
+    records["differentiable_spectral"], status = _differentiable_spectral_benchmark(
+        size,
+        keys[4],
+        repeats=repeats,
     )
     passed.append(status)
 
@@ -729,7 +700,7 @@ def run_benchmarks(
             "repeats": repeats,
             "seed": seed,
         },
-        "environment": _environment(),
+        "environment": capture_environment().to_dict(),
         "benchmarks": records,
         "passed": all(passed),
     }

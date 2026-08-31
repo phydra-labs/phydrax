@@ -17,6 +17,12 @@ import optax
 from jaxtyping import Array, Key
 
 import phydrax as phx
+from benchmarks._runtime import (
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+    synchronize,
+)
 from phydrax.operators import (
     coordinate_second_derivative_samples,
     DimensionSamplingPolicy,
@@ -276,10 +282,6 @@ def quartic_laplacian(state: Array, /) -> Array:
     return 12.0 * jnp.mean(value**2, axis=-1)
 
 
-def _block(value: Any) -> None:
-    jax.block_until_ready(value)
-
-
 def _measure(
     function,
     argument: Any,
@@ -287,17 +289,20 @@ def _measure(
     *,
     repeats: int,
 ) -> tuple[Array, float, float]:
-    compiled = jax.jit(function)
-    started = time.perf_counter()
-    value = compiled(argument)
-    _block(value)
-    compile_ms = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(int(repeats)):
-        value = compiled(argument)
-        _block(value)
-    wall_ms = 1e3 * (time.perf_counter() - started) / float(repeats)
-    return value, compile_ms, wall_ms
+    jitted = jax.jit(function)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(argument),
+        lambda lowered: lowered.compile(),
+    )
+    value, distribution = measure_repeated(
+        lambda: compiled(argument),
+        warmup=1,
+        repeats=int(repeats),
+    )
+    compile_ms = 1_000.0 * (
+        compilation.lowering_seconds + compilation.compilation_seconds
+    )
+    return value, compile_ms, 1_000.0 * float(distribution.mean_seconds)
 
 
 def _measure_thunk(
@@ -306,15 +311,14 @@ def _measure_thunk(
     *,
     repeats: int,
 ):
-    started = time.perf_counter()
-    value = function()
-    _block(value)
-    first_ms = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(int(repeats)):
-        value = function()
-        _block(value)
-    wall_ms = 1e3 * (time.perf_counter() - started) / float(repeats)
+    value, first_seconds = measure_synchronized(function)
+    value, distribution = measure_repeated(
+        function,
+        warmup=0,
+        repeats=int(repeats),
+    )
+    wall_ms = 1_000.0 * float(distribution.mean_seconds)
+    first_ms = 1_000.0 * first_seconds
     return value, max(first_ms - wall_ms, 0.0), wall_ms, first_ms
 
 
@@ -750,11 +754,11 @@ def _deep_picard_record(
 
     started = time.perf_counter()
     first = solve_once()
-    _block(first.diagnostics.target_rmse)
+    synchronize(first.diagnostics.target_rmse)
     first_ms = 1e3 * (time.perf_counter() - started)
     started = time.perf_counter()
     result = solve_once()
-    _block(result.diagnostics.target_rmse)
+    synchronize(result.diagnostics.target_rmse)
     steady_ms = 1e3 * (time.perf_counter() - started)
 
     predictor = result.solver["value"]
@@ -852,11 +856,11 @@ def _deep_bsde_record(
 
     started = time.perf_counter()
     first = solve_once()
-    _block(first.diagnostics.terminal_rmse)
+    synchronize(first.diagnostics.terminal_rmse)
     first_ms = 1e3 * (time.perf_counter() - started)
     started = time.perf_counter()
     result = solve_once()
-    _block(result.diagnostics.terminal_rmse)
+    synchronize(result.diagnostics.terminal_rmse)
     steady_ms = 1e3 * (time.perf_counter() - started)
 
     zero_state = jnp.zeros((dimension,))
@@ -942,11 +946,11 @@ def _deep_splitting_record(
 
     started = time.perf_counter()
     first = solve_once()
-    _block(first.diagnostics.one_step_rmse)
+    synchronize(first.diagnostics.one_step_rmse)
     first_ms = 1e3 * (time.perf_counter() - started)
     started = time.perf_counter()
     result = solve_once()
-    _block(result.diagnostics.one_step_rmse)
+    synchronize(result.diagnostics.one_step_rmse)
     steady_ms = 1e3 * (time.perf_counter() - started)
 
     query_times = jnp.linspace(0.0, 1.0, 2 * num_time_steps + 1)
