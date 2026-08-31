@@ -261,3 +261,38 @@ def test_kfac_trains_inverse_physical_scalar_block():
     trained = _train_and_assert_decrease(solver, seed=23, steps=2)
     final_coefficient = float(trained.functions["coefficient"].func())
     assert not jnp.isclose(final_coefficient, initial_coefficient)
+
+
+def test_kfac_accepts_mass_preserving_residual_attention_weights():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    u = _model(domain, 1, jr.key(24))
+    condition = phx.conditions.Residual("u", domain.component(), lambda field: field)
+    policy = phx.sampling.collocation.ResidualAttentionCollocation(
+        refresh_every=1,
+        decay=0.0,
+        minimum_ess_fraction=0.5,
+    )
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(condition.on),
+        PointSampling(5, layout=SampleLayout((("x",),))),
+        policy,
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=(term,))
+
+    trained = solver.solve(
+        num_iter=1,
+        optim=phx.optim.kfac(damping=1e-2),
+        seed=25,
+        jit=False,
+        keep_best=False,
+        log_every=0,
+    )
+    population = trained.collocation[0]
+
+    assert isinstance(
+        population,
+        phx.sampling.collocation.ResidualAttentionPopulation,
+    )
+    assert jnp.isfinite(trained.loss(key=jr.key(26), step=2))
+    assert jnp.allclose(jnp.mean(population.weight.data), 1.0)

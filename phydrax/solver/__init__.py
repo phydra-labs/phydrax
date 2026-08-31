@@ -80,6 +80,15 @@ from ._channel_flow import (
     ChannelSBDF2Method,
     solve_channel_sbdf2,
 )
+from ._characteristic_projection import (
+    CharacteristicProjectionProblem,
+    CharacteristicProjectionResult,
+    CharacteristicTraceResult,
+    CharacteristicVelocity,
+    CharacteristicWrap,
+    solve_characteristic_projection,
+    trace_characteristics,
+)
 from ._cochain_multirate import (
     CochainMultirateDiagnostics,
     CochainMultiratePlan,
@@ -550,6 +559,16 @@ from ._neural_cde import (
     NeuralCDETrainingState,
     NeuralCDEVectorField,
     train_neural_cde,
+)
+from ._neural_galerkin import (
+    FieldProjectionMetric,
+    NeuralFieldEvolutionResult,
+    NeuralGalerkinAudit,
+    NeuralGalerkinProblem,
+    NeuralTangentSolvePolicy,
+    RateFunction,
+    solve_neural_galerkin,
+    TangentFormulation,
 )
 from ._neural_quantum_jump import (
     NeuralJumpProjectionProblem,
@@ -1463,4 +1482,19 @@ __all__ = [
     "CFDEMCouplingState",
     "CFDEMMacroStepResult",
     "advance_cfd_dem_window",
+    "CharacteristicProjectionProblem",
+    "CharacteristicProjectionResult",
+    "CharacteristicTraceResult",
+    "CharacteristicVelocity",
+    "CharacteristicWrap",
+    "FieldProjectionMetric",
+    "NeuralFieldEvolutionResult",
+    "NeuralGalerkinAudit",
+    "NeuralGalerkinProblem",
+    "NeuralTangentSolvePolicy",
+    "RateFunction",
+    "TangentFormulation",
+    "solve_characteristic_projection",
+    "solve_neural_galerkin",
+    "trace_characteristics",
 ]

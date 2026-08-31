@@ -362,6 +362,20 @@ adapter. Diffusion control axes remain trailing, so both real components contrac
 against the same declared Wiener controls. Nontrivial state geometry and the separate
 delay/jump Diffrax backends are not assigned an inferred packing contract.
 
+## Learned field manifolds and characteristic flows
+
+`NeuralGalerkinProblem` lowers selected model leaves to one array-valued parameter
+ODE. Each vector-field call rebuilds the enforced named fields, evaluates the
+physical rate on fixed integration realizations, and solves a weighted tangent
+projection with the ordinary linear runtime. Diffrax remains the sole temporal
+backend. Saved-node audits report the tangent status and physical projection defect
+without presenting hidden-stage work as measured evidence.
+
+`trace_characteristics` converts backward physical time to increasing pseudo-time
+and reuses `DifferentialProblem` plus `solve_diffrax`. The optional
+`solve_characteristic_projection` layer is deliberately macro-step orchestration:
+Diffrax computes feet, while `FunctionalSolver` fits fixed pulled-back targets.
+
 ## Execution, distribution, and production lifecycle
 
 `StencilExecutionPlan` lowers regular interiors to one offset/weight kernel and retains

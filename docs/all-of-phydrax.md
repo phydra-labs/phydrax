@@ -58,6 +58,11 @@ Fourier evaluation, sparse Smolyak approximation, sparse Gaussian processes,
 and stochastic estimators remain specialized methods rather than sparse
 storage types. See [API → Operators → Interpolation](api/operators/interpolation.md).
 
+Adaptive residual policies remain source-owned. R3, RAR-D, and coreset policies
+change point support; `ResidualAttentionCollocation` instead keeps support fixed and
+updates a unit-mean local multiplier with explicit uniform and effective-sample-size
+guards. Independent fixed evaluation terms remain the evidence surface.
+
 Finite-dimensional algebra above those storage kernels is shared through
 `phydrax.linalg`: paired array/PyTree/block spaces, composable explicit and
 matrix-free operators, exact/least-squares/minimum-norm problem contracts,
@@ -71,6 +76,12 @@ detection and optimized coloring. Repeated Jacobian and Hessian evaluation is
 native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
+
+Certified positive-semidefinite actions may prepare a fixed-rank
+`RandomizedNystromPreconditioner`. Its deterministic sketch, positive shift,
+refresh mode, retained Ritz evidence, storage, and exact setup matvec count flow
+through the same preconditioner plan/prepare/refresh provenance as deterministic
+builders.
 
 ### Discretization: supports, field spaces, and formulations
 
@@ -229,6 +240,13 @@ factorization, stability, and orthogonality maps live in
 `phydrax.nn.parameters`; raw arrays remain optimizer leaves and physical values
 are constructed on demand. The same package owns explicit model-PyTree
 selection through `ParameterSubspace`.
+
+`NeuralGalerkinProblem` evolves a selected model subspace as a Diffrax parameter
+ODE. Fixed physical integration realizations define the field metric; rectangular
+least squares or a damped empirical Gram solve supplies the tangent rate. The result
+retains ordinary Diffrax evidence plus independent saved-node projection audits and
+reconstructs valid parameter states as named fields. Backward characteristic maps
+reuse the same Diffrax substrate before optional macro-step field projection.
 
 Exact native `Linear` paths can instead carry factorized low-rank updates over
 a shared dense base. The factor-only `ParameterSubspace` is the complete

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added fixed-rank randomized Nyström preconditioning with auditable sketch and
+  refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
+  field metrics with rectangular or Gram tangent solves and saved-node audits;
+  backward Diffrax characteristic tracing with macro-step neural projection; and
+  mass-preserving fixed-support residual-attention collocation with explicit ESS,
+  KFAC, and controlled-policy contracts.
 - Added reciprocal-lattice harmonic discretization with true one-dimensional and
   oblique two-dimensional periodicity, selected FFT analysis/synthesis,
   pairwise-difference material convolution, translation covariance, resource

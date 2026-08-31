@@ -314,6 +314,12 @@ from ._properties import (
     OperatorProperties,
     PropertyEvidence,
 )
+from ._randomized_preconditioning import (
+    ProbeRefresh,
+    RandomizedNystromDiagnostics,
+    RandomizedNystromPreconditioner,
+    RandomizedNystromPreconditionerBuilder,
+)
 from ._rational_functions import (
     PartialFractionRationalFunction,
     plan_rational_function_action,
@@ -765,6 +771,10 @@ __all__ = [
     "PreconditionerRefreshPolicy",
     "PreconditionerSource",
     "PreconditioningPolicy",
+    "ProbeRefresh",
+    "RandomizedNystromDiagnostics",
+    "RandomizedNystromPreconditioner",
+    "RandomizedNystromPreconditionerBuilder",
     "PreconditioningSide",
     "PreparedFactorization",
     "PreparedLowRankSolve",

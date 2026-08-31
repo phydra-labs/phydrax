@@ -94,6 +94,9 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Learned field evolution**: fixed physical measures project PDE rates onto
+  selected model tangents, Diffrax evolves the resulting parameter ODE, and
+  backward Diffrax characteristics feed optional time-slice field projection.
 - **Electromagnetics**: compatible cochain Maxwell and a reciprocal-lattice
   Fourier-modal substrate cover general time-domain topology and periodic layered
   frequency-domain scattering, respectively, with full-tensor finite layers,
