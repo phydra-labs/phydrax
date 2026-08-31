@@ -24,8 +24,8 @@ from ...nonlinear import (
     VariationalInequalityProblem,
 )
 from ._rigid_body import (
-    _rigid_body_world_inertia,
     PreparedRigidBodySet,
+    rigid_body_world_inertia,
     RigidBodyKinematics,
 )
 from ._rigid_joints import PreparedRigidJointGraph
@@ -834,7 +834,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
         signs: Array,
         /,
     ) -> Array:
-        _, inverse_world = _rigid_body_world_inertia(self.bodies, kinematics.orientation)
+        _, inverse_world = rigid_body_world_inertia(self.bodies, kinematics.orientation)
         row_axis = (signs.reshape((self.capacity, 2, 1)) * axis[:, None, :]).reshape(
             (-1, 3)
         )
@@ -862,7 +862,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
         signed_impulse: Array,
         /,
     ) -> Array:
-        _, inverse_world = _rigid_body_world_inertia(self.bodies, kinematics.orientation)
+        _, inverse_world = rigid_body_world_inertia(self.bodies, kinematics.orientation)
         torque = jnp.zeros((self.bodies.capacity, 3), dtype=kinematics.position.dtype)
         applied = axis * signed_impulse[:, None] * self.plan.valid[:, None]
         torque = torque.at[self.right].add(applied)
