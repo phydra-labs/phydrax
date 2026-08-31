@@ -24,3 +24,17 @@ def test_segment_constant_variants():
 
     assert jnp.allclose(maxs, jnp.array([2.0, -7.0, -7.0]))
     assert jnp.allclose(mins, jnp.array([1.0, 9.0, 9.0]))
+
+
+def test_segment_logsumexp_and_normalize_preserve_impossible_support():
+    logits = jnp.asarray([0.0, -1.0, -jnp.inf, -jnp.inf])
+    segments = jnp.asarray([0, 0, 1, 1], dtype=jnp.int32)
+
+    reduced = vx.segment_logsumexp(logits, segments, 3)
+    normalized = vx.segment_log_normalize(logits, segments, 3)
+
+    assert jnp.allclose(reduced[0], jnp.logaddexp(0.0, -1.0))
+    assert jnp.isneginf(reduced[1])
+    assert jnp.isneginf(reduced[2])
+    assert jnp.allclose(jnp.sum(jnp.exp(normalized[:2])), 1.0)
+    assert jnp.all(jnp.isneginf(normalized[2:]))
