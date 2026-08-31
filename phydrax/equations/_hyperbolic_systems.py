@@ -809,31 +809,23 @@ class MultispeciesEulerSystem(AbstractAdmissibleSystem):
 class IdealMHDSystem(AbstractAdmissibleSystem):
     """Ideal MHD with three-vector momentum and magnetic field."""
 
-    gamma: float = eqx.field(static=True)
-    density_floor: float = eqx.field(static=True)
-    pressure_floor: float = eqx.field(static=True)
+    material: IdealGasMaterial
 
     def __init__(
         self,
         dimension: int = 1,
         /,
         *,
-        gamma: float = 1.4,
-        density_floor: float = 1e-12,
-        pressure_floor: float = 1e-12,
+        material: IdealGasMaterial | None = None,
     ):
         dimension_ = int(dimension)
-        gamma_ = float(gamma)
+        material_ = IdealGasMaterial() if material is None else material
         if dimension_ not in (1, 2, 3):
             raise ValueError("MHD dimension must be one, two, or three.")
-        if not np.isfinite(gamma_) or gamma_ <= 1.0:
-            raise ValueError("MHD gamma must be finite and greater than one.")
-        if density_floor <= 0.0 or pressure_floor <= 0.0:
-            raise ValueError("MHD floors must be positive.")
+        if not isinstance(material_, IdealGasMaterial):
+            raise TypeError("IdealMHDSystem requires IdealGasMaterial.")
         self.dimension = dimension_
-        self.gamma = gamma_
-        self.density_floor = float(density_floor)
-        self.pressure_floor = float(pressure_floor)
+        self.material = material_
         self.component_names = (
             "density",
             "momentum_x",
@@ -848,20 +840,35 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
             {
                 "kind": "ideal-mhd-system",
                 "dimension": dimension_,
-                "gamma": gamma_,
-                "density_floor": float(density_floor),
-                "pressure_floor": float(pressure_floor),
+                "material": material_.material_id,
             }
         )
+
+    @property
+    def gamma(self) -> float:
+        return self.material.gamma
+
+    @property
+    def density_floor(self) -> float:
+        return self.material.density_floor
+
+    @property
+    def pressure_floor(self) -> float:
+        return self.material.pressure_floor
 
     def pressure(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
         density = value[..., 0]
         momentum_squared = jnp.sum(value[..., 1:4] ** 2, axis=-1)
         magnetic_squared = jnp.sum(value[..., 5:8] ** 2, axis=-1)
-        return (self.gamma - 1.0) * (
+        internal = (
             value[..., 4] - 0.5 * momentum_squared / density - 0.5 * magnetic_squared
         )
+        return self.material.pressure(density, internal / density)
+
+    def temperature(self, state: Array, /) -> Array:
+        value = jnp.asarray(state)
+        return self.material.temperature(value[..., 0], self.pressure(value))
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
@@ -883,7 +890,7 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
         pressure = value[..., 4]
         magnetic = value[..., 5:8]
         energy = (
-            pressure / (self.gamma - 1.0)
+            density * self.material.specific_internal_energy(density, pressure)
             + 0.5 * density * jnp.sum(velocity**2, axis=-1)
             + 0.5 * jnp.sum(magnetic**2, axis=-1)
         )
@@ -946,7 +953,7 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
             density = state[..., 0]
             velocity = state[..., 1 + axis_] / density
             magnetic = state[..., 5:8]
-            sound_squared = self.gamma * self.pressure(state) / density
+            sound_squared = self.material.sound_speed(density, self.pressure(state)) ** 2
             magnetic_squared = jnp.sum(magnetic**2, axis=-1) / density
             normal_squared = magnetic[..., axis_] ** 2 / density
             discriminant = jnp.maximum(
@@ -990,9 +997,7 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
 
     def admissible(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
-        return (value[..., 0] >= self.density_floor) & (
-            self.pressure(value) >= self.pressure_floor
-        )
+        return self.material.admissible(value[..., 0], self.pressure(value))
 
     def reflect_state(self, state: Array, axis: int, /) -> Array:
         return jnp.asarray(state).at[..., 1 + int(axis)].multiply(-1.0)

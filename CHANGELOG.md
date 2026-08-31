@@ -14,6 +14,10 @@
   transactional retry rollback, fixed-capacity decision journals, and exact scheduled
   replay of accepted temporal meshes. Added global OU realizations whose innovations
   obey the OU semigroup under interval subdivision, including antithetic coupling.
+- Unified ordinary finite-volume and constrained-MHD source composition behind one
+  prepared balance-law transport contract. Gravity, cooling, and OU forcing now compose
+  with face-flux MHD under the same adaptive realization, scheduled replay, rollback,
+  component-ownership checks, and portable checkpoint semantics.
 - Added fixed-rank randomized Nyström preconditioning with auditable sketch and
   refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
   field metrics with rectangular or Gram tangent solves and saved-node audits;

@@ -15,13 +15,11 @@ from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
 from ._balance_law import (
     BalanceLawProcessState,
     BalanceLawRuntimeState,
     PreparedBalanceLawRuntime,
 )
-from ._finite_volume_runtime import FiniteVolumeRunStatus
 
 
 class BalanceLawCheckpointPlan(StrictModule, NonTrainableState):
@@ -40,9 +38,9 @@ class BalanceLawCheckpointPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(runtime, PreparedBalanceLawRuntime):
             raise TypeError("runtime must be PreparedBalanceLawRuntime.")
-        if not isinstance(runtime.transport.dynamics, PreparedFiniteVolumeDynamics):
+        if not runtime.transport.checkpoint_supported:
             raise TypeError(
-                "Balance-law checkpoints require stationary structured dynamics."
+                "Balance-law transport does not support portable checkpoints."
             )
         mesh_id = str(temporal_mesh_id)
         realization = None if realization_id is None else str(realization_id)
@@ -77,18 +75,12 @@ def _process_manifest(state: BalanceLawRuntimeState, /) -> list[dict[str, Any]]:
     ]
 
 
-def _arrays(state: BalanceLawRuntimeState, /) -> dict[str, np.ndarray]:
-    transport = state.transport_state
-    arrays = {
-        "transport/cell_average": np.asarray(transport.cell_average()),
-        "transport/time": np.asarray(transport.time),
-        "transport/step_size": np.asarray(transport.step_size),
-        "transport/accepted_step": np.asarray(transport.accepted_step, dtype=np.int32),
-        "transport/last_status": np.asarray(transport.last_status, dtype=np.int32),
-        "transport/controller_state": np.asarray(transport.controller_state),
-        "transport/integrator_state": np.asarray(transport.integrator_state),
-        "transport/output_cursor": np.asarray(transport.output_cursor, dtype=np.int32),
-    }
+def _arrays(
+    state: BalanceLawRuntimeState,
+    runtime: PreparedBalanceLawRuntime,
+    /,
+) -> dict[str, np.ndarray]:
+    arrays = runtime.transport.checkpoint_arrays(state.transport_state)
     for process_state in state.process_states:
         for name, value in zip(
             process_state.field_names, process_state.values, strict=True
@@ -129,11 +121,12 @@ def write_balance_law_checkpoint(
         "kind": "balance-law-checkpoint",
         "checkpoint_id": plan.checkpoint_id,
         "runtime_id": plan.runtime.runtime_id,
+        "transport_kind": plan.runtime.transport.transport_kind,
         "temporal_mesh_id": plan.temporal_mesh_id,
         "realization_id": plan.realization_id,
         "processes": _process_manifest(state),
     }
-    arrays = _arrays(state)
+    arrays = _arrays(state, plan.runtime)
     payload_id = _payload_id(manifest, arrays)
     write_array_archive(
         path,
@@ -155,6 +148,7 @@ def read_balance_law_checkpoint(
         "kind",
         "checkpoint_id",
         "runtime_id",
+        "transport_kind",
         "temporal_mesh_id",
         "realization_id",
         "processes",
@@ -167,6 +161,7 @@ def read_balance_law_checkpoint(
         manifest["kind"] != "balance-law-checkpoint"
         or manifest["checkpoint_id"] != plan.checkpoint_id
         or manifest["runtime_id"] != plan.runtime.runtime_id
+        or manifest["transport_kind"] != plan.runtime.transport.transport_kind
         or manifest["temporal_mesh_id"] != plan.temporal_mesh_id
         or manifest["realization_id"] != plan.realization_id
     ):
@@ -180,17 +175,7 @@ def read_balance_law_checkpoint(
         plan.runtime.process_ids
     ):
         raise ValueError("Balance-law checkpoint process order changed.")
-    base_names = {
-        "transport/cell_average",
-        "transport/time",
-        "transport/step_size",
-        "transport/accepted_step",
-        "transport/last_status",
-        "transport/controller_state",
-        "transport/integrator_state",
-        "transport/output_cursor",
-    }
-    expected_names = set(base_names)
+    expected_names = set(plan.runtime.transport.checkpoint_array_names())
     for record in process_records:
         if not isinstance(record, dict) or set(record) != {"process_id", "fields"}:
             raise ValueError("Balance-law checkpoint process metadata changed.")
@@ -211,23 +196,7 @@ def read_balance_law_checkpoint(
     payload_id = _payload_id(payload_manifest, arrays)
     if payload_id != manifest["payload_id"]:
         raise ValueError("Balance-law checkpoint payload identity failed.")
-    dynamics = plan.runtime.transport.dynamics
-    cell_average = jnp.asarray(arrays["transport/cell_average"]).reshape(
-        dynamics.discretization.state_shape
-    )
-    status = int(np.asarray(arrays["transport/last_status"]))
-    if status not in tuple(int(value) for value in FiniteVolumeRunStatus):
-        raise ValueError("Balance-law checkpoint finite-volume status is invalid.")
-    transport_state = plan.runtime.transport.initialize_state(
-        cell_average,
-        jnp.asarray(arrays["transport/time"]),
-        jnp.asarray(arrays["transport/step_size"]),
-        accepted_step=jnp.asarray(arrays["transport/accepted_step"]),
-        last_status=status,
-        controller_state=jnp.asarray(arrays["transport/controller_state"]),
-        integrator_state=jnp.asarray(arrays["transport/integrator_state"]),
-        output_cursor=jnp.asarray(arrays["transport/output_cursor"]),
-    )
+    transport_state = plan.runtime.transport.restore_checkpoint(arrays)
     process_states = tuple(
         BalanceLawProcessState(
             str(record["process_id"]),

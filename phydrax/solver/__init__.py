@@ -70,6 +70,15 @@ from ._balance_law_checkpoint import (
     read_balance_law_checkpoint,
     write_balance_law_checkpoint,
 )
+from ._balance_law_transport import (
+    AbstractPreparedBalanceLawTransport,
+    BalanceLawSourceView,
+    BalanceLawTransportAdvance,
+    BalanceLawTransportState,
+    prepare_balance_law_transport,
+    PreparedConstrainedMHDBalanceLawTransport,
+    PreparedFiniteVolumeBalanceLawTransport,
+)
 from ._bdf_method import BDFMethod
 from ._boundary_integral import (
     InteriorLaplaceDirichletResult,
@@ -150,9 +159,7 @@ from ._compatible_systems import (
 )
 from ._constrained_mhd import (
     ConstrainedMHDDiagnostics,
-    ConstrainedMHDRolloutResult,
     ConstrainedMHDRunStatus,
-    ConstrainedMHDScheduledRolloutPlan,
     ConstrainedMHDSSPRK3Plan,
     ConstrainedMHDState,
     ConstrainedMHDStepResult,
@@ -984,9 +991,14 @@ __all__ = [
     "BalanceLawCheckpointPlan",
     "read_balance_law_checkpoint",
     "write_balance_law_checkpoint",
+    "AbstractPreparedBalanceLawTransport",
+    "BalanceLawSourceView",
+    "BalanceLawTransportAdvance",
+    "BalanceLawTransportState",
+    "prepare_balance_law_transport",
+    "PreparedConstrainedMHDBalanceLawTransport",
+    "PreparedFiniteVolumeBalanceLawTransport",
     "ConstrainedMHDDiagnostics",
-    "ConstrainedMHDRolloutResult",
-    "ConstrainedMHDScheduledRolloutPlan",
     "ConstrainedMHDRunStatus",
     "ConstrainedMHDSSPRK3Plan",
     "ConstrainedMHDState",

@@ -58,11 +58,12 @@ def _problem():
         0.0,
         1e-3,
     )
+    balance_transport = phx.solver.prepare_balance_law_transport(transport)
     gravity = phx.solver.NewtonianSelfGravityPlan(
         0.1,
         gravity_argument="gravity",
-    ).prepare(transport)
-    runtime = phx.solver.PreparedBalanceLawRuntime(transport, (gravity,))
+    ).prepare(balance_transport)
+    runtime = phx.solver.PreparedBalanceLawRuntime(balance_transport, (gravity,))
     initial = runtime.initialize_state(transport_state)
     adaptive = phx.solver.AdaptiveBalanceLawRolloutPlan(
         runtime,
