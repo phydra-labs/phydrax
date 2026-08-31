@@ -101,6 +101,12 @@
   force/support/load design, pure geometry/force observables, same-topology
   batches, per-graph evidence, mechanism/self-stress spectra, supplied-rigidity
   tangent stability, and continuation bridges.
+- Added member-network constitutive verification over force-density topology:
+  stress-free reference states, exact tension-only cable active sets,
+  corotational frame and discrete-rod bending, surface hinges, local and global
+  buckling, nonlinear continuation bridges, prestress fabrication/actuation
+  evidence, staged construction replay, continuous and catalog sizing, and
+  explicit certified/failed/incomplete structural verdicts.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.
