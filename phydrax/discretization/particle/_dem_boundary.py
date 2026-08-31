@@ -25,6 +25,10 @@ from ._dem_contact import (
     PreparedDEMContactModel,
 )
 from ._dem_contact_state import DEMContactEvaluationContext
+from ._pair_state import (
+    IMPLICIT_BARRIER_INTERACTION,
+    particle_wall_interaction_keys,
+)
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
     RigidSphereKinematics,
@@ -587,10 +591,18 @@ def evaluate_dem_barrier(
         angular_velocity,
         valid,
     )
-    keys = jnp.arange(bodies.capacity, dtype=jnp.int64)
+    route_ids = jnp.zeros((bodies.capacity,), dtype=jnp.int64)
+    keys = particle_wall_interaction_keys(
+        bodies.particles.particle_ids,
+        route_ids,
+        route_ids,
+        route_ids,
+        active_particles,
+        interaction_kind=IMPLICIT_BARRIER_INTERACTION,
+    )
     continued = (
         previous_history.valid
-        & (previous_history.pair_keys == keys)
+        & jnp.all(previous_history.pair_keys == keys, axis=-1)
         & previous_history.active
     )
     barrier_material = jnp.full((bodies.capacity,), barrier.material_id, dtype=jnp.int32)

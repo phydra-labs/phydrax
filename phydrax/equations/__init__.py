@@ -268,6 +268,15 @@ from ._reactive_cfd_dem import (
     ParticleContinuumExchangePlan,
     ReactiveCFDDEMCouplingPlan,
 )
+from ._reactive_monolithic import (
+    CellwiseReactiveFluidImplicitPlan,
+    ReactiveFluidImplicitState,
+    ReactiveMonolithicCouplingPlan,
+    ReactiveMonolithicResidualEvaluation,
+    ReactiveMonolithicRouteCertificate,
+    ReactiveMonolithicStage,
+    ReactiveMonolithicUnknown,
+)
 from ._semidiscrete import (
     BoundaryLift,
     compile_semidiscrete_dae,
@@ -729,4 +738,11 @@ __all__ = [
     "ParticleContinuumExchangeEvaluation",
     "ParticleContinuumExchangePlan",
     "ReactiveCFDDEMCouplingPlan",
+    "CellwiseReactiveFluidImplicitPlan",
+    "ReactiveFluidImplicitState",
+    "ReactiveMonolithicCouplingPlan",
+    "ReactiveMonolithicResidualEvaluation",
+    "ReactiveMonolithicRouteCertificate",
+    "ReactiveMonolithicStage",
+    "ReactiveMonolithicUnknown",
 ]

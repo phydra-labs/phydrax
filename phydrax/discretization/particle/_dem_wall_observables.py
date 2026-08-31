@@ -13,6 +13,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem_contact import DEMContactResponse
+from ._superquadric_wall import SuperquadricWallContactResult
 from ._triangle_wall import (
     PreparedTriangleWall,
     TriangleWallContactResult,
@@ -37,7 +38,7 @@ class DEMWallFacetObservables(StrictModule):
 
 def evaluate_wall_facet_observables(
     wall: PreparedTriangleWall,
-    geometry: TriangleWallContactResult,
+    geometry: TriangleWallContactResult | SuperquadricWallContactResult,
     contact: DEMContactResponse,
     /,
     *,
@@ -47,8 +48,10 @@ def evaluate_wall_facet_observables(
 ) -> DEMWallFacetObservables:
     if not isinstance(wall, PreparedTriangleWall):
         raise TypeError("wall must be a PreparedTriangleWall.")
-    if not isinstance(geometry, TriangleWallContactResult):
-        raise TypeError("geometry must be a TriangleWallContactResult.")
+    if not isinstance(
+        geometry, (TriangleWallContactResult, SuperquadricWallContactResult)
+    ):
+        raise TypeError("geometry must be a supported triangle-wall contact result.")
     if not isinstance(contact, DEMContactResponse):
         raise TypeError("contact must be a DEMContactResponse.")
     faces = wall.face_count
@@ -210,10 +213,14 @@ class FinnieWearPlan(StrictModule, NonTrainableState):
     def evaluate(
         self,
         wall: PreparedTriangleWall,
-        geometry: TriangleWallContactResult,
+        geometry: TriangleWallContactResult | SuperquadricWallContactResult,
         contact: DEMContactResponse,
         /,
     ) -> DEMWearEvaluation:
+        if not isinstance(
+            geometry, (TriangleWallContactResult, SuperquadricWallContactResult)
+        ):
+            raise TypeError("geometry must be a supported triangle-wall contact result.")
         face = geometry.triangle_indices.astype(jnp.int32)
         valid = geometry.geometry.valid & contact.active
         particle_material = geometry.particle_material.astype(jnp.int32)
@@ -259,7 +266,7 @@ class FinnieWearPlan(StrictModule, NonTrainableState):
     def step(
         self,
         wall: PreparedTriangleWall,
-        geometry: TriangleWallContactResult,
+        geometry: TriangleWallContactResult | SuperquadricWallContactResult,
         contact: DEMContactResponse,
         state: DEMWearState,
         step_size: Array,

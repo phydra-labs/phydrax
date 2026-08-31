@@ -16,6 +16,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._core import ParticleDiscretization
+from ._pair_state import CLUMP_COMPONENT_INTERACTION, INTERACTION_KEY_WIDTH
 from ._pairwise import ParticlePairRelation
 from ._rigid_body import (
     PreparedRigidBodySet,
@@ -337,6 +338,8 @@ def expand_clump_owner_pairs(
     owner_pair_keys: Array,
     /,
 ) -> ClumpComponentPairBatch:
+    if owner_pair_keys.shape != (owner_pairs.capacity, INTERACTION_KEY_WIDTH):
+        raise ValueError("owner_pair_keys must use structured interaction identities.")
     components = clumps.component_kinematics(kinematics)
     capacity = owner_pairs.capacity
     maximum = clumps.max_components
@@ -354,11 +357,18 @@ def expand_clump_owner_pairs(
         & components.valid[left_owner, left_component]
         & components.valid[right_owner, right_component]
     )
-    pair_keys = (
-        jnp.repeat(owner_pair_keys.astype(jnp.int64), maximum * maximum)
-        * (maximum * maximum)
-        + left_component.astype(jnp.int64) * maximum
-        + right_component.astype(jnp.int64)
+    owner_identity = jnp.repeat(
+        owner_pair_keys.astype(jnp.int64), maximum * maximum, axis=0
+    )
+    pair_keys = jnp.stack(
+        (
+            jnp.full_like(left_component, CLUMP_COMPONENT_INTERACTION, dtype=jnp.int64),
+            owner_identity[:, 1],
+            owner_identity[:, 2],
+            left_component.astype(jnp.int64),
+            right_component.astype(jnp.int64),
+        ),
+        axis=-1,
     )
     return ClumpComponentPairBatch(
         left_owner,
@@ -375,7 +385,7 @@ def expand_clump_owner_pairs(
         components.radius[right_owner, right_component],
         components.material[left_owner, left_component],
         components.material[right_owner, right_component],
-        jnp.where(valid, pair_keys, -1),
+        jnp.where(valid[:, None], pair_keys, -jnp.ones_like(pair_keys)),
         valid,
     )
 

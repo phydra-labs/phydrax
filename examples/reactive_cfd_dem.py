@@ -119,7 +119,7 @@ result = phx.solver.advance_reactive_cfd_dem_window(
     plan,
     phx.solver.ReactiveParticleCouplingSchedulePlan(
         phx.solver.ParticleConversionSolverPlan(
-            phx.solver.ParticleConversionBackend.STRUCTURED_TRIDIAGONAL
+            phx.solver.ParticleConversionBackend.STRUCTURED_NATIVE
         ),
         dem_substeps=1,
     ),

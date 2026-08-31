@@ -180,7 +180,9 @@ class AbstractPreparedParticleNeighborhood(StrictModule, NonTrainableState):
     artifact_kind: AbstractAttribute[str]
 
     @abc.abstractmethod
-    def build(self, position: ArrayLike, /) -> ParticleNeighborhoodState:
+    def build(
+        self, position: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
         raise NotImplementedError
 
     @property
@@ -343,19 +345,48 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         self.artifact_kind = "dense-particle-neighborhood"
         self.prepared_id = prepared_id
 
-    def build(self, position: ArrayLike, /) -> ParticleNeighborhoodState:
+    def build(
+        self, position: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
         value = jnp.asarray(position)
         if value.ndim != 2 or value.shape[0] != self.particle_capacity:
             raise ValueError(
                 "Particle positions must have shape (particle_capacity, dimension)."
             )
+        base = self.pair_relation
+        if active_mask is None:
+            route_valid = base.valid
+        else:
+            active = jnp.asarray(active_mask, dtype=bool)
+            if active.shape != (self.particle_capacity,):
+                raise ValueError("active_mask must have particle-capacity shape.")
+            route_valid = (
+                base.valid & active[base.left_indices] & active[base.right_indices]
+            )
+        relation = EdgeRelation(
+            base.left_indices,
+            base.right_indices,
+            source_size=self.particle_capacity,
+            target_size=self.particle_capacity,
+            valid=route_valid,
+        )
+        pair_relation = ParticlePairRelation(
+            relation,
+            base.left_particle_ids,
+            base.right_particle_ids,
+            source_support_id=base.source_support_id,
+            target_support_id=base.target_support_id,
+            same_set=True,
+            unordered=True,
+            relation_schema_id=base.relation_schema_id,
+        )
         logical = jnp.arange(self.particle_capacity, dtype=jnp.int32)
-        pair_count = jnp.sum(self.pair_relation.valid, dtype=jnp.int32)
+        pair_count = jnp.sum(route_valid, dtype=jnp.int32)
         empty = jnp.zeros((0,), dtype=jnp.int32)
         zero = jnp.zeros((), dtype=jnp.int32)
         false = jnp.asarray(False)
         return ParticleNeighborhoodState(
-            self.pair_relation,
+            pair_relation,
             box=self.box,
             storage_to_logical=logical,
             logical_to_storage=logical,
@@ -372,7 +403,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
             domain_violation=false,
             domain_violation_count=zero,
             prepared_neighborhood_id=self.prepared_id,
-            relation_schema_id=self.pair_relation.relation_schema_id,
+            relation_schema_id=pair_relation.relation_schema_id,
         )
 
 

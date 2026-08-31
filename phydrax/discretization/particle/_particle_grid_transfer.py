@@ -21,6 +21,7 @@ class ParticleGridRelation(StrictModule, NonTrainableState):
     cell_indices: Array
     weights: Array
     valid: Array
+    active: Array
     support_count: Array
     partition_residual: Array
     capacity_overflow: Array
@@ -124,7 +125,9 @@ class PreparedParticleGridTransfer(StrictModule, NonTrainableState):
     def cell_count(self) -> int:
         return int(self.plan.cell_centers.shape[0])
 
-    def relation(self, positions: ArrayLike, /) -> ParticleGridRelation:
+    def relation(
+        self, positions: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleGridRelation:
         position = jnp.asarray(positions, dtype=self.plan.cell_centers.dtype)
         if position.shape != (
             self.particles.capacity,
@@ -148,6 +151,11 @@ class PreparedParticleGridTransfer(StrictModule, NonTrainableState):
             0.0,
         )
         active = self.particles.active_mask
+        if active_mask is not None:
+            requested = jnp.asarray(active_mask, dtype=bool)
+            if requested.shape != (self.particles.capacity,):
+                raise ValueError("active_mask must have particle-capacity shape.")
+            active = active & requested
         valid = valid & active[:, None]
         weights = jnp.where(valid, weights, 0.0)
         overflow = active & (positive_count > self.plan.maximum_cells_per_particle)
@@ -163,6 +171,7 @@ class PreparedParticleGridTransfer(StrictModule, NonTrainableState):
             indices.astype(jnp.int32),
             weights,
             valid,
+            active,
             positive_count,
             residual,
             overflow,
@@ -185,7 +194,7 @@ class PreparedParticleGridTransfer(StrictModule, NonTrainableState):
             relation.weights.shape + (1,) * (gathered.ndim - 2)
         )
         result = jnp.sum(mask * gathered, axis=1)
-        active_mask = self.particles.active_mask.reshape(
+        active_mask = relation.active.reshape(
             (self.particles.capacity,) + (1,) * (result.ndim - 1)
         )
         return jnp.where(active_mask, result, 0.0)
