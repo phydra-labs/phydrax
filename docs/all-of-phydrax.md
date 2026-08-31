@@ -146,11 +146,11 @@ normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
 elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
 bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
-and wear, bonds/topology events, and certified sensitivity modes. Static
-three-dimensional rigid-body graphs additionally provide globally coupled fixed,
-ball, and hinge constraints with SO(3) pose projection, velocity KKT projection,
-physical residual certification, and transactional rollback; contact, joint limits,
-compliance, and dynamic topology remain separate contracts. Radial particle
+and wear, bonds/topology events, and certified sensitivity modes. Rigid mechanics
+adds globally coupled planar/spatial fixed, ball, hinge, prismatic, and distance
+joints; compliant/dissipative laws and motors; unilateral limits; hard restitution
+and exact Coulomb-cone contact; breakage; fixed-capacity topology transactions; and
+physical residual/rank/energy/branch certificates. Radial particle
 conversion adds typed thermochemistry, reactions, evaporation,
 shrinking-core conversion, morphology, conservative continuum/contact/radiative
 exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
@@ -165,6 +165,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
 [Guide → Constrained rigid-body dynamics](guides_constrained_rigid_bodies.md),
+[Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
@@ -1163,6 +1164,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
+- **Transient and deformable mechanics**: solve transactional implicit Newmark
+  volumetric FEM with material-state/admissibility ledgers; couple rigid bodies
+  through exact interpolation/transpose attachment KKT blocks and mixed pressure
+  gauges; evolve objective two-/three-dimensional Cosserat rods and triangular
+  membrane/bending shells; and construct fixed-capacity deformable or rigid–MPM
+  contact/coupling routes. See
+  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md).
 - **Force-density structural form-finding**: build sparse or affine-restraint
   tension, compression, or mixed-sign networks; compose self-weight, traction,
   pressure, or pneumatic loads; optimize forces, supports, loads, gridshell
