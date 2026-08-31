@@ -50,7 +50,9 @@ class FLIPParticleTransferPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(operators, PreparedMACOperators):
             raise TypeError("operators must be PreparedMACOperators.")
-        assignment_ = TensorBSplineSplatAssignment(1) if assignment is None else assignment
+        assignment_ = (
+            TensorBSplineSplatAssignment(1) if assignment is None else assignment
+        )
         execution_ = SplatExecutionPolicy() if execution is None else execution
         precision_ = ParticlePrecisionPolicy() if precision is None else precision
         budget_ = ParticleGridSplatBudget() if budget is None else budget
@@ -72,7 +74,9 @@ class FLIPParticleTransferPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def prepare(self, particles: ParticleDiscretization, /) -> PreparedFLIPParticleTransfer:
+    def prepare(
+        self, particles: ParticleDiscretization, /
+    ) -> PreparedFLIPParticleTransfer:
         return PreparedFLIPParticleTransfer(self, particles)
 
 
@@ -83,7 +87,9 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
     faces: tuple[PreparedParticleGridSplat, ...]
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(self, plan: FLIPParticleTransferPlan, particles: ParticleDiscretization, /):
+    def __init__(
+        self, plan: FLIPParticleTransferPlan, particles: ParticleDiscretization, /
+    ):
         if not isinstance(plan, FLIPParticleTransferPlan):
             raise TypeError("plan must be FLIPParticleTransferPlan.")
         if not isinstance(particles, ParticleDiscretization):
@@ -105,7 +111,9 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             ).prepare(particles)
 
         cell = prepared_for(operators.discretization.cell_layout)
-        faces = tuple(prepared_for(layout) for layout in operators.discretization.face_layouts)
+        faces = tuple(
+            prepared_for(layout) for layout in operators.discretization.face_layouts
+        )
         self.plan = plan
         self.particles = particles
         self.cell = cell
@@ -124,15 +132,24 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
     def dimension(self) -> int:
         return self.particles.ambient_dimension
 
-    def build(self, position: ArrayLike, /) -> FLIPTransferState:
+    def build(
+        self,
+        position: ArrayLike,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
+    ) -> FLIPTransferState:
         return FLIPTransferState(
-            self.cell.build(position),
-            tuple(value.build(position) for value in self.faces),
+            self.cell.build(position, active_mask=active_mask),
+            tuple(value.build(position, active_mask=active_mask) for value in self.faces),
             self.prepared_id,
         )
 
     def _validate_state(self, state: FLIPTransferState, /) -> None:
-        if not isinstance(state, FLIPTransferState) or state.transfer_id != self.prepared_id:
+        if (
+            not isinstance(state, FLIPTransferState)
+            or state.transfer_id != self.prepared_id
+        ):
             raise ValueError("FLIP transfer state belongs to another prepared transfer.")
 
     def particle_to_grid(
@@ -141,6 +158,8 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         velocity: ArrayLike,
         reference_density: ArrayLike,
         /,
+        *,
+        masses: ArrayLike | None = None,
     ) -> FLIPParticleToGridResult:
         self._validate_state(state)
         values = jnp.asarray(velocity, dtype=self.particles.safe_masses.dtype)
@@ -153,7 +172,13 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             ~jnp.isfinite(density) | (density <= 0.0),
             "reference_density must be positive and finite.",
         )
-        masses = self.particles.masses.astype(values.dtype)
+        masses = (
+            self.particles.masses.astype(values.dtype)
+            if masses is None
+            else jnp.asarray(masses, dtype=values.dtype)
+        )
+        if masses.shape != (self.particles.capacity,):
+            raise ValueError("masses must have particle-capacity shape.")
         volume = masses / density
         cell = self.cell.deposit_content(state.cell, volume)
         cell_volume = self.plan.operators.discretization.cell_volumes.astype(values.dtype)
@@ -164,7 +189,9 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
         face_support = []
         momentum_defect = jnp.asarray(0.0, dtype=values.dtype)
         successful = cell.successful
-        for axis, (transfer, route) in enumerate(zip(self.faces, state.faces, strict=True)):
+        for axis, (transfer, route) in enumerate(
+            zip(self.faces, state.faces, strict=True)
+        ):
             payload = jnp.stack((masses, masses * values[:, axis]), axis=-1)
             result = transfer.deposit_content(route, payload)
             mass = result.content[..., 0]
@@ -172,7 +199,9 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             scale = jnp.maximum(jnp.max(jnp.abs(mass), initial=0.0), 1.0)
             tolerance = jnp.finfo(mass.dtype).eps * max(16, transfer.route_count) * scale
             support = mass > tolerance
-            velocity_component = jnp.where(support, momentum / jnp.where(support, mass, 1.0), 0.0)
+            velocity_component = jnp.where(
+                support, momentum / jnp.where(support, mass, 1.0), 0.0
+            )
             face_mass.append(mass)
             face_momentum.append(momentum)
             face_velocity.append(velocity_component)
@@ -180,11 +209,15 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             momentum_defect = jnp.maximum(
                 momentum_defect, result.balance.maximum_absolute_balance_defect
             )
-            successful = successful & result.successful & jnp.all(jnp.isfinite(velocity_component))
+            successful = (
+                successful & result.successful & jnp.all(jnp.isfinite(velocity_component))
+            )
         finite = (
             jnp.all(jnp.isfinite(liquid_fraction))
             & jnp.all(jnp.isfinite(values))
-            & jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in face_velocity)))
+            & jnp.all(
+                jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in face_velocity))
+            )
         )
         return FLIPParticleToGridResult(
             cell.content,

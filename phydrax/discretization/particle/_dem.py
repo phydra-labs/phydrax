@@ -56,6 +56,7 @@ from ._neighborhood import (
 from ._pair_state import match_particle_pair_keys, ParticlePairKeySpace
 from ._pairwise import particle_pair_geometry
 from ._particle_morphology import ParticleDynamicBodyProperties
+from ._population import ParticlePopulationPlan
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
@@ -547,14 +548,16 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         return self.preparation.report_id
 
     def initial_body_properties(self) -> ParticleDynamicBodyProperties:
-        masses = self.bodies.particles.safe_masses
+        population = ParticlePopulationPlan(self.bodies.particles).initialize(
+            active_mask=self.bodies.particles.active_mask,
+            masses=self.bodies.particles.safe_masses,
+        )
         return ParticleDynamicBodyProperties(
-            masses,
+            population,
             self.bodies.inverse_masses,
             self.bodies.radii,
             self.bodies.inertias,
             self.bodies.inverse_inertias,
-            self.bodies.particles.active_mask,
         )
 
     def empty_particle_history(self) -> DEMContactHistory:

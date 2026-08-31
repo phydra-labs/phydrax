@@ -40,8 +40,11 @@ Most workflows are composing a few primitives:
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,
   measure-aware particle-grid splatting, compatible electrostatic and
-  electromagnetic particle-in-cell dynamics, fixed-population free-surface FLIP,
-  WENO fluxes, fixed-capacity AMR, field spaces, measures, transfers,
+  electromagnetic particle-in-cell dynamics, runtime charge/collision/ionization
+  microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
+  response, fixed-population and dynamically reseeded free-surface/multiphase
+  FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
+  fluxes, fixed-capacity AMR, field spaces, measures, transfers,
   fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
   source processes, compatible constrained MHD, temporal/stochastic composition,
   and auditable plan/preparation identities.

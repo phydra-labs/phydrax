@@ -132,6 +132,7 @@ nav:
         - Particle-grid splatting: "guides_particle_splatting.md"
         - Particle-in-cell methods: "guides_particle_in_cell.md"
         - Free-surface FLIP: "guides_flip.md"
+        - Advanced particle-grid physics: "guides_advanced_particle_grid.md"
         - Material point method: "guides_material_point_method.md"
         - Discrete element method: "guides_discrete_element_method.md"
         - Wet granular contact: "guides_wet_granular_contact.md"

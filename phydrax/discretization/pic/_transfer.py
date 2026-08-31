@@ -149,21 +149,39 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
     def bridge(self) -> StructuredCochainBridge:
         return self.plan.bridge
 
-    def build(self, position: ArrayLike, /) -> PICTransferState:
+    def build(
+        self,
+        position: ArrayLike,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
+    ) -> PICTransferState:
         return PICTransferState(
-            self.charge.build(position),
-            tuple(value.build(position) for value in self.electric),
-            tuple(value.build(position) for value in self.magnetic),
+            self.charge.build(position, active_mask=active_mask),
+            tuple(
+                value.build(position, active_mask=active_mask) for value in self.electric
+            ),
+            tuple(
+                value.build(position, active_mask=active_mask) for value in self.magnetic
+            ),
             self.prepared_id,
         )
 
     def _validate_state(self, state: PICTransferState, /) -> None:
-        if not isinstance(state, PICTransferState) or state.transfer_id != self.prepared_id:
+        if (
+            not isinstance(state, PICTransferState)
+            or state.transfer_id != self.prepared_id
+        ):
             raise ValueError("PIC transfer state belongs to another prepared transfer.")
 
     def deposit_charge(self, state: PICTransferState, /) -> PICChargeDepositResult:
+        return self.deposit_macrocharge(state, self.species.charges)
+
+    def deposit_macrocharge(
+        self, state: PICTransferState, macrocharge: ArrayLike, /
+    ) -> PICChargeDepositResult:
         self._validate_state(state)
-        result = self.charge.deposit_content(state.charge, self.species.charges)
+        result = self.charge.deposit_content(state.charge, macrocharge)
         cochain = self.bridge.pack(0, (result.density,))
         successful = result.successful & jnp.all(jnp.isfinite(cochain))
         return PICChargeDepositResult(
@@ -181,7 +199,9 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
         self._validate_state(state)
         integrated = self.bridge.unpack(1, electric_cochain)
         measures = self.bridge.unpack(1, self.bridge.cochain.primal_measures[1])
-        physical = tuple(value / measure for value, measure in zip(integrated, measures, strict=True))
+        physical = tuple(
+            value / measure for value, measure in zip(integrated, measures, strict=True)
+        )
         gathered = tuple(
             transfer.gather(route, component)
             for transfer, route, component in zip(
@@ -194,9 +214,7 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
             values = jnp.pad(values, ((0, 0), (0, 3 - self.bridge.dimension)))
         finite = jnp.all(jnp.isfinite(values))
         successful = support.all() & finite
-        return PICFieldGatherResult(
-            values, support, finite, successful, self.prepared_id
-        )
+        return PICFieldGatherResult(values, support, finite, successful, self.prepared_id)
 
     def gather_magnetic(
         self, state: PICTransferState, magnetic_cochain: ArrayLike, /
@@ -215,9 +233,7 @@ class PreparedPICParticleCochainTransfer(StrictModule, NonTrainableState):
         values = jnp.stack(tuple(value.values for value in gathered), axis=-1)
         finite = jnp.all(jnp.isfinite(values))
         successful = support.all() & finite
-        return PICFieldGatherResult(
-            values, support, finite, successful, self.prepared_id
-        )
+        return PICFieldGatherResult(values, support, finite, successful, self.prepared_id)
 
 
 __all__ = ["PICParticleCochainTransferPlan", "PreparedPICParticleCochainTransfer"]
