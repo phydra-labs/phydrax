@@ -186,11 +186,31 @@
 
 ---
 
-::: phydrax.equations.ResolvedMACIBCFDEMCouplingPlan
+::: phydrax.solver.MACImmersedBoundaryProjectionPlan
 
 ---
 
-::: phydrax.solver.advance_mac_resolved_ib_window
+::: phydrax.solver.MACImmersedBoundaryIMEXEulerMethod
+
+---
+
+::: phydrax.solver.MACImmersedBoundarySBDF2Method
+
+---
+
+::: phydrax.equations.MACPenaltyIBCFDEMCouplingPlan
+
+---
+
+::: phydrax.solver.advance_mac_penalty_ib_cfd_dem_window
+
+---
+
+::: phydrax.solver.MACRigidImmersedEulerMethod
+
+---
+
+::: phydrax.solver.MACDeformableImmersedBackwardEulerMethod
 
 ---
 

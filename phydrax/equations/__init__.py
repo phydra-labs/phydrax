@@ -140,14 +140,6 @@ from ._hyperbolic_systems import (
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
-from ._shallow_water_sources import ShallowWaterCoriolisSource
-from ._ib_cfd_dem import (
-    evaluate_resolved_ib_cfd_dem,
-    IBConstraintPlan,
-    ResolvedIBCFDEMCouplingPlan,
-    ResolvedIBEvaluation,
-    ResolvedIBGeometryPlan,
-)
 from ._incompressible import (
     compile_periodic_incompressible_flow,
     CompiledIncompressibleSpectralDynamics,
@@ -196,17 +188,18 @@ from ._local_constitutive_root import (
     LocalConstitutiveRootDiagnostics,
     LocalConstitutiveRootPlan,
 )
-from ._mac_ib_cfd_dem import (
-    evaluate_resolved_mac_ib_cfd_dem,
-    ResolvedMACIBCFDEMCouplingPlan,
-    ResolvedMACIBEvaluation,
-    ResolvedMACIBStatus,
-)
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
     CompiledMACIncompressibleDynamics,
     MACIncompressibleDiagnostics,
     MACStepRestriction,
+)
+from ._mac_penalty_ib_cfd_dem import (
+    evaluate_mac_penalty_ib_cfd_dem,
+    IBPenaltyPlan,
+    MACPenaltyIBCFDEMCouplingPlan,
+    MACPenaltyIBEvaluation,
+    MACPenaltyIBStatus,
 )
 from ._mac_scalar_buoyancy import (
     compile_mac_scalar_buoyancy,
@@ -345,6 +338,7 @@ from ._serialize import (
     pde_ir_to_dict,
     pde_ir_to_json,
 )
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._spectral_compile import (
     compile_spectral_pde,
     CompiledSpectralDynamics,
@@ -660,9 +654,10 @@ __all__ = [
     "MACVariableDensityState",
     "MACVariableDensityStepRestriction",
     "MACVariableDensityStepResult",
-    "ResolvedMACIBCFDEMCouplingPlan",
-    "ResolvedMACIBEvaluation",
-    "ResolvedMACIBStatus",
+    "IBPenaltyPlan",
+    "MACPenaltyIBCFDEMCouplingPlan",
+    "MACPenaltyIBEvaluation",
+    "MACPenaltyIBStatus",
     "CompiledLatticeBoltzmannProblem",
     "LatticeBoltzmannProblem",
     "compile_lattice_boltzmann_problem",
@@ -705,7 +700,7 @@ __all__ = [
     "MonogenicPolynomialBasis",
     "compile_mac_scalar_buoyancy",
     "compile_mac_variable_density_flow",
-    "evaluate_resolved_mac_ib_cfd_dem",
+    "evaluate_mac_penalty_ib_cfd_dem",
     "compile_mac_incompressible_flow",
     "compile_periodic_incompressible_flow",
     "compile_channel_flow",
@@ -798,13 +793,8 @@ __all__ = [
     "CFDEMCouplingEvaluation",
     "FluidParticleSample",
     "HydrodynamicClosureResult",
-    "IBConstraintPlan",
-    "ResolvedIBCFDEMCouplingPlan",
-    "ResolvedIBEvaluation",
-    "ResolvedIBGeometryPlan",
     "StokesDragPlan",
     "UnresolvedCFDEMCouplingPlan",
-    "evaluate_resolved_ib_cfd_dem",
     "evaluate_unresolved_cfd_dem",
     "AntoineSaturationPressurePlan",
     "EvaporationPhaseChangePlan",
