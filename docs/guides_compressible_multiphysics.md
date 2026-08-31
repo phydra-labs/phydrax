@@ -34,11 +34,24 @@ adaptive balance-law result into an all-active internal mesh. Replaying that mes
 the discrete schedule for forward- and reverse-mode differentiation. Rejected adaptive
 attempts never enter the replay program.
 
+## Prepared transport adapters
+
+`prepare_balance_law_transport` converts either `PreparedFiniteVolumeRuntime` or
+`ConstrainedMHDSSPRK3Plan` into the same narrow transport contract. The adapter owns
+prescribed advancement, source views, adapter-specific auxiliary state, and checkpoint
+arrays. It does not form a general multiphysics graph.
+
+Finite-volume source views expose ordinary cell averages. Constrained-MHD source views
+reconstruct cell magnetic fields from authoritative face flux while permitting ordinary
+processes to modify only density, momentum, and total energy. A process must declare its
+modified component names; undeclared changes reject the complete interval.
+
 ## Transactional source processes
 
 `PreparedBalanceLawRuntime` applies declared processes symmetrically around one exact
-transport interval. Process state is provisional until every source half-step and the
-transport step succeeds. A failure rolls back transport and every process state.
+adapter-owned transport interval. Process state is provisional until every source
+half-step and the transport step succeeds. A failure rolls back cell state, magnetic
+cochains, process state, and transport auxiliary state.
 Random drivers come from immutable `WienerRealization`,
 `OrnsteinUhlenbeckRealization`, or `CompositeStochasticRealization` values; no hidden
 key is consumed. OU innovations query one global transformed Brownian clock and obey
@@ -53,8 +66,14 @@ Built-in processes:
 - `RadiativeCoolingProcessPlan`: material-owned temperature and an implicitly
   differentiated local cooling solve.
 
-`BalanceLawCheckpointPlan` archives the transport continuation and exact process-state
-inventory in a checksum-validated pickle-free array archive.
+`BalanceLawCheckpointPlan` archives the adapter-owned transport continuation and exact
+process-state inventory in a checksum-validated pickle-free array archive. MHD
+checkpoints include reduced cell state, face magnetic flux, time, proposed step, status,
+and accepted-step count.
+
+`tools/balance_law_transport_qualification.py` compares adaptive constrained-MHD
+execution with full, step-rematerialized, and block-rematerialized balance-law replay,
+including cell, magnetic-cochain, retention, and divergence evidence.
 
 ## Particle mesh gravity
 
@@ -71,7 +90,9 @@ degree-one cochain. `UpwindConstrainedTransportPlan` updates magnetic flux throu
 cochain exterior derivative, so the discrete divergence change is zero by construction.
 
 `ConstrainedMHDSSPRK3Plan` advances reduced cell conservation and face magnetic flux in
-the same SSPRK stages. A global convex stage blend preserves conservation and the
+the same SSPRK stages. `PreparedConstrainedMHDBalanceLawTransport` then composes that
+advance with the ordinary gravity, cooling, and OU process contracts under scheduled or
+adaptive balance-law replay. A global convex stage blend preserves conservation and the
 magnetic constraint while enforcing ideal-MHD admissibility. `HLLDFluxPlan` uses HLL
 fallback for degenerate or inadmissible intermediate fans.
 
@@ -80,6 +101,8 @@ Initial qualification is deliberately narrow:
 - stationary Cartesian three-dimensional topology;
 - all axes periodic;
 - piecewise-constant MHD face traces;
+- gravity, cooling, and OU forcing may modify only their declared nonmagnetic cell
+  components; face magnetic flux remains transport-owned;
 - no AMR, mapped grids, physical MHD boundaries, or distributed CT.
 
 ## Learned closures

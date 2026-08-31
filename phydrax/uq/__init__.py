@@ -3,7 +3,6 @@
 #
 
 """Native uncertainty-quantification tools for Phydrax."""
-
 from .._exponential_family import (
     AbstractExponentialFamily,
     BernoulliFamily,
@@ -71,6 +70,7 @@ from ..linalg._gaussian_chain import (
     GaussianMarkovStatus,
     sample_gaussian_markov,
 )
+from ._autoregressive_law import AutoregressiveLaw
 from ._bellman import (
     bellman_filter,
     bellman_filter_status_name,
@@ -204,6 +204,7 @@ from ._exponential_family_projection import (
     fit_exponential_family,
     project_exponential_family,
 )
+from ._factor_law import GaussianFactorLaw
 from ._filter_checkpoint import (
     FilterCheckpointAlgorithm,
     FilterState,
@@ -810,6 +811,7 @@ from ._whitening import GaussianPriorWhitening
 
 __all__ = [
     "TopologyEnsembleSummary",
+    "AutoregressiveLaw",
     "QuantumPOVM",
     "QuantumTomographyData",
     "TomographyLikelihoodResult",
@@ -869,6 +871,7 @@ __all__ = [
     "GAUSSIAN_FACTOR_NOT_POSITIVE_SEMIDEFINITE",
     "GAUSSIAN_FACTOR_SUCCESS",
     "GaussianFactor",
+    "GaussianFactorLaw",
     "GaussianFactorStatus",
     "add_independent_gaussian_factors",
     "compress_gaussian_factor",

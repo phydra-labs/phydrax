@@ -337,13 +337,7 @@
 
 ## Hierarchy and embedding
 
-::: phydrax.discretization.FiniteElementAdaptationMap
 
----
-
-::: phydrax.discretization.FiniteElementTransferPlan
-
----
 
 ::: phydrax.discretization.FiniteElementAdaptationMap
 

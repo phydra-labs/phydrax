@@ -78,6 +78,11 @@ from ._derived import (
     mesh_to_dual_graph,
     MeshDualGraph,
 )
+from ._diffusion import (
+    FixedTopologyGraphDiffusion,
+    graph_denoising_loss,
+    GraphPayloadKind,
+)
 from ._equivariant import (
     EquivariantGraphConvolution,
     euclidean_edge_features,
@@ -141,10 +146,10 @@ from ._kernels import (
     scatter_max,
     scatter_mean,
     scatter_min,
-    segment_max,
-    segment_max_or_constant,
     segment_log_normalize,
     segment_logsumexp,
+    segment_max,
+    segment_max_or_constant,
     segment_mean,
     segment_min,
     segment_min_or_constant,
@@ -288,6 +293,9 @@ from .nn import GCNConv, GINConv, SAGEConv
 __all__ = [
     "compat",
     "nn",
+    "FixedTopologyGraphDiffusion",
+    "GraphPayloadKind",
+    "graph_denoising_loss",
     "Graph",
     "GraphIR",
     "OperatorTopology",

@@ -173,8 +173,10 @@ Positivity activation, hard limiters, shock motion, fallback masks, and schedule
 validity remain branchwise.
 
 Stateful self-gravity, stochastic forcing, and cooling use
-`PreparedBalanceLawRuntime`, whose symmetric source/transport composition commits
-process state only after the complete interval succeeds. See
+`PreparedBalanceLawRuntime`, whose prepared transport adapter may own ordinary
+finite-volume state or constrained-MHD cell and face-flux state. Symmetric
+source/transport composition commits process and adapter state only after the complete
+interval succeeds. See
 [Differentiable compressible multiphysics](guides_compressible_multiphysics.md).
 
 ## Named sharding

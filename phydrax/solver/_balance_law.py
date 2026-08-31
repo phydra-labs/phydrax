@@ -23,13 +23,15 @@ from ..stochastic._realization import (
     is_stochastic_realization,
     StochasticRealization,
 )
-from ._finite_volume_content import FiniteVolumeConservativeContentState
-from ._finite_volume_rollout import FiniteVolumeReplayPolicy
-from ._finite_volume_runtime import (
-    FiniteVolumeRuntimeState,
-    FiniteVolumeScheduledAdvanceResult,
-    PreparedFiniteVolumeRuntime,
+from ._balance_law_transport import (
+    AbstractPreparedBalanceLawTransport,
+    BalanceLawSourceView,
+    BalanceLawTransportAdvance,
+    BalanceLawTransportState,
 )
+from ._constrained_mhd import ConstrainedMHDState
+from ._finite_volume_rollout import FiniteVolumeReplayPolicy
+from ._finite_volume_runtime import FiniteVolumeRuntimeState
 
 
 class BalanceLawProcessState(StrictModule):
@@ -82,10 +84,11 @@ class AbstractPreparedBalanceLawProcess(StrictModule, NonTrainableState):
     requires_realization: bool = eqx.field(static=True)
     realization_name: str | None = eqx.field(static=True)
     differentiability: str = eqx.field(static=True)
+    modified_components: tuple[str, ...] = eqx.field(static=True)
 
     @abc.abstractmethod
     def initialize(
-        self, transport_state: FiniteVolumeRuntimeState, args: Any = None, /
+        self, source_view: BalanceLawSourceView, args: Any = None, /
     ) -> BalanceLawProcessState:
         raise NotImplementedError
 
@@ -119,24 +122,26 @@ class AbstractBalanceLawProcessPlan(StrictModule, NonTrainableState):
 
     @abc.abstractmethod
     def prepare(
-        self, runtime: PreparedFiniteVolumeRuntime, /
+        self, transport: AbstractPreparedBalanceLawTransport, /
     ) -> AbstractPreparedBalanceLawProcess:
         raise NotImplementedError
 
 
 class BalanceLawRuntimeState(StrictModule):
-    transport_state: FiniteVolumeRuntimeState
+    transport_state: BalanceLawTransportState
     process_states: tuple[BalanceLawProcessState, ...]
     process_ids: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
-        transport_state: FiniteVolumeRuntimeState,
+        transport_state: BalanceLawTransportState,
         process_states: tuple[BalanceLawProcessState, ...],
         /,
     ):
-        if not isinstance(transport_state, FiniteVolumeRuntimeState):
-            raise TypeError("transport_state must be FiniteVolumeRuntimeState.")
+        if not isinstance(
+            transport_state, (FiniteVolumeRuntimeState, ConstrainedMHDState)
+        ):
+            raise TypeError("transport_state is not a supported balance-law state.")
         states = tuple(process_states)
         if any(not isinstance(state, BalanceLawProcessState) for state in states):
             raise TypeError("process_states must contain BalanceLawProcessState values.")
@@ -154,7 +159,7 @@ class BalanceLawRuntimeState(StrictModule):
 
 class BalanceLawAdvanceResult(StrictModule):
     runtime_state: BalanceLawRuntimeState
-    transport: FiniteVolumeScheduledAdvanceResult
+    transport: BalanceLawTransportAdvance
     accepted: Array
     status: Array
     process_step_limits: Array
@@ -165,6 +170,7 @@ class BalanceLawAdvanceResult(StrictModule):
 class BalanceLawRolloutResult(StrictModule):
     final_state: BalanceLawRuntimeState
     retained_states: Array
+    retained_transport_auxiliary: Array
     retained_times: Array
     accepted: Array
     statuses: Array
@@ -175,19 +181,22 @@ class BalanceLawRolloutResult(StrictModule):
 class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
     """Symmetric transactional source/transport composition."""
 
-    transport: PreparedFiniteVolumeRuntime
+    transport: AbstractPreparedBalanceLawTransport
     processes: tuple[AbstractPreparedBalanceLawProcess, ...]
     process_ids: tuple[str, ...] = eqx.field(static=True)
+    process_forbidden_component_indices: tuple[tuple[int, ...], ...] = eqx.field(
+        static=True
+    )
     runtime_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        transport: PreparedFiniteVolumeRuntime,
+        transport: AbstractPreparedBalanceLawTransport,
         processes: tuple[AbstractPreparedBalanceLawProcess, ...],
         /,
     ):
-        if not isinstance(transport, PreparedFiniteVolumeRuntime):
-            raise TypeError("transport must be PreparedFiniteVolumeRuntime.")
+        if not isinstance(transport, AbstractPreparedBalanceLawTransport):
+            raise TypeError("transport must be a prepared balance-law transport.")
         prepared = tuple(processes)
         if not prepared or any(
             not isinstance(process, AbstractPreparedBalanceLawProcess)
@@ -199,6 +208,30 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         identifiers = tuple(process.process_id for process in prepared)
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Prepared balance-law process IDs must be unique.")
+        forbidden_indices = []
+        available = set(transport.component_names)
+        mutable = set(transport.mutable_component_names)
+        for process in prepared:
+            modified = tuple(process.modified_components)
+            if any(not name for name in modified) or len(set(modified)) != len(modified):
+                raise ValueError(
+                    "Process modified components must be unique and non-empty."
+                )
+            if not set(modified) <= available:
+                raise ValueError(
+                    f"Process {process.process_id!r} declares unknown modified components."
+                )
+            if not set(modified) <= mutable:
+                raise ValueError(
+                    f"Process {process.process_id!r} cannot modify transport-owned components."
+                )
+            forbidden_indices.append(
+                tuple(
+                    index
+                    for index, name in enumerate(transport.component_names)
+                    if name not in modified
+                )
+            )
         realization_names = tuple(
             process.realization_name
             for process in prepared
@@ -213,20 +246,23 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         self.transport = transport
         self.processes = prepared
         self.process_ids = identifiers
+        self.process_forbidden_component_indices = tuple(forbidden_indices)
         self.runtime_id = canonical_fingerprint(
             {
                 "kind": "prepared-balance-law-runtime",
-                "transport": transport.runtime_id,
+                "transport": transport.transport_id,
                 "processes": list(identifiers),
                 "splitting": "symmetric-declared-order",
             }
         )
 
     def initialize_state(
-        self, transport_state: FiniteVolumeRuntimeState, args: Any = None, /
+        self, transport_state: BalanceLawTransportState, args: Any = None, /
     ) -> BalanceLawRuntimeState:
+        self.transport.validate_state(transport_state)
+        source_view = self.transport.source_view(transport_state)
         states = tuple(
-            process.initialize(transport_state, args) for process in self.processes
+            process.initialize(source_view, args) for process in self.processes
         )
         return BalanceLawRuntimeState(transport_state, states)
 
@@ -251,40 +287,27 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
             "Multiple stochastic processes require CompositeStochasticRealization."
         )
 
-    @staticmethod
-    def _with_cell_average(
-        transport_state: FiniteVolumeRuntimeState,
-        cell_average: Array,
+    def _accepted_process_average(
+        self,
+        index: int,
+        incoming: Array,
+        result: BalanceLawProcessAdvance,
         /,
-    ) -> FiniteVolumeRuntimeState:
-        old = transport_state.content_state
-        average = jnp.asarray(cell_average).reshape(old.conservative_content.shape)
-        content = FiniteVolumeConservativeContentState.from_cell_average(
-            average,
-            old.effective_cell_volumes,
-            old.active_cell_mask,
-            old.time,
-            topology_epoch_id=old.topology_epoch_id,
-            geometry_family_id=old.geometry_family_id,
-            geometry_layout_id=old.geometry_layout_id,
-            geometry_version=old.geometry_version,
-            evidence_policy_id=old.evidence_policy_id,
-            evidence_version=old.evidence_version,
-            precision=old.precision,
+    ) -> tuple[Array, Array, Array]:
+        candidate = jnp.asarray(result.cell_average)
+        if candidate.shape != incoming.shape:
+            raise ValueError("Balance-law process changed the source-view shape.")
+        forbidden = self.process_forbidden_component_indices[index]
+        ownership_valid = (
+            jnp.all(
+                candidate[..., jnp.asarray(forbidden, dtype=jnp.int32)]
+                == incoming[..., jnp.asarray(forbidden, dtype=jnp.int32)]
+            )
+            if forbidden
+            else jnp.asarray(True)
         )
-        return FiniteVolumeRuntimeState(
-            content,
-            transport_state.topology_journal,
-            transport_state.step_size,
-            accepted_step=transport_state.accepted_step,
-            last_status=transport_state.last_status,
-            controller_state=transport_state.controller_state,
-            integrator_state=transport_state.integrator_state,
-            output_cursor=transport_state.output_cursor,
-            sliding_coupling=transport_state.sliding_coupling,
-            sliding_shift=transport_state.sliding_shift,
-            sliding_event_id=transport_state.sliding_event_id,
-        )
+        accepted = result.successful & ownership_valid
+        return jnp.where(accepted, candidate, incoming), accepted, ownership_valid
 
     def advance_prescribed(
         self,
@@ -297,6 +320,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
     ) -> BalanceLawAdvanceResult:
         if runtime_state.process_ids != self.process_ids:
             raise ValueError("Balance-law runtime state process order changed.")
+        self.transport.validate_state(runtime_state.transport_state)
         start = jnp.asarray(start_time)
         end = jnp.asarray(end_time, dtype=start.dtype)
         step_size = end - start
@@ -317,7 +341,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         del current_time
         stochastic_count = sum(process.requires_realization for process in self.processes)
         original = runtime_state
-        average = runtime_state.transport_state.cell_average()
+        average = self.transport.source_view(runtime_state.transport_state).cell_average
         states = list(runtime_state.process_states)
         limits = tuple(
             jnp.asarray(process.step_limit(start, average, state, args)).reshape(())
@@ -330,6 +354,7 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         within_limits = limit_valid & jnp.all(step_size <= limits_array)
         midpoint = start + 0.5 * step_size
         successful = within_limits
+        ownership_valid = jnp.asarray(True)
         first_diagnostics = []
         for index, process in enumerate(self.processes):
             component = self._realization_component(
@@ -343,15 +368,20 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                 component,
                 args,
             )
-            average = jnp.where(result.successful, result.cell_average, average)
+            average, process_successful, component_ownership = (
+                self._accepted_process_average(index, average, result)
+            )
             states[index] = result.process_state
-            successful = successful & result.successful
+            successful = successful & process_successful
+            ownership_valid = ownership_valid & component_ownership
             first_diagnostics.append(result.diagnostics)
 
-        source_updated = self._with_cell_average(runtime_state.transport_state, average)
-        transport = self.transport.advance_prescribed(source_updated, step_size, args)
+        source_updated = self.transport.with_source_view(
+            runtime_state.transport_state, average
+        )
+        transport = self.transport.advance_prescribed(source_updated, start, end, args)
         successful = successful & transport.accepted
-        average = transport.runtime_state.cell_average()
+        average = self.transport.source_view(transport.state).cell_average
         second_diagnostics = []
         for reverse_index, process in enumerate(reversed(self.processes)):
             index = len(self.processes) - 1 - reverse_index
@@ -366,12 +396,15 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
                 component,
                 args,
             )
-            average = jnp.where(result.successful, result.cell_average, average)
+            average, process_successful, component_ownership = (
+                self._accepted_process_average(index, average, result)
+            )
             states[index] = result.process_state
-            successful = successful & result.successful
+            successful = successful & process_successful
+            ownership_valid = ownership_valid & component_ownership
             second_diagnostics.append(result.diagnostics)
 
-        candidate_transport = self._with_cell_average(transport.runtime_state, average)
+        candidate_transport = self.transport.with_source_view(transport.state, average)
         candidate = BalanceLawRuntimeState(candidate_transport, tuple(states))
         committed = jax.lax.cond(
             successful,
@@ -385,7 +418,11 @@ class PreparedBalanceLawRuntime(StrictModule, NonTrainableState):
         status = jnp.where(
             successful,
             0,
-            jnp.where(within_limits, 2, 1),
+            jnp.where(
+                ~ownership_valid,
+                3,
+                jnp.where(within_limits, 2, 1),
+            ),
         ).astype(jnp.int32)
         diagnostics = tuple(first_diagnostics) + tuple(reversed(second_diagnostics))
         return BalanceLawAdvanceResult(
@@ -486,7 +523,12 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
                 return (
                     (result.runtime_state, active & result.accepted),
                     (
-                        result.runtime_state.transport_state.content_state.conservative_content,
+                        self.runtime.transport.source_view(
+                            result.runtime_state.transport_state
+                        ).cell_average,
+                        self.runtime.transport.auxiliary_state(
+                            result.runtime_state.transport_state
+                        ),
                         result.runtime_state.time,
                         result.accepted,
                         result.status,
@@ -498,7 +540,10 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
                 return (
                     (state, active),
                     (
-                        state.transport_state.content_state.conservative_content,
+                        self.runtime.transport.source_view(
+                            state.transport_state
+                        ).cell_average,
+                        self.runtime.transport.auxiliary_state(state.transport_state),
                         state.time,
                         jnp.asarray(False),
                         jnp.asarray(2, dtype=jnp.int32),
@@ -517,10 +562,11 @@ class ScheduledBalanceLawRolloutPlan(StrictModule, NonTrainableState):
             mode=self.replay.mode,
             block_size=self.replay.block_size,
         )
-        states, times, accepted, statuses, margins = outputs
+        states, auxiliary, times, accepted, statuses, margins = outputs
         return BalanceLawRolloutResult(
             final_state=final,
             retained_states=states,
+            retained_transport_auxiliary=auxiliary,
             retained_times=times,
             accepted=accepted,
             statuses=statuses,
