@@ -625,12 +625,40 @@ from ._mac_free_surface import (
     MACFreeSurfaceProjectionPlan,
     MACFreeSurfaceProjectionResult,
 )
-from ._mac_resolved_ib_cfd_dem import (
-    advance_mac_resolved_ib_window,
-    MACResolvedIBCouplingSchedulePlan,
-    MACResolvedIBCouplingState,
-    MACResolvedIBMacroStepResult,
-    MACResolvedIBWindowStatus,
+from ._mac_immersed_boundary import (
+    MACImmersedBoundaryProjectionPlan,
+    MACImmersedBoundaryProjectionResult,
+    MACImmersedBoundaryProjectionStatus,
+    MACImmersedBoundarySolveMethod,
+)
+from ._mac_immersed_deformable import (
+    MACDeformableImmersedBackwardEulerMethod,
+    MACDeformableImmersedEnergyLedger,
+    MACDeformableImmersedState,
+    MACDeformableImmersedStepResult,
+    StructuralEnergy,
+)
+from ._mac_immersed_rigid import (
+    MACRigidImmersedEulerMethod,
+    MACRigidImmersedProjectionPlan,
+    MACRigidImmersedProjectionResult,
+    MACRigidImmersedStepResult,
+)
+from ._mac_immersed_step import (
+    MACImmersedBoundaryIMEXEulerMethod,
+    MACImmersedBoundaryIMEXEulerResult,
+    MACImmersedBoundarySBDF2Method,
+    MACImmersedBoundarySBDF2Result,
+    MACImmersedBoundarySBDF2State,
+    MACImmersedBoundaryStepStatus,
+    MarkerMotionProvider,
+)
+from ._mac_penalty_ib_cfd_dem import (
+    advance_mac_penalty_ib_cfd_dem_window,
+    MACPenaltyIBCouplingSchedulePlan,
+    MACPenaltyIBCouplingState,
+    MACPenaltyIBMacroStepResult,
+    MACPenaltyIBWindowStatus,
 )
 from ._mac_sensitivity import (
     MACDerivativeMode,
@@ -672,6 +700,26 @@ from ._markov_cubature import (
     MarkovCubatureStatus,
     PolynomialRecombination,
     solve_markov_cubature,
+)
+from ._material_point_adaptive import (
+    AdaptiveMPMRolloutPlan,
+    AdaptiveMPMRolloutResult,
+    MPMAdaptiveAttemptJournal,
+    MPMAdaptivePolicy,
+    MPMAdaptiveStatus,
+)
+from ._material_point_fracture import (
+    MPMPhaseFieldEvidence,
+    MPMPhaseFieldFracturePlan,
+    MPMPhaseFieldRuntimeState,
+    MPMPhaseFieldStepResult,
+    PreparedMPMPhaseFieldDynamics,
+)
+from ._material_point_implicit import (
+    ImplicitMPMDiagnostics,
+    ImplicitMPMMethodPlan,
+    ImplicitMPMStepResult,
+    PreparedImplicitMPMDynamics,
 )
 from ._material_point_rollout import (
     MPMGradientKind,
@@ -1129,6 +1177,14 @@ from .maxwell import (
     CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
 )
+from ._uvlm import *  # noqa: F403
+from ._uvlm import __all__ as _uvlm_all
+from ._vortex_lattice import *  # noqa: F403
+from ._vortex_lattice import __all__ as _vortex_lattice_all
+from ._vortex_panels import *  # noqa: F403
+from ._vortex_panels import __all__ as _vortex_panels_all
+from ._vortex_step import *  # noqa: F403
+from ._vortex_step import __all__ as _vortex_step_all
 
 
 __all__ = [
@@ -1537,10 +1593,30 @@ __all__ = [
     "MACFreeSurfaceProjectionPlan",
     "MACFreeSurfaceProjectionResult",
     "MACReplayCertification",
-    "MACResolvedIBCouplingSchedulePlan",
-    "MACResolvedIBCouplingState",
-    "MACResolvedIBMacroStepResult",
-    "MACResolvedIBWindowStatus",
+    "MACDeformableImmersedBackwardEulerMethod",
+    "MACDeformableImmersedEnergyLedger",
+    "MACDeformableImmersedState",
+    "MACDeformableImmersedStepResult",
+    "MACImmersedBoundaryIMEXEulerMethod",
+    "MACImmersedBoundaryIMEXEulerResult",
+    "MACImmersedBoundaryProjectionPlan",
+    "MACImmersedBoundaryProjectionResult",
+    "MACImmersedBoundaryProjectionStatus",
+    "MACImmersedBoundarySBDF2Method",
+    "MACImmersedBoundarySBDF2Result",
+    "MACImmersedBoundarySBDF2State",
+    "MACImmersedBoundarySolveMethod",
+    "MACImmersedBoundaryStepStatus",
+    "MACRigidImmersedEulerMethod",
+    "MACRigidImmersedProjectionPlan",
+    "MACRigidImmersedProjectionResult",
+    "MACRigidImmersedStepResult",
+    "MarkerMotionProvider",
+    "StructuralEnergy",
+    "MACPenaltyIBCouplingSchedulePlan",
+    "MACPenaltyIBCouplingState",
+    "MACPenaltyIBMacroStepResult",
+    "MACPenaltyIBWindowStatus",
     "MACSegmentedShadowingPlan",
     "MACShadowingSensitivityResult",
     "MACShadowingStatus",
@@ -1549,7 +1625,7 @@ __all__ = [
     "MACVariableDensityProjectionPlan",
     "MACVariableDensityProjectionResult",
     "MACVariableDensityRateProjectionResult",
-    "advance_mac_resolved_ib_window",
+    "advance_mac_penalty_ib_cfd_dem_window",
     "SemidiscreteSPDE",
     "SemilinearDrift",
     "SemilinearFallback",
@@ -1963,6 +2039,20 @@ __all__ = [
     "MeshVaryingUQAggregator",
     "NonlinearLocalCondensation",
     "RelaxedHPMarking",
+    "AdaptiveMPMRolloutPlan",
+    "AdaptiveMPMRolloutResult",
+    "MPMAdaptiveAttemptJournal",
+    "MPMAdaptivePolicy",
+    "MPMAdaptiveStatus",
+    "ImplicitMPMDiagnostics",
+    "ImplicitMPMMethodPlan",
+    "ImplicitMPMStepResult",
+    "PreparedImplicitMPMDynamics",
+    "MPMPhaseFieldEvidence",
+    "MPMPhaseFieldFracturePlan",
+    "MPMPhaseFieldRuntimeState",
+    "MPMPhaseFieldStepResult",
+    "PreparedMPMPhaseFieldDynamics",
     "MPMGradientKind",
     "MPMGradientReport",
     "MPMReplayEvidence",
@@ -1972,4 +2062,15 @@ __all__ = [
     "MPMRetainedTrajectory",
     "MPMRolloutResult",
     "ScheduledMPMRolloutPlan",
+]
+
+__all__ += [
+    name
+    for name in (
+        *_uvlm_all,
+        *_vortex_lattice_all,
+        *_vortex_panels_all,
+        *_vortex_step_all,
+    )
+    if name not in __all__
 ]

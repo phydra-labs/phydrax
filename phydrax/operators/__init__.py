@@ -136,6 +136,7 @@ from .differential import (  # noqa: F401
     navier_stokes_stress,
     neo_hookean_cauchy,
     neo_hookean_pk1,
+    neo_hookean_reference_energy,
     partial_n,
     partial_t,
     partial_x,
@@ -266,6 +267,8 @@ from .integral import (  # noqa: F401
     SurfaceTargetReport3D,
     time_convolution,
 )
+from .integral.vortex import *  # noqa: F401,F403
+from .integral.vortex import __all__ as _vortex_all
 from .interpolation import (  # noqa: F401
     BSplineBoundaryConstraint,
     BSplineBoundaryMode,
@@ -444,6 +447,7 @@ __all__ = [
     "maxwell_stress",
     "navier_stokes_stress",
     "neo_hookean_cauchy",
+    "neo_hookean_reference_energy",
     "neo_hookean_pk1",
     "partial_t",
     "partial_n",
@@ -690,3 +694,5 @@ __all__ = [
     "real_part",
     "trace",
 ]
+
+__all__ += [name for name in _vortex_all if name not in __all__]

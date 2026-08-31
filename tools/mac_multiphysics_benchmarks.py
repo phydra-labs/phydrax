@@ -107,10 +107,14 @@ def run_mac_multiphysics_benchmark(*, count=6):
     )
     variable_diagnostics = variable_flow.diagnostics(0.0, variable_state)
 
-    marker_transfer = phx.discretization.MACMarkerTransferPlan(
-        operators, 0.3, min(12, count * count)
+    marker_position = jnp.asarray([[0.25, 0.25]])
+    marker_set = phx.discretization.LagrangianMarkerSetPlan(
+        jnp.asarray([0]), marker_position, jnp.asarray([1.0])
     ).prepare()
-    marker_relation = marker_transfer.relation(jnp.asarray([[0.25, 0.25]]))
+    marker_transfer = phx.discretization.MACMarkerTransferPlan(
+        operators, marker_set
+    ).prepare()
+    marker_relation = marker_transfer.relation(marker_position)
     marker_diagnostics = marker_transfer.diagnostics(
         marker_relation, velocity, jnp.asarray([[0.2, -0.1]])
     )

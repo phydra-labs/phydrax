@@ -1,0 +1,28 @@
+{
+  "benchmark": "mechanics-expansion",
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "rigid": {
+    "body_count": 8,
+    "constraint_rows": 14,
+    "compile_seconds": 6.150072540996916,
+    "steady_seconds": 0.0014524947500831331,
+    "successful": true,
+    "position_residual": 0.0,
+    "velocity_residual": 0.0
+  },
+  "friction": {
+    "contact_count": 1024,
+    "compile_seconds": 0.09059666699977242,
+    "steady_seconds": 0.00012718231255348655,
+    "successful": true,
+    "minimum_branch_margin": 0.3544003745317532
+  },
+  "rod": {
+    "node_count": 17,
+    "compile_seconds": 0.14575358300135122,
+    "steady_seconds": 0.00014593749983760063,
+    "valid": true,
+    "potential_energy": 0.0
+  }
+}

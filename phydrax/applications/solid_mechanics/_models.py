@@ -5,12 +5,11 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...equations import CellResidualAction, FiniteElementForm
+from ...equations import CellEnergyAction, FiniteElementForm
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 
 
@@ -64,6 +63,17 @@ class NeoHookeanParameters(StrictModule, NonTrainableState):
     @property
     def bulk_modulus(self) -> Array:
         return self.lame_lambda + (2.0 / 3.0) * self.shear_modulus
+
+
+def _embed_neo_hookean_deformation(deformation_gradient: ArrayLike, /) -> Array:
+    deformation = jnp.asarray(deformation_gradient)
+    if deformation.shape[-2:] == (3, 3):
+        return deformation
+    if deformation.shape[-2:] != (2, 2):
+        raise ValueError("Neo-Hookean deformation gradients must end in 2x2 or 3x3.")
+    embedded = jnp.zeros(deformation.shape[:-2] + (3, 3), dtype=deformation.dtype)
+    embedded = embedded.at[..., :2, :2].set(deformation)
+    return embedded.at[..., 2, 2].set(1.0)
 
 
 def neo_hookean_first_piola(
@@ -125,20 +135,24 @@ def neo_hookean_form(
     if not isinstance(parameters, NeoHookeanParameters):
         raise TypeError("parameters must be NeoHookeanParameters.")
 
-    def residual(values, gradients, points, weights, test_basis, test_gradients, context):
-        deformation = jnp.eye(3) + gradients[0]
-        stress = neo_hookean_first_piola(deformation, parameters)
-        return oe.contract("cq,cqib,cqab->cia", weights, test_gradients, stress)
+    def density(values, gradients, points, context):
+        del values, points, context
+        displacement_gradient = jnp.swapaxes(jnp.asarray(gradients), -1, -2)
+        if displacement_gradient.shape[-2:] not in ((2, 2), (3, 3)):
+            raise ValueError("Neo-Hookean displacement gradients must end in 2x2 or 3x3.")
+        deformation = _embed_neo_hookean_deformation(
+            jnp.eye(displacement_gradient.shape[-1]) + displacement_gradient
+        )
+        return neo_hookean_reference_energy(deformation, parameters)
 
     return FiniteElementForm(
         form_id,
         field_name,
         (
-            CellResidualAction(
+            CellEnergyAction(
                 field_name,
-                (field_name,),
-                residual,
-                action_id="neo-hookean-internal-force",
+                density,
+                action_id="neo-hookean-reference-energy",
             ),
         ),
     )

@@ -1,0 +1,35 @@
+{
+  "camera": {
+    "reconstructed_xyz": [
+      0.10000000000000091,
+      -0.10000000000000123,
+      5.000000000000057
+    ],
+    "reconstruction_error": 5.686369152047466e-14,
+    "successful": true,
+    "valid": true
+  },
+  "maturity": "qualified",
+  "passed": true,
+  "piv": {
+    "displacement_error": 0.0,
+    "median_displacement_rc": [
+      2.0,
+      -1.0
+    ],
+    "successful": true,
+    "valid_fraction": 1.0
+  },
+  "stb": {
+    "born_count": 1,
+    "final_residual_energy": 0.061345348085434334,
+    "initial_residual_energy": 52.11695936987421,
+    "reconstructed_xyz": [
+      0.10143847447857311,
+      -0.008866521128765011,
+      6.000000000000111
+    ],
+    "reconstruction_error": 0.00898244987474701,
+    "successful": true
+  }
+}

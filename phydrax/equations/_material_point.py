@@ -23,17 +23,62 @@ from ..discretization import (
 )
 from ..discretization.mpm import (
     ExplicitMPMMethodPlan,
+    MPMActiveBlockPlan,
+    MPMNodalFieldPlan,
     MPMParticleDomainPlan,
     MPMResourcePolicy,
     MPMRuntimeState,
     PreparedMPMDynamics,
     PrescribedGridVelocityPlan,
+    RigidMPMContactPlan,
 )
 from ..discretization.particle import ParticleDiscretization
 from ..discretization.splatting import PreparedParticleGridSplat
 
 
-MPMKinematics: TypeAlias = Literal["plane_strain", "three_dimensional"]
+MPMKinematics: TypeAlias = Literal[
+    "plane_strain",
+    "plane_stress",
+    "three_dimensional",
+]
+
+
+class MPMConstitutiveCapabilities(StrictModule, NonTrainableState):
+    stateful: bool = eqx.field(static=True)
+    has_free_energy: bool = eqx.field(static=True)
+    has_algorithmic_tangent: bool = eqx.field(static=True)
+    has_dissipation: bool = eqx.field(static=True)
+    has_tension_compression_split: bool = eqx.field(static=True)
+    supports_implicit: bool = eqx.field(static=True)
+    capability_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        stateful: bool,
+        has_free_energy: bool,
+        has_algorithmic_tangent: bool,
+        has_dissipation: bool,
+        has_tension_compression_split: bool = False,
+        supports_implicit: bool,
+    ):
+        values = {
+            "stateful": bool(stateful),
+            "has_free_energy": bool(has_free_energy),
+            "has_algorithmic_tangent": bool(has_algorithmic_tangent),
+            "has_dissipation": bool(has_dissipation),
+            "has_tension_compression_split": bool(has_tension_compression_split),
+            "supports_implicit": bool(supports_implicit),
+        }
+        self.stateful = values["stateful"]
+        self.has_free_energy = values["has_free_energy"]
+        self.has_algorithmic_tangent = values["has_algorithmic_tangent"]
+        self.has_dissipation = values["has_dissipation"]
+        self.has_tension_compression_split = values["has_tension_compression_split"]
+        self.supports_implicit = values["supports_implicit"]
+        self.capability_id = canonical_fingerprint(
+            {"kind": "mpm-constitutive-capabilities", **values}
+        )
 
 
 class MPMConstitutiveResponse(StrictModule):
@@ -43,6 +88,9 @@ class MPMConstitutiveResponse(StrictModule):
     trial_state: Array
     reference_energy_density: Array
     maximum_wave_speed: Array
+    dissipation_increment: Array
+    branch_code: Array
+    suggested_step: Array
     successful: Array
     admissible: Array
     diagnostics: Mapping[str, Array]
@@ -55,6 +103,9 @@ class MPMConstitutiveResponse(StrictModule):
         maximum_wave_speed: ArrayLike,
         /,
         *,
+        dissipation_increment: ArrayLike = 0.0,
+        branch_code: ArrayLike = 0,
+        suggested_step: ArrayLike = jnp.inf,
         successful: ArrayLike,
         admissible: ArrayLike,
         diagnostics: Mapping[str, ArrayLike] | None = None,
@@ -68,20 +119,24 @@ class MPMConstitutiveResponse(StrictModule):
         if stress.ndim < 2 or stress.shape[-1] != stress.shape[-2]:
             raise ValueError("First-Piola stress must end in one square tensor.")
         batch_shape = stress.shape[:-2]
-        for name, value in (
-            ("reference_energy_density", energy),
-            ("maximum_wave_speed", speed),
-            ("successful", successful_),
-            ("admissible", admissible_),
-        ):
-            if value.shape != batch_shape:
-                raise ValueError(
-                    f"{name} must have constitutive batch shape {batch_shape}."
-                )
+        energy = jnp.broadcast_to(energy, batch_shape)
+        speed = jnp.broadcast_to(speed, batch_shape)
+        dissipation = jnp.broadcast_to(
+            jnp.asarray(dissipation_increment, dtype=energy.dtype), batch_shape
+        )
+        branch = jnp.broadcast_to(jnp.asarray(branch_code, dtype=jnp.int32), batch_shape)
+        suggested = jnp.broadcast_to(
+            jnp.asarray(suggested_step, dtype=energy.dtype), batch_shape
+        )
+        successful_ = jnp.broadcast_to(successful_, batch_shape)
+        admissible_ = jnp.broadcast_to(admissible_, batch_shape)
         self.first_piola = stress
         self.trial_state = history
         self.reference_energy_density = energy
         self.maximum_wave_speed = speed
+        self.dissipation_increment = dissipation
+        self.branch_code = branch
+        self.suggested_step = suggested
         self.successful = successful_
         self.admissible = admissible_
         self.diagnostics = (
@@ -91,13 +146,24 @@ class MPMConstitutiveResponse(StrictModule):
         )
 
 
+class MPMLinearizedConstitutiveResponse(StrictModule):
+    response: MPMConstitutiveResponse
+    algorithmic_tangent: Array
+    tangent_successful: Array
+
+
 class AbstractMPMConstitutivePlan(StrictModule, NonTrainableState):
     """Fixed-shape material update required by explicit material-point dynamics."""
 
     dimension: AbstractAttribute[int]
     kinematics: AbstractAttribute[MPMKinematics]
     state_shape: AbstractAttribute[tuple[int, ...]]
+    capabilities: AbstractAttribute[MPMConstitutiveCapabilities]
     plan_id: AbstractAttribute[str]
+
+    @abc.abstractmethod
+    def initialize_state(self, batch_shape: tuple[int, ...], dtype: Any, /) -> Array:
+        raise NotImplementedError
 
     @abc.abstractmethod
     def evaluate(
@@ -110,6 +176,21 @@ class AbstractMPMConstitutivePlan(StrictModule, NonTrainableState):
         step_size: ArrayLike,
         /,
     ) -> MPMConstitutiveResponse:
+        raise NotImplementedError
+
+
+class AbstractImplicitMPMConstitutivePlan(AbstractMPMConstitutivePlan):
+    @abc.abstractmethod
+    def evaluate_linearized(
+        self,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: Any,
+        time: ArrayLike,
+        step_size: ArrayLike,
+        /,
+    ) -> MPMLinearizedConstitutiveResponse:
         raise NotImplementedError
 
 
@@ -235,6 +316,9 @@ def compile_material_point_problem(
     /,
     *,
     boundary: PrescribedGridVelocityPlan | None = None,
+    contact: RigidMPMContactPlan | None = None,
+    nodal_fields: MPMNodalFieldPlan | None = None,
+    active_blocks: MPMActiveBlockPlan | None = None,
     resource_policy: MPMResourcePolicy | None = None,
 ) -> CompiledMaterialPointProblem:
     if not isinstance(problem, MaterialPointProblemIR):
@@ -246,6 +330,9 @@ def compile_material_point_problem(
         problem.material,
         particle_domain,
         boundary=boundary,
+        contact=contact,
+        nodal_fields=nodal_fields,
+        active_blocks=active_blocks,
         external_acceleration=problem.external_acceleration,
         external_acceleration_id=problem.external_acceleration_id,
         resource_policy=resource_policy,
@@ -284,9 +371,12 @@ def compile_material_point_problem(
 
 __all__ = [
     "AbstractMPMConstitutivePlan",
+    "AbstractImplicitMPMConstitutivePlan",
     "CompiledMaterialPointProblem",
     "ExternalMPMAcceleration",
     "MPMConstitutiveResponse",
+    "MPMConstitutiveCapabilities",
+    "MPMLinearizedConstitutiveResponse",
     "MPMKinematics",
     "MaterialPointArguments",
     "MaterialPointProblemIR",

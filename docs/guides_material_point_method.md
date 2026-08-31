@@ -74,6 +74,10 @@ For plane strain, the two-dimensional deformation is embedded with out-of-plane 
 one. Plane stress is not implemented. Nonpositive `J` is a rejected material trial, not
 a clamped state.
 
+The field-valued energy and stress operators use the same $\mu$, $\lambda$, $K$,
+plane-strain, reference-volume, and nonpositive-$J$ conventions.
+
+
 Material parameters remain rollout arguments. Place state initialization inside a
 parameterized objective when the initial constitutive response depends on trainable
 parameters.
@@ -194,17 +198,42 @@ invalid rather than comparing unwrapped particles with canonical grid nodes.
 
 A rollout retains scalar evidence independently of particle-state retention.
 
-## Current limits
+## Compatibility matrix
 
-The supported method is one homogeneous material family, fixed particles, dense uniform
-nodal grids, quadratic B-splines, APIC, explicit USL, plane strain or 3-D Neo-Hookean
-elasticity, periodic boundaries, and static prescribed nodal velocity components.
+| Capability | Qualified composition |
+|---|---|
+| USF, USL-minus, MUSL | Single nodal field; MUSL reapplies rigid/prescribed constraints |
+| Plane stress | Explicit schedules and dense implicit MPM |
+| Finite-strain J2 | Explicit schedules; dense implicit with tangent evidence |
+| uGIMP | Explicit schedules; fixed-domain implicit routes |
+| cpGIMP, CPDI, CPDI2 | Explicit schedules only |
+| Rigid sharp/smooth contact | Explicit schedules only |
+| Two material fields | USL-minus only; at most two contacting fields per node |
+| Adaptive time | Explicit methods; scheduled replay carries derivative contract |
+| Active blocks | Dense-backed explicit mask |
+| Compact blocks | Explicit payload storage adapter |
+| Diffuse fracture | Explicit mechanics plus bounded grid damage solve |
+| Field partition or CPIC | Alternative sharp topology paths |
 
-PIC/FLIP, USF/MUSL, contact, plasticity, GIMP/CPDI, multimaterial fields, sparse grids,
-adaptive time meshes, implicit MPM, fracture, and carrier topology optimization are not
-part of this capability.
+## Advanced capabilities and limits
+
+The baseline remains the semantic reference. Qualified extensions are documented
+separately:
+
+- [USF/MUSL schedules and adaptive time](guides_mpm_schedules.md);
+- [plane stress and finite-strain J2](guides_mpm_constitutive_extensions.md);
+- [rigid friction and multiple nodal fields](guides_mpm_contact_fields.md);
+- [uGIMP, cpGIMP, CPDI, and CPDI2](guides_mpm_particle_domains.md);
+- [adaptive replay and dense implicit MPM](guides_mpm_adaptive_implicit.md);
+- [diffuse/sharp fracture and block storage](guides_mpm_fracture_sparse.md).
+
+The implementation does not claim PIC/FLIP, non-associated geomechanical plasticity,
+general multiway nodal contact, anisotropic plane-stress closure, sharp friction in
+implicit MPM, deformation-dependent CPDI implicit Jacobians, dynamic hash/tree grids,
+compact sparse implicit/fracture operators, or derivatives through adaptive decisions
+and fracture topology epochs.
 
 Electrostatic/electromagnetic [PIC](guides_particle_in_cell.md) and
 free-surface [FLIP](guides_flip.md) are separate method families over the same
-prepared splat data plane; they do not reuse MPM constitutive state or USL
-dynamics.
+prepared splat data plane; they do not reuse MPM constitutive state or explicit
+stress-update dynamics.

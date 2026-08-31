@@ -63,11 +63,22 @@ Most workflows are composing a few primitives:
   construction-stage replay, physical section catalogs, sizing, and explicit
   certified/failed/incomplete evidence build on force-density geometry without
   relabeling form-finding as structural safety.
+- **Advanced structural evidence**: extensible catenaries, contact and friction,
+  generalized DOFs, auditable section orientations, semirigid joints, warping
+  beams, fiber plasticity, GBT/finite-strip local buckling, collapse and dynamics,
+  exact construction-order search, standards clauses, reliability, calibration,
+  evidence acquisition, and immutable digital-twin ancestry extend member-network
+  mechanics without erasing model fidelity or applicability.
 - **Atomistic learning and dynamics**: scale-identified atomic structures,
   position-independent systems, stable-ID molecular topology, classical and learned
   scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
   SHAKE/RATTLE, triclinic cells, Ewald/PME, bounded replayable trajectories, and
   exact checkpoints retain explicit resources, precision, diagnostics, and provenance.
+- **Experimental velocimetry**: mask-aware multipass PIV, calibrated
+  multi-camera particle reconstruction and tracking, residual-image Lagrangian
+  refinement, deterministic synthetic qualification, and optional learned dense
+  displacement preserve image/physical coordinate frames, raw validity,
+  uncertainty, capacity, and provenance.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -187,6 +198,12 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the
+[MPM schedule/adaptivity guide](docs/guides_mpm_schedules.md), the
+[MPM constitutive guide](docs/guides_mpm_constitutive_extensions.md), the
+[MPM contact/field guide](docs/guides_mpm_contact_fields.md), the
+[MPM domain guide](docs/guides_mpm_particle_domains.md), the
+[MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
+[MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -306,6 +323,9 @@ is not imported by ordinary Phydrax or linear-algebra use.
 ## Documentation
 
 Can be found [here](https://phydra-labs.github.io/phydrax).
+The [velocimetry guide](docs/guides_velocimetry.md) covers classical and learned
+PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
+qualification, and explicit-loss interoperability.
 
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
@@ -317,6 +337,10 @@ The [member-network structural verification guide](docs/guides_member_network_st
 adds constitutive compatibility, slackness, bending, buckling, staged construction,
 prestress realizability, and material sizing while retaining explicit evidence
 boundaries.
+The [advanced structural evidence guide](docs/guides_advanced_structural_evidence.md)
+covers catenaries, contact, warping and plastic sections, local buckling,
+construction-order search, standards, reliability, calibration, and digital
+evidence graphs.
 The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
 demonstrates correlated empirical integration outside quantum mechanics, while the
 [VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian
