@@ -217,6 +217,29 @@ failure remains typed and fail-closed. See
 [Cookbook → Atomistic dynamics](cookbook/atomistic_dynamics.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
+### Experimental velocimetry from images to trajectories
+
+`phydrax.velocimetry` keeps particle image velocimetry, dense image displacement,
+particle tracking velocimetry, and residual-image Lagrangian refinement
+scientifically distinct. Classical PIV plans prepare mask-aware FFT correlation,
+extended search, deterministic peak evidence, multipass image deformation,
+validation, optional non-mutating replacement, and calibrated physical
+conversion. Camera rigs expose pinhole/distorted/refractive projection and rays;
+robust calibration, conflict-free multi-view association, triangulation, temporal
+tracking, and smoothing retain frames, identities, covariance, failures, and
+capacity evidence.
+
+Radiometric particle-image formation supports deterministic synthetic
+qualification and continuous Shake refinement without reusing conservative
+particle-grid deposition semantics. An optional native learned backend shares
+only the neutral dense image-displacement contract. Canonical archives and
+explicit-loss external adapters preserve zero versus invalid data, raw versus
+filled values, coordinate transforms, and provenance. PIV fields can adapt to
+compatible tensor grids and state-space observations; reconstructed PTV tracks
+can adapt to `TrajectoryData` with explicit gap resets. See
+[Guide → Velocimetry](guides_velocimetry.md) and
+[API → Velocimetry](api/velocimetry/index.md).
+
 ### Computational topology: exact invariants and filtered fields
 
 `phydrax.topology` consumes the canonical oriented cell complexes above without
