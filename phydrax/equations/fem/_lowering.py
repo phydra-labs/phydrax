@@ -17,6 +17,10 @@ from ...discretization._cell_complex import (
 from ...discretization._hexahedral import HexahedralConnectivity
 from ...discretization.fem import FiniteElementDiscretization
 from ...discretization.fem._high_order import ReferenceNodalFamily
+from ...discretization.fem._mortar import (
+    FiniteElementMortarMetricData,
+    FiniteElementMortarPlan,
+)
 from ...discretization.fem._reference_operator import PreparedFiniteElementReference
 from ._ir import FieldSlot, FiniteElementActionIR, LocalActionIR, RegionIR
 from ._kernels import KernelBinding, KernelTable
@@ -567,6 +571,104 @@ def compile_workset_program(
                 )
             )
     return WorksetProgram(ir, worksets)
+
+
+def compile_finite_element_hp_mortar_workset(
+    discretization: FiniteElementDiscretization,
+    action_index: int,
+    action_ir: FiniteElementActionIR,
+    field_name: str,
+    owner_block_index: int,
+    neighbour_block_index: int,
+    owner_cell: int,
+    neighbour_cell: int,
+    owner_local_facet: int,
+    neighbour_local_facet: int,
+    owner_reference: PreparedFiniteElementReference,
+    neighbour_reference: PreparedFiniteElementReference,
+    mortar: FiniteElementMortarPlan,
+    metric: FiniteElementMortarMetricData,
+    /,
+    *,
+    entity_index: int,
+    entity_set_id: str,
+) -> CompiledWorkset:
+    """Lower one asymmetric hp mortar patch into the generic workset contract."""
+
+    field_index = discretization._field_index(field_name)
+    owner_element = discretization.elements[field_index][owner_block_index]
+    neighbour_element = discretization.elements[field_index][neighbour_block_index]
+
+    def trace_indices(element, local_facet):
+        nodes = np.asarray(element.reference_nodes)
+        if element.cell_kind == "quadrilateral":
+            axis_side = ((1, 0), (0, 1), (1, 1), (0, 0))
+        elif element.cell_kind == "hexahedron":
+            axis_side = ((2, 0), (0, 1), (2, 1), (0, 0), (1, 0), (1, 1))
+        else:
+            raise ValueError("hp mortar lowering requires quad/hex tensor elements.")
+        axis, side = axis_side[int(local_facet)]
+        return np.flatnonzero(np.isclose(nodes[:, axis], float(side))).astype(np.int32)
+
+    owner_trace = trace_indices(owner_element, owner_local_facet)
+    neighbour_trace = trace_indices(neighbour_element, neighbour_local_facet)
+    if (
+        owner_trace.size != mortar.left_interpolation.shape[1]
+        or neighbour_trace.size != mortar.right_interpolation.shape[1]
+    ):
+        raise ValueError("Mortar trace widths and finite-element traces disagree.")
+    owner_routes = np.asarray(
+        discretization.dof_maps[field_index].cell_dofs[owner_block_index][owner_cell]
+    )[owner_trace]
+    neighbour_routes = np.asarray(
+        discretization.dof_maps[field_index].cell_dofs[neighbour_block_index][
+            neighbour_cell
+        ]
+    )[neighbour_trace]
+    cell_offsets = np.cumsum(
+        np.asarray(
+            (0,) + tuple(block.cell_count for block in discretization.mesh.blocks),
+            dtype=np.int32,
+        )
+    )
+    owner_global = int(cell_offsets[owner_block_index]) + int(owner_cell)
+    neighbour_global = int(cell_offsets[neighbour_block_index]) + int(neighbour_cell)
+    coordinate_element = discretization.coordinate_elements[owner_block_index]
+    signature = WorksetSignature(
+        "interior_facet",
+        discretization.mesh.blocks[owner_block_index].name,
+        owner_element.cell_kind,
+        mortar.plan_id,
+        {field_name: owner_trace.size},
+        support_id=discretization.support.support_id,
+        entity_set_id=entity_set_id,
+        element_id=owner_element.element_id,
+        coordinate_element_id=coordinate_element.element_id,
+        prepared_reference_id=owner_reference.prepared_id,
+        neighbour_element_id=neighbour_element.element_id,
+        neighbour_prepared_reference_id=neighbour_reference.prepared_id,
+        representation=owner_element.representation,
+        mapping=owner_element.mapping,
+        precision_id=discretization.precision_policy.policy_id,
+        ir_semantics_id=action_ir.action_id,
+        local_kernel="mortar",
+        neighbour_local_widths={field_name: neighbour_trace.size},
+    )
+    return CompiledWorkset(
+        signature,
+        np.asarray((int(action_index),), dtype=np.int32),
+        np.asarray((int(entity_index),), dtype=np.int32),
+        np.asarray((owner_global,), dtype=np.int32),
+        np.asarray((neighbour_global,), dtype=np.int32),
+        {field_name: owner_routes[None, :]},
+        reference=owner_reference,
+        neighbour_reference=neighbour_reference,
+        mortar=mortar,
+        mortar_metric=metric,
+        neighbour_gathers={field_name: neighbour_routes[None, :]},
+        owner_local_entities=np.asarray((owner_local_facet,), dtype=np.int32),
+        neighbour_local_entities=np.asarray((neighbour_local_facet,), dtype=np.int32),
+    )
 
 
 def kernel_table_from_form(

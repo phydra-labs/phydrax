@@ -163,6 +163,12 @@
   mass-policy-aware rates, tensor SBP and periodic mapped DGSEM conservation,
   p-multigrid, Schwarz/FDM and auxiliary preconditioning, two-sided mortars,
   fixed-capacity hp transactions, and backend-neutral distributed ownership.
+- Added operational nonconforming tensor-hp epochs with stable refinement forests,
+  isotropic quad/hex h-refinement and coarsening, 2:1 closure, anisotropic p
+  buckets, curved parent-map inheritance, H1 master-trace constraints, asymmetric
+  DG mortar worksets, role-correct h/p transfers, atomic solver transactions,
+  adaptive indicators and budgets, hp condensation/multigrid, inherited
+  partition ownership, and certified entropy-compatible DGSEM mortars.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct

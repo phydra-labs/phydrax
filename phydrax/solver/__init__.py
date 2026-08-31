@@ -317,8 +317,11 @@ from ._fermionic_gaussian import (
     solve_fermionic_gaussian,
 )
 from ._finite_element_adaptivity import (
+    FiniteElementHPTopologyResult,
     FiniteElementTopologyResult,
     FiniteElementTopologyTransaction,
+    read_finite_element_hp_epoch,
+    write_finite_element_hp_epoch,
 )
 from ._finite_element_checkpoint import (
     FiniteElementCheckpoint,
@@ -1455,8 +1458,11 @@ __all__ = [
     "FiniteElementStepDiagnostics",
     "FiniteElementRestartManifest",
     "FiniteElementStepPolicy",
+    "FiniteElementHPTopologyResult",
+    "read_finite_element_hp_epoch",
     "FiniteElementTopologyResult",
     "FiniteElementTopologyTransaction",
+    "write_finite_element_hp_epoch",
     "read_finite_element_restart",
     "write_finite_element_restart",
     "FiniteVolumeCheckpoint",
