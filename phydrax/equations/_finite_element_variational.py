@@ -139,6 +139,9 @@ def _default_rule(cell_kind: str, /) -> ReferenceRule:
 
 
 
+_UNIT_MASS_COEFFICIENT = coefficient(np.asarray(1.0))
+
+
 class FiniteElementExecutionContext(StrictModule, NonTrainableState):
     """Dynamic geometry, time, lift, and user arguments for FE execution."""
 
@@ -2091,23 +2094,16 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             right_hand_side,
         )
 
-    def _mass_operators(
+    def _compile_unit_mass_problem(
         self,
-        context: FiniteElementExecutionContext,
-        coefficient: Array,
         mass_policy: object = None,
         /,
-    ) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
+    ) -> CompiledFiniteElementProblem:
         from .fem._execution import FiniteElementMassPolicy
 
         policy = FiniteElementMassPolicy() if mass_policy is None else mass_policy
         if not isinstance(policy, FiniteElementMassPolicy):
             raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
-        coefficient = eqx.error_if(
-            coefficient,
-            jnp.any(~jnp.isfinite(coefficient) | (jnp.real(coefficient) <= 0.0)),
-            "Finite-element mass coefficient must be positive and finite.",
-        )
         local_kernel = "collocated" if policy.kind == "collocated_diagonal" else "auto"
         mass_rules = {}
         field_index = self.discretization._field_index(self.form.field_name)
@@ -2162,7 +2158,6 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 ReferenceQuadrilateralRule,
             )
 
-            field_index = self.discretization._field_index(self.form.field_name)
             for block, element in zip(
                 self.discretization.mesh.blocks,
                 self.discretization.elements[field_index],
@@ -2199,7 +2194,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 mass_rules[block.name] = rule
         mass_action = MassAction(
             self.form.field_name,
-            1.0,
+            _UNIT_MASS_COEFFICIENT,
             rules=mass_rules,
             action_id="compiled-dynamics-mass",
         )
@@ -2218,7 +2213,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 },
             ),
         )
-        compiled_mass = CompiledFiniteElementProblem(
+        return CompiledFiniteElementProblem(
             mass_form,
             self.discretization,
             execution_policy=FiniteElementExecutionPolicy(
@@ -2227,8 +2222,34 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 accumulation=self.execution_policy.accumulation,
             ),
         )
-        unit_mass = compiled_mass.linearization_operator(
-            compiled_mass.state_space.zeros(),
+
+    def _mass_operators(
+        self,
+        context: FiniteElementExecutionContext,
+        coefficient: Array,
+        mass_policy: object = None,
+        compiled_mass: CompiledFiniteElementProblem | None = None,
+        /,
+    ) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
+        from .fem._execution import FiniteElementMassPolicy
+
+        policy = FiniteElementMassPolicy() if mass_policy is None else mass_policy
+        if not isinstance(policy, FiniteElementMassPolicy):
+            raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
+        coefficient = eqx.error_if(
+            coefficient,
+            jnp.any(~jnp.isfinite(coefficient) | (jnp.real(coefficient) <= 0.0)),
+            "Finite-element mass coefficient must be positive and finite.",
+        )
+        mass_problem = (
+            self._compile_unit_mass_problem(policy)
+            if compiled_mass is None
+            else compiled_mass
+        )
+        if not isinstance(mass_problem, CompiledFiniteElementProblem):
+            raise TypeError("compiled_mass must be CompiledFiniteElementProblem or None.")
+        unit_mass = mass_problem.linearization_operator(
+            mass_problem.state_space.zeros(),
             context,
         )
         full_mass = FunctionLinearOperator(
@@ -2397,6 +2418,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             if system_id is None
             else str(system_id)
         )
+        compiled_mass = self._compile_unit_mass_problem(mass_policy)
 
         def residual(time, configuration, velocity, acceleration, args):
             base = self._execution_context(args)
@@ -2409,7 +2431,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 metric_data=base.metric_data,
                 user_args=base.user_args,
             )
-            full_mass, reduced_mass = self._mass_operators(context, mass_, mass_policy)
+            full_mass, reduced_mass = self._mass_operators(
+                context, mass_, mass_policy, compiled_mass
+            )
             value = (
                 reduced_mass.mv(acceleration)
                 + damping_ * reduced_mass.mv(velocity)

@@ -28,6 +28,10 @@ from ._cost import (
     SampledControlLoss,
     TerminalCost,
 )
+from ._descriptor_frequency import (
+    descriptor_frequency_response,
+    DescriptorFrequencyResponse,
+)
 from ._direct_collocation import (
     compile_direct_collocation,
     DIRECT_COLLOCATION_CONSTRAINT_FAILED,
@@ -276,6 +280,7 @@ __all__ = [
     "ControlSearchResult",
     "ControlTrajectory",
     "DifferentialControlFlow",
+    "DescriptorFrequencyResponse",
     "DifferentialFlowStep",
     "FREQUENCY_NONFINITE",
     "FREQUENCY_SINGULAR",
@@ -352,6 +357,7 @@ __all__ = [
     "discrete_lyapunov_solution",
     "discrete_observability_gramian",
     "discrete_observability_gramian_action",
+    "descriptor_frequency_response",
     "discrete_transfer_function",
     "decode_linear_control_solution",
     "evaluate_sampled_cost",

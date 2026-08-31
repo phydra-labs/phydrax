@@ -267,6 +267,15 @@ project compatibility and impose a volume gauge. A pressure outlet removes the
 constant nullspace and does neither. Every route reports its boundary closure, mass
 defect, gauge, pressure residual, pre/post divergence, and atomic commit status.
 
+### Runtime liquid masks and atmospheric pressure
+
+`MACFreeSurfaceProjectionPlan` retains the same MAC divergence, gradient,
+physical-boundary, pairing, and linear-solver contracts while restricting pressure
+to a runtime liquid mask. Air pressure is exactly zero; liquid–air interfaces
+therefore provide an atmospheric Dirichlet reference. An all-liquid mask activates
+the existing zero-mean gauge. The plan is used by fixed-population
+[FLIP](guides_flip.md) and does not claim VOF/PLIC or level-set geometry.
+
 ### Boundary and symmetry-preserving momentum
 
 `MACBoundaryPlan` declares each nonperiodic side as no-slip, free-slip/symmetry,

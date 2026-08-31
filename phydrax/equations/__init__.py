@@ -148,6 +148,7 @@ from ._finite_volume_verification import (
     sod_verification_case,
     woodward_colella_verification_case,
 )
+from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
@@ -510,6 +511,7 @@ __all__ = [
     "CompiledMACScalarBuoyancyDynamics",
     "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
+    "CompiledFLIPProblem",
     "CompiledSpectralDynamics",
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
@@ -517,6 +519,8 @@ __all__ = [
     "AbstractMPMConstitutivePlan",
     "MPMConstitutiveResponse",
     "MPMKinematics",
+    "compile_flip_problem",
+    "FLIPProblemIR",
     "compile_material_point_problem",
     "CompiledMaterialPointProblem",
     "ExternalMPMAcceleration",

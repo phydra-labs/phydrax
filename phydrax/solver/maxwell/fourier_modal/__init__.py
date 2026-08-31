@@ -19,6 +19,7 @@ from ._boundary_cascade import (
     identity_boundary_relation,
     prepare_layer_boundary,
 )
+from ._circuit_adapter import fourier_modal_scattering_component
 from ._contracts import (
     AbstractFourierFactorizationPlan,
     FourierModalLayer,
@@ -165,6 +166,7 @@ __all__ = [
     "emitted_port_amplitudes",
     "fields_in_layer",
     "fourier_modal_convergence_report",
+    "fourier_modal_scattering_component",
     "gaussian_source_coefficients",
     "homogeneous_affine_relation",
     "identity_boundary_relation",

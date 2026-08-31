@@ -56,13 +56,9 @@ class MaxwellReversibleAdjointPlan(StrictModule):
             raise ValueError("Reversible tolerance must be finite and positive.")
         if not runtime.capabilities.reversible:
             raise ValueError("Maxwell runtime is not reversible.")
-        if (
-            runtime.pml is not None
-            or runtime.observers
-            or runtime.plan.current_source is not None
-        ):
+        if runtime.pml is not None or runtime.observers or runtime.sources:
             raise ValueError(
-                "Reversible Maxwell requires no PML, observers, or external current."
+                "Reversible Maxwell requires no PML, observers, or prepared sources."
             )
         if any(boundary.kind == "impedance" for boundary in runtime.boundaries):
             raise ValueError("Impedance boundaries are not reversible.")
@@ -93,7 +89,11 @@ class MaxwellReversibleAdjointPlan(StrictModule):
         electric_new = self.runtime.electric_field(state_)
         magnetic_half = (
             state_.primary.magnetic_flux
-            + half * self.runtime.plan.bridge.exterior_derivative(1, electric_new)
+            + half
+            * self.runtime.plan.bridge.exterior_derivative(
+                self.runtime.layout.electric_degree,
+                electric_new,
+            )
         )
         magnetic_field_half = self.runtime.constitutive.magnetic_field(
             magnetic_half,
@@ -101,7 +101,11 @@ class MaxwellReversibleAdjointPlan(StrictModule):
         )
         displacement_old = (
             state_.primary.electric_displacement
-            - dt * self.runtime.plan.bridge.codifferential(2, magnetic_field_half)
+            - dt
+            * self.runtime.plan.bridge.codifferential(
+                self.runtime.layout.magnetic_degree,
+                magnetic_field_half,
+            )
         )
         electric_old = self.runtime.constitutive.electric_field(
             displacement_old,
@@ -109,7 +113,11 @@ class MaxwellReversibleAdjointPlan(StrictModule):
         )
         magnetic_old = (
             magnetic_half
-            + half * self.runtime.plan.bridge.exterior_derivative(1, electric_old)
+            + half
+            * self.runtime.plan.bridge.exterior_derivative(
+                self.runtime.layout.electric_degree,
+                electric_old,
+            )
         )
         del time
         return self.runtime.pack(

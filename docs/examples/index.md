@@ -21,6 +21,9 @@ The repository includes directly runnable scripts for the fixed-capacity particl
 ```text
 python examples/discrete_element_method.py
 python examples/material_point_method.py
+python examples/electrostatic_pic.py
+python examples/electromagnetic_pic.py
+python examples/flip_dam_break.py
 python examples/wet_granular_bridge.py
 python examples/superquadric_collision.py
 python examples/particle_internal_heating.py

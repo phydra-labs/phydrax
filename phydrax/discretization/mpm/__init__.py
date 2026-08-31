@@ -8,6 +8,16 @@ from ._boundary import PrescribedGridVelocityPlan, PrescribedGridVelocityResult
 from ._domain import MPMParticleDomainPlan
 from ._dynamics import ExternalMPMAcceleration, PreparedMPMDynamics
 from ._method import APICTransferPlan, ExplicitMPMMethodPlan, MPMResourcePolicy
+from ._rigid_coupling import (
+    PreparedRigidMPMCoupling,
+    RigidMPMConstraintPayload,
+    RigidMPMCouplingEvaluation,
+    RigidMPMCouplingMode,
+    RigidMPMCouplingPlan,
+    RigidMPMCouplingState,
+    RigidMPMCouplingStepResult,
+    RigidMPMRouteCacheCertificate,
+)
 from ._transfer import APICGatherResult
 from ._types import (
     MPMDiagnostics,
@@ -43,6 +53,14 @@ __all__ = [
     "MPMStepResult",
     "MPMTransferEvidence",
     "PreparedMPMDynamics",
+    "PreparedRigidMPMCoupling",
+    "RigidMPMConstraintPayload",
+    "RigidMPMCouplingEvaluation",
+    "RigidMPMCouplingMode",
+    "RigidMPMCouplingPlan",
+    "RigidMPMCouplingState",
+    "RigidMPMCouplingStepResult",
+    "RigidMPMRouteCacheCertificate",
     "PrescribedGridVelocityPlan",
     "PrescribedGridVelocityResult",
 ]

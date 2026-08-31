@@ -1,0 +1,8 @@
+{
+  "poisson_residual": 7.134910796491033e-12,
+  "charge_balance_defect": 0.0,
+  "electrostatic_energy_defect": 3.274286861261466e-08,
+  "continuity_defect": 0.0,
+  "boris_speed_defect": 6.938893903907228e-18,
+  "successful": true
+}
