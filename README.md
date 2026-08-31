@@ -192,6 +192,12 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the
+[MPM schedule/adaptivity guide](docs/guides_mpm_schedules.md), the
+[MPM constitutive guide](docs/guides_mpm_constitutive_extensions.md), the
+[MPM contact/field guide](docs/guides_mpm_contact_fields.md), the
+[MPM domain guide](docs/guides_mpm_particle_domains.md), the
+[MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
+[MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the

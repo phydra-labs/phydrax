@@ -41,6 +41,7 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
             maximum_explicit_derivative_order=1,
             supports_nonuniform=False,
             supports_mixed_entities=True,
+            maximum_support_radius_cells=0.5 * (degree_ + 1),
         )
         self.degree = degree_
         self.capabilities = capabilities
@@ -77,6 +78,15 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
             )
             _uniform_spacing(coordinates, bounds, axis.periodic)
 
+    def validate_input(self, assignment_input, source_count, dimension, /) -> None:
+        del source_count, dimension
+        if assignment_input is not None:
+            raise ValueError("Tensor B-spline assignment accepts no domain input.")
+
+    def update_input(self, position, deformation_gradient, committed_input, /) -> object:
+        del position, deformation_gradient, committed_input
+        return None
+
     def build(
         self,
         layout: TensorEntityLayout,
@@ -84,8 +94,12 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
         axis_bounds: tuple[tuple[float, float], ...],
         position: Array,
         active: Array,
-        /,
+        *,
+        assignment_input: object = None,
     ) -> SplatAssignmentState:
+        self.validate_input(
+            assignment_input, int(position.shape[0]), int(position.shape[1])
+        )
         stencils = tuple(
             _uniform_axis_stencil(
                 self.degree,

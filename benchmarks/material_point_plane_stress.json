@@ -1,0 +1,11 @@
+{
+  "maturity": "experimental",
+  "capability": "plane_stress",
+  "metrics": {
+    "successful": true,
+    "p33_residual": 5.234701561107613e-14,
+    "out_of_plane_stretch": 0.9762957485165843,
+    "tangent_finite": true
+  },
+  "passed": true
+}

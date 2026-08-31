@@ -1,0 +1,47 @@
+{
+  "maturity": "experimental",
+  "cases": {
+    "schedule_usl-minus": {
+      "compile_and_first_ms": 3194.0398330007156,
+      "steady_ms": 0.5350693330304542
+    },
+    "schedule_usf": {
+      "compile_and_first_ms": 3339.708041999984,
+      "steady_ms": 0.4991249988961499
+    },
+    "schedule_musl": {
+      "compile_and_first_ms": 4115.474083999288,
+      "steady_ms": 0.861111332293755
+    },
+    "assignment_gimp": {
+      "compile_and_first_ms": 2032.422709002276,
+      "steady_ms": 1.2289306663054351,
+      "routes": 1600
+    },
+    "assignment_cpdi": {
+      "compile_and_first_ms": 932.0654999974067,
+      "steady_ms": 0.16722200113387467,
+      "routes": 1024
+    },
+    "rigid_contact": {
+      "compile_and_first_ms": 593.4407499989902,
+      "steady_ms": 0.5016806656688763,
+      "nodes": 1024
+    },
+    "implicit": {
+      "solve_ms": 34032.28875000059,
+      "nonlinear_steps": 0,
+      "linear_iterations": 0
+    },
+    "sparse": {
+      "activation_compile_and_first_ms": 274.09491700018407,
+      "activation_steady_ms": 0.16477800090797246,
+      "pack_steady_ms": 0.06247200023305292,
+      "unpack_steady_ms": 0.08015300045371987,
+      "active_blocks": 16,
+      "dense_values": 1024,
+      "compact_values": 1024
+    }
+  },
+  "passed": true
+}

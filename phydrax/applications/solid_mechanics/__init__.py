@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from . import member_network
 from ._fem_dynamics import (
     FiniteElementAdmissibilityEvidence,
     FiniteElementDynamicsCandidate,
@@ -16,7 +17,6 @@ from ._fem_dynamics import (
     PreparedFiniteElementDynamicsStep,
     solve_finite_element_dynamics_step,
 )
-from . import member_network
 from ._force_density import (
     BatchedForceDensityResult,
     force_density_equilibrium,
@@ -103,6 +103,16 @@ from ._models import (
     neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
+from ._mpm_fracture import (
+    MPMPhaseFieldParameters,
+    PhaseFieldNeoHookeanMPMConstitutivePlan,
+)
+from ._mpm_plane_stress import IsotropicPlaneStressMPMConstitutivePlan
+from ._mpm_plasticity import (
+    finite_strain_j2_plane_stress_plan,
+    FiniteStrainJ2MPMConstitutivePlan,
+    FiniteStrainJ2Parameters,
+)
 from ._rod_dynamics import (
     evaluate_endpoint_attachment,
     evaluate_rod,
@@ -187,6 +197,11 @@ __all__ = [
     "J2PlasticityParameters",
     "J2PlasticityState",
     "J2PlasticityUpdate",
+    "FiniteStrainJ2MPMConstitutivePlan",
+    "FiniteStrainJ2Parameters",
+    "IsotropicPlaneStressMPMConstitutivePlan",
+    "MPMPhaseFieldParameters",
+    "PhaseFieldNeoHookeanMPMConstitutivePlan",
     "ImplicitNewmarkMethod",
     "NeoHookeanMPMConstitutivePlan",
     "NeoHookeanParameters",
@@ -238,6 +253,7 @@ __all__ = [
     "force_density_status_message",
     "force_density_tangent_matrix",
     "graph_fairness_residual",
+    "finite_strain_j2_plane_stress_plan",
     "j2_radial_return",
     "member_angle_residual",
     "member_direction_residual",

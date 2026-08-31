@@ -5,11 +5,17 @@
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ...equations import AbstractMPMConstitutivePlan, MPMConstitutiveResponse
+from ...equations import (
+    AbstractImplicitMPMConstitutivePlan,
+    MPMConstitutiveCapabilities,
+    MPMConstitutiveResponse,
+    MPMLinearizedConstitutiveResponse,
+)
 from ...linalg import SmallLinearSolvePlan, solve_small_linear
 from ._models import (
     neo_hookean_first_piola,
@@ -18,12 +24,13 @@ from ._models import (
 )
 
 
-class NeoHookeanMPMConstitutivePlan(AbstractMPMConstitutivePlan):
+class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
     """Stateless logarithmic Neo-Hookean material for plane strain or 3-D MPM."""
 
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    capabilities: MPMConstitutiveCapabilities
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, dimension: int, /):
@@ -33,6 +40,13 @@ class NeoHookeanMPMConstitutivePlan(AbstractMPMConstitutivePlan):
         self.dimension = dimension_
         self.kinematics = "plane_strain" if dimension_ == 2 else "three_dimensional"
         self.state_shape = (0,)
+        self.capabilities = MPMConstitutiveCapabilities(
+            stateful=False,
+            has_free_energy=True,
+            has_algorithmic_tangent=True,
+            has_dissipation=False,
+            supports_implicit=True,
+        )
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "neo-hookean-mpm-constitutive",
@@ -50,6 +64,9 @@ class NeoHookeanMPMConstitutivePlan(AbstractMPMConstitutivePlan):
         embedded = jnp.zeros(shape, dtype=deformation.dtype)
         embedded = embedded.at[..., :2, :2].set(deformation)
         return embedded.at[..., 2, 2].set(1.0)
+
+    def initialize_state(self, batch_shape, dtype, /):
+        return jnp.empty(tuple(batch_shape) + (0,), dtype=dtype)
 
     def evaluate(
         self,
@@ -135,6 +152,51 @@ class NeoHookeanMPMConstitutivePlan(AbstractMPMConstitutivePlan):
                 "longitudinal_modulus_bound": longitudinal_modulus_bound,
             },
         )
+
+    def evaluate_linearized(
+        self,
+        deformation_gradient: ArrayLike,
+        committed_state: ArrayLike,
+        reference_density: ArrayLike,
+        parameters: NeoHookeanParameters,
+        time: ArrayLike,
+        step_size: ArrayLike,
+        /,
+    ) -> MPMLinearizedConstitutiveResponse:
+        response = self.evaluate(
+            deformation_gradient,
+            committed_state,
+            reference_density,
+            parameters,
+            time,
+            step_size,
+        )
+        deformation = jnp.asarray(deformation_gradient)
+        batch_shape = deformation.shape[:-2]
+        flat_deformation = deformation.reshape((-1, self.dimension, self.dimension))
+
+        def stress(value):
+            return self.evaluate(
+                value[None, ...],
+                jnp.empty((1, 0), dtype=value.dtype),
+                jnp.ones((1,), dtype=value.dtype),
+                parameters,
+                time,
+                step_size,
+            ).first_piola[0]
+
+        tangent = jax.vmap(jax.jacfwd(stress))(flat_deformation)
+        tangent = tangent.reshape(
+            batch_shape
+            + (
+                self.dimension,
+                self.dimension,
+                self.dimension,
+                self.dimension,
+            )
+        )
+        tangent_successful = jnp.all(jnp.isfinite(tangent), axis=(-4, -3, -2, -1))
+        return MPMLinearizedConstitutiveResponse(response, tangent, tangent_successful)
 
 
 __all__ = ["NeoHookeanMPMConstitutivePlan"]
