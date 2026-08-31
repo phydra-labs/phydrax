@@ -748,6 +748,11 @@ When the GP input is only scalar time and the covariance is Matérn-3/2 or
 Matérn-5/2, the exact state-space path avoids dense observation-space storage:
 
 ```python
+sensor_time = jnp.linspace(0.0, 1.0, 16)
+forecast_time = jnp.linspace(-0.1, 1.1, 24)
+sensor_available = jnp.ones(sensor_time.shape, dtype=bool)
+sensor_residual = 0.02 * jnp.sin(2.0 * jnp.pi * sensor_time)
+
 temporal_plan = phx.uq.compile_state_space_kernel(
     phx.kernels.ScaleKernel(
         phx.kernels.Matern52Kernel(length_scale=0.25),

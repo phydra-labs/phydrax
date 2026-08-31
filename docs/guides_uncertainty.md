@@ -417,6 +417,11 @@ that supported temporal structure is present instead of paying for dense GP
 factorization:
 
 ```python
+observation_times = jnp.linspace(0.0, 1.0, 16)
+prediction_times = jnp.linspace(-0.1, 1.1, 24)
+observation_available = jnp.ones(observation_times.shape, dtype=bool)
+observation_values = jnp.sin(2.0 * jnp.pi * observation_times)
+
 plan = phx.uq.compile_state_space_kernel(
     phx.kernels.Matern32Kernel(length_scale=0.6),
     observation_times,

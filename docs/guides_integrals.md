@@ -383,9 +383,9 @@ contract is intentionally closed: one normalized scalar Gaussian
 
 ```python
 normal = phx.domain.ProbabilityDomain(phx.uq.Normal(0.0, 1.0), label="z")
-target = phx.integration.expectation(normal, target_id="standard-normal")
+gaussian_target = phx.integration.expectation(normal, target_id="standard-normal")
 kernel_mean = phx.integration.GaussianKernelMean(
-    target,
+    gaussian_target,
     phx.kernels.SquaredExponentialKernel(length_scale=0.75),
 )
 plan = phx.integration.BayesianQuadraturePlan(
@@ -394,7 +394,7 @@ plan = phx.integration.BayesianQuadraturePlan(
     observation_noise=0.0,
     solve_regularization=1e-10,
 )
-realization = phx.integration.materialize(target, plan)
+realization = phx.integration.materialize(gaussian_target, plan)
 mean = phx.integration.reduce(
     normal.Function("z")(lambda z: jnp.exp(0.2 * z)),
     realization,
