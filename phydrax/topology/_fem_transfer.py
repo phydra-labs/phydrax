@@ -24,7 +24,7 @@ def finite_element_topology_transfer(
     if not isinstance(source_mesh, CellMesh) or not isinstance(target_mesh, CellMesh):
         raise TypeError("Finite-element topology transfer requires two CellMesh values.")
     if not isinstance(lineage, FiniteElementAdaptationMap):
-        raise TypeError("lineage must be a finite-element adaptation map.")
+        raise TypeError("lineage must be a FiniteElementAdaptationMap.")
     source_topology_id = lineage.source_mesh.topology_id
     target_topology_id = lineage.target_mesh.topology_id
     lineage_id = lineage.adaptation_id

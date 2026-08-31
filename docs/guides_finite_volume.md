@@ -259,13 +259,95 @@ operators. `PreparedMACOperators` owns the compatible divergence, gradient,
 constant/variable-coefficient pressure actions, volume gauge, coefficient
 interpolation, weighted-adjoint evidence, and exact transform eligibility.
 
-`phydrax.solver.MACPressureProjectionPlan` owns pressure-solver execution. Uniform
-constant-coefficient operators may use an exact FFT/DCT transform after an
-independent action-identity check; general positive coefficients refresh one
-prepared `phydrax.linalg` problem. Every route removes the volume-weighted
-compatibility component, enforces a zero-mean pressure gauge, reports the original
-pressure residual and pre/post divergence, and retains incoming state on failure.
-The obsolete repeated predictor/projection correction loop has been removed.
+`phydrax.solver.MACPressureProjectionPlan` owns closure-aware pressure execution.
+Uniform constant-coefficient periodic/Neumann operators may use an exact FFT/DCT
+transform after an independent action-identity check; general positive coefficients
+and mixed/open closures use prepared `phydrax.linalg` problems. Neumann-only closures
+project compatibility and impose a volume gauge. A pressure outlet removes the
+constant nullspace and does neither. Every route reports its boundary closure, mass
+defect, gauge, pressure residual, pre/post divergence, and atomic commit status.
+
+### Boundary and symmetry-preserving momentum
+
+`MACBoundaryPlan` declares each nonperiodic side as no-slip, free-slip/symmetry,
+velocity or normal-flux inflow, pressure outlet, or stabilized traction-open.
+`MACBoundaryProvider` separates static provider identity from dynamic JAX value/rate
+leaves. Stage evaluation rejects nonfinite data and incompatible prescribed flux.
+Pressure closure is derived from these velocity declarations rather than configured
+independently. Open-boundary diagnostics retain advective, pressure, and nonnegative
+backflow-stabilization power.
+
+`MACMomentumPlan` prepares conservative face-momentum transport, its weighted
+skew-adjoint action, componentwise viscous diffusion, and skew, diffusion-symmetry,
+and dissipation evidence under the MAC face-dual measure. The public physical
+velocity remains one differently shaped normal-face array per axis;
+`PreparedMACOperators.velocity_space` supplies canonical flat temporal coordinates.
+The construction independently follows
+[Verstappen and Veldman (2003)](https://doi.org/10.1016/S0021-9991(03)00126-8);
+the compatible stage projection is qualified against
+[Costa (2018)](https://doi.org/10.1016/j.camwa.2018.07.034).
+
+```python
+finite_volume = phx.discretization.FiniteVolumePlan(grid).prepare()
+mac = phx.discretization.MACOperatorPlan(finite_volume).prepare()
+boundaries = phx.discretization.MACBoundaryPlan(mac)
+momentum = phx.discretization.MACMomentumPlan(
+    mac, boundaries=boundaries
+).prepare()
+pressure = phx.solver.MACPressureProjectionPlan(
+    mac, boundaries=boundaries
+)
+compiled = phx.equations.compile_mac_incompressible_flow(
+    phx.equations.IncompressibleFlowProblem(2, viscosity),
+    momentum,
+    pressure,
+)
+initial_state = compiled.project_state(face_velocity)
+```
+
+`compile_mac_incompressible_flow` projects every temporal rate and exposes physical
+pressure, energy, boundary, divergence, residual, gauge, and step-restriction
+evidence. Explicit SSPRK, implicit-diffusion `MACIMEXEulerMethod`, and fixed-step
+`MACSBDF2Method` consume the same compiled state. `MACHelmholtzSolvePlan` supports
+iterative, certified uniform-transform, and resource-gated transform-line routes.
+
+### Scalar, variable-density, and coupled dynamics
+
+`MACScalarProblem` owns named cell scalars, conservative centered/upwind transport,
+diffusion, source/reaction ledgers, and scalar boundary conditions.
+`compile_mac_scalar_buoyancy` couples selected names through `MACBuoyancyLaw` while
+using the exact transport face interpolation for kinetic/potential exchange.
+
+Dynamic miscible density is a separate conservative model:
+`MACVariableDensityState` stores positive cell density and face momentum, derives
+velocity from one face-density policy, shares one mass flux between density and
+momentum, and uses `MACVariableDensityProjectionPlan`. It does not claim an EOS,
+low-Mach heat expansion, VOF, or multiphase interface physics.
+
+`MACMarkerTransferPlan` gathers MAC face velocity and spreads marker force through
+the dual-measure adjoint. `ResolvedMACIBCFDEMCouplingPlan` and
+`advance_mac_resolved_ib_window` provide penalty IB force/torque, DEM contact
+subcycling, post-forcing projection, work/impulse ledgers, and complete rollback.
+
+### Distribution, mapped geometry, and sensitivity
+
+`MACDistributedTopologyPlan` owns pressure/face shardings, interface-face ownership,
+and local halo metadata. `MACDistributedProjectionPlan` supplies globally reduced
+compatibility, gauge, matrix-free CG, rank agreement, and atomic rollback. Direct
+distributed transforms remain unavailable unless an explicit redistribution plan is
+added; no hidden global gather is performed.
+
+`MappedMACGeometryPlan` certifies positive mapped cell/face/dual measures,
+free-stream preservation, D/G adjointness, and pressure action. `MACALEGeometryPlan`
+adds fixed-connectivity stage geometry, grid velocity, relative flux, GCL,
+wall-kinematic evidence, and fail-closed projection. Topology changes occur only
+through `MACRemeshEpochPlan`, whose transfer is explicitly nondifferentiable.
+
+`MACAdaptiveRolloutPlan` records bounded transactional attempts and an accepted time
+grid. `MACFrozenGridReplayPlan` and `MACFixedGridSensitivityPlan` differentiate that
+stopped grid. `MACSegmentedShadowingPlan` exposes QR-stabilized least-squares
+shadowing with conditioning/residual gates; it returns failure rather than presenting
+an uncertified long-time turbulent derivative.
 
 ## Stationary mapped grids
 
@@ -274,9 +356,10 @@ retaining fixed tensor topology. Preparation computes mapped vertices, cell volu
 face centers, face measures, and oriented area vectors in one, two, or three dimensions.
 It rejects nonpositive orientation or measure.
 
-Mapped execution currently accepts Rusanov or HLL fluxes, which evaluate the physical
-normal flux against mapped unit normals. Topology remains fixed under differentiation.
-Moving meshes are not supported.
+Generic mapped conservative-state execution currently accepts Rusanov or HLL fluxes,
+which evaluate the physical normal flux against mapped unit normals, and remains
+stationary. Time-dependent fixed-connectivity geometry is deliberately separate under
+the MAC-specific `MACALEGeometryPlan` described above.
 
 ## Multiblock and AMR
 
@@ -324,8 +407,10 @@ topology remain static.
   three-dimensional CTU implementation.
 - Mapped fluxes currently use Rusanov or HLL.
 - Periodic Cartesian constrained MHD is executed by
-  `UpwindConstrainedTransportPlan` and `ConstrainedMHDSSPRK3Plan`; physical MHD
-  boundaries, AMR reflux-curl, mapped grids, and distributed CT remain unsupported.
+  `UpwindConstrainedTransportPlan` and `ConstrainedMHDSSPRK3Plan`, then composed with
+  gravity, cooling, or OU forcing through the prepared balance-law transport adapter.
+  Physical MHD boundaries, AMR reflux-curl, mapped grids, and distributed CT remain
+  unsupported.
 - Hard shock-capturing decisions produce branchwise, not globally smooth, sensitivities.
 
 Runtime, material, boundary, positivity, checkpoint, rollout, and sharding contracts are

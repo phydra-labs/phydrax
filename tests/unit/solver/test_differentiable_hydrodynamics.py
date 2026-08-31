@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -47,6 +48,49 @@ def _periodic_euler_runtime(shape):
     return grid, system, discretization, runtime
 
 
+def _periodic_mhd_transport(count=3):
+    grid = phx.discretization.TensorGridPlan(
+        tuple(
+            phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
+        ),
+        axis_names=("x", "y", "z"),
+    ).prepare(jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
+    bridge = phx.discretization.StructuredCochainBridge(grid)
+    system = phx.equations.IdealMHDSystem(3)
+    discretization = phx.discretization.FiniteVolumePlan(
+        grid, component_names=system.component_names
+    ).prepare()
+    problem = phx.equations.ConservationProblemIR(
+        "constant-mhd",
+        "state",
+        system,
+        phx.discretization.FiniteVolumeBoundarySet.periodic(("x", "y", "z")),
+    )
+    method = phx.discretization.FiniteVolumeMethodPlan(
+        phx.discretization.PiecewiseConstantReconstruction(),
+        phx.discretization.HLLDFluxPlan(),
+    )
+    dynamics = phx.equations.compile_conservation_problem(
+        problem, discretization, method
+    ).dynamics
+    face_shape = (count, count, count)
+    magnetic_flux = bridge.pack_face_flux(
+        (
+            jnp.full(face_shape, 0.2),
+            jnp.zeros(face_shape),
+            jnp.zeros(face_shape),
+        )
+    )
+    primitive = jnp.zeros(face_shape + (8,))
+    primitive = primitive.at[..., 0].set(1.0)
+    primitive = primitive.at[..., 4].set(1.0)
+    primitive = primitive.at[..., 5].set(0.2)
+    full = system.primitive_to_conserved(primitive)
+    spatial = phx.discretization.UpwindConstrainedTransportPlan(dynamics, bridge)
+    integrator = phx.solver.ConstrainedMHDSSPRK3Plan(spatial, cfl=0.2)
+    return grid, system, integrator, full, magnetic_flux
+
+
 class _PreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
     maximum_step: float = eqx.field(static=True)
 
@@ -56,9 +100,10 @@ class _PreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
         self.requires_realization = False
         self.realization_name = None
         self.differentiability = "smooth_discrete"
+        self.modified_components = ("total_energy",)
 
-    def initialize(self, transport_state, args: Any = None, /):
-        del transport_state, args
+    def initialize(self, source_view, args: Any = None, /):
+        del source_view, args
         return phx.solver.BalanceLawProcessState(
             self.process_id,
             ("accepted_duration",),
@@ -98,6 +143,43 @@ class _PreparedLinearSource(phx.solver.AbstractPreparedBalanceLawProcess):
         )
 
 
+class _PreparedMagneticMutation(phx.solver.AbstractPreparedBalanceLawProcess):
+    def __init__(self, modified_components=("total_energy",)):
+        self.process_id = "undeclared-magnetic-mutation"
+        self.requires_realization = False
+        self.realization_name = None
+        self.differentiability = "invalid"
+        self.modified_components = tuple(modified_components)
+
+    def initialize(self, source_view, args: Any = None, /):
+        del source_view, args
+        return phx.solver.BalanceLawProcessState.empty(self.process_id)
+
+    def step_limit(self, time, cell_average, process_state, args: Any = None, /):
+        del time, cell_average, process_state, args
+        return jnp.asarray(jnp.inf)
+
+    def advance(
+        self,
+        start_time,
+        end_time,
+        cell_average,
+        process_state,
+        realization=None,
+        args: Any = None,
+        /,
+    ):
+        del start_time, end_time, realization, args
+        candidate = cell_average.at[..., 5].add(1e-3)
+        return phx.solver.BalanceLawProcessAdvance(
+            cell_average=candidate,
+            process_state=process_state,
+            successful=jnp.asarray(True),
+            source_change=candidate - cell_average,
+            diagnostics=jnp.asarray(True),
+        )
+
+
 def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_path):
     _, system, _, runtime = _periodic_euler_runtime((4,))
     primitive = jnp.broadcast_to(jnp.asarray([1.0, 0.0, 1.0]), (4, 3))
@@ -106,8 +188,9 @@ def test_adaptive_balance_law_records_rolls_back_replays_and_checkpoints(tmp_pat
         0.0,
         2e-3,
     )
+    transport = phx.solver.prepare_balance_law_transport(runtime)
     balance = phx.solver.PreparedBalanceLawRuntime(
-        runtime,
+        transport,
         (_PreparedLinearSource(1e-3),),
     )
     initial = balance.initialize_state(transport_state)
@@ -240,8 +323,9 @@ def test_gravity_balance_runtime_preserves_kick_internal_energy_and_checkpoints(
         (density, jnp.zeros_like(density), jnp.ones_like(density)), axis=-1
     )
     state = runtime.initialize_state(system.primitive_to_conserved(primitive), 0.0, 1e-4)
-    gravity = phx.solver.NewtonianSelfGravityPlan(0.2).prepare(runtime)
-    balance = phx.solver.PreparedBalanceLawRuntime(runtime, (gravity,))
+    transport = phx.solver.prepare_balance_law_transport(runtime)
+    gravity = phx.solver.NewtonianSelfGravityPlan(0.2).prepare(transport)
+    balance = phx.solver.PreparedBalanceLawRuntime(transport, (gravity,))
     balance_state = balance.initialize_state(state)
 
     advanced = balance.advance_prescribed(balance_state, 0.0, 1e-4)
@@ -264,7 +348,9 @@ def test_gravity_balance_runtime_preserves_kick_internal_energy_and_checkpoints(
 
 def test_particle_mesh_deposition_and_kick_drift_kick_are_finite():
     grid, _, _, runtime = _periodic_euler_runtime((8,))
-    gravity = phx.solver.NewtonianSelfGravityPlan(0.1).prepare(runtime)
+    gravity = phx.solver.NewtonianSelfGravityPlan(0.1).prepare(
+        phx.solver.prepare_balance_law_transport(runtime)
+    )
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(4), jnp.ones((4,)), ambient_dimension=1
     ).prepare()
@@ -289,14 +375,15 @@ def test_spectral_ou_replays_real_zero_mean_forcing():
     transport_state = runtime.initialize_state(
         system.primitive_to_conserved(primitive), 0.0, 1e-3
     )
+    transport = phx.solver.prepare_balance_law_transport(runtime)
     process = phx.solver.SpectralOUForcingPlan(
         kmin=1.0,
         kmax=2.0,
         solenoidal_fraction=1.0,
         correlation_time=0.2,
         rms_acceleration=0.1,
-    ).prepare(runtime)
-    process_state = process.initialize(transport_state)
+    ).prepare(transport)
+    process_state = process.initialize(transport.source_view(transport_state))
     realization = phx.stochastic.OrnsteinUhlenbeckRealization(
         jr.key(7),
         (4, 4, 2),
@@ -338,13 +425,14 @@ def test_implicit_radiative_cooling_decreases_energy_without_clipping():
         jnp.asarray([-3.0, -3.0]),
         bounds_policy="power_law_extrapolate",
     )
+    transport = phx.solver.prepare_balance_law_transport(runtime)
     cooling = phx.solver.RadiativeCoolingProcessPlan(
         curve,
         amplitude=1.0,
         accuracy_fraction=1.0,
         tolerance=1e-10,
-    ).prepare(runtime)
-    process_state = cooling.initialize(transport_state)
+    ).prepare(transport)
+    process_state = cooling.initialize(transport.source_view(transport_state))
 
     result = cooling.advance(
         0.0,
@@ -398,48 +486,9 @@ def test_shared_face_closure_is_conservative_and_equal_state_consistent():
 
 
 def test_hlld_and_constrained_transport_preserve_constant_mhd_state():
-    count = 3
-    grid = phx.discretization.TensorGridPlan(
-        tuple(
-            phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
-        ),
-        axis_names=("x", "y", "z"),
-    ).prepare(jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
-    bridge = phx.discretization.StructuredCochainBridge(grid)
-    system = phx.equations.IdealMHDSystem(3)
-    discretization = phx.discretization.FiniteVolumePlan(
-        grid, component_names=system.component_names
-    ).prepare()
-    problem = phx.equations.ConservationProblemIR(
-        "constant-mhd",
-        "state",
-        system,
-        phx.discretization.FiniteVolumeBoundarySet.periodic(("x", "y", "z")),
-    )
-    method = phx.discretization.FiniteVolumeMethodPlan(
-        phx.discretization.PiecewiseConstantReconstruction(),
-        phx.discretization.HLLDFluxPlan(),
-    )
-    dynamics = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    ).dynamics
-    face_shape = (count, count, count)
-    magnetic_flux = bridge.pack_face_flux(
-        (
-            jnp.full(face_shape, 0.2),
-            jnp.zeros(face_shape),
-            jnp.zeros(face_shape),
-        )
-    )
-    primitive = jnp.zeros(face_shape + (8,))
-    primitive = primitive.at[..., 0].set(1.0)
-    primitive = primitive.at[..., 4].set(1.0)
-    primitive = primitive.at[..., 5].set(0.2)
-    full = system.primitive_to_conserved(primitive)
+    _, system, integrator, full, magnetic_flux = _periodic_mhd_transport()
     hlld = phx.discretization.HLLDFluxPlan().face_flux(system, full, full, 0)
-    spatial = phx.discretization.UpwindConstrainedTransportPlan(dynamics, bridge)
-    integrator = phx.solver.ConstrainedMHDSSPRK3Plan(spatial, cfl=0.2)
-    state = integrator.initialize(full, magnetic_flux)
+    state = integrator.initialize(full, magnetic_flux, step_size=1e-4)
 
     result = integrator.advance(state, 0.0, 1e-4)
 
@@ -453,3 +502,174 @@ def test_hlld_and_constrained_transport_preserve_constant_mhd_state():
         result.state.magnetic_flux, state.magnetic_flux, atol=1e-10
     )
     assert result.diagnostics.magnetic_constraint_change < 1e-12
+
+
+def test_unified_mhd_balance_replays_and_checkpoints_cooling(tmp_path):
+    _, _, integrator, full, magnetic_flux = _periodic_mhd_transport()
+    state = integrator.initialize(full, magnetic_flux, step_size=1e-4)
+    transport = phx.solver.prepare_balance_law_transport(integrator)
+    curve = phx.equations.TabulatedCoolingCurve(
+        jnp.asarray([-6.0, 6.0]),
+        jnp.asarray([-3.0, -3.0]),
+        bounds_policy="power_law_extrapolate",
+    )
+    cooling = phx.solver.RadiativeCoolingProcessPlan(
+        curve,
+        accuracy_fraction=1.0,
+        tolerance=1e-10,
+    ).prepare(transport)
+    runtime = phx.solver.PreparedBalanceLawRuntime(transport, (cooling,))
+    initial = runtime.initialize_state(state)
+    adaptive = phx.solver.AdaptiveBalanceLawRolloutPlan(
+        runtime,
+        2e-4,
+        phx.solver.BalanceLawAdaptivePolicy(
+            2,
+            maximum_retries=1,
+            safety_factor=1.0,
+            growth_factor=1.0,
+        ),
+    )
+
+    realized = adaptive.rollout(initial)
+    scheduled = phx.solver.ScheduledBalanceLawRolloutPlan.from_realized_mesh(
+        runtime,
+        realized.realized_mesh,
+        replay=phx.solver.FiniteVolumeReplayPolicy("block", block_size=1),
+    )
+    replayed = scheduled.rollout(initial)
+
+    assert bool(realized.completed)
+    assert bool(jnp.all(replayed.accepted))
+    np.testing.assert_allclose(
+        replayed.final_state.transport_state.cell_state,
+        realized.final_state.transport_state.cell_state,
+    )
+    np.testing.assert_array_equal(
+        replayed.final_state.transport_state.magnetic_flux,
+        realized.final_state.transport_state.magnetic_flux,
+    )
+    np.testing.assert_array_equal(
+        replayed.retained_transport_auxiliary,
+        jnp.broadcast_to(
+            magnetic_flux,
+            replayed.retained_transport_auxiliary.shape,
+        ),
+    )
+    initial_energy = transport.source_view(state).cell_average[..., 4]
+    final_energy = transport.source_view(
+        realized.final_state.transport_state
+    ).cell_average[..., 4]
+    assert jnp.all(final_energy < initial_energy)
+
+    checkpoint_plan = phx.solver.BalanceLawCheckpointPlan(
+        runtime,
+        scheduled.temporal_mesh.mesh_id,
+    )
+    path = tmp_path / "mhd-balance-law.phxckpt"
+    written = phx.solver.write_balance_law_checkpoint(
+        path,
+        checkpoint_plan,
+        realized.final_state,
+    )
+    restored = phx.solver.read_balance_law_checkpoint(path, checkpoint_plan)
+    assert restored.payload_id == written.payload_id
+    np.testing.assert_array_equal(
+        restored.runtime_state.transport_state.cell_state,
+        realized.final_state.transport_state.cell_state,
+    )
+    np.testing.assert_array_equal(
+        restored.runtime_state.transport_state.magnetic_flux,
+        realized.final_state.transport_state.magnetic_flux,
+    )
+
+
+def test_mhd_balance_rejects_declared_and_undeclared_magnetic_sources():
+    _, _, integrator, full, magnetic_flux = _periodic_mhd_transport()
+    state = integrator.initialize(full, magnetic_flux, step_size=1e-4)
+    transport = phx.solver.prepare_balance_law_transport(integrator)
+    with pytest.raises(ValueError, match="transport-owned"):
+        phx.solver.PreparedBalanceLawRuntime(
+            transport,
+            (_PreparedMagneticMutation(("magnetic_x",)),),
+        )
+
+    runtime = phx.solver.PreparedBalanceLawRuntime(
+        transport,
+        (_PreparedMagneticMutation(),),
+    )
+    initial = runtime.initialize_state(state)
+    result = runtime.advance_prescribed(initial, 0.0, 1e-4)
+
+    assert not bool(result.accepted)
+    assert int(result.status) == 3
+    np.testing.assert_array_equal(
+        result.runtime_state.transport_state.cell_state, state.cell_state
+    )
+    np.testing.assert_array_equal(
+        result.runtime_state.transport_state.magnetic_flux,
+        state.magnetic_flux,
+    )
+
+
+def test_mhd_balance_composes_gravity_cooling_and_ou_forcing():
+    grid, system, integrator, full, magnetic_flux = _periodic_mhd_transport()
+    x = grid.structured_axes[0].interval_centers[:, None, None]
+    primitive = system.conserved_to_primitive(full)
+    primitive = primitive.at[..., 0].set(
+        jnp.broadcast_to(1.0 + 0.01 * jnp.sin(2.0 * jnp.pi * x), primitive.shape[:-1])
+    )
+    state = integrator.initialize(
+        system.primitive_to_conserved(primitive),
+        magnetic_flux,
+        step_size=1e-5,
+    )
+    transport = phx.solver.prepare_balance_law_transport(integrator)
+    gravity = phx.solver.NewtonianSelfGravityPlan(0.1).prepare(transport)
+    forcing = phx.solver.SpectralOUForcingPlan(
+        kmin=1.0,
+        kmax=1.0,
+        correlation_time=0.2,
+        rms_acceleration=1e-3,
+    ).prepare(transport)
+    curve = phx.equations.TabulatedCoolingCurve(
+        jnp.asarray([-6.0, 6.0]),
+        jnp.asarray([-4.0, -4.0]),
+        bounds_policy="power_law_extrapolate",
+    )
+    cooling = phx.solver.RadiativeCoolingProcessPlan(
+        curve,
+        accuracy_fraction=1.0,
+    ).prepare(transport)
+    runtime = phx.solver.PreparedBalanceLawRuntime(
+        transport,
+        (gravity, forcing, cooling),
+    )
+    initial = runtime.initialize_state(state)
+    realization = phx.stochastic.OrnsteinUhlenbeckRealization(
+        jr.key(31),
+        integrator.spatial.cell_shape + (3,),
+        support=(0.0, 1.0),
+        noise_id="mhd-balance-forcing",
+    )
+
+    result = runtime.advance_prescribed(
+        initial,
+        0.0,
+        1e-5,
+        None,
+        realization,
+    )
+
+    assert bool(result.accepted)
+    assert len(result.process_diagnostics) == 6
+    constraint_before = integrator.spatial.magnetic_constraint(magnetic_flux)
+    constraint_after = integrator.spatial.magnetic_constraint(
+        result.runtime_state.transport_state.magnetic_flux
+    )
+    np.testing.assert_allclose(constraint_after, constraint_before, atol=1e-12)
+    assert jnp.all(
+        system.admissible(
+            transport.source_view(result.runtime_state.transport_state).cell_average
+        )
+    )

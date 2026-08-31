@@ -25,14 +25,17 @@ representation.
 
 The default `representation="dense"` requires a coefficient with shape
 `state_shape + noise_shape`. `coefficient_matrix(time, state, args)` validates that
-contract and returns the canonical `(state_size, noise_size)` view. A sole
-`representation="diagonal"` term instead requires matching vector state and noise
-shapes and returns only its state-shaped diagonal. The canonical Diffrax backend
-lowers this to `lineax.DiagonalLinearOperator`; it never materializes an identity
-matrix. Backends without structured-noise support reject the term explicitly.
+contract and returns the canonical `(state_size, noise_size)` view.
+`representation="diagonal"` requires matching state and noise shapes and stores only
+the state-shaped diagonal. `representation="operator"` requires an explicit Lineax
+operator whose input and output structures match the declared noise and complete state.
 
-Dense terms are flattened and concatenated in declared order. `DifferentialSolution`
-retains the corresponding named control slices.
+`WienerNoiseLayout` records every named scalar or tensor Brownian block and its stable
+flattened slice. The canonical Diffrax backend combines arbitrary dense, diagonal, and
+operator blocks into one matrix-free block-column action; it does not materialize
+diagonal identities or concatenate structured factors. Backends without structured
+noise support reject those terms explicitly. `DifferentialSolution` retains the named
+control slices.
 
 A `WienerRealization` defines one global Brownian path or coupled path batch. Its
 `support` is independent of any one solve interval, so solving adjacent subintervals
@@ -63,6 +66,11 @@ common randomness is required.
             - noise_size
             - coefficient_array
             - coefficient_matrix
+            - coefficient_operator
+
+---
+
+::: phydrax.solver.WienerNoiseLayout
 
 ---
 

@@ -178,11 +178,13 @@ class PreparedTransformDiagonalSolve(StrictModule, NonTrainableState):
         if not jnp.issubdtype(target_space.dtype, jnp.complexfloating):
             effective_rhs_coordinates = jnp.real(effective_rhs_coordinates)
         effective_rhs = target_space.unflatten(effective_rhs_coordinates)
-        coefficients = jnp.where(
+        safe_diagonal = jnp.where(
             self.nullspace_mask,
-            jnp.zeros((), dtype=projected_rhs.dtype),
-            projected_rhs / self.diagonal,
+            jnp.ones((), dtype=self.diagonal.dtype),
+            self.diagonal,
         )
+        coefficients = projected_rhs / safe_diagonal
+        coefficients = jnp.where(self.nullspace_mask, 0.0, coefficients)
         solution_coordinates = representation.synthesize_coordinates(coefficients)
         if self.nullspace_basis.shape[1]:
             if self.plan.gauge == "minimum_norm":

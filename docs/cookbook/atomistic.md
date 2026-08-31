@@ -39,11 +39,13 @@ truncation.
 
 ```text
 atom_capacity = train_batch.atom_capacity
+execution = phx.atomistic.AtomisticGraphExecutionPlan(
+    32,
+    maximum_dense_atoms=atom_capacity,
+)
 potential = phx.nn.atomistic.PaiNNPotential(
     scale,
     cutoff=5.0,
-    maximum_neighbors=32,
-    maximum_dense_atoms=atom_capacity,
     feature_count=128,
     interaction_count=3,
     radial_basis_count=20,
@@ -58,8 +60,6 @@ prediction, training, or result path, replace only the model construction:
 potential = phx.nn.atomistic.NequIPPotential(
     scale,
     cutoff=5.0,
-    maximum_neighbors=32,
-    maximum_dense_atoms=atom_capacity,
     feature_count=32,
     interaction_count=3,
     radial_basis_count=20,
@@ -80,6 +80,7 @@ normalization.
 ```text
 problem = phx.atomistic.AtomisticTrainingProblem(
     train_batch,
+    execution,
     training_energy=train_energy,
     training_forces=train_forces,
     validation_batch=validation_batch,
@@ -111,7 +112,7 @@ At least one available target kind must have positive weight.
 Evaluate the test split through the conservative prediction surface:
 
 ```text
-prediction = phx.atomistic.energy_and_forces(selected, test_batch)
+prediction = phx.atomistic.energy_and_forces(selected, test_batch, execution)
 if not bool(prediction.valid.all()):
     raise RuntimeError("Test prediction failed neighborhood or finite checks")
 

@@ -43,11 +43,16 @@ Most workflows are composing a few primitives:
   measures, transfers, fixed-temporal differentiable replay, transactional
   gravity/cooling/stochastic source processes, compatible constrained MHD,
   temporal/stochastic composition, and auditable plan/preparation identities.
-- **Finite-molecule atomistic learning**: scale-identified atomic structures and
-  padded case-isolated batches reuse material-particle identities and `GraphIR`;
-  PaiNN scalar/vector interactions produce invariant molecular energies and
-  conservative forces with fail-closed neighborhood capacity, typed diagnostics,
-  local rMD17 parsing, and domain-specific energy/force training.
+- **Discrete structural form-finding**: sparse pin-jointed force-density
+  equilibrium supports full or componentwise coordinate restraints, tension,
+  compression, mixed signs, fixed and shape-dependent loads, mathematical
+  solution derivatives, and force/support/load state-design optimization with
+  physical residual, reaction, status, and provenance evidence.
+- **Atomistic learning and dynamics**: scale-identified atomic structures,
+  position-independent systems, stable-ID molecular topology, classical and learned
+  scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
+  SHAKE/RATTLE, triclinic cells, Ewald/PME, bounded replayable trajectories, and
+  exact checkpoints retain explicit resources, precision, diagnostics, and provenance.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -76,8 +81,10 @@ Most workflows are composing a few primitives:
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
 - **Learned probability transport**: endpoint flow matching, deterministic continuous
-  flows, VP/VE denoising score matching, replayable reverse-time diffusion, and
-  probability-flow densities reuse explicit laws and differential-solver evidence.
+  flows, scalar/matrix/state-dependent score diffusion, discrete Gaussian and
+  categorical diffusion, exactness-labeled guidance, coefficient-space field/path
+  laws, manifold/complex transport, and latent/graph/atomistic compositions reuse
+  explicit measures, event coordinates, and differential-solver evidence.
 - **Combinatorial optimization**: native exact finite, cardinality, assignment,
   and DAG path oracles preserve logical decisions, linear objective features,
   deterministic ties, independent certificates, JIT batching, and explicit
@@ -164,6 +171,7 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
+[material-point-method guide](docs/guides_material_point_method.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -173,14 +181,17 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).
 
-Finite nonperiodic molecular learning lives in `phx.atomistic`, with the
-equivariant energy model in `phx.nn.atomistic`. The implementation covers typed
-atomic structures and batches, resource-guarded dense molecular graphs, PaiNN
-energies, forces derived from one scalar energy, typed energy/force fitting, and
-offline local rMD17 data. It does not claim periodic systems, stress, long-range
-electrostatics, or molecular-dynamics stability. See the
-[atomistic guide](docs/guides_atomistic.md), the
-[atomistic cookbook](docs/cookbook/atomistic.md), and the
+Finite molecular learning and conservative atomistic dynamics live in
+`phx.atomistic`, with equivariant learned energy models in `phx.nn.atomistic`.
+The learning surface retains typed structures, batches, explicit dense graph
+execution, PaiNN/NequIP conservative forces, fitting, and offline rMD17 data.
+The dynamics surface adds complete unit systems, position-independent prepared
+systems, molecular topology, classical and learned potential programs,
+orthorhombic/triclinic neighborhoods, NVE/NVT, constraints, stress, Ewald/PME,
+NPT moves, replay, checkpoints, hybrid composition, ring polymers, and
+semi-grand transitions. See the [atomistic learning guide](docs/guides_atomistic.md),
+the [atomistic dynamics guide](docs/guides_atomistic_dynamics.md), the
+[dynamics cookbook](docs/cookbook/atomistic_dynamics.md), and the
 [atomistic API](docs/api/atomistic.md).
 
 ## Example
@@ -282,6 +293,9 @@ Can be found [here](https://phydra-labs.github.io/phydrax).
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
 [quantum operators and dynamics](docs/guides_quantum.md).
+The [force-density form-finding guide](docs/guides_force_density.md) covers
+pin-jointed equilibrium, follower loads, implicit derivatives, and inverse
+structural design while keeping these distinct from constitutive FEM analysis.
 The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
 demonstrates correlated empirical integration outside quantum mechanics, while the
 [VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian

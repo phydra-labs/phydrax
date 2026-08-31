@@ -2,6 +2,41 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._force_density import (
+    force_density_equilibrium,
+    force_density_load_path,
+    ForceDensityDiagnostics,
+    ForceDensityInputs,
+    ForceDensityPlan,
+    ForceDensityProblem,
+    ForceDensityProvenance,
+    ForceDensityResult,
+    ForceDensitySignMode,
+    ForceDensityState,
+    ForceDensityStatus,
+    ForceDensityTolerances,
+    plan_force_density,
+    prepare_force_density,
+    PreparedForceDensitySolve,
+    refresh_force_density,
+    solve_force_density,
+)
+from ._force_density_design import (
+    ForceDensityDesignConstraint,
+    ForceDensityDesignProblem,
+    ForceDensityDesignResult,
+    ForceDensityStateSolver,
+    solve_force_density_design,
+)
+from ._force_density_loads import (
+    AbstractForceDensityLoadModel,
+    CompositeForceDensityLoadModel,
+    EdgeLineLoadModel,
+    FixedNodalLoadModel,
+    SurfacePressureLoadModel,
+)
+from ._force_density_topology import ForceDensityStructure
+from ._material_point import NeoHookeanMPMConstitutivePlan
 from ._models import (
     j2_radial_return,
     J2PlasticityParameters,
@@ -9,6 +44,7 @@ from ._models import (
     J2PlasticityUpdate,
     neo_hookean_first_piola,
     neo_hookean_form,
+    neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
 from ._topology import (
@@ -25,20 +61,50 @@ from ._topology import (
 
 
 __all__ = [
+    "AbstractForceDensityLoadModel",
     "ComplianceTopologyProblem",
+    "CompositeForceDensityLoadModel",
     "DensityFilterPlan",
     "DensityTransferResult",
+    "EdgeLineLoadModel",
+    "FixedNodalLoadModel",
+    "ForceDensityDesignConstraint",
+    "ForceDensityDesignProblem",
+    "ForceDensityDesignResult",
+    "ForceDensityDiagnostics",
+    "ForceDensityInputs",
+    "ForceDensityPlan",
+    "ForceDensityProblem",
+    "ForceDensityProvenance",
+    "ForceDensityResult",
+    "ForceDensitySignMode",
+    "ForceDensityState",
+    "ForceDensityStateSolver",
+    "ForceDensityStatus",
+    "ForceDensityStructure",
+    "ForceDensityTolerances",
     "J2PlasticityParameters",
     "J2PlasticityState",
     "J2PlasticityUpdate",
     "NeoHookeanParameters",
+    "NeoHookeanMPMConstitutivePlan",
     "PreparedDensityFilter",
+    "PreparedForceDensitySolve",
     "SIMPInterpolation",
+    "SurfacePressureLoadModel",
     "TopologyOptimizationResult",
     "TopologyReanalysisReport",
+    "force_density_equilibrium",
+    "force_density_load_path",
     "j2_radial_return",
     "neo_hookean_first_piola",
+    "neo_hookean_reference_energy",
     "neo_hookean_form",
+    "plan_force_density",
+    "prepare_force_density",
     "reanalyse_topology_design",
+    "refresh_force_density",
+    "solve_force_density",
+    "solve_force_density_design",
     "solve_topology_optimization",
 ]

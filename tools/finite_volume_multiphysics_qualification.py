@@ -40,7 +40,9 @@ def _gravity_mode():
     runtime = phx.solver.PreparedFiniteVolumeRuntime(
         dynamics, phx.discretization.FluxPositivityPlan()
     )
-    gravity = phx.solver.NewtonianSelfGravityPlan(0.1).prepare(runtime)
+    gravity = phx.solver.NewtonianSelfGravityPlan(0.1).prepare(
+        phx.solver.prepare_balance_law_transport(runtime)
+    )
     x = grid.structured_axes[0].interval_centers
     density = 1.0 + 0.01 * jnp.sin(2.0 * jnp.pi * x)
     potential, _, acceleration, solved = gravity.solve_density(density)

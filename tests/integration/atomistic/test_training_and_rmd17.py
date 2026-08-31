@@ -7,6 +7,7 @@ import pytest
 import phydrax.atomistic._training as atomistic_training
 from phydrax.atomistic import (
     AtomisticBatch,
+    AtomisticGraphExecutionPlan,
     AtomisticScaleContract,
     AtomisticStatus,
     AtomisticTrainingPolicy,
@@ -22,6 +23,13 @@ from phydrax.nn.atomistic import NequIPPotential, PaiNNPotential
 SCALE = AtomisticScaleContract("angstrom", "electronvolt")
 
 
+def _execution(maximum_neighbors=3):
+    return AtomisticGraphExecutionPlan(
+        maximum_neighbors,
+        maximum_dense_atoms=256,
+    )
+
+
 def _batch():
     return AtomisticBatch(
         [[1, 1], [1, 1], [1, 1]],
@@ -35,12 +43,10 @@ def _batch():
     )
 
 
-def _potential(key, *, maximum_neighbors=1):
+def _potential(key):
     return PaiNNPotential(
         SCALE,
         cutoff=2.0,
-        maximum_neighbors=maximum_neighbors,
-        maximum_dense_atoms=2,
         feature_count=6,
         interaction_count=1,
         radial_basis_count=4,
@@ -50,7 +56,7 @@ def _potential(key, *, maximum_neighbors=1):
 
 def _targets(batch):
     teacher = _potential(jr.key(91))
-    prediction = energy_and_forces(teacher, batch)
+    prediction = energy_and_forces(teacher, batch, _execution())
     return prediction.energy, prediction.forces
 
 
@@ -92,6 +98,7 @@ def test_energy_force_and_joint_training_have_complete_decreasing_histories(targ
     energy, forces = _targets(batch)
     problem = AtomisticTrainingProblem(
         batch,
+        _execution(),
         training_energy=energy if target_kind != "force" else None,
         training_forces=forces if target_kind != "energy" else None,
     )
@@ -123,12 +130,14 @@ def test_normalization_is_fitted_only_from_training_targets():
     validation = batch.with_positions(batch.positions + 0.2)
     problem_a = AtomisticTrainingProblem(
         batch,
+        _execution(),
         training_energy=energy,
         validation_batch=validation,
         validation_energy=jnp.asarray([1e3, -1e3, 2e3]),
     )
     problem_b = AtomisticTrainingProblem(
         batch,
+        _execution(),
         training_energy=energy,
         validation_batch=validation,
         validation_energy=jnp.asarray([-4e8, 7e8, 9e8]),
@@ -146,7 +155,7 @@ def test_normalization_is_fitted_only_from_training_targets():
 def test_deterministic_continuation_matches_uninterrupted_training_and_selection():
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(batch, training_energy=energy)
+    problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
     initial = _potential(jr.key(4))
     first = fit_atomistic_potential(
         initial,
@@ -193,7 +202,9 @@ def test_deterministic_continuation_matches_uninterrupted_training_and_selection
 def test_nonfinite_supervision_terminates_with_typed_status():
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(batch, training_energy=energy.at[1].set(jnp.nan))
+    problem = AtomisticTrainingProblem(
+        batch, _execution(), training_energy=energy.at[1].set(jnp.nan)
+    )
     result = fit_atomistic_potential(
         _potential(jr.key(6)),
         problem,
@@ -217,7 +228,7 @@ def test_callbacks_receive_start_update_validation_and_stop_events():
 
     fit_atomistic_potential(
         _potential(jr.key(8)),
-        AtomisticTrainingProblem(batch, training_energy=energy),
+        AtomisticTrainingProblem(batch, _execution(), training_energy=energy),
         AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
         callbacks=(callback,),
     )
@@ -229,6 +240,7 @@ def test_validation_masks_are_part_of_continuation_identity():
     energy, _ = _targets(batch)
     first_problem = AtomisticTrainingProblem(
         batch,
+        _execution(),
         training_energy=energy,
         validation_batch=batch,
         validation_energy=energy,
@@ -236,6 +248,7 @@ def test_validation_masks_are_part_of_continuation_identity():
     )
     changed_problem = AtomisticTrainingProblem(
         batch,
+        _execution(),
         training_energy=energy,
         validation_batch=batch,
         validation_energy=energy,
@@ -264,6 +277,7 @@ def test_masked_nonfinite_targets_are_inert_before_residual_squaring():
     forces = forces.at[2, 1, 2].set(jnp.nan)
     problem = AtomisticTrainingProblem(
         batch,
+        _execution(),
         training_energy=energy,
         training_forces=forces,
         training_energy_mask=[True, False, True],
@@ -282,8 +296,8 @@ def test_training_reports_neighbor_overflow_without_nonfinite_conflation():
     batch = _batch()
     energy, _ = _targets(batch)
     result = fit_atomistic_potential(
-        _potential(jr.key(43), maximum_neighbors=0),
-        AtomisticTrainingProblem(batch, training_energy=energy),
+        _potential(jr.key(43)),
+        AtomisticTrainingProblem(batch, _execution(0), training_energy=energy),
         AtomisticTrainingPolicy(maximum_steps=2, force_weight=0.0),
     )
     assert int(result.status) == int(AtomisticStatus.NEIGHBOR_OVERFLOW)
@@ -298,7 +312,7 @@ def test_initial_model_is_selected_at_step_zero_and_trained_state_is_refingerpri
     initial_parameter_state = initial.parameter_state_id
     result = fit_atomistic_potential(
         initial,
-        AtomisticTrainingProblem(batch, training_energy=energy),
+        AtomisticTrainingProblem(batch, _execution(), training_energy=energy),
         AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
     )
     assert int(result.validation_steps[0]) == 0
@@ -380,19 +394,18 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
         return NequIPPotential(
             dataset.scale,
             cutoff=2.0,
-            maximum_neighbors=1,
-            maximum_dense_atoms=2,
             feature_count=2,
             interaction_count=1,
             radial_basis_count=3,
             key=key,
         )
 
-    teacher = energy_and_forces(potential(jr.key(301)), batch)
+    teacher = energy_and_forces(potential(jr.key(301)), batch, _execution())
     result = fit_atomistic_potential(
         potential(jr.key(302)),
         AtomisticTrainingProblem(
             batch,
+            _execution(),
             training_energy=teacher.energy,
             training_forces=teacher.forces,
         ),
@@ -406,7 +419,7 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
     )
     assert isinstance(result.final_potential, NequIPPotential)
     assert result.training_loss_history.shape == (2,)
-    prediction = energy_and_forces(result.best_potential, batch)
+    prediction = energy_and_forces(result.best_potential, batch, _execution())
     assert bool(jnp.all(prediction.valid))
     assert prediction.energy.shape == (sample_count,)
 
@@ -415,14 +428,12 @@ def test_nequip_trains_through_existing_contract_on_synthetic_rmd17(tmp_path):
 def test_training_rejects_cross_family_continuation(continuation_family):
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(batch, training_energy=energy)
+    problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
 
     def nequip(key):
         return NequIPPotential(
             SCALE,
             cutoff=2.0,
-            maximum_neighbors=1,
-            maximum_dense_atoms=2,
             feature_count=2,
             interaction_count=1,
             radial_basis_count=3,
@@ -452,7 +463,7 @@ def test_training_rejects_cross_family_continuation(continuation_family):
 def test_training_rejects_same_family_continuation_with_changed_configuration():
     batch = _batch()
     energy, _ = _targets(batch)
-    problem = AtomisticTrainingProblem(batch, training_energy=energy)
+    problem = AtomisticTrainingProblem(batch, _execution(), training_energy=energy)
     continuation = fit_atomistic_potential(
         _potential(jr.key(405)),
         problem,
@@ -461,8 +472,6 @@ def test_training_rejects_same_family_continuation_with_changed_configuration():
     changed = PaiNNPotential(
         SCALE,
         cutoff=1.5,
-        maximum_neighbors=1,
-        maximum_dense_atoms=2,
         feature_count=6,
         interaction_count=1,
         radial_basis_count=4,
@@ -495,6 +504,7 @@ def test_training_hashes_parameter_state_only_for_returned_checkpoints(monkeypat
         _potential(jr.key(406)),
         AtomisticTrainingProblem(
             batch,
+            _execution(),
             training_energy=energy,
             validation_batch=batch,
             validation_energy=energy,

@@ -215,3 +215,43 @@ def test_structured_state_design_recovers_all_at_once_kkt_solution():
     assert bool(solved.successful)
     assert jnp.allclose(solved.state, jnp.asarray([0.5]), atol=2e-3)
     assert jnp.allclose(solved.design, jnp.asarray([0.5]), atol=2e-3)
+
+
+def test_structured_state_design_lowers_declared_vector_constraints():
+    constraint = opt.StateDesignConstraint(
+        lambda state, design, scale: jnp.stack((state[0] + design[0], scale * design[0])),
+        lower=jnp.asarray((1.0, -jnp.inf)),
+        upper=jnp.asarray((1.0, 2.0)),
+        constraint_id="state-design-vector",
+    )
+    problem = opt.StateDesignProblem(
+        lambda state, design, _: state - design,
+        lambda state, design, _: jnp.sum(state**2 + design**2),
+        constraints=(constraint,),
+        problem_id="structured-state-design-constraints",
+    )
+    compilation = opt.compile_structured_state_design(
+        problem,
+        jnp.asarray((0.5,)),
+        jnp.asarray((0.5,)),
+        sample_args=jnp.asarray(2.0),
+        exact_hessian=False,
+    )
+    program = compilation.optimization.program
+    values = program.constraints(
+        jnp.asarray((0.5, 0.5)),
+        jnp.asarray(2.0),
+    )
+
+    assert program.num_constraints == 3
+    assert jnp.allclose(values, jnp.asarray((0.0, 1.0, 1.0)))
+    assert jnp.array_equal(
+        program.constraint_lower,
+        jnp.asarray((0.0, 1.0, -jnp.inf)),
+    )
+    assert jnp.array_equal(
+        program.constraint_upper,
+        jnp.asarray((0.0, 1.0, 2.0)),
+    )
+    assert program.equality_indices.tolist() == [0, 1]
+    assert program.upper_indices.tolist() == [2]

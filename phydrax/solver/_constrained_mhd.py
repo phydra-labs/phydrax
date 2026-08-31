@@ -14,12 +14,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
-from .._numerics._checkpointed_scan import checkpointed_scan
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..discretization._temporal import TemporalMesh
 from ..discretization.finite_volume import UpwindConstrainedTransportPlan
-from ._finite_volume_rollout import FiniteVolumeReplayPolicy
 
 
 class ConstrainedMHDRunStatus(IntEnum):
@@ -35,8 +32,22 @@ class ConstrainedMHDState(StrictModule):
     cell_state: Array
     magnetic_flux: Array
     time: Array
+    step_size: Array
     accepted_step: Array
     status: Array
+
+
+class ConstrainedMHDAcceptedIntegralLedger(StrictModule):
+    """Accepted SSPRK-integrated face fluxes and edge electromotive circulation."""
+
+    face_flux_integrals: tuple[Array, ...]
+    edge_electromotive_integrals: Array
+    cell_content_change: Array
+    magnetic_flux_change: Array
+    start_time: Array
+    end_time: Array
+    accepted: Array
+    transport_plan_id: str = eqx.field(static=True)
 
 
 class ConstrainedMHDDiagnostics(StrictModule):
@@ -54,17 +65,7 @@ class ConstrainedMHDStepResult(StrictModule):
     state: ConstrainedMHDState
     accepted: Array
     diagnostics: ConstrainedMHDDiagnostics
-
-
-class ConstrainedMHDRolloutResult(StrictModule):
-    final_state: ConstrainedMHDState
-    cell_states: Array
-    magnetic_fluxes: Array
-    times: Array
-    accepted: Array
-    statuses: Array
-    stability_margins: Array
-    temporal_mesh_id: str = eqx.field(static=True)
+    accepted_integrals: ConstrainedMHDAcceptedIntegralLedger
 
 
 class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
@@ -74,6 +75,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
     cfl: float = eqx.field(static=True)
     positivity_iterations: int = eqx.field(static=True)
     divergence_tolerance: float = eqx.field(static=True)
+    ctu_predictor: bool = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -84,6 +86,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         cfl: float = 0.35,
         positivity_iterations: int = 32,
         divergence_tolerance: float = 1e-10,
+        ctu_predictor: bool = False,
     ):
         if not isinstance(spatial, UpwindConstrainedTransportPlan):
             raise TypeError("spatial must be UpwindConstrainedTransportPlan.")
@@ -102,6 +105,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         self.cfl = cfl_
         self.positivity_iterations = iterations
         self.divergence_tolerance = tolerance
+        self.ctu_predictor = bool(ctu_predictor)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "constrained-mhd-ssprk3",
@@ -109,6 +113,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
                 "cfl": cfl_,
                 "positivity_iterations": iterations,
                 "divergence_tolerance": tolerance,
+                "ctu_predictor": self.ctu_predictor,
             }
         )
 
@@ -118,13 +123,15 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         magnetic_flux: ArrayLike,
         time: ArrayLike = 0.0,
         /,
+        *,
+        step_size: ArrayLike | None = None,
     ) -> ConstrainedMHDState:
         full = jnp.asarray(full_cell_state)
         expected = self.spatial.cell_shape + (8,)
         if full.shape != expected:
             raise ValueError(f"Full MHD state must have shape {expected}.")
         magnetic = self.spatial.validate_magnetic_flux(magnetic_flux)
-        reduced = full[..., :5]
+        reduced = self.spatial.layout.reduce_full_state(full)
         synchronized = self.spatial.full_state(reduced, magnetic)
         magnetic_mismatch = jnp.max(jnp.abs(synchronized[..., 5:8] - full[..., 5:8]))
         constraint = self.spatial.magnetic_constraint(magnetic)
@@ -140,10 +147,15 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
             "Initial constrained-MHD state is inadmissible or inconsistent.",
         )
         time_ = jnp.asarray(time, dtype=reduced.dtype).reshape(())
+        step_size_ = jnp.asarray(
+            jnp.nan if step_size is None else step_size,
+            dtype=reduced.dtype,
+        ).reshape(())
         return ConstrainedMHDState(
             reduced,
             magnetic,
             time_,
+            step_size_,
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(int(ConstrainedMHDRunStatus.SUCCESS), dtype=jnp.int32),
         )
@@ -199,13 +211,33 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
         args: Any,
         /,
     ):
-        rate = self.spatial.rate(
-            time,
-            evaluation_cell,
-            evaluation_magnetic,
-            args,
-            cfl=self.cfl,
-        )
+        if self.ctu_predictor:
+            predictor = self.spatial.rate(
+                time,
+                evaluation_cell,
+                evaluation_magnetic,
+                args,
+                cfl=self.cfl,
+            )
+            predicted_cell = evaluation_cell + 0.5 * increment * predictor.cell_rate
+            predicted_magnetic = (
+                evaluation_magnetic + 0.5 * increment * predictor.magnetic_rate
+            )
+            rate = self.spatial.rate(
+                time + 0.5 * increment,
+                predicted_cell,
+                predicted_magnetic,
+                args,
+                cfl=self.cfl,
+            )
+        else:
+            rate = self.spatial.rate(
+                time,
+                evaluation_cell,
+                evaluation_magnetic,
+                args,
+                cfl=self.cfl,
+            )
         candidate_cell = base_cell + increment * rate.cell_rate
         candidate_magnetic = base_magnetic + increment * rate.magnetic_rate
         cell, magnetic, factor = self._blend(
@@ -307,6 +339,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
             cell_3,
             magnetic_3,
             end,
+            step,
             state.accepted_step + jnp.asarray(1, dtype=jnp.int32),
             status,
         )
@@ -314,6 +347,7 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
             state.cell_state,
             state.magnetic_flux,
             state.time,
+            state.step_size,
             state.accepted_step,
             status,
         )
@@ -322,6 +356,46 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
             lambda _: candidate,
             lambda _: rejected,
             operand=None,
+        )
+        face_flux_integrals = tuple(
+            step
+            * (
+                (factor_1 * first + factor_2 * second) / 6.0
+                + (2.0 / 3.0) * factor_3 * third
+            )
+            for first, second, third in zip(
+                rate_1.integrated_normal_fluxes,
+                rate_2.integrated_normal_fluxes,
+                rate_3.integrated_normal_fluxes,
+                strict=True,
+            )
+        )
+        edge_integrals = step * (
+            (
+                factor_1 * rate_1.edge_electromotive_circulation
+                + factor_2 * rate_2.edge_electromotive_circulation
+            )
+            / 6.0
+            + (2.0 / 3.0) * factor_3 * rate_3.edge_electromotive_circulation
+        )
+        accepted_integrals = ConstrainedMHDAcceptedIntegralLedger(
+            face_flux_integrals=tuple(
+                jnp.where(successful, value, jnp.zeros_like(value))
+                for value in face_flux_integrals
+            ),
+            edge_electromotive_integrals=jnp.where(
+                successful, edge_integrals, jnp.zeros_like(edge_integrals)
+            ),
+            cell_content_change=jnp.where(
+                successful, cell_3 - cell_0, jnp.zeros_like(cell_0)
+            ),
+            magnetic_flux_change=jnp.where(
+                successful, magnetic_3 - magnetic_0, jnp.zeros_like(magnetic_0)
+            ),
+            start_time=state.time,
+            end_time=end,
+            accepted=successful,
+            transport_plan_id=self.plan_id,
         )
         diagnostics = ConstrainedMHDDiagnostics(
             stage_stable_steps=stable_steps,
@@ -337,113 +411,14 @@ class ConstrainedMHDSSPRK3Plan(StrictModule, NonTrainableState):
             ),
             successful=successful,
         )
-        return ConstrainedMHDStepResult(accepted_state, successful, diagnostics)
-
-
-class ConstrainedMHDScheduledRolloutPlan(StrictModule, NonTrainableState):
-    integrator: ConstrainedMHDSSPRK3Plan
-    temporal_mesh: TemporalMesh
-    replay: FiniteVolumeReplayPolicy
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        integrator: ConstrainedMHDSSPRK3Plan,
-        temporal_mesh: TemporalMesh,
-        /,
-        *,
-        replay: FiniteVolumeReplayPolicy | None = None,
-    ):
-        if not isinstance(integrator, ConstrainedMHDSSPRK3Plan):
-            raise TypeError("integrator must be ConstrainedMHDSSPRK3Plan.")
-        if not isinstance(temporal_mesh, TemporalMesh):
-            raise TypeError("temporal_mesh must be TemporalMesh.")
-        if temporal_mesh.role != "internal" or not bool(
-            np.all(np.asarray(temporal_mesh.active_intervals))
-        ):
-            raise ValueError(
-                "Constrained-MHD rollout requires an all-active internal mesh."
-            )
-        replay_ = FiniteVolumeReplayPolicy() if replay is None else replay
-        if not isinstance(replay_, FiniteVolumeReplayPolicy):
-            raise TypeError("replay must be FiniteVolumeReplayPolicy or None.")
-        self.integrator = integrator
-        self.temporal_mesh = temporal_mesh
-        self.replay = replay_
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "constrained-mhd-scheduled-rollout",
-                "integrator": integrator.plan_id,
-                "temporal_mesh": temporal_mesh.mesh_id,
-                "replay": replay_.policy_id,
-            }
-        )
-
-    def rollout(
-        self,
-        initial_state: ConstrainedMHDState,
-        args: Any = None,
-        /,
-    ) -> ConstrainedMHDRolloutResult:
-        def step(carry, interval):
-            state, active = carry
-            start, end = interval
-
-            def execute(_):
-                result = self.integrator.advance(state, start, end, args)
-                return (
-                    (result.state, active & result.accepted),
-                    (
-                        result.state.cell_state,
-                        result.state.magnetic_flux,
-                        result.state.time,
-                        result.accepted,
-                        result.state.status,
-                        result.diagnostics.stability_margin,
-                    ),
-                )
-
-            def skip(_):
-                return (
-                    (state, active),
-                    (
-                        state.cell_state,
-                        state.magnetic_flux,
-                        state.time,
-                        jnp.asarray(False),
-                        state.status,
-                        jnp.asarray(jnp.nan, dtype=state.time.dtype),
-                    ),
-                )
-
-            return jax.lax.cond(active, execute, skip, operand=None)
-
-        intervals = (self.temporal_mesh.nodes[:-1], self.temporal_mesh.nodes[1:])
-        (final, _), outputs = checkpointed_scan(
-            step,
-            (initial_state, jnp.asarray(True)),
-            intervals,
-            length=self.temporal_mesh.interval_count,
-            mode=self.replay.mode,
-            block_size=self.replay.block_size,
-        )
-        cells, magnetic, times, accepted, statuses, margins = outputs
-        return ConstrainedMHDRolloutResult(
-            final_state=final,
-            cell_states=cells,
-            magnetic_fluxes=magnetic,
-            times=times,
-            accepted=accepted,
-            statuses=statuses,
-            stability_margins=margins,
-            temporal_mesh_id=self.temporal_mesh.mesh_id,
+        return ConstrainedMHDStepResult(
+            accepted_state, successful, diagnostics, accepted_integrals
         )
 
 
 __all__ = [
     "ConstrainedMHDDiagnostics",
-    "ConstrainedMHDRolloutResult",
-    "ConstrainedMHDScheduledRolloutPlan",
+    "ConstrainedMHDAcceptedIntegralLedger",
     "ConstrainedMHDRunStatus",
     "ConstrainedMHDSSPRK3Plan",
     "ConstrainedMHDState",

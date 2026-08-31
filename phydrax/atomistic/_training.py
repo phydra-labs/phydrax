@@ -20,7 +20,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import combine_trainable, NonTrainableState, partition_trainable
 from .._training import TrainingCallback, TrainingController, TrainingProgress
-from ._graph import realize_atomistic_graph
+from ._graph import AtomisticGraphExecutionPlan, realize_atomistic_graph
 from ._potential import (
     _with_atomistic_potential_identity,
     AbstractAtomisticPotential,
@@ -36,6 +36,7 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
     """Typed energy/force supervision for one train and optional validation split."""
 
     training_batch: AtomisticBatch
+    graph_execution: AtomisticGraphExecutionPlan
     training_energy: Array | None
     training_forces: Array | None
     training_energy_mask: Array | None
@@ -51,6 +52,7 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
         self,
         training_batch: AtomisticBatch,
         /,
+        graph_execution: AtomisticGraphExecutionPlan,
         *,
         training_energy: ArrayLike | None = None,
         training_forces: ArrayLike | None = None,
@@ -62,6 +64,13 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
         validation_energy_mask: ArrayLike | None = None,
         validation_force_mask: ArrayLike | None = None,
     ):
+        if (
+            not isinstance(graph_execution, AtomisticGraphExecutionPlan)
+            or graph_execution.backend != "dense"
+        ):
+            raise TypeError(
+                "graph_execution must be a dense AtomisticGraphExecutionPlan."
+            )
         if not isinstance(training_batch, AtomisticBatch):
             raise TypeError("training_batch must be an AtomisticBatch.")
         if training_energy is None and training_forces is None:
@@ -117,6 +126,7 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
                 prefix="validation",
             )
         self.training_batch = training_batch
+        self.graph_execution = graph_execution
         self.training_energy = train_energy
         self.training_forces = train_forces
         self.training_energy_mask = train_energy_mask
@@ -130,6 +140,7 @@ class AtomisticTrainingProblem(StrictModule, NonTrainableState):
             {
                 "kind": "atomistic-training-problem",
                 "training_batch": training_batch.batch_id,
+                "graph_execution": graph_execution.plan_id,
                 "validation_batch": (
                     None if validation_batch is None else validation_batch.batch_id
                 ),
@@ -426,6 +437,7 @@ def _normalization(
 def _loss(
     potential: _AtomisticPotential,
     batch: AtomisticBatch,
+    execution: AtomisticGraphExecutionPlan,
     energy_target: Array | None,
     force_target: Array | None,
     energy_mask: Array | None,
@@ -438,7 +450,7 @@ def _loss(
     if need_forces:
 
         def energy_closure(position: Array) -> tuple[Array, tuple[Array, Array]]:
-            energy, _, graph = potential._energy_unchecked(batch, position)
+            energy, _, graph = potential._energy_unchecked(batch, position, execution)
             return jnp.sum(energy), (energy, graph.overflow)
 
         (_, auxiliary), position_gradient = jax.value_and_grad(
@@ -447,7 +459,9 @@ def _loss(
         predicted_energy, overflow = auxiliary
         predicted_forces = -position_gradient
     else:
-        predicted_energy, _, graph = potential._energy_unchecked(batch, batch.positions)
+        predicted_energy, _, graph = potential._energy_unchecked(
+            batch, batch.positions, execution
+        )
         overflow = graph.overflow
         predicted_forces = None
     zero = jnp.asarray(0.0, dtype=predicted_energy.dtype)
@@ -484,6 +498,7 @@ def _training_loss(
     return _loss(
         potential,
         problem.training_batch,
+        problem.graph_execution,
         problem.training_energy,
         problem.training_forces,
         problem.training_energy_mask,
@@ -505,6 +520,7 @@ def _validation_loss(
     return _loss(
         potential,
         problem.validation_batch,
+        problem.graph_execution,
         problem.validation_energy,
         problem.validation_forces,
         problem.validation_energy_mask,
@@ -531,9 +547,11 @@ def _synchronize_optimizer_state_identity(
     """Align optimizer parameter-tree metadata without changing moment leaves."""
 
     return jax.tree_util.tree_map(
-        lambda node: _with_atomistic_potential_identity(node, checkpoint)
-        if isinstance(node, AbstractAtomisticPotential)
-        else node,
+        lambda node: (
+            _with_atomistic_potential_identity(node, checkpoint)
+            if isinstance(node, AbstractAtomisticPotential)
+            else node
+        ),
         optimizer_state,
         is_leaf=lambda node: isinstance(node, AbstractAtomisticPotential),
     )
@@ -552,13 +570,15 @@ def _parameter_loss(
 
 
 def _batch_neighbor_overflow(
-    potential: _AtomisticPotential, batch: AtomisticBatch, /
+    potential: _AtomisticPotential,
+    batch: AtomisticBatch,
+    execution: AtomisticGraphExecutionPlan,
+    /,
 ) -> bool:
     graph = realize_atomistic_graph(
         batch,
+        execution,
         cutoff=potential.configuration.cutoff,
-        maximum_neighbors=potential.configuration.maximum_neighbors,
-        maximum_dense_atoms=potential.configuration.maximum_dense_atoms,
     )
     return bool(np.asarray(jnp.any(graph.overflow)))
 
@@ -655,11 +675,15 @@ def fit_atomistic_potential(
     if continuation is not None:
         control.best_payload = continuation.best_potential
     control.emit("start")
-    training_overflow = _batch_neighbor_overflow(current, problem.training_batch)
+    training_overflow = _batch_neighbor_overflow(
+        current, problem.training_batch, problem.graph_execution
+    )
     validation_overflow = (
         False
         if problem.validation_batch is None
-        else _batch_neighbor_overflow(current, problem.validation_batch)
+        else _batch_neighbor_overflow(
+            current, problem.validation_batch, problem.graph_execution
+        )
     )
     terminal_status = AtomisticStatus.SUCCESS
     termination = "maximum_steps"

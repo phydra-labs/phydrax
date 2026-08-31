@@ -29,13 +29,14 @@ from .._sampling import (
     sample_markov,
     SobolDesign,
 )
-from . import collocation
+from . import collocation, conditional
 
 
 __all__ = [
     "AbstractChainSampleResult",
     "AbstractProposal",
     "collocation",
+    "conditional",
     "AntitheticDesign",
     "CallableProposal",
     "DESIGN_ALGORITHM_VERSION",

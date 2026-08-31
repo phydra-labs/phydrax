@@ -1,11 +1,12 @@
 # Finite-molecule atomistic learning
 
-PhydraX provides a native research workflow for finite, nonperiodic molecular
-energies and conservative forces. It uses the existing material-particle and
-`GraphIR` substrates rather than introducing another entity or graph system.
-The current scope is molecular energy learning and differentiation only: there
-is no periodic execution, stress, cell derivative, long-range electrostatics,
-direct-force head, molecular-dynamics stability claim, or ASE dependency.
+This guide covers PhydraX's finite, nonperiodic molecular energy-learning
+workflow. It uses the existing material-particle and `GraphIR` substrates rather
+than introducing another entity or graph system. The PaiNN/NequIP prediction and
+training surface described here does not itself claim periodic execution, stress,
+long-range electrostatics, or molecular-dynamics stability. Conservative
+atomistic simulation is a separate prepared execution path documented in the
+[atomistic dynamics guide](guides_atomistic_dynamics.md).
 
 ## Scale and atom identity are part of the input
 
@@ -49,22 +50,26 @@ molecules. Runtime displacement, distance, unit direction, node/edge masks, and
 neighbor counts are stored in a canonical `GraphIR`. Coincident atoms have zero
 direction rather than a nonfinite normalization.
 
-Dense candidate storage is quadratic, so every realization requires an
-explicit `maximum_dense_atoms` guard. `maximum_neighbors` is a separate runtime
-capacity contract. The implementation evaluates every candidate and reports an
-overflow; it never truncates, clips, repairs, or selects a partial neighbor set.
+Dense candidate storage is quadratic, so every realization uses an explicit
+`AtomisticGraphExecutionPlan` with a `maximum_dense_atoms` guard.
+`maximum_neighbors` is a separate runtime capacity contract on that execution
+plan. The implementation evaluates every candidate and reports an overflow; it
+never truncates, clips, repairs, or selects a partial neighbor set.
 `AtomisticGraph.require_success` and direct energy evaluation fail closed.
 `energy_and_forces` instead returns `valid=False`, status
 `NEIGHBOR_OVERFLOW`, and non-trustworthy values as NaN so a batch pipeline can
 retain typed failure evidence.
 
 ```python
+execution = phx.atomistic.AtomisticGraphExecutionPlan(
+    16,
+    maximum_dense_atoms=32,
+)
 batch = phx.atomistic.AtomisticBatch.from_structure(water)
 graph = phx.atomistic.realize_atomistic_graph(
     batch,
+    execution,
     cutoff=5.0,
-    maximum_neighbors=16,
-    maximum_dense_atoms=32,
 )
 ```
 
@@ -88,14 +93,12 @@ import jax.random as jr
 potential = phx.nn.atomistic.PaiNNPotential(
     scale,
     cutoff=5.0,
-    maximum_neighbors=16,
-    maximum_dense_atoms=32,
     feature_count=64,
     interaction_count=3,
     radial_basis_count=20,
     key=jr.key(0),
 )
-prediction = phx.atomistic.energy_and_forces(potential, batch)
+prediction = phx.atomistic.energy_and_forces(potential, batch, execution)
 ```
 
 ## Low-degree Cartesian NequIP interactions
@@ -112,14 +115,12 @@ channels enter the masked per-atom energy readout.
 nequip = phx.nn.atomistic.NequIPPotential(
     scale,
     cutoff=5.0,
-    maximum_neighbors=16,
-    maximum_dense_atoms=32,
     feature_count=32,
     interaction_count=3,
     radial_basis_count=20,
     key=jr.key(2),
 )
-nequip_prediction = phx.atomistic.energy_and_forces(nequip, batch)
+nequip_prediction = phx.atomistic.energy_and_forces(nequip, batch, execution)
 ```
 
 `O3TensorProductPlan` resolves every legal degree/parity instruction, the
@@ -160,7 +161,7 @@ prediction until explicitly checkpointed:
 
 ```text
 updated = phx.atomistic.checkpoint_atomistic_potential(updated)
-prediction = phx.atomistic.energy_and_forces(updated, batch)
+prediction = phx.atomistic.energy_and_forces(updated, batch, execution)
 ```
 
 The immutable checkpoint operation returns a new potential and is shared by the
@@ -182,6 +183,7 @@ validation split never contributes to those fitted values.
 ```text
 problem = phx.atomistic.AtomisticTrainingProblem(
     training_batch,
+    execution,
     training_energy=training_energy,
     training_forces=training_forces,
     validation_batch=validation_batch,

@@ -10,12 +10,22 @@ Ownership is explicit:
 - :mod:`phydrax.nn.operator` contains operator data, engines, adapters, and runtime policy.
 """
 
-from . import activations, atomistic, layers, models, operator, parameters, quantum
+from . import (
+    activations,
+    atomistic,
+    latent,
+    layers,
+    models,
+    operator,
+    parameters,
+    quantum,
+)
 
 
 __all__ = [
     "activations",
     "atomistic",
+    "latent",
     "layers",
     "models",
     "operator",
