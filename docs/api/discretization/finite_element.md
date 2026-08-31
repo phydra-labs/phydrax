@@ -191,6 +191,78 @@
 
 ::: phydrax.equations.fem.TensorProductPartialAssemblyOperator
 
+---
+
+::: phydrax.integration.GaussLobattoLegendreRule
+
+---
+
+::: phydrax.discretization.fem.PreparedFiniteElementReference
+
+---
+
+::: phydrax.equations.FiniteElementCoefficient
+
+---
+
+::: phydrax.equations.FiniteElementMassPolicy
+
+## Tensor SBP and DGSEM
+
+::: phydrax.discretization.fem.TensorGLLSBPPlan
+
+---
+
+::: phydrax.discretization.fem.ElementLocalSBPReport
+
+---
+
+::: phydrax.discretization.fem.MappedTensorMetricPlan
+
+---
+
+::: phydrax.equations.fem.DGSEMConservationMethodPlan
+
+---
+
+::: phydrax.equations.fem.DGSEMFluxCompatibilityCertificate
+
+---
+
+::: phydrax.equations.fem.certify_dgsem_flux_compatibility
+
+## High-order hierarchy, mortars, and hp
+
+::: phydrax.discretization.fem.FiniteElementPTransfer
+
+---
+
+::: phydrax.discretization.fem.FiniteElementPMultigridPlan
+
+---
+
+::: phydrax.discretization.fem.TensorFastDiagonalizationBuilder
+
+---
+
+::: phydrax.discretization.fem.FiniteElementPatchPreconditionerBuilder
+
+---
+
+::: phydrax.discretization.fem.FiniteElementMortarPlan
+
+---
+
+::: phydrax.discretization.fem.FiniteElementHPTransaction
+
+---
+
+::: phydrax.discretization.fem.FiniteElementPartitionWorksetPlan
+
+---
+
+::: phydrax.discretization.fem.DistributedFiniteElementMortarPlan
+
 ## Materials and local algebra
 
 ::: phydrax.equations.ConstitutiveModel

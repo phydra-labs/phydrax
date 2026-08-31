@@ -626,7 +626,10 @@ class LatentContractionModel(
                 name=self.factor_names[0],
                 key=keys[0],
             )
-            dynamic = stack_scan_dynamics(self.factor_models[1:])
+            dynamic = stack_scan_dynamics(
+                self.factor_models[1:],
+                self._scan_static_aligned,
+            )
             if dynamic is not None:
                 scan_inputs = jnp.stack(
                     tuple(jnp.asarray(pts) for pts in factor_inputs[1:]), axis=0
@@ -1061,7 +1064,10 @@ class Separable(_AbstractStructuredInputModel):
                 or len(self.models) <= 1
             ):
                 return None
-            dynamic = stack_scan_dynamics(self.models[1:])
+            dynamic = stack_scan_dynamics(
+                self.models[1:],
+                self._scan_static_regular,
+            )
             if dynamic is None:
                 return None
 
@@ -1299,7 +1305,7 @@ class Separable(_AbstractStructuredInputModel):
                 static_group = self._scan_static_clone_groups[i]
                 first = jax.vmap(ft.partial(group_models[0], key=group_keys[0]))(xi)
                 group_lat = self._reshape_latents(first)
-                dynamic = stack_scan_dynamics(group_models[1:])
+                dynamic = stack_scan_dynamics(group_models[1:], static_group)
                 if dynamic is not None and static_group is not None:
                     scan_x = jnp.broadcast_to(xi, (clones - 1, int(xi.shape[0])))
 

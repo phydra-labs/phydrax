@@ -95,6 +95,11 @@ from ._interface import (
     implicit_phase_penalty,
 )
 from ._likelihood import SupervisedLikelihoodTerm
+from ._modal import (
+    CompiledModalResidualTerm,
+    ModalObservationTerm,
+    ModalTimeProvider,
+)
 from ._moment import MomentPenalty
 from ._observation import ObservationPenalty
 from ._operator_dataset import (
@@ -180,6 +185,7 @@ __all__ = [
     "BarycenterObjectiveTerm",
     "BatchSampler",
     "CochainResidualTerm",
+    "CompiledModalResidualTerm",
     "DeepBSDEPredictor",
     "DeepBSDERollout",
     "DeepBSDESamplingMode",
@@ -235,6 +241,8 @@ __all__ = [
     "InvariantSubspaceResidualEvaluation",
     "InvariantSubspaceResidualResult",
     "LabelProvider",
+    "ModalObservationTerm",
+    "ModalTimeProvider",
     "MomentPenalty",
     "ObservationPenalty",
     "OperatorDatasetTerm",

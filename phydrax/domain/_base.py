@@ -62,11 +62,11 @@ def _validate_enforcement_gate_fractions(
 def _make_compact_boundary_factor(
     distance: Callable[[Array], Array],
     *,
-    scale: float,
+    scale: Array | float,
     saturation_fraction: float,
     linear_fraction: float,
 ) -> Callable[[Array], Array]:
-    delta_value = float(scale) * saturation_fraction
+    delta_value = jnp.asarray(scale, dtype=float) * saturation_fraction
     transition_width = 1.0 - linear_fraction
     plateau_shape = linear_fraction + 0.5 * transition_width
 
@@ -121,7 +121,7 @@ def _make_compact_boundary_factor(
 def _make_compact_enforcement_gate(
     distance: Callable[[Array], Array],
     *,
-    scale: float,
+    scale: Array | float,
     saturation_fraction: float,
     linear_fraction: float,
 ) -> Callable[[Array], Array]:
@@ -144,7 +144,7 @@ def _make_compact_enforcement_gate(
 def _make_global_enforcement_gate(
     distance: Callable[[Array], Array],
     *,
-    scale: float,
+    scale: Array | float,
 ) -> Callable[[Array], Array]:
     """Map a smooth signed distance source to a broad dimensionless gate."""
     half_span = jnp.asarray(0.5 * scale, dtype=float)
@@ -161,14 +161,11 @@ def _make_global_enforcement_gate(
 def _make_global_boundary_ansatz_factor(
     distance: Callable[[Array], Array],
     *,
-    scale: float,
+    scale: Array | float,
 ) -> Callable[[Array], Array]:
     r"""Build a dimensional global gate with outward unit boundary derivative."""
     gate = _make_global_enforcement_gate(distance, scale=scale)
-    coefficient = jnp.asarray(
-        -float(scale) / _GLOBAL_GATE_BOUNDARY_SLOPE,
-        dtype=float,
-    )
+    coefficient = -jnp.asarray(scale, dtype=float) / _GLOBAL_GATE_BOUNDARY_SLOPE
 
     def factor(points: Array) -> Array:
         return coefficient * gate(points)
@@ -307,16 +304,15 @@ class AbstractGeometry(JointFactor):
         return eqx.tree_at(lambda factor: factor._label, self, labels[0])
 
     @property
-    def enforcement_characteristic_length(self) -> float:
+    def enforcement_characteristic_length(self) -> Array:
         """Shortest bounding-box span used to scale a dimensionless solver gate."""
         bounds = jnp.asarray(self.bounds, dtype=float)
-        widths = bounds[1] - bounds[0]
-        length = float(jnp.min(widths))
-        if not math.isfinite(length) or length <= 0.0:
-            raise ValueError(
-                f"{type(self).__name__} must have a finite positive bounding-box span."
-            )
-        return length
+        length = jnp.min(bounds[1] - bounds[0])
+        return eqx.error_if(
+            length,
+            ~jnp.isfinite(length) | (length <= 0.0),
+            f"{type(self).__name__} must have a finite positive bounding-box span.",
+        )
 
     @property
     def boundary_ansatz_factor(self) -> Callable[[Array], Array]:

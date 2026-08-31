@@ -58,7 +58,7 @@ conservation.
 
 ## Compilation
 
-```python
+```text
 method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
     phx.discretization.WendlandC2SPHKernel(2),
     smoothing_length=h,

@@ -194,7 +194,7 @@ restriction.
 
 Attach a pair through the standard compiler:
 
-```python
+```text
 compiled = phx.equations.compile_conservation_problem(
     problem,
     discretization,

@@ -235,7 +235,7 @@ a bijection or probability law. `FlowMatchingTerm` regresses a state-shaped
 `DomainFunction` against `u_t`; the population optimum is the conditional expectation
 of endpoint velocity given the interpolated state.
 
-```python
+```text
 endpoints = phx.transport.independent_endpoint_coupling(
     source_samples,
     target_samples,

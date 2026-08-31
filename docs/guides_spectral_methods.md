@@ -4,6 +4,8 @@ Phydrax separates a spectral basis, its physical evaluation support, modal degre
 freedom, nonlinear realization, and temporal method. Tensor spectral objects are global
 products rather than spectral elements. Spherical spaces instead bind exact S2FFT
 sampling theorems to a round-sphere support; neither path invents element topology.
+Local high-order tensor elements, mapped geometry, CG/DG coupling, and DGSEM
+live in the finite-element compiler; see [Spectral elements](guides_spectral_elements.md).
 
 ## Spaces and representations
 
@@ -13,6 +15,9 @@ physical bounds, quadrature, transforms, and exact field-space identities:
 ```python
 import jax.numpy as jnp
 import phydrax as phx
+import jax.random as jr
+
+key = jr.key(0)
 
 space = phx.discretization.TensorSpectralPlan(
     (phx.discretization.FourierBasisPlan(128),),
@@ -58,8 +63,8 @@ sphere = phx.discretization.SphericalSpectralPlan(
 values = jnp.cos(sphere.transform.theta)[:, None] * jnp.ones(
     (1, sphere.transform.phi.size)
 )
-coefficients = sphere.project(values)
-reconstructed = sphere.reconstruct(coefficients)
+sphere_coefficients = sphere.project(values)
+reconstructed = sphere.reconstruct(sphere_coefficients)
 laplacian_values = sphere.laplacian(values)
 ```
 
@@ -92,12 +97,82 @@ internal orthogonal-polynomial substrate. Physical conveniences such as
 `space.partial_derivative`, `space.gradient`, and `space.laplacian` accept and return
 point values; modal evolution uses `modal_derivative` and `modal_laplacian`.
 
+## Implicit modal fields
+
+`ImplicitModalField` represents a complete tensor-spectral state with one shared
+coefficient model. For a `d`-axis space, the model receives
+`[k_1 / s_1, ..., k_d / s_d, t]` and returns one complex coefficient (or a declared
+component shape). `mode_scales` owns the explicit input normalization; spatial
+derivatives remain the responsibility of the prepared spectral discretization.
+
+```python
+raw = phx.nn.models.ComplexOutputModel(
+    phx.nn.models.MLP(
+        in_size=2,
+        out_size=2,
+        width_size=64,
+        depth=3,
+        key=key,
+    )
+)
+modal = phx.nn.models.ImplicitModalField(
+    raw,
+    space,
+    real_field=True,
+)
+u_hat = modal.as_domain_function(
+    phx.domain.ScalarInterval(0.0, 1.0, label="t")
+)
+```
+
+`real_field=True` applies the canonical `HermitianSpectralCoordinates` projection,
+including real self-conjugate modes. `modal.physical_values(t)` reconstructs through
+the prepared transform; it never identifies point values with modal coefficients.
+
+Train the field against the existing coefficient-resident PDE compiler rather than
+reimplementing spectral derivatives or nonlinear products:
+
+```text
+physics = phx.terms.CompiledModalResidualTerm(
+    compiled,
+    function_name="u_hat",
+    times=times,
+)
+initial = phx.terms.ModalObservationTerm(
+    jnp.asarray([0.0]),
+    initial_coefficients[None, ...],
+    function_name="u_hat",
+)
+solver = phx.solver.FunctionalSolver(
+    functions={"u_hat": u_hat},
+    terms=(physics, initial),
+)
+```
+
+`ModalObservationTerm` accepts coefficient-wise masks and nonnegative weights, so
+known, missing, and merely uncomputed coefficients remain distinct. A masked target
+may be non-finite only where its mask is false.
+
+Two optional coefficient priors compose without changing PDE semantics:
+
+- `ExponentialSpectralEnvelope` applies positive per-axis decay rates. `sum` is the
+  tensor-product decay law; `mean` is an explicit dimension-normalized heuristic.
+- `SpectralBasisModulation` evaluates exact prepared one-dimensional basis functions
+  at declared coarse nodes and passes the resulting real feature vector to a model.
+
+These priors are parameterizations, not regularity estimates or missing-mode
+guarantees. Full tensor materialization is still exponential in the number of axes.
+For nonlinear PDEs, `CompiledModalResidualTerm` materializes the declared state and
+uses the compiler's explicit dealiasing policy. `maximum_query_points` and
+`maximum_feature_bytes` fail before hidden tensor or feature-table growth exceeds the
+declared resource budget.
+
 ## Nonlinear evaluation and dealiasing
 
 Nonlinear pseudospectral compilation requires an explicit policy. Quadratic Fourier
 products normally use 3/2 overresolution; cubic products require 2× overresolution.
 
-```python
+```text
 method = phx.discretization.PseudospectralMethodPlan(
     dealiasing=phx.discretization.PaddingDealiasingPlan(
         maximum_polynomial_degree=2,
@@ -118,7 +193,7 @@ it never reports exact nonlinear projection.
 
 The prepared method also owns direct nonlinear actions for modal solver callbacks:
 
-```python
+```text
 prepared_method = method.prepare(
     space,
     required_polynomial_degree=2,
@@ -133,6 +208,49 @@ quadratic_coefficients = prepared_method.nonlinear_action(
 This is the representation-safe path for nonlinear callbacks passed to spectral SPDE
 constructors. Their initial state, reaction result, and state-shaped noise amplitudes
 are modal; project initial physical data and reconstruct physical observables.
+
+## All-coordinate spectral PDE residuals
+
+`compile_spectral_residual` treats every declared coordinate, including time, as
+one axis of a tensor spectral trial space. It evaluates selected
+`PDEEquation.residual` expressions through modal derivatives and the prepared
+nonlinear realization, without differentiating a neural model with respect to
+query coordinates:
+
+```text
+method = phx.discretization.PseudospectralMethodPlan(
+    dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
+)
+residual = phx.equations.compile_spectral_residual(
+    problem,
+    space,
+    method,
+    scope="full",
+)
+state = residual.project_state(predicted_values)
+loss = residual.residual_energy(state, parameter_values)
+```
+
+`PolynomialClosureDealiasingPlan` differs from ordinary padding. Padding
+overresolves enough to protect the retained Galerkin projection from aliases.
+Polynomial closure represents the complete finite product bandwidth before the
+residual is measured. `scope="retained"` deliberately measures only the
+trial-space projection; `scope="full"` measures the prepared closure-space
+residual. `SpectralResidualCompilationReport` records the two modal shapes,
+polynomial degree, exactness, condition policy, and resource size.
+
+The residual norm uses the prepared physical quadrature rather than assuming
+that raw coefficient storage is orthonormal. A nonpolynomial field expression
+has no finite exact closure: select `ModalFilterPlan` and
+`require_exact=False` to request an explicitly approximate objective.
+Nonlinear sine and constrained-basis closure, masked grids, per-case geometry,
+and fields on different coordinate subsets are rejected.
+
+Boundary and initial conditions are never silently omitted. Problems carrying
+conditions compile only after the caller selects
+`condition_handling="external"` and supplies a hard physical
+`OperatorOutputPipeline`, or after those conditions have already been encoded
+by the chosen basis.
 
 For Fourier spaces, `SpatialNoiseBasis.from_spectrum` first constructs real
 weighted-orthonormal Laplacian modes and then projects them into full complex
@@ -156,7 +274,7 @@ matrix-free operators.
 A spectral conservation method differentiates projected physical fluxes and therefore
 preserves the zero Fourier mode up to roundoff:
 
-```python
+```text
 method = phx.discretization.SpectralConservationMethodPlan(
     phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.ModalFilterPlan(2 / 3),
@@ -199,7 +317,7 @@ space = phx.discretization.TensorSpectralPlan(
     axis_names=("x", "y"),
     field_name="velocity",
 ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
-problem = phx.equations.IncompressibleFlowProblem(2, viscosity=1e-3)
+problem = phx.equations.IncompressibleFlowProblem(2, 1e-3)
 method = phx.discretization.PseudospectralMethodPlan(
     dealiasing=phx.discretization.PaddingDealiasingPlan(2),
 )
@@ -221,7 +339,7 @@ semidirect-product action, including reflected translations.
 Wall-bounded channel flow uses a Fourier x Chebyshev x Fourier tensor plan and a
 separate constrained Stokes preparation:
 
-```python
+```text
 problem = phx.equations.IncompressibleFlowProblem(3, viscosity=1e-3)
 constraint = phx.discretization.ChannelMeanConstraint(
     "pressure_gradient", (1.0, 0.0)
@@ -318,7 +436,7 @@ operator is diagonal. The method uses stable phi-function series at zero and sma
 arguments. `matrix_phi3_action` extends the shared matrix-function substrate; ETDRK
 does not carry a private matrix-function convention.
 
-```python
+```text
 method = phx.solver.ETDRKMethod(4)
 solution = phx.solver.solve_etdrk(
     method,

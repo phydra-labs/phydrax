@@ -8,6 +8,132 @@
   reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
   initial states, and memory-linear diagonal Wiener coefficients. Replaced the
   flow-specific `FlowMatchingPolicy` with shared `UniformTimeSamplingPolicy`.
+- Generalized matrix-free quantum local actions through
+  `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
+  a clean migration of discrete VMC/TDVP while preserving the connected-action
+  algorithm. Added finite nonperiodic Born--Oppenheimer
+  `ElectronicCoulombHamiltonian`, validated Bohr/Hartree reference conversion,
+  exact and chunked-exact coordinate kinetic traces, singularity statuses without
+  distance clipping, replayable electronic walkers, an exactly corrected
+  state-dependent proposal, and a full-generalized-determinant
+  `phydrax.nn.quantum.FermiNet` with same-spin antisymmetry, sparsity-aware
+  scaled log envelopes, higher-order-correct zero/subnormal signed products,
+  polynomial singular-term determinant derivatives, coefficient-aware
+  nonzero-product mixture shifts with coefficient- and singularity-reactivation
+  fallbacks, a positive physical decay floor, and determinant mixtures
+  differentiable at zero coefficients, under an explicit four-electron ceiling.
+  Electronic VMC
+  folds local statuses into validity and reuses persistent chains, matrix-free
+  score/Gram stochastic reconfiguration, training lifecycle, linear solves,
+  diagnostics, statuses, and checkpoints. Added H/He/H₂ tests,
+  documentation, and a fixed multi-seed benchmark campaign with predeclared
+  statistical/chemical gates and provenance; periodic, relativistic, and
+  stochastic-trace electrons remain unsupported.
+- Added exact scalar temporal Matérn-3/2 and Matérn-5/2 Gaussian processes
+  through content-addressed continuous state-space compilation, origin-shifted
+  stable irregular train/query schedules, exact missing/query masks, bounded
+  stationary long-gap discretization, sequential square-root filtering and
+  reverse-scan RTS smoothing,
+  dense-parity parameter gradients, active-observation marginal likelihoods,
+  linear-storage predictive marginals, explicit compute precision,
+  prepared/evaluated identity and failure provenance, portable result export,
+  and complete retained-storage scaling benchmarks.
+- Added integration-native fixed-design Bayesian quadrature for normalized scalar
+  Gaussian targets with analytic squared-exponential kernel means, optional
+  kernel scaling, content-bound Gaussian targets, separate observation noise and
+  solve regularization, true evaluation-stage dtype placement, scale-normalized
+  prepared `phydrax.linalg` conditioning, reusable PyTree/field reductions,
+  overflow-stable analytic means, posterior-SD diagnostics, dtype-aware variance
+  validity, explicit target/contraction/solve/resource failure boundaries, and
+  an analytic Gaussian benchmark against IID and
+  randomized QMC. The posterior SD is explicitly model uncertainty, not a
+  deterministic or frequentist error bound.
+- Added `phydrax.atomistic` and `phydrax.nn.atomistic.PaiNNPotential` for finite
+  nonperiodic molecular research: scale-identified atomic structures and padded
+  batches reuse material-particle identities and `GraphIR`; resource-guarded
+  case-isolated dense neighborhoods fail closed without truncation; invariant
+  energies yield conservative forces with typed status, diagnostics, precision,
+  and provenance; energy-only, force-only, and joint training retain fitted
+  training-only normalization, selection, restart, and complete histories; and
+  local-NPZ rMD17 parsing/splitting plus a fingerprinted multi-seed benchmark
+  tool require explicit data provenance. Periodic execution, stress, long-range
+  electrostatics, direct-force heads, ASE integration, and molecular-dynamics
+  stability claims remain outside this capability.
+- Added labeled nonintrusive polynomial chaos for independent scalar Uniform and
+  Normal inputs: preflight-guarded graded total-degree multiindices and
+  sample-by-feature projection storage, stable normalized Legendre/Hermite tensor
+  bases, content-addressed measure-honoring product-integration projection, diagnosed
+  exact/least-squares regression with complete solver-policy identity, immutable
+  array/Field/PyTree expansions, coefficient moments and first/total Sobol effects,
+  portable fit evidence, and a matched-model-call benchmark campaign.
+- Added resource-planned `O3TensorProductPlan`/`O3TensorProduct` layers and a
+  drop-in `phydrax.nn.atomistic.NequIPPotential`. Independently derived
+  Cartesian Clebsch–Gordan maps cover legal scalar/pseudoscalar,
+  vector/pseudovector, and symmetric-traceless tensor/pseudotensor paths through
+  degree two with per-instruction radial weights, masked finite-molecule
+  aggregation, species-conditioned self connections, parity-safe gates, and the
+  existing conservative prediction/training contracts. The rMD17 campaign now
+  records matched PaiNN-versus-NequIP seeds, errors, equivariance defects,
+  timing, memory, parameters, neighborhood work, gates, summaries, and
+  provenance. High-degree irreps, MACE/symmetric contraction, periodic systems,
+  stress, long range, and molecular-dynamics claims remain out of scope.
+- Added experimental two- and three-dimensional soft-sphere DEM with rigid
+  translational/angular state, collision-free stable pair keys, persistent
+  Cundall--Strack contact history, linear spring--dashpot and Hertz--Mindlin
+  contact families, exact-signed-distance barriers, dense/cell-list execution,
+  structured fail-closed fixed stepping, contact qualification, an executable
+  settling example, and dense/cell performance evidence.
+- Added source-resolved accepted-step DEM energy/work ledgers, explicit rejection
+  reasons, qualification artifacts, certified Verlet caching, fused/reference
+  pair reductions, radius-class filtering, replay/checkpointed VJPs, sharp and
+  smooth sensitivity contracts, inverse/UQ qualification, and transverse
+  hybrid-event saltation.
+- Added rolling resistance, prescribed and servo barriers, certified analytic
+  contact curvature and curved Hertz walls, finite-range DMT adhesion,
+  bilinear elasto-plastic normal contact, and conservative lumped contact heat
+  transfer.
+- Added SO(2)/SO(3) rigid bodies, immutable sphere-clump templates, common rigid
+  contact geometry, triangle walls, elastic/damageable fixed bond graphs,
+  fixed-pool topology events, convex SAT contact, and certified
+  sphere-to-implicit contact.
+- Added conservative particle-grid transfer, unresolved Stokes CFD--DEM,
+  atomic multirate coupling windows, work-adjoint resolved immersed-boundary
+  coupling, thermal CFD--DEM energy exchange, expanded examples, qualification
+  campaign artifacts, and performance evidence.
+- Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
+  while preserving the existing array-valued SSPRK contract.
+- Added all-coordinate tensor spectral PDE residual compilation with explicit
+  full-closure versus retained-projection semantics, polynomial closure
+  dealiasing, exactness and resource evidence, physical quadrature norms,
+  external hard-condition contracts, and targetless operator fitting through
+  `SpectralPDEResidualLoss`.
+- Added native high-order quadrilateral/hexahedral finite elements with explicit
+  nodal representations, GLL reference actions, dense and sum-factorized
+  workset kernels, mapped cell/facet metrics, high-order CG/DG routing,
+  mass-policy-aware rates, tensor SBP and periodic mapped DGSEM conservation,
+  p-multigrid, Schwarz/FDM and auxiliary preconditioning, two-sided mortars,
+  fixed-capacity hp transactions, and backend-neutral distributed ownership.
+- Added implicit tensor-modal neural fields with Hermitian real-field projection,
+  explicit modal input scaling and resource bounds, optional positive exponential
+  decay and prepared-basis modulation, masked modal observations, and direct
+  residual training against compiled coefficient-resident spectral dynamics.
+- Added native low-rank adaptation for exact real `Linear` weight paths,
+  factor-only `ParameterSubspace` training through `fit_operator` and Optax
+  `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
+  deployment merging, and checksum-validated adapter artifacts bound to the
+  complete base model content and structure.
+- Added `phydrax.pgm`: immutable finite-discrete factor graphs over native
+  bipartite `GraphIR` topology; dense, enumerated, Ising, Potts, logical, and
+  cardinality factors; explicitly capped exact enumeration; exact-forest and loopy
+  sum/max-product belief propagation with honest normalizer/MAP semantics; validated
+  persistent chromatic Gibbs sampling; correlated-chain integration; structured
+  constructors; and exact-likelihood, moment, and contrastive-divergence primitives.
+- Added `phydrax.topology`: compact active subcomplexes and relative pairs,
+  exact prime-field homology with cycle/cocycle representatives, exact rational
+  Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,
+  ordinary and induced-relative persistent homology, natural and fixed-capacity
+  diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
+  and exact-nullity validation of metric cochain harmonic kernels.
 - Added a native linear-combinatorial substrate with separate logical decisions
   and objective features, content-addressed plans, deterministic ties, portable
   statuses, and independent certificates. Added exact streamed finite,
@@ -114,6 +240,13 @@
   marking/refinement/coarsening and transfer data, local DWR indicators, and
   executable phase-field, CPFEM, persistent-pair contact, fracture, and fixed-
   crack XFEM application workflows. Distributed execution remains out of scope.
+- Added accepted linear-solve histories, exact FEM diagonal data, pairing-aware
+  p-transfer roles and p-level planning, collocated tensor-product actions,
+  staged DG traces, explicit quadrature evidence, one-ring patch and low-order
+  auxiliary preconditioners, an incompressible pressure-correction workflow, and
+  conservative multirate DG traces. The execution and preconditioning design is
+  informed by libParanumal and its published high-order solver algorithms while
+  remaining Phydrax-native.
 - Added first-class exact-sampling round-sphere spectral discretizations with
   explicit S2FFT mode layouts, physical area measures, matrix-free
   Laplace--Beltrami actions, complete-degree real eigenbases and spatial noise,

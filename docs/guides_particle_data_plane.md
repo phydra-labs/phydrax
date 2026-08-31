@@ -14,3 +14,16 @@ Materialized relations remain available for graph export and edge-local state.
 Stable logical order is independent of cell storage order. Inside differentiated
 execution, any capacity failure rejects the state. Host orchestration may rebuild
 and replay only from a previous accepted checkpoint.
+
+## Persistent same-set edge state
+
+`ParticlePairKeySpace` ranks stable particle IDs and assigns one collision-free
+triangular ordinal to every unordered physical pair. A realized relation may
+change route order without changing these keys.
+
+`match_particle_pair_keys` stable-sorts the old key realization and searches the
+new realization. Continued routes gather their previous edge-local PyTree
+values, births receive finite zero defaults, and ended routes disappear.
+Duplicate or out-of-range keys fail closed. Matching indices and masks are
+stopped-gradient decisions; continued floating values retain ordinary JAX
+tangents.

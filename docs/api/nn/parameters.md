@@ -108,6 +108,108 @@ spd = phx.nn.parameters.PositiveDefiniteTransform()(raw)
             - value
             - __call__
 
+
+## Low-rank adaptation
+
+`LowRankUpdate` represents a real affine weight as
+`W_eff = W_0 + (alpha / rank) * left @ right`. The base has shape
+`(out, in)`, `left` has shape `(out, rank)`, and `right` has shape
+`(rank, in)`. `Linear` evaluates the two factor contractions directly; it does
+not construct the dense update during training. `merge_low_rank(...)` performs
+that construction explicitly for deployment.
+
+`adapt_low_rank(...)` accepts exact native `Linear.weight` paths only. It
+initializes `left` to zero and `right` from a Gaussian, so the adapted model is
+exactly the base model before optimization. `alpha=None` resolves to
+`alpha=rank`, giving unit effective scaling. RWF, weight transforms, complex
+weights, aliased layers, and already adapted weights fail before model surgery.
+
+```text
+import jax.random as jr
+import phydrax as phx
+
+paths = phx.nn.parameters.low_rank_sites(model)
+specs = {
+    path: phx.nn.parameters.LowRankSpec(rank=8)
+    for path in paths
+}
+adapted, report = phx.nn.parameters.adapt_low_rank(
+    model,
+    specs,
+    key=jr.key(0),
+)
+subspace = phx.nn.parameters.low_rank_parameter_subspace(adapted)
+
+fit = phx.nn.operator.training.fit_operator(
+    adapted,
+    training_data,
+    parameter_subspace=subspace,
+    epochs=10,
+)
+deployed = phx.nn.parameters.merge_low_rank(fit.execution_model)
+```
+
+The explicit subspace is mandatory for low-rank training through
+`fit_operator` and `FunctionalSolver.solve`. It prevents gradients, optimizer
+moments, and decoupled weight decay from reaching the dense base or unrelated
+model leaves. The initial implementation supports standard and
+extra-argument Optax transformations. KFAC and Phydrax geometric/iterative
+optimizers reject explicit subspaces.
+
+Adapter-only artifacts are content-bound to the complete dense base:
+
+```text
+phx.nn.parameters.save_low_rank_adapter("task.phxadapter", trained_model)
+restored = phx.nn.parameters.read_low_rank_adapter(
+    "task.phxadapter",
+    exact_base_model,
+)
+```
+
+Loading verifies the model type, static structure, every base array, site
+path, shape, dtype, rank, and factor checksum before reconstruction. A wrong
+base fails rather than accepting shape compatibility alone.
+
+The factorization is not identifiable: for invertible `Q`, the pairs
+`(left, right)` and `(left @ Q, inverse(Q) @ right)` represent the same dense
+update. Deterministic optimization remains valid, but factor-space Hessians,
+KFAC blocks, Laplace approximations, and MCMC require a separate gauge-aware
+contract and are not claimed here.
+
+::: phydrax.nn.parameters.LowRankSpec
+
+---
+
+::: phydrax.nn.parameters.LowRankUpdate
+
+---
+
+::: phydrax.nn.parameters.LowRankAdaptationReport
+
+---
+
+::: phydrax.nn.parameters.adapt_low_rank
+
+---
+
+::: phydrax.nn.parameters.low_rank_sites
+
+---
+
+::: phydrax.nn.parameters.low_rank_parameter_subspace
+
+---
+
+::: phydrax.nn.parameters.merge_low_rank
+
+---
+
+::: phydrax.nn.parameters.save_low_rank_adapter
+
+---
+
+::: phydrax.nn.parameters.read_low_rank_adapter
+
 ## Explicit model subspaces
 
 `ParameterSubspace` partitions selected inexact array leaves from a frozen complement and reconstructs the original model topology exactly. It also records deterministic leaf paths, shapes, exact dtypes, and total dimension. `pack()` and `unpack()` provide the canonical vector coordinate system; `reconstruct_vector()` rebuilds a complete model directly from that vector. Use exact leaf paths or named subtree paths for branched architectures. `last_layer(...)` means the globally final array leaves in deterministic PyTree order; it is not architecture-aware and does not select one output head per branch.
@@ -130,6 +232,8 @@ reconstructed = subspace.reconstruct(selected)
         members:
             - __init__
             - reconstruct
+            - validate_root
+            - rebase
             - array_leaf_paths
             - pack
             - unpack

@@ -28,6 +28,9 @@ FORBIDDEN_RUNTIME_PACKAGES = frozenset(
 
 CANONICAL_CORE_OWNERS = {
     "cochain": "phydrax.discretization.CochainDiscretization",
+    "cell_complex": "phydrax.discretization.CellComplexTopology",
+    "homology": "phydrax.topology.compute_homology",
+    "persistence": "phydrax.topology.compute_persistence",
     "linear_operator": "phydrax.linalg.AbstractLinearOperator",
     "real_coordinate_map": "phydrax.linalg.AbstractRealCoordinateMap",
     "finite_real_algebra": "phydrax.metrix.algebra.AbstractFiniteRealAlgebraSpec",

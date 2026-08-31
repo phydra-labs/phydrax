@@ -35,6 +35,7 @@ from ._o3 import (
     RadialBasis,
     RadialMap,
 )
+from ._o3_tensor_product import O3TensorProduct, O3TensorProductPlan
 from ._regional_processor import RegionalGraphProcessor
 from ._spectral import BasisSpectralConvND, BasisTransformPlan, ModalTransformKind
 from ._transformer import OperatorTransformerProcessor
@@ -62,6 +63,8 @@ __all__ = [
     "ModalTransformKind",
     "GeometryMomentEmbedding",
     "O3PointwiseLinear",
+    "O3TensorProduct",
+    "O3TensorProductPlan",
     "o3_gated_activation",
     "RadialBasis",
     "TensorNormActivation",

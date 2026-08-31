@@ -4,6 +4,9 @@ Topology contains combinatorial entities and incidence. Support binds topology t
 embedding identity. Coordinates and numerical measures are not hidden inside entity
 IDs.
 
+This module is the canonical finite-topology carrier. Exact invariant analysis,
+filtrations, and persistence live in [`phydrax.topology`](../topology/index.md).
+
 ::: phydrax.discretization.EntitySubset
 
 ---

@@ -516,6 +516,14 @@ from ._particle_parameter_score import (
     ParameterizedParticleGenealogicalScoreResult,
 )
 from ._pathfinder import fit_pathfinder, PathfinderResult
+from ._polynomial_chaos import (
+    PolynomialChaosBasis,
+    PolynomialChaosExpansion,
+    PolynomialChaosFitResult,
+    PolynomialChaosProjectionPlan,
+    PolynomialChaosRegressionPlan,
+    PolynomialMultiIndexSet,
+)
 from ._posterior import (
     AbstractBijector,
     ExpBijector,
@@ -711,6 +719,14 @@ from ._state_space_estimation import (
     StateSpaceMAPWorkflowResult,
     StateSpaceSampler,
     StateSpaceSamplingWorkflowResult,
+)
+from ._state_space_gp import (
+    compile_state_space_kernel,
+    fit_state_space_gaussian_process,
+    state_space_gaussian_process_status_name,
+    STATE_SPACE_GP_SMOOTHER_FAILURE,
+    StateSpaceGaussianProcessPlan,
+    StateSpaceGaussianProcessResult,
 )
 from ._state_space_inference import (
     EXACT_STATE_SPACE_DEGENERATE_LIKELIHOOD,
@@ -1266,6 +1282,12 @@ __all__ = [
     "LinearizedVarianceEstimate",
     "propagate_linearized",
     "propagate_linearized_map",
+    "PolynomialChaosBasis",
+    "PolynomialChaosExpansion",
+    "PolynomialChaosFitResult",
+    "PolynomialChaosProjectionPlan",
+    "PolynomialChaosRegressionPlan",
+    "PolynomialMultiIndexSet",
     "GaussianPriorWhitening",
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",
@@ -1413,6 +1435,12 @@ __all__ = [
     "SparseGaussianProcessDiscrepancy",
     "SparseGaussianProcessFactor",
     "value_functional",
+    "StateSpaceGaussianProcessPlan",
+    "StateSpaceGaussianProcessResult",
+    "compile_state_space_kernel",
+    "fit_state_space_gaussian_process",
+    "STATE_SPACE_GP_SMOOTHER_FAILURE",
+    "state_space_gaussian_process_status_name",
     "DiscrepancyIdentifiabilityReport",
     "DiscrepancyIdentifiabilityThresholds",
     "discrepancy_identifiability_report",

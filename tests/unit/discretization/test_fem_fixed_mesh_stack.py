@@ -69,7 +69,7 @@ def test_conforming_p3_routes_and_tensor_partial_action():
 
     family = phx.discretization.fem.ReferenceNodalFamily("quadrilateral", 1)
     tabulation = phx.discretization.fem.TensorProductTabulation(
-        family, jnp.asarray([0.0, 1.0]), jnp.asarray([0.0, 1.0])
+        family, (jnp.asarray([0.0, 1.0]), jnp.asarray([0.0, 1.0]))
     )
     plan = phx.discretization.fem.SumFactorizationPlan(tabulation)
     tensor = phx.equations.fem.TensorProductPartialAssemblyOperator(

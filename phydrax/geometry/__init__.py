@@ -18,6 +18,7 @@ from ._bvh_overlap import (
 )
 from ._capabilities import (
     BoundaryAtlasProvider,
+    ContactCurvatureProvider,
     GeometryCapability,
     SeamDiagnosticsProvider,
 )
@@ -30,6 +31,7 @@ from ._certificate import (
 )
 from ._contracts import (
     CompiledGeometry,
+    ContactCurvatureResult,
     GeometryKernel,
     GeometryKind,
     GeometrySource,
@@ -260,6 +262,8 @@ __all__ = [
     "ConePatch",
     "CylinderPatch",
     "Circle",
+    "ContactCurvatureProvider",
+    "ContactCurvatureResult",
     "CompiledGeometry",
     "Cube",
     "Coincident",

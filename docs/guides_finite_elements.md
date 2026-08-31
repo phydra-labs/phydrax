@@ -11,19 +11,19 @@ unstructured finite volume. `CellBlock` retains ordered local vertices and a cel
 kind; `CellComplexTopology` remains the incidence authority. Connectivity and
 entity identities are static, while coordinate arrays are numeric geometry.
 
-Supported cell blocks are triangles, quadrilaterals, and tetrahedra. Polygonal
-meshes order triangle blocks before quadrilateral blocks so global cell/facet
-routes remain canonical.
+Supported cell blocks are triangles, quadrilaterals, tetrahedra, and
+hexahedra. Polygonal meshes order triangle blocks before quadrilateral blocks
+so global cell/facet routes remain canonical.
 
 ## Reference elements and fields
 
-`lagrange_element(cell_kind, degree)` constructs conforming triangle P1/P2,
-quadrilateral Q1, tetrahedron P1, and hexahedron Q1 elements. Arbitrary-order
-simplex and quadrilateral nodal families are executable as cell-local
-discontinuous fields; their global conforming entity numbering remains limited
-to the explicitly listed continuous families. Additional constructors provide
-discontinuous P0/P1+, triangular RT0, and triangular first-kind Nedelec order
-zero.
+`lagrange_element(cell_kind, degree)` constructs nodal triangle, quadrilateral,
+tetrahedron, and hexahedron elements. Arbitrary-order conforming entity
+numbering is executable for polygonal and hexahedral H1 fields; discontinuous
+fields remain cell-local. Coefficient representation is declared by the
+element independently of H1/L2/H(div)/H(curl) conformity. Additional
+constructors provide discontinuous P0/P1+, triangular RT0, and triangular
+first-kind Nedelec order zero.
 
 `FiniteElementFieldSpec` supports replicated component shapes and multiple named
 fields. One `CompiledFiniteElementProblem` owns the ordered product space and
@@ -60,8 +60,11 @@ cell residual/energy/bilinear actions, exterior and interior numerical fluxes,
 SIPG facet actions, and prepared global operator actions. The compiled
 `WorksetProgram` is the authoritative residual execution schedule.
 
-Coefficients may be point functions, cell arrays, facet arrays, or quadrature
-arrays. A staged coefficient receives the execution context:
+Coefficients may be physical point functions or arrays explicitly bound to
+cell entities, facet entities and sides, quadrature rules, or field DOFs.
+Non-point coefficients retain exact support, entity-set, field-space, rule,
+side, shape, and axis-layout identities; array rank is not used as scientific
+metadata. A staged point coefficient receives the execution context:
 
 ```python
 import phydrax as phx
@@ -87,9 +90,11 @@ its reduction follows `FiniteElementPrecisionPolicy`.
 u = P z + g
 ```
 
-with explicit full and reduced spaces. Raw weak residuals use the algebraic dual
-pullback, while primal vectors use the pairing-aware adjoint. Every connected mesh
-component must be anchored. Natural boundary data remains a weak-form term.
+with explicit full and reduced spaces. Raw weak residuals use the algebraic
+dual pullback. Pairing adjoints and physical mass projections are separate
+operators and coincide with a raw transpose only under the corresponding
+identity pairings. Every connected mesh component must be anchored. Natural
+boundary data remains a weak-form term.
 
 ## Solvers and execution
 
@@ -102,9 +107,10 @@ lagged/Picard operator factories, and a scalable adjoint solve.
 lift-acceleration semantics. `as_generalized_eigenproblem()` returns native
 constrained stiffness/mass operators.
 
-`FiniteElementExecutionPolicy` selects matrix-free or sparse realization and
-fast, deterministic, or compensated residual accumulation. Sparse execution
-uses the existing `SparseAssemblyPlan` prepare/refresh lifecycle.
+`FiniteElementExecutionPolicy` independently selects matrix-free versus sparse
+realization, dense/partial/sum-factorized/collocated local kernels, and
+fast/deterministic/compensated residual accumulation. Sparse execution uses the
+existing `SparseAssemblyPlan` prepare/refresh lifecycle.
 
 ## Materials, compatible methods, and hierarchy
 
@@ -126,13 +132,15 @@ domains, and rule identities used by residual execution. Matrix-free JVPs
 differentiate this same program.
 
 `SimplexNodalFamily` and `ReferenceNodalFamily` provide arbitrary-order
-cell-local simplex and quadrilateral execution. `TensorProductTabulation` and
-`SumFactorizationPlan` expose reusable tensor contractions; hexahedron Q1 uses
-the physical finite-element geometry and residual path.
+simplex and anisotropic tensor nodal references. `TensorProductTabulation`,
+`SumFactorizationPlan`, and `PreparedFiniteElementReference` bind explicit
+volume/facet rules, dense actions, trace data, and reusable two- or three-axis
+tensor contractions. The authoritative compiler selects dense, partial,
+sum-factorized, or collocated kernels through the same workset program.
 
-Built-in executable workflows include linear elasticity, upwind DG advection,
-RT0-P0 Darcy, Nedelec Maxwell, lowest-order triangular primal HDG, and
-Taylor-Hood Stokes.
+See [Spectral elements](guides_spectral_elements.md) for mapped tensor
+geometry, high-order CG/DG, GLL mass, DGSEM, multigrid, mortars, hp
+transactions, and distributed ownership.
 
 ## SIPG Poisson
 
@@ -174,9 +182,11 @@ Rejected attempts do not increment state or material versions.
 
 ## Current limits
 
-Execution is single-device. Compatible elements are triangle RT0/Nedelec0;
-HDG is lowest-order triangular primal HDG; SIPG is scalar on one homogeneous
-2-D polygon block; local adaptation is conforming T3 refinement with
-complete-family coarsening; contact and XFEM expose fixed-pair/fixed-crack
-derivative scopes. Search, active-set selection, marking, and topology events
-are discrete derivative boundaries. No real multi-process backend is claimed.
+Execution remains single-device unless a caller supplies a JAX named-axis
+collective context; no MPI runtime or mesh partitioner is claimed. Compatible
+elements are triangle RT0/Nedelec0; HDG is lowest-order triangular primal HDG;
+the legacy SIPG convenience remains scalar on one homogeneous 2-D polygon
+block; local mesh adaptation remains conforming T3 refinement with
+complete-family coarsening. DGSEM is periodic and stationary-mesh only.
+Search, active-set selection, marking, topology changes, and hp candidate
+promotion are discrete derivative boundaries.

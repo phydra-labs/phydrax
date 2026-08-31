@@ -110,6 +110,14 @@ from ._incomplete_factorizations import (
     SparseFactorizationPreconditioner,
     SparseFactorizationPreconditionerBuilder,
 )
+from ._initial_guess import (
+    HistoryLinearSolveResult,
+    LinearInitialGuessDiagnostics,
+    LinearInitialGuessStrategy,
+    LinearSolveHistory,
+    LinearSolveHistoryPolicy,
+    solve_with_history,
+)
 from ._linear_transform import (
     AbstractLinearTransform,
     DenseLinearTransform,
@@ -708,6 +716,12 @@ __all__ = [
     "FactoredMatrixEquationStatus",
     "FactoredMatrixSolution",
     "FactoredMatrixSolutionForm",
+    "HistoryLinearSolveResult",
+    "LinearInitialGuessDiagnostics",
+    "LinearInitialGuessStrategy",
+    "LinearSolveHistory",
+    "LinearSolveHistoryPolicy",
+    "solve_with_history",
     "MatrixEquationCostEstimate",
     "MatrixEquationDiagnostics",
     "MatrixEquationKind",

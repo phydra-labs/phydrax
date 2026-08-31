@@ -51,6 +51,7 @@ from ._dealias import (
     ModalFilterPlan,
     NoDealiasingPlan,
     PaddingDealiasingPlan,
+    PolynomialClosureDealiasingPlan,
     PreparedDealiasingPlan,
 )
 from ._galerkin import PreparedSpectralGalerkin, SpectralGalerkinMethodPlan
@@ -107,6 +108,7 @@ __all__ = [
     "ModalFilterPlan",
     "NoDealiasingPlan",
     "PaddingDealiasingPlan",
+    "PolynomialClosureDealiasingPlan",
     "PeriodicLerayProjector",
     "PreparedBoundaryLift",
     "PreparedDealiasingPlan",

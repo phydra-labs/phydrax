@@ -8,6 +8,12 @@ from ._differential_output import (
     LinearDifferentialTransform,
 )
 from ._equinox import EquinoxModel, EquinoxStructuredModel
+from ._implicit_modal import (
+    DecayAggregation,
+    ExponentialSpectralEnvelope,
+    ImplicitModalField,
+    SpectralBasisModulation,
+)
 from ._magnitude_direction import MagnitudeDirectionModel
 from ._ragged_series import (
     MaskedSeriesPoolingModel,
@@ -25,9 +31,12 @@ from ._sequential import Sequential
 __all__ = [
     "ComplexOutputModel",
     "ConcatenatedModel",
+    "DecayAggregation",
     "DifferentialFieldDecoder",
     "DifferentialNormalization",
     "EquinoxModel",
+    "ExponentialSpectralEnvelope",
+    "ImplicitModalField",
     "EquinoxStructuredModel",
     "LatentContractionModel",
     "LatentExecutionPolicy",
@@ -37,5 +46,6 @@ __all__ = [
     "RaggedSeriesBatchInput",
     "RaggedSeriesModel",
     "Separable",
+    "SpectralBasisModulation",
     "Sequential",
 ]

@@ -38,6 +38,9 @@ several-variable first derivatives all use this one data-bearing contract.
 Constraint geometry and targets are independent:
 
 ```python
+import jax.numpy as jnp
+import phydrax as phx
+
 frame = phx.equations.HolomorphicPolynomialFrame.one_variable(3)
 functionals = (
     phx.equations.HolomorphicPointFunctional.value(-1.0),
@@ -167,7 +170,7 @@ into a canonical `ComplexInterchangeState`. Dense and low-rank complex layers,
 meromorphic coefficients, and trainable pole locations retain explicit provider and
 architecture identities.
 
-```python
+```text
 state = phx.export.export_complex_parameters(model)
 restored = phx.export.import_complex_parameters(model_template, state)
 ```

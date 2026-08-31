@@ -54,6 +54,9 @@ class _GradientBackend:
             num_iter=config.num_iter,
             optim=self.optimizer,
             evaluation_parameters=config.evaluation_parameters,
+            parameter_paths=config.parameter_paths,
+            parameter_shapes=config.parameter_shapes,
+            parameter_dtypes=config.parameter_dtypes,
             seed=config.seed,
             jit=config.jit,
             keep_best=config.keep_best,
@@ -79,6 +82,10 @@ class _EvosaxBackend:
         config: FunctionalSolveConfig,
         /,
     ) -> "FunctionalSolver":
+        if config.parameter_paths is not None:
+            raise ValueError(
+                "Explicit parameter subspaces are unsupported by Evosax backends."
+            )
         return _solve_evosax_distribution(
             solver,
             num_iter=config.num_iter,
@@ -107,6 +114,10 @@ class _KFACBackend:
         config: FunctionalSolveConfig,
         /,
     ) -> "FunctionalSolver":
+        if config.parameter_paths is not None:
+            raise ValueError(
+                "Explicit parameter subspaces are unsupported by KFAC."
+            )
         from ._kfac_solver import solve_kfac
 
         return solve_kfac(

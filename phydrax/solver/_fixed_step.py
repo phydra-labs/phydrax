@@ -12,14 +12,77 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array, PyTree
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._numerics._ssp_runge_kutta import ssprk33_step, ssprk54_step
 from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
+from .._tree_math import tree_where
 from ..discretization import DiscretizationBundle
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
+
+
+def _canonical_structured_state(state: Any, /) -> PyTree[Array]:
+    leaves, treedef = jax.tree.flatten(state)
+    if not leaves:
+        raise ValueError("Fixed-step initial_state must contain array leaves.")
+    if any(not eqx.is_array(leaf) for leaf in leaves):
+        raise TypeError("Every structured fixed-step state leaf must be an array.")
+    arrays = tuple(jnp.asarray(leaf) for leaf in leaves)
+    if not any(jnp.issubdtype(array.dtype, jnp.inexact) for array in arrays):
+        raise TypeError(
+            "Structured fixed-step initial_state requires at least one inexact leaf."
+        )
+    return jax.tree.unflatten(treedef, arrays)
+
+
+def _state_dtype(state: PyTree[Array], /):
+    dtypes = tuple(
+        leaf.dtype
+        for leaf in jax.tree.leaves(state)
+        if jnp.issubdtype(leaf.dtype, jnp.inexact)
+    )
+    if not dtypes:
+        raise TypeError("Fixed-step state requires at least one inexact leaf.")
+    return jnp.result_type(*dtypes)
+
+
+def _validate_result_state(
+    role: str, candidate: PyTree[Array], reference: PyTree[Array], /
+) -> None:
+    if jax.tree.structure(candidate) != jax.tree.structure(reference):
+        raise ValueError(f"Fixed-step {role} must preserve the state PyTree structure.")
+    for proposed, current in zip(
+        jax.tree.leaves(candidate), jax.tree.leaves(reference), strict=True
+    ):
+        if not eqx.is_array(proposed):
+            raise TypeError(f"Every fixed-step {role} leaf must be an array.")
+        if proposed.shape != current.shape or proposed.dtype != current.dtype:
+            raise ValueError(
+                f"Fixed-step {role} must preserve every state leaf shape and dtype."
+            )
+
+
+def _validate_scalar_result(role: str, value: Any, /, *, boolean: bool = False) -> None:
+    if not eqx.is_array(value) or value.shape != ():
+        raise TypeError(f"Fixed-step {role} must be a scalar array.")
+    if boolean and value.dtype != jnp.dtype(bool):
+        raise TypeError(f"Fixed-step {role} must be Boolean.")
+
+
+def _prepend_initial_state(
+    initial: PyTree[Array], states: PyTree[Array], /
+) -> PyTree[Array]:
+    return jax.tree.map(
+        lambda first, rest: jnp.concatenate((first[None, ...], rest), axis=0),
+        initial,
+        states,
+    )
+
+
+def _take_saved_states(states: PyTree[Array], indices: Array, /) -> PyTree[Array]:
+    return jax.tree.map(lambda leaf: leaf[indices], states)
 
 
 class AcceptedStepTransformResult(StrictModule):
@@ -105,8 +168,8 @@ class CompositeAcceptedStepTransform(AbstractAcceptedStepTransform):
 
 
 class FixedStepResult(StrictModule):
-    candidate_state: Array
-    accepted_state: Array
+    candidate_state: PyTree[Array]
+    accepted_state: PyTree[Array]
     successful: Array
     residual: Array
     iterations: Array
@@ -123,7 +186,7 @@ class AbstractFixedStepMethod(StrictModule, NonTrainableState):
         self,
         step_index: Array,
         time: Array,
-        state: Array,
+        state: PyTree[Array],
         step_size: Array,
         args: Any,
         /,
@@ -132,12 +195,14 @@ class AbstractFixedStepMethod(StrictModule, NonTrainableState):
 
 
 class CallableFixedStepMethod(AbstractFixedStepMethod):
-    step_function: Callable[[Array, Array, Array, Array, Any], FixedStepResult]
+    step_function: Callable[[Array, Array, PyTree[Array], Array, Any], FixedStepResult]
     method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        step_function: Callable[[Array, Array, Array, Array, Any], FixedStepResult],
+        step_function: Callable[
+            [Array, Array, PyTree[Array], Array, Any], FixedStepResult
+        ],
         method_id: str,
         /,
     ):
@@ -153,7 +218,7 @@ class CallableFixedStepMethod(AbstractFixedStepMethod):
         self,
         step_index: Array,
         time: Array,
-        state: Array,
+        state: PyTree[Array],
         step_size: Array,
         args: Any,
         /,
@@ -266,7 +331,7 @@ class SSPRK54FixedStepMethod(AbstractSSPRKFixedStepMethod):
 
 class FixedStepProblem(StrictModule, NonTrainableState):
     method: AbstractFixedStepMethod
-    initial_state: Array
+    initial_state: PyTree[Array]
     args: Any
     state_geometry: AbstractStateGeometry
     discretization_bundle: DiscretizationBundle | None
@@ -279,7 +344,7 @@ class FixedStepProblem(StrictModule, NonTrainableState):
     def __init__(
         self,
         method: AbstractFixedStepMethod,
-        initial_state: ArrayLike,
+        initial_state: Any,
         /,
         *,
         t0: float,
@@ -292,9 +357,12 @@ class FixedStepProblem(StrictModule, NonTrainableState):
     ):
         if not isinstance(method, AbstractFixedStepMethod):
             raise TypeError("method must be an AbstractFixedStepMethod.")
-        initial = jnp.asarray(initial_state)
-        if not jnp.issubdtype(initial.dtype, jnp.inexact):
-            raise TypeError("Fixed-step initial_state must have an inexact dtype.")
+        if state_geometry is None:
+            initial = jnp.asarray(initial_state)
+            if not jnp.issubdtype(initial.dtype, jnp.inexact):
+                raise TypeError("Fixed-step initial_state must have an inexact dtype.")
+        else:
+            initial = _canonical_structured_state(initial_state)
         start = float(t0)
         end = float(t1)
         step = float(step_size)
@@ -315,12 +383,19 @@ class FixedStepProblem(StrictModule, NonTrainableState):
             raise TypeError(
                 "discretization_bundle must be a DiscretizationBundle or None."
             )
+        state_payload = (
+            {
+                "state_shape": list(initial.shape),
+                "state_dtype": str(initial.dtype),
+            }
+            if eqx.is_array(initial)
+            else {"state_tree": array_tree_signature(initial)}
+        )
         generated = canonical_fingerprint(
             {
                 "kind": "fixed-step-problem",
                 "method": method.method_id,
-                "state_shape": list(initial.shape),
-                "state_dtype": str(initial.dtype),
+                **state_payload,
                 "t0": start,
                 "t1": end,
                 "step_size": step,
@@ -347,7 +422,7 @@ class FixedStepProblem(StrictModule, NonTrainableState):
 
 class FixedStepSolution(StrictModule, NonTrainableState):
     times: Array
-    states: Array
+    states: PyTree[Array]
     valid: Array
     successful: Array
     residuals: Array
@@ -374,13 +449,26 @@ def solve_fixed_step(
     stride = int(save_every)
     if stride <= 0:
         raise ValueError("save_every must be positive.")
-    step_size = jnp.asarray(problem.step_size, dtype=problem.initial_state.dtype)
+    state_dtype = _state_dtype(problem.initial_state)
+    step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
 
     def advance(carry, step_index):
         state, previous_success = carry
-        time = jnp.asarray(problem.t0, dtype=state.dtype) + step_index * step_size
+        time = jnp.asarray(problem.t0, dtype=state_dtype) + step_index * step_size
         result = problem.method.step(step_index, time, state, step_size, problem.args)
-        accepted = jnp.where(previous_success, result.accepted_state, state)
+        _validate_result_state("candidate_state", result.candidate_state, state)
+        _validate_result_state("accepted_state", result.accepted_state, state)
+        _validate_scalar_result("successful", result.successful, boolean=True)
+        _validate_scalar_result("residual", result.residual)
+        _validate_scalar_result("iterations", result.iterations)
+        _validate_scalar_result("work", result.work)
+        _validate_scalar_result(
+            "transform_applied", result.transform_applied, boolean=True
+        )
+        _validate_scalar_result(
+            "transform_correction_norm", result.transform_correction_norm
+        )
+        accepted = tree_where(previous_success, result.accepted_state, state)
         successful = previous_success & result.successful
         payload = (
             accepted,
@@ -400,8 +488,7 @@ def solve_fixed_step(
         indices,
     )
     states, valid, residuals, iterations, work, transformed, correction = payload
-    initial = problem.initial_state[None, ...]
-    all_states = jnp.concatenate((initial, states), axis=0)
+    all_states = _prepend_initial_state(problem.initial_state, states)
     all_valid = jnp.concatenate((jnp.asarray([True]), valid), axis=0)
     all_times = jnp.asarray(problem.t0, dtype=step_size.dtype) + step_size * jnp.arange(
         problem.step_count + 1
@@ -418,7 +505,7 @@ def solve_fixed_step(
     )
     return FixedStepSolution(
         all_times[save_indices],
-        all_states[save_indices],
+        _take_saved_states(all_states, save_indices),
         all_valid[save_indices],
         final_success,
         residuals,

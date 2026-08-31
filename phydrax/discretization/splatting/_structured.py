@@ -141,9 +141,12 @@ class ParticleGridSplatState(StrictModule):
 
     def require_success(self, value: ArrayLike, /) -> Array:
         """Return ``value`` or fail unless geometry and boundary checks passed."""
+        failed = ~self.successful
+        if not isinstance(failed, jax.core.Tracer):
+            failed = bool(failed)
         return eqx.error_if(
             jnp.asarray(value),
-            ~self.successful,
+            failed,
             "Particle-grid splat state failed geometry, support, or boundary checks.",
         )
 

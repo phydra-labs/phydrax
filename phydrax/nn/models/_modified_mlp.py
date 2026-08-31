@@ -204,7 +204,7 @@ class ModifiedMLP(_AbstractBaseModel):
             repeated_blocks = tuple(
                 zip(self.layers[1:-1], self.dropouts[1:], strict=True)
             )
-            dynamic = stack_scan_dynamics(repeated_blocks)
+            dynamic = stack_scan_dynamics(repeated_blocks, self._scan_static)
             if dynamic is not None:
                 sites = jnp.arange(3, len(self.dropouts) + 2, dtype=jnp.uint32)
                 hidden = scan_apply_with_data(

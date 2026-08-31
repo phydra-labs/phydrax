@@ -23,8 +23,7 @@ def test_sum_factorized_gradient_contracts_every_nodal_axis():
     family = phx.discretization.fem.ReferenceNodalFamily("quadrilateral", 2)
     tabulation = phx.discretization.fem.TensorProductTabulation(
         family,
-        jnp.asarray([0.2, 0.8]),
-        jnp.asarray([0.3, 0.7]),
+        (jnp.asarray([0.2, 0.8]), jnp.asarray([0.3, 0.7])),
     )
     plan = phx.discretization.fem.SumFactorizationPlan(tabulation)
     coefficients = jnp.zeros((3, 3)).at[2, 1].set(1.0)

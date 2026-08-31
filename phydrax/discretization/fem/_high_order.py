@@ -5,175 +5,406 @@
 from __future__ import annotations
 
 from itertools import product
+from math import comb
+from numbers import Integral
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._interpolation import (
+    barycentric_basis,
+    barycentric_differentiation_matrix,
+)
+from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._reference import FiniteElementSpec
 
 
 NodeSet = Literal["equispaced", "gauss-lobatto"]
+TensorOrder = int | tuple[int, ...]
 
 
-def _nodes(order: int, node_set: NodeSet) -> np.ndarray:
+def _normalize_orders(
+    cell_kind: str, order: TensorOrder, /
+) -> tuple[str, tuple[int, ...]]:
+    cell = str(cell_kind)
+    dimensions = {"quadrilateral": 2, "hexahedron": 3}
+    if cell not in dimensions:
+        raise ValueError("Tensor nodal families require a quadrilateral or hexahedron.")
+    if isinstance(order, bool):
+        raise TypeError("Tensor polynomial orders must be integers.")
+    if isinstance(order, Integral):
+        orders = (int(order),) * dimensions[cell]
+    elif isinstance(order, tuple):
+        if len(order) != dimensions[cell] or any(
+            isinstance(value, bool) or not isinstance(value, Integral) for value in order
+        ):
+            raise ValueError(
+                "Anisotropic polynomial orders must match the cell dimension."
+            )
+        orders = tuple(int(value) for value in order)
+    else:
+        raise TypeError("Tensor polynomial order must be an integer or integer tuple.")
+    if any(value < 1 for value in orders):
+        raise ValueError("Tensor polynomial orders must be positive.")
+    return cell, orders
+
+
+def _axis_data(
+    order: int, node_set: NodeSet, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    count = order + 1
     if node_set == "equispaced":
-        return np.linspace(0.0, 1.0, order + 1)
+        nodes = np.linspace(0.0, 1.0, count)
+        barycentric = np.asarray(
+            [(-1.0) ** index * comb(order, index) for index in range(count)],
+            dtype=float,
+        )
+        barycentric /= np.max(np.abs(barycentric))
+        return nodes, barycentric, None
     if node_set == "gauss-lobatto":
-        if order == 1:
-            return np.asarray([0.0, 1.0])
-        roots = np.polynomial.legendre.Legendre.basis(order).deriv().roots()
-        return 0.5 * (np.concatenate(([-1.0], roots, [1.0])) + 1.0)
+        rule = legendre_rule_data(count, "lobatto")
+        nodes = 0.5 * (np.asarray(rule.nodes, dtype=float) + 1.0)
+        quadrature = 0.5 * np.asarray(rule.weights, dtype=float)
+        barycentric = (-1.0) ** np.arange(count) * np.sqrt(
+            np.asarray(rule.weights, dtype=float)
+        )
+        barycentric /= np.max(np.abs(barycentric))
+        return nodes, barycentric, quadrature
     raise ValueError("Unknown nodal point set.")
 
 
-def lagrange_1d_tabulation(nodes: ArrayLike, points: ArrayLike, /) -> tuple[Array, Array]:
+def _default_barycentric_weights(nodes: Array, /) -> Array:
+    count = int(nodes.shape[0])
+    differences = nodes[:, None] - nodes[None, :]
+    safe = differences + jnp.eye(count, dtype=nodes.dtype)
+    weights = jnp.reciprocal(jnp.prod(safe, axis=1))
+    return weights / jnp.max(jnp.abs(weights))
+
+
+def lagrange_1d_tabulation(
+    nodes: ArrayLike,
+    points: ArrayLike,
+    /,
+    *,
+    barycentric_weights: ArrayLike | None = None,
+) -> tuple[Array, Array]:
+    """Evaluate a nodal basis and its derivative through barycentric data."""
+
     nodes_ = jnp.asarray(nodes)
     points_ = jnp.asarray(points).reshape((-1,))
-    count = nodes_.shape[0]
-    values = []
-    gradients = []
-    for i in range(count):
-        factors = []
-        for j in range(count):
-            if i != j:
-                factors.append((points_ - nodes_[j]) / (nodes_[i] - nodes_[j]))
-        value = jnp.ones_like(points_)
-        for factor in factors:
-            value = value * factor
-        gradient = jnp.zeros_like(points_)
-        for omitted in range(len(factors)):
-            product = jnp.ones_like(points_)
-            for index, factor in enumerate(factors):
-                if index != omitted:
-                    product = product * factor
-            denominator_index = omitted if omitted < i else omitted + 1
-            gradient = gradient + product / (nodes_[i] - nodes_[denominator_index])
-        values.append(value)
-        gradients.append(gradient)
-    return jnp.stack(tuple(values), axis=-1), jnp.stack(tuple(gradients), axis=-1)
+    if nodes_.ndim != 1 or int(nodes_.shape[0]) == 0:
+        raise ValueError("Lagrange nodes must be a nonempty vector.")
+    dtype = jnp.result_type(nodes_, points_, float)
+    nodes_ = nodes_.astype(dtype)
+    points_ = points_.astype(dtype)
+    weights = (
+        _default_barycentric_weights(nodes_)
+        if barycentric_weights is None
+        else jnp.asarray(barycentric_weights, dtype=dtype)
+    )
+    if weights.shape != nodes_.shape:
+        raise ValueError("Barycentric weights must match the Lagrange nodes.")
+    values = jax.vmap(barycentric_basis, in_axes=(0, None, None))(
+        points_, nodes_, weights
+    )
+    differentiation = barycentric_differentiation_matrix(nodes_, weights=weights)
+    gradients = oe.contract("qi,ij->qj", values, differentiation)
+    return values, gradients
+
+
+def _dense_tensor_tabulation(
+    basis: tuple[Array, ...], gradients: tuple[Array, ...], /
+) -> tuple[Array, Array]:
+    if len(basis) == 2:
+        values = oe.contract("qi,qj->qij", basis[0], basis[1])
+        components = (
+            oe.contract("qi,qj->qij", gradients[0], basis[1]),
+            oe.contract("qi,qj->qij", basis[0], gradients[1]),
+        )
+    elif len(basis) == 3:
+        values = oe.contract("qi,qj,qk->qijk", basis[0], basis[1], basis[2])
+        components = (
+            oe.contract("qi,qj,qk->qijk", gradients[0], basis[1], basis[2]),
+            oe.contract("qi,qj,qk->qijk", basis[0], gradients[1], basis[2]),
+            oe.contract("qi,qj,qk->qijk", basis[0], basis[1], gradients[2]),
+        )
+    else:
+        raise ValueError("Tensor tabulation requires two or three axes.")
+    point_count = int(values.shape[0])
+    return values.reshape((point_count, -1)), jnp.stack(
+        tuple(component.reshape((point_count, -1)) for component in components),
+        axis=-1,
+    )
+
+
+def _quad_entity_dofs(
+    index: np.ndarray, orders: tuple[int, ...], /
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
+    px, py = orders
+    vertices = (
+        (int(index[0, 0]),),
+        (int(index[px, 0]),),
+        (int(index[px, py]),),
+        (int(index[0, py]),),
+    )
+    edges = (
+        tuple(int(value) for value in index[1:px, 0]),
+        tuple(int(value) for value in index[px, 1:py]),
+        tuple(int(value) for value in index[px - 1 : 0 : -1, py]),
+        tuple(int(value) for value in index[0, py - 1 : 0 : -1]),
+    )
+    interior = tuple(int(value) for value in index[1:px, 1:py].reshape((-1,)))
+    return vertices, edges, (interior,)
+
+
+def _hex_entity_dofs(
+    index: np.ndarray, orders: tuple[int, ...], /
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
+    px, py, pz = orders
+    vertices = (
+        (int(index[0, 0, 0]),),
+        (int(index[px, 0, 0]),),
+        (int(index[px, py, 0]),),
+        (int(index[0, py, 0]),),
+        (int(index[0, 0, pz]),),
+        (int(index[px, 0, pz]),),
+        (int(index[px, py, pz]),),
+        (int(index[0, py, pz]),),
+    )
+    edges = (
+        tuple(int(value) for value in index[1:px, 0, 0]),
+        tuple(int(value) for value in index[px, 1:py, 0]),
+        tuple(int(value) for value in index[px - 1 : 0 : -1, py, 0]),
+        tuple(int(value) for value in index[0, py - 1 : 0 : -1, 0]),
+        tuple(int(value) for value in index[1:px, 0, pz]),
+        tuple(int(value) for value in index[px, 1:py, pz]),
+        tuple(int(value) for value in index[px - 1 : 0 : -1, py, pz]),
+        tuple(int(value) for value in index[0, py - 1 : 0 : -1, pz]),
+        tuple(int(value) for value in index[0, 0, 1:pz]),
+        tuple(int(value) for value in index[px, 0, 1:pz]),
+        tuple(int(value) for value in index[px, py, 1:pz]),
+        tuple(int(value) for value in index[0, py, 1:pz]),
+    )
+    faces = (
+        tuple(int(index[x, y, 0]) for y in range(1, py) for x in range(1, px)),
+        tuple(int(index[x, y, pz]) for x in range(1, px) for y in range(1, py)),
+        tuple(int(index[x, 0, z]) for x in range(1, px) for z in range(1, pz)),
+        tuple(int(index[px, y, z]) for y in range(1, py) for z in range(1, pz)),
+        tuple(int(index[x, py, z]) for x in range(px - 1, 0, -1) for z in range(1, pz)),
+        tuple(int(index[0, y, z]) for y in range(py - 1, 0, -1) for z in range(1, pz)),
+    )
+    interior = tuple(int(value) for value in index[1:px, 1:py, 1:pz].reshape((-1,)))
+    return vertices, edges, faces, (interior,)
 
 
 class ReferenceNodalFamily(StrictModule, NonTrainableState):
+    """An anisotropic tensor-product nodal family on a unit quad or hex."""
+
     cell_kind: str = eqx.field(static=True)
-    order: int = eqx.field(static=True)
+    orders: tuple[int, ...] = eqx.field(static=True)
     node_set: NodeSet = eqx.field(static=True)
-    axis_nodes: Array
+    nodes_by_axis: tuple[Array, ...]
+    barycentric_weights_by_axis: tuple[Array, ...]
+    quadrature_weights_by_axis: tuple[Array | None, ...]
     family_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        cell_kind: Literal["quadrilateral"],
-        order: int,
+        cell_kind: Literal["quadrilateral", "hexahedron"],
+        order: TensorOrder,
         /,
         *,
         node_set: NodeSet = "gauss-lobatto",
     ):
-        cell = str(cell_kind)
-        order_ = int(order)
-        if cell != "quadrilateral" or order_ < 1:
-            raise ValueError(
-                "Initial arbitrary-order family supports quadrilaterals, p >= 1."
-            )
-        points = _nodes(order_, node_set)
+        cell, orders = _normalize_orders(cell_kind, order)
+        axis_data = tuple(_axis_data(value, node_set) for value in orders)
+        nodes = tuple(jnp.asarray(data[0]) for data in axis_data)
+        barycentric = tuple(jnp.asarray(data[1]) for data in axis_data)
+        quadrature = tuple(
+            None if data[2] is None else jnp.asarray(data[2]) for data in axis_data
+        )
         self.cell_kind = cell
-        self.order = order_
+        self.orders = orders
         self.node_set = node_set
-        self.axis_nodes = jnp.asarray(points)
+        self.nodes_by_axis = nodes
+        self.barycentric_weights_by_axis = barycentric
+        self.quadrature_weights_by_axis = quadrature
         self.family_id = canonical_fingerprint(
             {
                 "kind": "reference-nodal-family",
                 "cell_kind": cell,
-                "order": order_,
+                "orders": orders,
                 "node_set": node_set,
-                "axis_nodes": array_tree_fingerprint(points),
+                "nodes_by_axis": tuple(
+                    array_tree_fingerprint(data[0]) for data in axis_data
+                ),
+                "barycentric_weights_by_axis": tuple(
+                    array_tree_fingerprint(data[1]) for data in axis_data
+                ),
+                "quadrature_weights_by_axis": tuple(
+                    None if data[2] is None else array_tree_fingerprint(data[2])
+                    for data in axis_data
+                ),
             }
         )
 
+    @property
+    def dimension(self) -> int:
+        return len(self.orders)
+
+    @property
+    def nodal_shape(self) -> tuple[int, ...]:
+        return tuple(order + 1 for order in self.orders)
+
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
         points_ = jnp.asarray(points)
-        if points_.ndim != 2 or points_.shape[1] != 2:
-            raise ValueError("Quadrilateral points must have shape (count, 2).")
-        bx, gx = lagrange_1d_tabulation(self.axis_nodes, points_[:, 0])
-        by, gy = lagrange_1d_tabulation(self.axis_nodes, points_[:, 1])
-        values = oe.contract("qi,qj->qij", bx, by).reshape((points_.shape[0], -1))
-        grad_x = oe.contract("qi,qj->qij", gx, by).reshape((points_.shape[0], -1))
-        grad_y = oe.contract("qi,qj->qij", bx, gy).reshape((points_.shape[0], -1))
-        return values, jnp.stack((grad_x, grad_y), axis=-1)
+        if points_.ndim != 2 or points_.shape[1] != self.dimension:
+            raise ValueError(
+                "Tensor reference points must have shape (count, cell_dimension)."
+            )
+        factors = tuple(
+            lagrange_1d_tabulation(
+                nodes,
+                points_[:, axis],
+                barycentric_weights=weights,
+            )
+            for axis, (nodes, weights) in enumerate(
+                zip(self.nodes_by_axis, self.barycentric_weights_by_axis)
+            )
+        )
+        return _dense_tensor_tabulation(
+            tuple(factor[0] for factor in factors),
+            tuple(factor[1] for factor in factors),
+        )
 
     def finite_element(self, /) -> FiniteElementSpec:
-        p = self.order
         grid = np.stack(
             np.meshgrid(
-                np.asarray(self.axis_nodes), np.asarray(self.axis_nodes), indexing="ij"
+                *(np.asarray(nodes) for nodes in self.nodes_by_axis),
+                indexing="ij",
             ),
             axis=-1,
-        ).reshape((-1, 2))
-        index = np.arange((p + 1) ** 2, dtype=np.int32).reshape((p + 1, p + 1))
-        vertices = (
-            (int(index[0, 0]),),
-            (int(index[p, 0]),),
-            (int(index[p, p]),),
-            (int(index[0, p]),),
+        ).reshape((-1, self.dimension))
+        index = np.arange(np.prod(self.nodal_shape), dtype=np.int32).reshape(
+            self.nodal_shape
         )
-        edges = (
-            tuple(int(value) for value in index[1:p, 0]),
-            tuple(int(value) for value in index[p, 1:p]),
-            tuple(int(value) for value in index[p - 1 : 0 : -1, p]),
-            tuple(int(value) for value in index[0, p - 1 : 0 : -1]),
+        entity_dofs = (
+            _quad_entity_dofs(index, self.orders)
+            if self.cell_kind == "quadrilateral"
+            else _hex_entity_dofs(index, self.orders)
         )
-        interior = tuple(int(value) for value in index[1:p, 1:p].reshape((-1,)))
         return FiniteElementSpec(
             "TensorProductLagrange",
-            "quadrilateral",
-            p,
+            self.cell_kind,
+            max(self.orders),
             grid,
-            (vertices, edges, (interior,)),
+            entity_dofs,
             conformity="H1",
+            representation="point_value",
             tabulator=self.tabulate,
             tabulator_id=self.family_id,
         )
 
 
 class TensorProductTabulation(StrictModule, NonTrainableState):
-    basis_x: Array
-    basis_y: Array
-    gradient_x: Array
-    gradient_y: Array
+    """One-dimensional factors for tensor-product basis actions."""
+
+    basis_factors: tuple[Array, ...]
+    gradient_factors: tuple[Array, ...]
     tabulation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         family: ReferenceNodalFamily,
-        points_x: ArrayLike,
-        points_y: ArrayLike,
+        points_by_axis: tuple[ArrayLike, ...],
         /,
     ):
         if not isinstance(family, ReferenceNodalFamily):
             raise TypeError("family must be ReferenceNodalFamily.")
-        bx, gx = lagrange_1d_tabulation(family.axis_nodes, points_x)
-        by, gy = lagrange_1d_tabulation(family.axis_nodes, points_y)
-        self.basis_x = bx
-        self.basis_y = by
-        self.gradient_x = gx
-        self.gradient_y = gy
+        if (
+            not isinstance(points_by_axis, tuple)
+            or len(points_by_axis) != family.dimension
+        ):
+            raise ValueError("Tensor points must be one tuple entry per cell axis.")
+        point_arrays = tuple(jnp.asarray(points) for points in points_by_axis)
+        if any(points.ndim != 1 or int(points.shape[0]) == 0 for points in point_arrays):
+            raise ValueError("Tensor point factors must be nonempty vectors.")
+        factors = tuple(
+            lagrange_1d_tabulation(
+                nodes,
+                points,
+                barycentric_weights=weights,
+            )
+            for nodes, weights, points in zip(
+                family.nodes_by_axis,
+                family.barycentric_weights_by_axis,
+                point_arrays,
+            )
+        )
+        self.basis_factors = tuple(factor[0] for factor in factors)
+        self.gradient_factors = tuple(factor[1] for factor in factors)
         self.tabulation_id = canonical_fingerprint(
             {
                 "kind": "tensor-product-tabulation",
                 "family": family.family_id,
-                "points_x": array_tree_fingerprint(np.asarray(points_x)),
-                "points_y": array_tree_fingerprint(np.asarray(points_y)),
+                "points_by_axis": tuple(
+                    array_tree_fingerprint(np.asarray(points)) for points in point_arrays
+                ),
             }
         )
 
+    @property
+    def dimension(self) -> int:
+        return len(self.basis_factors)
+
+    @property
+    def nodal_shape(self) -> tuple[int, ...]:
+        return tuple(int(factor.shape[1]) for factor in self.basis_factors)
+
+    @property
+    def evaluation_shape(self) -> tuple[int, ...]:
+        return tuple(int(factor.shape[0]) for factor in self.basis_factors)
+
+
+def _factorized_forward(factors: tuple[Array, ...], values: Array, /) -> Array:
+    if len(factors) == 2:
+        return oe.contract("ai,...ij,bj->...ab", factors[0], values, factors[1])
+    if len(factors) == 3:
+        return oe.contract(
+            "ai,...ijk,bj,ck->...abc",
+            factors[0],
+            values,
+            factors[1],
+            factors[2],
+        )
+    raise ValueError("Factorized actions require two or three tensor axes.")
+
+
+def _factorized_transpose(factors: tuple[Array, ...], values: Array, /) -> Array:
+    if len(factors) == 2:
+        return oe.contract("ai,...ab,bj->...ij", factors[0], values, factors[1])
+    if len(factors) == 3:
+        return oe.contract(
+            "ai,...abc,bj,ck->...ijk",
+            factors[0],
+            values,
+            factors[1],
+            factors[2],
+        )
+    raise ValueError("Factorized actions require two or three tensor axes.")
+
 
 class SumFactorizationPlan(StrictModule, NonTrainableState):
+    """Dense-equivalent tensor interpolation and reference-gradient actions."""
+
     tabulation: TensorProductTabulation
     plan_id: str = eqx.field(static=True)
 
@@ -187,64 +418,41 @@ class SumFactorizationPlan(StrictModule, NonTrainableState):
 
     def interpolate(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)
-        expected = (
-            self.tabulation.basis_x.shape[1],
-            self.tabulation.basis_y.shape[1],
-        )
-        if values.shape[-2:] != expected:
+        if values.shape[-self.tabulation.dimension :] != self.tabulation.nodal_shape:
             raise ValueError("Tensor coefficients have incompatible nodal axes.")
-        first = oe.contract("...ij,qj->...iq", values, self.tabulation.basis_y)
-        return oe.contract("pi,...iq->...pq", self.tabulation.basis_x, first)
+        return _factorized_forward(self.tabulation.basis_factors, values)
 
     def interpolate_transpose(self, values: ArrayLike, /) -> Array:
         quadrature = jnp.asarray(values)
-        expected = (
-            self.tabulation.basis_x.shape[0],
-            self.tabulation.basis_y.shape[0],
-        )
-        if quadrature.shape[-2:] != expected:
+        if (
+            quadrature.shape[-self.tabulation.dimension :]
+            != self.tabulation.evaluation_shape
+        ):
             raise ValueError("Tensor quadrature values have incompatible axes.")
-        first = oe.contract("pi,...pq->...iq", self.tabulation.basis_x, quadrature)
-        return oe.contract("...iq,qj->...ij", first, self.tabulation.basis_y)
+        return _factorized_transpose(self.tabulation.basis_factors, quadrature)
 
     def gradient(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)
-        dx = oe.contract(
-            "pi,...ij,qj->...pq",
-            self.tabulation.gradient_x,
-            values,
-            self.tabulation.basis_y,
-        )
-        dy = oe.contract(
-            "pi,...ij,qj->...pq",
-            self.tabulation.basis_x,
-            values,
-            self.tabulation.gradient_y,
-        )
-        return jnp.stack((dx, dy), axis=-1)
+        if values.shape[-self.tabulation.dimension :] != self.tabulation.nodal_shape:
+            raise ValueError("Tensor coefficients have incompatible nodal axes.")
+        components = []
+        for axis in range(self.tabulation.dimension):
+            factors = list(self.tabulation.basis_factors)
+            factors[axis] = self.tabulation.gradient_factors[axis]
+            components.append(_factorized_forward(tuple(factors), values))
+        return jnp.stack(tuple(components), axis=-1)
 
     def gradient_transpose(self, values: ArrayLike, /) -> Array:
         gradient = jnp.asarray(values)
-        expected = (
-            self.tabulation.basis_x.shape[0],
-            self.tabulation.basis_y.shape[0],
-            2,
-        )
-        if gradient.shape[-3:] != expected:
+        expected = self.tabulation.evaluation_shape + (self.tabulation.dimension,)
+        if gradient.shape[-len(expected) :] != expected:
             raise ValueError("Tensor quadrature gradients have incompatible axes.")
-        dx = oe.contract(
-            "pi,...pq,qj->...ij",
-            self.tabulation.gradient_x,
-            gradient[..., 0],
-            self.tabulation.basis_y,
-        )
-        dy = oe.contract(
-            "pi,...pq,qj->...ij",
-            self.tabulation.basis_x,
-            gradient[..., 1],
-            self.tabulation.gradient_y,
-        )
-        return dx + dy
+        terms = []
+        for axis in range(self.tabulation.dimension):
+            factors = list(self.tabulation.basis_factors)
+            factors[axis] = self.tabulation.gradient_factors[axis]
+            terms.append(_factorized_transpose(tuple(factors), gradient[..., axis]))
+        return sum(terms[1:], start=terms[0])
 
 
 class QuadratureChunkPolicy(StrictModule, NonTrainableState):
@@ -368,6 +576,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                 tuple(tuple(values) for values in dimension) for dimension in entity_dofs
             ),
             conformity="H1",
+            representation="point_value",
             tabulator=self.tabulate,
             tabulator_id=self.family_id,
         )
@@ -375,6 +584,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
 
 __all__ = [
     "NodeSet",
+    "TensorOrder",
     "QuadratureChunkPolicy",
     "ReferenceNodalFamily",
     "SumFactorizationPlan",

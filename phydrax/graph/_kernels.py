@@ -115,6 +115,30 @@ def segment_min_or_constant(
     )
 
 
+def segment_logsumexp(
+    logits: jnp.ndarray,
+    segment_ids: jnp.ndarray,
+    num_segments: int,
+) -> jnp.ndarray:
+    """Reduce log values by segment while preserving empty or impossible support."""
+    maxima = segment_max(logits, segment_ids, num_segments)
+    gathered = maxima[segment_ids]
+    shifted = jnp.where(jnp.isfinite(gathered), logits - gathered, -jnp.inf)
+    totals = segment_sum(jnp.exp(shifted), segment_ids, num_segments)
+    return jnp.where(totals > 0, maxima + jnp.log(totals), -jnp.inf)
+
+
+def segment_log_normalize(
+    logits: jnp.ndarray,
+    segment_ids: jnp.ndarray,
+    num_segments: int,
+) -> jnp.ndarray:
+    """Normalize log values independently within every nonempty feasible segment."""
+    normalizers = segment_logsumexp(logits, segment_ids, num_segments)
+    gathered = normalizers[segment_ids]
+    return jnp.where(jnp.isfinite(gathered), logits - gathered, -jnp.inf)
+
+
 def segment_softmax(
     logits: jnp.ndarray,
     segment_ids: jnp.ndarray,
@@ -173,6 +197,8 @@ __all__ = [
     "segment_min",
     "segment_max_or_constant",
     "segment_min_or_constant",
+    "segment_logsumexp",
+    "segment_log_normalize",
     "segment_softmax",
     "scatter_add",
     "scatter_mean",

@@ -92,9 +92,11 @@ tests = [
     "PyWavelets>=1.8,<2",
     "pytest>=9.0.2",
     "pytest-clarity>=1.0.1",
+    "pytest-impacted>=0.29.0",
     "pytest-rerunfailures>=16.1",
     "pytest-sugar>=1.1.1",
     "pytest-testmon>=2.2.0",
+    "pytest-tia>=1.1.1",
     "pytest-xdist>=3.8.0",
 ]
 qa = [

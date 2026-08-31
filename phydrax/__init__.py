@@ -18,6 +18,7 @@ from . import (
     coresets,
     data_utils,
     discretization,
+    topology,
     domain,
     dynamics,
     enforcement,
@@ -34,6 +35,7 @@ from . import (
     nonlinear,
     operators,
     optim,
+    pgm,
     sampling,
     solver,
     sparse,
@@ -46,12 +48,15 @@ from . import (
     weighting,
 )
 
+from . import atomistic
+
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
 
 
 # Explicit re-exports for star import
 __all__ = [
+    "atomistic",
     "applications",
     "backends",
     "combinatorial",
@@ -62,6 +67,7 @@ __all__ = [
     "terms",
     "data_utils",
     "discretization",
+    "topology",
     "domain",
     "dynamics",
     "equations",
@@ -79,6 +85,7 @@ __all__ = [
     "nonlinear",
     "operators",
     "optim",
+    "pgm",
     "sampling",
     "sparse",
     "special",
