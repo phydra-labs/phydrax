@@ -39,10 +39,12 @@ Most workflows are composing a few primitives:
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, material-particle supports, conservative SPH, measure-aware
-  particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
-  measures, transfers, fixed-temporal differentiable replay, transactional
-  gravity/cooling/stochastic source processes, compatible constrained MHD,
-  temporal/stochastic composition, and auditable plan/preparation identities.
+  particle-grid splatting, compatible electrostatic and electromagnetic
+  particle-in-cell dynamics, fixed-population free-surface FLIP, WENO fluxes,
+  fixed-capacity AMR, field spaces, measures, transfers, fixed-temporal
+  differentiable replay, transactional gravity/cooling/stochastic source
+  processes, compatible constrained MHD, temporal/stochastic composition, and
+  auditable plan/preparation identities.
 - **Discrete structural form-finding**: sparse pin-jointed force-density
   equilibrium supports coordinate and general affine restraints, tension,
   compression, mixed signs, prepared linear/nonlinear refresh, weighted

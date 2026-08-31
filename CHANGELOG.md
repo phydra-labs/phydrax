@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Added fixed-population compatible particle-in-cell dynamics over stable charged
+  particle supports: measure-aware endpoint charge, physical cochain E/B gather,
+  matrix-free compatible electrostatics, relativistic Boris stepping, periodic
+  cubical-Whitney trajectory current with discrete-continuity evidence, and
+  transactional coupling to the existing compatible Maxwell runtime.
+- Added constant-density fixed-population free-surface FLIP over prepared
+  particle splats and MAC grids: cell and staggered-face mass/momentum transfer,
+  runtime atmospheric pressure projection, bounded velocity extrapolation,
+  explicit PIC/FLIP grid-delta blending, problem compilation, fixed-step
+  rollback, and complete transfer/projection/energy evidence.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional

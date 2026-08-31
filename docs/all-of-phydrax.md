@@ -116,8 +116,16 @@ energy/dissipation ledgers, and native SSPRK integration. Structured
 particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
-route moments, and fast/deterministic/compensated reductions. Explicit material
-point dynamics compose that transfer with quadratic nodal B-splines, matched
+route moments, and fast/deterministic/compensated reductions. Compatible
+particle-in-cell methods attach extensive macrocharge to the same stable
+particle support, deposit endpoint charge on degree-zero cochains, gather
+physical E/B from oriented cochain layouts, solve compatible electrostatics, and
+advance periodic 3-D Maxwell fields with a trajectory current that certifies
+discrete continuity. Fixed-population free-surface FLIP separately binds cell and
+staggered-face splats to a runtime atmospheric MAC projection and an explicit
+PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
+SPH/VOF interface geometry. Explicit material point dynamics compose that
+transfer with quadratic nodal B-splines, matched
 APIC momentum, first-Piola reference-volume forces, transactional USL updates,
 stability evidence, and fixed-temporal replay for plane-strain and
 three-dimensional Neo-Hookean solids. DEM adds stable compositional
