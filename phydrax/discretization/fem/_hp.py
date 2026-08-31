@@ -25,15 +25,23 @@ _LINEAGE_CODES = {"unchanged": 0, "refinement": 1, "coarsening": 2}
 
 
 class FiniteElementHPTopology(StrictModule, NonTrainableState):
-    """Fixed-capacity quad/hex topology identity and anisotropic cell degrees."""
+    """Fixed-capacity quad/hex refinement forest with anisotropic leaf degrees."""
 
     cell_global_ids: Array
+    allocated: Array
     active: Array
     cell_degrees: Array
+    root_cell_ids: Array
+    path_codes: Array
+    levels: Array
+    parent_slots: Array
+    child_slots: Array
+    child_valid: Array
     cell_kind: FiniteElementHPCellKind = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
+    child_capacity: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -41,16 +49,26 @@ class FiniteElementHPTopology(StrictModule, NonTrainableState):
         cell_kind: FiniteElementHPCellKind,
         topology_id: str,
         cell_global_ids: ArrayLike,
+        allocated: ArrayLike,
         active: ArrayLike,
         cell_degrees: ArrayLike,
         /,
+        *,
+        root_cell_ids: ArrayLike | None = None,
+        path_codes: ArrayLike | None = None,
+        levels: ArrayLike | None = None,
+        parent_slots: ArrayLike | None = None,
+        child_slots: ArrayLike | None = None,
+        child_valid: ArrayLike | None = None,
     ):
         kind = cell_kind
         identifier = str(topology_id)
         identifiers = np.asarray(cell_global_ids, dtype=np.int64)
+        allocated_ = np.asarray(allocated, dtype=bool)
         active_ = np.asarray(active, dtype=bool)
         degrees = np.asarray(cell_degrees, dtype=np.int32)
         dimension = 2 if kind == "quadrilateral" else 3 if kind == "hexahedron" else 0
+        children_per_parent = 2**dimension if dimension else 0
         if not identifier or dimension == 0:
             raise ValueError(
                 "hp topology requires a quad/hex kind and non-empty identity."
@@ -58,37 +76,141 @@ class FiniteElementHPTopology(StrictModule, NonTrainableState):
         if (
             identifiers.ndim != 1
             or identifiers.size == 0
+            or allocated_.shape != identifiers.shape
             or active_.shape != identifiers.shape
             or degrees.shape != (identifiers.size, dimension)
+            or np.any(active_ & ~allocated_)
+            or not np.any(active_)
         ):
             raise ValueError("hp topology arrays have incompatible fixed capacities.")
-        if not np.any(active_):
-            raise ValueError("hp topology must contain at least one active cell.")
+        capacity = identifiers.size
+        roots = (
+            np.where(allocated_, identifiers, -1)
+            if root_cell_ids is None
+            else np.asarray(root_cell_ids, dtype=np.int64)
+        )
+        paths = (
+            np.where(allocated_, 1, -1)
+            if path_codes is None
+            else np.asarray(path_codes, dtype=np.int64)
+        )
+        levels_ = (
+            np.where(allocated_, 0, -1).astype(np.int32)
+            if levels is None
+            else np.asarray(levels, dtype=np.int32)
+        )
+        parents = (
+            np.full((capacity,), -1, dtype=np.int32)
+            if parent_slots is None
+            else np.asarray(parent_slots, dtype=np.int32)
+        )
+        children = (
+            np.full((capacity, children_per_parent), -1, dtype=np.int32)
+            if child_slots is None
+            else np.asarray(child_slots, dtype=np.int32)
+        )
+        children_valid = (
+            np.zeros((capacity, children_per_parent), dtype=bool)
+            if child_valid is None
+            else np.asarray(child_valid, dtype=bool)
+        )
         if (
-            np.any(identifiers[active_] < 0)
-            or np.unique(identifiers[active_]).size != np.count_nonzero(active_)
-            or np.any(identifiers[~active_] != -1)
+            roots.shape != identifiers.shape
+            or paths.shape != identifiers.shape
+            or levels_.shape != identifiers.shape
+            or parents.shape != identifiers.shape
+            or children.shape != (capacity, children_per_parent)
+            or children_valid.shape != children.shape
+        ):
+            raise ValueError("hp refinement-forest arrays have incompatible shapes.")
+        if (
+            np.any(identifiers[allocated_] < 0)
+            or np.unique(identifiers[allocated_]).size != np.count_nonzero(allocated_)
+            or np.any(identifiers[~allocated_] != -1)
             or np.any(degrees[active_] < 1)
             or np.any(degrees[~active_] != 0)
+            or np.any(roots[allocated_] < 0)
+            or np.any(paths[allocated_] < 1)
+            or np.any(levels_[allocated_] < 0)
+            or np.any(roots[~allocated_] != -1)
+            or np.any(paths[~allocated_] != -1)
+            or np.any(levels_[~allocated_] != -1)
+            or np.any(parents[~allocated_] != -1)
+            or np.any(children[~children_valid] != -1)
+            or np.any(children[children_valid] < 0)
+            or np.any(children[children_valid] >= capacity)
         ):
-            raise ValueError("hp active IDs/degrees or inactive sentinels are invalid.")
+            raise ValueError("hp forest identities, degrees, or sentinels are invalid.")
+        tree_pairs = np.stack((roots[allocated_], paths[allocated_]), axis=1)
+        if np.unique(tree_pairs, axis=0).shape[0] != tree_pairs.shape[0]:
+            raise ValueError("Allocated hp cells require unique stable tree identities.")
+        for slot in np.flatnonzero(allocated_):
+            parent = int(parents[slot])
+            if parent >= 0:
+                if (
+                    parent >= capacity
+                    or not allocated_[parent]
+                    or levels_[slot] != levels_[parent] + 1
+                    or roots[slot] != roots[parent]
+                ):
+                    raise ValueError("hp parent routes or tree identities are invalid.")
+            local_children = children[slot, children_valid[slot]]
+            if local_children.size:
+                if (
+                    active_[slot] and np.any(active_[local_children])
+                ) or np.unique(local_children).size != local_children.size:
+                    raise ValueError(
+                        "An active hp leaf cannot own active allocated children."
+                    )
+                if np.any(parents[local_children] != slot):
+                    raise ValueError("hp parent and child routes disagree.")
+                ordinals = np.flatnonzero(children_valid[slot])
+                expected_paths = paths[slot] * children_per_parent + ordinals + 1
+                if np.any(paths[local_children] != expected_paths):
+                    raise ValueError("hp child path codes are not canonical.")
         self.cell_global_ids = jnp.asarray(identifiers)
+        self.allocated = jnp.asarray(allocated_)
         self.active = jnp.asarray(active_)
         self.cell_degrees = jnp.asarray(degrees)
+        self.root_cell_ids = jnp.asarray(roots)
+        self.path_codes = jnp.asarray(paths)
+        self.levels = jnp.asarray(levels_)
+        self.parent_slots = jnp.asarray(parents)
+        self.child_slots = jnp.asarray(children)
+        self.child_valid = jnp.asarray(children_valid)
         self.cell_kind = kind
         self.topology_id = identifier
-        self.capacity = identifiers.size
+        self.capacity = capacity
         self.dimension = dimension
+        self.child_capacity = children_per_parent
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-element-hp-topology",
                 "cell_kind": kind,
                 "topology": identifier,
                 "cell_ids": array_tree_fingerprint(identifiers),
+                "allocated": array_tree_fingerprint(allocated_),
                 "active": array_tree_fingerprint(active_),
                 "degrees": array_tree_fingerprint(degrees),
+                "roots": array_tree_fingerprint(roots),
+                "paths": array_tree_fingerprint(paths),
+                "levels": array_tree_fingerprint(levels_),
+                "parents": array_tree_fingerprint(parents),
+                "children": array_tree_fingerprint(children),
+                "child_valid": array_tree_fingerprint(children_valid),
             }
         )
+
+    @property
+    def active_count(self) -> int:
+        return int(np.count_nonzero(np.asarray(self.active)))
+
+    @property
+    def allocated_count(self) -> int:
+        return int(np.count_nonzero(np.asarray(self.allocated)))
+
+    def stable_tree_ids(self, /) -> Array:
+        return jnp.stack((self.root_cell_ids, self.path_codes), axis=1)
 
 
 class FiniteElementHPLineage(StrictModule, NonTrainableState):
@@ -566,183 +688,11 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         return self._reverse(self.pairing_adjoint, target_values)
 
 
-class FiniteElementHPAcceptedPlan(StrictModule, NonTrainableState):
-    """One accepted or candidate topology paired with deterministic worksets."""
-
-    topology: FiniteElementHPTopology
-    worksets: FiniteElementHPWorksetPlan
-    accepted_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        topology: FiniteElementHPTopology,
-        worksets: FiniteElementHPWorksetPlan | None = None,
-        /,
-    ):
-        if not isinstance(topology, FiniteElementHPTopology):
-            raise TypeError("topology must be FiniteElementHPTopology.")
-        selected = (
-            finite_element_hp_workset_plan(topology) if worksets is None else worksets
-        )
-        if (
-            not isinstance(selected, FiniteElementHPWorksetPlan)
-            or selected.topology_id != topology.topology_id
-            or selected.topology_plan_id != topology.plan_id
-            or selected.capacity != topology.capacity
-            or selected.dimension != topology.dimension
-        ):
-            raise ValueError("hp worksets do not belong to the supplied topology.")
-        self.topology = topology
-        self.worksets = selected
-        self.accepted_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-hp-accepted-plan",
-                "topology": topology.plan_id,
-                "worksets": selected.plan_id,
-            }
-        )
-
-
-class FiniteElementHPTransaction(StrictModule, NonTrainableState):
-    """Rollback-safe host promotion of one immutable fixed-capacity candidate."""
-
-    accepted: FiniteElementHPAcceptedPlan
-    candidate: FiniteElementHPAcceptedPlan
-    lineage: FiniteElementHPLineage
-    p_transfers: tuple[FiniteElementHPTransferPlan, ...]
-    h_transfers: tuple[FiniteElementHPTransferPlan, ...]
-    transaction_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        accepted: FiniteElementHPAcceptedPlan,
-        candidate: FiniteElementHPAcceptedPlan,
-        lineage: FiniteElementHPLineage,
-        /,
-        *,
-        p_transfers: tuple[FiniteElementHPTransferPlan, ...] = (),
-        h_transfers: tuple[FiniteElementHPTransferPlan, ...] = (),
-    ):
-        if (
-            not isinstance(accepted, FiniteElementHPAcceptedPlan)
-            or not isinstance(candidate, FiniteElementHPAcceptedPlan)
-            or not isinstance(lineage, FiniteElementHPLineage)
-        ):
-            raise TypeError(
-                "hp transaction requires accepted/candidate plans and lineage."
-            )
-        source = accepted.topology
-        target = candidate.topology
-        if (
-            source.cell_kind != target.cell_kind
-            or source.capacity != target.capacity
-            or lineage.source_topology_id != source.topology_id
-            or lineage.target_topology_id != target.topology_id
-            or lineage.source_capacity != source.capacity
-            or lineage.target_capacity != target.capacity
-        ):
-            raise ValueError("hp candidate topology and lineage are incompatible.")
-        p_transfers_ = tuple(p_transfers)
-        h_transfers_ = tuple(h_transfers)
-        if any(
-            not isinstance(transfer, FiniteElementHPTransferPlan)
-            for transfer in p_transfers_ + h_transfers_
-        ):
-            raise TypeError(
-                "hp transaction transfers must be FiniteElementHPTransferPlan."
-            )
-        if any(transfer.transfer_kind != "p" for transfer in p_transfers_) or any(
-            transfer.transfer_kind not in ("h-refinement", "h-coarsening")
-            for transfer in h_transfers_
-        ):
-            raise ValueError("hp transaction transfer kinds are assigned incorrectly.")
-        for transfer in p_transfers_ + h_transfers_:
-            if (
-                transfer.source_topology_id != source.topology_id
-                or transfer.target_topology_id != target.topology_id
-                or transfer.source_plan_id != source.plan_id
-                or transfer.target_plan_id != target.plan_id
-                or transfer.source_capacity != source.capacity
-                or transfer.target_capacity != target.capacity
-            ):
-                raise ValueError("hp transaction transfer topology identities disagree.")
-        source_slots = np.asarray(lineage.source_slots)
-        target_slots = np.asarray(lineage.target_slots)
-        valid = np.asarray(lineage.valid)
-        if np.any(~np.asarray(source.active)[source_slots[valid]]) or np.any(
-            ~np.asarray(target.active)[target_slots[valid]]
-        ):
-            raise ValueError("hp lineage edges must connect active cells.")
-        active_source = np.flatnonzero(np.asarray(source.active))
-        active_target = np.flatnonzero(np.asarray(target.active))
-        routed_source = source_slots[valid]
-        routed_target = target_slots[valid]
-        relation_codes = np.asarray(lineage.relation_codes)[valid]
-        if not np.array_equal(
-            np.unique(routed_source), active_source
-        ) or not np.array_equal(np.unique(routed_target), active_target):
-            raise ValueError("hp lineage must cover every active source and target cell.")
-        child_capacity = 2**source.dimension
-        for slot in active_source:
-            local_codes = np.unique(relation_codes[routed_source == slot])
-            if local_codes.size != 1:
-                raise ValueError("One hp source cell cannot mix lineage relations.")
-            if (
-                local_codes[0] == _LINEAGE_CODES["refinement"]
-                and np.count_nonzero(routed_source == slot) > child_capacity
-            ):
-                raise ValueError("hp refinement exceeds quad/hex child capacity.")
-        for slot in active_target:
-            local_codes = np.unique(relation_codes[routed_target == slot])
-            if local_codes.size != 1:
-                raise ValueError("One hp target cell cannot mix lineage relations.")
-            if (
-                local_codes[0] == _LINEAGE_CODES["coarsening"]
-                and np.count_nonzero(routed_target == slot) > child_capacity
-            ):
-                raise ValueError("hp coarsening exceeds quad/hex child capacity.")
-        unchanged = relation_codes == _LINEAGE_CODES["unchanged"]
-        refinement = relation_codes == _LINEAGE_CODES["refinement"]
-        coarsening = relation_codes == _LINEAGE_CODES["coarsening"]
-        if (
-            np.unique(routed_source[unchanged]).size != np.count_nonzero(unchanged)
-            or np.unique(routed_target[unchanged]).size != np.count_nonzero(unchanged)
-            or np.unique(routed_target[refinement]).size != np.count_nonzero(refinement)
-            or np.unique(routed_source[coarsening]).size != np.count_nonzero(coarsening)
-        ):
-            raise ValueError("hp lineage refinement/coarsening directions are ambiguous.")
-        self.accepted = accepted
-        self.candidate = candidate
-        self.lineage = lineage
-        self.p_transfers = p_transfers_
-        self.h_transfers = h_transfers_
-        self.transaction_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-hp-transaction",
-                "accepted": accepted.accepted_id,
-                "candidate": candidate.accepted_id,
-                "lineage": lineage.lineage_id,
-                "p_transfers": [value.transfer_id for value in p_transfers_],
-                "h_transfers": [value.transfer_id for value in h_transfers_],
-            }
-        )
-
-    def rollback(self, /) -> FiniteElementHPAcceptedPlan:
-        return self.accepted
-
-    def promote(self, candidate_accepted: bool, /) -> FiniteElementHPAcceptedPlan:
-        if not isinstance(candidate_accepted, (bool, np.bool_)):
-            raise TypeError("hp candidate promotion is an explicit host decision.")
-        return self.candidate if bool(candidate_accepted) else self.accepted
-
-
 __all__ = [
-    "FiniteElementHPAcceptedPlan",
     "FiniteElementHPCellKind",
     "FiniteElementHPLineage",
     "FiniteElementHPLineageKind",
     "FiniteElementHPTopology",
-    "FiniteElementHPTransaction",
     "FiniteElementHPTransferKind",
     "FiniteElementHPTransferPlan",
     "FiniteElementHPWorksetPlan",

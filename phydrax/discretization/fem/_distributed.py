@@ -16,6 +16,8 @@ from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator, ConstraintMap
 from .._cell_mesh import CellMesh
 from ._generic import FiniteElementDofMap
+from ._hp import FiniteElementHPLineage
+from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarPlan
 
 
@@ -801,17 +803,143 @@ class DistributedFiniteElementOperator(StrictModule, NonTrainableState):
         return self.collective.sum(self.local_operator.mv(value))
 
 
+class FiniteElementHPPartitionPlan(StrictModule, NonTrainableState):
+    """Inherited hp cell ownership, adaptive halos, and mortar dependencies."""
+
+    cell_owner_by_slot: Array
+    partition: FiniteElementPartition
+    worksets: FiniteElementPartitionWorksetPlan
+    interface_owner_part: Array
+    mortar_dependencies: Array
+    epoch_id: str = eqx.field(static=True)
+    topology_id: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        epoch: FiniteElementHPEpoch,
+        cell_owner_by_slot: ArrayLike,
+        part_count: int,
+        /,
+    ):
+        owners = np.asarray(cell_owner_by_slot, dtype=np.int32)
+        active = np.asarray(epoch.topology.active)
+        parts = int(part_count)
+        if (
+            owners.shape != (epoch.topology.capacity,)
+            or parts <= 0
+            or np.any(owners[active] < 0)
+            or np.any(owners[active] >= parts)
+            or np.any(owners[~active] != -1)
+        ):
+            raise ValueError("Adaptive hp ownership or inactive sentinels are invalid.")
+        active_slots = np.asarray(epoch.active_cell_slots, dtype=np.int32)
+        active_owners = owners[active_slots]
+        partition = FiniteElementPartition(active_owners, parts)
+        slot_to_cell = np.full((epoch.topology.capacity,), -1, dtype=np.int32)
+        slot_to_cell[active_slots] = np.arange(active_slots.size, dtype=np.int32)
+        valid = np.asarray(epoch.interfaces.valid)
+        interface_owners = np.asarray(epoch.interfaces.owner_slots)[valid]
+        interface_neighbours = np.asarray(epoch.interfaces.neighbour_slots)[valid]
+        interior = interface_neighbours >= 0
+        facets = np.stack(
+            (
+                slot_to_cell[interface_owners[interior]],
+                slot_to_cell[interface_neighbours[interior]],
+            ),
+            axis=1,
+        )
+        worksets = finite_element_partition_workset_plan(
+            partition,
+            facets,
+            cell_global_ids=np.asarray(epoch.topology.cell_global_ids)[active_slots],
+        )
+        interface_owner_part = owners[interface_owners]
+        paired_parts = np.where(
+            interior,
+            owners[np.maximum(interface_neighbours, 0)],
+            interface_owner_part,
+        )
+        interface_owner_part = np.minimum(interface_owner_part, paired_parts)
+        dependencies = np.zeros((parts, parts), dtype=bool)
+        for left, right in zip(
+            owners[interface_owners[interior]],
+            owners[interface_neighbours[interior]],
+            strict=True,
+        ):
+            if left != right:
+                dependencies[left, right] = True
+                dependencies[right, left] = True
+        self.cell_owner_by_slot = jnp.asarray(owners)
+        self.partition = partition
+        self.worksets = worksets
+        self.interface_owner_part = jnp.asarray(interface_owner_part)
+        self.mortar_dependencies = jnp.asarray(dependencies)
+        self.epoch_id = epoch.epoch_id
+        self.topology_id = epoch.topology.topology_id
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-hp-partition",
+                "epoch": epoch.epoch_id,
+                "topology": epoch.topology.topology_id,
+                "owners": array_tree_fingerprint(owners),
+                "worksets": worksets.plan_id,
+                "interface_owner_part": array_tree_fingerprint(interface_owner_part),
+                "mortar_dependencies": array_tree_fingerprint(dependencies),
+            }
+        )
+
+
+def inherit_finite_element_hp_ownership(
+    source: FiniteElementHPPartitionPlan,
+    target: FiniteElementHPEpoch,
+    lineage: FiniteElementHPLineage,
+    /,
+) -> FiniteElementHPPartitionPlan:
+    """Inherit child ownership and require coarsening siblings to share one owner."""
+
+    if lineage.source_topology_id != source.topology_id:
+        raise ValueError("hp ownership lineage does not start from the source topology.")
+    owners = np.full((target.topology.capacity,), -1, dtype=np.int32)
+    source_owners = np.asarray(source.cell_owner_by_slot)
+    routes: dict[int, set[int]] = {}
+    for source_slot, target_slot, valid in zip(
+        np.asarray(lineage.source_slots),
+        np.asarray(lineage.target_slots),
+        np.asarray(lineage.valid),
+        strict=True,
+    ):
+        if valid:
+            routes.setdefault(int(target_slot), set()).add(
+                int(source_owners[int(source_slot)])
+            )
+    for target_slot in np.flatnonzero(np.asarray(target.topology.active)):
+        inherited = routes.get(int(target_slot), set())
+        if len(inherited) != 1 or next(iter(inherited)) < 0:
+            raise ValueError(
+                "Every active hp target cell must inherit exactly one valid owner."
+            )
+        owners[target_slot] = next(iter(inherited))
+    return FiniteElementHPPartitionPlan(
+        target,
+        owners,
+        source.partition.part_count,
+    )
+
+
 __all__ = [
     "DistributedFiniteElementConstraint",
     "DistributedFiniteElementMortarPlan",
     "DistributedFiniteElementOperator",
     "FiniteElementFacetOwnershipPlan",
     "FiniteElementHaloPlan",
+    "FiniteElementHPPartitionPlan",
     "FiniteElementPartition",
     "FiniteElementPartitionWorksetPlan",
     "JaxCollectiveBackend",
     "PartitionedFiniteElementDofMap",
     "distributed_finite_element_mortar_plan",
+    "inherit_finite_element_hp_ownership",
     "finite_element_partition_workset_plan",
     "partition_cells_contiguous",
 ]

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import cast
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,11 +17,13 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
     ArraySpace,
+    ComposedLinearOperator,
     ConstraintMap,
     DenseLinearOperator,
     FunctionLinearOperator,
 )
 from ._generic import FiniteElementDiscretization
+from ._hp_runtime import FiniteElementHPTraceConstraintPlan
 
 
 class FiniteElementDirichletConstraint(StrictModule, NonTrainableState):
@@ -38,7 +41,11 @@ class FiniteElementDirichletConstraint(StrictModule, NonTrainableState):
         values: ArrayLike | Callable[[Array], ArrayLike],
         /,
     ) -> Array:
-        evaluated = values(self.dof_coordinates) if callable(values) else values
+        if callable(values):
+            evaluator = cast(Callable[[Array], ArrayLike], values)
+            evaluated = evaluator(self.dof_coordinates)
+        else:
+            evaluated = values
         raw = jnp.asarray(evaluated)
         full_space = self.constraint_map.full_space
         if not isinstance(full_space, ArraySpace):
@@ -253,8 +260,72 @@ def affine_dof_constraint(
     )
 
 
+def finite_element_hp_constraint(
+    discretization: FiniteElementDiscretization,
+    field_name: str,
+    plan: FiniteElementHPTraceConstraintPlan,
+    /,
+) -> ConstraintMap:
+    """Lift one scalar trace plan over field components and declare its pairing."""
+
+    if not isinstance(plan, FiniteElementHPTraceConstraintPlan):
+        raise TypeError("plan must be FiniteElementHPTraceConstraintPlan.")
+    field_index = discretization._field_index(field_name)
+    dof_map = discretization.dof_maps[field_index]
+    full_space = discretization.field_spaces[field_index].vector_space
+    if not isinstance(full_space, ArraySpace):
+        raise TypeError("Adaptive hp trace constraints require ArraySpace fields.")
+    if plan.full_dof_count != dof_map.global_dof_count:
+        raise ValueError("hp trace plan and finite-element DOF map disagree.")
+    component_count = int(np.prod(full_space.shape[1:], dtype=int))
+    matrix = np.kron(
+        np.asarray(plan.prolongation),
+        np.eye(component_count, dtype=np.asarray(plan.prolongation).dtype),
+    )
+    return affine_dof_constraint(
+        discretization,
+        field_name,
+        matrix,
+        constraint_id=canonical_fingerprint(
+            {
+                "kind": "finite-element-hp-field-constraint",
+                "field_space": discretization.field_spaces[field_index].field_space_id,
+                "trace_plan": plan.plan_id,
+            }
+        ),
+    )
+
+
+def compose_finite_element_constraints(
+    outer: ConstraintMap,
+    inner: ConstraintMap,
+    /,
+) -> ConstraintMap:
+    """Compose hanging/master coordinates with a further reduced constraint."""
+
+    if not isinstance(outer, ConstraintMap) or not isinstance(inner, ConstraintMap):
+        raise TypeError("Constraint composition requires two ConstraintMap values.")
+    if not inner.full_space.compatible(outer.reduced_space):
+        raise ValueError("Inner full space must equal the outer reduced space.")
+    prolongation = ComposedLinearOperator(outer.prolongation, inner.prolongation)
+    return ConstraintMap(
+        outer.full_space,
+        inner.reduced_space,
+        prolongation,
+        constraint_id=canonical_fingerprint(
+            {
+                "kind": "composed-finite-element-constraint",
+                "outer": outer.constraint_id,
+                "inner": inner.constraint_id,
+            }
+        ),
+    )
+
+
 __all__ = [
     "FiniteElementDirichletConstraint",
+    "compose_finite_element_constraints",
+    "finite_element_hp_constraint",
     "affine_dof_constraint",
     "dirichlet_constraint",
 ]

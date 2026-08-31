@@ -35,6 +35,7 @@ benchmarks/*
 !benchmarks/direct_collocation_ipopt.json
 !benchmarks/direct_collocation_qualification.json
 !benchmarks/integral_physics.json
+!benchmarks/hp_spectral_element.json
 !benchmarks/map_gp_search.json
 !benchmarks/maxwell_amoeba.json
 !benchmarks/incompressible_spectral.json
