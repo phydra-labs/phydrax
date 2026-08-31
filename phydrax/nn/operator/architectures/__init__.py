@@ -126,7 +126,7 @@ from .spectral._wavelet import MultiwaveletOperator, WaveletNeuralOperator
 _PORTABLE_ARCHITECTURES = (
     ("ABUPT", ABUPT),
     ("AxialFactorizedFNO", AxialFactorizedFNO),
-    ("CNO", CNO),
+    ("periodic-fourier-cno", CNO),
     ("CochainNeuralOperator", CochainNeuralOperator),
     ("CoDANO", CoDANO),
     ("ConditionalFlowFunctionOperator", ConditionalFlowFunctionOperator),
@@ -162,7 +162,7 @@ _PORTABLE_ARCHITECTURES = (
     ("SelectiveStateSpaceMixer", SelectiveStateSpaceMixer),
     ("SFNO", SFNO),
     ("Transolver", Transolver),
-    ("UNO", UNO),
+    ("periodic-fourier-uno", UNO),
     ("UPT", UPT),
     ("WaveletNeuralOperator", WaveletNeuralOperator),
 )

@@ -21,6 +21,15 @@ Low-level model building blocks.
       execution share one reset and padding contract.
     - `MeasureNormalizedConvND` separates learned signed kernels from non-negative
       physical quadrature and observation masks.
+
+`MeasureNormalizedConvND` keeps zero extension as its ordinary default and
+offers an explicit circular mode for periodic same-size fields. Circular
+extension requires an odd effective kernel, modularly wraps sanitized measured
+values and masked measure—even when the halo exceeds the grid—and performs a
+valid convolution with the full periodic stencil denominator. The target mask
+is applied on the original unpadded grid. Circular latent extension must not be
+used as a substitute for physical boundary-value enforcement.
+
 ::: phydrax.nn.layers.Linear
     options:
         members:

@@ -24,6 +24,7 @@ from ._dem_contact import (
     HertzNormalContactPlan,
     PreparedDEMContactModel,
 )
+from ._dem_contact_state import DEMContactEvaluationContext
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
     RigidSphereKinematics,
@@ -97,28 +98,42 @@ class PrescribedDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         return result
 
 
+class DEMServoControlMode(StrEnum):
+    FORCE = "force"
+    TORQUE = "torque"
+
+
 class ServoDEMBarrierState(StrictModule):
     displacement: Array
     velocity: Array
     integral_error: Array
     previous_error: Array
+    command: Array
+    effective_velocity_limit: Array
+    saturation_margin: Array
+    skin_margin: Array
     saturated: Array
 
 
 class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
     axis: Array
-    target_force: float = eqx.field(static=True)
+    reference_point: Array
+    target_value: float = eqx.field(static=True)
     proportional_gain: float = eqx.field(static=True)
     integral_gain: float = eqx.field(static=True)
     derivative_gain: float = eqx.field(static=True)
     velocity_limit: float = eqx.field(static=True)
+    gain_schedule_ratio: float = eqx.field(static=True)
+    minimum_gain_fraction: float = eqx.field(static=True)
+    neighbor_skin: float | None = eqx.field(static=True)
+    control_mode: DEMServoControlMode = eqx.field(static=True)
     geometry_function: Callable[[Any, Array], Any]
     motion_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         axis: Array,
-        target_force: float,
+        target_value: float,
         /,
         *,
         proportional_gain: float,
@@ -127,21 +142,40 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         velocity_limit: float,
         geometry_function: Callable[[Any, Array], Any],
         motion_id: str,
+        control_mode: DEMServoControlMode = DEMServoControlMode.FORCE,
+        reference_point: Array | None = None,
+        gain_schedule_ratio: float = 1.0,
+        minimum_gain_fraction: float = 0.1,
+        neighbor_skin: float | None = None,
     ):
         axis_host = np.asarray(axis)
         if axis_host.ndim != 1 or axis_host.size not in (2, 3):
             raise ValueError("Servo axis must be a 2-D or 3-D vector.")
+        if not isinstance(control_mode, DEMServoControlMode):
+            raise TypeError("control_mode must be a DEMServoControlMode.")
+        if control_mode is DEMServoControlMode.TORQUE and axis_host.size != 3:
+            raise ValueError("Torque-controlled servo barriers require three dimensions.")
         norm = np.linalg.norm(axis_host)
+        point = (
+            np.zeros_like(axis_host)
+            if reference_point is None
+            else np.asarray(reference_point)
+        )
+        if point.shape != axis_host.shape or np.any(~np.isfinite(point)):
+            raise ValueError("reference_point must match the finite servo axis.")
         values = tuple(
             float(value)
             for value in (
-                target_force,
+                target_value,
                 proportional_gain,
                 integral_gain,
                 derivative_gain,
                 velocity_limit,
+                gain_schedule_ratio,
+                minimum_gain_fraction,
             )
         )
+        skin = None if neighbor_skin is None else float(neighbor_skin)
         if (
             not np.isfinite(norm)
             or norm <= 0.0
@@ -150,25 +184,43 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
             or values[2] < 0.0
             or values[3] < 0.0
             or values[4] <= 0.0
+            or values[5] <= 0.0
+            or not 0.0 < values[6] <= 1.0
+            or (skin is not None and (not np.isfinite(skin) or skin <= 0.0))
         ):
-            raise ValueError("Servo axis, gains, target, and velocity limit are invalid.")
+            raise ValueError("Servo axis, gains, target, and limits are invalid.")
         if not callable(geometry_function):
             raise TypeError("geometry_function must be callable.")
         identifier = str(motion_id)
         if not identifier:
             raise ValueError("motion_id must be nonempty.")
         self.axis = jnp.asarray(axis_host / norm)
-        self.target_force = values[0]
+        self.reference_point = jnp.asarray(point)
+        self.target_value = values[0]
         self.proportional_gain = values[1]
         self.integral_gain = values[2]
         self.derivative_gain = values[3]
         self.velocity_limit = values[4]
+        self.gain_schedule_ratio = values[5]
+        self.minimum_gain_fraction = values[6]
+        self.neighbor_skin = skin
+        self.control_mode = control_mode
         self.geometry_function = geometry_function
         self.motion_id = identifier
 
     def initialize(self, dtype: Any = jnp.float64, /) -> ServoDEMBarrierState:
         zero = jnp.zeros((), dtype=dtype)
-        return ServoDEMBarrierState(zero, zero, zero, zero, jnp.asarray(False))
+        return ServoDEMBarrierState(
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            jnp.asarray(self.velocity_limit, dtype=dtype),
+            jnp.asarray(self.velocity_limit, dtype=dtype),
+            jnp.asarray(jnp.inf, dtype=dtype),
+            jnp.asarray(False),
+        )
 
     def update(
         self,
@@ -176,26 +228,73 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         reaction_force: Array,
         step_size: Array,
         /,
+        *,
+        reaction_torque: Array | None = None,
+        minimum_radius: Array | None = None,
     ) -> ServoDEMBarrierState:
         if not isinstance(state, ServoDEMBarrierState):
             raise TypeError("state must be a ServoDEMBarrierState.")
-        measured = jnp.sum(jnp.asarray(reaction_force) * self.axis)
-        error = jnp.asarray(self.target_force, dtype=measured.dtype) - measured
-        integral = state.integral_error + step_size * error
-        derivative = (error - state.previous_error) / jnp.asarray(step_size)
+        dt = jnp.asarray(step_size)
+        dt = eqx.error_if(
+            dt,
+            ~jnp.isfinite(dt) | (dt <= 0.0),
+            "Servo step size must be finite and positive.",
+        )
+        if self.control_mode is DEMServoControlMode.FORCE:
+            measured = jnp.sum(jnp.asarray(reaction_force) * self.axis)
+        else:
+            if reaction_torque is None:
+                raise ValueError(
+                    "Torque-controlled servo update requires reaction_torque."
+                )
+            measured = jnp.sum(jnp.asarray(reaction_torque) * self.axis)
+        error = jnp.asarray(self.target_value, dtype=measured.dtype) - measured
+        derivative = (error - state.previous_error) / dt
+        proposed_integral = state.integral_error + dt * error
+        proposed_command = (
+            self.proportional_gain * error
+            + self.integral_gain * proposed_integral
+            + self.derivative_gain * derivative
+        )
+        target_scale = jnp.maximum(jnp.abs(self.target_value), 1.0)
+        scheduled_fraction = jnp.clip(
+            self.minimum_gain_fraction
+            + self.gain_schedule_ratio * jnp.abs(error) / target_scale,
+            self.minimum_gain_fraction,
+            1.0,
+        )
+        effective_limit = self.velocity_limit * scheduled_fraction
+        if minimum_radius is not None:
+            radius_limit = self.gain_schedule_ratio * jnp.asarray(minimum_radius) / dt
+            effective_limit = jnp.minimum(effective_limit, radius_limit)
+        skin_margin = jnp.asarray(jnp.inf, dtype=measured.dtype)
+        if self.neighbor_skin is not None:
+            skin_limit = self.neighbor_skin / (2.0 * dt)
+            effective_limit = jnp.minimum(effective_limit, skin_limit)
+            skin_margin = skin_limit - jnp.abs(proposed_command)
+        velocity = jnp.clip(proposed_command, -effective_limit, effective_limit)
+        saturated = jnp.abs(proposed_command) > effective_limit
+        drives_inward = jnp.sign(error) != jnp.sign(proposed_command)
+        integral = jnp.where(
+            ~saturated | drives_inward,
+            proposed_integral,
+            state.integral_error,
+        )
         command = (
             self.proportional_gain * error
             + self.integral_gain * integral
             + self.derivative_gain * derivative
         )
-        velocity = jnp.clip(command, -self.velocity_limit, self.velocity_limit)
-        saturated = jnp.abs(command) > self.velocity_limit
-        integral = jnp.where(saturated, state.integral_error, integral)
+        velocity = jnp.clip(command, -effective_limit, effective_limit)
         return ServoDEMBarrierState(
-            state.displacement + step_size * velocity,
+            state.displacement + dt * velocity,
             velocity,
             integral,
             error,
+            command,
+            effective_limit,
+            effective_limit - jnp.abs(command),
+            skin_margin,
             saturated,
         )
 
@@ -206,23 +305,34 @@ class ServoDEMBarrierMotionPlan(AbstractDEMBarrierMotionPlan):
         moved_geometry = self.geometry_function(geometry, args.displacement)
         dimension = points.shape[-1]
         angular_dimension = 1 if dimension == 2 else 3
-        return DEMBarrierMotion(
-            moved_geometry,
-            args.velocity * self.axis,
-            jnp.zeros((angular_dimension,), dtype=points.dtype),
-            jnp.zeros((dimension,), dtype=points.dtype),
-            jnp.all(
-                jnp.isfinite(
-                    jnp.stack(
-                        (
-                            args.displacement,
-                            args.velocity,
-                            args.integral_error,
-                            args.previous_error,
-                        )
+        if self.control_mode is DEMServoControlMode.FORCE:
+            linear_velocity = args.velocity * self.axis
+            angular_velocity = jnp.zeros((angular_dimension,), dtype=points.dtype)
+        else:
+            linear_velocity = jnp.zeros((dimension,), dtype=points.dtype)
+            angular_velocity = args.velocity * self.axis
+        valid = jnp.all(
+            jnp.isfinite(
+                jnp.stack(
+                    (
+                        args.displacement,
+                        args.velocity,
+                        args.integral_error,
+                        args.previous_error,
+                        args.command,
+                        args.effective_velocity_limit,
+                        args.saturation_margin,
+                        args.skin_margin,
                     )
                 )
-            ),
+            )
+        )
+        return DEMBarrierMotion(
+            moved_geometry,
+            linear_velocity,
+            angular_velocity,
+            self.reference_point,
+            valid,
         )
 
 
@@ -319,6 +429,7 @@ def evaluate_dem_barrier(
     *,
     time: Array = jnp.asarray(0.0),
     args: Any = None,
+    body_properties: Any = None,
     normal_tolerance: float = 1.0e-12,
     frame_tolerance: float = 1.0e-10,
 ) -> DEMBoundaryResponse:
@@ -336,6 +447,23 @@ def evaluate_dem_barrier(
     if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("normal_tolerance must be finite and positive.")
     position = kinematics.position
+    radii = bodies.radii if body_properties is None else body_properties.radii
+    inverse_masses = (
+        bodies.inverse_masses
+        if body_properties is None
+        else body_properties.inverse_masses
+    )
+    active_body_mask = (
+        bodies.particles.active_mask
+        if body_properties is None
+        else body_properties.active
+    )
+    if (
+        radii.shape != bodies.radii.shape
+        or inverse_masses.shape != bodies.inverse_masses.shape
+        or active_body_mask.shape != bodies.particles.active_mask.shape
+    ):
+        raise ValueError("Dynamic barrier body properties have invalid shapes.")
     motion = barrier.motion.evaluate(barrier.geometry, jnp.asarray(time), position, args)
     if not isinstance(motion, DEMBarrierMotion):
         raise TypeError("Barrier motion must return DEMBarrierMotion.")
@@ -376,8 +504,8 @@ def evaluate_dem_barrier(
     normal_norm = jnp.linalg.norm(allowed_normal, axis=-1)
     safe_norm = jnp.where(normal_norm > tolerance, normal_norm, 1.0)
     normal = allowed_normal / safe_norm[:, None]
-    overlap = jnp.maximum(bodies.radii - clearance, 0.0)
-    active_particles = bodies.particles.active_mask
+    overlap = jnp.maximum(radii - clearance, 0.0)
+    active_particles = active_body_mask
     degenerate = (
         active_particles
         & (overlap > 0.0)
@@ -409,7 +537,7 @@ def evaluate_dem_barrier(
         signed_curvature = (
             -wall_curvature if barrier.side is DEMBarrierSide.INTERIOR else wall_curvature
         )
-        curvature_denominator = 1.0 / bodies.radii + signed_curvature
+        curvature_denominator = 1.0 / radii + signed_curvature
         curvature_valid = (
             curvature.valid
             & isotropic
@@ -433,7 +561,7 @@ def evaluate_dem_barrier(
         degenerate = degenerate | (active_particles & (overlap > 0.0) & ~curvature_valid)
         valid = active_particles & ~degenerate
     else:
-        effective_radius = bodies.radii
+        effective_radius = radii
         curvature_margin = jnp.asarray(jnp.inf, dtype=position.dtype)
     particle_contact_velocity = kinematics.velocity + sphere_spin_velocity(
         kinematics.angular_velocity, arm, bodies.ambient_dimension
@@ -448,7 +576,7 @@ def evaluate_dem_barrier(
     tangential_velocity = relative_velocity - normal_velocity[:, None] * normal
     batch = DEMContactBatch(
         jnp.where(valid[:, None], normal, 0.0),
-        jnp.where(valid, clearance - bodies.radii, 0.0),
+        jnp.where(valid, clearance - radii, 0.0),
         jnp.where(valid, overlap, 0.0),
         jnp.where(valid, effective_radius, 0.0),
         jnp.where(valid[:, None], arm, 0.0),
@@ -469,16 +597,19 @@ def evaluate_dem_barrier(
     response = contact_model.evaluate(
         batch,
         previous_history,
-        keys,
-        active_particles,
-        continued,
-        bodies.inverse_masses,
-        jnp.zeros_like(bodies.inverse_masses),
-        bodies.radii,
-        bodies.radii,
-        bodies.material_ids,
-        barrier_material,
-        step_size,
+        DEMContactEvaluationContext(
+            keys,
+            active_particles,
+            continued,
+            inverse_masses,
+            jnp.zeros_like(inverse_masses),
+            radii,
+            radii,
+            bodies.material_ids,
+            barrier_material,
+            step_size,
+            -jnp.ones((), dtype=jnp.int32),
+        ),
         frame_tolerance=frame_tolerance,
     )
     particle_force = response.pair_force
@@ -517,8 +648,15 @@ def evaluate_dem_barrier(
 
 
 __all__ = [
+    "AbstractDEMBarrierMotionPlan",
+    "DEMBarrierMotion",
     "DEMBarrierSide",
     "DEMBoundaryResponse",
+    "DEMServoControlMode",
     "ImplicitDEMBarrier",
+    "PrescribedDEMBarrierMotionPlan",
+    "ServoDEMBarrierMotionPlan",
+    "ServoDEMBarrierState",
+    "StaticDEMBarrierMotionPlan",
     "evaluate_dem_barrier",
 ]

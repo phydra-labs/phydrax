@@ -10,7 +10,7 @@ live in the finite-element compiler; see [Spectral elements](guides_spectral_ele
 ## Spaces and representations
 
 A basis plan owns mathematical modes. Preparing a tensor plan binds those modes to
-physical bounds, quadrature, transforms, and exact field-space identities:
+explicit axis domains, quadrature, transforms, and exact field-space identities:
 
 ```python
 import jax.numpy as jnp
@@ -23,7 +23,7 @@ space = phx.discretization.TensorSpectralPlan(
     (phx.discretization.FourierBasisPlan(128),),
     axis_names=("x",),
     field_name="u",
-).prepare(jnp.asarray([[0.0], [1.0]]))
+).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 ```
 
 `space.modal_space` has representation `"modal_coefficient"` and is the primary
@@ -45,6 +45,86 @@ Fourier fields use full complex modal storage. Real reconstruction is explicit a
 encode homogeneous Dirichlet and Neumann endpoint semantics respectively. Chebyshev
 and Legendre plans use the internal polynomial preparation substrate and budgeted
 dense linear transforms.
+
+## Axis domains and unbounded intervals
+
+`AxisDomain` distinguishes bounded, periodic, half-line, and real-line support.
+Endpoint inclusion belongs to the node rule rather than being inferred from
+nonperiodicity: Gauss nodes include neither endpoint, Radau includes one, and
+Lobatto includes both. Point-primary tensor measures use each axis's declared
+quadrature weights.
+
+Rational Chebyshev bases compactify infinity without storing nonfinite points:
+
+```python
+domain = phx.discretization.AxisDomain.real_line()
+boundary = phx.discretization.SpectralBoundaryConditionPlan.decay()
+basis = phx.discretization.ConstrainedBasisPlan(
+    phx.discretization.RationalChebyshevLineBasisPlan(48, 4.0),
+    boundary,
+)
+line = phx.discretization.TensorSpectralPlan(
+    (basis,),
+    axis_names=("x",),
+).prepare((domain,))
+```
+
+The full-line map is `y = scale*t/sqrt(1-t**2)` on endpoint-free first-Fejér
+nodes. The half-line plan uses `y = endpoint + scale*(1+t)/(1-t)` or its
+negative-direction counterpart. Physical quadrature weights contain the map
+Jacobian. Value traces at compactified infinity are exact modal functionals;
+unsupported derivative traces fail during preparation.
+
+Mapped finite-mode derivatives are projected actions. `axis.derivative_exact`
+is false and `axis.derivative_residual` records an independent overresolved
+closure check. The scale is a preparation identity. Compare a declared scale
+set with `SpectralModalDiagnosticsPlan`; Phydrax does not silently optimize it.
+
+## Modal transfer and resolution evidence
+
+`prepare_spectral_modal_transfer` owns every resolution change used by
+dealiasing and eigen verification. Fourier transfers split and recombine even
+Nyquist modes. Polynomial transfers preserve degree identity. Constrained
+transfers pass through base-modal coordinates and verify target traces rather
+than assuming that numerical nullspace columns are nested.
+
+`SpectralModalDiagnosticsPlan` reports physical tail norms, relative tail
+norms, head-tail overlap, raw coefficient envelopes, local slopes, and
+rounding-floor masks. A tail report is resolution evidence, not a proof that a
+function belongs to one asymptotic convergence class.
+
+General eigensolves can be compared with homogeneous chordal matching:
+
+```python
+resolution_domain = phx.discretization.AxisDomain.periodic(0.0, 1.0)
+coarse = phx.discretization.TensorSpectralPlan(
+    (phx.discretization.FourierBasisPlan(8),)
+).prepare((resolution_domain,))
+fine = phx.discretization.TensorSpectralPlan(
+    (phx.discretization.FourierBasisPlan(12),)
+).prepare((resolution_domain,))
+coarse_result = phx.linalg.eigen.general_eigensolve(
+    phx.linalg.eigen.GeneralEigenproblem(
+        phx.discretization.spectral_derivative_operator(coarse, 0).operator
+    )
+)
+fine_result = phx.linalg.eigen.general_eigensolve(
+    phx.linalg.eigen.GeneralEigenproblem(
+        phx.discretization.spectral_derivative_operator(fine, 0).operator
+    )
+)
+transfer = phx.discretization.prepare_spectral_modal_transfer(coarse, fine)
+evidence = phx.discretization.compare_spectral_eigen_resolutions(
+    coarse_result,
+    fine_result,
+    coarse,
+    fine,
+    transfer,
+)
+```
+
+Matching is one-to-one. Repeated modes are judged through transferred physical
+subspaces, not through eigenvector signs, phases, or ordinal positions.
 
 ## Exact-sampling spherical spaces
 
@@ -96,6 +176,18 @@ Polynomial derivatives use prepared fixed-capacity coefficient matrices from the
 internal orthogonal-polynomial substrate. Physical conveniences such as
 `space.partial_derivative`, `space.gradient`, and `space.laplacian` accept and return
 point values; modal evolution uses `modal_derivative` and `modal_laplacian`.
+Constrained polynomial trial spaces are not generally closed under strong modal
+differentiation. Their physical derivative conveniences differentiate the reconstructed
+polynomial, while modal operator constructors fail explicitly rather than inventing a
+diagonal closure.
+
+The periodic Hilbert transform is an exact Fourier multiplier with
+`-1j*sign(k)`. The mean and the even-grid Nyquist mode are explicitly zero:
+
+```python
+hilbert = phx.discretization.spectral_hilbert_operator(space, 0)
+hilbert_coefficients = hilbert(coefficients)
+```
 
 ## Implicit modal fields
 
@@ -166,7 +258,6 @@ For nonlinear PDEs, `CompiledModalResidualTerm` materializes the declared state 
 uses the compiler's explicit dealiasing policy. `maximum_query_points` and
 `maximum_feature_bytes` fail before hidden tensor or feature-table growth exceeds the
 declared resource budget.
-
 ## Nonlinear evaluation and dealiasing
 
 Nonlinear pseudospectral compilation requires an explicit policy. Quadratic Fourier
@@ -316,7 +407,12 @@ space = phx.discretization.TensorSpectralPlan(
     ),
     axis_names=("x", "y"),
     field_name="velocity",
-).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+).prepare(
+    (
+        phx.discretization.AxisDomain.periodic(0.0, 1.0),
+        phx.discretization.AxisDomain.periodic(0.0, 1.0),
+    )
+)
 problem = phx.equations.IncompressibleFlowProblem(2, 1e-3)
 method = phx.discretization.PseudospectralMethodPlan(
     dealiasing=phx.discretization.PaddingDealiasingPlan(2),
@@ -340,7 +436,7 @@ Wall-bounded channel flow uses a Fourier x Chebyshev x Fourier tensor plan and a
 separate constrained Stokes preparation:
 
 ```text
-problem = phx.equations.IncompressibleFlowProblem(3, viscosity=1e-3)
+problem = phx.equations.IncompressibleFlowProblem(3, 1e-3)
 constraint = phx.discretization.ChannelMeanConstraint(
     "pressure_gradient", (1.0, 0.0)
 )
@@ -406,7 +502,7 @@ basis = phx.discretization.ConstrainedBasisPlan(
 space = phx.discretization.TensorSpectralPlan(
     (basis,),
     axis_names=("x",),
-).prepare(jnp.asarray([[-1.0], [1.0]]))
+).prepare((phx.discretization.AxisDomain.interval(-1.0, 1.0),))
 galerkin = phx.discretization.SpectralGalerkinMethodPlan().prepare(space)
 ```
 

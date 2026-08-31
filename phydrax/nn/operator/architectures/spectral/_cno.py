@@ -8,18 +8,24 @@ from collections.abc import Sequence
 from math import prod
 from typing import Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._spectral._fourier import fourier_resample as spectral_resample
 from phydrax._strict import StrictModule
+from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
-from phydrax.nn.layers._measure_convolution import _AbstractMeasureNormalizedConvND
+from phydrax.nn.layers._measure_convolution import (
+    _AbstractMeasureNormalizedConvND,
+    _measure_dependency_support,
+)
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
@@ -60,18 +66,126 @@ def _prepare_grid_values(
     return array, case_shape
 
 
+def _error_if_invalid(token: Array, predicate: Array, message: str, /) -> Array:
+    if isinstance(predicate, jax_core.Tracer):
+        return eqx.error_if(token, predicate, message)
+    if bool(predicate):
+        raise ValueError(message)
+    return token
+
+
+def _validate_periodic_fourier_axes(
+    token: Array,
+    axes: tuple[OperatorAxis, ...],
+    dimension: int,
+    /,
+    *,
+    owner: str,
+) -> Array:
+    if len(axes) != dimension:
+        raise ValueError(f"{owner} expects {dimension} spatial axes.")
+    checked = token
+    for axis in axes:
+        if axis.size < 2:
+            raise ValueError(f"{owner} axes require at least two nodes.")
+        if not axis.periodic:
+            raise ValueError(f"{owner} requires periodic axes.")
+        if axis.basis not in ("uniform", "fourier"):
+            raise ValueError(f"{owner} axes require uniform or Fourier basis metadata.")
+        nodes = jnp.asarray(axis.nodes)
+        spacing = jnp.diff(nodes)
+        checked = _error_if_invalid(
+            checked,
+            jnp.any(~jnp.isfinite(nodes)) | jnp.any(spacing <= 0.0),
+            f"{owner} axis {axis.name!r} must contain finite, distinct, "
+            "strictly ordered nodes.",
+        )
+        checked = _error_if_invalid(
+            checked,
+            jnp.logical_not(
+                jnp.allclose(
+                    spacing,
+                    jnp.mean(spacing),
+                    rtol=1e-5,
+                    atol=1e-8,
+                )
+            ),
+            f"{owner} axis {axis.name!r} must be uniformly spaced.",
+        )
+    return checked
+
+
+def _validate_coincident_axes(
+    token: Array,
+    source_axes: tuple[OperatorAxis, ...],
+    query_axes: tuple[OperatorAxis, ...],
+    dimension: int,
+    /,
+    *,
+    owner: str,
+) -> Array:
+    checked = _validate_periodic_fourier_axes(
+        token,
+        source_axes,
+        dimension,
+        owner=owner,
+    )
+    checked = _validate_periodic_fourier_axes(
+        checked,
+        query_axes,
+        dimension,
+        owner=owner,
+    )
+    for source, query in zip(source_axes, query_axes, strict=True):
+        if (
+            source.name != query.name
+            or source.basis != query.basis
+            or source.periodic != query.periodic
+            or source.nodes.shape != query.nodes.shape
+        ):
+            raise ValueError(f"{owner} requires exactly coincident source/query axes.")
+        checked = _error_if_invalid(
+            checked,
+            jnp.logical_not(jnp.array_equal(source.nodes, query.nodes)),
+            f"{owner} requires exactly coincident source/query axis nodes.",
+        )
+    return checked
+
+
 def _coordinate_features(
     axes: tuple[OperatorAxis, ...],
     case_shape: tuple[int, ...],
     /,
 ) -> Array:
-    normalized = []
-    for axis in axes:
-        span = axis.nodes[-1] - axis.nodes[0]
-        normalized.append(2.0 * (axis.nodes - axis.nodes[0]) / span - 1.0)
-    grids = jnp.meshgrid(*normalized, indexing="ij")
-    coordinates = jnp.stack(grids, axis=-1)
+    sample_shape = tuple(axis.size for axis in axes)
+    features = []
+    for index, axis in enumerate(axes):
+        phase = 2.0 * jnp.pi * jnp.arange(axis.size) / axis.size
+        reshape = [1] * len(axes)
+        reshape[index] = axis.size
+        phase_grid = jnp.broadcast_to(jnp.reshape(phase, reshape), sample_shape)
+        features.extend((jnp.sin(phase_grid), jnp.cos(phase_grid)))
+    coordinates = jnp.stack(features, axis=-1)
     return jnp.broadcast_to(coordinates, case_shape + coordinates.shape)
+
+
+def _dependency_on_periodic_fourier_axes(
+    support: OperatorDependencySupport,
+    axes: Sequence[OperatorAxis] | None,
+    /,
+    *,
+    owner: str,
+) -> OperatorDependencySupport:
+    if axes is None:
+        return support
+    axes_value = tuple(axes)
+    if support.dimension != len(axes_value):
+        raise ValueError(f"{owner} dependency axes have the wrong dimension.")
+    if any(not axis.periodic for axis in axes_value):
+        raise ValueError(f"{owner} dependency support requires periodic axes.")
+    if any(axis.basis not in ("uniform", "fourier") for axis in axes_value):
+        raise ValueError(f"{owner} dependency axes require uniform or Fourier basis.")
+    return support.on_axes(axes_value)
 
 
 def _operator_source(batch: OperatorBatch, source_key: str | None, /):
@@ -105,11 +219,10 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             out_channels=out_channels,
             kernel_size=kernel_size,
             padding="SAME",
+            circular=True,
             use_bias=True,
             key=key,
         )
-        if any(size % 2 == 0 for size in self.kernel_size):
-            raise ValueError("kernel_size must contain positive odd sizes per axis.")
         self.activation = activation
         self.oversample_factor = int(oversample_factor)
         if self.oversample_factor < 1:
@@ -124,6 +237,23 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
             shape=self.kernel_size + (self.in_channels, self.out_channels),
         )
         self.bias = jnp.zeros((self.out_channels,), dtype=float)
+
+    def dependency_support(
+        self,
+        axes: Sequence[OperatorAxis] | None = None,
+        /,
+    ) -> OperatorDependencySupport:
+        support = _measure_dependency_support(self)
+        if self.activation is not None and self.oversample_factor > 1:
+            support = OperatorDependencySupport.global_(
+                self.spatial_ndim,
+                evidence="exact",
+            )
+        return _dependency_on_periodic_fourier_axes(
+            support,
+            axes,
+            owner="AntiAliasedConvND",
+        )
 
     def __call__(
         self,
@@ -235,9 +365,16 @@ class _CNOBlock(StrictModule):
             )
         return output
 
+    def dependency_support(self) -> OperatorDependencySupport:
+        branch = self.first.dependency_support().sequential(
+            self.second.dependency_support()
+        )
+        assert branch.dimension is not None
+        return branch.parallel(OperatorDependencySupport.pointwise(branch.dimension))
+
 
 class CNO(AbstractOperatorModel):
-    """N-dimensional anti-aliased Convolutional Neural Operator."""
+    """Periodic-Fourier anti-aliased Convolutional Neural Operator."""
 
     operator_architecture = "CNO"
 
@@ -276,7 +413,7 @@ class CNO(AbstractOperatorModel):
             raise ValueError("spatial_ndim must be 1-3 and width/depth must be positive.")
         keys = jr.split(key, int(depth) + 2)
         lifted = _get_size(in_channels) + (
-            self.spatial_ndim if coordinate_embedding else 0
+            2 * self.spatial_ndim if coordinate_embedding else 0
         )
         self.lift = Linear(
             in_size=lifted, out_size=self.width, activation=None, key=keys[0]
@@ -300,6 +437,20 @@ class CNO(AbstractOperatorModel):
             key=keys[-1],
         )
 
+    def dependency_support(
+        self,
+        axes: Sequence[OperatorAxis] | None = None,
+        /,
+    ) -> OperatorDependencySupport:
+        support = OperatorDependencySupport.pointwise(self.spatial_ndim)
+        for block in self.blocks:
+            support = support.sequential(block.dependency_support())
+        return _dependency_on_periodic_fourier_axes(
+            support,
+            axes,
+            owner="CNO",
+        )
+
     def _evaluate(
         self,
         values: Array,
@@ -314,6 +465,12 @@ class CNO(AbstractOperatorModel):
         if len(axes) != self.spatial_ndim:
             raise ValueError(f"CNO expects {self.spatial_ndim} spatial axes.")
         array, case_shape = _prepare_grid_values(values, axes, _get_size(self.in_size))
+        array = _validate_periodic_fourier_axes(
+            array,
+            axes,
+            self.spatial_ndim,
+            owner="CNO",
+        )
         if source_mask is not None:
             array = jnp.where(
                 jnp.asarray(source_mask, dtype=bool)[..., None],
@@ -364,14 +521,22 @@ class CNO(AbstractOperatorModel):
         del key
         source = _operator_source(batch, self.source_key)
         query = batch.require_single_query()
-        axes = source.axes or query.axes
-        if not axes or source.values is None:
-            raise ValueError("CNO requires tensor-grid source values and query axes.")
-        if source.axes and source.sample_shape != query.sample_shape:
-            raise ValueError("CNO requires coincident source and query grids.")
-        return self._evaluate(
+        if not source.axes or not query.axes or source.values is None:
+            raise ValueError(
+                "CNO requires tensor-grid source values and explicit source/query axes."
+            )
+        if not source.has_physical_quadrature:
+            raise ValueError("CNO requires physical source quadrature weights.")
+        values = _validate_coincident_axes(
             jnp.asarray(source.values),
-            axes,
+            source.axes,
+            query.axes,
+            self.spatial_ndim,
+            owner="CNO",
+        )
+        return self._evaluate(
+            values,
+            source.axes,
             source_mask=source.mask_array(case_shape=batch.case_shape),
             target_mask=query.mask_array(case_shape=batch.case_shape),
             source_quadrature=source.quadrature(case_shape=batch.case_shape),
@@ -391,13 +556,19 @@ class CNO(AbstractOperatorModel):
         if not isinstance(x, tuple) or len(x) != self.spatial_ndim + 1:
             raise ValueError("CNO requires (values, axis_0, ..., axis_d).")
         axes = tuple(
-            OperatorAxis(f"axis_{index}", nodes) for index, nodes in enumerate(x[1:])
+            OperatorAxis(
+                f"axis_{index}",
+                nodes,
+                basis="fourier",
+                periodic=True,
+            )
+            for index, nodes in enumerate(x[1:])
         )
         return self._evaluate(jnp.asarray(x[0]), axes)
 
 
 class UNO(AbstractOperatorModel):
-    """U-shaped anti-aliased neural operator with band-limited resampling."""
+    """Periodic-Fourier U-shaped operator with band-limited resampling."""
 
     operator_architecture = "UNO"
 
@@ -439,7 +610,7 @@ class UNO(AbstractOperatorModel):
             raise ValueError("UNO widths must contain at least two positive levels.")
         keys = jr.split(key, 3 * len(self.widths))
         lifted = _get_size(in_channels) + (
-            self.spatial_ndim if coordinate_embedding else 0
+            2 * self.spatial_ndim if coordinate_embedding else 0
         )
         self.lift = Linear(
             in_size=lifted,
@@ -498,10 +669,31 @@ class UNO(AbstractOperatorModel):
             key=keys[-1],
         )
 
+    def dependency_support(
+        self,
+        axes: Sequence[OperatorAxis] | None = None,
+        /,
+    ) -> OperatorDependencySupport:
+        support = OperatorDependencySupport.global_(
+            self.spatial_ndim,
+            evidence="conservative",
+        )
+        return _dependency_on_periodic_fourier_axes(
+            support,
+            axes,
+            owner="UNO",
+        )
+
     def _evaluate(self, values: Array, axes: tuple[OperatorAxis, ...], /) -> Array:
         if len(axes) != self.spatial_ndim:
             raise ValueError(f"UNO expects {self.spatial_ndim} spatial axes.")
         array, case_shape = _prepare_grid_values(values, axes, _get_size(self.in_size))
+        array = _validate_periodic_fourier_axes(
+            array,
+            axes,
+            self.spatial_ndim,
+            owner="UNO",
+        )
         if self.coordinate_embedding:
             array = jnp.concatenate(
                 (array, _coordinate_features(axes, case_shape)), axis=-1
@@ -544,15 +736,25 @@ class UNO(AbstractOperatorModel):
     ) -> Array:
         del key
         source = _operator_source(batch, self.source_key)
-        axes = source.axes or batch.require_single_query().axes
-        if not axes or source.values is None:
-            raise ValueError("UNO requires tensor-grid source values and query axes.")
-        if (
-            source.axes
-            and source.sample_shape != batch.require_single_query().sample_shape
-        ):
-            raise ValueError("UNO requires coincident source and query grids.")
-        return self._evaluate(jnp.asarray(source.values), axes)
+        query = batch.require_single_query()
+        if not source.axes or not query.axes or source.values is None:
+            raise ValueError(
+                "UNO requires tensor-grid source values and explicit source/query axes."
+            )
+        values = _validate_coincident_axes(
+            jnp.asarray(source.values),
+            source.axes,
+            query.axes,
+            self.spatial_ndim,
+            owner="UNO",
+        )
+        values = _error_if_invalid(
+            values,
+            jnp.any(~source.mask_array(case_shape=batch.case_shape))
+            | jnp.any(~query.mask_array(case_shape=batch.case_shape)),
+            "UNO does not support masked source or query sites.",
+        )
+        return self._evaluate(values, source.axes)
 
     def __call__(
         self,
@@ -567,7 +769,13 @@ class UNO(AbstractOperatorModel):
         if not isinstance(x, tuple) or len(x) != self.spatial_ndim + 1:
             raise ValueError("UNO requires (values, axis_0, ..., axis_d).")
         axes = tuple(
-            OperatorAxis(f"axis_{index}", nodes) for index, nodes in enumerate(x[1:])
+            OperatorAxis(
+                f"axis_{index}",
+                nodes,
+                basis="fourier",
+                periodic=True,
+            )
+            for index, nodes in enumerate(x[1:])
         )
         return self._evaluate(jnp.asarray(x[0]), axes)
 

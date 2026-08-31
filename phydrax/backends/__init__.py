@@ -49,6 +49,7 @@ from .clarabel import (
     prepare_clarabel,
     PreparedClarabel,
 )
+from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
 from .mpax import (
     mpax_availability,
     MPAX_CAPABILITIES,
@@ -118,6 +119,10 @@ __all__ = [
     "PreparedClarabel",
     "clarabel_availability",
     "prepare_clarabel",
+    "IREE_CAPABILITIES",
+    "IREEBackend",
+    "import_iree",
+    "iree_availability",
     "MPAXAlgorithm",
     "MPAXBackend",
     "MPAXPlan",

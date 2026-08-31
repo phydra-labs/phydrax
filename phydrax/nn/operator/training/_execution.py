@@ -51,6 +51,8 @@ def samples_with_values(
         quadrature_weights=samples.quadrature_weights,
         mask=samples.mask,
         topology=samples.topology,
+        support_id=samples.support_id,
+        measure_id=samples.measure_id,
     )
 
 
@@ -68,10 +70,15 @@ def nondimensionalize_batch(
         samples = inputs[field.source_name]
         if samples.values is None:
             raise ValueError(f"Source {field.source_name!r} has no values.")
-        inputs[field.source_name] = samples_with_values(
-            samples,
-            field.nondimensionalize(jnp.asarray(samples.values)),
+        values = field.nondimensionalize(jnp.asarray(samples.values))
+        mask = samples.mask_array(case_shape=batch.case_shape)
+        trailing = (1,) * (values.ndim - mask.ndim)
+        values = jnp.where(
+            mask.reshape(mask.shape + trailing),
+            values,
+            jnp.zeros((), dtype=values.dtype),
         )
+        inputs[field.source_name] = samples_with_values(samples, values)
     return OperatorBatch(
         inputs=inputs,
         queries=batch.queries,
@@ -84,30 +91,55 @@ def nondimensionalize_targets(
     targets: OperatorTargetBatch,
     task: OperatorTask,
     /,
+    *,
+    target_aliases: Mapping[str, str] | None = None,
 ) -> OperatorTargetBatch:
-    """Map physical target values into task execution units."""
+    """Map physical target values, including rollout aliases, into execution units."""
     if not targets.fields:
         return OperatorTargetBatch(
             {},
             case_axes=targets.case_axes,
             case_shape=targets.case_shape,
         )
-    expected = tuple(field.name for field in task.target_fields)
+    aliases = {} if target_aliases is None else dict(target_aliases)
+    target_names = tuple(field.name for field in task.target_fields)
+    replaced = set(aliases.values())
+    expected = tuple(name for name in target_names if name not in replaced) + tuple(
+        aliases
+    )
     if set(targets.fields) != set(expected):
         raise ValueError(
-            "Operator target names must match the task; "
+            "Operator target names must match the task and rollout aliases; "
             f"expected {expected!r}, got {tuple(targets.fields)!r}."
         )
     by_name = task.field_by_name
-    return OperatorTargetBatch(
-        {
-            name: OperatorFieldBatch(
-                by_name[name].nondimensionalize(field.values),
-                query_name=field.query_name,
-                spec=field.spec,
+    fields: dict[str, OperatorFieldBatch] = {}
+    for name, field in targets.fields.items():
+        canonical_name = aliases.get(name, name)
+        if canonical_name not in by_name or not by_name[canonical_name].is_target:
+            raise KeyError(
+                f"Target alias {name!r} resolves to unknown task target "
+                f"{canonical_name!r}."
             )
-            for name, field in targets.fields.items()
-        },
+        specification = by_name[canonical_name]
+        assert specification.query_name is not None
+        assert specification.output_spec is not None
+        if (
+            field.query_name != specification.query_name
+            or field.spec.to_dict() != specification.output_spec.to_dict()
+        ):
+            raise ValueError(
+                f"Target field {name!r} does not match routed task field "
+                f"{canonical_name!r}."
+            )
+        values = specification.nondimensionalize(field.values)
+        fields[name] = OperatorFieldBatch(
+            values,
+            query_name=field.query_name,
+            spec=field.spec,
+        )
+    return OperatorTargetBatch(
+        fields,
         case_axes=targets.case_axes,
         case_shape=targets.case_shape,
     )
@@ -188,18 +220,20 @@ def executionize_prediction(
     by_name = task.field_by_name
     for model_name, target_name in output_field_map.items():
         target = by_name[target_name]
+        output_spec = target.output_spec
+        if output_spec is None:
+            raise ValueError(f"Task output field {target_name!r} has no output spec.")
         physical_field = prediction.field(target_name)
         template_field = template.field(model_name)
         if (
-            target.output_spec is not None
-            and target.output_spec.classification is not None
-            and template_field.spec.to_dict() != target.output_spec.to_dict()
+            output_spec.classification is not None
+            and template_field.spec.to_dict() != output_spec.to_dict()
         ):
             raise ValueError(
                 f"Execution template {model_name!r} does not preserve classification semantics."
             )
         values = target.nondimensionalize(physical_field.values)
-        if normalization is not None and target.output_spec.classification is None:
+        if normalization is not None and output_spec.classification is None:
             if target_name not in normalization.targets:
                 raise KeyError(f"Missing normalizer for target field {target_name!r}.")
             values = normalization.targets[target_name].normalize(values)
@@ -276,6 +310,59 @@ def _operator_prediction(
 
 
 _compiled_operator_prediction = eqx.filter_jit(_operator_prediction)
+
+
+def _evaluate_operator_step(
+    model: AbstractOperatorModel,
+    execution_batch: OperatorBatch,
+    physical_batch: OperatorBatch,
+    task: OperatorTask,
+    output_field_map: Mapping[str, str],
+    output_pipeline: OperatorOutputPipeline | None,
+    normalization: OperatorNormalizationPolicy | None,
+    dtype_policy: OperatorDTypePolicy,
+    key: EvalKey,
+    /,
+    *,
+    predictor: Callable[
+        [AbstractOperatorModel, OperatorBatch, EvalKey, OperatorDTypePolicy],
+        OperatorPrediction,
+    ] = _operator_prediction,
+) -> tuple[OperatorPrediction, OperatorPrediction]:
+    """Run the one canonical task-bound prediction and constraint pipeline."""
+    model_key = key
+    pipeline_key = key
+    if output_pipeline is not None:
+        model_key, pipeline_key = split_eval_key(key, 2)
+    raw_prediction = predictor(
+        model,
+        execution_batch,
+        model_key,
+        dtype_policy,
+    )
+    physical_prediction = physicalize_prediction(
+        raw_prediction,
+        physical_batch,
+        task,
+        output_field_map,
+        normalization,
+    )
+    if output_pipeline is not None:
+        physical_prediction = output_pipeline(
+            physical_prediction,
+            physical_batch,
+            key=pipeline_key,
+        )
+        task.validate_prediction(physical_prediction)
+    execution_prediction = executionize_prediction(
+        physical_prediction,
+        raw_prediction,
+        execution_batch,
+        task,
+        output_field_map,
+        normalization,
+    )
+    return execution_prediction, physical_prediction
 
 
 class PreparedOperatorInput(StrictModule):
@@ -562,30 +649,18 @@ class OperatorExecutionPlan(StrictModule):
             raise ValueError(
                 "Prepared operator input belongs to a different runtime contract."
             )
-        model_key = key
-        pipeline_key = key
-        if self.output_pipeline is not None:
-            model_key, pipeline_key = split_eval_key(key, 2)
-        raw = self.lowered_callable(
+        _, prediction = _evaluate_operator_step(
             self.execution_model,
             prepared.execution_batch,
-            model_key,
-            self.dtype_policy,
-        )
-        prediction = physicalize_prediction(
-            raw,
             prepared.physical_batch,
             self.task,
             self.output_field_map,
+            self.output_pipeline,
             self.normalization,
+            self.dtype_policy,
+            key,
+            predictor=self.lowered_callable,
         )
-        if self.output_pipeline is not None:
-            prediction = self.output_pipeline(
-                prediction,
-                prepared.physical_batch,
-                key=pipeline_key,
-            )
-            self.task.validate_prediction(prediction)
         return prediction
 
     def predict(

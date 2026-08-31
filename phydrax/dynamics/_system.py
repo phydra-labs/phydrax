@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
@@ -122,6 +123,9 @@ class DiscreteSystem(StrictModule):
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)
+    step_size: float | None = eqx.field(static=True)
+    step_rtol: float = eqx.field(static=True)
+    step_atol: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -131,6 +135,9 @@ class DiscreteSystem(StrictModule):
         state_layout: StateLayout,
         input_layout: InputLayout | None = None,
         system_id: str,
+        step_size: float | None = None,
+        step_rtol: float = 1e-7,
+        step_atol: float = 1e-12,
     ):
         if not callable(transition):
             raise TypeError("DiscreteSystem transition must be callable.")
@@ -138,10 +145,27 @@ class DiscreteSystem(StrictModule):
             raise TypeError("state_layout must be a StateLayout.")
         if input_layout is not None and not isinstance(input_layout, InputLayout):
             raise TypeError("input_layout must be an InputLayout or None.")
+        resolved_step = None if step_size is None else float(step_size)
+        relative_tolerance = float(step_rtol)
+        absolute_tolerance = float(step_atol)
+        if resolved_step is not None and (
+            not np.isfinite(resolved_step) or resolved_step <= 0.0
+        ):
+            raise ValueError("step_size must be finite and positive or None.")
+        if (
+            not np.isfinite(relative_tolerance)
+            or relative_tolerance < 0.0
+            or not np.isfinite(absolute_tolerance)
+            or absolute_tolerance < 0.0
+        ):
+            raise ValueError("step_rtol and step_atol must be finite and nonnegative.")
         self.transition = transition
         self.state_layout = state_layout
         self.input_layout = input_layout
         self.system_id = _identifier(system_id, "DiscreteSystem system_id")
+        self.step_size = resolved_step
+        self.step_rtol = relative_tolerance
+        self.step_atol = absolute_tolerance
 
     def evaluate(
         self,

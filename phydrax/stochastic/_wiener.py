@@ -330,16 +330,18 @@ class WienerRealization(StrictModule):
         if start.shape != end.shape:
             raise ValueError("Wiener increment bounds must have matching shapes.")
         support_start, support_end = self.support
-        if bool(
+        invalid_interval = (
             jnp.any(~jnp.isfinite(start))
             | jnp.any(~jnp.isfinite(end))
             | jnp.any(start < support_start)
             | jnp.any(end > support_end)
             | jnp.any(end < start)
-        ):
-            raise ValueError(
-                "Wiener increment intervals must lie in support with end >= start."
-            )
+        )
+        start = eqx.error_if(
+            start,
+            invalid_interval,
+            "Wiener increment intervals must lie in support with end >= start.",
+        )
         resolved_dtype = jnp.dtype(dtype)
         flat_starts = start.reshape((-1,))
         flat_ends = end.reshape((-1,))

@@ -20,12 +20,7 @@ physical material-mass measure. Current coordinates are not part of the plan or
 support identity. Moving a particle therefore changes numeric state without
 changing the material topology.
 
-Particle IDs are stable physical identities. Logical particle order is distinct
-from any future locality-oriented execution permutation. Static `EntitySubset`
-values label material regions or observation groups. The active mask belongs to
-topological identity; activating, deleting, emitting, splitting, or merging a
-particle requires a future explicit topology event rather than an in-trajectory
-array mutation.
+Particle IDs are stable physical identities. Logical particle order is distinct from any locality-oriented execution permutation. Static `EntitySubset` values label material regions or observation groups. The prepared support fixes every potential slot. Process operations may activate or deactivate preallocated runtime body state, but they never resize or reorder the support.
 
 ## Pair relations
 
@@ -76,8 +71,7 @@ The implemented contract is the fixed discrete particle program:
 - dense candidate indices are static, while cell IDs, sorting, and packed
   cell-list routes are stopped-gradient decisions;
 - compact-support membership and periodic minimum-image choices are branchwise;
-- particle activation and capacity changes are unsupported inside a differentiated
-  trajectory;
+- particle activation and fixed-pool topology events are discrete stopped-gradient decisions;
 - inactive padding is selected to finite values before arithmetic.
 
 No straight-through topology estimator is used.
@@ -101,17 +95,14 @@ the same kernels, pair relations, dense authority, cell-list execution, and
 
 ## Discrete element method
 
-[Soft-sphere DEM](guides_discrete_element_method.md) composes rigid-sphere
-properties, stable pair-state remapping, normal and tangential contact channels,
-rotational velocity, exact-signed-distance barriers, and structured fixed-step
-state. DEM reuses the same dense authority, cell-list execution, precision, and
-reduction policies as SPH; it does not introduce a second particle search API.
+[Soft-contact DEM](guides_discrete_element_method.md) composes rigid-sphere properties, stable pair-state remapping, normal, cohesion, tangential, and rotational contact channels, barriers, multicontact correction, and structured fixed-step state. A separate superquadric route shares neighborhoods and rigid-body integration. DEM reuses the same dense authority, cell-list execution, precision, and reduction policies as SPH; it does not introduce a second particle search API.
+
+## Internal conversion and process operations
+
+[Particle internal transport](guides_particle_internal_transport.md) maps selected owners to homogeneous radial finite-volume batches with extensive energy and species state. [Particle thermochemistry](guides_particle_thermochemistry.md) adds typed phases, elements, reactions, evaporation, shrinking-core conversion, and morphology.
+
+[Reactive CFD–DEM](guides_reactive_cfd_dem.md) composes conversion and mechanics through conservative particle-grid exchange and atomic macro windows. Fixed-pool insertion, removal, residence, mass-flow, fragmentation, and deactivation use explicit process events without changing array shape.
 
 ## Current limits
 
-The substrate supports fixed populations, dense or fixed-capacity cell-list
-pairs, certified cached Verlet neighborhoods, periodic or nonperiodic boxes,
-fused reductions, persistent same-set pair state, wall/contact history, and
-prepared particle-grid transfer. Particle emission, distributed contact
-ownership, and general nonspherical dynamics beyond qualified fixed-topology
-shape contracts remain future method families over these contracts.
+The substrate supports fixed-capacity populations, dense or cell-list pairs, certified cached Verlet neighborhoods, periodic or nonperiodic boxes, fused reductions, persistent same-set pair state, wall/contact history, radial internal conversion, fixed-pool process events, and prepared particle-grid transfer. Distributed ownership, dynamic memory growth, and general adaptive intraparticle meshes remain future method families over these contracts.

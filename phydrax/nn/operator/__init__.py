@@ -24,6 +24,11 @@ from ...geometry.operator import (
     RegionalPointLatentGeometry,
     TensorGridLatentGeometry,
 )
+from .._dependency import (
+    AxisDependencyReach,
+    operator_dependency_support,
+    OperatorDependencySupport,
+)
 from . import (
     adapters,
     architectures,
@@ -199,6 +204,7 @@ from .topology import (
 __all__ = [
     "capabilities",
     "catalog",
+    "AxisDependencyReach",
     "ConfiguredOperatorContract",
     "data",
     "eigen",
@@ -239,6 +245,8 @@ __all__ = [
     "OperatorFieldRole",
     "OperatorFieldSpec",
     "OperatorGeometryKind",
+    "operator_dependency_support",
+    "OperatorDependencySupport",
     "OperatorMaskPolicy",
     "OperatorModel",
     "OperatorOutputSpec",

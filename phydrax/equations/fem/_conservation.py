@@ -22,6 +22,10 @@ from ...discretization.fem._generic import (
     FiniteElementRuntimeData,
     IntegrationDomain,
 )
+from ...discretization.fem._mortar import (
+    FiniteElementMortarMetricData,
+    FiniteElementMortarPlan,
+)
 from ...discretization.fem._sbp import (
     ElementLocalSBPData,
     MappedTensorMetricPlan,
@@ -310,6 +314,220 @@ def certify_dgsem_flux_compatibility(
         source_evidence=source_evidence,
         viscous_evidence=viscous_evidence,
     )
+
+
+class DGSEMMortarCompatibilityCertificate(StrictModule, NonTrainableState):
+    """Mass, constant, geometry, and entropy evidence for one hp mortar."""
+
+    left_mass_error: Array
+    right_mass_error: Array
+    constant_error: Array
+    opposite_normal_error: Array
+    entropy_error: Array
+    tolerance: float = eqx.field(static=True)
+    passed: bool = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mortar: FiniteElementMortarPlan,
+        metric: FiniteElementMortarMetricData,
+        entropy_error: ArrayLike,
+        tolerance: float,
+        /,
+    ):
+        if not isinstance(mortar, FiniteElementMortarPlan) or not isinstance(
+            metric, FiniteElementMortarMetricData
+        ):
+            raise TypeError("DGSEM mortar certification requires mortar and metric data.")
+        tolerance_ = float(tolerance)
+        left = jnp.max(
+            jnp.abs(
+                mortar.left_mass @ mortar.left_pairing_adjoint
+                - mortar.left_weighted_pairing_pullback
+            )
+        )
+        right = jnp.max(
+            jnp.abs(
+                mortar.right_mass @ mortar.right_pairing_adjoint
+                - mortar.right_weighted_pairing_pullback
+            )
+        )
+        constant = jnp.maximum(
+            jnp.max(
+                jnp.abs(
+                    mortar.left_interpolation
+                    @ jnp.ones((mortar.left_interpolation.shape[1],))
+                    - 1.0
+                )
+            ),
+            jnp.max(
+                jnp.abs(
+                    mortar.right_interpolation
+                    @ jnp.ones((mortar.right_interpolation.shape[1],))
+                    - 1.0
+                )
+            ),
+        )
+        normals = metric.opposite_normal_error
+        entropy = jnp.max(jnp.abs(jnp.asarray(entropy_error)))
+        passed = bool(
+            max(
+                float(left),
+                float(right),
+                float(constant),
+                float(normals),
+                float(entropy),
+            )
+            <= tolerance_
+        )
+        self.left_mass_error = left
+        self.right_mass_error = right
+        self.constant_error = constant
+        self.opposite_normal_error = normals
+        self.entropy_error = entropy
+        self.tolerance = tolerance_
+        self.passed = passed
+        self.certificate_id = canonical_fingerprint(
+            {
+                "kind": "dgsem-mortar-compatibility",
+                "mortar": mortar.plan_id,
+                "metric": metric.metric_id,
+                "left_mass_error": float(left),
+                "right_mass_error": float(right),
+                "constant_error": float(constant),
+                "normal_error": float(normals),
+                "entropy_error": float(entropy),
+                "tolerance": tolerance_,
+            }
+        )
+
+
+def certify_dgsem_mortar_compatibility(
+    mortar: FiniteElementMortarPlan,
+    metric: FiniteElementMortarMetricData,
+    /,
+    *,
+    entropy_error: ArrayLike = 0.0,
+    tolerance: float = 1.0e-10,
+) -> DGSEMMortarCompatibilityCertificate:
+    return DGSEMMortarCompatibilityCertificate(
+        mortar,
+        metric,
+        entropy_error,
+        tolerance,
+    )
+
+
+class DGSEMMortarFluxLedger(StrictModule):
+    left_residual: Array
+    right_residual: Array
+    conservation_residual: Array
+    entropy_flux: Array
+    certificate_id: str = eqx.field(static=True)
+
+
+def dgsem_mortar_flux_ledger(
+    mortar: FiniteElementMortarPlan,
+    metric: FiniteElementMortarMetricData,
+    certificate: DGSEMMortarCompatibilityCertificate,
+    flux: ArrayLike,
+    /,
+    *,
+    entropy_flux: ArrayLike | None = None,
+) -> DGSEMMortarFluxLedger:
+    """Execute one certified mortar flux and accumulate conservation/entropy ledgers."""
+
+    if (
+        not isinstance(certificate, DGSEMMortarCompatibilityCertificate)
+        or not certificate.passed
+    ):
+        raise ValueError("Nonconforming DGSEM requires a passing mortar certificate.")
+    left, right = mortar.conservative_flux_contributions(flux, metric)
+    conservation = jnp.sum(left, axis=0) + jnp.sum(right, axis=0)
+    entropy = (
+        jnp.zeros_like(conservation)
+        if entropy_flux is None
+        else mortar.integrated_flux(entropy_flux, metric)
+    )
+    return DGSEMMortarFluxLedger(
+        left,
+        right,
+        conservation,
+        entropy,
+        certificate.certificate_id,
+    )
+
+
+class DGSEMNonconformingMortarPlan(StrictModule, NonTrainableState):
+    """A set of hp mortars accepted only with explicit entropy certificates."""
+
+    mortars: tuple[FiniteElementMortarPlan, ...]
+    metrics: tuple[FiniteElementMortarMetricData, ...]
+    certificates: tuple[DGSEMMortarCompatibilityCertificate, ...]
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mortars: Sequence[FiniteElementMortarPlan],
+        metrics: Sequence[FiniteElementMortarMetricData],
+        certificates: Sequence[DGSEMMortarCompatibilityCertificate],
+        /,
+    ):
+        mortars_ = tuple(mortars)
+        metrics_ = tuple(metrics)
+        certificates_ = tuple(certificates)
+        if (
+            not mortars_
+            or len(mortars_) != len(metrics_)
+            or len(mortars_) != len(certificates_)
+            or any(not value.passed for value in certificates_)
+        ):
+            raise ValueError(
+                "Every nonconforming DGSEM mortar requires passing evidence."
+            )
+        self.mortars = mortars_
+        self.metrics = metrics_
+        self.certificates = certificates_
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "dgsem-nonconforming-mortars",
+                "mortars": [value.plan_id for value in mortars_],
+                "metrics": [value.metric_id for value in metrics_],
+                "certificates": [value.certificate_id for value in certificates_],
+            }
+        )
+
+    def ledgers(
+        self,
+        fluxes: Sequence[ArrayLike],
+        /,
+        *,
+        entropy_fluxes: Sequence[ArrayLike] | None = None,
+    ) -> tuple[DGSEMMortarFluxLedger, ...]:
+        fluxes_ = tuple(fluxes)
+        entropy_ = (
+            (None,) * len(fluxes_) if entropy_fluxes is None else tuple(entropy_fluxes)
+        )
+        if len(fluxes_) != len(self.mortars) or len(entropy_) != len(self.mortars):
+            raise ValueError("DGSEM mortar flux counts do not match the plan.")
+        return tuple(
+            dgsem_mortar_flux_ledger(
+                mortar,
+                metric,
+                certificate,
+                flux,
+                entropy_flux=entropy_flux,
+            )
+            for mortar, metric, certificate, flux, entropy_flux in zip(
+                self.mortars,
+                self.metrics,
+                self.certificates,
+                fluxes_,
+                entropy_,
+                strict=True,
+            )
+        )
 
 
 class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
@@ -1292,11 +1510,16 @@ class PreparedDGSEMConservationDynamics(StrictModule):
 
 __all__ = [
     "DGSEMConservationDiagnostics",
+    "DGSEMMortarCompatibilityCertificate",
+    "DGSEMMortarFluxLedger",
+    "DGSEMNonconformingMortarPlan",
     "DGSEMConservationMethodPlan",
     "DGSEMFaceFluxes",
     "DGSEMFluxCompatibilityCertificate",
     "DGSEMPreparationReport",
     "DGSEMStableStepEvidence",
     "PreparedDGSEMConservationDynamics",
+    "certify_dgsem_mortar_compatibility",
     "certify_dgsem_flux_compatibility",
+    "dgsem_mortar_flux_ledger",
 ]

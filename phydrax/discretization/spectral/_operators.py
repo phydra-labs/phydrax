@@ -16,6 +16,7 @@ from ..._trainable import NonTrainableState
 from ...linalg import (
     AbstractLinearOperator,
     DiagonalLinearOperator,
+    FunctionLinearOperator,
     OperatorProperties,
 )
 from .._spaces import DiscreteFieldSpace
@@ -23,13 +24,13 @@ from ._space import TensorSpectralDiscretization
 
 
 class PreparedSpectralOperator(StrictModule, NonTrainableState):
-    """One exact modal operator with scientific source and target identities."""
+    """One modal operator with scientific source, target, and exactness evidence."""
 
     operator: AbstractLinearOperator
     source_space: DiscreteFieldSpace
     target_space: DiscreteFieldSpace
     axes: tuple[int, ...] = eqx.field(static=True)
-    derivative_orders: tuple[int, ...] = eqx.field(static=True)
+    axis_actions: tuple[str, ...] = eqx.field(static=True)
     classification: str = eqx.field(static=True)
     exact: bool = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
@@ -42,7 +43,7 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
         /,
         *,
         axes: Sequence[int],
-        derivative_orders: Sequence[int],
+        axis_actions: Sequence[str],
         classification: str,
         exact: bool = True,
     ):
@@ -55,9 +56,13 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
                 "source_space and target_space must be DiscreteFieldSpace values."
             )
         axes_ = tuple(int(value) for value in axes)
-        orders = tuple(int(value) for value in derivative_orders)
-        if len(axes_) != len(orders) or any(value < 0 for value in orders):
-            raise ValueError("axes and non-negative derivative_orders must align.")
+        actions = tuple(str(value) for value in axis_actions)
+        if (
+            len(axes_) != len(actions)
+            or len(set(axes_)) != len(axes_)
+            or any(not action for action in actions)
+        ):
+            raise ValueError("Unique axes and nonempty axis_actions must align.")
         kind = str(classification)
         if not kind:
             raise ValueError("classification must be non-empty.")
@@ -65,7 +70,7 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
         self.source_space = source_space
         self.target_space = target_space
         self.axes = axes_
-        self.derivative_orders = orders
+        self.axis_actions = actions
         self.classification = kind
         self.exact = bool(exact)
         self.operator_id = canonical_fingerprint(
@@ -75,7 +80,7 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
                 "source": source_space.field_space_id,
                 "target": target_space.field_space_id,
                 "axes": list(axes_),
-                "orders": list(orders),
+                "axis_actions": list(actions),
                 "classification": kind,
                 "exact": bool(exact),
             }
@@ -113,16 +118,95 @@ def spectral_derivative_operator(
         raise ValueError(f"axis must lie in [0, {len(discretization.axes)}).")
     if order_ < 0:
         raise ValueError("order must be non-negative.")
-    diagonal = _axis_multiplier(discretization, axis_, order_).reshape((-1,))
+    prepared = discretization.axes[axis_]
+    exact = order_ == 0 or prepared.derivative_exact
+    if prepared.derivative_matrix is None:
+        diagonal = _axis_multiplier(discretization, axis_, order_).reshape((-1,))
+        operator: AbstractLinearOperator = DiagonalLinearOperator(
+            diagonal,
+            space=discretization.modal_space.vector_space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "spectral-derivative-operator",
+                    "discretization": discretization.prepared_id,
+                    "axis": axis_,
+                    "order": order_,
+                }
+            ),
+        )
+    else:
+        operator = FunctionLinearOperator(
+            lambda coefficients: discretization.modal_derivative(
+                coefficients,
+                axis=axis_,
+                order=order_,
+            ),
+            source=discretization.modal_space.vector_space,
+            target=discretization.modal_space.vector_space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "spectral-derivative-operator",
+                    "discretization": discretization.prepared_id,
+                    "axis": axis_,
+                    "order": order_,
+                    "path": "axis-action",
+                }
+            ),
+        )
+    return PreparedSpectralOperator(
+        operator,
+        discretization.modal_space,
+        discretization.modal_space,
+        axes=(axis_,),
+        axis_actions=(f"derivative:{order_}",),
+        classification="spectral-derivative",
+        exact=exact,
+    )
+
+
+def spectral_hilbert_operator(
+    discretization: TensorSpectralDiscretization,
+    axis: int,
+    /,
+) -> PreparedSpectralOperator:
+    """Return the exact discrete periodic Hilbert transform on one Fourier axis."""
+    if not isinstance(discretization, TensorSpectralDiscretization):
+        raise TypeError("discretization must be a TensorSpectralDiscretization.")
+    axis_ = int(axis)
+    if axis_ < 0 or axis_ >= len(discretization.axes):
+        raise ValueError(f"axis must lie in [0, {len(discretization.axes)}).")
+    prepared = discretization.axes[axis_]
+    if prepared.family != "fourier":
+        raise ValueError("The spectral Hilbert transform requires a Fourier axis.")
+    numbers = prepared.modes.mode_numbers
+    active = ~(prepared.modes.zero_mask | prepared.modes.nyquist_mask)
+    multiplier = (
+        -1j
+        * jnp.sign(numbers).astype(
+            jnp.dtype(discretization.plan.precision.coefficient_dtype)
+        )
+        * active
+    )
+    shape = [1] * len(discretization.modal_shape)
+    shape[axis_] = multiplier.size
+    diagonal = jnp.broadcast_to(
+        multiplier.reshape(tuple(shape)),
+        discretization.modal_shape,
+    ).reshape((-1,))
     operator = DiagonalLinearOperator(
         diagonal,
         space=discretization.modal_space.vector_space,
+        properties=OperatorProperties(
+            diagonal=True,
+            evidence={"diagonal": "construction"},
+        ),
         operator_id=canonical_fingerprint(
             {
-                "kind": "spectral-derivative-operator",
+                "kind": "spectral-hilbert-operator",
                 "discretization": discretization.prepared_id,
                 "axis": axis_,
-                "order": order_,
+                "zero_mode": "zero",
+                "nyquist_mode": "zero",
             }
         ),
     )
@@ -131,8 +215,9 @@ def spectral_derivative_operator(
         discretization.modal_space,
         discretization.modal_space,
         axes=(axis_,),
-        derivative_orders=(order_,),
-        classification="pseudospectral",
+        axis_actions=("hilbert",),
+        classification="periodic-hilbert",
+        exact=True,
     )
 
 
@@ -142,7 +227,7 @@ def spectral_laplacian_operator(
     *,
     axes: int | Sequence[int] | None = None,
 ) -> PreparedSpectralOperator:
-    """Return the exact negative-semidefinite modal Laplacian."""
+    """Return a prepared modal Laplacian when every axis action is closed."""
     if not isinstance(discretization, TensorSpectralDiscretization):
         raise TypeError("discretization must be a TensorSpectralDiscretization.")
     selected = (
@@ -158,45 +243,79 @@ def spectral_laplacian_operator(
         or any(axis < 0 or axis >= len(discretization.axes) for axis in selected)
     ):
         raise ValueError("Laplacian axes must be unique valid spectral axes.")
-    values = jnp.zeros(
-        discretization.modal_shape,
-        dtype=jnp.dtype(discretization.plan.precision.coefficient_dtype),
+    diagonal_families = ("fourier", "sine", "cosine")
+    closed_actions = all(
+        discretization.axes[axis].derivative_matrix is not None
+        or discretization.axes[axis].family in diagonal_families
+        for axis in selected
     )
-    for axis in selected:
-        values = values + _axis_multiplier(discretization, axis, 2)
-    diagonal = values.reshape((-1,))
-    properties = OperatorProperties(
-        diagonal=True,
-        self_adjoint=True,
-        evidence={
-            "diagonal": "construction",
-            "self_adjoint": "construction",
-        },
+    if not closed_actions:
+        raise ValueError(
+            "The selected basis does not define a closed modal derivative action."
+        )
+    diagonal_path = all(
+        discretization.axes[axis].derivative_matrix is None for axis in selected
     )
-    operator = DiagonalLinearOperator(
-        diagonal,
-        space=discretization.modal_space.vector_space,
-        properties=properties,
-        operator_id=canonical_fingerprint(
-            {
-                "kind": "spectral-laplacian-operator",
-                "discretization": discretization.prepared_id,
-                "axes": list(selected),
-            }
-        ),
-    )
+    exact = all(discretization.axes[axis].derivative_exact for axis in selected)
+    if diagonal_path:
+        values = jnp.zeros(
+            discretization.modal_shape,
+            dtype=jnp.dtype(discretization.plan.precision.coefficient_dtype),
+        )
+        for axis in selected:
+            values = values + _axis_multiplier(discretization, axis, 2)
+        diagonal = values.reshape((-1,))
+        properties = OperatorProperties(
+            diagonal=True,
+            self_adjoint=True,
+            evidence={
+                "diagonal": "construction",
+                "self_adjoint": "construction",
+            },
+        )
+        operator: AbstractLinearOperator = DiagonalLinearOperator(
+            diagonal,
+            space=discretization.modal_space.vector_space,
+            properties=properties,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "spectral-laplacian-operator",
+                    "discretization": discretization.prepared_id,
+                    "axes": list(selected),
+                }
+            ),
+        )
+    else:
+        operator = FunctionLinearOperator(
+            lambda coefficients: discretization.modal_laplacian(
+                coefficients,
+                axes=selected,
+            ),
+            source=discretization.modal_space.vector_space,
+            target=discretization.modal_space.vector_space,
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "spectral-laplacian-operator",
+                    "discretization": discretization.prepared_id,
+                    "axes": list(selected),
+                    "path": "axis-actions",
+                }
+            ),
+        )
     return PreparedSpectralOperator(
         operator,
         discretization.modal_space,
         discretization.modal_space,
         axes=selected,
-        derivative_orders=(2,) * len(selected),
-        classification="pseudospectral",
+        axis_actions=("derivative:2",) * len(selected),
+        classification="spectral-laplacian",
+        exact=exact,
     )
 
 
 __all__ = [
     "PreparedSpectralOperator",
     "spectral_derivative_operator",
+    "spectral_hilbert_operator",
     "spectral_laplacian_operator",
 ]

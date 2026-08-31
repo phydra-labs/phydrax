@@ -44,7 +44,32 @@ term evaluation.
     ```
 """
 
+from .._hybrid_sensitivity import HybridSensitivityMode
 from . import maxwell
+from ._balance_law import (
+    AbstractBalanceLawProcessPlan,
+    AbstractPreparedBalanceLawProcess,
+    BalanceLawAdvanceResult,
+    BalanceLawProcessAdvance,
+    BalanceLawProcessState,
+    BalanceLawRolloutResult,
+    BalanceLawRuntimeState,
+    PreparedBalanceLawRuntime,
+    ScheduledBalanceLawRolloutPlan,
+)
+from ._balance_law_adaptive import (
+    AdaptiveBalanceLawRolloutPlan,
+    AdaptiveBalanceLawRolloutResult,
+    BalanceLawAdaptivePolicy,
+    BalanceLawAdaptiveStatus,
+    BalanceLawDecisionJournal,
+)
+from ._balance_law_checkpoint import (
+    BalanceLawCheckpoint,
+    BalanceLawCheckpointPlan,
+    read_balance_law_checkpoint,
+    write_balance_law_checkpoint,
+)
 from ._bdf_method import BDFMethod
 from ._boundary_integral import (
     InteriorLaplaceDirichletResult,
@@ -80,6 +105,15 @@ from ._channel_flow import (
     ChannelSBDF2Method,
     solve_channel_sbdf2,
 )
+from ._characteristic_projection import (
+    CharacteristicProjectionProblem,
+    CharacteristicProjectionResult,
+    CharacteristicTraceResult,
+    CharacteristicVelocity,
+    CharacteristicWrap,
+    solve_characteristic_projection,
+    trace_characteristics,
+)
 from ._cochain_multirate import (
     CochainMultirateDiagnostics,
     CochainMultiratePlan,
@@ -113,6 +147,15 @@ from ._compatible_systems import (
     CompatibleThermoelasticState,
     CompatibleVariableDensityProjection,
     IncompressibleProjectionResult,
+)
+from ._constrained_mhd import (
+    ConstrainedMHDDiagnostics,
+    ConstrainedMHDRolloutResult,
+    ConstrainedMHDRunStatus,
+    ConstrainedMHDScheduledRolloutPlan,
+    ConstrainedMHDSSPRK3Plan,
+    ConstrainedMHDState,
+    ConstrainedMHDStepResult,
 )
 from ._convergence import (
     coupled_strong_error,
@@ -274,8 +317,11 @@ from ._fermionic_gaussian import (
     solve_fermionic_gaussian,
 )
 from ._finite_element_adaptivity import (
+    FiniteElementHPTopologyResult,
     FiniteElementTopologyResult,
     FiniteElementTopologyTransaction,
+    read_finite_element_hp_epoch,
+    write_finite_element_hp_epoch,
 )
 from ._finite_element_checkpoint import (
     FiniteElementCheckpoint,
@@ -334,11 +380,13 @@ from ._finite_volume_implicit import (
 )
 from ._finite_volume_output import FiniteVolumeOutputPlan
 from ._finite_volume_rollout import (
+    AdaptiveFiniteVolumeRolloutPlan,
     FiniteVolumeGradientReport,
-    FiniteVolumeRematerializationPolicy,
+    FiniteVolumeReplayMode,
+    FiniteVolumeReplayPolicy,
     FiniteVolumeRetentionPolicy,
-    FiniteVolumeRolloutPlan,
     FiniteVolumeRolloutResult,
+    ScheduledFiniteVolumeRolloutPlan,
 )
 from ._finite_volume_runtime import (
     FiniteVolumeAdvanceResult,
@@ -346,6 +394,7 @@ from ._finite_volume_runtime import (
     FiniteVolumeEmbeddedAdvanceEvidence,
     FiniteVolumeRunStatus,
     FiniteVolumeRuntimeState,
+    FiniteVolumeScheduledAdvanceResult,
     FiniteVolumeStepPolicy,
     PreparedFiniteVolumeRuntime,
 )
@@ -460,6 +509,11 @@ from ._heom_scaled import (
     prepare_scaled_heom_topology,
     ScaledHEOMTopology,
 )
+from ._hybrid_event import (
+    HybridEventPlan,
+    HybridEventSensitivityResult,
+    localize_hybrid_event,
+)
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -551,6 +605,16 @@ from ._neural_cde import (
     NeuralCDEVectorField,
     train_neural_cde,
 )
+from ._neural_galerkin import (
+    FieldProjectionMetric,
+    NeuralFieldEvolutionResult,
+    NeuralGalerkinAudit,
+    NeuralGalerkinProblem,
+    NeuralTangentSolvePolicy,
+    RateFunction,
+    solve_neural_galerkin,
+    TangentFormulation,
+)
 from ._neural_quantum_jump import (
     NeuralJumpProjectionProblem,
     NeuralJumpProjectionResult,
@@ -574,7 +638,29 @@ from ._nonmarkov_campaign import (
     spin_boson_dephasing_comparison,
     SpinBosonComparisonResult,
 )
-from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
+from ._particle_conversion import (
+    advance_particle_conversion,
+    ParticleConversionBackend,
+    ParticleConversionReplayRecord,
+    ParticleConversionSolverPlan,
+    ParticleConversionStepResult,
+)
+from ._particle_conversion_sensitivity import (
+    particle_conversion_surrogate_bias,
+    particle_conversion_validity_certificate,
+    ParticleConversionSensitivityPolicy,
+    ParticleConversionSensitivityResult,
+    ParticleConversionSurrogateBiasCertificate,
+    ParticleConversionValidityCertificate,
+    sharp_particle_conversion_jvp,
+    sharp_particle_conversion_vjp,
+)
+from ._particle_mesh_gravity import (
+    ParticleMeshGravityDiagnostics,
+    ParticleMeshGravityPlan,
+    ParticleMeshGravityState,
+    ParticleMeshGravityStepResult,
+)
 from ._particle_methods import (
     DEMFixedStepMethod,
     DFSPHFixedStepMethod,
@@ -672,6 +758,32 @@ from ._quantum_trajectory_contract import (
     QuantumTrajectoryPlan,
     QuantumTrajectoryStatus,
 )
+from ._radiative_cooling import (
+    PreparedRadiativeCoolingProcess,
+    RadiativeCoolingDiagnostics,
+    RadiativeCoolingProcessPlan,
+)
+from ._reactive_cfd_dem import (
+    advance_reactive_cfd_dem_window,
+    initialize_reactive_cfd_dem,
+    ReactiveCFDDEMCouplingState,
+    ReactiveCFDDEMEvaluation,
+    ReactiveCFDDEMMacroStepResult,
+    ReactiveCouplingMode,
+    ReactiveFluidFields,
+    ReactiveParticleCouplingSchedulePlan,
+)
+from ._reactive_replay import (
+    checkpointed_reactive_rollout,
+    checkpointed_reactive_vjp,
+    evaluate_reactive_parameter_ensemble,
+    reactive_replay_matches,
+    ReactiveCheckpointPolicy,
+    ReactiveCheckpointVJPResult,
+    ReactiveParameterEnsembleResult,
+    ReactiveReplayRecord,
+    ReactiveReplayResult,
+)
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -717,6 +829,11 @@ from ._rough_delay import (
 from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 from ._rough_logode import LinearLogODE, LogODE
 from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
+from ._self_gravity import (
+    NewtonianGravityDiagnostics,
+    NewtonianSelfGravityPlan,
+    PreparedNewtonianSelfGravity,
+)
 from ._semilinear import (
     exact_modal_stochastic_convolution,
     SemilinearFallback,
@@ -738,6 +855,11 @@ from ._spectral_artifacts import (
 from ._spectral_coordinates import (
     HERMITIAN_COORDINATE_INVALID,
     HermitianCoordinateEvolution,
+)
+from ._spectral_forcing import (
+    PreparedSpectralOUForcing,
+    SpectralOUForcingDiagnostics,
+    SpectralOUForcingPlan,
 )
 from ._split_differential import (
     split_differential_problem,
@@ -844,6 +966,31 @@ from .maxwell import (
 
 
 __all__ = [
+    "AbstractBalanceLawProcessPlan",
+    "AbstractPreparedBalanceLawProcess",
+    "BalanceLawAdvanceResult",
+    "BalanceLawProcessAdvance",
+    "BalanceLawProcessState",
+    "BalanceLawRolloutResult",
+    "BalanceLawRuntimeState",
+    "PreparedBalanceLawRuntime",
+    "ScheduledBalanceLawRolloutPlan",
+    "AdaptiveBalanceLawRolloutPlan",
+    "AdaptiveBalanceLawRolloutResult",
+    "BalanceLawAdaptivePolicy",
+    "BalanceLawAdaptiveStatus",
+    "BalanceLawDecisionJournal",
+    "BalanceLawCheckpoint",
+    "BalanceLawCheckpointPlan",
+    "read_balance_law_checkpoint",
+    "write_balance_law_checkpoint",
+    "ConstrainedMHDDiagnostics",
+    "ConstrainedMHDRolloutResult",
+    "ConstrainedMHDScheduledRolloutPlan",
+    "ConstrainedMHDRunStatus",
+    "ConstrainedMHDSSPRK3Plan",
+    "ConstrainedMHDState",
+    "ConstrainedMHDStepResult",
     "HarmonicConstraint",
     "preserve_magnetic_periods",
     "CalabiYauCampaign",
@@ -1110,10 +1257,12 @@ __all__ = [
     "ProbabilisticODECovarianceOutput",
     "ProbabilisticODEFactorization",
     "ProbabilisticODEMethod",
-    "LocalImplicitSourcePlan",
     "ProbabilisticODESolution",
     "ProbabilisticODEStatus",
     "ProbabilisticODEUpdate",
+    "PreparedRadiativeCoolingProcess",
+    "RadiativeCoolingDiagnostics",
+    "RadiativeCoolingProcessPlan",
     "CaputoFractionalProblem",
     "ConvolutionKernel",
     "ConvolutionVolterraProblem",
@@ -1172,6 +1321,9 @@ __all__ = [
     "SPDEConvergenceLevel",
     "PreparedSplitFieldPML",
     "SpectralStateArtifact",
+    "PreparedSpectralOUForcing",
+    "SpectralOUForcingDiagnostics",
+    "SpectralOUForcingPlan",
     "PreparedStaggeredAcoustics",
     "SPDEConvergenceMetric",
     "SPDEConvergenceStudy",
@@ -1239,7 +1391,13 @@ __all__ = [
     "SplitFieldPMLPlan",
     "StaggeredAcousticPlan",
     "StaggeredAcousticState",
-    "StrangSplitPlan",
+    "ParticleMeshGravityDiagnostics",
+    "ParticleMeshGravityPlan",
+    "ParticleMeshGravityState",
+    "ParticleMeshGravityStepResult",
+    "NewtonianGravityDiagnostics",
+    "NewtonianSelfGravityPlan",
+    "PreparedNewtonianSelfGravity",
     "DirectionalSplitFiniteVolumePlan",
     "FiniteVolumeStepResult",
     "SplittingKind",
@@ -1255,6 +1413,7 @@ __all__ = [
     "FiniteVolumeALEAdvanceEvidence",
     "FiniteVolumeEmbeddedAdvanceEvidence",
     "FiniteVolumeAdvanceResult",
+    "FiniteVolumeScheduledAdvanceResult",
     "FiniteVolumeRunStatus",
     "FiniteVolumeTopologyArtifactEvidence",
     "FiniteVolumeTopologyEventTransaction",
@@ -1299,8 +1458,11 @@ __all__ = [
     "FiniteElementStepDiagnostics",
     "FiniteElementRestartManifest",
     "FiniteElementStepPolicy",
+    "FiniteElementHPTopologyResult",
+    "read_finite_element_hp_epoch",
     "FiniteElementTopologyResult",
     "FiniteElementTopologyTransaction",
+    "write_finite_element_hp_epoch",
     "read_finite_element_restart",
     "write_finite_element_restart",
     "FiniteVolumeCheckpoint",
@@ -1310,11 +1472,13 @@ __all__ = [
     "FiniteVolumeConservativeContentState",
     "apply_stage_rate_euler_update",
     "FiniteVolumeOutputPlan",
+    "AdaptiveFiniteVolumeRolloutPlan",
     "FiniteVolumeGradientReport",
-    "FiniteVolumeRematerializationPolicy",
+    "FiniteVolumeReplayMode",
+    "FiniteVolumeReplayPolicy",
     "FiniteVolumeRetentionPolicy",
-    "FiniteVolumeRolloutPlan",
     "FiniteVolumeRolloutResult",
+    "ScheduledFiniteVolumeRolloutPlan",
     "solve_direct_ssa",
     "solve_jump_differential",
     "solve_next_reaction",
@@ -1463,4 +1627,53 @@ __all__ = [
     "CFDEMCouplingState",
     "CFDEMMacroStepResult",
     "advance_cfd_dem_window",
+    "advance_particle_conversion",
+    "ParticleConversionBackend",
+    "ParticleConversionReplayRecord",
+    "ParticleConversionSolverPlan",
+    "ParticleConversionStepResult",
+    "advance_reactive_cfd_dem_window",
+    "initialize_reactive_cfd_dem",
+    "ReactiveCFDDEMCouplingState",
+    "ReactiveCFDDEMEvaluation",
+    "ReactiveCFDDEMMacroStepResult",
+    "ReactiveCouplingMode",
+    "ReactiveFluidFields",
+    "ReactiveParticleCouplingSchedulePlan",
+    "HybridEventPlan",
+    "HybridEventSensitivityResult",
+    "localize_hybrid_event",
+    "HybridSensitivityMode",
+    "particle_conversion_surrogate_bias",
+    "particle_conversion_validity_certificate",
+    "ParticleConversionSensitivityPolicy",
+    "ParticleConversionSensitivityResult",
+    "ParticleConversionSurrogateBiasCertificate",
+    "ParticleConversionValidityCertificate",
+    "sharp_particle_conversion_jvp",
+    "sharp_particle_conversion_vjp",
+    "checkpointed_reactive_rollout",
+    "checkpointed_reactive_vjp",
+    "evaluate_reactive_parameter_ensemble",
+    "reactive_replay_matches",
+    "ReactiveCheckpointPolicy",
+    "ReactiveCheckpointVJPResult",
+    "ReactiveParameterEnsembleResult",
+    "ReactiveReplayRecord",
+    "ReactiveReplayResult",
+    "CharacteristicProjectionProblem",
+    "CharacteristicProjectionResult",
+    "CharacteristicTraceResult",
+    "CharacteristicVelocity",
+    "CharacteristicWrap",
+    "FieldProjectionMetric",
+    "NeuralFieldEvolutionResult",
+    "NeuralGalerkinAudit",
+    "NeuralGalerkinProblem",
+    "NeuralTangentSolvePolicy",
+    "RateFunction",
+    "TangentFormulation",
+    "solve_characteristic_projection",
+    "solve_neural_galerkin",
+    "trace_characteristics",
 ]

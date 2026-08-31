@@ -112,6 +112,64 @@ def _mass_solve(matrix: Array, right_hand_side: Array, name: str, /) -> Array:
     )
 
 
+class FiniteElementMortarMetricData(StrictModule):
+    """Physical coordinates, weights, and opposite scaled normals for one mortar."""
+
+    physical_coordinates: Array
+    physical_weights: Array
+    owner_scaled_normals: Array
+    neighbour_scaled_normals: Array
+    metric_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        physical_coordinates: ArrayLike,
+        physical_weights: ArrayLike,
+        owner_scaled_normals: ArrayLike,
+        neighbour_scaled_normals: ArrayLike,
+        /,
+        *,
+        metric_id: str | None = None,
+    ):
+        coordinates = jnp.asarray(physical_coordinates)
+        weights = jnp.asarray(physical_weights)
+        owner = jnp.asarray(owner_scaled_normals)
+        neighbour = jnp.asarray(neighbour_scaled_normals)
+        if (
+            coordinates.ndim != 2
+            or weights.shape != (coordinates.shape[0],)
+            or owner.shape != coordinates.shape
+            or neighbour.shape != coordinates.shape
+            or not jnp.issubdtype(coordinates.dtype, jnp.inexact)
+            or not jnp.issubdtype(weights.dtype, jnp.inexact)
+        ):
+            raise ValueError("Mortar metric arrays have incompatible shapes.")
+        identifier = (
+            canonical_fingerprint(
+                {
+                    "kind": "finite-element-mortar-metric",
+                    "coordinates": array_tree_fingerprint(np.asarray(coordinates)),
+                    "weights": array_tree_fingerprint(np.asarray(weights)),
+                    "owner_normals": array_tree_fingerprint(np.asarray(owner)),
+                    "neighbour_normals": array_tree_fingerprint(np.asarray(neighbour)),
+                }
+            )
+            if metric_id is None
+            else str(metric_id)
+        )
+        if not identifier:
+            raise ValueError("metric_id must be non-empty.")
+        self.physical_coordinates = coordinates
+        self.physical_weights = weights
+        self.owner_scaled_normals = owner
+        self.neighbour_scaled_normals = neighbour
+        self.metric_id = identifier
+
+    @property
+    def opposite_normal_error(self) -> Array:
+        return jnp.max(jnp.abs(self.owner_scaled_normals + self.neighbour_scaled_normals))
+
+
 class FiniteElementMortarEvidence(StrictModule, NonTrainableState):
     """Inspectable reproduction, coordinate, and conservation evidence."""
 
@@ -411,27 +469,48 @@ class FiniteElementMortarPlan(StrictModule, NonTrainableState):
             raise ValueError("Mortar values have incompatible shape.")
         return oe.contract("im,m...->i...", self.right_pairing_adjoint, values)
 
-    def integrated_flux(self, flux: ArrayLike, /) -> Array:
+    def integrated_flux(
+        self,
+        flux: ArrayLike,
+        metric: FiniteElementMortarMetricData | None = None,
+        /,
+    ) -> Array:
         value = jnp.asarray(flux)
-        if value.shape[0] != self.physical_weights.shape[0]:
+        physical_weights = (
+            self.physical_weights if metric is None else metric.physical_weights
+        )
+        if value.shape[0] != physical_weights.shape[0]:
             raise ValueError("Mortar flux has incompatible quadrature shape.")
-        weights = self.physical_weights.reshape(
-            self.physical_weights.shape + (1,) * (value.ndim - 1)
+        weights = physical_weights.reshape(
+            physical_weights.shape + (1,) * (value.ndim - 1)
         )
         return jnp.sum(weights * value, axis=0)
 
-    def conservative_flux_contributions(self, flux: ArrayLike, /) -> tuple[Array, Array]:
+    def conservative_flux_contributions(
+        self,
+        flux: ArrayLike,
+        metric: FiniteElementMortarMetricData | None = None,
+        /,
+    ) -> tuple[Array, Array]:
         value = jnp.asarray(flux)
-        if value.shape[0] != self.physical_weights.shape[0]:
+        physical_weights = (
+            self.physical_weights if metric is None else metric.physical_weights
+        )
+        if value.shape[0] != physical_weights.shape[0]:
             raise ValueError("Mortar flux has incompatible quadrature shape.")
-        weights = self.physical_weights.reshape(
-            self.physical_weights.shape + (1,) * (value.ndim - 1)
+        weights = physical_weights.reshape(
+            physical_weights.shape + (1,) * (value.ndim - 1)
         )
         weighted = weights * value
         return self.pullback_left_raw(weighted), -self.pullback_right_raw(weighted)
 
-    def conservation_residual(self, flux: ArrayLike, /) -> Array:
-        left, right = self.conservative_flux_contributions(flux)
+    def conservation_residual(
+        self,
+        flux: ArrayLike,
+        metric: FiniteElementMortarMetricData | None = None,
+        /,
+    ) -> Array:
+        left, right = self.conservative_flux_contributions(flux, metric)
         return jnp.sum(left, axis=0) + jnp.sum(right, axis=0)
 
 
@@ -655,5 +734,6 @@ def serial_finite_element_mortar_plan(
 __all__ = [
     "FiniteElementMortarEvidence",
     "FiniteElementMortarPlan",
+    "FiniteElementMortarMetricData",
     "serial_finite_element_mortar_plan",
 ]

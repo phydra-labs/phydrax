@@ -1868,11 +1868,13 @@ def _coordinate_axis_map(
                         f"is incompatible with basis {discretization.axes[axis].family!r}."
                     )
                 if coordinate.bounds is not None:
-                    actual_bounds = tuple(
-                        float(value)
-                        for value in np.asarray(discretization.axes[axis].bounds)
+                    bounds = discretization.axes[axis].bounds
+                    actual_bounds = (
+                        None
+                        if bounds is None
+                        else tuple(float(value) for value in np.asarray(bounds))
                     )
-                    if not np.allclose(
+                    if actual_bounds is None or not np.allclose(
                         actual_bounds,
                         coordinate.bounds,
                         rtol=1e-10,

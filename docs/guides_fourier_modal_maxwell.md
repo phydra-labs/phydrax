@@ -95,6 +95,42 @@ and isotropic. Magnetoelectric coupling and patterned ports are rejected.
 `passive` and `reciprocal` are scientific claims recorded with the material; they do
 not silently alter the supplied tensors.
 
+
+## Geometry rasterization
+
+`FourierModalRasterizationPlan` maps one compiled two-dimensional or sliced
+three-dimensional geometry onto the prepared lattice pixel centers. The plan owns
+fixed subpixel coordinates; `rasterize_fourier_modal_material` evaluates the current
+geometry state and returns a `FrequencyMaxwellMaterial`, fill fractions, and explicit
+field-certificate evidence.
+
+With `smoothing_width=None`, rasterization uses the exact region predicate and is a
+discrete derivative boundary. A positive smoothing width applies Phydrax's compact
+regularized Heaviside to the geometry boundary field. Geometry parameters are then
+differentiable only when the geometry's `FieldCertificate` says they are.
+
+```python
+raster_plan = fm.FourierModalRasterizationPlan(
+    harmonics,
+    fm.FourierModalRasterizationPolicy(
+        samples_per_axis=3,
+        smoothing_width=0.02,
+    ),
+)
+material = fm.rasterize_fourier_modal_material(
+    raster_plan,
+    geometry,
+    inside_permittivity=12.0,
+    outside_permittivity=1.0,
+    material_id="inclusion",
+).material
+```
+
+The initial contract supports scalar inside/outside permittivity and permeability on
+a two-dimensional lattice. It performs arithmetic fill averaging, not tensor
+interface factorization. The resulting material may still use direct, inverse, or
+vector Fourier factorization during layer preparation.
+
 ## Fourier factorization
 
 - `DirectFourierFactorizationPlan`: direct Laurent multiplication.

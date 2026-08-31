@@ -1317,7 +1317,7 @@ space = phx.discretization.TensorSpectralPlan(
     (phx.discretization.FourierBasisPlan(32),),
     axis_names=("x",),
     field_name="u",
-).prepare(jnp.asarray([[0.0], [1.0]]))
+).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 method = phx.discretization.PseudospectralMethodPlan(
     dealiasing=phx.discretization.PolynomialClosureDealiasingPlan(2),
 )
@@ -1380,6 +1380,73 @@ Classification fields are dimensionless and have no physical component channels 
 the initial contract. Keep continuous physical fields separate and apply cochain or
 conservation physics only to those declared fields or an explicitly decoded
 probability/order field.
+
+## Autoregressive operator training and deployment
+
+Operator autoregression is a task-bound physical state route, not an arbitrary
+array feedback callback. `OperatorRolloutRoute` binds one model prediction to
+one coincident physical source field. Every other input remains static
+conditioning, and source/query support identities and component specifications
+must match exactly. Ordered future-step target aliases retain the routed task
+field's dimensional transform and canonical target normalizer without becoming
+additional model outputs.
+
+```text
+route = phx.nn.operator.training.OperatorRolloutRoute(
+    source_name="state",
+    prediction_name="state",
+    task_field="state",
+)
+policy = phx.nn.operator.training.OperatorRolloutPolicy(
+    maximum_horizon=3,
+    initial_horizon=1,
+    transition_steps=100,
+)
+rollout_loss = phx.nn.operator.training.SupervisedOperatorRolloutLoss(
+    target_fields=("state_t1", "state_t2", "state_t3"),
+    time_weights=(1.0, 1.0, 1.0),
+)
+fit = phx.nn.operator.training.fit_operator(
+    model,
+    rollout_dataset,
+    task=task,
+    loss_terms=(rollout_loss,),
+    training_evidence=training_evidence,
+    rollout_route=route,
+    rollout_policy=policy,
+    steps=300,
+)
+```
+
+At every recurrent step the candidate output is physicalized, passed through
+the configured hard-constraint/conservation pipeline, inserted into the
+physical source, and then nondimensionalized, normalized, sanitized, and cast
+again. This is the same authored step used by deployed rollout:
+
+```text
+first = phx.nn.operator.training.autoregressive_operator_rollout(
+    fit.trained_operator,
+    initial_batch,
+    2,
+    route,
+    key=jr.key(7),
+)
+second = phx.nn.operator.training.autoregressive_operator_rollout(
+    fit.trained_operator,
+    first.final_batch,
+    1,
+    route,
+    key=jr.key(7),
+    step_offset=first.next_step,
+)
+```
+
+`predictions`, `final_batch`, and `next_step` make chunk continuation explicit.
+Semantic keys use the absolute step, so full and chunked execution agree. There
+is no inferred carry, JAXPR transformation, teacher-forcing path, or separate
+training-only recurrence. Dynamic controls, independent queries, and multiple
+recurrent state fields require a future typed route rather than an `advance`
+closure.
 
 ## Reproducible production training
 

@@ -1,0 +1,328 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+from __future__ import annotations
+
+from typing import Any
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import numpy as np
+from jaxtyping import Array
+
+from .._fingerprint import canonical_fingerprint
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
+from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
+from ..equations import EulerSystem, TabulatedCoolingCurve
+from ..nonlinear import (
+    implicit_root_result,
+    NonlinearSystemProblem,
+    NonlinearTermination,
+)
+from ._balance_law import (
+    AbstractBalanceLawProcessPlan,
+    AbstractPreparedBalanceLawProcess,
+    BalanceLawProcessAdvance,
+    BalanceLawProcessState,
+)
+from ._finite_volume_runtime import FiniteVolumeRuntimeState, PreparedFiniteVolumeRuntime
+
+
+class RadiativeCoolingDiagnostics(StrictModule):
+    temperature_before: Array
+    temperature_after: Array
+    energy_change: Array
+    maximum_residual: Array
+    maximum_iterations: Array
+    supported: Array
+    successful: Array
+
+
+class RadiativeCoolingProcessPlan(AbstractBalanceLawProcessPlan):
+    curve: TabulatedCoolingCurve
+    amplitude: float = eqx.field(static=True)
+    amplitude_argument: str | None = eqx.field(static=True)
+    accuracy_fraction: float = eqx.field(static=True)
+    maximum_iterations: int = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        curve: TabulatedCoolingCurve,
+        /,
+        *,
+        amplitude: float = 1.0,
+        amplitude_argument: str | None = None,
+        accuracy_fraction: float = 0.1,
+        maximum_iterations: int = 20,
+        tolerance: float = 1e-9,
+    ):
+        if not isinstance(curve, TabulatedCoolingCurve):
+            raise TypeError("curve must be TabulatedCoolingCurve.")
+        amplitude_ = float(amplitude)
+        fraction = float(accuracy_fraction)
+        iterations = int(maximum_iterations)
+        tolerance_ = float(tolerance)
+        argument = None if amplitude_argument is None else str(amplitude_argument)
+        if (
+            not np.isfinite(amplitude_)
+            or amplitude_ <= 0.0
+            or not np.isfinite(fraction)
+            or not 0.0 < fraction <= 1.0
+            or iterations <= 0
+            or not np.isfinite(tolerance_)
+            or tolerance_ <= 0.0
+            or (argument is not None and not argument)
+        ):
+            raise ValueError("Radiative cooling process parameters are invalid.")
+        self.curve = curve
+        self.amplitude = amplitude_
+        self.amplitude_argument = argument
+        self.accuracy_fraction = fraction
+        self.maximum_iterations = iterations
+        self.tolerance = tolerance_
+        self.process_id = canonical_fingerprint(
+            {
+                "kind": "radiative-cooling-process",
+                "curve": curve.curve_id,
+                "amplitude": amplitude_,
+                "amplitude_argument": argument,
+                "accuracy_fraction": fraction,
+                "maximum_iterations": iterations,
+                "tolerance": tolerance_,
+            }
+        )
+
+    def prepare(
+        self, runtime: PreparedFiniteVolumeRuntime, /
+    ) -> "PreparedRadiativeCoolingProcess":
+        return PreparedRadiativeCoolingProcess(self, runtime)
+
+
+class _CoolingResidual(StrictModule, NonTrainableState):
+    system: EulerSystem
+    curve: TabulatedCoolingCurve
+
+    def __call__(self, log_excess: Array, args: Any, /) -> Array:
+        density, initial_internal, step, amplitude, floor = args
+        internal = floor + jnp.exp(log_excess)
+        pressure = (self.system.gamma - 1.0) * internal
+        temperature = self.system.material.temperature(density, pressure)
+        evaluated = self.curve.evaluate(temperature)
+        cooling = amplitude * density**2 * evaluated.rate
+        residual = internal - initial_internal + step * cooling
+        return jnp.where(evaluated.supported, residual, jnp.asarray(jnp.nan))
+
+
+class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
+    plan: RadiativeCoolingProcessPlan
+    runtime: PreparedFiniteVolumeRuntime
+    dynamics: PreparedFiniteVolumeDynamics
+    problem: NonlinearSystemProblem
+    termination: NonlinearTermination
+    density_index: int = eqx.field(static=True)
+    momentum_indices: tuple[int, ...] = eqx.field(static=True)
+    energy_index: int = eqx.field(static=True)
+    cell_shape: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        plan: RadiativeCoolingProcessPlan,
+        runtime: PreparedFiniteVolumeRuntime,
+        /,
+    ):
+        if not isinstance(plan, RadiativeCoolingProcessPlan):
+            raise TypeError("plan must be RadiativeCoolingProcessPlan.")
+        if not isinstance(runtime, PreparedFiniteVolumeRuntime) or not isinstance(
+            runtime.dynamics, PreparedFiniteVolumeDynamics
+        ):
+            raise TypeError("Radiative cooling requires stationary structured FV.")
+        dynamics = runtime.dynamics
+        if not isinstance(dynamics.system, EulerSystem):
+            raise TypeError("Initial radiative cooling support requires EulerSystem.")
+        residual = _CoolingResidual(dynamics.system, plan.curve)
+        problem_id = canonical_fingerprint(
+            {
+                "kind": "radiative-cooling-implicit-root",
+                "system": dynamics.system.system_id,
+                "curve": plan.curve.curve_id,
+            }
+        )
+        problem = NonlinearSystemProblem(residual, problem_id=problem_id)
+        termination = NonlinearTermination(
+            absolute_residual=plan.tolerance,
+            relative_residual=plan.tolerance,
+            absolute_step=0.0,
+            relative_step=0.0,
+            maximum_steps=plan.maximum_iterations,
+        )
+        names = tuple(dynamics.system.component_names)
+        self.plan = plan
+        self.runtime = runtime
+        self.dynamics = dynamics
+        self.problem = problem
+        self.termination = termination
+        self.density_index = names.index("density")
+        self.momentum_indices = tuple(
+            names.index(f"momentum_{axis}") for axis in range(dynamics.system.dimension)
+        )
+        self.energy_index = names.index("total_energy")
+        self.cell_shape = tuple(dynamics.discretization.cell_shape)
+        self.process_id = canonical_fingerprint(
+            {
+                "kind": "prepared-radiative-cooling",
+                "plan": plan.process_id,
+                "runtime": runtime.runtime_id,
+                "root_problem": problem_id,
+            }
+        )
+        self.requires_realization = False
+        self.realization_name = None
+        self.differentiability = "branchwise-implicit"
+
+    def initialize(
+        self, transport_state: FiniteVolumeRuntimeState, args: Any = None, /
+    ) -> BalanceLawProcessState:
+        del transport_state, args
+        return BalanceLawProcessState.empty(self.process_id)
+
+    def _field(self, cell_average: Array, /) -> Array:
+        components = len(self.dynamics.system.component_names)
+        expected = (int(np.prod(self.cell_shape)), components)
+        value = jnp.asarray(cell_average)
+        if value.shape != expected:
+            raise ValueError(f"Cooling cell_average must have shape {expected}.")
+        return value.reshape(self.cell_shape + (components,))
+
+    def _amplitude(self, args: Any, dtype, /) -> Array:
+        raw = (
+            self.plan.amplitude
+            if self.plan.amplitude_argument is None
+            else args[self.plan.amplitude_argument]
+        )
+        amplitude = jnp.asarray(raw, dtype=dtype).reshape(())
+        return eqx.error_if(
+            amplitude,
+            ~jnp.isfinite(amplitude) | (amplitude <= 0.0),
+            "Cooling amplitude must be positive and finite.",
+        )
+
+    def _thermodynamics(self, field: Array, /) -> tuple[Array, Array, Array, Array]:
+        density = field[..., self.density_index]
+        momentum = field[..., self.momentum_indices]
+        kinetic = 0.5 * jnp.sum(momentum**2, axis=-1) / density
+        internal = field[..., self.energy_index] - kinetic
+        pressure = (self.dynamics.system.gamma - 1.0) * internal
+        temperature = self.dynamics.system.material.temperature(density, pressure)
+        return density, kinetic, internal, temperature
+
+    def step_limit(
+        self,
+        time: Array,
+        cell_average: Array,
+        process_state: BalanceLawProcessState,
+        args: Any = None,
+        /,
+    ) -> Array:
+        del time, process_state
+        field = self._field(cell_average)
+        density, _, internal, temperature = self._thermodynamics(field)
+        amplitude = self._amplitude(args, field.dtype)
+        evaluated = self.plan.curve.evaluate(temperature)
+        rate = amplitude * density**2 * evaluated.rate
+        local = jnp.where(rate > 0.0, internal / rate, jnp.inf)
+        supported = jnp.all(evaluated.supported)
+        return jnp.where(
+            supported,
+            self.plan.accuracy_fraction * jnp.min(local),
+            jnp.asarray(jnp.nan, dtype=field.dtype),
+        )
+
+    def advance(
+        self,
+        start_time: Array,
+        end_time: Array,
+        cell_average: Array,
+        process_state: BalanceLawProcessState,
+        realization: Any = None,
+        args: Any = None,
+        /,
+    ) -> BalanceLawProcessAdvance:
+        del realization
+        if process_state.process_id != self.process_id or process_state.values:
+            raise ValueError("Radiative cooling process state changed.")
+        step = jnp.asarray(end_time - start_time)
+        field = self._field(cell_average)
+        density, kinetic, internal, temperature_before = self._thermodynamics(field)
+        amplitude = self._amplitude(args, field.dtype)
+        floor = jnp.asarray(
+            self.dynamics.system.pressure_floor / (self.dynamics.system.gamma - 1.0),
+            dtype=field.dtype,
+        )
+        excess = jnp.maximum(internal - floor, jnp.finfo(field.dtype).tiny)
+        initial_log = jnp.log(excess)
+        flat_log = initial_log.reshape((-1,))
+        flat_density = density.reshape((-1,))
+        flat_internal = internal.reshape((-1,))
+
+        def solve_cell(log_value, density_value, internal_value):
+            result = implicit_root_result(
+                self.problem,
+                log_value,
+                termination=self.termination,
+                args=(density_value, internal_value, step, amplitude, floor),
+            )
+            return (
+                result.state,
+                result.successful,
+                result.diagnostics.final_residual_norm,
+                result.diagnostics.iterations,
+            )
+
+        solved_log, cell_success, residual, iterations = jax.vmap(solve_cell)(
+            flat_log, flat_density, flat_internal
+        )
+        internal_new = (floor + jnp.exp(solved_log)).reshape(self.cell_shape)
+        energy_new = kinetic + internal_new
+        candidate = field.at[..., self.energy_index].set(energy_new)
+        pressure_new = (self.dynamics.system.gamma - 1.0) * internal_new
+        temperature_after = self.dynamics.system.material.temperature(
+            density, pressure_new
+        )
+        supported = self.plan.curve.evaluate(temperature_after).supported
+        successful = (
+            jnp.all(cell_success)
+            & jnp.all(supported)
+            & jnp.all(jnp.isfinite(candidate))
+            & jnp.all(self.dynamics.system.admissible(candidate))
+        )
+        accepted = jnp.where(successful, candidate, field)
+        diagnostics = RadiativeCoolingDiagnostics(
+            temperature_before=temperature_before,
+            temperature_after=temperature_after,
+            energy_change=accepted[..., self.energy_index]
+            - field[..., self.energy_index],
+            maximum_residual=jnp.max(residual),
+            maximum_iterations=jnp.max(iterations),
+            supported=jnp.all(supported),
+            successful=successful,
+        )
+        incoming = field.reshape(cell_average.shape)
+        accepted_flat = accepted.reshape(cell_average.shape)
+        return BalanceLawProcessAdvance(
+            cell_average=accepted_flat,
+            process_state=process_state,
+            successful=successful,
+            source_change=accepted_flat - incoming,
+            diagnostics=diagnostics,
+        )
+
+
+__all__ = [
+    "PreparedRadiativeCoolingProcess",
+    "RadiativeCoolingDiagnostics",
+    "RadiativeCoolingProcessPlan",
+]

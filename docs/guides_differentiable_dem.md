@@ -22,4 +22,6 @@ A sharp branchwise derivative is the JVP/VJP of the executed fixed-step program 
 
 ## Hybrid event mode
 
-`DEMHybridEventPlan` localizes one bracketed guard, applies a reset, and computes the saltation matrix including event-time sensitivity. Grazing, simultaneous competing guards, unbracketed roots, nonfinite state, or residual above tolerance fail. General simultaneous-impact and topology-event sensitivities remain research limitations.
+`HybridEventPlan` is the shared transverse-event contract for DEM and particle conversion. It localizes one bracketed guard, applies a reset, and computes the saltation matrix including event-time sensitivity. `HybridSensitivityMode` selects sharp branchwise, smooth surrogate, or hybrid-event-aware treatment where supported.
+
+`ParticleConversionSensitivityPolicy` adds species-exhaustion, porosity, morphology-scale, temperature-bound, phase, and reaction margins. Conversion JVP/VJP results carry a validity certificate and return invalid/NaN payloads at unresolved branch changes. Grazing, simultaneous competing guards, unbracketed roots, nonfinite state, or residual above tolerance fail. General simultaneous-impact and topology-event sensitivities remain research limitations.

@@ -167,7 +167,7 @@ def test_time_law_schedule_and_uniform_refinement_are_transactional():
     assert jnp.allclose(final_state, 1.0)
     assert bool(results[0].accepted)
     assert refined.blocks[0].cell_count == 16
-    assert refinement.child_cells.shape == (4, 4)
+    assert refinement.child_cell_ids.shape == (4, 4)
 
 
 def test_element_partial_and_p_transfer_operators_are_consistent():

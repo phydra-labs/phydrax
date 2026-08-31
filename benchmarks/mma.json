@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {
+      "constraint_evaluations": 76,
+      "finite": true,
+      "iterations": 18,
+      "objective": 67.23181773091744,
+      "objective_evaluations": 38,
+      "optimality": 6.688658515940915e-10,
+      "relative_point_error": 1.4420569331425633e-11,
+      "size": 16,
+      "status": 0,
+      "volume_violation": 3.552713678800501e-15,
+      "wall_seconds": 1.731681291013956
+    },
+    {
+      "constraint_evaluations": 80,
+      "finite": true,
+      "iterations": 19,
+      "objective": 270.914002284538,
+      "objective_evaluations": 40,
+      "optimality": 4.035154432813215e-10,
+      "relative_point_error": 6.14027872803963e-12,
+      "size": 64,
+      "status": 0,
+      "volume_violation": 1.4210854715202004e-14,
+      "wall_seconds": 1.1256305829738267
+    }
+  ]
+}

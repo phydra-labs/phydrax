@@ -313,6 +313,7 @@ def sphere_pair_contact_geometry(
     /,
     *,
     distance_tolerance: float = 1.0e-12,
+    radii: Array | None = None,
 ) -> SpherePairContactGeometry:
     """Lift center geometry to one common-point rigid-sphere contact geometry."""
 
@@ -336,8 +337,11 @@ def sphere_pair_contact_geometry(
         raise ValueError("distance_tolerance must be finite and positive.")
     left = pairs.left_indices
     right = pairs.right_indices
-    left_radius = bodies.radii[left]
-    right_radius = bodies.radii[right]
+    radius_values = bodies.radii if radii is None else jnp.asarray(radii)
+    if radius_values.shape != bodies.radii.shape:
+        raise ValueError("Dynamic sphere radii must match body capacity.")
+    left_radius = radius_values[left]
+    right_radius = radius_values[right]
     normal = geometry.direction
     gap = geometry.distance - left_radius - right_radius
     overlap = jnp.where(geometry.valid, jnp.maximum(-gap, 0.0), 0.0)
