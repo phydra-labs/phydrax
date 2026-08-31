@@ -257,6 +257,57 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             output.append(value[offset : offset + count].reshape(shape))
         return tuple(output)
 
+    def pack_normal_flux(self, components: tuple[ArrayLike, ...], /) -> Array:
+        """Integrate a Cartesian vector through oriented codimension-one entities."""
+        if len(components) != self.dimension:
+            raise ValueError("One normal-flux component is required per dimension.")
+        values = tuple(jnp.asarray(component) for component in components)
+        if self.dimension == 1:
+            return self.pack(0, values)
+        if self.dimension == 2:
+            bx, by = values
+            measure_x, measure_y = self.unpack(1, self.cochain.primal_measures[1])
+            return self.pack(1, (-by * measure_x, bx * measure_y))
+        return self.pack_face_flux(values)
+
+    def unpack_normal_flux(self, values: ArrayLike, /) -> tuple[Array, ...]:
+        """Recover Cartesian normal fields from codimension-one flux integrals."""
+        if self.dimension == 1:
+            return self.unpack(0, values)
+        if self.dimension == 2:
+            flux_x, flux_y = self.unpack(1, values)
+            measure_x, measure_y = self.unpack(1, self.cochain.primal_measures[1])
+            return (flux_y / measure_y, -flux_x / measure_x)
+        return self.unpack_face_flux(values)
+
+    def pack_electromotive(
+        self,
+        components: tuple[ArrayLike, ...],
+        /,
+    ) -> Array:
+        """Integrate the Faraday electromotive form for two or three dimensions."""
+        if self.dimension == 2:
+            if len(components) != 1:
+                raise ValueError("Planar MHD requires one out-of-plane electromotive.")
+            return self.pack(0, components)
+        if self.dimension == 3:
+            if len(components) != 3:
+                raise ValueError("Three-dimensional MHD requires three edge components.")
+            return self.pack_edge_circulation(components)
+        if components:
+            raise ValueError("One-dimensional MHD has no evolved EMF cochain.")
+        return jnp.zeros((0,))
+
+    def unpack_electromotive(self, values: ArrayLike, /) -> tuple[Array, ...]:
+        if self.dimension == 2:
+            return self.unpack(0, values)
+        if self.dimension == 3:
+            return self.unpack_edge_circulation(values)
+        value = jnp.asarray(values)
+        if value.shape != (0,):
+            raise ValueError("One-dimensional EMF storage must be empty.")
+        return ()
+
     def pack_edge_circulation(
         self, components: tuple[ArrayLike, ArrayLike, ArrayLike], /
     ) -> Array:

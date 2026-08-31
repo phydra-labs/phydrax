@@ -3,6 +3,7 @@
 #
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -142,6 +143,33 @@ def test_neumann_direct_solve_projects_compatibility_and_enforces_minimum_norm()
     np.testing.assert_allclose(jnp.mean(projected.value), 0.0, atol=2e-12)
     assert float(projected.removed_component_norm) > 1.0
     assert float(projected.residual_norm) < 2e-9
+
+
+def test_neumann_direct_solve_has_finite_mathematical_derivatives():
+    diagonalization = phx.discretization.diagonalize_fd_laplacian(
+        _grid(phx.discretization.UniformCellAxisSpec(32)),
+        {"x": ("neumann", "neumann")},
+    )
+    coordinates = diagonalization.unknown_coordinates[0]
+    seed = jnp.sin(2.0 * jnp.pi * coordinates)
+    right_hand_side = diagonalization.operator.mv(seed)
+    plan = phx.discretization.FDLaplacianSolvePlan(
+        diagonalization,
+        compatibility="project_rhs",
+        gauge="zero_mean",
+    )
+
+    def objective(rhs):
+        value = plan.solve(rhs).value
+        return 0.5 * jnp.vdot(value, value).real
+
+    gradient = jax.jit(jax.grad(objective))(right_hand_side)
+    solution = plan.solve(right_hand_side).value
+    expected = plan.solve(solution).value
+
+    assert jnp.all(jnp.isfinite(gradient))
+    np.testing.assert_allclose(gradient, expected, rtol=2e-10, atol=2e-10)
+    np.testing.assert_allclose(jnp.mean(gradient), 0.0, atol=2e-12)
 
 
 def test_fd_diagonalization_rejects_boundary_metadata_mismatch():

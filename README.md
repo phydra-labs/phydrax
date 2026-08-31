@@ -43,6 +43,11 @@ Most workflows are composing a few primitives:
   measures, transfers, fixed-temporal differentiable replay, transactional
   gravity/cooling/stochastic source processes, compatible constrained MHD,
   temporal/stochastic composition, and auditable plan/preparation identities.
+- **Discrete structural form-finding**: sparse pin-jointed force-density
+  equilibrium supports full or componentwise coordinate restraints, tension,
+  compression, mixed signs, fixed and shape-dependent loads, mathematical
+  solution derivatives, and force/support/load state-design optimization with
+  physical residual, reaction, status, and provenance evidence.
 - **Finite-molecule atomistic learning**: scale-identified atomic structures and
   padded case-isolated batches reuse material-particle identities and `GraphIR`;
   PaiNN scalar/vector interactions produce invariant molecular energies and
@@ -285,6 +290,9 @@ Can be found [here](https://phydra-labs.github.io/phydrax).
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
 [quantum operators and dynamics](docs/guides_quantum.md).
+The [force-density form-finding guide](docs/guides_force_density.md) covers
+pin-jointed equilibrium, follower loads, implicit derivatives, and inverse
+structural design while keeping these distinct from constitutive FEM analysis.
 The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
 demonstrates correlated empirical integration outside quantum mechanics, while the
 [VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian

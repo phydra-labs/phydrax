@@ -1,0 +1,74 @@
+{
+  "balance_law": {
+    "adaptive_realize_replay": "qualified",
+    "accepted_transport_integrals": "implemented",
+    "accepted_step_couplings": "implemented",
+    "multirate_source_subcycling": "implemented",
+    "general_imex_tableau": "implemented"
+  },
+  "constrained_mhd": {
+    "one_dimensional_periodic": "implemented",
+    "two_point_five_dimensional_periodic": "implemented",
+    "three_dimensional_periodic": "qualified",
+    "primitive_plm": "implemented",
+    "primitive_weno_z": "implemented",
+    "primitive_teno": "implemented",
+    "primitive_mp5": "implemented",
+    "hll_uct": "implemented",
+    "physical_boundary_policies": "implemented",
+    "local_cell_positivity": "implemented",
+    "dual_energy": "implemented",
+    "ctu_predictor": "implemented",
+    "characteristic_reconstruction": "implemented",
+    "mapped_faraday": "implemented",
+    "ale_faraday": "implemented",
+    "unstructured_glm": "implemented",
+    "unstructured_cochain_faraday": "implemented",
+    "distributed_entity_ownership": "implemented"
+  },
+  "gravity": {
+    "periodic": "qualified",
+    "dirichlet": "implemented",
+    "neumann": "implemented",
+    "mixed": "implemented",
+    "conservative_energy_coupling": "implemented",
+    "composite_amr": "implemented",
+    "isolated_zero_padded_green": "implemented",
+    "distributed_solve": "implemented"
+  },
+  "material_sources": {
+    "implicit_cooling": "qualified",
+    "exact_piecewise_power_law_cooling": "implemented",
+    "constant_heating": "implemented",
+    "continuum_thermochemistry": "implemented",
+    "gray_flux_limited_diffusion": "implemented",
+    "multigroup_m1_transport": "implemented"
+  },
+  "nonideal_mhd": {
+    "resistive": "implemented",
+    "hall": "implemented",
+    "ambipolar": "implemented",
+    "anisotropic_conduction": "implemented"
+  },
+  "amr": {
+    "magnetic_restriction": "implemented",
+    "magnetic_prolongation": "implemented",
+    "emf_reflux_curl": "implemented",
+    "topology_replay": "implemented",
+    "composite_gravity": "implemented"
+  },
+  "applications": {
+    "flrw_background": "implemented",
+    "cosmological_kdk": "implemented",
+    "first_order_lagrangian_initial_conditions": "implemented",
+    "coupled_baryon_dark_matter_runtime": "implemented"
+  },
+  "inference": {
+    "whitened_field_log_density": "implemented",
+    "sensitivity_report": "implemented",
+    "particle_marginal_likelihood": "implemented",
+    "structure_preserving_face_closure": "implemented",
+    "coupled_face_edge_mhd_closure": "implemented",
+    "ood_fallback": "implemented"
+  }
+}
