@@ -29,7 +29,12 @@ from ._assignment import (
     MultilinearSplatAssignment,
     SplatAssignmentState,
 )
-from ._reduction import cast_stage, certified_sum, deposit_routes
+from ._reduction import (
+    _scatter_route_payload,
+    cast_stage,
+    certified_sum,
+    deposit_routes,
+)
 from ._types import (
     ParticleGridSplatBudget,
     SplatBalanceEvidence,
@@ -37,6 +42,7 @@ from ._types import (
     SplatDepositResult,
     SplatExecutionPolicy,
     SplatReconstructionResult,
+    SplatRouteScatterResult,
 )
 
 
@@ -498,6 +504,58 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             self.plan.execution.accumulation,
         )
         return state.require_success(target)
+
+    def scatter_route_payload(
+        self,
+        state: ParticleGridSplatState,
+        payload: ArrayLike,
+        /,
+    ) -> SplatRouteScatterResult:
+        """Reduce an already weighted payload for every particle-grid route."""
+        self._require_state(state)
+        values = jnp.asarray(payload)
+        route_shape = state.stencil.indices.shape
+        if (
+            values.ndim < 2
+            or tuple(int(size) for size in values.shape[:2]) != route_shape
+        ):
+            raise ValueError(
+                f"Route payload must begin with route shape {route_shape}; "
+                f"got {values.shape}."
+            )
+        evaluated = cast_stage(values, self.plan.precision.evaluation_dtype)
+        payload_shape = evaluated.shape[2:]
+        active = self.particles.active_mask.reshape(
+            (self.particles.capacity, 1) + (1,) * len(payload_shape)
+        )
+        evaluated = eqx.error_if(
+            evaluated,
+            jnp.any(jnp.where(active, ~jnp.isfinite(evaluated), False)),
+            "Active route payload values must be finite.",
+        )
+        evaluated = jnp.where(active, evaluated, jnp.zeros((), dtype=evaluated.dtype))
+        accumulated = cast_stage(
+            evaluated,
+            self.plan.precision.accumulation_dtype,
+        )
+        target_flat = _scatter_route_payload(
+            state.stencil,
+            accumulated,
+            self.stable_source_order,
+            self.target_size,
+            self.plan.execution.accumulation,
+        )
+        target = target_flat.reshape(self.target_shape + payload_shape)
+        target = cast_stage(target, self.plan.precision.output_dtype)
+        successful = state.successful & jnp.all(jnp.isfinite(target))
+        target = state.require_success(target)
+        return SplatRouteScatterResult(
+            target,
+            state.valid_route_count,
+            successful,
+            execution_policy_id=self.plan.execution.policy_id,
+            precision_policy_id=self.plan.precision.policy_id,
+        )
 
     def deposit_content(
         self,

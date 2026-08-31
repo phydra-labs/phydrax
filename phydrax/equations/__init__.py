@@ -195,6 +195,16 @@ from ._manufactured import (
     ManufacturedPDECase,
     ManufacturedSpatialOperator,
 )
+from ._material_point import (
+    AbstractMPMConstitutivePlan,
+    compile_material_point_problem,
+    CompiledMaterialPointProblem,
+    ExternalMPMAcceleration,
+    MaterialPointArguments,
+    MaterialPointProblemIR,
+    MPMConstitutiveResponse,
+    MPMKinematics,
+)
 from ._materials import (
     AbstractThermodynamicMaterial,
     IdealGasMaterial,
@@ -421,6 +431,14 @@ __all__ = [
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
+    "AbstractMPMConstitutivePlan",
+    "MPMConstitutiveResponse",
+    "MPMKinematics",
+    "compile_material_point_problem",
+    "CompiledMaterialPointProblem",
+    "ExternalMPMAcceleration",
+    "MaterialPointArguments",
+    "MaterialPointProblemIR",
     "ConstitutiveResponse",
     "FiniteElementMaterialState",
     "FiniteElementMaterialTransaction",

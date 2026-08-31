@@ -634,6 +634,17 @@ from ._markov_cubature import (
     PolynomialRecombination,
     solve_markov_cubature,
 )
+from ._material_point_rollout import (
+    MPMGradientKind,
+    MPMGradientReport,
+    MPMReplayEvidence,
+    MPMReplayMode,
+    MPMReplayPolicy,
+    MPMRetainedTrajectory,
+    MPMRetentionMode,
+    MPMRolloutResult,
+    ScheduledMPMRolloutPlan,
+)
 from ._memory import (
     ConvolutionKernel,
     ConvolutionVolterraProblem,
@@ -1808,4 +1819,13 @@ __all__ = [
     "solve_characteristic_projection",
     "solve_neural_galerkin",
     "trace_characteristics",
+    "MPMGradientKind",
+    "MPMGradientReport",
+    "MPMReplayEvidence",
+    "MPMReplayMode",
+    "MPMReplayPolicy",
+    "MPMRetentionMode",
+    "MPMRetainedTrajectory",
+    "MPMRolloutResult",
+    "ScheduledMPMRolloutPlan",
 ]

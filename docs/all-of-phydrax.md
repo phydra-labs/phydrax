@@ -116,8 +116,12 @@ energy/dissipation ledgers, and native SSPRK integration. Structured
 particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
-route moments, and fast/deterministic/compensated reductions. DEM adds stable
-compositional normal/cohesion/tangential/rotational history, accepted-step
+route moments, and fast/deterministic/compensated reductions. Explicit material
+point dynamics compose that transfer with quadratic nodal B-splines, matched
+APIC momentum, first-Piola reference-volume forces, transactional USL updates,
+stability evidence, and fixed-temporal replay for plane-strain and
+three-dimensional Neo-Hookean solids. DEM adds stable compositional
+normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
 elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
 bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
@@ -127,6 +131,7 @@ shrinking-core conversion, morphology, conservative continuum/contact/radiative
 exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
+[Guide → Material point method](guides_material_point_method.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
 [Guide → Wet granular contact](guides_wet_granular_contact.md),
 [Guide → Superquadric DEM](guides_superquadric_dem.md),
