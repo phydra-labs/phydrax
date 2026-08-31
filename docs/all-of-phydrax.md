@@ -140,7 +140,7 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
-### Atomistic learning: finite molecular energies and conservative forces
+### Atomistic learning and conservative dynamics
 
 `phydrax.atomistic` specializes the existing material-particle and `GraphIR`
 substrates for scale-identified finite molecules. `AtomicStructure` and
@@ -164,13 +164,20 @@ fits loss normalization from the training split only, and reuses the shared key,
 callback, selection, patience, and deterministic-continuation lifecycle. The
 offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
 indices; the campaign tool compares matched PaiNN and NequIP runs across seeds.
-This is a finite nonperiodic molecular research capability: preserved cell or
-periodic metadata is rejected by both models, and the NequIP scope stops at
-degree two. There is no high-degree irreps or MACE claim, stress, long-range
-electrostatics, direct-force head, ASE integration, or molecular-dynamics
-stability claim. See [Guide → Atomistic learning](guides_atomistic.md),
-[Cookbook → Finite-molecule atomistic potentials](cookbook/atomistic.md), and
-[API → Atomistic molecular learning](api/atomistic.md).
+The existing learned models retain their finite nonperiodic training and prediction
+scope unless explicitly wrapped with periodic graph execution; execution capability
+does not certify rollout stability. The atomistic dynamics substrate separately
+provides complete unit systems, position-independent prepared systems, stable-ID
+molecular topology and pair exceptions, classical and learned scalar-energy
+programs, dense/cell/Verlet execution, NVE and BAOAB NVT, SHAKE/RATTLE,
+triclinic cells and stress, direct Ewald and native B-spline PME, isotropic NPT
+moves, bounded replay, exact checkpoints, hybrid composition, ring polymers,
+and variance-constrained semi-grand transitions. Every capacity or physical
+failure remains typed and fail-closed. See
+[Guide → Atomistic learning](guides_atomistic.md),
+[Guide → Atomistic dynamics](guides_atomistic_dynamics.md),
+[Cookbook → Atomistic dynamics](cookbook/atomistic_dynamics.md), and
+[API → Atomistic learning and dynamics](api/atomistic.md).
 
 ### Computational topology: exact invariants and filtered fields
 

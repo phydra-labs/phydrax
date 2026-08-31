@@ -22,7 +22,9 @@ def _expanded_mask(batch: AtomisticBatch) -> Array:
     return batch.atom_mask[..., None]
 
 
-def _center_positions(batch: AtomisticBatch, positions: ArrayLike, /) -> tuple[Array, Array]:
+def _center_positions(
+    batch: AtomisticBatch, positions: ArrayLike, /
+) -> tuple[Array, Array]:
     value = jnp.asarray(positions, dtype=batch.positions.dtype)
     mask = _expanded_mask(batch)
     mass = jnp.where(batch.atom_mask, batch.masses, 0.0)
@@ -48,9 +50,13 @@ class AtomisticCoordinateDiffusion(StrictModule):
         if not isinstance(process, AbstractGaussianDiffusion):
             raise TypeError("process must implement AbstractGaussianDiffusion.")
         if template.has_periodic_metadata:
-            raise ValueError("Atomistic coordinate diffusion initially excludes periodic cells.")
+            raise ValueError(
+                "Atomistic coordinate diffusion initially excludes periodic cells."
+            )
         if process.state_shape != (int(template.positions.size),):
-            raise ValueError("Coordinate diffusion dimension must equal padded position size.")
+            raise ValueError(
+                "Coordinate diffusion dimension must equal padded position size."
+            )
         mass = jnp.where(template.atom_mask, template.masses, 0.0)
         center_weights = mass / jnp.sum(mass, axis=1, keepdims=True)
         self.template = template
@@ -65,7 +71,7 @@ class AtomisticCoordinateDiffusion(StrictModule):
         self.process_id = process_id or canonical_fingerprint(
             {
                 "kind": "atomistic-coordinate-diffusion",
-                "batch_topology_id": template.candidate_topology_id,
+                "batch_topology_id": template.atom_topology_id,
                 "process_id": process.process_id,
             }
         )
@@ -73,8 +79,10 @@ class AtomisticCoordinateDiffusion(StrictModule):
     def _require_batch(self, batch: AtomisticBatch, /) -> None:
         if not isinstance(batch, AtomisticBatch):
             raise TypeError("batch must be an AtomisticBatch.")
-        if batch.candidate_topology_id != self.template.candidate_topology_id:
-            raise ValueError("Atomistic diffusion requires the template candidate topology.")
+        if batch.atom_topology_id != self.template.atom_topology_id:
+            raise ValueError(
+                "Atomistic diffusion requires the template candidate topology."
+            )
         if not jnp.array_equal(batch.atomic_numbers, self.template.atomic_numbers):
             raise ValueError("Coordinate diffusion requires fixed atom species.")
         if not (
@@ -83,9 +91,13 @@ class AtomisticCoordinateDiffusion(StrictModule):
             and jnp.array_equal(batch.masses, self.template.masses)
             and batch.scale.scale_id == self.template.scale.scale_id
         ):
-            raise ValueError("Coordinate diffusion requires fixed masks, masses, and scale.")
+            raise ValueError(
+                "Coordinate diffusion requires fixed masks, masses, and scale."
+            )
 
-    def perturb(self, batch: AtomisticBatch, key: Key[Array, ""], /, *, time) -> AtomisticBatch:
+    def perturb(
+        self, batch: AtomisticBatch, key: Key[Array, ""], /, *, time
+    ) -> AtomisticBatch:
         self._require_batch(batch)
         centered, _ = _center_positions(batch, batch.positions)
         perturbed = self.process.perturb(key, centered.reshape((-1,)), t1=time).reshape(
@@ -95,7 +107,9 @@ class AtomisticCoordinateDiffusion(StrictModule):
         perturbed = jnp.where(_expanded_mask(batch), perturbed, batch.positions)
         return batch.with_positions(perturbed)
 
-    def conditional_score(self, perturbed: AtomisticBatch, clean: AtomisticBatch, /, *, time):
+    def conditional_score(
+        self, perturbed: AtomisticBatch, clean: AtomisticBatch, /, *, time
+    ):
         self._require_batch(perturbed)
         self._require_batch(clean)
         noisy, _ = _center_positions(perturbed, perturbed.positions)
@@ -136,7 +150,9 @@ class AtomisticHybridDiffusion(StrictModule):
         if len(values) != species_schedule.num_classes or len(set(values)) != len(values):
             raise ValueError("species must uniquely map every categorical class.")
         if any(number <= 0 for number in values):
-            raise ValueError("Atomistic species vocabulary must contain positive numbers.")
+            raise ValueError(
+                "Atomistic species vocabulary must contain positive numbers."
+            )
         maximum = max(values)
         mapping = jnp.full((maximum + 1,), -1, dtype=jnp.int32)
         mapping = mapping.at[jnp.asarray(values)].set(
@@ -146,7 +162,9 @@ class AtomisticHybridDiffusion(StrictModule):
         if bool(jnp.any(active_numbers > maximum)) or bool(
             jnp.any(mapping[active_numbers] < 0)
         ):
-            raise ValueError("Template contains atomic numbers outside species vocabulary.")
+            raise ValueError(
+                "Template contains atomic numbers outside species vocabulary."
+            )
         self.coordinate = coordinate
         self.species_schedule = species_schedule
         self.species = values

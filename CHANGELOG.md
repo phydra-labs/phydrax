@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Added native atomistic dynamics with complete unit identities,
+  position-independent prepared systems, stable-ID molecular topology and pair
+  exceptions, composable classical/learned scalar-energy programs, dense and
+  triclinic cell/Verlet execution, momentum-form NVE and BAOAB NVT,
+  SHAKE/RATTLE constraints, stress, direct Ewald and B-spline PME, isotropic
+  NPT moves, bounded replayable trajectories, exact checkpoints, hybrid and
+  RESPA composition, Born–Oppenheimer provider boundaries, ring polymers with
+  PILE, and variance-constrained semi-grand transitions. Dense graph resources
+  are now explicit execution-plan identity rather than learned architecture identity.
 - Added exact fixed-temporal finite-volume replay with full, step, or block
   rematerialization; transactional balance-law source composition and persistence;
   periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral
