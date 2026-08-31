@@ -31,6 +31,11 @@ class StructuredFlowBenchmarkRecord:
     mac_transform_divergence: float
     mac_iterative_divergence: float
     mac_route_difference: float
+    mac_momentum_count: int
+    mac_momentum_skew_defect: float
+    mac_diffusion_symmetry_defect: float
+    mac_projected_rate_divergence: float
+    mac_nonlinear_energy_defect: float
     finite: bool
 
     @property
@@ -45,6 +50,10 @@ class StructuredFlowBenchmarkRecord:
             and self.mac_transform_divergence <= 1e-9
             and self.mac_iterative_divergence <= 1e-7
             and self.mac_route_difference <= 1e-7
+            and self.mac_momentum_skew_defect <= 1e-9
+            and self.mac_diffusion_symmetry_defect <= 1e-9
+            and self.mac_projected_rate_divergence <= 1e-8
+            and self.mac_nonlinear_energy_defect <= 1e-8
         )
 
 
@@ -92,11 +101,7 @@ def run_structured_flow_benchmark(
     )
 
     sbp_grid = phx.discretization.TensorGridPlan(
-        (
-            phx.discretization.UniformAxisSpec(
-                sbp_count, periodic=True, endpoint=False
-            ),
-        ),
+        (phx.discretization.UniformAxisSpec(sbp_count, periodic=True, endpoint=False),),
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     system = phx.equations.EulerSystem(1)
@@ -147,6 +152,36 @@ def run_structured_flow_benchmark(
     transform_divergence = jnp.linalg.norm(transform.divergence_after)
     iterative_divergence = jnp.linalg.norm(iterative.divergence_after)
     route_difference = jnp.max(jnp.abs(transform.velocity[0] - iterative.velocity[0]))
+
+    momentum_count = max(4, mac_count // 2)
+    momentum_grid = phx.discretization.TensorGridPlan(
+        (
+            phx.discretization.UniformCellAxisSpec(momentum_count, periodic=True),
+            phx.discretization.UniformCellAxisSpec(momentum_count, periodic=True),
+        ),
+        axis_names=("x", "y"),
+    ).prepare(jnp.asarray([[0.0, 0.0], [2.0 * jnp.pi, 2.0 * jnp.pi]]))
+    momentum_finite_volume = phx.discretization.FiniteVolumePlan(momentum_grid).prepare()
+    momentum_mac = phx.discretization.MACOperatorPlan(momentum_finite_volume).prepare()
+    momentum = phx.discretization.MACMomentumPlan(momentum_mac).prepare()
+    momentum_projection = phx.solver.MACPressureProjectionPlan(
+        momentum_mac,
+        solve_method="transform",
+        tolerance=1e-10,
+    )
+    compiled_mac = phx.equations.compile_mac_incompressible_flow(
+        phx.equations.IncompressibleFlowProblem(2, 0.01),
+        momentum,
+        momentum_projection,
+    )
+    x_faces = momentum_finite_volume.face_centers[0]
+    y_faces = momentum_finite_volume.face_centers[1]
+    momentum_velocity = (
+        jnp.sin(x_faces[..., 0]) * jnp.cos(x_faces[..., 1]),
+        -jnp.cos(y_faces[..., 0]) * jnp.sin(y_faces[..., 1]),
+    )
+    momentum_state = compiled_mac.project_state(momentum_velocity)
+    momentum_diagnostics = compiled_mac.diagnostics(0.0, momentum_state)
     values = jnp.asarray(
         (
             first_error,
@@ -156,6 +191,10 @@ def run_structured_flow_benchmark(
             transform_divergence,
             iterative_divergence,
             route_difference,
+            momentum.report.weighted_skew_residual,
+            momentum.report.diffusion_symmetry_residual,
+            momentum_diagnostics.divergence_norm,
+            momentum_diagnostics.nonlinear_energy_rate,
         )
     )
     return StructuredFlowBenchmarkRecord(
@@ -176,7 +215,19 @@ def run_structured_flow_benchmark(
         mac_transform_divergence=float(transform_divergence),
         mac_iterative_divergence=float(iterative_divergence),
         mac_route_difference=float(route_difference),
-        finite=bool(jnp.all(jnp.isfinite(values)) & transform.converged & iterative.converged),
+        mac_momentum_count=momentum_count,
+        mac_momentum_skew_defect=float(momentum.report.weighted_skew_residual),
+        mac_diffusion_symmetry_defect=float(momentum.report.diffusion_symmetry_residual),
+        mac_projected_rate_divergence=float(momentum_diagnostics.divergence_norm),
+        mac_nonlinear_energy_defect=float(
+            jnp.abs(momentum_diagnostics.nonlinear_energy_rate)
+        ),
+        finite=bool(
+            jnp.all(jnp.isfinite(values))
+            & transform.converged
+            & iterative.converged
+            & momentum_diagnostics.projection_converged
+        ),
     )
 
 

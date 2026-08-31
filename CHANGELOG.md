@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Added
+- Added bounded and periodic unit-density MAC incompressible dynamics with static
+  no-slip wall closure, face-dual velocity coordinates, symmetry-preserving momentum
+  transport, conservative explicit viscosity, transform-or-iterative stage
+  projection, fixed-step SSPRK composition, short-horizon differentiation, step
+  restrictions, and complete constraint and kinetic-energy diagnostics. Hardened
+  singular transform solves so masked pressure nullspaces retain finite reverse-mode
+  derivatives.
+- Extended the MAC flow substrate with dynamic no-slip/free-slip/inflow/pressure/open
+  boundary closures, named conservative scalars and Boussinesq exchange, iterative,
+  transform, hybrid-line and IMEX/SBDF2 viscous solves, conservative variable-density
+  face momentum, dual-measure resolved IB–DEM coupling, transactional adaptivity and
+  replay, short-horizon and least-squares-shadowing sensitivities, explicit sharded
+  pressure CG, compatible mapped/ALE geometry, and conservative nondifferentiable
+  remesh epochs. Every path exposes its mass, momentum, energy, residual, topology,
+  differentiation, resource, and fail-closed acceptance evidence.
 - Added exact fixed-temporal finite-volume replay with full, step, or block
   rematerialization; transactional balance-law source composition and persistence;
   periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral

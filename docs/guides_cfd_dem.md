@@ -14,7 +14,14 @@ A relation fails when support is empty, cannot be normalized, or exceeds cells-p
 
 ## Resolved immersed boundary
 
-`ResolvedIBCFDEMCouplingPlan` uses fixed markers, shared interpolation/spreading weights, and a no-slip penalty constraint. Marker forces reduce to body force and torque while the exact opposite source is spread to fluid cells. The discrete interpolation/spreading work-adjoint residual is an acceptance criterion.
+`ResolvedMACIBCFDEMCouplingPlan` binds rigid-sphere markers to the actual staggered
+MAC face centers. `MACMarkerTransferPlan` gathers velocity and spreads the exact
+dual-measure adjoint acceleration; force, torque, virtual work, support capacity,
+and fixed-body reaction are explicit evidence. `advance_mac_resolved_ib_window`
+subcycles existing DEM contact dynamics, accumulates trapezoidal hydrodynamic
+impulses, inserts the face source before pressure projection, and commits fluid and
+particle states atomically. The penalty constraint reports its slip and stiffness;
+it is not presented as an exact no-slip multiplier method.
 
 ## Thermal coupling
 
