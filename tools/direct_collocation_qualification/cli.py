@@ -5,31 +5,17 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import json
 import os
-import platform
 from pathlib import Path
 
-import jax
-import jax.numpy as jnp
-import numpy as np
-
-from phydrax._fingerprint import canonical_fingerprint
+from benchmarks._io import write_json_atomic
+from benchmarks._runtime import capture_environment
 
 from .cases import qualification_setups
 from .contracts import DirectCollocationQualificationArtifact
 from .graduation import evaluate_direct_collocation_graduation
 from .runner import run_qualification_case
-
-
-def _package_fingerprint() -> str:
-    packages = sorted(
-        (distribution.metadata["Name"].lower(), distribution.version)
-        for distribution in importlib.metadata.distributions()
-        if distribution.metadata["Name"]
-    )
-    return canonical_fingerprint(packages)
 
 
 def main() -> None:
@@ -49,25 +35,25 @@ def main() -> None:
     backends = tuple(arguments.backend or ("native",))
     setups = qualification_setups()
     records = tuple(
-        run_qualification_case(setup, backend)
-        for setup in setups
-        for backend in backends
+        run_qualification_case(setup, backend) for setup in setups for backend in backends
     )
     graduation = evaluate_direct_collocation_graduation(
         records,
         documentation_complete=True,
         artifact_present=True,
     )
+    runtime = capture_environment().to_dict()
     metadata = {
         "qualification": "direct-collocation",
         "source_id": os.environ.get("GITHUB_SHA", "working-tree"),
-        "package_fingerprint": _package_fingerprint(),
-        "platform": platform.platform(),
-        "python": platform.python_version(),
-        "jax": jax.__version__,
-        "numpy": np.__version__,
-        "dtype": str(jnp.asarray(0.0).dtype),
+        "package_fingerprint": runtime["package_fingerprint"],
+        "platform": runtime["platform"],
+        "python": runtime["python_version"],
+        "jax": runtime["jax"]["version"],
+        "numpy": runtime["numpy_version"],
+        "dtype": runtime["default_float_dtype"],
         "backends": list(backends),
+        "runtime": runtime,
     }
     artifact = DirectCollocationQualificationArtifact.create(
         metadata=metadata,
@@ -77,8 +63,7 @@ def main() -> None:
     )
     required = tuple(setup.case.case_id for setup in setups)
     artifact.verify(required_case_ids=required)
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(artifact.to_dict(), indent=2) + "\n")
+    write_json_atomic(arguments.output, artifact.to_dict())
     print(json.dumps(artifact.to_dict(), indent=2))
 
 

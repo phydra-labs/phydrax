@@ -738,6 +738,12 @@
   resource accounting.
 
 ### Changed
+- Benchmark tooling now shares one synchronized PyTree timing runtime, normalized
+  software/hardware fingerprints, raw duration distributions, official XLA
+  cost/memory evidence, atomic artifact writes, and environment-checked bootstrap
+  comparisons. Operator reports separate lowering, compilation, first execution,
+  and steady samples and no longer relabel process allocator high-water state as
+  operation-local peak memory.
 - Compatible Maxwell state now stores electric displacement `D`, magnetic flux `B`,
   charge, material/boundary auxiliary state, and observer state. `E` and `H` are
   constitutive outputs. Construction uses `CompatibleMaxwellPlan(...).prepare()` and

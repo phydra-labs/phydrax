@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import logical_array_bytes
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -53,14 +54,6 @@ def _problem(size: int, dimension: int):
         source,
         target,
         cost=phx.transport.SquaredEuclideanCost(),
-    )
-
-
-def _array_bytes(tree) -> int:
-    return sum(
-        int(leaf.size * leaf.dtype.itemsize)
-        for leaf in jax.tree.leaves(tree)
-        if isinstance(leaf, jax.Array)
     )
 
 
@@ -166,8 +159,8 @@ def _record(
         kernel_error = None
         plan_error = None
 
-    factor_bytes = _array_bytes(result.factors)
-    result_bytes = _array_bytes(result)
+    factor_bytes = logical_array_bytes(result.factors)
+    result_bytes = logical_array_bytes(result)
     dense_plan_bytes = size * size * problem.source.points.dtype.itemsize
     return {
         "size": size,

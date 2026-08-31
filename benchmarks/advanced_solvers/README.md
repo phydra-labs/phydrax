@@ -30,6 +30,12 @@ Repeat `--adapter` or `--case` to select an exact subset. `--size`, `--seed`,
 written with `allow_nan=False`; incomplete measurements use `null` plus explicit
 evidence rather than fabricated numeric sentinels.
 
+`compare --relative-performance-tolerance R` and
+`--absolute-performance-tolerance-ms A` enable a solve-time regression decision.
+`--performance-confidence`, `--performance-bootstrap-resamples`, and
+`--performance-minimum-samples` control its uncertainty contract. Omitting both
+practical tolerances keeps comparison descriptive.
+
 ## Problem families
 
 The default campaign contains one deterministic representative of each declared
@@ -125,17 +131,20 @@ Each row separates and labels:
 10. independent verification of the refreshed problem.
 
 Compilation may be deferred until after numerical preparation when an adapter needs a
-prepared state to lower its executable. Timing summaries are recomputed from their raw
-samples during schema validation. Synchronization is adapter-defined and explicit. A
-device adapter must block at every phase boundary before a sample is accepted. Setup,
-compilation, preparation, differentiation, refresh, and verification are never silently
-folded into steady-state solve timing.
+prepared state to lower its executable. The repository-wide private benchmark runtime
+provides one recursive JAX synchronization boundary and one raw duration-distribution
+implementation. Timing summaries are recomputed from their raw samples during schema
+validation. A device adapter must block at every phase boundary before a sample is
+accepted. Setup, compilation, preparation, differentiation, refresh, and verification
+are never silently folded into steady-state solve timing.
 
-Campaigns enable JAX float64 before capturing their environment fingerprint so every
-adapter receives the canonical float64 problem without an implicit downcast. The
-nonlinear-root Phydrax and Optimistix adapters both differentiate the converged solution
-with respect to the target through each library's implicit-root contract; an analytic
-diagonal sensitivity check guards this comparison.
+Campaigns enable JAX float64 before capturing their runtime fingerprint. The fingerprint
+covers Python, Phydrax, NumPy, JAX, jaxlib, backend/device identity, default precision,
+performance-affecting environment variables, and the normalized installed-package set.
+Source revision remains separate so two commits can be compared in one identical runtime.
+The nonlinear-root Phydrax and Optimistix adapters both differentiate the converged
+solution with respect to the target through each library's implicit-root contract; an
+analytic diagonal sensitivity check guards this comparison.
 
 ## Transfers, memory, and operations
 
@@ -163,17 +172,22 @@ rows retain stationarity/KKT/proximal evidence and reference objective gaps.
 
 `compare` requires matching schema, selected case × adapter cross-product, case
 fingerprints, implementations, timing protocol, transfer contract, and—unless explicitly
-overridden—environment fingerprint. It reports differences only after those
-comparability checks pass.
+overridden—runtime fingerprint. Optional practical thresholds add deterministic
+bootstrap intervals over the retained solve samples. A cross-runtime comparison may be
+descriptive, but it is never regression-eligible.
 
 ## Layout
 
+- `benchmarks/_runtime.py`: shared synchronization, timing distributions, compiler
+  evidence, logical array bytes, and runtime fingerprints;
+- `benchmarks/_comparison.py`: deterministic paired or independent performance
+  comparisons with practical thresholds;
+- `benchmarks/_io.py`: finite atomic JSON and generic atomic file replacement;
 - `problems.py`: deterministic generators and identity fingerprints;
 - `certificates.py`: independent mathematical verification;
 - `adapters/`: lazy, source-specific setup/compile/prepare/solve/differentiate/refresh
   bridges;
-- `harness.py`: synchronization, phase measurement, lifecycle release, and row
-  construction;
+- `harness.py`: solver lifecycle execution and row construction;
 - `schema.py`: strict row/report validation;
 - `compare.py`: comparability checks and report deltas;
 - `campaign.py`: presets and exact case construction;

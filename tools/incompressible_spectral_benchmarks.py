@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
 @dataclass(frozen=True)
@@ -54,16 +55,17 @@ class IncompressibleSpectralBenchmarkRecord:
 
 def _measure(function, argument, repeats):
     compiled = jax.jit(function)
-    started = time.perf_counter()
-    value = compiled(argument)
-    jax.block_until_ready(value)
-    first = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        value = compiled(argument)
-        jax.block_until_ready(value)
-    steady = 1e3 * (time.perf_counter() - started) / repeats
-    return value, first, steady
+    value, first_seconds = measure_synchronized(lambda: compiled(argument))
+    value, distribution = measure_repeated(
+        lambda: compiled(argument),
+        warmup=0,
+        repeats=repeats,
+    )
+    return (
+        value,
+        1_000.0 * first_seconds,
+        1_000.0 * float(distribution.mean_seconds),
+    )
 
 
 def run_incompressible_spectral_benchmark(
@@ -187,12 +189,8 @@ def run_incompressible_spectral_benchmark(
         periodic_steady_ms=float(steady),
         periodic_divergence_norm=float(periodic_divergence),
         periodic_finite=bool(jnp.all(jnp.isfinite(periodic_rate))),
-        periodic_nonlinear_energy_rate=float(
-            periodic_diagnostics.nonlinear_energy_rate
-        ),
-        periodic_energy_balance_defect=float(
-            periodic_diagnostics.energy_balance_defect
-        ),
+        periodic_nonlinear_energy_rate=float(periodic_diagnostics.nonlinear_energy_rate),
+        periodic_energy_balance_defect=float(periodic_diagnostics.energy_balance_defect),
         channel_prepare_ms=float(channel_prepare),
         channel_solve_ms=float(channel_solve),
         channel_factor_bytes=factor_bytes,

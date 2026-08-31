@@ -16,23 +16,16 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
-
-
-def _block(value: Any, /) -> None:
-    for leaf in jax.tree.leaves(value):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
+from benchmarks._runtime import measure_repeated, synchronize
 
 
 def _measure(operation, /, *, repeats: int):
-    value = operation()
-    _block(value)
-    samples = []
-    for _ in range(repeats):
-        started = time.perf_counter()
-        value = operation()
-        _block(value)
-        samples.append(1.0e3 * (time.perf_counter() - started))
+    value, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
+    )
+    samples = 1_000.0 * np.asarray(distribution.samples_seconds)
     return value, float(np.mean(samples)), float(np.std(samples))
 
 
@@ -81,7 +74,7 @@ def _record(intervals: int, repeats: int, /) -> dict[str, Any]:
         states,
         controls,
     )
-    _block(compilation.initial_coordinates)
+    synchronize(compilation.initial_coordinates)
     compilation_ms = 1.0e3 * (time.perf_counter() - started)
     program = compilation.structured_program
     _, objective_ms, objective_std = _measure(
@@ -142,9 +135,7 @@ def main() -> None:
     arguments = parser.parse_args()
     if arguments.repeats < 1 or any(value < 1 for value in arguments.intervals):
         raise ValueError("repeats and every interval count must be positive")
-    records = [
-        _record(intervals, arguments.repeats) for intervals in arguments.intervals
-    ]
+    records = [_record(intervals, arguments.repeats) for intervals in arguments.intervals]
     artifact = {
         "benchmark": "direct-collocation-sparse-scaling",
         "platform": platform.platform(),
