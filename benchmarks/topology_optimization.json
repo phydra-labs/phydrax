@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "cells": 8,
+      "filter_constant_residual": 0.0,
+      "final_compliance": 19.28571428571426,
+      "initial_compliance": 24.285714285714292,
+      "iterations": 32,
+      "maximum_density": 0.9298245614006863,
+      "minimum_density": 0.07017543859647281,
+      "optimality": 5.218758758473996e-11,
+      "state_and_adjoint_solves": 34,
+      "status": 0,
+      "volume_ratio": 0.5000000000000009,
+      "wall_seconds": 4.2110515420208685
+    },
+    {
+      "cells": 16,
+      "filter_constant_residual": 0.0,
+      "final_compliance": 38.571428571428555,
+      "initial_compliance": 47.386243386243386,
+      "iterations": 37,
+      "maximum_density": 0.9298245613998919,
+      "minimum_density": 0.07017543859863253,
+      "optimality": 4.495692706996124e-10,
+      "state_and_adjoint_solves": 39,
+      "status": 0,
+      "volume_ratio": 0.5000000000000001,
+      "wall_seconds": 3.3837799999746494
+    }
+  ]
+}

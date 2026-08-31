@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from math import isfinite
+from math import isfinite, sqrt
 from numbers import Integral
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -22,12 +22,16 @@ from ..._strict import StrictModule
 from ._selection import ParameterSubspace
 
 
+LowRankScaling: TypeAlias = Literal["rank", "sqrt_rank"]
+
+
 @dataclass(frozen=True, slots=True)
 class LowRankSpec:
     """Construction policy for one low-rank affine weight update."""
 
     rank: int
     alpha: float | None = None
+    scaling: LowRankScaling = "rank"
     stddev: float = 0.01
 
     def __post_init__(self) -> None:
@@ -37,13 +41,19 @@ class LowRankSpec:
         if rank <= 0:
             raise ValueError("Low-rank adaptation rank must be positive.")
         alpha = float(rank if self.alpha is None else self.alpha)
+        scaling = str(self.scaling)
         stddev = float(self.stddev)
         if not isfinite(alpha) or alpha <= 0.0:
             raise ValueError("Low-rank adaptation alpha must be finite and positive.")
+        if scaling not in ("rank", "sqrt_rank"):
+            raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
         if not isfinite(stddev) or stddev <= 0.0:
-            raise ValueError("Low-rank initialization stddev must be finite and positive.")
+            raise ValueError(
+                "Low-rank initialization stddev must be finite and positive."
+            )
         object.__setattr__(self, "rank", rank)
         object.__setattr__(self, "alpha", alpha)
+        object.__setattr__(self, "scaling", scaling)
         object.__setattr__(self, "stddev", stddev)
 
 
@@ -60,6 +70,7 @@ class LowRankUpdate(StrictModule):
     left: Array
     right: Array
     alpha: float = eqx.field(static=True)
+    scaling: LowRankScaling = eqx.field(static=True)
 
     def __init__(
         self,
@@ -68,6 +79,7 @@ class LowRankUpdate(StrictModule):
         *,
         rank: int,
         alpha: float | None = None,
+        scaling: LowRankScaling = "rank",
         stddev: float = 0.01,
         key: Key[Array, ""] = DOC_KEY0,
     ):
@@ -76,7 +88,12 @@ class LowRankUpdate(StrictModule):
             raise TypeError("Low-rank base weights must be real inexact JAX arrays.")
         if value.ndim != 2:
             raise ValueError("Low-rank base weights must be rank-two arrays.")
-        spec = LowRankSpec(rank=rank, alpha=alpha, stddev=stddev)
+        spec = LowRankSpec(
+            rank=rank,
+            alpha=alpha,
+            scaling=scaling,
+            stddev=stddev,
+        )
         output_size, input_size = (int(size) for size in value.shape)
         if spec.rank > min(output_size, input_size):
             raise ValueError(
@@ -89,6 +106,7 @@ class LowRankUpdate(StrictModule):
         )
         assert spec.alpha is not None
         self.alpha = spec.alpha
+        self.scaling = spec.scaling
 
     @classmethod
     def from_factors(
@@ -99,6 +117,7 @@ class LowRankUpdate(StrictModule):
         /,
         *,
         alpha: float,
+        scaling: LowRankScaling = "rank",
     ) -> LowRankUpdate:
         """Construct an update from validated persisted factors without randomness."""
         base_ = jnp.asarray(base)
@@ -118,13 +137,17 @@ class LowRankUpdate(StrictModule):
         if left_.dtype != base_.dtype or right_.dtype != base_.dtype:
             raise TypeError("Low-rank factors must have the exact base dtype.")
         alpha_ = float(alpha)
+        scaling_ = str(scaling)
         if not isfinite(alpha_) or alpha_ <= 0.0:
             raise ValueError("Low-rank adaptation alpha must be finite and positive.")
+        if scaling_ not in ("rank", "sqrt_rank"):
+            raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
         instance = object.__new__(cls)
         object.__setattr__(instance, "base", base_)
         object.__setattr__(instance, "left", left_)
         object.__setattr__(instance, "right", right_)
         object.__setattr__(instance, "alpha", alpha_)
+        object.__setattr__(instance, "scaling", scaling_)
         object.__setattr__(instance, "_strict_initialized", True)
         return instance
 
@@ -142,7 +165,8 @@ class LowRankUpdate(StrictModule):
 
     @property
     def scale(self) -> float:
-        return self.alpha / self.rank
+        denominator = self.rank if self.scaling == "rank" else sqrt(self.rank)
+        return self.alpha / denominator
 
     @property
     def base_parameter_count(self) -> int:
@@ -155,7 +179,9 @@ class LowRankUpdate(StrictModule):
     def apply(self, value: Array, /) -> Array:
         """Apply the effective weight without materializing its dense update."""
         argument = jnp.asarray(value)
-        base_output = contract("oi,...i->...o", jax.lax.stop_gradient(self.base), argument)
+        base_output = contract(
+            "oi,...i->...o", jax.lax.stop_gradient(self.base), argument
+        )
         latent = contract("ri,...i->...r", self.right, argument)
         update = contract("or,...r->...o", self.left, latent)
         return (base_output + self.scale * update).astype(base_output.dtype)
@@ -175,6 +201,7 @@ class LowRankAdaptationSite:
     dtype: str
     rank: int
     alpha: float
+    scaling: LowRankScaling
     scale: float
     base_parameter_count: int
     adapter_parameter_count: int
@@ -229,7 +256,6 @@ def _is_adaptable(site: _LinearSite, /) -> bool:
     weight = layer.weight
     return bool(
         not isinstance(weight, LowRankUpdate)
-        and not layer.random_weight_factorization
         and layer.weight_transform is None
         and eqx.is_inexact_array(weight)
         and not jnp.iscomplexobj(weight)
@@ -241,10 +267,6 @@ def _validate_adaptable(site: _LinearSite, /) -> Array:
     layer = site.layer
     if isinstance(layer.weight, LowRankUpdate):
         raise TypeError(f"Linear weight {site.path!r} is already low-rank adapted.")
-    if layer.random_weight_factorization:
-        raise ValueError(
-            f"Linear weight {site.path!r} uses random weight factorization."
-        )
     if layer.weight_transform is not None:
         raise ValueError(f"Linear weight {site.path!r} uses a weight transform.")
     weight = jnp.asarray(layer.weight)
@@ -303,6 +325,7 @@ def adapt_low_rank(
             weight,
             rank=spec.rank,
             alpha=spec.alpha,
+            scaling=spec.scaling,
             stddev=spec.stddev,
             key=site_key,
         )
@@ -314,6 +337,7 @@ def adapt_low_rank(
                 dtype=jnp.dtype(update.dtype).str,
                 rank=update.rank,
                 alpha=update.alpha,
+                scaling=update.scaling,
                 scale=update.scale,
                 base_parameter_count=update.base_parameter_count,
                 adapter_parameter_count=update.adapter_parameter_count,
@@ -399,9 +423,7 @@ def validate_low_rank_subspace(
 def merge_low_rank(tree: PyTree[Any], /) -> PyTree[Any]:
     """Return a dense model with every low-rank update merged into its base."""
     return jax.tree_util.tree_map(
-        lambda value: (
-            value.materialize() if isinstance(value, LowRankUpdate) else value
-        ),
+        lambda value: value.materialize() if isinstance(value, LowRankUpdate) else value,
         tree,
         is_leaf=lambda value: isinstance(value, LowRankUpdate),
     )
@@ -419,6 +441,7 @@ __all__ = [
     "LowRankAdaptationReport",
     "LowRankAdaptationSite",
     "LowRankSpec",
+    "LowRankScaling",
     "LowRankUpdate",
     "adapt_low_rank",
     "contains_low_rank_updates",

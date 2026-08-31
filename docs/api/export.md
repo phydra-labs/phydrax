@@ -79,6 +79,53 @@ result = trained.save_onnx(
 
 ::: phydrax.export.OnnxExportResult
 
+## StableHLO and IREE deployment
+
+Install the matched optional compiler/runtime pair with `phydrax[iree]`.
+`save_iree(...)` exports one deterministic array-valued callable through
+`jax.export`, compiles the resulting StableHLO module in process, validates the
+compiled function against native JAX, and publishes a pickle-free directory
+containing a checksummed VMFB module and canonical JSON manifest.
+
+```text
+artifact = phx.export.save_iree(
+    model,
+    "model.phxiree",
+    inputs=[sample],
+    input_names=["x"],
+)
+deployed = phx.export.load_iree(artifact.path)
+prediction = deployed(sample)
+```
+
+The manifest binds exact positional input shapes and dtypes, one output shape and
+dtype, target backend, runtime driver, JAX calling-convention version, and the
+identical IREE compiler/runtime release. Loading rejects checksum, version,
+shape, and dtype mismatches. No implicit casting occurs.
+
+The initial surface supports one array output and static concrete input shapes.
+`key` must be `None`; stochastic inference must be converted to an explicitly
+deterministic deployed function first. Like ONNX, IREE export is an inference
+boundary, not serialization of a solver or training loop.
+
+::: phydrax.export.save_iree
+
+---
+
+::: phydrax.export.load_iree
+
+---
+
+::: phydrax.export.IREEExportPolicy
+
+---
+
+::: phydrax.export.IREEArtifactManifest
+
+---
+
+::: phydrax.export.IREEExecutable
+
 ## Portable uncertainty results
 
 `phydrax.uq.export_result` writes native UQ results as pickle-free, checksummed archives

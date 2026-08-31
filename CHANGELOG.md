@@ -31,6 +31,19 @@
   multi-RHS and Brillouin source semantics, interior field reconstruction,
   diffraction-order far fields, explicit refresh, convergence, resource, diagnostic,
   status, and provenance contracts.
+- Extended native low-rank adaptation with rank-stabilized scaling, exact
+  adapter-artifact reconstruction, and composition with frozen random-weight
+  factorization coordinates.
+- Added field-certificate-aware geometry-to-material rasterization for
+  Fourier-modal Maxwell, with sharp and differentiable compact-Heaviside paths,
+  fixed subpixel sampling, fill-fraction evidence, and material identities.
+- Added certified finite-box Method of Moving Asymptotes, constrained
+  reduced-adjoint state/design optimization, sparse physical-radius density
+  filtering, SIMP compliance topology optimization, and independent
+  reference-discretization reanalysis.
+- Added pickle-free StableHLO/IREE inference export with matched optional
+  compiler/runtime versions, in-process compilation and loading, exact
+  shape/dtype ABI checks, checksummed manifests, and native parity evidence.
 - Added full-rank Euclidean VP/VE score diffusion with structured diagonal Gaussian
   laws, exact perturbation marginals, weighted denoising score matching, replayable
   reverse-time SDE sampling, probability-flow composition, per-realization Diffrax

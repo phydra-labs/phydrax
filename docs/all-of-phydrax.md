@@ -253,6 +253,10 @@ a shared dense base. The factor-only `ParameterSubspace` is the complete
 gradient and optimizer-state boundary for `fit_operator` and Optax
 `FunctionalSolver` runs; merging returns an ordinary dense deployment model,
 while adapter-only archives verify the complete base content before loading.
+Standard and rank-stabilized scaling are explicit per site. RWF layers adapt
+their unscaled `V` coordinate before the frozen row scale and remain RWF after
+deployment merging.
+
 The checked transfer campaign improves its frozen baseline with 53 selected
 parameters versus 197 for full fine-tuning, and the resource campaign reduces
 Adam state from 4,194,308 to 131,076 bytes with merged/factorized disagreement
@@ -552,6 +556,10 @@ and filter/SOC SQP with BFGS/SR1/exact Hessians. BOBYQA, COBYQA,
 deterministic multistart, and explicitly recertified SciPy/NLopt/Ipopt/Ceres
 boundaries cover black-box and specialist routes. Residual graphs retain block
 sparsity, Schur ordering, manifold retractions, and incremental factor versions.
+Method of Moving Asymptotes adds a finite-box, feasible-start route for very
+large designs with few inequalities. Its reduced state/design form reuses exact
+adjoints and supports fixed-mesh SIMP compliance optimization with sparse
+physical-radius filtering and mandatory independent reanalysis evidence.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,

@@ -74,6 +74,10 @@ hdf5 = [
 ipopt = [
   "cyipopt>=1.7,<2",
 ]
+iree = [
+  "iree-base-compiler==3.11.0",
+  "iree-base-runtime==3.11.0",
+]
 docs = [
   "hippogriffe==0.2.2",
   "griffe==1.7.3",

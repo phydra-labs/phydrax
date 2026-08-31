@@ -29,7 +29,7 @@ def _adapted(base):
     paths = phx.nn.parameters.low_rank_sites(base)
     model, _ = phx.nn.parameters.adapt_low_rank(
         base,
-        {path: phx.nn.parameters.LowRankSpec(2) for path in paths},
+        {path: phx.nn.parameters.LowRankSpec(2, scaling="sqrt_rank") for path in paths},
         key=jr.key(1),
     )
     first = model.layers[0].weight
@@ -38,6 +38,7 @@ def _adapted(base):
         jnp.full_like(first.left, 0.125),
         jnp.full_like(first.right, -0.25),
         alpha=first.alpha,
+        scaling=first.scaling,
     )
     return eqx.tree_at(lambda value: value.layers[0].weight, model, changed)
 
@@ -60,6 +61,7 @@ def test_low_rank_adapter_round_trip_binds_base_and_preserves_merge(tmp_path):
         phx.nn.parameters.merge_low_rank(adapted)(inputs),
     )
     assert restored.manifest.provenance == {"task": "unit"}
+    assert all(site.scaling == "sqrt_rank" for site in restored.manifest.sites)
     assert tuple(site.path for site in restored.manifest.sites) == (
         ".layers[0].weight",
         ".layers[1].weight",
