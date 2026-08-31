@@ -47,7 +47,10 @@ distance to the friction stick/slip switch, and route-capacity success. These
 margins qualify only the executed branch; they do not claim a smooth derivative
 through a changed collision sequence.
 
-Soft-sphere DEM remains experimental. Dense/cell parity, restitution refinement,
-oblique frictional collision, restart equivalence, and fixed-capacity failure
-evidence are required before a qualified claim. Distributed and arbitrary-shape
-claims remain absent.
+Soft-contact DEM remains experimental. Dense/cell parity, restitution refinement, oblique frictional collision, restart equivalence, and fixed-capacity failure evidence remain required. New compositional contact channels additionally expose bridge-volume, lubrication-dissipation, rolling/torsion-cap, and frame-transport residuals. Superquadric contact carries witness and convergence residuals. Multicontact correction, wall traction, and Finnie wear retain independent acceptance checks. Distributed claims remain absent.
+
+## Particle-conversion qualification
+
+Particle conversion is qualified by exact radial measure identities, thermodynamic inversion residual, interior heat/species cancellation, element balance, phase inventory, accepted-step energy closure, and agreement between reference Rosenbrock and structured tridiagonal backends. `tools/particle_conversion_qualification.py` records these cases as one machine-readable campaign.
+
+Reactive coupling adds particle/fluid momentum, energy, and species closure; subsystem success flags; coupling iteration residual; and atomic rollback. `tools/reactive_cfd_dem_qualification.py` exercises both Strang and iterated schedules. `ParticlePhysicsSupportMatrix` reports claims compositionally: a successful DEM claim does not imply thermochemistry, superquadric, radiation, or distributed support.

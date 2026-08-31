@@ -158,7 +158,7 @@ models. An external Equinox or Optax tree update changes numeric parameters but
 necessarily preserves static metadata; it is unsupported for provenance-bearing
 prediction until explicitly checkpointed:
 
-```python
+```text
 updated = phx.atomistic.checkpoint_atomistic_potential(updated)
 prediction = phx.atomistic.energy_and_forces(updated, batch)
 ```
@@ -179,7 +179,7 @@ Loss scales can be supplied, or fitted from the training targets only: standard
 deviation of per-atom training energy and RMS training-force component. A
 validation split never contributes to those fitted values.
 
-```python
+```text
 problem = phx.atomistic.AtomisticTrainingProblem(
     training_batch,
     training_energy=training_energy,

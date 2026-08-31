@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any, Callable
 
 import equinox as eqx
@@ -14,15 +13,10 @@ import numpy as np
 from jaxtyping import Array, PyTree
 
 from ..._fingerprint import canonical_fingerprint
+from ..._hybrid_sensitivity import HybridSensitivityMode
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem import DEMDiagnostics
-
-
-class DEMSensitivityMode(StrEnum):
-    SHARP_BRANCHWISE = "sharp_branchwise"
-    SMOOTH_SURROGATE = "smooth_surrogate"
-    HYBRID_EVENT_AWARE = "hybrid_event_aware"
 
 
 class DEMTrainableMaterialParameters(StrictModule):
@@ -91,11 +85,15 @@ class DEMTrainableMaterialParameters(StrictModule):
 
 
 class DEMSensitivityPolicy(StrictModule, NonTrainableState):
-    mode: DEMSensitivityMode = eqx.field(static=True)
+    mode: HybridSensitivityMode = eqx.field(static=True)
     activation_margin: float = eqx.field(static=True)
     no_tension_margin: float = eqx.field(static=True)
     friction_margin: float = eqx.field(static=True)
     frame_margin: float = eqx.field(static=True)
+    cohesion_birth_margin: float = eqx.field(static=True)
+    cohesion_rupture_margin: float = eqx.field(static=True)
+    rolling_yield_margin: float = eqx.field(static=True)
+    torsional_yield_margin: float = eqx.field(static=True)
     acceptance_margin: float = eqx.field(static=True)
     neighborhood_margin: float = eqx.field(static=True)
     perturbation_scale: float = eqx.field(static=True)
@@ -104,17 +102,21 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        mode: DEMSensitivityMode = DEMSensitivityMode.SHARP_BRANCHWISE,
+        mode: HybridSensitivityMode = HybridSensitivityMode.SHARP_BRANCHWISE,
         activation_margin: float = 1.0e-8,
         no_tension_margin: float = 1.0e-8,
         friction_margin: float = 1.0e-8,
         frame_margin: float = 1.0e-8,
+        cohesion_birth_margin: float = 1.0e-8,
+        cohesion_rupture_margin: float = 1.0e-8,
+        rolling_yield_margin: float = 1.0e-8,
+        torsional_yield_margin: float = 1.0e-8,
         acceptance_margin: float = 1.0e-8,
         neighborhood_margin: float = 1.0e-8,
         perturbation_scale: float = 1.0e-8,
     ):
-        if not isinstance(mode, DEMSensitivityMode):
-            raise TypeError("mode must be a DEMSensitivityMode.")
+        if not isinstance(mode, HybridSensitivityMode):
+            raise TypeError("mode must be a HybridSensitivityMode.")
         values = tuple(
             float(value)
             for value in (
@@ -122,6 +124,10 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
                 no_tension_margin,
                 friction_margin,
                 frame_margin,
+                cohesion_birth_margin,
+                cohesion_rupture_margin,
+                rolling_yield_margin,
+                torsional_yield_margin,
                 acceptance_margin,
                 neighborhood_margin,
                 perturbation_scale,
@@ -134,6 +140,10 @@ class DEMSensitivityPolicy(StrictModule, NonTrainableState):
             self.no_tension_margin,
             self.friction_margin,
             self.frame_margin,
+            self.cohesion_birth_margin,
+            self.cohesion_rupture_margin,
+            self.rolling_yield_margin,
+            self.torsional_yield_margin,
             self.acceptance_margin,
             self.neighborhood_margin,
             self.perturbation_scale,
@@ -153,6 +163,10 @@ class DEMLocalValidityCertificate(StrictModule, NonTrainableState):
     no_tension_margin: Array
     friction_margin: Array
     frame_margin: Array
+    cohesion_birth_margin: Array
+    cohesion_rupture_margin: Array
+    rolling_yield_margin: Array
+    torsional_yield_margin: Array
     acceptance_margin: Array
     neighborhood_margin: Array
     forward_successful: Array
@@ -166,7 +180,7 @@ class DEMSensitivityResult(StrictModule):
     sensitivity: Any
     certificate: DEMLocalValidityCertificate
     usable: Array
-    mode: DEMSensitivityMode = eqx.field(static=True)
+    mode: HybridSensitivityMode = eqx.field(static=True)
 
 
 def dem_local_validity_certificate(
@@ -183,6 +197,10 @@ def dem_local_validity_certificate(
         diagnostics.minimum_no_tension_margin,
         diagnostics.minimum_friction_switch_margin,
         diagnostics.minimum_frame_transport_margin,
+        diagnostics.minimum_cohesion_birth_margin,
+        diagnostics.minimum_cohesion_rupture_margin,
+        diagnostics.minimum_rolling_yield_margin,
+        diagnostics.minimum_torsional_yield_margin,
         diagnostics.acceptance_margin,
         diagnostics.neighborhood_certificate_margin,
     )
@@ -191,6 +209,10 @@ def dem_local_validity_certificate(
         policy.no_tension_margin,
         policy.friction_margin,
         policy.frame_margin,
+        policy.cohesion_birth_margin,
+        policy.cohesion_rupture_margin,
+        policy.rolling_yield_margin,
+        policy.torsional_yield_margin,
         policy.acceptance_margin,
         policy.neighborhood_margin,
     )
@@ -227,7 +249,7 @@ def sharp_branchwise_jvp(
     policy: DEMSensitivityPolicy,
     /,
 ) -> DEMSensitivityResult:
-    if policy.mode is not DEMSensitivityMode.SHARP_BRANCHWISE:
+    if policy.mode is not HybridSensitivityMode.SHARP_BRANCHWISE:
         raise ValueError("sharp_branchwise_jvp requires sharp_branchwise policy.")
     primal, tangent = jax.jvp(function, (parameters,), (direction,))
     certificate = dem_local_validity_certificate(diagnostics, policy)
@@ -254,7 +276,7 @@ def sharp_branchwise_vjp(
     policy: DEMSensitivityPolicy,
     /,
 ) -> DEMSensitivityResult:
-    if policy.mode is not DEMSensitivityMode.SHARP_BRANCHWISE:
+    if policy.mode is not HybridSensitivityMode.SHARP_BRANCHWISE:
         raise ValueError("sharp_branchwise_vjp requires sharp_branchwise policy.")
     primal, pullback = jax.vjp(function, parameters)
     sensitivity = pullback(cotangent)[0]
@@ -276,7 +298,7 @@ def sharp_branchwise_vjp(
 
 __all__ = [
     "DEMLocalValidityCertificate",
-    "DEMSensitivityMode",
+    "HybridSensitivityMode",
     "DEMSensitivityPolicy",
     "DEMSensitivityResult",
     "DEMTrainableMaterialParameters",

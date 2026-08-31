@@ -1,21 +1,24 @@
 # Discrete element method
 
-Phydrax provides an experimental, fixed-capacity, JAX-native soft-sphere discrete element method for two- and three-dimensional rigid spheres. The method composes the existing particle support, dense or cell-list neighborhoods, stable physical pair identities, deterministic reductions, native signed-distance geometry, and fail-closed fixed-step solver.
+Phydrax provides an experimental, fixed-capacity, JAX-native soft-contact discrete element method. The primary compiled equation path covers two- and three-dimensional rigid spheres. A separate three-dimensional `SuperquadricDEMPlan` reuses neighborhoods, stable pair identities, compositional contact, deterministic reductions, and rigid-body integration for smooth convex superquadrics.
 
 ## Supported contract
 
 - isotropic disks in 2-D and spheres in 3-D;
-- scalar mass moment of inertia and angular velocity;
-- fully mobile or fully fixed bodies;
-- linear spring–dashpot or Hertz normal response;
+- dynamic mass, radius, and inertia updates from accepted morphology;
+- linear spring–dashpot, Hertz, or Thornton plastic normal response;
+- optional DMT, capillary-bridge, and near-contact lubrication cohesion;
 - optional Cundall–Strack or Mindlin tangential history;
+- optional constant or elastic rolling–torsional resistance;
+- optional elastic half-space multicontact correction;
 - periodic particle boxes;
-- static exact-signed-distance barriers for linear contact;
-- dense-reference and fixed-capacity cell-list candidate relations;
+- static, prescribed, or force/torque-servo barriers;
+- triangle-wall traction, work, heat, and Finnie-wear observables;
+- dense, cell-list, hierarchical-radius, or cached Verlet neighborhoods;
 - explicit kick–drift–contact–kick integration;
 - branchwise differentiation through one realized contact route.
 
-Sphere orientation is intentionally absent: it cannot affect isotropic sphere contact. Clumps and nonspherical bodies will introduce orientation with their own state geometry.
+Sphere orientation is intentionally absent because it cannot affect isotropic sphere geometry. Rigid clumps and superquadrics carry explicit orientation and angular state.
 
 ## Problem construction
 
@@ -79,9 +82,9 @@ solution = phx.solver.solve_fixed_step(problem)
 
 ## Pair identity and contact memory
 
-Neighborhood slots are not physical contact identity. A cell-list rebuild may move the same physical pair to another slot. `ParticlePairKeySpace` maps canonical stable particle IDs to collision-free triangular ordinals. `match_particle_pair_keys` then remaps edge-local state by sorting old keys and searching new keys.
+Neighborhood slots are not physical contact identity. A cell-list rebuild may move the same physical pair to another slot. `ParticlePairKeySpace` maps canonical stable particle IDs to collision-free triangular ordinals. `match_particle_pair_keys` then remaps the complete `DEMContactHistory` tree by sorting old keys and searching new keys.
 
-A continued contact preserves its tangential displacement and previous normal. A new contact starts from zero history. A separated contact is removed. Pair sorting and matching are discrete stopped-gradient operations; gathered history values remain differentiable.
+Normal, cohesion, tangential, and rotational channels own separate typed histories. Continued contacts preserve their constitutive state after objective frame transport. New contacts start from zero history; separated contacts are removed. Pair sorting and matching are discrete stopped-gradient operations, while gathered history values remain differentiable.
 
 ## Contact geometry
 
@@ -185,12 +188,13 @@ adds immutable radius classes and pair-specific diameter-plus-skin filtering.
 ## Additional contact physics
 
 - `ConstantRollingResistancePlan` adds a stateless Coulomb-like rolling couple.
-- `DMTAdhesiveNormalPlan` supplies a finite-range attractive potential and
-  declares its neighbor-search reach.
-- `ThorntonLinearPlasticNormalPlan` stores maximum overlap, plastic overlap, and
-  irreversible loss under bilinear loading/unloading.
-- `LumpedContactThermalPlan` conservatively exchanges pair heat and reports an
-  explicit thermal timestep restriction.
+- `ElasticRollingTorsionalResistancePlan` stores objective rolling and torsional elastic displacement, applies damping and friction caps, and reports energy and yield margins.
+- `DMTContactCohesionPlan` adds finite-range DMT attraction beside an explicit normal law.
+- `LinearCapillaryBridgePlan` owns bridge birth, rupture, volume source/release, and liquid-balance residuals.
+- `NearContactLubricationPlan` adds regularized finite-gap viscous resistance.
+- `CompositeDEMCohesionPlan` composes ordered cohesion contributions without erasing component history or diagnostics.
+- `ThorntonLinearPlasticNormalPlan` stores maximum overlap, plastic overlap, and irreversible loss under bilinear loading/unloading.
+- `ParticleContactExchangePlan` provides conservative contact heat exchange as a separate coupling channel.
 
 ## Rigid shapes, walls, and bonds
 
@@ -199,11 +203,7 @@ body-frame inertia, and world-frame angular velocity. Rigid sphere clumps store
 only owner pose dynamically and use immutable component templates and stable
 owner/component contact keys.
 
-`RigidContactGeometry` is the common contact-point/normal/lever-arm contract.
-Static triangle walls use deterministic face/edge/vertex ownership. Convex
-polyhedra use a complete face/edge separating-axis oracle. Certified implicit
-contact currently supports sphere-to-implicit queries with an explicit
-distance-error and Lipschitz certificate.
+`RigidContactGeometry` is the common contact-point/normal/lever-arm contract. Static triangle walls use deterministic face/edge/vertex ownership. Convex polyhedra use a complete face/edge separating-axis oracle. Certified implicit contact currently supports sphere-to-implicit queries with an explicit distance-error and Lipschitz certificate. `SuperquadricContactPlan` uses fixed-iteration support-map geometry with witness, curvature, and convergence residuals; it rejects rather than substituting a bounding-sphere force.
 
 `FixedBondGraphPlan` is independent of transient contact search. Elastic bonds
 retain stable IDs and axial/shear/bending/twisting energy. Mixed-mode damage is
@@ -218,14 +218,8 @@ gather and extensive-content deposition. Unresolved CFD–DEM coupling returns
 paired particle and fluid momentum sources and enforces closure validity.
 Accepted multirate windows commit fluid and DEM candidates atomically.
 
-Resolved immersed-boundary coupling uses the same marker interpolation/spreading
-weights and checks discrete work adjointness. Thermal CFD–DEM exchanges equal
-and opposite particle/fluid heat sources.
+Resolved immersed-boundary coupling uses the same marker interpolation/spreading weights and checks discrete work adjointness. `ReactiveCFDDEMCouplingPlan` composes conservative continuum heat/species exchange, contact heat, radiation, particle conversion, morphology, and DEM under one atomic macro-window acceptance decision.
 
 ## Current maturity and limitations
 
-The original spherical forward path is evidence-backed but each newly enabled
-law, shape, coupling, sensitivity, and backend retains its own support-matrix
-status. Distributed execution remains explicitly unsupported. Convex contact
-uses linear penalty semantics until a separately qualified effective-curvature
-law exists; implicit contact does not infer Hertz curvature from sampled fields.
+The original spherical forward path is evidence-backed but each newly enabled law, shape, coupling, sensitivity, and backend retains its own support-matrix status. Distributed execution remains explicitly unsupported. Convex polyhedron contact uses linear penalty semantics until a separately qualified effective-curvature law exists; implicit contact does not infer Hertz curvature from sampled fields. Superquadric wall contact and rigid nonsmooth complementarity are not implemented.

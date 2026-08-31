@@ -40,17 +40,22 @@ from ._dem_contact import (
     LinearSpringDashpotNormalPlan,
     PreparedDEMContactModel,
 )
+from ._dem_contact_state import (
+    DEMContactEvaluationContext,
+    remap_dem_contact_history,
+)
 from ._dem_kernels import reduce_dem_contact
+from ._dem_multicontact import (
+    AbstractDEMContactGraphCorrectionPlan,
+    DEMMulticontactCorrection,
+)
 from ._neighborhood import (
     AbstractPreparedParticleNeighborhood,
     ParticleNeighborhoodState,
 )
-from ._pair_state import (
-    match_particle_pair_keys,
-    ParticlePairKeySpace,
-    remap_particle_pair_values,
-)
+from ._pair_state import match_particle_pair_keys, ParticlePairKeySpace
 from ._pairwise import particle_pair_geometry
+from ._particle_morphology import ParticleDynamicBodyProperties
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
@@ -72,6 +77,7 @@ class DEMRejectionReason(IntFlag):
     DOMAIN = 1 << 2
     PAIR_KEY = 1 << 3
     GEOMETRY = 1 << 4
+    BODY = 1 << 10
     CONTACT = 1 << 5
     NONFINITE = 1 << 6
     OVERLAP = 1 << 7
@@ -83,6 +89,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
     """Fixed-capacity penalty DEM with branchwise contact topology."""
 
     contact: DEMContactModelPlan
+    multicontact: AbstractDEMContactGraphCorrectionPlan | None
     maximum_overlap_fraction: float = eqx.field(static=True)
     distance_tolerance: float = eqx.field(static=True)
     frame_tolerance: float = eqx.field(static=True)
@@ -95,6 +102,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
         contact: DEMContactModelPlan,
         /,
         *,
+        multicontact: AbstractDEMContactGraphCorrectionPlan | None = None,
         maximum_overlap_fraction: float = 0.1,
         distance_tolerance: float = 1.0e-12,
         frame_tolerance: float = 1.0e-10,
@@ -103,6 +111,12 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(contact, DEMContactModelPlan):
             raise TypeError("contact must be a DEMContactModelPlan.")
+        if multicontact is not None and not isinstance(
+            multicontact, AbstractDEMContactGraphCorrectionPlan
+        ):
+            raise TypeError(
+                "multicontact must be an AbstractDEMContactGraphCorrectionPlan or None."
+            )
         overlap = float(maximum_overlap_fraction)
         distance = float(distance_tolerance)
         frame = float(frame_tolerance)
@@ -126,6 +140,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
             {
                 "kind": "soft-sphere-dem-method-plan",
                 "contact": contact.contact_model_id,
+                "multicontact": (None if multicontact is None else multicontact.plan_id),
                 "maximum_overlap_fraction": overlap,
                 "distance_tolerance": distance,
                 "frame_tolerance": frame,
@@ -137,6 +152,7 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
         if not identifier:
             raise ValueError("method_id must be nonempty.")
         self.contact = contact
+        self.multicontact = multicontact
         self.maximum_overlap_fraction = overlap
         self.distance_tolerance = distance
         self.frame_tolerance = frame
@@ -212,6 +228,7 @@ class DEMStepEnergyLedger(StrictModule):
 
 class DEMRuntimeState(StrictModule):
     kinematics: RigidSphereKinematics
+    body_properties: ParticleDynamicBodyProperties
     particle_history: DEMContactHistory
     boundary_histories: tuple[DEMContactHistory, ...]
     neighborhood_cache: ParticleVerletState | None
@@ -223,10 +240,18 @@ class DEMDiagnostics(StrictModule):
     active_contacts: Array
     sticking_contacts: Array
     sliding_contacts: Array
+    cohesion_births: Array
+    cohesion_ruptures: Array
+    rolling_yield_contacts: Array
+    torsional_yield_contacts: Array
     maximum_overlap_fraction: Array
     minimum_gap_margin: Array
     minimum_no_tension_margin: Array
     minimum_frame_transport_margin: Array
+    minimum_cohesion_birth_margin: Array
+    minimum_cohesion_rupture_margin: Array
+    minimum_rolling_yield_margin: Array
+    minimum_torsional_yield_margin: Array
     acceptance_margin: Array
     minimum_friction_switch_margin: Array
     neighborhood_rebuilt: Array
@@ -243,6 +268,9 @@ class DEMDiagnostics(StrictModule):
     maximum_friction_cone_defect: Array
     wall_action_reaction_defect: Array
     contact_history_continuity_defect: Array
+    multicontact_residual: Array
+    minimum_multicontact_regularity_margin: Array
+    maximum_bridge_volume_residual: Array
     successful: Array
     rejection_reasons: Array
 
@@ -263,6 +291,11 @@ class DEMEvaluation(StrictModule):
     contact_energy: Array
     contact_births: Array
     contact_deaths: Array
+    cohesion_births: Array
+    cohesion_ruptures: Array
+    multicontact: DEMMulticontactCorrection | None
+    rolling_yield_events: Array
+    torsional_yield_events: Array
     boundary_wall_power: Array
     stick_to_slip_events: Array
     slip_to_stick_events: Array
@@ -282,6 +315,13 @@ class DEMStepEvaluation(StrictModule):
     work: Array
 
     rejection_reasons: Array
+
+
+class DEMBodyPropertyUpdateResult(StrictModule):
+    candidate_state: DEMRuntimeState
+    accepted_state: DEMRuntimeState
+    evaluation: DEMEvaluation
+    successful: Array
 
 
 class DEMStateGeometry(AbstractStateGeometry):
@@ -506,18 +546,27 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
     def resource_evidence_id(self) -> str:
         return self.preparation.report_id
 
+    def initial_body_properties(self) -> ParticleDynamicBodyProperties:
+        masses = self.bodies.particles.safe_masses
+        return ParticleDynamicBodyProperties(
+            masses,
+            self.bodies.inverse_masses,
+            self.bodies.radii,
+            self.bodies.inertias,
+            self.bodies.inverse_inertias,
+            self.bodies.particles.active_mask,
+        )
+
     def empty_particle_history(self) -> DEMContactHistory:
-        return DEMContactHistory.empty(
+        return self.contact_model.empty_history(
             self.neighborhood.pair_capacity,
-            self.bodies.ambient_dimension,
             self.bodies.radii.dtype,
         )
 
     def empty_boundary_histories(self) -> tuple[DEMContactHistory, ...]:
         return tuple(
-            DEMContactHistory.empty(
+            self.contact_model.empty_history(
                 self.bodies.capacity,
-                self.bodies.ambient_dimension,
                 self.bodies.radii.dtype,
             )
             for _ in self.barriers
@@ -535,21 +584,32 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             ),
         )
 
-    def _kinetic_energy(self, kinematics: RigidSphereKinematics, /) -> Array:
-        masses = self.bodies.particles.safe_masses
-        return 0.5 * jnp.sum(masses[:, None] * kinematics.velocity**2) + 0.5 * jnp.sum(
-            self.bodies.inertias[:, None] * kinematics.angular_velocity**2
-        )
+    def _kinetic_energy(
+        self,
+        kinematics: RigidSphereKinematics,
+        properties: ParticleDynamicBodyProperties,
+        /,
+    ) -> Array:
+        return 0.5 * jnp.sum(
+            properties.masses[:, None] * kinematics.velocity**2
+        ) + 0.5 * jnp.sum(properties.inertias[:, None] * kinematics.angular_velocity**2)
 
-    def _gravity_potential(self, kinematics: RigidSphereKinematics, /) -> Array:
-        masses = self.bodies.particles.safe_masses
-        potential = -masses * jnp.sum(kinematics.position * self.gravity, axis=-1)
-        return jnp.sum(jnp.where(self.bodies.particles.active_mask, potential, 0.0))
+    def _gravity_potential(
+        self,
+        kinematics: RigidSphereKinematics,
+        properties: ParticleDynamicBodyProperties,
+        /,
+    ) -> Array:
+        potential = -properties.masses * jnp.sum(
+            kinematics.position * self.gravity, axis=-1
+        )
+        return jnp.sum(jnp.where(properties.active, potential, 0.0))
 
     def _ledger_view(
         self,
         ledger: DEMEnergyLedgerState,
         kinematics: RigidSphereKinematics,
+        properties: ParticleDynamicBodyProperties,
         contact_energy: Array,
         boundary_wall_power: Array,
         /,
@@ -558,9 +618,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             ledger.initial_kinetic_energy,
             ledger.initial_contact_energy,
             ledger.initial_gravity_potential,
-            self._kinetic_energy(kinematics),
+            self._kinetic_energy(kinematics, properties),
             contact_energy,
-            self._gravity_potential(kinematics),
+            self._gravity_potential(kinematics, properties),
             boundary_wall_power,
             ledger.cumulative_particle_contact_work,
             ledger.cumulative_boundary_contact_work,
@@ -583,6 +643,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         current: RigidSphereLoad,
         previous_kinematics: RigidSphereKinematics,
         current_kinematics: RigidSphereKinematics,
+        properties: ParticleDynamicBodyProperties,
         step_size: Array,
         /,
     ) -> Array:
@@ -594,7 +655,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         average_angular_velocity = 0.5 * (
             previous_kinematics.angular_velocity + current_kinematics.angular_velocity
         )
-        mobile = self.bodies.particles.active_mask & ~self.bodies.fixed_mask
+        mobile = properties.active & ~self.bodies.fixed_mask
         translational = jnp.sum(impulse * average_velocity, axis=-1)
         rotational = jnp.sum(angular_impulse * average_angular_velocity, axis=-1)
         return jnp.sum(jnp.where(mobile, translational + rotational, 0.0))
@@ -607,17 +668,18 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         step_size: Array,
         /,
     ) -> DEMStepEnergyLedger:
-        kinetic_before = self._kinetic_energy(state.kinematics)
-        kinetic_after = self._kinetic_energy(next_kinematics)
+        kinetic_before = self._kinetic_energy(state.kinematics, state.body_properties)
+        kinetic_after = self._kinetic_energy(next_kinematics, state.body_properties)
         contact_before = state.energy.contact_energy
         contact_after = evaluation.contact_energy
-        gravity_before = self._gravity_potential(state.kinematics)
-        gravity_after = self._gravity_potential(next_kinematics)
+        gravity_before = self._gravity_potential(state.kinematics, state.body_properties)
+        gravity_after = self._gravity_potential(next_kinematics, state.body_properties)
         particle_work = self._source_work(
             state.loads.particle_contact,
             evaluation.loads.particle_contact,
             state.kinematics,
             next_kinematics,
+            state.body_properties,
             step_size,
         )
         boundary_work = (
@@ -628,6 +690,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                         current,
                         state.kinematics,
                         next_kinematics,
+                        state.body_properties,
                         step_size,
                     )
                     for previous, current in zip(
@@ -650,6 +713,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             evaluation.loads.gravity,
             state.kinematics,
             next_kinematics,
+            state.body_properties,
             step_size,
         )
         external_work = self._source_work(
@@ -657,6 +721,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             evaluation.loads.external,
             state.kinematics,
             next_kinematics,
+            state.body_properties,
             step_size,
         )
         contact_work = particle_work + jnp.sum(boundary_work)
@@ -753,6 +818,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         args: Any = None,
     ) -> DEMRuntimeState:
         kinematics = self.bodies.kinematics(position, velocity, angular_velocity)
+        body_properties = self.initial_body_properties()
         zero = self._zero_load()
         resolved_zero = DEMResolvedLoad(
             zero,
@@ -761,8 +827,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             self._zero_load(),
             self._zero_load(),
         )
-        kinetic = self._kinetic_energy(kinematics)
-        gravity_potential = self._gravity_potential(kinematics)
+        kinetic = self._kinetic_energy(kinematics, body_properties)
+        gravity_potential = self._gravity_potential(kinematics, body_properties)
         scalar_zero = jnp.zeros((), dtype=kinematics.position.dtype)
         zero_boundary = jnp.zeros((len(self.barriers),), dtype=kinematics.position.dtype)
         energy_seed = DEMEnergyLedgerState(
@@ -794,6 +860,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         seed = DEMRuntimeState(
             kinematics,
+            body_properties,
             self.empty_particle_history(),
             self.empty_boundary_histories(),
             neighborhood_cache,
@@ -830,6 +897,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         initialized = DEMRuntimeState(
             kinematics,
+            body_properties,
             evaluation.particle_contact.next_history,
             tuple(value.contact.next_history for value in evaluation.boundaries),
             evaluation.neighborhood_cache,
@@ -847,12 +915,76 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 initialized.kinematics.velocity,
                 initialized.kinematics.angular_velocity,
             ),
+            initialized.body_properties,
             initialized.particle_history,
             initialized.boundary_histories,
             initialized.neighborhood_cache,
             initialized.loads,
             initialized.energy,
         )
+
+    def apply_body_properties(
+        self,
+        time: Array,
+        state: DEMRuntimeState,
+        properties: ParticleDynamicBodyProperties,
+        rebuild_neighborhood: Array,
+        /,
+        *,
+        args: Any = None,
+    ) -> DEMBodyPropertyUpdateResult:
+        if not isinstance(state, DEMRuntimeState):
+            raise TypeError("state must be a DEMRuntimeState.")
+        if not isinstance(properties, ParticleDynamicBodyProperties):
+            raise TypeError("properties must be ParticleDynamicBodyProperties.")
+        mobile = (properties.active & ~self.bodies.fixed_mask)[:, None]
+        kinematics = RigidSphereKinematics(
+            state.kinematics.position,
+            jnp.where(mobile, state.kinematics.velocity, 0.0),
+            jnp.where(mobile, state.kinematics.angular_velocity, 0.0),
+        )
+        cache = state.neighborhood_cache
+        if isinstance(self.neighborhood, PreparedVerletParticleNeighborhood):
+            if cache is None:
+                raise ValueError(
+                    "Verlet morphology update requires a neighborhood cache."
+                )
+            initialized = self.neighborhood.initialize(kinematics.position)
+            cache = tree_where(jnp.asarray(rebuild_neighborhood), initialized, cache)
+        staged = DEMRuntimeState(
+            kinematics,
+            properties,
+            state.particle_history,
+            state.boundary_histories,
+            cache,
+            state.loads,
+            state.energy,
+        )
+        evaluation = self.evaluate(
+            jnp.asarray(time),
+            staged,
+            jnp.zeros((), dtype=kinematics.position.dtype),
+            args,
+        )
+        energy = self._ledger_view(
+            state.energy,
+            kinematics,
+            properties,
+            evaluation.contact_energy,
+            evaluation.boundary_wall_power,
+        )
+        candidate = DEMRuntimeState(
+            kinematics,
+            properties,
+            evaluation.particle_contact.next_history,
+            tuple(value.contact.next_history for value in evaluation.boundaries),
+            evaluation.neighborhood_cache,
+            evaluation.loads,
+            energy,
+        )
+        successful = evaluation.successful & tree_allfinite(candidate)
+        accepted = tree_where(successful, candidate, state)
+        return DEMBodyPropertyUpdateResult(candidate, accepted, evaluation, successful)
 
     def evaluate(
         self,
@@ -864,6 +996,29 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
     ) -> DEMEvaluation:
         if not isinstance(state, DEMRuntimeState):
             raise TypeError("state must be a DEMRuntimeState.")
+        properties = state.body_properties
+        expected = (self.bodies.capacity,)
+        body_shapes_valid = (
+            properties.masses.shape == expected
+            and properties.inverse_masses.shape == expected
+            and properties.radii.shape == expected
+            and properties.inertias.shape == expected
+            and properties.inverse_inertias.shape == expected
+            and properties.active.shape == expected
+        )
+        if not body_shapes_valid:
+            raise ValueError("Dynamic DEM body properties have invalid shapes.")
+        body_valid = (
+            jnp.all(jnp.isfinite(properties.masses) & (properties.masses >= 0.0))
+            & jnp.all(jnp.isfinite(properties.inverse_masses))
+            & jnp.all(jnp.isfinite(properties.radii) & (properties.radii >= 0.0))
+            & jnp.all(jnp.isfinite(properties.inertias) & (properties.inertias > 0.0))
+            & jnp.all(jnp.isfinite(properties.inverse_inertias))
+            & jnp.all(
+                ~properties.active
+                | ((properties.masses > 0.0) & (properties.radii > 0.0))
+            )
+        )
         kinematics = self.bodies.kinematics(
             state.kinematics.position,
             state.kinematics.velocity,
@@ -895,36 +1050,11 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 keys.valid,
                 maximum_key=maximum_key,
             )
-            values = remap_particle_pair_values(
+            history = remap_dem_contact_history(
+                state.particle_history,
                 remap,
-                {
-                    "active": state.particle_history.active,
-                    "sliding": state.particle_history.sliding,
-                    "normal_maximum_overlap": (
-                        state.particle_history.normal_maximum_overlap
-                    ),
-                    "normal_plastic_overlap": (
-                        state.particle_history.normal_plastic_overlap
-                    ),
-                    "normal_previous_overlap": (
-                        state.particle_history.normal_previous_overlap
-                    ),
-                    "previous_normal": state.particle_history.previous_normal,
-                    "tangential_displacement": (
-                        state.particle_history.tangential_displacement
-                    ),
-                },
-            )
-            history = DEMContactHistory(
                 keys.keys,
                 keys.valid,
-                values["active"].astype(bool),
-                values["sliding"].astype(bool),
-                values["normal_maximum_overlap"],
-                values["normal_plastic_overlap"],
-                values["normal_previous_overlap"],
-                values["previous_normal"],
-                values["tangential_displacement"],
             )
             return history, remap.continued, remap.successful
 
@@ -933,17 +1063,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 ~state.particle_history.valid
                 | (keys.valid & (state.particle_history.pair_keys == keys.keys))
             )
-            history = DEMContactHistory(
-                keys.keys,
-                keys.valid,
-                state.particle_history.active,
-                state.particle_history.sliding,
-                state.particle_history.normal_maximum_overlap,
-                state.particle_history.normal_plastic_overlap,
-                state.particle_history.normal_previous_overlap,
-                state.particle_history.previous_normal,
-                state.particle_history.tangential_displacement,
-            )
+            history = state.particle_history.with_routes(keys.keys, keys.valid)
             return history, keys.valid & history.valid, same_keys
 
         remapped_history, continued, alignment_successful = jax.lax.cond(
@@ -958,17 +1078,18 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             pairs,
             center_geometry,
             distance_tolerance=self.method.distance_tolerance,
+            radii=state.body_properties.radii,
         )
         batch = DEMContactBatch(
             sphere_geometry.normal,
             sphere_geometry.gap,
             sphere_geometry.overlap,
             (
-                self.bodies.radii[pairs.left_indices]
-                * self.bodies.radii[pairs.right_indices]
+                properties.radii[pairs.left_indices]
+                * properties.radii[pairs.right_indices]
                 / (
-                    self.bodies.radii[pairs.left_indices]
-                    + self.bodies.radii[pairs.right_indices]
+                    properties.radii[pairs.left_indices]
+                    + properties.radii[pairs.right_indices]
                 )
             ),
             sphere_geometry.left_arm,
@@ -977,25 +1098,104 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             sphere_geometry.tangential_velocity,
             kinematics.angular_velocity[pairs.left_indices],
             kinematics.angular_velocity[pairs.right_indices],
-            sphere_geometry.valid,
+            sphere_geometry.valid
+            & properties.active[pairs.left_indices]
+            & properties.active[pairs.right_indices],
         )
         left = pairs.left_indices
         right = pairs.right_indices
-        particle_contact = self.contact_model.evaluate(
-            batch,
-            remapped_history,
+        contact_context = DEMContactEvaluationContext(
             keys.keys,
             keys.valid,
             continued,
-            self.bodies.inverse_masses[left],
-            self.bodies.inverse_masses[right],
-            self.bodies.radii[left],
-            self.bodies.radii[right],
+            state.body_properties.inverse_masses[left],
+            state.body_properties.inverse_masses[right],
+            state.body_properties.radii[left],
+            state.body_properties.radii[right],
             self.bodies.material_ids[left],
             self.bodies.material_ids[right],
             step_size,
+            -jnp.ones((), dtype=jnp.int32),
+        )
+        particle_contact = self.contact_model.evaluate(
+            batch,
+            remapped_history,
+            contact_context,
             frame_tolerance=self.method.frame_tolerance,
         )
+        multicontact = None
+        if self.method.multicontact is not None and batch.gap.shape[0] > 0:
+            base_batch = batch
+            previous_correction = jnp.zeros_like(batch.gap)
+            correction_residual = jnp.asarray(jnp.inf, dtype=batch.gap.dtype)
+            for _ in range(self.method.multicontact.iterations):
+                contact_point = kinematics.position[left] + base_batch.left_arm
+                compressive_force = jnp.maximum(
+                    jnp.sum(
+                        particle_contact.normal_force * base_batch.normal,
+                        axis=-1,
+                    ),
+                    0.0,
+                )
+                multicontact = self.method.multicontact.evaluate(
+                    left,
+                    right,
+                    contact_point,
+                    base_batch.normal,
+                    compressive_force,
+                    self.bodies.material_ids,
+                    self.materials,
+                    base_batch.valid & particle_contact.active,
+                )
+                scale = jnp.maximum(
+                    jnp.minimum(
+                        state.body_properties.radii[left],
+                        state.body_properties.radii[right],
+                    ),
+                    1.0e-30,
+                )
+                correction_residual = jnp.max(
+                    jnp.abs(multicontact.gap_correction - previous_correction) / scale
+                )
+                previous_correction = multicontact.gap_correction
+                corrected_gap = base_batch.gap - multicontact.gap_correction
+                batch = DEMContactBatch(
+                    base_batch.normal,
+                    corrected_gap,
+                    jnp.maximum(-corrected_gap, 0.0),
+                    base_batch.effective_radius,
+                    base_batch.left_arm,
+                    base_batch.right_arm,
+                    base_batch.normal_velocity,
+                    base_batch.tangential_velocity,
+                    base_batch.left_angular_velocity,
+                    base_batch.right_angular_velocity,
+                    base_batch.valid,
+                )
+                particle_contact = self.contact_model.evaluate(
+                    batch,
+                    remapped_history,
+                    contact_context,
+                    frame_tolerance=self.method.frame_tolerance,
+                )
+            correction_successful = multicontact.successful & (
+                correction_residual <= self.method.multicontact.convergence_tolerance
+            )
+            multicontact = eqx.tree_at(
+                lambda value: value.residual,
+                multicontact,
+                correction_residual,
+            )
+            multicontact = eqx.tree_at(
+                lambda value: value.successful,
+                multicontact,
+                correction_successful,
+            )
+            particle_contact = eqx.tree_at(
+                lambda value: value.successful,
+                particle_contact,
+                particle_contact.successful & correction_successful,
+            )
         pair_load = reduce_dem_contact(
             pairs,
             particle_contact,
@@ -1017,6 +1217,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 step_size,
                 time=time,
                 args=args,
+                body_properties=state.body_properties,
                 normal_tolerance=self.method.distance_tolerance,
                 frame_tolerance=self.method.frame_tolerance,
             )
@@ -1036,13 +1237,14 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         for load in boundary_loads:
             boundary_force = boundary_force + load.force
             boundary_torque = boundary_torque + load.torque
-        gravity_force = self.bodies.particles.safe_masses[:, None] * self.gravity
-        gravity_force = jnp.where(
-            self.bodies.particles.active_mask[:, None], gravity_force, 0.0
-        )
+        gravity_force = properties.masses[:, None] * self.gravity
+        gravity_force = jnp.where(properties.active[:, None], gravity_force, 0.0)
         gravity_load = self.bodies.load(gravity_force, jnp.zeros_like(pair_torque))
         external_value = self._external_load(time, kinematics, args)
-        external_load = self.bodies.load(external_value.force, external_value.torque)
+        external_load = self.bodies.load(
+            jnp.where(properties.active[:, None], external_value.force, 0.0),
+            jnp.where(properties.active[:, None], external_value.torque, 0.0),
+        )
         total_load = self.bodies.load(
             self.precision.output(
                 pair_force + boundary_force + gravity_load.force + external_load.force
@@ -1066,13 +1268,21 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             continued_active, dtype=jnp.int32
         )
         stick_to_slip = jnp.sum(
-            continued_active & ~remapped_history.sliding & particle_contact.sliding,
+            continued_active
+            & ~remapped_history.tangential.sliding
+            & particle_contact.sliding,
             dtype=jnp.int32,
         )
         slip_to_stick = jnp.sum(
-            continued_active & remapped_history.sliding & ~particle_contact.sliding,
+            continued_active
+            & remapped_history.tangential.sliding
+            & ~particle_contact.sliding,
             dtype=jnp.int32,
         )
+        cohesion_births = jnp.sum(particle_contact.cohesion_births, dtype=jnp.int32)
+        cohesion_ruptures = jnp.sum(particle_contact.cohesion_ruptures, dtype=jnp.int32)
+        rolling_yields = jnp.sum(particle_contact.rolling_yielded, dtype=jnp.int32)
+        torsional_yields = jnp.sum(particle_contact.torsional_yielded, dtype=jnp.int32)
         contact_energy = jnp.sum(particle_contact.elastic_energy)
         boundary_wall_power = (
             jnp.stack(tuple(response.wall_power for response in boundary_responses))
@@ -1091,12 +1301,28 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 old_history.active & ~new_history.active, dtype=jnp.int32
             )
             stick_to_slip = stick_to_slip + jnp.sum(
-                continued_boundary & ~old_history.sliding & new_history.sliding,
+                continued_boundary
+                & ~old_history.tangential.sliding
+                & new_history.tangential.sliding,
                 dtype=jnp.int32,
             )
             slip_to_stick = slip_to_stick + jnp.sum(
-                continued_boundary & old_history.sliding & ~new_history.sliding,
+                continued_boundary
+                & old_history.tangential.sliding
+                & ~new_history.tangential.sliding,
                 dtype=jnp.int32,
+            )
+            cohesion_births = cohesion_births + jnp.sum(
+                response.contact.cohesion_births, dtype=jnp.int32
+            )
+            cohesion_ruptures = cohesion_ruptures + jnp.sum(
+                response.contact.cohesion_ruptures, dtype=jnp.int32
+            )
+            rolling_yields = rolling_yields + jnp.sum(
+                response.contact.rolling_yielded, dtype=jnp.int32
+            )
+            torsional_yields = torsional_yields + jnp.sum(
+                response.contact.torsional_yielded, dtype=jnp.int32
             )
             contact_energy = contact_energy + jnp.sum(response.contact.elastic_energy)
         boundary_successful = (
@@ -1105,6 +1331,11 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             else jnp.asarray(True)
         )
         reasons = jnp.zeros((), dtype=jnp.int32)
+        reasons = reasons | jnp.where(
+            ~body_valid,
+            int(DEMRejectionReason.BODY),
+            0,
+        ).astype(jnp.int32)
         reasons = reasons | jnp.where(
             neighborhood.cell_overflow,
             int(DEMRejectionReason.CELL_CAPACITY),
@@ -1144,6 +1375,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         diagnostic_energy = self._ledger_view(
             state.energy,
             kinematics,
+            state.body_properties,
             contact_energy,
             boundary_wall_power,
         )
@@ -1151,7 +1383,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             kinematics,
             neighborhood_cache,
             particle_contact,
+            multicontact,
             boundary_responses,
+            state.body_properties,
             pair_force,
             pair_torque,
             diagnostic_energy,
@@ -1163,21 +1397,26 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             + self.bodies.particles.active_count * len(self.barriers)
         )
         return DEMEvaluation(
-            neighborhood,
-            neighborhood_cache,
-            particle_contact,
-            boundary_responses,
-            resolved_loads,
-            diagnostics,
-            contact_energy,
-            births,
-            deaths,
-            boundary_wall_power,
-            stick_to_slip,
-            slip_to_stick,
-            work.astype(jnp.int32),
-            successful,
-            reasons,
+            neighborhood=neighborhood,
+            neighborhood_cache=neighborhood_cache,
+            particle_contact=particle_contact,
+            boundaries=boundary_responses,
+            loads=resolved_loads,
+            diagnostics=diagnostics,
+            contact_energy=contact_energy,
+            contact_births=births,
+            contact_deaths=deaths,
+            cohesion_births=cohesion_births,
+            cohesion_ruptures=cohesion_ruptures,
+            multicontact=multicontact,
+            rolling_yield_events=rolling_yields,
+            torsional_yield_events=torsional_yields,
+            boundary_wall_power=boundary_wall_power,
+            stick_to_slip_events=stick_to_slip,
+            slip_to_stick_events=slip_to_stick,
+            work=work.astype(jnp.int32),
+            successful=successful,
+            rejection_reasons=reasons,
         )
 
     def step_detailed(
@@ -1191,12 +1430,12 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
     ) -> DEMStepEvaluation:
         del step_index
         half = 0.5 * step_size
-        mobile = (self.bodies.particles.active_mask & ~self.bodies.fixed_mask)[:, None]
+        mobile = (state.body_properties.active & ~self.bodies.fixed_mask)[:, None]
         half_velocity = state.kinematics.velocity + half * (
-            self.bodies.inverse_masses[:, None] * state.loads.total.force
+            state.body_properties.inverse_masses[:, None] * state.loads.total.force
         )
         half_angular = state.kinematics.angular_velocity + half * (
-            self.bodies.inverse_inertias[:, None] * state.loads.total.torque
+            state.body_properties.inverse_inertias[:, None] * state.loads.total.torque
         )
         half_velocity = jnp.where(mobile, half_velocity, 0.0)
         half_angular = jnp.where(mobile, half_angular, 0.0)
@@ -1204,6 +1443,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         next_position = jnp.where(mobile, next_position, state.kinematics.position)
         staged = DEMRuntimeState(
             RigidSphereKinematics(next_position, half_velocity, half_angular),
+            state.body_properties,
             state.particle_history,
             state.boundary_histories,
             state.neighborhood_cache,
@@ -1212,10 +1452,11 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         evaluation = self.evaluate(time + step_size, staged, step_size, args)
         next_velocity = half_velocity + half * (
-            self.bodies.inverse_masses[:, None] * evaluation.loads.total.force
+            state.body_properties.inverse_masses[:, None] * evaluation.loads.total.force
         )
         next_angular = half_angular + half * (
-            self.bodies.inverse_inertias[:, None] * evaluation.loads.total.torque
+            state.body_properties.inverse_inertias[:, None]
+            * evaluation.loads.total.torque
         )
         next_velocity = jnp.where(mobile, next_velocity, 0.0)
         next_angular = jnp.where(mobile, next_angular, 0.0)
@@ -1226,6 +1467,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         candidate_energy = self._accumulated_energy(state.energy, energy)
         candidate = DEMRuntimeState(
             next_kinematics,
+            state.body_properties,
             evaluation.particle_contact.next_history,
             tuple(value.contact.next_history for value in evaluation.boundaries),
             evaluation.neighborhood_cache,
@@ -1259,9 +1501,14 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             reasons,
         )
 
-    def step_restriction(self) -> DEMStepRestriction:
-        active = self.bodies.particles.active_mask & ~self.bodies.fixed_mask
-        masses = jnp.where(active, self.bodies.particles.safe_masses, jnp.inf)
+    def step_restriction(
+        self, properties: ParticleDynamicBodyProperties | None = None, /
+    ) -> DEMStepRestriction:
+        selected_properties = (
+            self.initial_body_properties() if properties is None else properties
+        )
+        active = selected_properties.active & ~self.bodies.fixed_mask
+        masses = jnp.where(active, selected_properties.masses, jnp.inf)
         minimum_mass = jnp.min(masses)
         normal = self.method.contact.normal
         if isinstance(normal, LinearSpringDashpotNormalPlan):
@@ -1273,12 +1520,12 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         young = self.materials.young_modulus[material]
         poisson = self.materials.poisson_ratio[material]
         shear = young / (2.0 * (1.0 + poisson))
-        radius = self.bodies.radii
+        radius = selected_properties.radii
         if self.bodies.ambient_dimension == 2:
             measure = jnp.pi * radius**2
         else:
             measure = (4.0 / 3.0) * jnp.pi * radius**3
-        density = self.bodies.particles.safe_masses / jnp.maximum(measure, 1.0e-30)
+        density = selected_properties.masses / jnp.maximum(measure, 1.0e-30)
         rayleigh_values = (
             jnp.pi * radius * jnp.sqrt(density / shear) / (0.1631 * poisson + 0.8766)
         )
@@ -1311,7 +1558,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         kinematics,
         neighborhood_cache,
         particle_contact,
+        multicontact,
         boundaries,
+        body_properties,
         pair_force,
         pair_torque,
         energy,
@@ -1326,6 +1575,16 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                     jnp.zeros((1,), dtype=energy.kinetic_energy.dtype),
                 )
             )
+        )
+        multicontact_residual = (
+            jnp.zeros((), dtype=energy.kinetic_energy.dtype)
+            if multicontact is None
+            else multicontact.residual
+        )
+        multicontact_margin = (
+            jnp.asarray(jnp.inf, dtype=energy.kinetic_energy.dtype)
+            if multicontact is None
+            else multicontact.regularity_margin
         )
         wall_defect = jnp.zeros((), dtype=energy.kinetic_energy.dtype)
         neighborhood_rebuilt = (
@@ -1346,6 +1605,22 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         active_count = jnp.sum(particle_contact.active, dtype=jnp.int32)
         sticking_count = jnp.sum(particle_contact.sticking, dtype=jnp.int32)
         sliding_count = jnp.sum(particle_contact.sliding, dtype=jnp.int32)
+        cohesion_birth_count = jnp.sum(particle_contact.cohesion_births, dtype=jnp.int32)
+        cohesion_rupture_count = jnp.sum(
+            particle_contact.cohesion_ruptures, dtype=jnp.int32
+        )
+        rolling_yield_count = jnp.sum(particle_contact.rolling_yielded, dtype=jnp.int32)
+        torsional_yield_count = jnp.sum(
+            particle_contact.torsional_yielded, dtype=jnp.int32
+        )
+        bridge_residual = jnp.max(
+            jnp.concatenate(
+                (
+                    jnp.abs(particle_contact.bridge_volume_residual),
+                    jnp.zeros((1,), dtype=energy.kinetic_energy.dtype),
+                )
+            )
+        )
         maximum_overlap = particle_contact.maximum_overlap_fraction
         elastic_energy = jnp.sum(particle_contact.elastic_energy)
         friction_margin = jnp.min(
@@ -1359,6 +1634,10 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         activation_margin = particle_contact.activation_margin
         no_tension_margin = particle_contact.no_tension_margin
         frame_margin = particle_contact.frame_transport_margin
+        cohesion_birth_margin = particle_contact.cohesion_birth_margin
+        cohesion_rupture_margin = particle_contact.cohesion_rupture_margin
+        rolling_yield_margin = particle_contact.rolling_yield_margin
+        torsional_yield_margin = particle_contact.torsional_yield_margin
         for response in boundaries:
             active_count = active_count + jnp.sum(
                 response.contact.active, dtype=jnp.int32
@@ -1368,6 +1647,22 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             )
             sliding_count = sliding_count + jnp.sum(
                 response.contact.sliding, dtype=jnp.int32
+            )
+            cohesion_birth_count = cohesion_birth_count + jnp.sum(
+                response.contact.cohesion_births, dtype=jnp.int32
+            )
+            cohesion_rupture_count = cohesion_rupture_count + jnp.sum(
+                response.contact.cohesion_ruptures, dtype=jnp.int32
+            )
+            rolling_yield_count = rolling_yield_count + jnp.sum(
+                response.contact.rolling_yielded, dtype=jnp.int32
+            )
+            torsional_yield_count = torsional_yield_count + jnp.sum(
+                response.contact.torsional_yielded, dtype=jnp.int32
+            )
+            bridge_residual = jnp.maximum(
+                bridge_residual,
+                jnp.max(jnp.abs(response.contact.bridge_volume_residual)),
             )
             maximum_overlap = jnp.maximum(
                 maximum_overlap, response.contact.maximum_overlap_fraction
@@ -1394,7 +1689,19 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             frame_margin = jnp.minimum(
                 frame_margin, response.contact.frame_transport_margin
             )
-        masses = self.bodies.particles.safe_masses
+            cohesion_birth_margin = jnp.minimum(
+                cohesion_birth_margin, response.contact.cohesion_birth_margin
+            )
+            cohesion_rupture_margin = jnp.minimum(
+                cohesion_rupture_margin, response.contact.cohesion_rupture_margin
+            )
+            rolling_yield_margin = jnp.minimum(
+                rolling_yield_margin, response.contact.rolling_yield_margin
+            )
+            torsional_yield_margin = jnp.minimum(
+                torsional_yield_margin, response.contact.torsional_yield_margin
+            )
+        masses = body_properties.masses
         linear_momentum = jnp.sum(masses[:, None] * kinematics.velocity, axis=0)
         angular_momentum = jnp.sum(
             sphere_lever_torque(
@@ -1402,7 +1709,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 masses[:, None] * kinematics.velocity,
                 self.bodies.ambient_dimension,
             )
-            + self.bodies.inertias[:, None] * kinematics.angular_velocity,
+            + body_properties.inertias[:, None] * kinematics.angular_velocity,
             axis=0,
         )
         net_force = jnp.sum(pair_force, axis=0)
@@ -1414,35 +1721,46 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             axis=0,
         )
         return DEMDiagnostics(
-            active_count,
-            sticking_count,
-            sliding_count,
-            maximum_overlap,
-            activation_margin,
-            no_tension_margin,
-            frame_margin,
-            self.method.maximum_overlap_fraction - maximum_overlap,
-            friction_margin,
-            neighborhood_rebuilt,
-            neighborhood_rebuild_count,
-            neighborhood_certificate_margin,
-            linear_momentum,
-            angular_momentum,
-            energy.kinetic_energy,
-            elastic_energy,
-            energy.gravity_potential,
-            energy,
-            net_force,
-            net_torque,
-            friction_defect,
-            wall_defect,
-            jnp.where(
+            active_contacts=active_count,
+            sticking_contacts=sticking_count,
+            sliding_contacts=sliding_count,
+            cohesion_births=cohesion_birth_count,
+            cohesion_ruptures=cohesion_rupture_count,
+            rolling_yield_contacts=rolling_yield_count,
+            torsional_yield_contacts=torsional_yield_count,
+            maximum_overlap_fraction=maximum_overlap,
+            minimum_gap_margin=activation_margin,
+            minimum_no_tension_margin=no_tension_margin,
+            minimum_frame_transport_margin=frame_margin,
+            minimum_cohesion_birth_margin=cohesion_birth_margin,
+            minimum_cohesion_rupture_margin=cohesion_rupture_margin,
+            minimum_rolling_yield_margin=rolling_yield_margin,
+            minimum_torsional_yield_margin=torsional_yield_margin,
+            acceptance_margin=(self.method.maximum_overlap_fraction - maximum_overlap),
+            minimum_friction_switch_margin=friction_margin,
+            neighborhood_rebuilt=neighborhood_rebuilt,
+            neighborhood_rebuild_count=neighborhood_rebuild_count,
+            neighborhood_certificate_margin=neighborhood_certificate_margin,
+            total_linear_momentum=linear_momentum,
+            total_angular_momentum=angular_momentum,
+            kinetic_energy=energy.kinetic_energy,
+            elastic_energy=elastic_energy,
+            gravity_potential_energy=energy.gravity_potential,
+            energy=energy,
+            net_internal_force=net_force,
+            net_internal_torque=net_torque,
+            maximum_friction_cone_defect=friction_defect,
+            wall_action_reaction_defect=wall_defect,
+            contact_history_continuity_defect=jnp.where(
                 (rejection_reasons & int(DEMRejectionReason.PAIR_KEY)) != 0,
                 1.0,
                 0.0,
             ),
-            successful,
-            rejection_reasons,
+            multicontact_residual=multicontact_residual,
+            minimum_multicontact_regularity_margin=multicontact_margin,
+            maximum_bridge_volume_residual=bridge_residual,
+            successful=successful,
+            rejection_reasons=rejection_reasons,
         )
 
 
