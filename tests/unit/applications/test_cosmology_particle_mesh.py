@@ -131,3 +131,15 @@ def test_cosmological_pm_rejects_dual_particle_or_geometry_authority():
             gravity,
             [0.5, 0.5],
         )
+
+
+def test_periodic_pm_rejects_spatial_curvature():
+    background, _, _, _, rollout, state = _case()
+    curved = cosmology.FLRWBackground(
+        background.hubble_constant,
+        background.matter_density,
+        curvature_density=0.01,
+        scale=background.scale,
+    )
+    with pytest.raises((ValueError, RuntimeError), match="zero spatial curvature"):
+        jax.block_until_ready(rollout.rollout(curved, state).state.positions)

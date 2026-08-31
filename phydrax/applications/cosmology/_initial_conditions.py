@@ -203,14 +203,25 @@ class LagrangianPerturbationInitialConditionPlan(StrictModule, NonTrainableState
         )
         if len(set(scale_ids)) != 1:
             raise ValueError("LPT scale contracts disagree.")
-        if power.spatial_dimension != len(self.shape):
+        if power.descriptor.spatial_dimension != len(self.shape):
             raise ValueError("Matter power and LPT dimensions disagree.")
+        if not power.descriptor.is_linear_cold_baryon_auto:
+            raise ValueError(
+                "LPT requires linear cold-baryon auto-power without shot noise."
+            )
         noise = jnp.asarray(white_noise)
         if noise.shape != self.shape:
             raise ValueError("White noise must match the LPT grid.")
         scale_factor = jnp.asarray(initial_scale_factor, dtype=noise.dtype)
         if scale_factor.shape != ():
             raise ValueError("Initial scale factor must be scalar.")
+        scale_factor = background.require_flat(scale_factor)
+        scale_factor = background.realization.require_compatible(
+            growth.realization, scale_factor
+        )
+        scale_factor = background.realization.require_compatible(
+            power.realization, scale_factor
+        )
         raw_k, gradient_k = _wavevectors(self.shape, self.box_size, noise.dtype)
         squared = sum(component**2 for component in raw_k)
         magnitude = jnp.sqrt(squared)

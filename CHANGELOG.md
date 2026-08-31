@@ -6,6 +6,13 @@
 - Added field-valued logarithmic compressible Neo-Hookean reference energy,
   line-search-safe nonfinite integral propagation, and an experimental matched
   neural-variational/finite-element hyperelastic qualification.
+- Added advanced cosmology contracts: curved/CPL FLRW geometry and distances,
+  realization-safe semantic transfer/power products, process-isolated linear-theory
+  interoperation, neutrino component algebra, model-card power corrections,
+  adiabatic gas--particle shared gravity, analytic halo foundations, Limber/RSD
+  predictions, canonical CMB spectra, and bounded periodic force qualification.
+  Periodic LPT/PM remains flat-only; complete Boltzmann/CMB evolution and production
+  tree gravity remain explicit external or unsupported boundaries.
 - Extended Material Point Method with explicit USF/USL-minus/MUSL schedules,
   fixed-capacity adaptive realization and scheduled replay, constitutive capability
   and algorithmic-tangent contracts, isotropic plane stress, multiplicative
@@ -200,6 +207,13 @@
   buckling, nonlinear continuation bridges, prestress fabrication/actuation
   evidence, staged construction replay, continuous and catalog sizing, and
   explicit certified/failed/incomplete structural verdicts.
+- Added advanced structural evidence: generalized coordinate channels, explicit
+  section-orientation fields, semirigid connections and nonlinear supports,
+  extensible catenaries, cable/saddle contact, warping beam and bracing energy,
+  fiber-section plasticity transactions, imperfections, collapse and dynamics,
+  thin-walled GBT/finite-strip/shell-submodel evidence, exact precedence
+  branch-and-bound, standards clauses, reliability, calibration, evidence
+  acquisition, and immutable structural-twin snapshots.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.

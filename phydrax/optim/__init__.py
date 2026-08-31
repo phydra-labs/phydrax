@@ -11,6 +11,13 @@ from ._bounds import (
     ProjectedGradient,
     ProjectedLBFGS,
 )
+from ._branch_and_bound import (
+    AbstractBranchAndBoundProblem,
+    branch_and_bound,
+    BranchAndBoundPolicy,
+    BranchAndBoundResult,
+    BranchAndBoundStatus,
+)
 from ._certificates import (
     certify_constrained_physical,
     certify_least_squares_physical,
@@ -168,6 +175,7 @@ from ._pde_constrained import (
 )
 from ._pde_constrained_mma import ReducedMMA
 from ._pounders import POUNDERS, POUNDERSEvidence
+from ._precedence_space import PrecedenceNode, PrecedenceOperation, PrecedenceSpace
 from ._programming import (
     AbstractConvexCone,
     AbstractConvexProgramMethod,
@@ -365,10 +373,14 @@ from ._variable_projection import (
 
 __all__ = [
     "AbstractConvexCone",
+    "AbstractBranchAndBoundProblem",
     "AbstractConvexProgramMethod",
     "CanonicalProgram",
     "ConicProgram",
     "ConicProgramData",
+    "BranchAndBoundPolicy",
+    "BranchAndBoundResult",
+    "BranchAndBoundStatus",
     "ConicSensitivityResult",
     "ClarabelInteriorPoint",
     "ConvexDifferentiationMode",
@@ -438,6 +450,9 @@ __all__ = [
     "BoundedGaussNewton",
     "BoundedLevenbergMarquardt",
     "BoundedResidualFunction",
+    "PrecedenceNode",
+    "PrecedenceOperation",
+    "PrecedenceSpace",
     "BoxIndicator",
     "CVaRRisk",
     "ChanceConstraint",
@@ -497,6 +512,7 @@ __all__ = [
     "ProjectedLBFGS",
     "ProgressiveHedging",
     "ProximalGradient",
+    "branch_and_bound",
     "ProximalNewton",
     "ProximalProblem",
     "ProximalResult",

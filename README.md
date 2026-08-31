@@ -63,6 +63,12 @@ Most workflows are composing a few primitives:
   construction-stage replay, physical section catalogs, sizing, and explicit
   certified/failed/incomplete evidence build on force-density geometry without
   relabeling form-finding as structural safety.
+- **Advanced structural evidence**: extensible catenaries, contact and friction,
+  generalized DOFs, auditable section orientations, semirigid joints, warping
+  beams, fiber plasticity, GBT/finite-strip local buckling, collapse and dynamics,
+  exact construction-order search, standards clauses, reliability, calibration,
+  evidence acquisition, and immutable digital-twin ancestry extend member-network
+  mechanics without erasing model fidelity or applicability.
 - **Atomistic learning and dynamics**: scale-identified atomic structures,
   position-independent systems, stable-ID molecular topology, classical and learned
   scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
@@ -331,6 +337,10 @@ The [member-network structural verification guide](docs/guides_member_network_st
 adds constitutive compatibility, slackness, bending, buckling, staged construction,
 prestress realizability, and material sizing while retaining explicit evidence
 boundaries.
+The [advanced structural evidence guide](docs/guides_advanced_structural_evidence.md)
+covers catenaries, contact, warping and plastic sections, local buckling,
+construction-order search, standards, reliability, calibration, and digital
+evidence graphs.
 The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
 demonstrates correlated empirical integration outside quantum mechanics, while the
 [VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian
