@@ -1,0 +1,11 @@
+{
+  "maturity": "experimental",
+  "capability": "adaptive",
+  "metrics": {
+    "completed": true,
+    "attempts": 1,
+    "accepted_steps": 1,
+    "replay_parity": 0.0
+  },
+  "passed": true
+}

@@ -1,0 +1,11 @@
+{
+  "maturity": "experimental",
+  "capability": "contact",
+  "metrics": {
+    "successful": true,
+    "post_normal_velocity": 0.0,
+    "dissipation": 0.3,
+    "work": -1.2374999999999998
+  },
+  "passed": true
+}
