@@ -110,7 +110,19 @@
 
 ---
 
-::: phydrax.discretization.FWaveShallowWaterPlan
+::: phydrax.discretization.ShallowWaterHydrostaticHLLPlan
+
+---
+
+::: phydrax.discretization.ShallowWaterWetDryPolicy
+
+---
+
+::: phydrax.discretization.PreparedShallowWaterBathymetry
+
+---
+
+::: phydrax.discretization.ShallowWaterObservables
 
 ---
 
@@ -331,6 +343,10 @@
 ::: phydrax.equations.ShallowWaterSystem
 
 ---
+::: phydrax.equations.ShallowWaterCoriolisSource
+
+---
+
 
 ::: phydrax.equations.IdealMHDSystem
 

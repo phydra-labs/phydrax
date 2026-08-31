@@ -1004,10 +1004,9 @@ class IdealMHDSystem(AbstractAdmissibleSystem):
 
 
 class ShallowWaterSystem(AbstractAdmissibleSystem):
-    """Flat or bathymetric shallow-water conservation system."""
+    """One- or two-dimensional shallow-water conservation system."""
 
     gravity: float = eqx.field(static=True)
-    depth_floor: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -1015,18 +1014,15 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
         /,
         *,
         gravity: float = 9.81,
-        depth_floor: float = 1e-10,
     ):
         dimension_ = int(dimension)
         gravity_ = float(gravity)
-        floor_ = float(depth_floor)
         if dimension_ not in (1, 2):
             raise ValueError("Shallow-water dimension must be one or two.")
-        if not np.isfinite(gravity_) or gravity_ <= 0.0 or floor_ <= 0.0:
-            raise ValueError("Shallow-water gravity and depth floor must be positive.")
+        if not np.isfinite(gravity_) or gravity_ <= 0.0:
+            raise ValueError("Shallow-water gravity must be finite and positive.")
         self.dimension = dimension_
         self.gravity = gravity_
-        self.depth_floor = floor_
         self.component_names = (
             "depth",
             *(f"discharge_{axis}" for axis in range(dimension_)),
@@ -1036,13 +1032,21 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
                 "kind": "shallow-water-system",
                 "dimension": dimension_,
                 "gravity": gravity_,
-                "depth_floor": floor_,
+                "dry_state": "zero-depth-zero-discharge",
             }
         )
 
+    def velocity(self, state: Array, /) -> Array:
+        """Return velocity with the exact dry-state value defined as zero."""
+        value = jnp.asarray(state)
+        depth = value[..., :1]
+        safe_depth = jnp.where(depth > 0.0, depth, 1.0)
+        velocity = value[..., 1:] / safe_depth
+        return jnp.where(depth > 0.0, velocity, 0.0)
+
     def conserved_to_primitive(self, state: Array, /) -> Array:
         value = jnp.asarray(state)
-        return jnp.concatenate((value[..., :1], value[..., 1:] / value[..., :1]), axis=-1)
+        return jnp.concatenate((value[..., :1], self.velocity(value)), axis=-1)
 
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
         value = jnp.asarray(primitive)
@@ -1051,35 +1055,15 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         del args
         value = jnp.asarray(state)
+        axis_ = int(axis)
         depth = value[..., 0]
         discharge = value[..., 1:]
-        velocity = discharge / depth[..., None]
-        normal_velocity = velocity[..., int(axis)]
+        normal_velocity = self.velocity(value)[..., axis_]
         momentum_flux = discharge * normal_velocity[..., None]
-        momentum_flux = momentum_flux.at[..., int(axis)].add(
-            0.5 * self.gravity * depth**2
-        )
+        momentum_flux = momentum_flux.at[..., axis_].add(0.5 * self.gravity * depth**2)
         return jnp.concatenate(
-            (discharge[..., int(axis) : int(axis) + 1], momentum_flux), axis=-1
+            (discharge[..., axis_ : axis_ + 1], momentum_flux), axis=-1
         )
-
-    def max_wave_speed(
-        self,
-        left: Array,
-        right: Array,
-        axis: int,
-        args: Any = None,
-        /,
-    ) -> Array:
-        del args
-        axis_ = int(axis)
-
-        def speed(state: Array) -> Array:
-            return jnp.abs(state[..., 1 + axis_] / state[..., 0]) + jnp.sqrt(
-                self.gravity * state[..., 0]
-            )
-
-        return jnp.maximum(speed(left), speed(right))
 
     def signal_bounds(
         self,
@@ -1089,8 +1073,34 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
         args: Any = None,
         /,
     ) -> tuple[Array, Array]:
-        speed = self.max_wave_speed(left, right, axis, args)
-        return -speed, speed
+        del args
+        axis_ = int(axis)
+        left_ = jnp.asarray(left)
+        right_ = jnp.asarray(right)
+        left_velocity = self.velocity(left_)[..., axis_]
+        right_velocity = self.velocity(right_)[..., axis_]
+        left_celerity = jnp.sqrt(self.gravity * jnp.maximum(left_[..., 0], 0.0))
+        right_celerity = jnp.sqrt(self.gravity * jnp.maximum(right_[..., 0], 0.0))
+        lower = jnp.minimum(
+            left_velocity - left_celerity,
+            right_velocity - right_celerity,
+        )
+        upper = jnp.maximum(
+            left_velocity + left_celerity,
+            right_velocity + right_celerity,
+        )
+        return lower, upper
+
+    def max_wave_speed(
+        self,
+        left: Array,
+        right: Array,
+        axis: int,
+        args: Any = None,
+        /,
+    ) -> Array:
+        lower, upper = self.signal_bounds(left, right, axis, args)
+        return jnp.maximum(jnp.abs(lower), jnp.abs(upper))
 
     def normal_signal_bounds(
         self,
@@ -1100,16 +1110,36 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
         args: Any = None,
         /,
     ) -> tuple[Array, Array]:
+        del args
+        left_ = jnp.asarray(left)
+        right_ = jnp.asarray(right)
         normal_ = jnp.asarray(normal)
-        speed = jnp.zeros(left.shape[:-1], dtype=left.dtype)
-        for axis in range(self.dimension):
-            speed = speed + jnp.abs(normal_[..., axis]) * self.max_wave_speed(
-                left, right, axis, args
+        if normal_.ndim == 0 or normal_.shape[-1] != self.dimension:
+            raise ValueError(
+                "Normal vectors must have a trailing dimension matching "
+                f"system dimension {self.dimension}."
             )
-        return -speed, speed
+        left_velocity = jnp.sum(self.velocity(left_) * normal_, axis=-1)
+        right_velocity = jnp.sum(self.velocity(right_) * normal_, axis=-1)
+        left_celerity = jnp.sqrt(self.gravity * jnp.maximum(left_[..., 0], 0.0))
+        right_celerity = jnp.sqrt(self.gravity * jnp.maximum(right_[..., 0], 0.0))
+        lower = jnp.minimum(
+            left_velocity - left_celerity,
+            right_velocity - right_celerity,
+        )
+        upper = jnp.maximum(
+            left_velocity + left_celerity,
+            right_velocity + right_celerity,
+        )
+        return lower, upper
 
     def admissible(self, state: Array, /) -> Array:
-        return jnp.asarray(state)[..., 0] >= self.depth_floor
+        value = jnp.asarray(state)
+        depth = value[..., 0]
+        discharge = value[..., 1:]
+        finite = jnp.all(jnp.isfinite(value), axis=-1)
+        dry_momentum = jnp.all(discharge == 0.0, axis=-1)
+        return finite & (depth >= 0.0) & ((depth > 0.0) | dry_momentum)
 
     def reflect_state(self, state: Array, axis: int, /) -> Array:
         return jnp.asarray(state).at[..., 1 + int(axis)].multiply(-1.0)

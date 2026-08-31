@@ -14,6 +14,19 @@ A benchmark notebook for the coupled 3-DOF spring-mass system in matrix form, wi
 
 - Public notebook: [spring-mass-ode](https://static.marimo.app/static/spring-mass-ode-xuq3)
 
+## Shallow-water scripts
+
+The wet/dry and rotating-flow paths have directly runnable qualification examples:
+
+```text
+python examples/shallow_water_wet_dry.py
+python examples/rotating_shallow_water.py
+```
+
+The first reports stage acceptance, minimum depth, mass defect, and wet-cell count.
+The second exercises identified f/beta-plane forcing and reports mass and momentum
+norm diagnostics. See [Shallow water](../guides_shallow_water.md).
+
 ## Particle physics scripts
 
 The repository includes directly runnable scripts for the fixed-capacity particle stack:

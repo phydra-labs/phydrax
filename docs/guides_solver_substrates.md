@@ -284,9 +284,11 @@ boundary policies, reconstruction, and one conservative interface method.
 `HighResolutionReconstructionPlan` provides WENO-Z, TENO, and MP5;
 `CharacteristicReconstructionPlan` uses equation-owned eigensystems. Euler,
 multispecies Euler, shallow water, and ideal MHD live under `phydrax.equations`.
-Rusanov, HLL, HLLC, Roe, entropy fluxes, wave propagation, positivity, and
-multidimensional shared-face divergence remain independently selectable and
-compatibility-checked. See [Structured finite volume](guides_finite_volume.md).
+Ordinary numerical fluxes, wave propagation, and positivity are compatibility-checked.
+Bathymetric shallow water instead uses `ShallowWaterHydrostaticHLLPlan`, which keeps
+shared transport, one-sided bed corrections, and SSPRK-stage positivity indivisible.
+See [Structured finite volume](guides_finite_volume.md) and
+[Shallow water](guides_shallow_water.md).
 
 ## SBP-SAT, mapped grids, and multiblock coupling
 

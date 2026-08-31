@@ -160,6 +160,7 @@ from ._hyperbolic_systems import (
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._ib_cfd_dem import (
     evaluate_resolved_ib_cfd_dem,
     IBConstraintPlan,
@@ -654,6 +655,7 @@ __all__ = [
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
+    "ShallowWaterCoriolisSource",
     "PrandtlTransport",
     "StiffenedGasMaterial",
     "ideal_gas_euler_entropy_pair",
