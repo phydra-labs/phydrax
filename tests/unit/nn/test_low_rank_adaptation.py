@@ -15,6 +15,7 @@ from phydrax.nn.parameters import LowRankUpdate
 _KEY0 = jr.key(0)
 _KEY1 = jr.key(1)
 
+
 @pytest.mark.parametrize(
     ("kwargs", "error"),
     [
@@ -24,6 +25,7 @@ _KEY1 = jr.key(1)
         ({"rank": 1, "alpha": 0.0}, ValueError),
         ({"rank": 1, "alpha": jnp.inf}, ValueError),
         ({"rank": 1, "stddev": 0.0}, ValueError),
+        ({"rank": 1, "scaling": "invalid"}, ValueError),
     ],
 )
 def test_low_rank_spec_rejects_invalid_coordinates(kwargs, error):
@@ -41,10 +43,14 @@ def _linear(*, key=_KEY0, rwf=False, weight_transform=None):
     )
 
 
-def _adapt(model, *, rank=2, key=_KEY1):
+def _adapt(model, *, rank=2, scaling="rank", key=_KEY1):
     paths = phx.nn.parameters.low_rank_sites(model)
     specs = {
-        path: phx.nn.parameters.LowRankSpec(rank=rank, alpha=rank)
+        path: phx.nn.parameters.LowRankSpec(
+            rank=rank,
+            alpha=rank,
+            scaling=scaling,
+        )
         for path in paths
     }
     return phx.nn.parameters.adapt_low_rank(model, specs, key=key)
@@ -70,6 +76,7 @@ def test_low_rank_linear_preserves_initial_function_and_factorizes_batches():
         jnp.arange(4.0, dtype=update.dtype).reshape((2, 2)) / 7.0,
         jnp.arange(6.0, dtype=update.dtype).reshape((2, 3)) / 5.0,
         alpha=update.alpha,
+        scaling=update.scaling,
     )
     changed = eqx.tree_at(lambda model: model.weight, adapted, nonzero)
     merged = phx.nn.parameters.merge_low_rank(changed)
@@ -87,6 +94,7 @@ def test_low_rank_gradients_stop_base_and_reach_both_nonzero_factors():
         jnp.full_like(update.left, 0.2),
         jnp.full_like(update.right, -0.1),
         alpha=update.alpha,
+        scaling=update.scaling,
     )
     changed = eqx.tree_at(lambda model: model.weight, adapted, changed_update)
     inputs = jnp.arange(6.0).reshape((2, 3))
@@ -95,6 +103,33 @@ def test_low_rank_gradients_stop_base_and_reach_both_nonzero_factors():
     assert jnp.array_equal(gradients.weight.base, jnp.zeros_like(update.base))
     assert jnp.any(gradients.weight.left != 0.0)
     assert jnp.any(gradients.weight.right != 0.0)
+
+
+def test_rank_stabilized_scaling_and_rwf_compose_without_materializing():
+    base = _linear(rwf=True)
+    adapted, report = _adapt(base, scaling="sqrt_rank")
+    assert report.sites[0].scaling == "sqrt_rank"
+    assert adapted.weight.scale == pytest.approx(
+        adapted.weight.alpha / jnp.sqrt(adapted.weight.rank)
+    )
+    inputs = jnp.arange(12.0).reshape((4, 3))
+    assert jnp.array_equal(adapted(inputs), base(inputs))
+
+    update = adapted.weight
+    changed = eqx.tree_at(
+        lambda layer: layer.weight,
+        adapted,
+        LowRankUpdate.from_factors(
+            update.base,
+            jnp.full_like(update.left, 0.2),
+            jnp.full_like(update.right, -0.1),
+            alpha=update.alpha,
+            scaling=update.scaling,
+        ),
+    )
+    merged = phx.nn.parameters.merge_low_rank(changed)
+    assert merged.random_weight_factorization
+    assert jnp.allclose(changed(inputs), merged(inputs), rtol=1e-12, atol=1e-12)
 
 
 def test_low_rank_paths_keys_and_subspace_are_deterministic():
@@ -109,12 +144,8 @@ def test_low_rank_paths_keys_and_subspace_are_deterministic():
     paths = phx.nn.parameters.low_rank_sites(model)
     assert paths == tuple(f".layers[{index}].weight" for index in range(4))
     specs = {path: phx.nn.parameters.LowRankSpec(2) for path in reversed(paths)}
-    first, first_report = phx.nn.parameters.adapt_low_rank(
-        model, specs, key=jr.key(5)
-    )
-    second, second_report = phx.nn.parameters.adapt_low_rank(
-        model, specs, key=jr.key(5)
-    )
+    first, first_report = phx.nn.parameters.adapt_low_rank(model, specs, key=jr.key(5))
+    second, second_report = phx.nn.parameters.adapt_low_rank(model, specs, key=jr.key(5))
     assert first_report == second_report
     for left, right in zip(first.layers, second.layers, strict=True):
         assert jnp.array_equal(left.weight.right, right.weight.right)
@@ -174,11 +205,6 @@ def test_low_rank_scan_cache_safely_falls_back_after_model_surgery():
 
 
 def test_low_rank_adaptation_rejects_unsupported_or_ambiguous_sites():
-    with pytest.raises(ValueError, match="random weight factorization"):
-        phx.nn.parameters.adapt_low_rank(
-            _linear(rwf=True),
-            {".weight": phx.nn.parameters.LowRankSpec(1)},
-        )
     with pytest.raises(ValueError, match="weight transform"):
         phx.nn.parameters.adapt_low_rank(
             _linear(

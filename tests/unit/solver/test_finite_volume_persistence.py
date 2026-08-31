@@ -50,8 +50,6 @@ def _prepared_runtime(cells=16):
         accepted_step=7,
         controller_state=jnp.asarray([0.3, 0.4]),
         integrator_state=jnp.asarray([1.2]),
-        forcing_state=jnp.asarray([2.5]),
-        random_state=jnp.asarray([11, 17], dtype=jnp.uint32),
         output_cursor=4,
     )
     return runtime, discretization, state
@@ -84,8 +82,8 @@ def _legacy_arrays(case, state):
         "last_status": np.asarray(state.last_status, dtype=np.int32),
         "controller_state": np.asarray(state.controller_state),
         "integrator_state": np.asarray(state.integrator_state),
-        "forcing_state": np.asarray(state.forcing_state),
-        "random_state": np.asarray(state.random_state, dtype=np.uint32),
+        "forcing_state": np.asarray(()),
+        "random_state": np.asarray((), dtype=np.uint32),
         "output_cursor": np.asarray(state.output_cursor, dtype=np.int32),
     }
 
@@ -220,8 +218,6 @@ def _assert_runtime_state_exact(actual, expected):
     np.testing.assert_array_equal(actual.last_status, expected.last_status)
     np.testing.assert_array_equal(actual.controller_state, expected.controller_state)
     np.testing.assert_array_equal(actual.integrator_state, expected.integrator_state)
-    np.testing.assert_array_equal(actual.forcing_state, expected.forcing_state)
-    np.testing.assert_array_equal(actual.random_state, expected.random_state)
     np.testing.assert_array_equal(actual.output_cursor, expected.output_cursor)
     assert (
         actual.content_state.topology_epoch_id == expected.content_state.topology_epoch_id
@@ -266,8 +262,6 @@ def _replace_journal(state, journal, *, content_state=None):
         last_status=state.last_status,
         controller_state=state.controller_state,
         integrator_state=state.integrator_state,
-        forcing_state=state.forcing_state,
-        random_state=state.random_state,
         output_cursor=state.output_cursor,
         sliding_coupling=state.sliding_coupling,
         sliding_shift=state.sliding_shift,

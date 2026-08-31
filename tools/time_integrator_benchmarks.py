@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import json
 import platform
-import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -16,6 +15,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
 @dataclass(frozen=True)
@@ -25,22 +25,18 @@ class _Measured:
     steady_ms: float
 
 
-def _block(value):
-    for leaf in jax.tree.leaves(value):
-        if hasattr(leaf, "block_until_ready"):
-            leaf.block_until_ready()
-    return value
-
-
 def _measure(function: Callable[[], Any], repeats: int) -> _Measured:
-    started = time.perf_counter()
-    value = _block(function())
-    first = 1000.0 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        value = _block(function())
-    steady = 1000.0 * (time.perf_counter() - started) / repeats
-    return _Measured(value, first, steady)
+    value, first_seconds = measure_synchronized(function)
+    value, distribution = measure_repeated(
+        function,
+        warmup=0,
+        repeats=repeats,
+    )
+    return _Measured(
+        value,
+        1_000.0 * first_seconds,
+        1_000.0 * float(distribution.mean_seconds),
+    )
 
 
 def _ode(rate: float, *, problem_id: str):

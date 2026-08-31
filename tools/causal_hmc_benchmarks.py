@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
-import time
 from pathlib import Path
 from typing import Any
 
@@ -20,30 +18,31 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from benchmarks._runtime import (
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+)
 from phydrax.uq._causal_hmc import build_causal_hmc_kernel
 
 
-def _ready(value: Any) -> Any:
-    return jax.block_until_ready(value)
-
-
 def _timings(function, arguments, *, repetitions: int):
-    compiled = jax.jit(function)
-    started = time.perf_counter()
-    result = compiled(*arguments)
-    _ready(result)
-    cold = time.perf_counter() - started
-    warm = []
-    for _ in range(int(repetitions)):
-        started = time.perf_counter()
-        value = compiled(*arguments)
-        _ready(value)
-        warm.append(time.perf_counter() - started)
-    execution = statistics.median(warm)
+    jitted = jax.jit(function)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(*arguments),
+        lambda lowered: lowered.compile(),
+    )
+    result, first_execution_seconds = measure_synchronized(lambda: compiled(*arguments))
+    _, steady = measure_repeated(
+        lambda: compiled(*arguments),
+        warmup=0,
+        repeats=int(repetitions),
+    )
     return result, {
-        "cold_seconds": cold,
-        "compile_seconds": max(0.0, cold - execution),
-        "execute_seconds": execution,
+        "lowering_seconds": compilation.lowering_seconds,
+        "compilation_seconds": compilation.compilation_seconds,
+        "first_execution_seconds": first_execution_seconds,
+        "steady": steady.to_seconds_dict(),
     }
 
 

@@ -25,6 +25,7 @@ it does not label the local Gaussian transition as an exact SDE likelihood.
 ## API sections
 
 - [State-space models and solver transition adapters](state_space.md)
+- [Gaussian score diffusions](diffusion.md)
 - [Signatures and path kernels](signatures.md)
 - [Martingale problems and stopping](martingales.md)
 - [Backward stochastic differential equations](bsde.md)
@@ -70,6 +71,10 @@ reconstruction occurs.
 ## Realization provenance
 
 ::: phydrax.stochastic.WienerRealization
+
+---
+
+::: phydrax.stochastic.OrnsteinUhlenbeckRealization
 
 ---
 

@@ -952,6 +952,10 @@ def _hybrid_diffusion(
     path_sign: Array,
     num_channels: int,
 ):
+    if any(term.representation != "dense" for term in differential.wiener_terms):
+        raise NotImplementedError(
+            "Jump-differential solving currently requires dense Wiener coefficients."
+        )
     state_shape = tuple(differential.initial_state.shape)
     state_size = prod(state_shape) if state_shape else 1
 
@@ -959,7 +963,7 @@ def _hybrid_diffusion(
         state = augmented_state[:state_size].reshape(state_shape)
         columns = []
         for term in differential.wiener_terms:
-            value = jnp.asarray(term.coefficient(time, state, args))
+            value = term.coefficient_array(time, state, args)
             columns.append(value.reshape((state_size, term.noise_size)))
         state_diffusion = path_sign * jnp.concatenate(columns, axis=-1)
         hazard_diffusion = jnp.zeros(

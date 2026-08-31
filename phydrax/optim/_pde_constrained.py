@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import abc
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import equinox as eqx
@@ -35,6 +36,8 @@ from ._iterative._types import (
     _tree_norm,
     _validate_real_inexact_tree,
     Bounds,
+    ConstrainedOptimalityCertificate,
+    NonlinearConstraint,
     NonlinearLeastSquaresProblem,
     OptimizationDiagnostics,
     OptimizationProvenance,
@@ -152,6 +155,62 @@ class LeastSquaresStateSolver(AbstractStateSolver):
         )
 
 
+class StateDesignConstraint(StrictModule):
+    """Bound-form constraint evaluated on one accepted state/design pair."""
+
+    function: Callable
+    lower: Any
+    upper: Any
+    constraint_id: str = eqx.field(static=True)
+    depends_on_state: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        function: Callable,
+        /,
+        *,
+        lower: Any = -jnp.inf,
+        upper: Any = jnp.inf,
+        constraint_id: str,
+        depends_on_state: bool = True,
+    ):
+        if not callable(function):
+            raise TypeError("function must be callable.")
+        identifier = str(constraint_id)
+        if not identifier:
+            raise ValueError("constraint_id must be non-empty.")
+        self.function = function
+        self.lower = lower
+        self.upper = upper
+        self.constraint_id = identifier
+        self.depends_on_state = bool(depends_on_state)
+
+    def value(
+        self,
+        state: PyTree[Any],
+        design: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> PyTree[Array]:
+        return _validate_real_inexact_tree(
+            self.function(state, design, args),
+            name="state-design constraint value",
+        )
+
+    def bounds(
+        self,
+        value: PyTree[Any],
+        /,
+    ) -> tuple[PyTree[Array], PyTree[Array]]:
+        adapter = NonlinearConstraint(
+            lambda _, __: value,
+            lower=self.lower,
+            upper=self.upper,
+            constraint_id=self.constraint_id,
+        )
+        return adapter.bounds(value)
+
+
 class StateDesignProblem(StrictModule):
     """PDE/state-constrained objective with explicit state and design roles."""
 
@@ -159,6 +218,7 @@ class StateDesignProblem(StrictModule):
     objective: Any
     state_solver: AbstractStateSolver
     design_bounds: Bounds | None
+    constraints: tuple[StateDesignConstraint, ...]
     has_aux: bool = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
 
@@ -170,6 +230,7 @@ class StateDesignProblem(StrictModule):
         *,
         state_solver: AbstractStateSolver | None = None,
         design_bounds: Bounds | None = None,
+        constraints: Sequence[StateDesignConstraint] = (),
         has_aux: bool = False,
         problem_id: str = "state-design",
     ):
@@ -180,6 +241,12 @@ class StateDesignProblem(StrictModule):
             raise TypeError("state_solver must be an AbstractStateSolver or None.")
         if design_bounds is not None and not isinstance(design_bounds, Bounds):
             raise TypeError("design_bounds must be a Bounds or None.")
+        constraints_ = tuple(constraints)
+        if any(
+            not isinstance(constraint, StateDesignConstraint)
+            for constraint in constraints_
+        ):
+            raise TypeError("constraints must contain StateDesignConstraint values.")
         identifier = str(problem_id)
         if not identifier:
             raise ValueError("problem_id must be non-empty.")
@@ -187,6 +254,7 @@ class StateDesignProblem(StrictModule):
         self.objective = objective
         self.state_solver = solver
         self.design_bounds = design_bounds
+        self.constraints = constraints_
         self.has_aux = bool(has_aux)
         self.problem_id = identifier
 
@@ -224,6 +292,19 @@ class StateDesignProblem(StrictModule):
             raise TypeError("A state-design objective must return one real scalar array.")
         return value, auxiliary
 
+    def constraint_values(
+        self,
+        state: PyTree[Any],
+        design: PyTree[Any],
+        args: Any = None,
+        /,
+    ) -> tuple[PyTree[Array], ...]:
+        """Evaluate every state/design constraint in stable declaration order."""
+
+        return tuple(
+            constraint.value(state, design, args) for constraint in self.constraints
+        )
+
     def solve_state(
         self,
         design: PyTree[Any],
@@ -251,6 +332,8 @@ class StateDesignResult(StrictModule):
     status: Array
     diagnostics: OptimizationDiagnostics
     provenance: OptimizationProvenance
+    certificate: ConstrainedOptimalityCertificate | None
+    method_evidence: Any
 
     def __init__(
         self,
@@ -263,6 +346,9 @@ class StateDesignResult(StrictModule):
         diagnostics: OptimizationDiagnostics,
         provenance: OptimizationProvenance,
         /,
+        *,
+        certificate: ConstrainedOptimalityCertificate | None = None,
+        method_evidence: Any = None,
     ):
         self.state = _validate_real_inexact_tree(state, name="state")
         self.design = _validate_real_inexact_tree(design, name="design")
@@ -274,8 +360,16 @@ class StateDesignResult(StrictModule):
             raise TypeError("diagnostics must be OptimizationDiagnostics.")
         if not isinstance(provenance, OptimizationProvenance):
             raise TypeError("provenance must be OptimizationProvenance.")
+        if certificate is not None and not isinstance(
+            certificate, ConstrainedOptimalityCertificate
+        ):
+            raise TypeError(
+                "certificate must be a ConstrainedOptimalityCertificate or None."
+            )
         self.diagnostics = diagnostics
         self.provenance = provenance
+        self.certificate = certificate
+        self.method_evidence = method_evidence
 
     @property
     def successful(self) -> Array:
@@ -631,6 +725,11 @@ def _solve_reduced_adjoint(
 ) -> StateDesignResult:
     if not isinstance(problem, StateDesignProblem):
         raise TypeError("problem must be a StateDesignProblem.")
+    if problem.constraints:
+        raise ValueError(
+            "ReducedAdjoint does not support StateDesignProblem constraints; "
+            "use ReducedMMA."
+        )
     state = _validate_real_inexact_tree(initial_state, name="initial_state")
     design = _validate_real_inexact_tree(initial_design, name="initial_design")
     if problem.design_bounds is not None:
@@ -1051,6 +1150,10 @@ def _solve_simultaneous_kkt(
     termination: OptimizationTermination,
     args: Any,
 ) -> StateDesignResult:
+    if problem.constraints:
+        raise ValueError(
+            "SimultaneousKKT does not support StateDesignProblem constraints."
+        )
     if problem.design_bounds is not None:
         raise ValueError(
             "SimultaneousKKT currently requires an unconstrained design; use "
@@ -1179,6 +1282,7 @@ __all__ = [
     "LeastSquaresStateSolver",
     "ReducedAdjoint",
     "SimultaneousKKT",
+    "StateDesignConstraint",
     "StateDesignProblem",
     "StateDesignResult",
     "StateEquationResult",

@@ -12,6 +12,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from benchmarks._comparison import PerformancePolicy
+from benchmarks._io import write_json_atomic
+
 from .adapters import adapter_names, load_adapter, load_adapters
 from .campaign import AVAILABLE_CASES, build_cases, CampaignConfig, PRESETS
 from .compare import compare_reports
@@ -51,6 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("candidate", type=Path)
     compare.add_argument("--allow-different-environments", action="store_true")
     compare.add_argument("--output", type=Path)
+    compare.add_argument("--relative-performance-tolerance", type=_nonnegative_float)
+    compare.add_argument("--absolute-performance-tolerance-ms", type=_nonnegative_float)
+    compare.add_argument("--performance-confidence", type=float, default=0.95)
+    compare.add_argument(
+        "--performance-bootstrap-resamples",
+        type=_positive_integer,
+        default=10_000,
+    )
+    compare.add_argument(
+        "--performance-minimum-samples",
+        type=_positive_integer,
+        default=5,
+    )
 
     capability = commands.add_parser(
         "capabilities",
@@ -83,6 +99,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             reference,
             candidate,
             require_same_environment=not arguments.allow_different_environments,
+            performance_policy=_performance_policy(arguments),
         )
         destination = arguments.output
     else:
@@ -145,12 +162,26 @@ def _read_json(path: Path, /) -> Mapping[str, Any]:
 
 
 def _emit_json(value: Any, destination: Path | None, /) -> None:
-    payload = json.dumps(value, allow_nan=False, indent=2, sort_keys=True) + "\n"
     if destination is None:
+        payload = json.dumps(value, allow_nan=False, indent=2, sort_keys=True) + "\n"
         sys.stdout.write(payload)
     else:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(payload, encoding="utf-8")
+        write_json_atomic(destination, value)
+
+
+def _performance_policy(arguments: argparse.Namespace, /) -> PerformancePolicy | None:
+    relative = arguments.relative_performance_tolerance
+    absolute_ms = arguments.absolute_performance_tolerance_ms
+    if relative is None and absolute_ms is None:
+        return None
+    return PerformancePolicy(
+        objective="minimize",
+        relative_tolerance=relative,
+        absolute_tolerance=None if absolute_ms is None else absolute_ms / 1_000.0,
+        confidence=float(arguments.performance_confidence),
+        bootstrap_resamples=int(arguments.performance_bootstrap_resamples),
+        minimum_samples=int(arguments.performance_minimum_samples),
+    )
 
 
 def _all_capabilities() -> tuple[str, ...]:

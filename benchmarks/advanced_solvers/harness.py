@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
-import os
-import platform
-import statistics
 import sys
-import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
-from typing import Any, TypeVar
+from typing import Any
 
 import numpy as np
+
+from benchmarks._runtime import (
+    capture_environment,
+    DurationDistribution,
+    measure_repeated,
+    measure_synchronized,
+)
 
 from .adapters.base import (
     Availability,
@@ -29,97 +32,9 @@ from .schema import (
     empty_distribution,
     SCHEMA_VERSION,
     skip_certificate,
-    stable_fingerprint,
     TIMING_PHASES,
     validate_report,
 )
-
-
-_T = TypeVar("_T")
-_THREAD_ENVIRONMENT_KEYS = (
-    "OMP_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-    "XLA_FLAGS",
-    "JAX_PLATFORMS",
-)
-
-
-def capture_environment() -> dict[str, Any]:
-    """Capture deterministic execution-environment evidence for every row."""
-    import jax
-
-    devices = jax.devices()
-    jax_evidence = {
-        "version": jax.__version__,
-        "backend": jax.default_backend(),
-        "x64_enabled": bool(jax.config.read("jax_enable_x64")),
-        "devices": [
-            {
-                "platform": device.platform,
-                "kind": device.device_kind,
-            }
-            for device in devices
-        ],
-    }
-    evidence: dict[str, Any] = {
-        "python_version": platform.python_version(),
-        "platform": platform.platform(),
-        "machine": platform.machine(),
-        "processor": platform.processor(),
-        "logical_cpus": os.cpu_count() or 1,
-        "numpy_version": np.__version__,
-        "jax": jax_evidence,
-        "thread_environment": {
-            key: os.environ.get(key) for key in _THREAD_ENVIRONMENT_KEYS
-        },
-    }
-    return {"fingerprint": stable_fingerprint(evidence), **evidence}
-
-
-def synchronize(value: Any, /) -> None:
-    """Recursively block JAX leaves so asynchronous work is included in timing."""
-    import jax
-
-    def visit(item: Any) -> None:
-        if isinstance(item, jax.Array):
-            item.block_until_ready()
-            return
-        if isinstance(item, Mapping):
-            for nested in item.values():
-                visit(nested)
-            return
-        if isinstance(item, (list, tuple)):
-            for nested in item:
-                visit(nested)
-            return
-        if is_dataclass(item) and not isinstance(item, type):
-            for field in fields(item):
-                visit(object.__getattribute__(item, field.name))
-            return
-        leaves = jax.tree.leaves(item)
-        if len(leaves) == 1 and leaves[0] is item:
-            return
-        for leaf in leaves:
-            visit(leaf)
-
-    visit(value)
-
-
-def duration_distribution(samples_ms: Sequence[float], /) -> dict[str, Any]:
-    samples = [float(value) for value in samples_ms]
-    if not samples:
-        return empty_distribution()
-    return {
-        "count": len(samples),
-        "samples_ms": samples,
-        "min_ms": min(samples),
-        "median_ms": statistics.median(samples),
-        "mean_ms": statistics.fmean(samples),
-        "std_ms": statistics.pstdev(samples),
-        "max_ms": max(samples),
-    }
 
 
 def execute_case(
@@ -145,8 +60,8 @@ def execute_case(
         )
 
     timing = {phase: empty_distribution() for phase in TIMING_PHASES}
-    setup_state, sample = _measure_once(lambda: adapter.setup(spec))
-    timing["setup"] = duration_distribution([sample])
+    setup_state, sample = measure_synchronized(lambda: adapter.setup(spec))
+    timing["setup"] = DurationDistribution((sample,)).to_milliseconds_dict()
 
     compilation_applicable = adapter.compilation_applicable(setup_state)
     compile_after_preparation = (
@@ -154,44 +69,47 @@ def execute_case(
     )
     compiled_state = setup_state
     if compilation_applicable and not compile_after_preparation:
-        compiled_state, sample = _measure_once(lambda: adapter.compile(setup_state))
-        timing["compilation"] = duration_distribution([sample])
+        compiled_state, sample = measure_synchronized(
+            lambda: adapter.compile(setup_state)
+        )
+        timing["compilation"] = DurationDistribution((sample,)).to_milliseconds_dict()
 
     prepared_state = compiled_state
     if adapter.preparation_applicable(compiled_state):
-        prepared_state, sample = _measure_once(lambda: adapter.prepare(compiled_state))
-        timing["preparation"] = duration_distribution([sample])
+        prepared_state, sample = measure_synchronized(
+            lambda: adapter.prepare(compiled_state)
+        )
+        timing["preparation"] = DurationDistribution((sample,)).to_milliseconds_dict()
 
     if compile_after_preparation:
-        prepared_state, sample = _measure_once(lambda: adapter.compile(prepared_state))
-        timing["compilation"] = duration_distribution([sample])
+        prepared_state, sample = measure_synchronized(
+            lambda: adapter.compile(prepared_state)
+        )
+        timing["compilation"] = DurationDistribution((sample,)).to_milliseconds_dict()
 
-    for _ in range(warmup):
-        warmup_result = adapter.solve(prepared_state)
-        synchronize(warmup_result)
-
-    solve_samples: list[float] = []
-    result: SolveResult | None = None
-    for _ in range(repeats):
-        result, sample = _measure_once(lambda: adapter.solve(prepared_state))
-        solve_samples.append(sample)
-    if result is None:
-        raise RuntimeError("positive repeat count did not produce a solve result")
-    timing["solve"] = duration_distribution(solve_samples)
+    result, solve_distribution = measure_repeated(
+        lambda: adapter.solve(prepared_state),
+        warmup=warmup,
+        repeats=repeats,
+    )
+    timing["solve"] = solve_distribution.to_milliseconds_dict()
 
     if adapter.differentiation_applicable(prepared_state):
-        prepared_state, sample = _measure_once(
+        prepared_state, sample = measure_synchronized(
             lambda: adapter.compile_differentiation(prepared_state)
         )
-        timing["differentiation_compilation"] = duration_distribution([sample])
-        differentiation_samples = []
-        for _ in range(repeats):
-            _, sample = _measure_once(lambda: adapter.differentiate(prepared_state))
-            differentiation_samples.append(sample)
-        timing["differentiation"] = duration_distribution(differentiation_samples)
+        timing["differentiation_compilation"] = DurationDistribution(
+            (sample,)
+        ).to_milliseconds_dict()
+        _, differentiation_distribution = measure_repeated(
+            lambda: adapter.differentiate(prepared_state),
+            warmup=0,
+            repeats=repeats,
+        )
+        timing["differentiation"] = differentiation_distribution.to_milliseconds_dict()
 
     certificate_problem = adapter.certificate_problem(prepared_state)
-    verification, sample = _measure_once(
+    verification, sample = measure_synchronized(
         lambda: _materialize_and_certify(
             adapter,
             prepared_state,
@@ -201,7 +119,7 @@ def execute_case(
         )
     )
     certificate, converged, operations = verification
-    timing["verification"] = duration_distribution([sample])
+    timing["verification"] = DurationDistribution((sample,)).to_milliseconds_dict()
 
     refresh_evidence: RefreshEvidence = NOT_APPLICABLE_REFRESH
     refreshed_result: SolveResult | None = None
@@ -209,17 +127,19 @@ def execute_case(
     refreshed_certificate = None
     refreshed_converged = None
     if adapter.refresh_applicable(prepared_state):
-        refresh_result, refresh_sample = _measure_once(
+        refresh_result, refresh_sample = measure_synchronized(
             lambda: adapter.refresh(prepared_state)
         )
         prepared_state, refresh_evidence = refresh_result
-        timing["refresh"] = duration_distribution([refresh_sample])
-        refreshed_result, refreshed_solve_sample = _measure_once(
+        timing["refresh"] = DurationDistribution((refresh_sample,)).to_milliseconds_dict()
+        refreshed_result, refreshed_solve_sample = measure_synchronized(
             lambda: adapter.solve(prepared_state)
         )
-        timing["refreshed_solve"] = duration_distribution([refreshed_solve_sample])
+        timing["refreshed_solve"] = DurationDistribution(
+            (refreshed_solve_sample,)
+        ).to_milliseconds_dict()
         refreshed_certificate_problem = adapter.certificate_problem(prepared_state)
-        refreshed_verification, refreshed_verification_sample = _measure_once(
+        refreshed_verification, refreshed_verification_sample = measure_synchronized(
             lambda: _materialize_and_certify(
                 adapter,
                 prepared_state,
@@ -229,9 +149,9 @@ def execute_case(
             )
         )
         refreshed_certificate, refreshed_converged, _ = refreshed_verification
-        timing["refreshed_verification"] = duration_distribution(
-            [refreshed_verification_sample]
-        )
+        timing["refreshed_verification"] = DurationDistribution(
+            (refreshed_verification_sample,)
+        ).to_milliseconds_dict()
 
     transfer_results = [result]
     if refreshed_result is not None:
@@ -331,7 +251,7 @@ def run_campaign(
         raise ValueError("selected_adapters must not contain duplicates")
     if len(set(selected_cases)) != len(selected_cases):
         raise ValueError("selected_cases must not contain duplicates")
-    environment = capture_environment()
+    environment = capture_environment().to_dict()
     rows = [
         execute_case(
             adapters[adapter_name],
@@ -358,14 +278,6 @@ def run_campaign(
     }
     validate_report(report)
     return report
-
-
-def _measure_once(operation: Callable[[], _T], /) -> tuple[_T, float]:
-    started = time.perf_counter_ns()
-    value = operation()
-    synchronize(value)
-    elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000.0
-    return value, elapsed_ms
 
 
 def _skip_row(
@@ -521,10 +433,4 @@ def _certificate_kind(capability: str) -> str:
     }[capability]
 
 
-__all__ = [
-    "capture_environment",
-    "duration_distribution",
-    "execute_case",
-    "run_campaign",
-    "synchronize",
-]
+__all__ = ["execute_case", "run_campaign"]

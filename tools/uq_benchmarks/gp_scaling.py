@@ -8,13 +8,18 @@ import argparse
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from statistics import median
 from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import (
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+    synchronize,
+)
 
 from .report import (
     BenchmarkReport,
@@ -37,15 +42,8 @@ _MAX_CAGP_EXACT_STORAGE_RATIO = 0.75
 _MAX_CAGP_CONSERVATIVE_VIOLATION = 1e-8
 
 
-def _block_until_ready(value: Any) -> None:
-    jax.block_until_ready(value)
-
-
 def _timed_call(function: Callable[[], Any]) -> tuple[Any, float]:
-    started = time.perf_counter()
-    value = function()
-    _block_until_ready(value)
-    return value, time.perf_counter() - started
+    return measure_synchronized(function)
 
 
 def _jit_timings(
@@ -53,20 +51,22 @@ def _jit_timings(
     *args: Any,
     repetitions: int,
 ) -> tuple[float, float, float]:
-    compiled = jax.jit(function)
-    started = time.perf_counter()
-    _block_until_ready(compiled(*args))
-    cold_seconds = time.perf_counter() - started
-    warm_seconds = []
-    for _ in range(repetitions):
-        started = time.perf_counter()
-        _block_until_ready(compiled(*args))
-        warm_seconds.append(time.perf_counter() - started)
-    execution_seconds = median(warm_seconds)
+    jitted = jax.jit(function)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(*args),
+        lambda lowered: lowered.compile(),
+    )
+    _, first_execution_seconds = measure_synchronized(lambda: compiled(*args))
+    _, steady = measure_repeated(
+        lambda: compiled(*args),
+        warmup=0,
+        repeats=repetitions,
+    )
+    compile_seconds = compilation.lowering_seconds + compilation.compilation_seconds
     return (
-        cold_seconds,
-        max(0.0, cold_seconds - execution_seconds),
-        execution_seconds,
+        compile_seconds + first_execution_seconds,
+        compile_seconds,
+        float(steady.median_seconds),
     )
 
 
@@ -311,9 +311,9 @@ def _case(
     )
     exact_condition = exact_conditioner.condition(residual)
     fitc_condition = sparse_conditioner.condition(residual)
-    _block_until_ready((exact_condition, fitc_condition))
+    synchronize((exact_condition, fitc_condition))
     cagp_condition = computation_aware_conditioner.condition(residual)
-    _block_until_ready(cagp_condition)
+    synchronize(cagp_condition)
     mean_rmse = jnp.sqrt(jnp.mean((fitc_condition.mean - exact_condition.mean) ** 2))
     variance_rmse = jnp.sqrt(
         jnp.mean((fitc_condition.variance - exact_condition.variance) ** 2)

@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-import time
 from typing import Literal
 
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_synchronized
 
 from .cases import DirectCollocationQualificationSetup
 from .contracts import DirectCollocationQualificationRecord
@@ -53,9 +53,9 @@ def run_qualification_case(
         method=_method(backend),
         termination=termination,
     )
-    started = time.perf_counter()
-    result = phx.control.solve_prepared_direct_collocation(prepared)
-    elapsed = time.perf_counter() - started
+    result, elapsed = measure_synchronized(
+        lambda: phx.control.solve_prepared_direct_collocation(prepared)
+    )
     program = compilation.structured_program
     direction = jnp.linspace(0.1, 1.0, program.num_variables)
     sparse_action = program.jacobian_plan.operator(

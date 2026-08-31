@@ -1,0 +1,25 @@
+{
+  "environment": {
+    "backend": "cpu",
+    "jax": "0.9.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "python": "3.12.8"
+  },
+  "interface": {
+    "reflection": 0.11111112435658772,
+    "reflection_error": 1.3245476618295449e-08,
+    "status": 0,
+    "transmission": 0.8888888584635184,
+    "transmission_error": 3.042537044528615e-08
+  },
+  "propagation": {
+    "boundary_modal_difference": 1.6859767686498582e-12,
+    "constitutive_residual": 0.0,
+    "modal_status": 0,
+    "paired_error": 1.6188678741574844e-13
+  },
+  "reference": {
+    "upstream_commit": "e13d422cbb8b77820a5e375eb9f5c415be01b81e",
+    "upstream_release": "v1.7.1"
+  }
+}

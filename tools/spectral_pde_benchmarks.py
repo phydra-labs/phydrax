@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
 @dataclass(frozen=True)
@@ -80,16 +81,17 @@ def _problem():
 
 def _measure(function, argument, repeats):
     compiled = jax.jit(function)
-    started = time.perf_counter()
-    value = compiled(argument)
-    jax.block_until_ready(value)
-    first = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        value = compiled(argument)
-        jax.block_until_ready(value)
-    steady = 1e3 * (time.perf_counter() - started) / repeats
-    return value, first, steady
+    value, first_seconds = measure_synchronized(lambda: compiled(argument))
+    value, distribution = measure_repeated(
+        lambda: compiled(argument),
+        warmup=0,
+        repeats=repeats,
+    )
+    return (
+        value,
+        1_000.0 * first_seconds,
+        1_000.0 * float(distribution.mean_seconds),
+    )
 
 
 def run_spectral_pde_benchmark(
@@ -106,7 +108,7 @@ def run_spectral_pde_benchmark(
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
     method = phx.discretization.PseudospectralMethodPlan(
         dealiasing=phx.discretization.PaddingDealiasingPlan(2),
     )

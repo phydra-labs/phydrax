@@ -9,11 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import jax
-
 from phydrax.domain import DomainFunction
 
-from .._callable import _ensure_special_kwonly_args
+from ._inference import make_inference_export_callable
 
 
 @dataclass(frozen=True)
@@ -23,62 +21,6 @@ class OnnxExportResult:
     path: Path
     validation_ok: bool | None = None
     validation_message: str | None = None
-
-
-def _array_callable(fn: Callable[..., Any] | DomainFunction, /) -> Callable[..., Any]:
-    if isinstance(fn, DomainFunction):
-        return _ensure_special_kwonly_args(fn.func)
-    if not callable(fn):
-        raise TypeError(
-            f"save_onnx expects a callable or DomainFunction; got {type(fn).__name__}."
-        )
-    return _ensure_special_kwonly_args(fn)
-
-
-def _as_args(value: Any, /) -> tuple[Any, ...]:
-    if isinstance(value, tuple):
-        return value
-    return (value,)
-
-
-def _apply_preprocess(
-    preprocess: Callable[..., Any] | None,
-    args: tuple[Any, ...],
-    /,
-) -> tuple[Any, ...]:
-    if preprocess is None:
-        return args
-    return _as_args(preprocess(*args))
-
-
-def _make_export_callable(
-    fn: Callable[..., Any] | DomainFunction,
-    /,
-    *,
-    key: Any,
-    preprocess: Callable[..., Any] | None,
-    postprocess: Callable[..., Any] | None,
-    vectorize: bool,
-) -> Callable[..., Any]:
-    callable_fn = _array_callable(fn)
-
-    def _call_model(*model_args: Any) -> Any:
-        if not vectorize:
-            return callable_fn(*model_args, key=key)
-
-        def _row_call(*row_args: Any) -> Any:
-            return callable_fn(*row_args, key=key)
-
-        return jax.vmap(_row_call)(*model_args)
-
-    def _exported(*args: Any) -> Any:
-        model_args = _apply_preprocess(preprocess, args)
-        y = _call_model(*model_args)
-        if postprocess is None:
-            return y
-        return postprocess(y)
-
-    return _exported
 
 
 def save_onnx(
@@ -114,7 +56,7 @@ def save_onnx(
 
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    export_fn = _make_export_callable(
+    export_fn = make_inference_export_callable(
         fn,
         key=key,
         preprocess=preprocess,

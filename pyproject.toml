@@ -50,6 +50,7 @@ dependencies = [
     "polars>=1.40.1",
     "pyvista>=0.46.4",
     "scipy>=1.14",
+    "sympy>=1.14,<1.15",
     "s2fft>=1.4,<1.5",
     "setuptools<81",
     "shapely>=2.0",
@@ -73,6 +74,10 @@ hdf5 = [
 ipopt = [
   "cyipopt>=1.7,<2",
 ]
+iree = [
+  "iree-base-compiler==3.11.0",
+  "iree-base-runtime==3.11.0",
+]
 docs = [
   "hippogriffe==0.2.2",
   "griffe==1.7.3",
@@ -95,6 +100,7 @@ tests = [
     "pytest-impacted>=0.29.0",
     "pytest-rerunfailures>=16.1",
     "pytest-sugar>=1.1.1",
+    "pytest-tia==1.1.1",
     "pytest-testmon>=2.2.0",
     "pytest-tia>=1.1.1",
     "pytest-xdist>=3.8.0",

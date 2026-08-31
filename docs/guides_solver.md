@@ -162,6 +162,49 @@ noise basis.
 See [API → Solver → Differential equation integration](api/solver/differential.md)
 for the complete shape, replay, and result contract.
 
+## Neural Galerkin field evolution
+
+`solve_neural_galerkin` evolves a finite parameter subspace while measuring its
+induced fields on fixed physical integration realizations. At each Diffrax vector-field
+evaluation it projects the requested physical field rate onto the model tangent space.
+`NeuralTangentSolvePolicy("rectangular")` uses direct weighted least squares;
+`"gram"` solves the damped empirical Gram system and may use a prepared positive
+preconditioner.
+
+The metric realization is frozen for the complete Diffrax solve. Resampling at
+internal Runge--Kutta stages would make the parameter vector field stochastic and
+invalidate ordinary adaptive-step error semantics. Diffrax owns temporal stepping,
+save times, dense parameter interpolation, outer status, and adjoints. Phydrax audits
+the tangent solve independently at every saved node; hidden Diffrax stages do not
+expose their inner linear diagnostics.
+
+```text
+problem = phx.solver.NeuralGalerkinProblem(
+    {"u": field},
+    rate,
+    (phx.solver.FieldProjectionMetric("u", realization),),
+)
+result = phx.solver.solve_neural_galerkin(
+    problem,
+    time_grid,
+    tangent=phx.solver.NeuralTangentSolvePolicy(damping=1e-6),
+    dense=True,
+)
+```
+
+`result.functions_at(i)` reconstructs one valid saved node.
+`functions_at_time(t)` is available only with `dense=True`; it is Diffrax
+interpolation of the parameter ODE and therefore retains the declared parameterization.
+Backsolve adjoints, changing collocation populations, and soft essential-boundary
+penalties are not supported in the initial contract. Use exact enforcement when an
+essential condition must hold throughout the tangent evolution.
+
+`trace_characteristics` likewise delegates backward feet to Diffrax through increasing
+pseudo-time. `solve_characteristic_projection` samples query points, traces their
+feet, freezes the pulled-back prior field values, and projects each macro time slice
+with `FunctionalSolver`. A user-supplied wrap owns periodic coordinates; invalid feet
+are never clipped silently.
+
 ## What `FunctionalSolver` does
 
 A `FunctionalSolver` is a lightweight orchestrator that holds:

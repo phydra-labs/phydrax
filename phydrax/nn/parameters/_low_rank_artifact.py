@@ -94,6 +94,7 @@ def save_low_rank_adapter(
                 "dtype": jnp.dtype(update.dtype).str,
                 "rank": update.rank,
                 "alpha": update.alpha,
+                "scaling": update.scaling,
                 "scale": update.scale,
                 "left": left_name,
                 "right": right_name,
@@ -122,6 +123,7 @@ def _validated_sites(
         "shape",
         "dtype",
         "rank",
+        "scaling",
         "alpha",
         "scale",
         "left",
@@ -132,7 +134,9 @@ def _validated_sites(
     seen_arrays: set[str] = set()
     for record in value:
         if not isinstance(record, dict) or set(record) != expected_fields:
-            raise ArrayArchiveCorruptionError("Low-rank adapter site metadata is invalid.")
+            raise ArrayArchiveCorruptionError(
+                "Low-rank adapter site metadata is invalid."
+            )
         path = record["path"]
         if not isinstance(path, str) or not path or path in seen_paths:
             raise ArrayArchiveCorruptionError("Low-rank adapter paths are invalid.")
@@ -153,23 +157,29 @@ def _validated_sites(
         shape = record["shape"]
         rank = record["rank"]
         alpha = record["alpha"]
+        scaling = record["scaling"]
         scale = record["scale"]
         dtype = record["dtype"]
         if (
             not isinstance(shape, list)
             or len(shape) != 2
-            or any(isinstance(size, bool) or not isinstance(size, int) or size <= 0 for size in shape)
+            or any(
+                isinstance(size, bool) or not isinstance(size, int) or size <= 0
+                for size in shape
+            )
             or isinstance(rank, bool)
             or not isinstance(rank, int)
             or rank <= 0
             or not isinstance(dtype, str)
+            or scaling not in ("rank", "sqrt_rank")
             or not isinstance(alpha, (int, float))
             or not isinstance(scale, (int, float))
             or not np.isfinite(alpha)
             or not np.isfinite(scale)
             or alpha <= 0.0
             or scale <= 0.0
-            or float(scale) != float(alpha) / rank
+            or float(scale)
+            != float(alpha) / (rank if scaling == "rank" else np.sqrt(rank))
         ):
             raise ArrayArchiveCorruptionError("Low-rank adapter site values are invalid.")
         seen_paths.add(path)
@@ -229,7 +239,7 @@ def read_low_rank_adapter(
             return value
         if isinstance(value.weight, LowRankUpdate):
             raise TypeError("Low-rank adapters require a dense supplied base model.")
-        if value.random_weight_factorization or value.weight_transform is not None:
+        if value.weight_transform is not None:
             raise ValueError(
                 f"Low-rank adapter site {weight_path!r} is no longer adaptable."
             )
@@ -247,6 +257,7 @@ def read_low_rank_adapter(
             left,
             right,
             alpha=float(record["alpha"]),
+            scaling=record["scaling"],
         )
         if update.rank != int(record["rank"]) or update.scale != float(record["scale"]):
             raise ArrayArchiveCorruptionError(
@@ -269,6 +280,7 @@ def read_low_rank_adapter(
             dtype=record["dtype"],
             rank=int(record["rank"]),
             alpha=float(record["alpha"]),
+            scaling=record["scaling"],
             scale=float(record["scale"]),
             base_parameter_count=int(np.prod(record["shape"])),
             adapter_parameter_count=int(

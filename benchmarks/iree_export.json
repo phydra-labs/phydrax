@@ -1,0 +1,12 @@
+{
+  "artifact_bytes": 10197,
+  "compile_seconds": 4.314493165991735,
+  "compiler_version": "3.11.0",
+  "maximum_absolute_error": 0.0,
+  "maximum_relative_error": 0.0,
+  "runtime_driver": "local-task",
+  "runtime_version": "3.11.0",
+  "target_backend": "llvm-cpu",
+  "validation_ok": true,
+  "warm_seconds": 7.737497799098492e-05
+}

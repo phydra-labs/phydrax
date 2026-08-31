@@ -351,6 +351,25 @@ def test_fno_prefers_explicit_channels_when_spatial_sizes_are_ambiguous():
     assert model((values, axis, axis)).shape == (2, 4, 4, 1)
 
 
+@pytest.mark.parametrize(
+    "axis",
+    (
+        jnp.asarray([1.0, 0.75, 0.5, 0.25]),
+        jnp.asarray([0.0, 0.0, 0.0, 0.0]),
+    ),
+)
+def test_fno_rejects_nonincreasing_runtime_axes(axis):
+    model = phx.nn.operator.architectures.FNO(
+        n_modes=(2,),
+        width=4,
+        depth=1,
+        key=jr.key(4),
+    )
+
+    with pytest.raises(eqx.EquinoxRuntimeError):
+        model((jnp.ones((4,)), axis))
+
+
 def test_spectral_resampling_preserves_constants_and_multiscale_shape():
     values = jnp.ones((2, 15, 17, 3))
     resized = phx.nn.operator.architectures.spectral_resample(values, (8, 9))
@@ -582,8 +601,8 @@ def test_operator_attention_shapes_and_measure_aware_slice_pooling():
 
 @pytest.mark.parametrize("model_name", ("cno", "uno"))
 def test_cno_family_handles_odd_grids_and_native_batches(model_name):
-    x_axis = jnp.linspace(0.0, 1.0, 15)
-    y_axis = jnp.linspace(0.0, 1.0, 17)
+    x_axis = jnp.arange(15, dtype=float) / 15
+    y_axis = jnp.arange(17, dtype=float) / 17
     values = jr.normal(jr.key(0), (2, 15, 17))
     if model_name == "cno":
         model = phx.nn.operator.architectures.CNO(
@@ -593,9 +612,33 @@ def test_cno_family_handles_odd_grids_and_native_batches(model_name):
         model = phx.nn.operator.architectures.UNO(
             spatial_ndim=2, widths=(4, 6, 8), key=jr.key(1)
         )
-    output = model((values, x_axis, y_axis))
-    assert output.shape == values.shape
-    assert jnp.all(jnp.isfinite(output))
+    tuple_output = model((values, x_axis, y_axis))
+    axes = (
+        phx.nn.operator.OperatorAxis(
+            "x",
+            x_axis,
+            quadrature_weights=jnp.full((15,), 1.0 / 15.0),
+            basis="fourier",
+            periodic=True,
+        ),
+        phx.nn.operator.OperatorAxis(
+            "y",
+            y_axis,
+            quadrature_weights=jnp.full((17,), 1.0 / 17.0),
+            basis="fourier",
+            periodic=True,
+        ),
+    )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"source": phx.nn.operator.FunctionSamples(values=values, axes=axes)},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=axes)},
+        case_axes=("case",),
+    )
+    batch_output = model(batch)
+
+    assert tuple_output.shape == values.shape
+    assert jnp.all(jnp.isfinite(tuple_output))
+    assert jnp.allclose(batch_output, tuple_output, atol=2e-6, rtol=2e-6)
 
 
 def test_sfno_is_finite_on_its_exact_s2fft_sampling():

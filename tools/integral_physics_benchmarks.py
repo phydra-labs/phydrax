@@ -7,7 +7,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import time
 from pathlib import Path
 from typing import Any
 
@@ -18,21 +17,25 @@ import jax.random as jr
 import jax.scipy.special as jsp
 
 import phydrax as phx
+from benchmarks._runtime import measure_lower_and_compile, measure_repeated
 from phydrax._frozendict import frozendict
 
 
 def _timed(operation, /, *, repeats: int) -> tuple[jax.Array, float, float]:
-    compiled = jax.jit(operation)
-    started = time.perf_counter()
-    value = compiled()
-    jax.block_until_ready(value)
-    compile_ms = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        value = compiled()
-        jax.block_until_ready(value)
-    steady_ms = 1e3 * (time.perf_counter() - started) / repeats
-    return value, compile_ms, steady_ms
+    jitted = jax.jit(operation)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(),
+        lambda lowered: lowered.compile(),
+    )
+    value, distribution = measure_repeated(
+        compiled,
+        warmup=1,
+        repeats=repeats,
+    )
+    compile_ms = 1_000.0 * (
+        compilation.lowering_seconds + compilation.compilation_seconds
+    )
+    return value, compile_ms, 1_000.0 * float(distribution.mean_seconds)
 
 
 def _time_point(value: float):

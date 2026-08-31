@@ -63,6 +63,13 @@ from ._fractional import (
     FractionalGaussianRealization,
     FractionalGaussianSamplingMethod,
 )
+from ._gaussian_diffusion import (
+    AbstractGaussianDiffusion,
+    DiffusionTerminalReference,
+    TerminalReferenceRelationship,
+    VarianceExplodingDiffusion,
+    VariancePreservingDiffusion,
+)
 from ._hierarchy import (
     NoiseCoupling,
     NoiseCouplingWitness,
@@ -145,12 +152,14 @@ from ._measure_change import (
     PathMeasureChange,
     wiener_measure_change,
 )
+from ._ou import OrnsteinUhlenbeckRealization
 from ._path_dependent_bsde import ReflectedPathDependentBSDEProblem
 from ._process import (
     AbstractMarginalTransitionLaw,
     AbstractPathwiseTransition,
     AbstractProcessDistribution,
     cocycle_objective,
+    DiagonalGaussianProcessDistribution,
     gaussian_process_diagnostics,
     GaussianProcessDiagnostics,
     GaussianProcessDistribution,
@@ -295,7 +304,9 @@ __all__ = [
     "AbstractTransitionKernel",
     "AbstractStructuralComponent",
     "AbstractProcessDistribution",
+    "AbstractGaussianDiffusion",
     "AtomicStochasticRealization",
+    "OrnsteinUhlenbeckRealization",
     "AtomicPathEvent",
     "AutoregressiveComponent",
     "autodiff_bsde_control",
@@ -326,6 +337,7 @@ __all__ = [
     "DeterministicTransitionComponent",
     "diffusion_measure_change",
     "DiffusionMeasureChange",
+    "DiffusionTerminalReference",
     "FiniteStateTransitionKernel",
     "CompositeStochasticRealization",
     "CompetingPathEvents",
@@ -350,6 +362,7 @@ __all__ = [
     "cocycle_objective",
     "GaussianProcessDiagnostics",
     "GaussianProcessDistribution",
+    "DiagonalGaussianProcessDistribution",
     "gaussian_process_diagnostics",
     "LatentGaussianCoefficientProcess",
     "ProcessQueryDiagnostics",
@@ -492,6 +505,9 @@ __all__ = [
     "TrajectoryMeasureMode",
     "TrajectoryTimeRule",
     "StochasticTransitionView",
+    "TerminalReferenceRelationship",
+    "VarianceExplodingDiffusion",
+    "VariancePreservingDiffusion",
     "StochasticRealization",
     "TransitionWeighting",
     "TransitionSample",

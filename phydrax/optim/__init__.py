@@ -126,6 +126,7 @@ from ._least_squares_trust import (
 from ._minimize import minimize
 from ._mirror_descent import mirror_descent
 from ._mirror_geometry import ParameterMirrorGeometry
+from ._mma import MethodOfMovingAsymptotes, MMAEvidence, MMAPolicy
 from ._model_based import BOBYQA, COBYQA, ModelBasedKind
 from ._multistart import (
     multistart_minimize,
@@ -152,10 +153,12 @@ from ._pde_constrained import (
     ReducedAdjoint,
     SimultaneousKKT,
     solve_state_design,
+    StateDesignConstraint,
     StateDesignProblem,
     StateDesignResult,
     StateEquationResult,
 )
+from ._pde_constrained_mma import ReducedMMA
 from ._pounders import POUNDERS, POUNDERSEvidence
 from ._programming import (
     AbstractConvexCone,
@@ -462,6 +465,9 @@ __all__ = [
     "LevenbergMarquardt",
     "L1Functional",
     "MeanVarianceRisk",
+    "MMAEvidence",
+    "MMAPolicy",
+    "MethodOfMovingAsymptotes",
     "MonteCarloSampling",
     "MinimizationProblem",
     "MinimizationResult",
@@ -506,8 +512,10 @@ __all__ = [
     "SampleBatch",
     "ReducedNewtonKrylov",
     "ReducedAdjoint",
+    "ReducedMMA",
     "SimultaneousKKT",
     "StateDesignProblem",
+    "StateDesignConstraint",
     "StateDesignResult",
     "StateEquationResult",
     "SteihaugToint",

@@ -11,13 +11,11 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_synchronized
 
 
 def _timed(function, *args):
-    start = time.perf_counter()
-    value = function(*args)
-    jax.block_until_ready(value)
-    return value, time.perf_counter() - start
+    return measure_synchronized(lambda: function(*args))
 
 
 def main():

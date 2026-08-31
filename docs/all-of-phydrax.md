@@ -58,6 +58,11 @@ Fourier evaluation, sparse Smolyak approximation, sparse Gaussian processes,
 and stochastic estimators remain specialized methods rather than sparse
 storage types. See [API → Operators → Interpolation](api/operators/interpolation.md).
 
+Adaptive residual policies remain source-owned. R3, RAR-D, and coreset policies
+change point support; `ResidualAttentionCollocation` instead keeps support fixed and
+updates a unit-mean local multiplier with explicit uniform and effective-sample-size
+guards. Independent fixed evaluation terms remain the evidence surface.
+
 Finite-dimensional algebra above those storage kernels is shared through
 `phydrax.linalg`: paired array/PyTree/block spaces, composable explicit and
 matrix-free operators, exact/least-squares/minimum-norm problem contracts,
@@ -72,6 +77,12 @@ native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
 
+Certified positive-semidefinite actions may prepare a fixed-rank
+`RandomizedNystromPreconditioner`. Its deterministic sketch, positive shift,
+refresh mode, retained Ritz evidence, storage, and exact setup matvec count flow
+through the same preconditioner plan/prepare/refresh provenance as deterministic
+builders.
+
 ### Discretization: supports, field spaces, and formulations
 
 `phydrax.discretization` binds labeled continuum semantics to finite topology,
@@ -80,9 +91,12 @@ approximation bundles. Tensor support is independent of finite-difference,
 spectral, or collocation calculus. Global tensor spectral spaces separate mathematical
 modes, physical grids, modal DOFs, dealiasing, constrained/Galerkin/tau formulations,
 periodic Leray projection, channel Stokes constraints, and temporal integration.
-Exact-sampling round-sphere spaces instead expose S2FFT mode layouts, physical area
-measure, scalar Laplace--Beltrami actions, complete-degree noise bases, and the
-prepared discretization consumed by SFNO.
+Axis domains cover bounded, periodic, half-line, and real-line support; rational
+Chebyshev bases, canonical modal transfers, physical modal-tail diagnostics, and
+cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
+resource identities. Exact-sampling round-sphere spaces separately expose S2FFT mode
+layouts, physical area measure, scalar Laplace--Beltrami actions, complete-degree noise
+bases, and the prepared discretization consumed by SFNO.
 Local stencil programs, structured compact line solves, periodic/bounded SBP
 calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
 WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose
@@ -98,13 +112,22 @@ particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
 route moments, and fast/deterministic/compensated reductions. DEM adds stable
-contact history, accepted-step work/energy ledgers, cached and fused
-neighborhoods, rolling/adhesive/plastic/thermal laws, SO(2)/SO(3) bodies,
-clumps, triangle/convex/implicit geometry, bonds/topology events, certified
-sensitivity modes, and conservative unresolved/resolved CFD coupling. See
+compositional normal/cohesion/tangential/rotational history, accepted-step
+work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
+elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
+bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
+and wear, bonds/topology events, and certified sensitivity modes. Radial
+particle conversion adds typed thermochemistry, reactions, evaporation,
+shrinking-core conversion, morphology, conservative continuum/contact/radiative
+exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
+[Guide → Wet granular contact](guides_wet_granular_contact.md),
+[Guide → Superquadric DEM](guides_superquadric_dem.md),
+[Guide → Particle internal transport](guides_particle_internal_transport.md),
+[Guide → Particle thermochemistry](guides_particle_thermochemistry.md),
+[Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
@@ -116,6 +139,38 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Discretization](guides_discretization.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
+
+### Atomistic learning: finite molecular energies and conservative forces
+
+`phydrax.atomistic` specializes the existing material-particle and `GraphIR`
+substrates for scale-identified finite molecules. `AtomicStructure` and
+`AtomisticBatch` retain stable atomic IDs, masses, padding masks, and explicit
+length/energy identity. Case-isolated dense candidate graphs expose
+displacement, distance, direction, masks, and neighbor work under mandatory
+atom-count and neighbor-capacity guards; overflow invalidates the result without
+edge truncation. `phydrax.nn.atomistic.PaiNNPotential` provides invariant
+scalar/equivariant vector interactions. The drop-in `NequIPPotential` adds
+species-conditioned self connections, parity-safe gates, degree-zero-through-two
+edge features, and independently derived Cartesian O(3) tensor products whose
+legal instructions, radial parameter count, work, resource limits, and identity
+are planned before allocation. Both models mask padded nodes and edges, use a
+smooth cutoff, and sum invariant per-atom energy. Forces are only the negative
+position derivative of that scalar energy with frozen candidate topology.
+Prediction evidence includes validity/status, scale and precision identity,
+graph provenance, and net-force/net-torque defects.
+
+Domain-specific training accepts energy-only, force-only, or joint supervision,
+fits loss normalization from the training split only, and reuses the shared key,
+callback, selection, patience, and deterministic-continuation lifecycle. The
+offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
+indices; the campaign tool compares matched PaiNN and NequIP runs across seeds.
+This is a finite nonperiodic molecular research capability: preserved cell or
+periodic metadata is rejected by both models, and the NequIP scope stops at
+degree two. There is no high-degree irreps or MACE claim, stress, long-range
+electrostatics, direct-force head, ASE integration, or molecular-dynamics
+stability claim. See [Guide → Atomistic learning](guides_atomistic.md),
+[Cookbook → Finite-molecule atomistic potentials](cookbook/atomistic.md), and
+[API → Atomistic molecular learning](api/atomistic.md).
 
 ### Computational topology: exact invariants and filtered fields
 
@@ -195,11 +250,22 @@ factorization, stability, and orthogonality maps live in
 are constructed on demand. The same package owns explicit model-PyTree
 selection through `ParameterSubspace`.
 
+`NeuralGalerkinProblem` evolves a selected model subspace as a Diffrax parameter
+ODE. Fixed physical integration realizations define the field metric; rectangular
+least squares or a damped empirical Gram solve supplies the tangent rate. The result
+retains ordinary Diffrax evidence plus independent saved-node projection audits and
+reconstructs valid parameter states as named fields. Backward characteristic maps
+reuse the same Diffrax substrate before optional macro-step field projection.
+
 Exact native `Linear` paths can instead carry factorized low-rank updates over
 a shared dense base. The factor-only `ParameterSubspace` is the complete
 gradient and optimizer-state boundary for `fit_operator` and Optax
 `FunctionalSolver` runs; merging returns an ordinary dense deployment model,
 while adapter-only archives verify the complete base content before loading.
+Standard and rank-stabilized scaling are explicit per site. RWF layers adapt
+their unscaled `V` coordinate before the frozen row scale and remain RWF after
+deployment merging.
+
 The checked transfer campaign improves its frozen baseline with 53 selected
 parameters versus 197 for full fine-tuning, and the resource campaign reduces
 Adam state from 4,194,308 to 131,076 bytes with merged/factorized disagreement
@@ -246,14 +312,39 @@ factors use native dense or sparse linear actions, bounded kernel-row workspaces
 small projected Cholesky solves, and explicit resource/conditioning evidence while
 retaining unresolved action directions in covariance. Exact scalar GP inference
 automatically selects weight space for a lower-rank finite-feature kernel; learned
-feature maps and kernel hyperparameters remain differentiable leaves. Matrix-free
-JVP/VJP propagation
+feature maps and kernel hyperparameters remain differentiable leaves.
+
+Scalar temporal Matérn-3/2 and Matérn-5/2 kernels also compile to exact
+two- or three-state continuous linear Gaussian models. One stable sorted schedule
+shares train/query overlaps and repeated queries, while real observation masks
+represent query-only and missing training positions. Sequential square-root
+Kalman filtering and reverse-scan RTS smoothing return linear-storage query
+marginals and the exact active-observation log marginal likelihood. Hybrid
+short-gap/stationary long-gap process covariance stays bounded on wide irregular
+schedules. An origin-shifted internal schedule and stationary prior at one negative
+length scale avoid large-origin precision loss and zero-root parameter gradients.
+Results retain query-scoped status/masks, prepared/evaluated kernel and external
+schedule identity, method provenance, evaluated parameters, and precision evidence.
+Repeated training times, mixed compute dtypes, unsupported kernel algebra,
+SHO/CARMA, non-Gaussian likelihoods, and parallel execution are rejected rather
+than approximated; no large-noise sentinel or covariance repair is used.
+
+Matrix-free JVP/VJP propagation
 transports diagonal, dense, low-rank, or operator-valued covariance through
 scientific maps; normalized
 errors-in-variables likelihoods account jointly for uncertain predictors and
 observations. Probability domains, static random fields, and joint QMC propagate
 full uncertain-input distributions. Global Wiener, Poisson-clock, composite, and
 coefficient-process realizations provide replayable process paths.
+Independent scalar Uniform and Normal inputs also support labeled nonintrusive
+polynomial chaos. Deterministic guarded total-degree multiindices, normalized
+Legendre/Hermite tensor bases, existing product-integration projection, and
+diagnosed native exact/least-squares regression produce immutable PyTree- and
+Field-preserving expansions. Mean, variance, and first/total Sobol effects follow
+from orthonormal coefficient energy. Rank deficiency and nonfinite data fail
+without silent pseudoinverse repair; this surface does not claim intrusive
+stochastic Galerkin semantics.
+
 
 Regular Bernoulli, Poisson, exponential-rate, and Normal families expose typed natural
 and mean coordinates, normalized laws, weighted sufficient-statistic projection, and
@@ -286,6 +377,20 @@ First-order, scaled-unscented, spherical-radial, Gauss--Hermite, and keyed Monte
 Carlo expectations are declared approximations; they do not make nonlinear
 inference exact. Dense-only paths enforce dimension guards, and covariance inputs
 are never silently repaired.
+
+Integration-native fixed-design Bayesian quadrature binds an analytic
+`GaussianKernelMean` to one normalized Gaussian target identity and its exact
+probability label/location/scale content.
+`BayesianQuadraturePlan` supports squared-exponential kernels, optionally scaled,
+and applies prepared `phydrax.linalg` conditioning weights to scalar, array,
+field, or PyTree integrands through ordinary `materialize`/`reduce` calls.
+Observation noise and solve regularization remain distinct, child solve evidence
+is retained, and target mismatch, non-finite outputs, failed solves, resource
+overrun, and materially invalid posterior variance fail closed. The reported
+Bayesian posterior standard deviation is model-based uncertainty, **not a
+deterministic or frequentist error bound**. Active acquisition, WSABI,
+unnormalized evidence, arbitrary measures, and arbitrary kernels are explicit
+non-capabilities.
 
 The completed state-space surface also includes SING natural-gradient
 variational smoothing for additive-noise latent SDEs; square-root sequential
@@ -369,6 +474,12 @@ consistent segmented continuation, frozen-grid implicit replay derivatives,
 checkpointed reverse passes, guarded numerical reuse, and local regularity evidence
 without introducing a second identification representation.
 Array models bind into `ContinuousSystem` as explicit trainable PyTree children.
+Pointwise array models also bind as deterministic fixed-step `DiscreteSystem`
+maps with an explicit coordinate-step contract. Neural identification reads
+`TrajectoryData` through lazy validity/reset/control-aware windows and combines
+supervised, deterministic reference-branch, and residual rollout objectives.
+One authored recurrent step underlies full, prefix, chunked, rematerialized,
+and resumed execution; Phydrax does not infer carry state from a JAXPR trace.
 Structured Port-Hamiltonian fields provide state-dependent energy,
 interconnection, dissipation, control, and forcing components while preserving
 exact skew and semidefinite geometry; solver-owned isothermal dynamics add the
@@ -454,6 +565,10 @@ and filter/SOC SQP with BFGS/SR1/exact Hessians. BOBYQA, COBYQA,
 deterministic multistart, and explicitly recertified SciPy/NLopt/Ipopt/Ceres
 boundaries cover black-box and specialist routes. Residual graphs retain block
 sparsity, Schur ordering, manifold retractions, and incremental factor versions.
+Method of Moving Asymptotes adds a finite-box, feasible-start route for very
+large designs with few inequalities. Its reduced state/design form reuses exact
+adjoints and supports fixed-mesh SIMP compliance optimization with sparse
+physical-radius filtering and mandatory independent reanalysis evidence.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
@@ -715,6 +830,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Autoregressive operator learning**: bind one coincident physical state
+  source and prediction with `OperatorRolloutRoute`. Training and deployment use
+  the same authored step: raw output is physicalized, constrained, restored to
+  the physical source, and reprocessed through source normalization before the
+  next call. Named future targets and recurrent residuals support traced
+  fixed-capacity horizons, while `final_batch` and an absolute step offset make
+  chunk continuation and semantic keys explicit. Dynamic controls, independent
+  queries, multiple recurrent states, and inferred carry are not accepted by
+  this route.
 - **Irregular-time sequence mixing**: use `DiagonalStateSpaceMixer` for an
   input-independent stable diagonal continuous-time baseline, or
   `SelectiveStateSpaceMixer` when input-dependent step, injection, and readout
@@ -873,6 +997,16 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [API → Stochastic → State-space models](api/stochastic/state_space.md),
   [API → UQ → Filtering](api/uq/filtering.md), and
   [API → UQ → Inference and ensembles](api/uq/inference.md).
+- **Finite-discrete probabilistic graphical models**: define stable named variable
+  groups and dense, enumerated, Ising, Potts, logical, or cardinality factors over
+  arbitrary hypergraph topology. Explicitly capped enumeration returns exact
+  normalizers, marginals, and MAP states. Sum/max-product belief propagation is exact
+  on forests and carries fixed-point-only evidence on loops; loopy sum-product labels
+  its normalizer as Bethe. Validated chromatic Gibbs preserves exact hard support,
+  clamping, persistent chain identity, and correlated-sample semantics. Parameter
+  refresh never silently changes topology. See
+  [Probabilistic graphical models](guides_probabilistic_graphical_models.md) and
+  [API → Probabilistic graphical models](api/pgm.md).
 - **Backward stochastic equations and semilinear high-dimensional PDEs**:
   evaluate terminal, local, and global BSDE residuals with explicit or
   autodifferentiated controls; fit one time-conditioned field from trajectory-node
@@ -909,6 +1043,16 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   and channel geometry through `OperatorFlowMatchingMetric`.
   See [Guides → Optimal transport](guides_transport.md) and
   [API → Continuous learned transport](api/transport/continuous.md).
+- **Score-based diffusion transport**: prescribe an exact VP or VE Gaussian
+  perturbation, train a state-shaped marginal score with
+  `DenoisingScoreMatchingTerm`, and reuse that field in either replayable
+  `ReverseDiffusion` or `probability_flow_system`. Reverse samples retain distinct
+  terminal states, global Wiener paths, solver status, and terminal-reference
+  semantics. Probability flow composes with `ContinuousFlowLaw` instead of creating a
+  second density implementation. The initial contract is full-rank real Euclidean
+  vector state only; singular, manifold, and field diffusion remain explicit future
+  contracts. See [API → Gaussian score diffusions](api/stochastic/diffusion.md) and
+  [API → Score diffusion transport](api/transport/diffusion.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
   `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
   and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density
@@ -930,20 +1074,33 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior
   problems, ensembles for neural-model epistemic variation, scalar or correlated
   Gaussian processes for model discrepancy, linear-functional GPs for operator
-  observations, joint QMC for uncertain inputs, proper likelihoods/scores for
-  observations, and conformal calibration for coverage. Use FITC only after dense
-  scaling is measured.
+  observations, joint QMC for uncertain inputs, fixed-design Bayesian quadrature
+  for a kernel-conditioned normalized Gaussian expectation, proper
+  likelihoods/scores for observations, and conformal calibration for coverage.
+  Bayesian quadrature posterior SD is not a deterministic/frequentist error
+  bound. Use FITC only after dense scaling is measured.
+  For repeated low-dimensional propagation under independent scalar Uniform or
+  Normal laws, use nonintrusive polynomial-chaos projection or diagnosed regression;
+  retain its coefficient moments and Sobol effects as finite-span evidence, not a
+  truncation-error certificate.
   See [Guides → Uncertainty quantification](guides_uncertainty.md),
+  [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
-- **Quantum systems and dynamics**: construct composite states, local operators,
-  reduced densities, information measures, matrix commutators, and closed- or
-  open-system residuals. Complex residual penalties remain real and nonnegative.
+- **Quantum systems and dynamics**: construct composite states, generalized local
+  operators, reduced densities, information measures, matrix commutators, and
+  closed- or open-system residuals. Connected discrete VMC and nonrelativistic
+  finite-molecule Coulomb VMC share persistent MCMC, matrix-free score/Gram SR,
+  statuses, diagnostics, and checkpoints. The continuum path includes exact or
+  chunked-exact coordinate traces, state-corrected electronic proposals, and a
+  full-determinant FermiNet under a conservative four-electron ceiling; it
+  excludes larger, periodic, or relativistic electron systems and stochastic
+  traces. Complex residual penalties remain real and nonnegative.
   See [Guides → Quantum operators and dynamics](guides_quantum.md),
-  [Cookbook → Composite systems and a Bell state](cookbook/quantum_composite.md), and
+  [Cookbook → Variational Monte Carlo](cookbook/quantum_vmc.md), and
   [Cookbook → Open-system amplitude damping](cookbook/quantum_open_system.md).
 - **Ritz/energy minimization**: use an explicit integral source with the
   appropriate term, with essential boundary conditions enforced in the ansatz.

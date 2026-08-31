@@ -1291,7 +1291,7 @@ def test_v2_runs_matched_search_and_persists_artifacts(
     assert "schema_version" not in payload
     assert payload["trials"][0]["learning_curve"]
     assert payload["external_audits"] == []
-    assert "peak_memory_bytes_mean" in pl.read_parquet(paths[1]).columns
+    assert "compiler_estimated_memory_bytes_mean" in pl.read_parquet(paths[1]).columns
     assert pl.read_parquet(paths[2]).height == 2
     assert pl.read_parquet(paths[3]).height == 1
     assert pl.read_parquet(paths[4]).height == 0
@@ -1402,10 +1402,14 @@ def _aggregate(evaluation, shift, relative_l2):
         spectral_mean=None,
         conservation_error_mean=0.0,
         maximum_absolute_error_mean=relative_l2,
-        compile_seconds_mean=0.01,
+        lowering_seconds_mean=0.001,
+        compilation_seconds_mean=0.009,
+        first_execution_seconds_mean=0.001,
+        inference_seed_medians_seconds=(0.001,) * 5,
         inference_seconds_mean=0.001,
+        inference_seconds_std=0.0,
         training_seconds_mean=1.0,
-        peak_memory_bytes_mean=1024.0,
+        compiler_estimated_memory_bytes_mean=1024.0,
         convergence_rate=1.0,
     )
 
@@ -1708,7 +1712,7 @@ def test_pareto_front_reports_dominance_and_missing_metrics():
             family="b-family",
             relative_l2_mean=row.relative_l2_mean * 2.0,
             inference_seconds_mean=row.inference_seconds_mean * 2.0,
-            peak_memory_bytes_mean=2048.0,
+            compiler_estimated_memory_bytes_mean=2048.0,
         )
         for row in first_rows
     )
@@ -1774,7 +1778,8 @@ def test_pareto_front_reports_dominance_and_missing_metrics():
     assert lookup["b"].dominated_by == ("a@1",)
 
     incomplete_rows = tuple(
-        replace(row, peak_memory_bytes_mean=None) for row in first_rows + second_rows
+        replace(row, compiler_estimated_memory_bytes_mean=None)
+        for row in first_rows + second_rows
     )
     incomplete = _pareto_fronts(incomplete_rows, trials, comparisons)[0]
     assert all(not point.complete for point in incomplete.points)

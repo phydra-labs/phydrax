@@ -27,6 +27,7 @@ from ._temporal_method import TemporalSolveEvidence
 
 DifferentialInterpretation: TypeAlias = Literal["ito", "stratonovich"]
 NoiseStructure: TypeAlias = Literal["additive", "commutative", "general"]
+WienerCoefficientRepresentation: TypeAlias = Literal["dense", "diagonal"]
 DifferentialVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 
 
@@ -38,6 +39,7 @@ class WienerTerm(StrictModule):
     noise_shape: tuple[int, ...] = eqx.field(static=True)
     structure: NoiseStructure = eqx.field(static=True)
     basis_id: str | None = eqx.field(static=True)
+    representation: WienerCoefficientRepresentation = eqx.field(static=True)
 
     def __init__(
         self,
@@ -48,6 +50,7 @@ class WienerTerm(StrictModule):
         *,
         structure: NoiseStructure = "general",
         basis_id: str | None = None,
+        representation: WienerCoefficientRepresentation = "dense",
     ):
         if not isinstance(name, str) or not name:
             raise ValueError("WienerTerm name must be a non-empty string.")
@@ -60,6 +63,8 @@ class WienerTerm(StrictModule):
             raise ValueError(
                 "WienerTerm structure must be 'additive', 'commutative', or 'general'."
             )
+        if representation not in ("dense", "diagonal"):
+            raise ValueError("WienerTerm representation must be 'dense' or 'diagonal'.")
         if basis_id is not None and (not isinstance(basis_id, str) or not basis_id):
             raise ValueError("WienerTerm basis_id must be non-empty or None.")
         self.name = name
@@ -67,11 +72,35 @@ class WienerTerm(StrictModule):
         self.noise_shape = shape
         self.structure = structure
         self.basis_id = basis_id
+        self.representation = representation
 
     @property
     def noise_size(self) -> int:
         """Flattened control dimension contributed by this term."""
         return prod(self.noise_shape) if self.noise_shape else 1
+
+    def coefficient_array(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        """Evaluate the coefficient in its declared dense or diagonal representation."""
+        time_array = jnp.asarray(time)
+        state_array = jnp.asarray(state)
+        expected_shape = (
+            tuple(state_array.shape) + self.noise_shape
+            if self.representation == "dense"
+            else tuple(state_array.shape)
+        )
+        coefficient = jnp.asarray(self.coefficient(time_array, state_array, args))
+        if tuple(coefficient.shape) != expected_shape:
+            raise ValueError(
+                f"WienerTerm {self.name!r} coefficient must return shape "
+                f"{expected_shape}; got {coefficient.shape}."
+            )
+        return coefficient
 
     def coefficient_matrix(
         self,
@@ -80,16 +109,14 @@ class WienerTerm(StrictModule):
         args: Any = None,
         /,
     ) -> Array:
-        """Evaluate the coefficient as ``(state_size, noise_size)``."""
-        time_array = jnp.asarray(time)
-        state_array = jnp.asarray(state)
-        expected_shape = tuple(state_array.shape) + self.noise_shape
-        coefficient = jnp.asarray(self.coefficient(time_array, state_array, args))
-        if tuple(coefficient.shape) != expected_shape:
+        """Evaluate a declared dense coefficient as ``(state_size, noise_size)``."""
+        if self.representation != "dense":
             raise ValueError(
-                f"WienerTerm {self.name!r} coefficient must return shape "
-                f"{expected_shape}; got {coefficient.shape}."
+                "A diagonal Wiener coefficient has no implicit dense matrix; "
+                "use a backend with diagonal-operator support."
             )
+        state_array = jnp.asarray(state)
+        coefficient = self.coefficient_array(time, state_array, args)
         state_size = prod(state_array.shape) if state_array.shape else 1
         return coefficient.reshape((state_size, self.noise_size))
 
@@ -136,6 +163,7 @@ def _problem_identifier(
                 "noise_shape": list(term.noise_shape),
                 "structure": term.structure,
                 "basis_id": term.basis_id,
+                "representation": term.representation,
             }
             for term in terms
         ],
@@ -220,11 +248,19 @@ class DifferentialProblem(StrictModule):
         names = tuple(term.name for term in terms)
         if len(set(names)) != len(names):
             raise ValueError("WienerTerm names must be unique within a problem.")
+        diagonal = tuple(term for term in terms if term.representation == "diagonal")
+        if diagonal:
+            if len(terms) != 1:
+                raise ValueError("A diagonal WienerTerm must be the problem's sole Wiener term.")
+            if state.ndim != 1 or diagonal[0].noise_shape != tuple(state.shape):
+                raise ValueError(
+                    "A diagonal WienerTerm requires vector state and matching noise shapes."
+                )
 
         offset = 0
         slices: dict[str, tuple[int, int]] = {}
         for term in terms:
-            term.coefficient_matrix(start, state, args)
+            term.coefficient_array(start, state, args)
             slices[term.name] = (offset, offset + term.noise_size)
             offset += term.noise_size
 
@@ -528,5 +564,6 @@ __all__ = [
     "DifferentialSolution",
     "DifferentialVectorField",
     "NoiseStructure",
+    "WienerCoefficientRepresentation",
     "WienerTerm",
 ]

@@ -564,6 +564,8 @@ class GeneralEigenSolveProvenance(StrictModule):
     prepared_id: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
     mass_operator_id: str | None = eqx.field(static=True)
+    source_space_id: str = eqx.field(static=True)
+    target_space_id: str = eqx.field(static=True)
     selection_id: str = eqx.field(static=True)
     coordinate_convention: str = eqx.field(static=True)
     capabilities: GeneralEigenCapabilities = eqx.field(static=True)
@@ -1007,6 +1009,8 @@ def general_eigensolve(
                 if prepared.problem.mass_operator is None
                 else prepared.problem.mass_operator.operator_id
             ),
+            source_space_id=prepared.problem.operator.source.space_id,
+            target_space_id=prepared.problem.operator.target.space_id,
             selection_id=prepared.plan.policy.selection.selection_id,
             coordinate_convention=(
                 "canonical-coordinate homogeneous alpha/beta; left vectors are "
@@ -1260,6 +1264,8 @@ def _general_eigensolve_native(
                 if prepared.problem.mass_operator is None
                 else prepared.problem.mass_operator.operator_id
             ),
+            source_space_id=prepared.problem.operator.source.space_id,
+            target_space_id=prepared.problem.operator.target.space_id,
             selection_id=policy.selection.selection_id,
             coordinate_convention=(
                 "canonical-coordinate homogeneous alpha/beta; left vectors are "

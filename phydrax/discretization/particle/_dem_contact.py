@@ -16,6 +16,19 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
+from ._dem_cohesion import (
+    AbstractDEMCohesionPlan,
+    evaluate_dem_cohesion,
+    zero_cohesion_response,
+)
+from ._dem_contact_state import (
+    DEMCohesionHistory,
+    DEMContactEvaluationContext,
+    DEMContactHistory,
+    DEMNormalHistory,
+    DEMRotationalHistory,
+    DEMTangentialHistory,
+)
 from ._rigid_sphere import sphere_lever_torque
 
 
@@ -33,42 +46,6 @@ class DEMContactBatch(StrictModule):
     left_angular_velocity: Array
     right_angular_velocity: Array
     valid: Array
-
-
-class DEMContactHistory(StrictModule):
-    """Persistent Cundall--Strack state aligned to stable contact keys."""
-
-    pair_keys: Array
-    valid: Array
-    active: Array
-    sliding: Array
-    normal_maximum_overlap: Array
-    normal_plastic_overlap: Array
-    normal_previous_overlap: Array
-    previous_normal: Array
-    tangential_displacement: Array
-
-    @classmethod
-    def empty(
-        cls, capacity: int, ambient_dimension: int, dtype: Any, /
-    ) -> DEMContactHistory:
-        count = int(capacity)
-        dimension = int(ambient_dimension)
-        if count < 0 or dimension not in (2, 3):
-            raise ValueError(
-                "Contact history requires nonnegative capacity and dimension 2 or 3."
-            )
-        return cls(
-            -jnp.ones((count,), dtype=jnp.int64),
-            jnp.zeros((count,), dtype=bool),
-            jnp.zeros((count,), dtype=bool),
-            jnp.zeros((count,), dtype=bool),
-            jnp.zeros((count,), dtype=dtype),
-            jnp.zeros((count,), dtype=dtype),
-            jnp.zeros((count,), dtype=dtype),
-            jnp.zeros((count, dimension), dtype=dtype),
-            jnp.zeros((count, dimension), dtype=dtype),
-        )
 
 
 class DEMNormalResponse(StrictModule):
@@ -99,10 +76,22 @@ class DEMTangentialResponse(StrictModule):
     successful: Array
 
 
-class DEMRollingResponse(StrictModule):
+class DEMRotationalResponse(StrictModule):
     left_torque: Array
     right_torque: Array
+    rolling_torque_left: Array
+    rolling_torque_right: Array
+    torsional_torque_left: Array
+    torsional_torque_right: Array
+    elastic_energy: Array
     dissipated_work: Array
+    rolling_dissipated_work: Array
+    torsional_dissipated_work: Array
+    rolling_yielded: Array
+    torsional_yielded: Array
+    rolling_margin: Array
+    torsional_margin: Array
+    next_history: DEMRotationalHistory
     active: Array
     successful: Array
 
@@ -114,21 +103,34 @@ class DEMContactResponse(StrictModule):
     next_history: DEMContactHistory
     normal_force: Array
     tangential_force: Array
+    cohesion_force: Array
     active: Array
     sticking: Array
     sliding: Array
+    cohesion_births: Array
+    cohesion_ruptures: Array
+    bridge_volume_source: Array
+    bridge_volume_release: Array
+    bridge_volume_residual: Array
+    rolling_yielded: Array
+    torsional_yielded: Array
     elastic_energy: Array
     normal_viscous_endpoint_loss: Array
-    rolling_torque_left: Array
-    rolling_torque_right: Array
+    rotational_torque_left: Array
+    rotational_torque_right: Array
     normal_plastic_dissipated_work: Array
-    rolling_dissipated_work: Array
+    rotational_dissipated_work: Array
+    cohesion_dissipated_work: Array
     tangential_constitutive_loss_estimate: Array
     friction_defect: Array
     switch_margin: Array
     activation_margin: Array
+    cohesion_birth_margin: Array
+    cohesion_rupture_margin: Array
     no_tension_margin: Array
     frame_transport_margin: Array
+    rolling_yield_margin: Array
+    torsional_yield_margin: Array
     maximum_overlap_fraction: Array
     successful: Array
 
@@ -368,160 +370,6 @@ class HertzNormalContactPlan(AbstractDEMNormalContactPlan):
         )
 
 
-class DMTAdhesiveNormalPlan(AbstractDEMNormalContactPlan):
-    """Finite-cutoff DMT-like adhesive Hertz contact."""
-
-    surface_energy: Array
-    cutoff: Array
-    maximum_cutoff: float = eqx.field(static=True)
-    normal_law_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        surface_energy: ArrayLike,
-        cutoff: ArrayLike,
-        /,
-        *,
-        normal_law_id: str | None = None,
-    ):
-        energy = np.asarray(surface_energy)
-        cutoff_ = np.asarray(cutoff)
-        for name, value in (("surface_energy", energy), ("cutoff", cutoff_)):
-            if value.ndim not in (0, 2):
-                raise ValueError(f"{name} must be scalar or a square pair table.")
-            if value.ndim == 2 and (
-                value.shape[0] != value.shape[1] or not np.array_equal(value, value.T)
-            ):
-                raise ValueError(f"{name} pair table must be square and symmetric.")
-            if np.any(~np.isfinite(value)) or np.any(value <= 0.0):
-                raise ValueError(f"{name} must be finite and positive.")
-        if energy.ndim != cutoff_.ndim or (
-            energy.ndim == 2 and energy.shape != cutoff_.shape
-        ):
-            raise ValueError("surface_energy and cutoff schemas must match.")
-        generated = canonical_fingerprint(
-            {
-                "kind": "dmt-adhesive-normal",
-                "surface_energy": array_tree_fingerprint(energy),
-                "cutoff": array_tree_fingerprint(cutoff_),
-            }
-        )
-        identifier = generated if normal_law_id is None else str(normal_law_id)
-        if not identifier:
-            raise ValueError("normal_law_id must be nonempty.")
-        self.surface_energy = jnp.asarray(energy)
-        self.cutoff = jnp.asarray(cutoff_)
-        self.maximum_cutoff = float(np.max(cutoff_))
-        self.normal_law_id = identifier
-
-    def evaluate(
-        self,
-        batch,
-        previous_history,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
-        materials,
-        step_size,
-        /,
-    ):
-        del left_radius, right_radius, previous_history
-        dtype = batch.overlap.dtype
-        effective_radius = batch.effective_radius
-        effective_mass = _effective_mass(left_inverse_mass, right_inverse_mass)
-        effective_young = materials.effective_young_modulus(
-            left_material, right_material
-        ).astype(dtype)
-        surface_energy = _pair_parameter(
-            self.surface_energy,
-            left_material,
-            right_material,
-            materials.material_count,
-        ).astype(dtype)
-        cutoff = _pair_parameter(
-            self.cutoff,
-            left_material,
-            right_material,
-            materials.material_count,
-        ).astype(dtype)
-        root = jnp.sqrt(jnp.maximum(effective_radius * batch.overlap, 0.0))
-        repulsive_elastic = (4.0 / 3.0) * effective_young * root * batch.overlap
-        tangent_stiffness = 2.0 * effective_young * root
-        restitution = materials.pair_restitution(left_material, right_material).astype(
-            dtype
-        )
-        beta = jnp.log(restitution) / jnp.sqrt(jnp.pi**2 + jnp.log(restitution) ** 2)
-        damping = (
-            -2.0
-            * jnp.sqrt(5.0 / 6.0)
-            * beta
-            * jnp.sqrt(effective_mass * tangent_stiffness)
-        )
-        overlap_active = batch.overlap > 0.0
-        repulsive_trial = repulsive_elastic - damping * batch.normal_velocity
-        repulsive = jnp.where(overlap_active, jnp.maximum(repulsive_trial, 0.0), 0.0)
-        pull_off = 4.0 * jnp.pi * effective_radius * surface_energy
-        positive_gap = jnp.maximum(batch.gap, 0.0)
-        adhesive_shape = jnp.where(
-            batch.gap <= 0.0,
-            1.0,
-            jnp.maximum(1.0 - positive_gap / cutoff, 0.0),
-        )
-        adhesive = pull_off * adhesive_shape
-        force = repulsive - adhesive
-        active = (
-            batch.valid
-            & (batch.gap < cutoff)
-            & (left_inverse_mass + right_inverse_mass > 0.0)
-        )
-        hertz_energy = (
-            (8.0 / 15.0)
-            * effective_young
-            * jnp.sqrt(jnp.maximum(effective_radius, 0.0))
-            * batch.overlap**2.5
-        )
-        adhesive_energy = jnp.where(
-            batch.gap <= 0.0,
-            pull_off * batch.gap - 0.5 * pull_off * cutoff,
-            -0.5 * pull_off * cutoff * adhesive_shape**2,
-        )
-        energy = jnp.where(active, hertz_energy + adhesive_energy, 0.0)
-        loss = jnp.where(
-            active & overlap_active,
-            damping * batch.normal_velocity**2 * jnp.asarray(step_size),
-            0.0,
-        )
-        stiffness = tangent_stiffness + jnp.where(
-            (batch.gap > 0.0) & (batch.gap < cutoff),
-            pull_off / cutoff,
-            0.0,
-        )
-        force = jnp.where(active, force, 0.0)
-        finite = (
-            jnp.all(jnp.isfinite(force))
-            & jnp.all(jnp.isfinite(energy))
-            & jnp.all(jnp.isfinite(loss))
-        )
-        return DEMNormalResponse(
-            force,
-            repulsive,
-            stiffness,
-            damping,
-            jnp.abs(force),
-            energy,
-            jnp.maximum(loss, 0.0),
-            jnp.zeros_like(force),
-            jnp.zeros_like(force),
-            jnp.zeros_like(force),
-            jnp.where(active, batch.overlap, 0.0),
-            active,
-            finite,
-        )
-
-
 class ThorntonLinearPlasticNormalPlan(AbstractDEMNormalContactPlan):
     """Bilinear elasto-plastic loading with elastic unloading history."""
 
@@ -626,9 +474,9 @@ class ThorntonLinearPlasticNormalPlan(AbstractDEMNormalContactPlan):
             self.yield_overlap, left_material, right_material, count
         ).astype(dtype)
         overlap = batch.overlap
-        previous_maximum = previous_history.normal_maximum_overlap
-        previous_plastic = previous_history.normal_plastic_overlap
-        previous_overlap = previous_history.normal_previous_overlap
+        previous_maximum = previous_history.normal.maximum_overlap
+        previous_plastic = previous_history.normal.plastic_overlap
+        previous_overlap = previous_history.normal.previous_overlap
         maximum = jnp.maximum(previous_maximum, overlap)
         yield_force = loading_stiffness * yield_overlap
         maximum_force = jnp.where(
@@ -862,57 +710,46 @@ class MindlinTangentialContactPlan(AbstractDEMTangentialContactPlan):
         )
 
 
-class AbstractDEMRollingContactPlan(StrictModule, NonTrainableState):
-    rolling_law_id: AbstractAttribute[str]
+class AbstractDEMRotationalContactPlan(StrictModule, NonTrainableState):
+    rotational_law_id: AbstractAttribute[str]
 
     @abc.abstractmethod
     def evaluate(
         self,
         batch: DEMContactBatch,
         normal: DEMNormalResponse,
-        left_inverse_mass: Array,
-        right_inverse_mass: Array,
-        left_radius: Array,
-        right_radius: Array,
-        left_material: Array,
-        right_material: Array,
+        history: DEMRotationalHistory,
+        context: DEMContactEvaluationContext,
         materials: Any,
-        step_size: Array,
         ambient_dimension: int,
         /,
-    ) -> DEMRollingResponse:
+    ) -> DEMRotationalResponse:
         raise NotImplementedError
 
 
-class ConstantRollingResistancePlan(AbstractDEMRollingContactPlan):
-    rolling_law_id: str = eqx.field(static=True)
+class ConstantRollingResistancePlan(AbstractDEMRotationalContactPlan):
+    rotational_law_id: str = eqx.field(static=True)
 
-    def __init__(self, *, rolling_law_id: str | None = None):
+    def __init__(self, *, rotational_law_id: str | None = None):
         generated = canonical_fingerprint({"kind": "constant-rolling-resistance"})
-        identifier = generated if rolling_law_id is None else str(rolling_law_id)
+        identifier = generated if rotational_law_id is None else str(rotational_law_id)
         if not identifier:
-            raise ValueError("rolling_law_id must be nonempty.")
-        self.rolling_law_id = identifier
+            raise ValueError("rotational_law_id must be nonempty.")
+        self.rotational_law_id = identifier
 
     def evaluate(
         self,
         batch,
         normal,
-        left_inverse_mass,
-        right_inverse_mass,
-        left_radius,
-        right_radius,
-        left_material,
-        right_material,
+        history,
+        context,
         materials,
-        step_size,
         ambient_dimension,
         /,
     ):
         coefficient = materials.pair_rolling_friction(
-            left_material, right_material
+            context.left_material, context.right_material
         ).astype(batch.overlap.dtype)
-        del left_radius, right_radius
         effective_radius = batch.effective_radius
         if ambient_dimension == 2:
             relative = batch.left_angular_velocity - batch.right_angular_velocity
@@ -931,18 +768,40 @@ class ConstantRollingResistancePlan(AbstractDEMRollingContactPlan):
         right_torque = -left_torque
         loss = jnp.where(
             active,
-            -jnp.sum(left_torque * relative, axis=-1) * jnp.asarray(step_size),
+            -jnp.sum(left_torque * relative, axis=-1) * context.step_size,
             0.0,
+        )
+        angular = jnp.zeros_like(history.rolling_displacement)
+        next_history = DEMRotationalHistory(
+            angular,
+            angular,
+            jnp.where(normal.active[:, None], batch.normal, 0.0),
+            active,
+            jnp.zeros_like(active),
         )
         successful = (
             jnp.all(jnp.isfinite(left_torque))
             & jnp.all(jnp.isfinite(loss))
             & jnp.all(loss >= 0.0)
         )
-        return DEMRollingResponse(
+        zero_torque = jnp.zeros_like(left_torque)
+        scalar = jnp.zeros_like(batch.gap)
+        return DEMRotationalResponse(
             left_torque,
             right_torque,
+            left_torque,
+            right_torque,
+            zero_torque,
+            zero_torque,
+            scalar,
             loss,
+            loss,
+            scalar,
+            active,
+            jnp.zeros_like(active),
+            jnp.where(active, 0.0, limit),
+            jnp.full_like(batch.gap, jnp.inf),
+            next_history,
             active,
             successful,
         )
@@ -950,8 +809,9 @@ class ConstantRollingResistancePlan(AbstractDEMRollingContactPlan):
 
 class DEMContactModelPlan(StrictModule, NonTrainableState):
     normal: AbstractDEMNormalContactPlan
+    cohesion: AbstractDEMCohesionPlan | None
     tangential: AbstractDEMTangentialContactPlan | None
-    rolling: AbstractDEMRollingContactPlan | None
+    rotational: AbstractDEMRotationalContactPlan | None
     contact_model_id: str = eqx.field(static=True)
 
     def __init__(
@@ -959,12 +819,15 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
         normal: AbstractDEMNormalContactPlan,
         /,
         *,
+        cohesion: AbstractDEMCohesionPlan | None = None,
         tangential: AbstractDEMTangentialContactPlan | None = None,
-        rolling: AbstractDEMRollingContactPlan | None = None,
+        rotational: AbstractDEMRotationalContactPlan | None = None,
         contact_model_id: str | None = None,
     ):
         if not isinstance(normal, AbstractDEMNormalContactPlan):
             raise TypeError("normal must be an AbstractDEMNormalContactPlan.")
+        if cohesion is not None and not isinstance(cohesion, AbstractDEMCohesionPlan):
+            raise TypeError("cohesion must be an AbstractDEMCohesionPlan or None.")
         if tangential is not None and not isinstance(
             tangential, AbstractDEMTangentialContactPlan
         ):
@@ -975,35 +838,47 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
             normal, HertzNormalContactPlan
         ):
             raise TypeError("Mindlin tangential contact requires Hertz normal contact.")
-        if rolling is not None and not isinstance(rolling, AbstractDEMRollingContactPlan):
-            raise TypeError("rolling must be an AbstractDEMRollingContactPlan or None.")
+        if rotational is not None and not isinstance(
+            rotational, AbstractDEMRotationalContactPlan
+        ):
+            raise TypeError(
+                "rotational must be an AbstractDEMRotationalContactPlan or None."
+            )
         generated = canonical_fingerprint(
             {
                 "kind": "dem-contact-model",
                 "normal": normal.normal_law_id,
+                "cohesion": (None if cohesion is None else cohesion.cohesion_law_id),
                 "tangential": None
                 if tangential is None
                 else tangential.tangential_law_id,
-                "rolling": None if rolling is None else rolling.rolling_law_id,
+                "rotational": (
+                    None if rotational is None else rotational.rotational_law_id
+                ),
             }
         )
         identifier = generated if contact_model_id is None else str(contact_model_id)
         if not identifier:
             raise ValueError("contact_model_id must be nonempty.")
         self.normal = normal
+        self.cohesion = cohesion
         self.tangential = tangential
-        self.rolling = rolling
+        self.rotational = rotational
         self.contact_model_id = identifier
 
     @property
     def interaction_range(self) -> float:
         from ._dem_smooth import SmoothPenaltyNormalPlan
 
-        if isinstance(self.normal, DMTAdhesiveNormalPlan):
-            return self.normal.maximum_cutoff
-        if isinstance(self.normal, SmoothPenaltyNormalPlan):
-            return self.normal.maximum_range
-        return 0.0
+        normal_range = (
+            self.normal.maximum_range
+            if isinstance(self.normal, SmoothPenaltyNormalPlan)
+            else 0.0
+        )
+        cohesion_range = (
+            0.0 if self.cohesion is None else self.cohesion.maximum_interaction_range
+        )
+        return max(normal_range, cohesion_range)
 
     def prepare(
         self, materials: Any, ambient_dimension: int, /
@@ -1044,24 +919,50 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
             }
         )
 
+    def empty_history(self, capacity: int, dtype: Any, /) -> DEMContactHistory:
+        history = DEMContactHistory.empty(
+            capacity,
+            self.ambient_dimension,
+            dtype,
+        )
+        cohesion = (
+            DEMCohesionHistory(())
+            if self.plan.cohesion is None
+            else self.plan.cohesion.initialize_history(capacity, dtype)
+        )
+        if not isinstance(cohesion, DEMCohesionHistory):
+            cohesion = DEMCohesionHistory((cohesion,))
+        return DEMContactHistory(
+            history.pair_keys,
+            history.valid,
+            history.active,
+            history.normal,
+            cohesion,
+            history.tangential,
+            history.rotational,
+        )
+
     def evaluate(
         self,
         batch: DEMContactBatch,
         previous_history: DEMContactHistory,
-        current_keys: Array,
-        current_valid: Array,
-        continued: Array,
-        left_inverse_mass: Array,
-        right_inverse_mass: Array,
-        left_radius: Array,
-        right_radius: Array,
-        left_material: Array,
-        right_material: Array,
-        step_size: Array,
+        context: DEMContactEvaluationContext,
         /,
         *,
         frame_tolerance: float = 1.0e-10,
     ) -> DEMContactResponse:
+        if not isinstance(context, DEMContactEvaluationContext):
+            raise TypeError("context must be a DEMContactEvaluationContext.")
+        current_keys = context.current_keys
+        current_valid = context.current_valid
+        continued = context.continued
+        left_inverse_mass = context.left_inverse_mass
+        right_inverse_mass = context.right_inverse_mass
+        left_radius = context.left_radius
+        right_radius = context.right_radius
+        left_material = context.left_material
+        right_material = context.right_material
+        step_size = context.step_size
         _validate_batch_inputs(
             batch,
             previous_history,
@@ -1084,43 +985,46 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
             scalar = jnp.zeros((0,), dtype=batch.normal.dtype)
             mask = jnp.zeros((0,), dtype=bool)
             return DEMContactResponse(
-                vector,
-                angular,
-                angular,
-                DEMContactHistory(
-                    jnp.asarray(current_keys, dtype=jnp.int64),
-                    jnp.asarray(current_valid, dtype=bool),
-                    mask,
-                    mask,
-                    scalar,
-                    scalar,
-                    scalar,
-                    vector,
-                    vector,
-                ),
-                vector,
-                vector,
-                mask,
-                mask,
-                mask,
-                scalar,
-                scalar,
-                angular,
-                angular,
-                scalar,
-                scalar,
-                scalar,
-                scalar,
-                jnp.full((0,), jnp.inf, dtype=batch.normal.dtype),
-                jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
-                jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
-                jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
-                jnp.zeros((), dtype=batch.normal.dtype),
-                self.materials.admissible(),
+                pair_force=vector,
+                left_torque=angular,
+                right_torque=angular,
+                next_history=previous_history.with_routes(current_keys, current_valid),
+                normal_force=vector,
+                tangential_force=vector,
+                cohesion_force=vector,
+                active=mask,
+                sticking=mask,
+                sliding=mask,
+                cohesion_births=mask,
+                cohesion_ruptures=mask,
+                bridge_volume_source=scalar,
+                bridge_volume_release=scalar,
+                bridge_volume_residual=scalar,
+                rolling_yielded=mask,
+                torsional_yielded=mask,
+                elastic_energy=scalar,
+                normal_viscous_endpoint_loss=scalar,
+                rotational_torque_left=angular,
+                rotational_torque_right=angular,
+                normal_plastic_dissipated_work=scalar,
+                rotational_dissipated_work=scalar,
+                cohesion_dissipated_work=scalar,
+                tangential_constitutive_loss_estimate=scalar,
+                friction_defect=scalar,
+                switch_margin=jnp.full((0,), jnp.inf, dtype=batch.normal.dtype),
+                activation_margin=jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
+                cohesion_birth_margin=jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
+                cohesion_rupture_margin=jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
+                rolling_yield_margin=jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
+                torsional_yield_margin=jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
+                no_tension_margin=jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
+                frame_transport_margin=jnp.asarray(jnp.inf, dtype=batch.normal.dtype),
+                maximum_overlap_fraction=jnp.zeros((), dtype=batch.normal.dtype),
+                successful=self.materials.admissible(),
             )
         transported, transport_success, frame_margin = _transport_history(
-            previous_history.tangential_displacement,
-            previous_history.previous_normal,
+            previous_history.tangential.displacement,
+            previous_history.tangential.previous_normal,
             batch.normal,
             continued & previous_history.active,
             self.ambient_dimension,
@@ -1138,12 +1042,32 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
             self.materials,
             step_size,
         )
+        if self.plan.cohesion is None:
+            cohesion = zero_cohesion_response(
+                batch.gap.shape,
+                batch.gap.dtype,
+                previous_history.cohesion,
+            )
+        else:
+            cohesion = evaluate_dem_cohesion(
+                self.plan.cohesion,
+                batch,
+                normal,
+                previous_history.cohesion,
+                context,
+                self.materials,
+            )
+        friction_normal = eqx.tree_at(
+            lambda response: response.friction_load,
+            normal,
+            normal.friction_load + cohesion.friction_load,
+        )
         if self.plan.tangential is None:
             tangential = _zero_tangential_response(batch, normal.active)
         else:
             tangential = self.plan.tangential.evaluate(
                 batch,
-                normal,
+                friction_normal,
                 transported,
                 left_inverse_mass,
                 right_inverse_mass,
@@ -1154,56 +1078,71 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
                 self.materials,
                 step_size,
             )
-        if self.plan.rolling is None:
-            rolling = _zero_rolling_response(batch, self.ambient_dimension)
-        else:
-            rolling = self.plan.rolling.evaluate(
+        if self.plan.rotational is None:
+            rotational = _zero_rotational_response(
                 batch,
-                normal,
-                left_inverse_mass,
-                right_inverse_mass,
-                left_radius,
-                right_radius,
-                left_material,
-                right_material,
+                self.ambient_dimension,
+                previous_history.rotational,
+            )
+        else:
+            rotational = self.plan.rotational.evaluate(
+                batch,
+                friction_normal,
+                previous_history.rotational,
+                context,
                 self.materials,
-                step_size,
                 self.ambient_dimension,
             )
         normal_force = normal.force_magnitude[:, None] * batch.normal
-        pair_force = normal_force + tangential.force
+        cohesion_force = cohesion.force_magnitude[:, None] * batch.normal
+        pair_force = normal_force + cohesion_force + tangential.force
         left_torque = (
             sphere_lever_torque(batch.left_arm, tangential.force, self.ambient_dimension)
-            + rolling.left_torque
+            + rotational.left_torque
         )
         right_torque = (
             sphere_lever_torque(
                 batch.right_arm, -tangential.force, self.ambient_dimension
             )
-            + rolling.right_torque
+            + rotational.right_torque
         )
-        active = normal.active
+        active = normal.active | cohesion.active
         next_history = DEMContactHistory(
             jnp.where(current_valid, current_keys, -1).astype(jnp.int64),
             current_valid,
             active,
-            tangential.sliding,
-            normal.next_maximum_overlap,
-            normal.next_plastic_overlap,
-            normal.next_previous_overlap,
-            jnp.where(active[:, None], batch.normal, 0.0),
-            jnp.where(active[:, None], tangential.displacement, 0.0),
+            DEMNormalHistory(
+                normal.next_maximum_overlap,
+                normal.next_plastic_overlap,
+                normal.next_previous_overlap,
+            ),
+            cohesion.next_history,
+            DEMTangentialHistory(
+                tangential.sliding,
+                jnp.where(normal.active[:, None], batch.normal, 0.0),
+                jnp.where(normal.active[:, None], tangential.displacement, 0.0),
+            ),
+            rotational.next_history,
         )
         radius_scale = jnp.maximum(jnp.minimum(left_radius, right_radius), 1.0e-30)
-        maximum_overlap = jnp.max(jnp.where(active, batch.overlap / radius_scale, 0.0))
+        maximum_overlap = jnp.max(
+            jnp.where(normal.active, batch.overlap / radius_scale, 0.0)
+        )
         activation_margin = jnp.min(jnp.where(batch.valid, jnp.abs(batch.gap), jnp.inf))
+        cohesion_birth_margin = jnp.min(
+            jnp.where(batch.valid, cohesion.birth_margin, jnp.inf)
+        )
+        cohesion_rupture_margin = jnp.min(
+            jnp.where(batch.valid, cohesion.rupture_margin, jnp.inf)
+        )
         no_tension_margin = jnp.min(
             jnp.where(batch.valid, normal.no_tension_margin, jnp.inf)
         )
         successful = (
             normal.successful
+            & cohesion.successful
             & tangential.successful
-            & rolling.successful
+            & rotational.successful
             & transport_success
             & self.materials.admissible()
             & jnp.all(jnp.isfinite(pair_force))
@@ -1211,29 +1150,47 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(right_torque))
         )
         return DEMContactResponse(
-            jnp.where(active[:, None], pair_force, 0.0),
-            jnp.where(active[:, None], left_torque, 0.0),
-            jnp.where(active[:, None], right_torque, 0.0),
-            next_history,
-            jnp.where(active[:, None], normal_force, 0.0),
-            jnp.where(active[:, None], tangential.force, 0.0),
-            active,
-            tangential.sticking,
-            tangential.sliding,
-            normal.elastic_energy + tangential.elastic_energy,
-            normal.viscous_endpoint_loss,
-            rolling.left_torque,
-            rolling.right_torque,
-            normal.plastic_dissipated_work,
-            rolling.dissipated_work,
-            tangential.constitutive_loss_estimate,
-            tangential.friction_defect,
-            tangential.switch_margin,
-            activation_margin,
-            no_tension_margin,
-            frame_margin,
-            maximum_overlap,
-            successful,
+            pair_force=jnp.where(active[:, None], pair_force, 0.0),
+            left_torque=jnp.where(active[:, None], left_torque, 0.0),
+            right_torque=jnp.where(active[:, None], right_torque, 0.0),
+            next_history=next_history,
+            normal_force=jnp.where(normal.active[:, None], normal_force, 0.0),
+            tangential_force=jnp.where(normal.active[:, None], tangential.force, 0.0),
+            cohesion_force=jnp.where(cohesion.active[:, None], cohesion_force, 0.0),
+            active=active,
+            sticking=tangential.sticking,
+            sliding=tangential.sliding,
+            cohesion_births=cohesion.born,
+            cohesion_ruptures=cohesion.ruptured,
+            bridge_volume_source=cohesion.bridge_volume_source,
+            bridge_volume_release=cohesion.bridge_volume_release,
+            bridge_volume_residual=cohesion.bridge_volume_residual,
+            rolling_yielded=rotational.rolling_yielded,
+            torsional_yielded=rotational.torsional_yielded,
+            elastic_energy=(
+                normal.elastic_energy
+                + cohesion.elastic_energy
+                + tangential.elastic_energy
+                + rotational.elastic_energy
+            ),
+            normal_viscous_endpoint_loss=normal.viscous_endpoint_loss,
+            rotational_torque_left=rotational.left_torque,
+            rotational_torque_right=rotational.right_torque,
+            normal_plastic_dissipated_work=normal.plastic_dissipated_work,
+            rotational_dissipated_work=rotational.dissipated_work,
+            cohesion_dissipated_work=cohesion.dissipated_work,
+            tangential_constitutive_loss_estimate=(tangential.constitutive_loss_estimate),
+            friction_defect=tangential.friction_defect,
+            switch_margin=tangential.switch_margin,
+            activation_margin=activation_margin,
+            cohesion_birth_margin=cohesion_birth_margin,
+            cohesion_rupture_margin=cohesion_rupture_margin,
+            no_tension_margin=no_tension_margin,
+            rolling_yield_margin=jnp.min(rotational.rolling_margin),
+            torsional_yield_margin=jnp.min(rotational.torsional_margin),
+            frame_transport_margin=frame_margin,
+            maximum_overlap_fraction=maximum_overlap,
+            successful=successful,
         )
 
 
@@ -1371,21 +1328,45 @@ def _tangential_response(
     )
 
 
-def _zero_rolling_response(
-    batch: DEMContactBatch, ambient_dimension: int, /
-) -> DEMRollingResponse:
+def _zero_rotational_response(
+    batch: DEMContactBatch,
+    ambient_dimension: int,
+    history: DEMRotationalHistory,
+    /,
+) -> DEMRotationalResponse:
     angular_dimension = 1 if ambient_dimension == 2 else 3
     torque = jnp.zeros(
         (batch.overlap.shape[0], angular_dimension),
         dtype=batch.overlap.dtype,
     )
     scalar = jnp.zeros_like(batch.overlap)
-    return DEMRollingResponse(
+    mask = jnp.zeros_like(batch.valid)
+    next_history = DEMRotationalHistory(
         torque,
         torque,
-        scalar,
-        jnp.zeros_like(batch.valid),
-        jnp.asarray(True),
+        jnp.zeros_like(batch.normal),
+        mask,
+        mask,
+    )
+    del history
+    return DEMRotationalResponse(
+        left_torque=torque,
+        right_torque=torque,
+        rolling_torque_left=torque,
+        rolling_torque_right=torque,
+        torsional_torque_left=torque,
+        torsional_torque_right=torque,
+        elastic_energy=scalar,
+        dissipated_work=scalar,
+        rolling_dissipated_work=scalar,
+        torsional_dissipated_work=scalar,
+        rolling_yielded=mask,
+        torsional_yielded=mask,
+        rolling_margin=jnp.full_like(batch.gap, jnp.inf),
+        torsional_margin=jnp.full_like(batch.gap, jnp.inf),
+        next_history=next_history,
+        active=mask,
+        successful=jnp.asarray(True),
     )
 
 
@@ -1447,14 +1428,24 @@ def _validate_batch_inputs(
         history.pair_keys.shape != (capacity,)
         or history.valid.shape != (capacity,)
         or history.active.shape != (capacity,)
-        or history.sliding.shape != (capacity,)
-        or history.normal_maximum_overlap.shape != (capacity,)
-        or history.normal_plastic_overlap.shape != (capacity,)
-        or history.normal_previous_overlap.shape != (capacity,)
-        or history.previous_normal.shape != vector_shape
-        or history.tangential_displacement.shape != vector_shape
+        or history.normal.maximum_overlap.shape != (capacity,)
+        or history.normal.plastic_overlap.shape != (capacity,)
+        or history.normal.previous_overlap.shape != (capacity,)
+        or history.tangential.sliding.shape != (capacity,)
+        or history.tangential.previous_normal.shape != vector_shape
+        or history.tangential.displacement.shape != vector_shape
+        or history.rotational.rolling_displacement.shape != angular_shape
+        or history.rotational.torsional_displacement.shape != angular_shape
+        or history.rotational.previous_normal.shape != vector_shape
+        or history.rotational.rolling_yielded.shape != (capacity,)
+        or history.rotational.torsional_yielded.shape != (capacity,)
     ):
         raise ValueError("DEM contact history does not match contact capacity.")
+    if any(
+        not eqx.is_array(leaf) or leaf.ndim == 0 or leaf.shape[0] != capacity
+        for leaf in jax.tree.leaves(history.cohesion)
+    ):
+        raise ValueError("DEM cohesion history does not match contact capacity.")
     scalar_arrays = (
         keys,
         valid,
@@ -1472,14 +1463,20 @@ def _validate_batch_inputs(
 
 __all__ = [
     "AbstractDEMNormalContactPlan",
+    "AbstractDEMRotationalContactPlan",
     "AbstractDEMTangentialContactPlan",
+    "ConstantRollingResistancePlan",
     "CundallStrackTangentialPlan",
     "DEMContactBatch",
     "DEMContactHistory",
     "DEMContactModelPlan",
     "DEMContactResponse",
+    "DEMNormalResponse",
+    "DEMRotationalResponse",
+    "DEMTangentialResponse",
     "HertzNormalContactPlan",
     "LinearSpringDashpotNormalPlan",
     "MindlinTangentialContactPlan",
     "PreparedDEMContactModel",
+    "ThorntonLinearPlasticNormalPlan",
 ]

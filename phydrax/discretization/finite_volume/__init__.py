@@ -41,6 +41,7 @@ from ._cell_polynomial import (
     CellPolynomialReconstructionReport,
     PreparedCellPolynomialReconstruction,
 )
+from ._closure import ConservativeFaceClosurePlan
 from ._contact_angle import (
     ContactAngleCondition,
     ContactAngleEvidence,
@@ -133,6 +134,7 @@ from ._mapped import (
     MappedFiniteVolumeDiscretization,
     MappedFiniteVolumePlan,
 )
+from ._mhd_ct import MHDCTRateResult, UpwindConstrainedTransportPlan
 from ._multiblock import (
     ConservativeMultiblockFluxResult,
     ConservativeMultiblockInterfacePlan,
@@ -174,6 +176,7 @@ from ._riemann import (
     EntropyConservativeEulerFluxPlan,
     EntropyStableEulerFluxPlan,
     HLLCFluxPlan,
+    HLLDFluxPlan,
     HLLFluxPlan,
     NumericalFluxResult,
     RoeFluxPlan,
@@ -428,6 +431,7 @@ __all__ = [
     "CharacteristicSystem",
     "ConstantStateBoundary",
     "ConvexStateLimiterPlan",
+    "ConservativeFaceClosurePlan",
     "DifferentiabilityPolicy",
     "EntropyConservativeEulerFluxPlan",
     "ConservativeAMRSynchronizationPlan",
@@ -451,6 +455,8 @@ __all__ = [
     "MappedFiniteVolumeDiscretization",
     "MappedFiniteVolumePlan",
     "evaluate_mapped_finite_volume_geometry",
+    "MHDCTRateResult",
+    "UpwindConstrainedTransportPlan",
     "FiniteVolumePlan",
     "FaceVelocity",
     "MACOperatorPlan",
@@ -460,6 +466,7 @@ __all__ = [
     "FiniteVolumeResidualDiagnostics",
     "integrated_finite_volume_relative_entropy",
     "HLLCFluxPlan",
+    "HLLDFluxPlan",
     "HLLFluxPlan",
     "EinfeldtHLLFluxPlan",
     "FiniteVolumeAdmissibilityReport",

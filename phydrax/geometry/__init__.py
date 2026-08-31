@@ -21,6 +21,7 @@ from ._capabilities import (
     ContactCurvatureProvider,
     GeometryCapability,
     SeamDiagnosticsProvider,
+    SupportMapProvider,
 )
 from ._certificate import (
     DistanceSemantics,
@@ -29,6 +30,7 @@ from ._certificate import (
     SignReliability,
     ZeroSetAccuracy,
 )
+from ._certified_implicit import CertifiedImplicitCover, CertifiedImplicitTopology
 from ._contracts import (
     CompiledGeometry,
     ContactCurvatureResult,
@@ -97,6 +99,7 @@ from .analytic import (
     SharpCSG,
     Sphere,
     Square,
+    Superquadric,
     Torus,
     Translation,
     Triangle,
@@ -206,6 +209,8 @@ __all__ = [
     "design",
     "reconstruction",
     "simplicial",
+    "CertifiedImplicitCover",
+    "CertifiedImplicitTopology",
     "AbstractSurfacePatch",
     "AabbOverlapCandidate",
     "AabbOverlapQueryResult",
@@ -333,6 +338,7 @@ __all__ = [
     "SamplingResult",
     "Radius",
     "SeamDiagnosticsProvider",
+    "SupportMapProvider",
     "Sketch",
     "SketchSolution",
     "TangentCircles",
@@ -354,6 +360,7 @@ __all__ = [
     "surface_normal",
     "TorusPatch",
     "Sphere",
+    "Superquadric",
     "Translation",
     "TriangleMesh",
     "Square",

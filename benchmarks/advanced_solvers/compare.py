@@ -7,6 +7,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from benchmarks._comparison import compare_performance, PerformancePolicy
+from benchmarks._runtime import DurationDistribution
+
 from .schema import row_identity, validate_report
 
 
@@ -20,6 +23,7 @@ def compare_reports(
     /,
     *,
     require_same_environment: bool = True,
+    performance_policy: PerformancePolicy | None = None,
 ) -> dict[str, Any]:
     """Compare complete reports without silently dropping missing or invalid rows."""
     validate_report(reference)
@@ -39,9 +43,10 @@ def compare_reports(
             "campaign protocols differ in seed, warmup/repeats, selected members, "
             "or selected ordering"
         )
-    if require_same_environment and (
-        reference["environment"]["fingerprint"] != candidate["environment"]["fingerprint"]
-    ):
+    same_environment = (
+        reference["environment"]["fingerprint"] == candidate["environment"]["fingerprint"]
+    )
+    if require_same_environment and not same_environment:
         raise IncomparableReportsError(
             "environment fingerprints differ; pass require_same_environment=False "
             "only for an intentional cross-environment comparison"
@@ -117,6 +122,13 @@ def compare_reports(
                             candidate_solve,
                         ),
                     },
+                    "solve_performance": _solve_performance(
+                        baseline,
+                        contender,
+                        policy=performance_policy,
+                        comparison_id=identity,
+                        same_environment=same_environment,
+                    ),
                     "relative_residual": {
                         "reference": baseline_residual,
                         "candidate": candidate_residual,
@@ -139,11 +151,47 @@ def compare_reports(
     return {
         "reference_environment": reference["environment"]["fingerprint"],
         "candidate_environment": candidate["environment"]["fingerprint"],
-        "same_environment": (
-            reference["environment"]["fingerprint"]
-            == candidate["environment"]["fingerprint"]
-        ),
+        "same_environment": same_environment,
         "rows": comparisons,
+    }
+
+
+def _solve_performance(
+    reference: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    /,
+    *,
+    policy: PerformancePolicy | None,
+    comparison_id: str,
+    same_environment: bool,
+) -> dict[str, Any] | None:
+    if policy is None:
+        return None
+    if not same_environment:
+        return {
+            "eligible": False,
+            "comparison": None,
+            "reason": "runtime environment fingerprints differ",
+        }
+    baseline = DurationDistribution(
+        tuple(
+            float(value) / 1_000.0 for value in reference["timing"]["solve"]["samples_ms"]
+        )
+    )
+    contender = DurationDistribution(
+        tuple(
+            float(value) / 1_000.0 for value in candidate["timing"]["solve"]["samples_ms"]
+        )
+    )
+    return {
+        "eligible": True,
+        "comparison": compare_performance(
+            baseline,
+            contender,
+            policy,
+            comparison_id=comparison_id,
+        ).to_dict(),
+        "reason": None,
     }
 
 

@@ -37,6 +37,7 @@ from ._least_squares import (
 )
 from ._quadrature_rules import (
     clenshaw_curtis_data,
+    fejer_first_data,
     gauss_kronrod_data,
     gauss_legendre_data,
     QuadratureRuleData,
@@ -86,6 +87,7 @@ __all__ = [
     "WeightedMomentsDiagnostics",
     "axis_level",
     "clenshaw_curtis_data",
+    "fejer_first_data",
     "complex_precision_dtype",
     "gauss_kronrod_data",
     "gauss_legendre_data",
