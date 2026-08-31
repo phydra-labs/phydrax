@@ -29,6 +29,10 @@
   transactional retry rollback, fixed-capacity decision journals, and exact scheduled
   replay of accepted temporal meshes. Added global OU realizations whose innovations
   obey the OU semigroup under interval subdivision, including antithetic coupling.
+- Unified ordinary finite-volume and constrained-MHD source composition behind one
+  prepared balance-law transport contract. Gravity, cooling, and OU forcing now compose
+  with face-flux MHD under the same adaptive realization, scheduled replay, rollback,
+  component-ownership checks, and portable checkpoint semantics.
 - Added fixed-rank randomized Nyström preconditioning with auditable sketch and
   refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
   field metrics with rectangular or Gram tangent solves and saved-node audits;
@@ -56,6 +60,11 @@
   reduced-adjoint state/design optimization, sparse physical-radius density
   filtering, SIMP compliance topology optimization, and independent
   reference-discretization reanalysis.
+- Added native sparse force-density form-finding for pin-jointed tension,
+  compression, and mixed-sign structures with componentwise coordinate restraints,
+  fixed and shape-dependent edge/surface loads, prepared numeric refresh,
+  mathematically implicit linear/root derivatives, physical residual and reaction
+  certification, and force/support/load state-design optimization.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.
@@ -64,6 +73,14 @@
   reverse-time SDE sampling, probability-flow composition, per-realization Diffrax
   initial states, and memory-linear diagonal Wiener coefficients. Replaced the
   flow-specific `FlowMatchingPolicy` with shared `UniformTimeSamplingPolicy`.
+- Extended generative transport with stable array/PyTree/complex event coordinates,
+  block-operator Wiener noise, full and Hausdorff Gaussian factor laws,
+  matrix/state-dependent Itô reversal, exactness-labeled guidance, discrete Gaussian
+  and categorical diffusion, coefficient-space field/path diffusion, intrinsic
+  manifold and complex diffusion, latent/graph/atomistic compositions, persistent
+  energy training, normalized autoregressive laws, and sample-only adversarial
+  objectives. Every family retains explicit measure, geometry, approximation, and
+  density capabilities rather than sharing a universal model facade.
 - Generalized matrix-free quantum local actions through
   `AbstractLocalQuantumOperator` and evidence-rich `LocalOperatorEstimate`, with
   a clean migration of discrete VMC/TDVP while preserving the connected-action
@@ -144,18 +161,27 @@
   pair reductions, radius-class filtering, replay/checkpointed VJPs, sharp and
   smooth sensitivity contracts, inverse/UQ qualification, and transverse
   hybrid-event saltation.
-- Added rolling resistance, prescribed and servo barriers, certified analytic
-  contact curvature and curved Hertz walls, finite-range DMT adhesion,
-  bilinear elasto-plastic normal contact, and conservative lumped contact heat
-  transfer.
-- Added SO(2)/SO(3) rigid bodies, immutable sphere-clump templates, common rigid
-  contact geometry, triangle walls, elastic/damageable fixed bond graphs,
-  fixed-pool topology events, convex SAT contact, and certified
-  sphere-to-implicit contact.
-- Added conservative particle-grid transfer, unresolved Stokes CFD--DEM,
-  atomic multirate coupling windows, work-adjoint resolved immersed-boundary
-  coupling, thermal CFD--DEM energy exchange, expanded examples, qualification
-  campaign artifacts, and performance evidence.
+- Added compositional normal/cohesion/tangential/rotational DEM contact history,
+  elastic rolling–torsional resistance, finite-range DMT cohesion, conservative
+  capillary bridge lifecycle, near-contact lubrication, bilinear elasto-plastic
+  normal response, elastic half-space multicontact correction, and conservative
+  contact heat exchange.
+- Added prescribed force/torque servo barriers, certified analytic contact
+  curvature, curved Hertz walls, facet traction/work/heat observables, Finnie
+  wear accumulation and geometry commits, SO(2)/SO(3) rigid bodies, immutable
+  sphere-clump templates, triangle walls, elastic/damageable bond graphs,
+  fixed-pool topology events, convex SAT contact, certified sphere-to-implicit
+  contact, and support-map superquadric contact and dynamics.
+- Added conservative slab/cylindrical/spherical internal shell meshes, typed
+  species/phase/element thermochemistry, polynomial heat-capacity inversion,
+  heat/species transport, stoichiometric Arrhenius networks, evaporation,
+  shrinking-core conversion, reference Rosenbrock and structured tridiagonal
+  solvers, morphology, fragmentation, radiation, and process operations.
+- Added conservative particle-grid transfer, unresolved Stokes CFD–DEM,
+  work-adjoint resolved immersed-boundary coupling, reactive continuum heat and
+  species exchange, atomic Strang/iterated reactive CFD–DEM windows, generic
+  hybrid-event sensitivity, replay/checkpointed VJPs, UQ, compositional support
+  claims, executable examples, qualification campaigns, and performance evidence.
 - Generalized fixed-step problems and solutions to mixed-dtype array PyTrees
   while preserving the existing array-valued SSPRK contract.
 - Added all-coordinate tensor spectral PDE residual compilation with explicit
@@ -169,6 +195,12 @@
   mass-policy-aware rates, tensor SBP and periodic mapped DGSEM conservation,
   p-multigrid, Schwarz/FDM and auxiliary preconditioning, two-sided mortars,
   fixed-capacity hp transactions, and backend-neutral distributed ownership.
+- Added operational nonconforming tensor-hp epochs with stable refinement forests,
+  isotropic quad/hex h-refinement and coarsening, 2:1 closure, anisotropic p
+  buckets, curved parent-map inheritance, H1 master-trace constraints, asymmetric
+  DG mortar worksets, role-correct h/p transfers, atomic solver transactions,
+  adaptive indicators and budgets, hp condensation/multigrid, inherited
+  partition ownership, and certified entropy-compatible DGSEM mortars.
 - Added implicit tensor-modal neural fields with Hermitian real-field projection,
   explicit modal input scaling and resource bounds, optional positive exponential
   decay and prepared-basis modulation, masked modal observations, and direct
@@ -193,11 +225,17 @@
   analysis, local homology, certified implicit covers, and Conley homology
   index-pair workflows.
 - Added `phydrax.pgm`: immutable finite-discrete factor graphs over native
-  bipartite `GraphIR` topology; dense, enumerated, Ising, Potts, logical, and
-  cardinality factors; explicitly capped exact enumeration; exact-forest and loopy
-  sum/max-product belief propagation with honest normalizer/MAP semantics; validated
-  persistent chromatic Gibbs sampling; correlated-chain integration; structured
-  constructors; and exact-likelihood, moment, and contrastive-divergence primitives.
+  bipartite `GraphIR` topology; dense, sparse-enumerated, structured, and open
+  capability-declared kernels; explicit precision/resource evidence; directed linear
+  forest propagation; synchronous, Gauss--Seidel, accelerated, and qualified implicit
+  loopy BP; same-topology and heterogeneous graph batches; bounded variable
+  elimination, junction trees, normalized laws, smooth dual MAP bounds, and
+  perturb-and-MAP estimates; systematic/random/block/tempered/qualified-cluster
+  sampling with online reducers; persistent CD/SML, pseudolikelihood, Bethe, and exact
+  EM objectives; and pickle-free graph/BP/Gibbs checkpoints. Added general PyTree
+  conditional update programs under `phydrax.sampling.conditional` and factor-graph
+  reverse denoising, adaptive mixing control, and hybrid embeddings under
+  `phydrax.transport.discrete`.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

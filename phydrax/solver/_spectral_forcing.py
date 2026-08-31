@@ -13,7 +13,7 @@ from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
-from ..equations import CompressibleNavierStokesSystem, EulerSystem
+from ..equations import CompressibleNavierStokesSystem, EulerSystem, IdealMHDSystem
 from ..stochastic import OrnsteinUhlenbeckRealization
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
@@ -21,7 +21,10 @@ from ._balance_law import (
     BalanceLawProcessAdvance,
     BalanceLawProcessState,
 )
-from ._finite_volume_runtime import FiniteVolumeRuntimeState, PreparedFiniteVolumeRuntime
+from ._balance_law_transport import (
+    AbstractPreparedBalanceLawTransport,
+    BalanceLawSourceView,
+)
 
 
 class SpectralOUForcingDiagnostics(eqx.Module):
@@ -110,14 +113,14 @@ class SpectralOUForcingPlan(AbstractBalanceLawProcessPlan):
         )
 
     def prepare(
-        self, runtime: PreparedFiniteVolumeRuntime, /
+        self, transport: AbstractPreparedBalanceLawTransport, /
     ) -> PreparedSpectralOUForcing:
-        return PreparedSpectralOUForcing(self, runtime)
+        return PreparedSpectralOUForcing(self, transport)
 
 
 class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
     plan: SpectralOUForcingPlan
-    runtime: PreparedFiniteVolumeRuntime
+    transport: AbstractPreparedBalanceLawTransport
     dynamics: PreparedFiniteVolumeDynamics
     wavevectors: Array
     spectral_weight: Array
@@ -132,18 +135,21 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
     def __init__(
         self,
         plan: SpectralOUForcingPlan,
-        runtime: PreparedFiniteVolumeRuntime,
+        transport: AbstractPreparedBalanceLawTransport,
         /,
     ):
         if not isinstance(plan, SpectralOUForcingPlan):
             raise TypeError("plan must be SpectralOUForcingPlan.")
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime) or not isinstance(
-            runtime.dynamics, PreparedFiniteVolumeDynamics
-        ):
+        if not isinstance(
+            transport, AbstractPreparedBalanceLawTransport
+        ) or not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError("Spectral OU forcing requires stationary structured FV.")
-        dynamics = runtime.dynamics
-        if not isinstance(dynamics.system, (EulerSystem, CompressibleNavierStokesSystem)):
-            raise TypeError("Spectral OU forcing requires Euler/Navier-Stokes.")
+        dynamics = transport.dynamics
+        if not isinstance(
+            dynamics.system,
+            (EulerSystem, CompressibleNavierStokesSystem, IdealMHDSystem),
+        ):
+            raise TypeError("Spectral OU forcing requires a compressible system.")
         dimension = dynamics.system.dimension
         if dimension not in (2, 3):
             raise ValueError("Spectral OU forcing requires two or three dimensions.")
@@ -178,7 +184,7 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
         normalization = 1.0 / jnp.sqrt(vector_variance)
         names = tuple(dynamics.system.component_names)
         self.plan = plan
-        self.runtime = runtime
+        self.transport = transport
         self.dynamics = dynamics
         self.wavevectors = wavevectors
         self.spectral_weight = weight
@@ -186,8 +192,10 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
         self.normalization = normalization
         self.density_index = names.index("density")
         self.momentum_indices = tuple(
-            names.index(f"momentum_{axis}") for axis in range(dimension)
+            index for index, name in enumerate(names) if name.startswith("momentum_")
         )
+        if len(self.momentum_indices) != dimension:
+            raise RuntimeError("OU forcing momentum layout is inconsistent.")
         self.energy_index = names.index("total_energy")
         self.cell_shape = tuple(grid.shape)
         self.dimension = dimension
@@ -195,19 +203,22 @@ class PreparedSpectralOUForcing(AbstractPreparedBalanceLawProcess):
             {
                 "kind": "prepared-spectral-ou-forcing",
                 "plan": plan.process_id,
-                "runtime": runtime.runtime_id,
+                "transport": transport.transport_id,
                 "cell_shape": list(grid.shape),
             }
         )
         self.requires_realization = True
         self.realization_name = plan.realization_name
         self.differentiability = "smooth_discrete"
+        self.modified_components = tuple(
+            names[index] for index in self.momentum_indices
+        ) + ("total_energy",)
 
     def initialize(
-        self, transport_state: FiniteVolumeRuntimeState, args: Any = None, /
+        self, source_view: BalanceLawSourceView, args: Any = None, /
     ) -> BalanceLawProcessState:
-        del transport_state, args
-        real_dtype = jnp.dtype(self.runtime.precision.storage_dtype)
+        del source_view, args
+        real_dtype = jnp.dtype(self.transport.precision.storage_dtype)
         complex_dtype = jnp.complex64 if real_dtype.itemsize == 4 else jnp.complex128
         coefficients = jnp.zeros(self.cell_shape + (self.dimension,), dtype=complex_dtype)
         return BalanceLawProcessState(

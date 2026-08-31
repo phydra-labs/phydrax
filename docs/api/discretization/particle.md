@@ -159,7 +159,23 @@
 
 ---
 
-::: phydrax.discretization.DMTAdhesiveNormalPlan
+::: phydrax.discretization.ElasticRollingTorsionalResistancePlan
+
+---
+
+::: phydrax.discretization.DMTContactCohesionPlan
+
+---
+
+::: phydrax.discretization.LinearCapillaryBridgePlan
+
+---
+
+::: phydrax.discretization.NearContactLubricationPlan
+
+---
+
+::: phydrax.discretization.CompositeDEMCohesionPlan
 
 ---
 
@@ -167,7 +183,7 @@
 
 ---
 
-::: phydrax.discretization.LumpedContactThermalPlan
+::: phydrax.discretization.ElasticHalfSpaceMulticontactPlan
 
 ### Rigid bodies, shapes, and bonds
 
@@ -187,6 +203,10 @@
 
 ---
 
+::: phydrax.discretization.FinnieWearPlan
+
+---
+
 ::: phydrax.discretization.FixedBondGraphPlan
 
 ---
@@ -201,9 +221,73 @@
 
 ::: phydrax.discretization.ImplicitRigidShapePlan
 
+---
+
+::: phydrax.discretization.SuperquadricSetPlan
+
+---
+
+::: phydrax.discretization.SuperquadricContactPlan
+
+---
+
+::: phydrax.discretization.SuperquadricDEMPlan
+
+### Internal particle state and processes
+
+::: phydrax.discretization.RadialShellMeshPlan
+
+---
+
+::: phydrax.discretization.ParticleInternalBatchPlan
+
+---
+
+::: phydrax.discretization.ParticleInternalBatchState
+
+---
+
+::: phydrax.discretization.ParticleConversionState
+
+---
+
+::: phydrax.discretization.DensityPorosityMorphologyPlan
+
+---
+
+::: phydrax.discretization.ReciprocalPairRadiationPlan
+
+---
+
+::: phydrax.discretization.ReactiveParticleTemplatePlan
+
+---
+
+::: phydrax.discretization.ReactiveParticleTemplateDistributionPlan
+
+---
+
+::: phydrax.discretization.ParticleInsertionPlan
+
+---
+
+::: phydrax.discretization.insert_reactive_particles
+
+---
+
+::: phydrax.discretization.ParticleRegionPlan
+
+---
+
+::: phydrax.discretization.MassFlowSurfacePlan
+
 ### CFD--DEM
 
 ::: phydrax.discretization.ConservativeParticleGridTransferPlan
+
+---
+
+::: phydrax.discretization.ParticleContactExchangePlan
 
 ---
 
@@ -215,7 +299,11 @@
 
 ---
 
-::: phydrax.equations.ThermalCFDEMCouplingPlan
+::: phydrax.equations.ParticleContinuumExchangePlan
+
+---
+
+::: phydrax.equations.ReactiveCFDDEMCouplingPlan
 
 ## SPH kernels and dynamics
 

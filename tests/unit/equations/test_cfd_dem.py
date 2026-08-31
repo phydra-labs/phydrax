@@ -112,7 +112,7 @@ def test_multirate_window_commits_equal_opposite_impulses_atomically():
     assert result.accepted_state.accepted_windows == 1
 
 
-def test_resolved_ib_work_adjoint_and_thermal_exchange_are_conservative():
+def test_resolved_ib_work_adjoint_is_conservative():
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.asarray([1.0]), ambient_dimension=2
     ).prepare()
@@ -136,26 +136,6 @@ def test_resolved_ib_work_adjoint_and_thermal_exchange_are_conservative():
     )
     assert evaluation.successful
     assert jnp.isclose(evaluation.work_adjoint_residual, 0.0)
-
-    compiled, state, transfer = _compiled_dem()
-    thermal = phx.equations.ThermalCFDEMCouplingPlan(
-        transfer,
-        jnp.ones((2,)),
-        jnp.ones((2,)),
-        jnp.ones((2,)),
-    )
-    thermal_state = phx.equations.initialize_thermal_cfd_dem(
-        thermal, jnp.asarray([300.0, 400.0]), jnp.asarray([500.0, 200.0])
-    )
-    thermal_eval = phx.equations.evaluate_thermal_cfd_dem(
-        thermal, state.kinematics.position, thermal_state
-    )
-    assert thermal_eval.successful
-    assert jnp.isclose(thermal_eval.energy_residual, 0.0)
-    step = phx.equations.step_thermal_cfd_dem(
-        thermal, state.kinematics.position, thermal_state, jnp.asarray(0.1)
-    )
-    assert step.successful
 
 
 def test_resolved_mac_ib_window_preserves_zero_load_and_projection():

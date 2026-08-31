@@ -208,6 +208,37 @@ from ._multiphase import (
     TwoMaterialVOFStateLayout,
     TwoMaterialVOFSystem,
 )
+from ._particle_conversion import (
+    compile_particle_conversion_problem,
+    CompiledParticleConversionProblem,
+    ParticleConversionBatchEvaluation,
+    ParticleConversionEvaluation,
+    ParticleConversionProblemIR,
+    ParticleConversionRejectionReason,
+    PreparedParticleConversionDynamics,
+)
+from ._particle_reaction import (
+    AntoineSaturationPressurePlan,
+    EvaporationPhaseChangePlan,
+    ParticlePhaseChangeEvaluation,
+    ParticleReactionEvaluation,
+    ParticleReactionLocation,
+    ParticleReactionNetworkPlan,
+    ShrinkingCoreConversionPlan,
+    ShrinkingCoreEvaluation,
+    ShrinkingCoreState,
+)
+from ._particle_thermochemistry import (
+    evaluate_particle_transport,
+    ParticlePhase,
+    ParticleSpeciesSchema,
+    ParticleThermochemicalMaterialBundle,
+    ParticleThermodynamicMaterialPlan,
+    ParticleThermodynamicState,
+    ParticleTransportBoundary,
+    ParticleTransportEvaluation,
+    ParticleTransportMaterialPlan,
+)
 from ._radiative import (
     RadiativeCoolingBoundsPolicy,
     TabulatedCoolingCurve,
@@ -221,6 +252,11 @@ from ._randomized_compile import (
     RandomizedDifferentialMethod,
     RandomizedDifferentialPlan,
     RandomizedNodeCoupling,
+)
+from ._reactive_cfd_dem import (
+    ParticleContinuumExchangeEvaluation,
+    ParticleContinuumExchangePlan,
+    ReactiveCFDDEMCouplingPlan,
 )
 from ._semidiscrete import (
     BoundaryLift,
@@ -256,15 +292,6 @@ from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
     StencilStateLayout,
-)
-from ._thermal_cfd_dem import (
-    evaluate_thermal_cfd_dem,
-    initialize_thermal_cfd_dem,
-    step_thermal_cfd_dem,
-    ThermalCFDEMCouplingPlan,
-    ThermalCFDEMCouplingState,
-    ThermalCFDEMEvaluation,
-    ThermalCFDEMStepResult,
 )
 from ._tokens import (
     pad_pde_tokens,
@@ -652,14 +679,35 @@ __all__ = [
     "ResolvedIBEvaluation",
     "ResolvedIBGeometryPlan",
     "StokesDragPlan",
-    "ThermalCFDEMCouplingPlan",
-    "ThermalCFDEMCouplingState",
-    "ThermalCFDEMEvaluation",
-    "ThermalCFDEMStepResult",
     "UnresolvedCFDEMCouplingPlan",
     "evaluate_resolved_ib_cfd_dem",
-    "evaluate_thermal_cfd_dem",
     "evaluate_unresolved_cfd_dem",
-    "initialize_thermal_cfd_dem",
-    "step_thermal_cfd_dem",
+    "AntoineSaturationPressurePlan",
+    "EvaporationPhaseChangePlan",
+    "ParticlePhaseChangeEvaluation",
+    "ParticleReactionEvaluation",
+    "ParticleReactionLocation",
+    "ParticleReactionNetworkPlan",
+    "ShrinkingCoreConversionPlan",
+    "ShrinkingCoreEvaluation",
+    "ShrinkingCoreState",
+    "evaluate_particle_transport",
+    "ParticlePhase",
+    "ParticleSpeciesSchema",
+    "ParticleThermochemicalMaterialBundle",
+    "ParticleThermodynamicMaterialPlan",
+    "ParticleThermodynamicState",
+    "ParticleTransportBoundary",
+    "ParticleTransportEvaluation",
+    "ParticleTransportMaterialPlan",
+    "compile_particle_conversion_problem",
+    "CompiledParticleConversionProblem",
+    "ParticleConversionBatchEvaluation",
+    "ParticleConversionEvaluation",
+    "ParticleConversionProblemIR",
+    "ParticleConversionRejectionReason",
+    "PreparedParticleConversionDynamics",
+    "ParticleContinuumExchangeEvaluation",
+    "ParticleContinuumExchangePlan",
+    "ReactiveCFDDEMCouplingPlan",
 ]

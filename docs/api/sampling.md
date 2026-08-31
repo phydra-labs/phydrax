@@ -51,6 +51,50 @@ The initial implementation deliberately uses fixed kernels. Proposal adaptation 
 parameter updates are separate phases rather than hidden mutations of production-chain
 stationarity.
 
+## Conditional update programs
+
+`phydrax.sampling.conditional` composes arbitrary PyTree-valued node groups,
+batched interaction routes, stateful exact or approximate kernels, and immutable
+parallel update stages.
+
+::: phydrax.sampling.conditional.ConditionalVariableGroup
+
+---
+
+::: phydrax.sampling.conditional.ConditionalInteractionGroup
+
+---
+
+::: phydrax.sampling.conditional.AbstractConditionalKernel
+
+---
+
+::: phydrax.sampling.conditional.CallableConditionalKernel
+
+---
+
+::: phydrax.sampling.conditional.MetropolisWithinConditionalKernel
+
+---
+
+::: phydrax.sampling.conditional.ConditionalUpdateStage
+
+---
+
+::: phydrax.sampling.conditional.prepare_conditional_program
+
+---
+
+::: phydrax.sampling.conditional.initialize_conditional_program
+
+---
+
+::: phydrax.sampling.conditional.conditional_program_step
+
+---
+
+::: phydrax.sampling.conditional.sample_conditional_program
+
 ## Integration bridge
 
 ::: phydrax.integration.markov_chain_measure

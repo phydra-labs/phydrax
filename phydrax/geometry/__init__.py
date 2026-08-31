@@ -21,6 +21,7 @@ from ._capabilities import (
     ContactCurvatureProvider,
     GeometryCapability,
     SeamDiagnosticsProvider,
+    SupportMapProvider,
 )
 from ._certificate import (
     DistanceSemantics,
@@ -98,6 +99,7 @@ from .analytic import (
     SharpCSG,
     Sphere,
     Square,
+    Superquadric,
     Torus,
     Translation,
     Triangle,
@@ -336,6 +338,7 @@ __all__ = [
     "SamplingResult",
     "Radius",
     "SeamDiagnosticsProvider",
+    "SupportMapProvider",
     "Sketch",
     "SketchSolution",
     "TangentCircles",
@@ -357,6 +360,7 @@ __all__ = [
     "surface_normal",
     "TorusPatch",
     "Sphere",
+    "Superquadric",
     "Translation",
     "TriangleMesh",
     "Square",

@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -16,104 +14,6 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_complex import PolygonalConnectivity
 from .._cell_mesh import CellBlock, CellMesh
-from .._transfer import FieldTransfer
-
-
-FiniteElementTransferRole = Literal[
-    "primal",
-    "dual-residual",
-    "coefficient",
-    "material-state",
-    "adjoint",
-]
-
-
-class FiniteElementRefinementMap(StrictModule, NonTrainableState):
-    """Versioned parent/child and old/new entity lineage for one mesh update."""
-
-    parent_cells: Array
-    child_cells: Array
-    old_vertex_to_new: Array
-    source_topology_id: str = eqx.field(static=True)
-    target_topology_id: str = eqx.field(static=True)
-    refinement_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        source_topology_id: str,
-        target_topology_id: str,
-        parent_cells: ArrayLike,
-        child_cells: ArrayLike,
-        old_vertex_to_new: ArrayLike,
-        /,
-    ):
-        source = str(source_topology_id)
-        target = str(target_topology_id)
-        parents = np.asarray(parent_cells, dtype=np.int32)
-        children = np.asarray(child_cells, dtype=np.int32)
-        vertex_map = np.asarray(old_vertex_to_new, dtype=np.int32)
-        if not source or not target or source == target:
-            raise ValueError("Refinement topology IDs must be distinct and non-empty.")
-        if parents.ndim != 1 or children.ndim != 2 or children.shape[0] != parents.size:
-            raise ValueError("Refinement parent/child routes have incompatible shapes.")
-        if vertex_map.ndim != 1 or np.any(vertex_map < 0):
-            raise ValueError("old_vertex_to_new must be one non-negative rank-1 map.")
-        self.parent_cells = jnp.asarray(parents)
-        self.child_cells = jnp.asarray(children)
-        self.old_vertex_to_new = jnp.asarray(vertex_map)
-        self.source_topology_id = source
-        self.target_topology_id = target
-        self.refinement_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-refinement-map",
-                "source": source,
-                "target": target,
-                "parents": array_tree_fingerprint(parents),
-                "children": array_tree_fingerprint(children),
-                "vertices": array_tree_fingerprint(vertex_map),
-            }
-        )
-
-
-class FiniteElementTransferPlan(StrictModule, NonTrainableState):
-    """One existing FieldTransfer assigned an explicit FE scientific role."""
-
-    transfer: FieldTransfer
-    role: FiniteElementTransferRole = eqx.field(static=True)
-    refinement_id: str = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        transfer: FieldTransfer,
-        role: FiniteElementTransferRole,
-        refinement_id: str,
-        /,
-    ):
-        if not isinstance(transfer, FieldTransfer):
-            raise TypeError("transfer must be FieldTransfer.")
-        if role not in (
-            "primal",
-            "dual-residual",
-            "coefficient",
-            "material-state",
-            "adjoint",
-        ):
-            raise ValueError("Unknown finite-element transfer role.")
-        refinement = str(refinement_id)
-        if not refinement:
-            raise ValueError("refinement_id must be non-empty.")
-        self.transfer = transfer
-        self.role = role
-        self.refinement_id = refinement
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-transfer-plan",
-                "transfer": transfer.transfer_id,
-                "role": role,
-                "refinement": refinement,
-            }
-        )
 
 
 class FiniteElementErrorEstimate(StrictModule):
@@ -183,7 +83,7 @@ def refine_triangles_uniform(
     /,
     *,
     numeric_version: str = "refined",
-) -> tuple[CellMesh, FiniteElementRefinementMap]:
+) -> tuple[CellMesh, FiniteElementAdaptationMap]:
     """Uniformly split every T3 into four conforming children."""
 
     if not isinstance(mesh, CellMesh) or mesh.topological_dimension != 2:
@@ -245,12 +145,14 @@ def refine_triangles_uniform(
         vertex_global_ids=vertex_ids,
         numeric_version=numeric_version,
     )
-    refinement = FiniteElementRefinementMap(
-        mesh.topology_id,
-        refined.topology_id,
-        np.arange(cells.shape[0], dtype=np.int32),
-        child_map,
-        np.arange(vertices.shape[0], dtype=np.int32),
+    refinement = FiniteElementAdaptationMap(
+        mesh,
+        refined,
+        parent_ids,
+        child_ids.reshape((-1, 4)),
+        np.ones((parent_ids.size, 4), dtype=bool),
+        vertex_ids[vertices.shape[0] :],
+        np.asarray(mesh.vertex_global_ids)[edges],
     )
     return refined, refinement
 
@@ -670,10 +572,7 @@ __all__ = [
     "FiniteElementAdaptationMap",
     "FiniteElementErrorEstimate",
     "FiniteElementDWRIndicators",
-    "FiniteElementRefinementMap",
     "FiniteElementTransferBundle",
-    "FiniteElementTransferPlan",
-    "FiniteElementTransferRole",
     "coarsen_triangles_local",
     "dorfler_mark",
     "dual_weighted_residual_estimate",

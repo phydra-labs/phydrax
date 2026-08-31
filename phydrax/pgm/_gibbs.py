@@ -16,12 +16,21 @@ from jaxtyping import Array, ArrayLike, Key
 from .._fingerprint import canonical_fingerprint
 from .._sampling import AbstractChainSampleResult, derive_key, SampleAddress
 from .._strict import StrictModule
+from ._kernel import (
+    FactorExecutionEvidence,
+    FactorGraphPrecisionPolicy,
+    FactorGraphResourcePolicy,
+)
 from ._model import (
     DiscreteFactorGraph,
+    EnumeratedFactorGroup,
+    factor_count,
     factor_graph_contains,
     factor_graph_log_score,
+    factor_group_capabilities,
     factor_group_cardinality_signature,
     factor_group_dense_tables,
+    factor_kernel_id,
     pack_assignments,
 )
 from ._types import GibbsDiagnostics, GibbsTransitionStatus
@@ -139,6 +148,9 @@ class PreparedChromaticGibbs(StrictModule):
     graph: DiscreteFactorGraph
     method: ChromaticGibbs
     factor_tables: tuple[Array, ...]
+    precision: FactorGraphPrecisionPolicy
+    resources: FactorGraphResourcePolicy
+    factor_evidence: tuple[FactorExecutionEvidence, ...]
     colors: Array
     stages: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     incidents: tuple[tuple[tuple[int, int, int], ...], ...] = eqx.field(static=True)
@@ -275,6 +287,8 @@ def prepare_chromatic_gibbs(
     /,
     *,
     max_factor_configurations: int = 65_536,
+    precision: FactorGraphPrecisionPolicy | None = None,
+    resources: FactorGraphResourcePolicy | None = None,
 ) -> PreparedChromaticGibbs:
     """Compile a deterministic validated strong-color Gibbs schedule."""
     if not isinstance(graph, DiscreteFactorGraph):
@@ -282,19 +296,71 @@ def prepare_chromatic_gibbs(
     selected = ChromaticGibbs() if method is None else method
     if not isinstance(selected, ChromaticGibbs):
         raise TypeError("method must be ChromaticGibbs.")
-    cap = int(max_factor_configurations)
+    precision_ = FactorGraphPrecisionPolicy() if precision is None else precision
+    resources_ = FactorGraphResourcePolicy() if resources is None else resources
+    if not isinstance(precision_, FactorGraphPrecisionPolicy):
+        raise TypeError("precision must be FactorGraphPrecisionPolicy or None.")
+    if not isinstance(resources_, FactorGraphResourcePolicy):
+        raise TypeError("resources must be FactorGraphResourcePolicy or None.")
+    cap = min(int(max_factor_configurations), resources_.maximum_configurations)
     if cap < 1:
         raise ValueError("max_factor_configurations must be positive.")
     tables: list[Array] = []
+    execution_evidence: list[FactorExecutionEvidence] = []
+    dense_total = 0
     for group_index in range(len(graph.factor_groups)):
         signature = factor_group_cardinality_signature(graph, group_index)
-        configurations = prod(signature)
-        if configurations > cap:
+        group = graph.factor_groups[group_index]
+        capabilities = factor_group_capabilities(group)
+        if not capabilities.scalar_conditional:
             raise ValueError(
-                f"Factor group {group_index} requires {configurations} configurations, "
-                f"exceeding max_factor_configurations={cap}."
+                f"Factor group {group_index} does not support scalar conditionals."
             )
-        tables.append(factor_group_dense_tables(graph, group_index))
+        dense_configurations = prod(signature)
+        represented = (
+            int(group.configurations.shape[0])
+            if isinstance(group, EnumeratedFactorGroup)
+            else dense_configurations
+        )
+        if represented > cap:
+            raise ValueError(
+                f"Factor group {group_index} requires {represented} represented "
+                f"configurations, exceeding max_factor_configurations={cap}."
+            )
+        dense_elements = (
+            0
+            if isinstance(group, EnumeratedFactorGroup)
+            else factor_count(group) * dense_configurations
+        )
+        dense_total += dense_elements
+        if dense_total > resources_.maximum_dense_elements:
+            raise ValueError(
+                f"Cumulative factor dense size {dense_total} exceeds "
+                f"maximum_dense_elements={resources_.maximum_dense_elements}."
+            )
+        tables.append(
+            precision_.evaluation(
+                group.log_potentials
+                if isinstance(group, EnumeratedFactorGroup)
+                else factor_group_dense_tables(graph, group_index)
+            )
+        )
+        execution_evidence.append(
+            FactorExecutionEvidence(
+                capabilities,
+                represented_configurations=represented,
+                dense_elements=dense_elements,
+                message_entries=0,
+                work_estimate=(
+                    factor_count(group) * represented * max(len(signature), 1)
+                ),
+                workspace_elements=max(
+                    dense_elements,
+                    factor_count(group) * represented,
+                ),
+                kernel_id=factor_kernel_id(group),
+            )
+        )
 
     colors_host = (
         _automatic_colors(graph)
@@ -306,6 +372,11 @@ def prepare_chromatic_gibbs(
         tuple(int(value) for value in np.nonzero(colors_host == color)[0])
         for color in range(int(colors_host.max()) + 1 if colors_host.size else 0)
     )
+    if len(stages) > resources_.maximum_colors:
+        raise ValueError(
+            f"Gibbs colors {len(stages)} exceed maximum_colors="
+            f"{resources_.maximum_colors}."
+        )
     incident_lists: list[list[tuple[int, int, int]]] = [
         [] for _ in range(graph.num_variables)
     ]
@@ -320,12 +391,17 @@ def prepare_chromatic_gibbs(
             "structure_id": graph.structure_id,
             "colors": colors_host.tolist(),
             "max_factor_configurations": cap,
+            "precision": precision_.policy_id,
+            "resources": resources_.policy_id,
         }
     )
     return PreparedChromaticGibbs(
         graph=graph,
         method=selected,
         factor_tables=tuple(tables),
+        precision=precision_,
+        resources=resources_,
+        factor_evidence=tuple(execution_evidence),
         colors=jnp.asarray(colors_host),
         stages=stages,
         incidents=incidents,
@@ -348,8 +424,12 @@ def refresh_chromatic_gibbs(
     if graph.parameter_signature != prepared.graph.parameter_signature:
         raise ValueError("Refreshed graph parameter signature does not match the plan.")
     tables = tuple(
-        factor_group_dense_tables(graph, index)
-        for index in range(len(graph.factor_groups))
+        prepared.precision.evaluation(
+            group.log_potentials
+            if isinstance(group, EnumeratedFactorGroup)
+            else factor_group_dense_tables(graph, index)
+        )
+        for index, group in enumerate(graph.factor_groups)
     )
     updated = eqx.tree_at(lambda value: value.graph, prepared, graph)
     return eqx.tree_at(lambda value: value.factor_tables, updated, tables)
@@ -369,7 +449,9 @@ def initialize_gibbs(
     if states.ndim != 2:
         raise ValueError("Gibbs positions must have one leading chain axis.")
     contains = factor_graph_contains(prepared.graph, states)
-    scores = jax.vmap(lambda value: factor_graph_log_score(prepared.graph, value))(states)
+    scores = prepared.precision.accumulation(
+        jax.vmap(lambda value: factor_graph_log_score(prepared.graph, value))(states)
+    )
     valid = contains & jnp.isfinite(scores)
     if not bool(jnp.all(valid)):
         raise ValueError("Every initial Gibbs position must have finite graph support.")
@@ -385,13 +467,24 @@ def _conditional_logits(
     cardinality = int(np.asarray(prepared.graph.cardinalities)[variable])
     values: list[Array] = []
     for candidate in range(cardinality):
-        score = jnp.asarray(0.0, dtype=position.dtype).astype(
-            jnp.result_type(*[table.dtype for table in prepared.factor_tables])
-        )
+        score = jnp.asarray(0.0, dtype=prepared.precision.accumulation_dtype)
         for group_index, factor, scope_position in prepared.incidents[variable]:
             scope = prepared.graph.factor_scopes[group_index][factor]
             states = position[scope].at[scope_position].set(candidate)
-            score = score + prepared.factor_tables[group_index][factor][tuple(states)]
+            group = prepared.graph.factor_groups[group_index]
+            if isinstance(group, EnumeratedFactorGroup):
+                matches = jnp.all(group.configurations == states[None, :], axis=-1)
+                contribution = jnp.max(
+                    jnp.where(
+                        matches,
+                        prepared.factor_tables[group_index][factor],
+                        -jnp.inf,
+                    )
+                )
+            else:
+                contribution = prepared.factor_tables[group_index][factor][tuple(states)]
+            contribution = prepared.precision.accumulation(contribution)
+            score = score + contribution
         values.append(score)
     return jnp.stack(values)
 
@@ -458,8 +551,8 @@ def gibbs_sweep(
             invalid_count = invalid_count + (~feasible).astype(jnp.int32)
             changed_count = changed_count + (sampled != current).astype(jnp.int32)
 
-    scores = jax.vmap(lambda value: factor_graph_log_score(prepared.graph, value))(
-        positions
+    scores = prepared.precision.accumulation(
+        jax.vmap(lambda value: factor_graph_log_score(prepared.graph, value))(positions)
     )
     finite_score = jnp.isfinite(scores)
     valid = state.valid & (invalid_count == 0) & finite_score
@@ -543,6 +636,16 @@ def sample_gibbs(
         raise TypeError("state must be GibbsState.")
     if not isinstance(schedule, GibbsSchedule):
         raise TypeError("schedule must be GibbsSchedule.")
+    retained = (
+        state.num_chains
+        * schedule.num_draws
+        * (prepared.graph.num_variables + 1 + 3 * schedule.sweeps_per_draw)
+    )
+    if retained > prepared.resources.maximum_retained_elements:
+        raise ValueError(
+            f"Retained Gibbs elements {retained} exceed maximum_retained_elements="
+            f"{prepared.resources.maximum_retained_elements}."
+        )
     clamp_mask = (
         jnp.zeros((prepared.graph.num_variables,), dtype=bool)
         if clamped is None
@@ -551,11 +654,11 @@ def sample_gibbs(
     if clamp_mask.shape != (prepared.graph.num_variables,):
         raise ValueError("clamped must have one boolean per graph variable.")
 
-    def warmup_step(carry, _):
+    def warmup_step(carry, sweep_index):
         next_state, _info = gibbs_sweep(
             prepared,
             carry,
-            key,
+            jr.fold_in(key, sweep_index),
             clamped=clamp_mask,
         )
         return next_state, None
@@ -563,24 +666,27 @@ def sample_gibbs(
     warmed, _ = jax.lax.scan(
         warmup_step,
         state,
-        xs=None,
-        length=schedule.warmup_sweeps,
+        xs=jnp.arange(schedule.warmup_sweeps, dtype=jnp.uint32),
     )
 
-    def collect_draw(carry, _):
-        def transition_step(inner, __):
+    def collect_draw(carry, draw_index):
+        def transition_step(inner, transition_index):
+            sweep_index = (
+                schedule.warmup_sweeps
+                + draw_index * schedule.sweeps_per_draw
+                + transition_index
+            )
             return gibbs_sweep(
                 prepared,
                 inner,
-                key,
+                jr.fold_in(key, sweep_index),
                 clamped=clamp_mask,
             )
 
         next_state, infos = jax.lax.scan(
             transition_step,
             carry,
-            xs=None,
-            length=schedule.sweeps_per_draw,
+            xs=jnp.arange(schedule.sweeps_per_draw, dtype=jnp.uint32),
         )
         output = (
             next_state.positions,
@@ -594,8 +700,7 @@ def sample_gibbs(
     final_state, outputs = jax.lax.scan(
         collect_draw,
         warmed,
-        xs=None,
-        length=schedule.num_draws,
+        xs=jnp.arange(schedule.num_draws, dtype=jnp.uint32),
     )
     samples, scores, valid, invalid, changed = outputs
     samples = jnp.swapaxes(samples, 0, 1)
@@ -606,7 +711,7 @@ def sample_gibbs(
     diagnostics = _mixing_diagnostics(samples, invalid, changed)
     return GibbsSampleResult(
         samples=samples,
-        log_score=scores,
+        log_score=prepared.precision.output(scores),
         transition_valid=valid,
         invalid_conditional_count=invalid,
         state_change_fraction=changed,

@@ -23,8 +23,10 @@ impulses, inserts the face source before pressure projection, and commits fluid 
 particle states atomically. The penalty constraint reports its slip and stiffness;
 it is not presented as an exact no-slip multiplier method.
 
-## Thermal coupling
+## Reactive heat and species coupling
 
-`ThermalCFDEMCouplingPlan` samples fluid temperature and deposits the opposite heat source through the same conservative relation. Particle and cell heat capacities define an explicit stability restriction. Mechanical drag work is not automatically converted to heat.
+`ParticleContinuumExchangePlan` samples fluid temperature and species concentration and deposits the exact opposite extensive heat and species sources through the same conservative transfer. `ParticleContactExchangePlan` handles reciprocal contact heat independently. `ReciprocalPairRadiationPlan` adds reciprocal particle and optional wall radiation.
 
-Distributed ownership, turbulence modulation, lubrication, added mass, phase change, and radiation remain unsupported.
+`ReactiveCFDDEMCouplingPlan` combines prepared DEM, radial particle conversion, continuum exchange, optional contact exchange, morphology, and radiation. `advance_reactive_cfd_dem_window` uses Strang or fixed-iteration strong coupling and commits fluid, DEM, conversion, and morphology candidates atomically.
+
+Distributed ownership, turbulence modulation, added mass, and monolithic fluid–particle Newton solves remain unsupported. Contact-scale near-gap lubrication is available through the DEM cohesion channel; it is not a bulk hydrodynamic closure.

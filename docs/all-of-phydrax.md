@@ -117,13 +117,22 @@ particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
 route moments, and fast/deterministic/compensated reductions. DEM adds stable
-contact history, accepted-step work/energy ledgers, cached and fused
-neighborhoods, rolling/adhesive/plastic/thermal laws, SO(2)/SO(3) bodies,
-clumps, triangle/convex/implicit geometry, bonds/topology events, certified
-sensitivity modes, and conservative unresolved/resolved CFD coupling. See
+compositional normal/cohesion/tangential/rotational history, accepted-step
+work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
+elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
+bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
+and wear, bonds/topology events, and certified sensitivity modes. Radial
+particle conversion adds typed thermochemistry, reactions, evaporation,
+shrinking-core conversion, morphology, conservative continuum/contact/radiative
+exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
+[Guide → Wet granular contact](guides_wet_granular_contact.md),
+[Guide → Superquadric DEM](guides_superquadric_dem.md),
+[Guide → Particle internal transport](guides_particle_internal_transport.md),
+[Guide → Particle thermochemistry](guides_particle_thermochemistry.md),
+[Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
@@ -565,6 +574,19 @@ Method of Moving Asymptotes adds a finite-box, feasible-start route for very
 large designs with few inequalities. Its reduced state/design form reuses exact
 adjoints and supports fixed-mesh SIMP compliance optimization with sparse
 physical-radius filtering and mandatory independent reanalysis evidence.
+
+Pin-jointed structural form-finding lives in
+`phydrax.applications.solid_mechanics`. `ForceDensityStructure` compiles member
+topology and full or componentwise coordinate restraints into one sparse reduced
+equilibrium relation. Sign-definite tension and compression expose certified
+positive-definite linear systems; mixed signs retain only self-adjoint evidence.
+Fixed nodal and reference line loads remain linear, while current line loads and
+oriented T3/Q4 pressure become physical nonlinear roots with implicit derivatives.
+The same state/design runtime optimizes force densities, support coordinates, and
+load parameters without a parallel goal or optimizer hierarchy. Results retain
+member forces, reactions, physical residuals, nested solver evidence, and stable
+plan identities; they do not claim constitutive stiffness, buckling, bending, or
+stability.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
@@ -1045,10 +1067,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `ReverseDiffusion` or `probability_flow_system`. Reverse samples retain distinct
   terminal states, global Wiener paths, solver status, and terminal-reference
   semantics. Probability flow composes with `ContinuousFlowLaw` instead of creating a
-  second density implementation. The initial contract is full-rank real Euclidean
-  vector state only; singular, manifold, and field diffusion remain explicit future
-  contracts. See [API → Gaussian score diffusions](api/stochastic/diffusion.md) and
-  [API → Score diffusion transport](api/transport/diffusion.md).
+  second density implementation. Structured extensions add matrix and
+  state-dependent Itô reversal, exactness-labeled conditioning, discrete Gaussian and
+  categorical chains, Hausdorff subspace laws, coefficient-space field/path
+  diffusion, intrinsic manifold and complex-coordinate semantics, and
+  latent/graph/atomistic composition without erasing their distinct measures.
+  See [API → Gaussian score diffusions](api/stochastic/diffusion.md),
+  [API → Score diffusion transport](api/transport/diffusion.md), and
+  [API → Advanced generative transport](api/transport/generative_expansion.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
   `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
   and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density
@@ -1083,6 +1109,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
+- **Force-density structural form-finding**: build sparse pin-jointed tension,
+  compression, or mixed-sign equilibrium problems; add fixed or follower loads;
+  and optimize force densities, support positions, or load parameters through the
+  native state/design runtime. See
+  [Guides → Force-density form-finding](guides_force_density.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

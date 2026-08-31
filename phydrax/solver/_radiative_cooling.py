@@ -16,7 +16,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
-from ..equations import EulerSystem, TabulatedCoolingCurve
+from ..equations import EulerSystem, IdealMHDSystem, TabulatedCoolingCurve
 from ..nonlinear import (
     implicit_root_result,
     NonlinearSystemProblem,
@@ -28,7 +28,10 @@ from ._balance_law import (
     BalanceLawProcessAdvance,
     BalanceLawProcessState,
 )
-from ._finite_volume_runtime import FiniteVolumeRuntimeState, PreparedFiniteVolumeRuntime
+from ._balance_law_transport import (
+    AbstractPreparedBalanceLawTransport,
+    BalanceLawSourceView,
+)
 
 
 class RadiativeCoolingDiagnostics(StrictModule):
@@ -97,13 +100,13 @@ class RadiativeCoolingProcessPlan(AbstractBalanceLawProcessPlan):
         )
 
     def prepare(
-        self, runtime: PreparedFiniteVolumeRuntime, /
-    ) -> "PreparedRadiativeCoolingProcess":
-        return PreparedRadiativeCoolingProcess(self, runtime)
+        self, transport: AbstractPreparedBalanceLawTransport, /
+    ) -> PreparedRadiativeCoolingProcess:
+        return PreparedRadiativeCoolingProcess(self, transport)
 
 
 class _CoolingResidual(StrictModule, NonTrainableState):
-    system: EulerSystem
+    system: EulerSystem | IdealMHDSystem
     curve: TabulatedCoolingCurve
 
     def __call__(self, log_excess: Array, args: Any, /) -> Array:
@@ -119,30 +122,33 @@ class _CoolingResidual(StrictModule, NonTrainableState):
 
 class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
     plan: RadiativeCoolingProcessPlan
-    runtime: PreparedFiniteVolumeRuntime
+    transport: AbstractPreparedBalanceLawTransport
     dynamics: PreparedFiniteVolumeDynamics
     problem: NonlinearSystemProblem
     termination: NonlinearTermination
     density_index: int = eqx.field(static=True)
     momentum_indices: tuple[int, ...] = eqx.field(static=True)
     energy_index: int = eqx.field(static=True)
+    magnetic_indices: tuple[int, ...] = eqx.field(static=True)
     cell_shape: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(
         self,
         plan: RadiativeCoolingProcessPlan,
-        runtime: PreparedFiniteVolumeRuntime,
+        transport: AbstractPreparedBalanceLawTransport,
         /,
     ):
         if not isinstance(plan, RadiativeCoolingProcessPlan):
             raise TypeError("plan must be RadiativeCoolingProcessPlan.")
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime) or not isinstance(
-            runtime.dynamics, PreparedFiniteVolumeDynamics
-        ):
-            raise TypeError("Radiative cooling requires stationary structured FV.")
-        dynamics = runtime.dynamics
-        if not isinstance(dynamics.system, EulerSystem):
-            raise TypeError("Initial radiative cooling support requires EulerSystem.")
+        if not isinstance(
+            transport, AbstractPreparedBalanceLawTransport
+        ) or not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):
+            raise TypeError(
+                "Radiative cooling requires stationary structured FV dynamics."
+            )
+        dynamics = transport.dynamics
+        if not isinstance(dynamics.system, (EulerSystem, IdealMHDSystem)):
+            raise TypeError("Radiative cooling requires ideal-gas Euler or MHD.")
         residual = _CoolingResidual(dynamics.system, plan.curve)
         problem_id = canonical_fingerprint(
             {
@@ -161,32 +167,40 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
         )
         names = tuple(dynamics.system.component_names)
         self.plan = plan
-        self.runtime = runtime
+        self.transport = transport
         self.dynamics = dynamics
         self.problem = problem
         self.termination = termination
         self.density_index = names.index("density")
         self.momentum_indices = tuple(
-            names.index(f"momentum_{axis}") for axis in range(dynamics.system.dimension)
+            index for index, name in enumerate(names) if name.startswith("momentum_")
         )
+        if len(self.momentum_indices) != dynamics.system.dimension:
+            raise RuntimeError("Cooling system momentum layout is inconsistent.")
         self.energy_index = names.index("total_energy")
+        self.magnetic_indices = tuple(
+            names.index(f"magnetic_{axis}")
+            for axis in "xyz"
+            if f"magnetic_{axis}" in names
+        )
         self.cell_shape = tuple(dynamics.discretization.cell_shape)
         self.process_id = canonical_fingerprint(
             {
                 "kind": "prepared-radiative-cooling",
                 "plan": plan.process_id,
-                "runtime": runtime.runtime_id,
+                "transport": transport.transport_id,
                 "root_problem": problem_id,
             }
         )
         self.requires_realization = False
         self.realization_name = None
         self.differentiability = "branchwise-implicit"
+        self.modified_components = ("total_energy",)
 
     def initialize(
-        self, transport_state: FiniteVolumeRuntimeState, args: Any = None, /
+        self, source_view: BalanceLawSourceView, args: Any = None, /
     ) -> BalanceLawProcessState:
-        del transport_state, args
+        del source_view, args
         return BalanceLawProcessState.empty(self.process_id)
 
     def _field(self, cell_average: Array, /) -> Array:
@@ -214,10 +228,16 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
         density = field[..., self.density_index]
         momentum = field[..., self.momentum_indices]
         kinetic = 0.5 * jnp.sum(momentum**2, axis=-1) / density
-        internal = field[..., self.energy_index] - kinetic
+        magnetic = (
+            0.5 * jnp.sum(field[..., self.magnetic_indices] ** 2, axis=-1)
+            if self.magnetic_indices
+            else jnp.zeros_like(kinetic)
+        )
+        nonthermal = kinetic + magnetic
+        internal = field[..., self.energy_index] - nonthermal
         pressure = (self.dynamics.system.gamma - 1.0) * internal
         temperature = self.dynamics.system.material.temperature(density, pressure)
-        return density, kinetic, internal, temperature
+        return density, nonthermal, internal, temperature
 
     def step_limit(
         self,
@@ -256,7 +276,7 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
             raise ValueError("Radiative cooling process state changed.")
         step = jnp.asarray(end_time - start_time)
         field = self._field(cell_average)
-        density, kinetic, internal, temperature_before = self._thermodynamics(field)
+        density, nonthermal, internal, temperature_before = self._thermodynamics(field)
         amplitude = self._amplitude(args, field.dtype)
         floor = jnp.asarray(
             self.dynamics.system.pressure_floor / (self.dynamics.system.gamma - 1.0),
@@ -286,7 +306,7 @@ class PreparedRadiativeCoolingProcess(AbstractPreparedBalanceLawProcess):
             flat_log, flat_density, flat_internal
         )
         internal_new = (floor + jnp.exp(solved_log)).reshape(self.cell_shape)
-        energy_new = kinetic + internal_new
+        energy_new = nonthermal + internal_new
         candidate = field.at[..., self.energy_index].set(energy_new)
         pressure_new = (self.dynamics.system.gamma - 1.0) * internal_new
         temperature_after = self.dynamics.system.material.temperature(

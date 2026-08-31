@@ -4,9 +4,20 @@
 
 """Finite-discrete factor graphs, exact inference, belief propagation, and Gibbs sampling."""
 
+from ._batch import (
+    batch_belief_propagation,
+    BatchedBeliefPropagationResult,
+    BatchedBeliefPropagationState,
+    enumerate_packed_factor_graphs,
+    FactorGraphShardingPolicy,
+    pack_factor_graphs,
+    PackedFactorGraphBatch,
+    sample_gibbs_per_chain_clamps,
+)
 from ._belief_propagation import (
     BeliefPropagationMethod,
     BeliefPropagationResult,
+    BeliefPropagationSchedulePolicy,
     BeliefPropagationState,
     initialize_belief_propagation,
     MaxProductBeliefPropagation,
@@ -17,6 +28,28 @@ from ._belief_propagation import (
     run_belief_propagation,
     SumProductBeliefPropagation,
     SumProductBeliefPropagationResult,
+)
+from ._bp_advanced import (
+    AdvancedBeliefPropagationResult,
+    run_accelerated_belief_propagation,
+    run_implicit_belief_propagation,
+)
+from ._checkpoint import (
+    FactorGraphCheckpoint,
+    read_factor_graph_checkpoint,
+    write_factor_graph_checkpoint,
+)
+from ._elimination import (
+    junction_tree_calibrate,
+    JunctionTreePlan,
+    JunctionTreeResult,
+    NormalizedFactorGraphLaw,
+    plan_junction_tree,
+    plan_variable_elimination,
+    variable_elimination,
+    VariableEliminationMethod,
+    VariableEliminationPlan,
+    VariableEliminationResult,
 )
 from ._exact import enumerate_assignments, enumerate_factor_graph
 from ._gibbs import (
@@ -32,6 +65,21 @@ from ._gibbs import (
     refresh_chromatic_gibbs,
     sample_gibbs,
 )
+from ._kernel import (
+    AbstractDiscreteFactorKernel,
+    CallableFactorKernel,
+    FactorExecutionEvidence,
+    FactorGraphPrecisionPolicy,
+    FactorGraphResourcePolicy,
+    FactorKernelCapabilities,
+)
+from ._map import (
+    DualLPResult,
+    perturb_and_map_log_normalizer,
+    PerturbAndMAPResult,
+    SmoothDualLP,
+    solve_smooth_dual_lp,
+)
 from ._model import (
     BinaryCardinalityFactorGroup,
     DenseTableFactorGroup,
@@ -40,7 +88,9 @@ from ._model import (
     EnumeratedFactorGroup,
     factor_graph_contains,
     factor_graph_log_score,
+    factor_group_capabilities,
     IsingFactorGroup,
+    KernelFactorGroup,
     LogicalFactorGroup,
     pack_assignments,
     pack_evidence,
@@ -49,6 +99,25 @@ from ._model import (
     VariableSelection,
     VariableStateValues,
 )
+from ._sampling_advanced import (
+    AbstractChainReducer,
+    BestStateReducer,
+    BestStateReducerState,
+    gibbs_sweep_with_policy,
+    GibbsScanPolicy,
+    initialize_parallel_tempering,
+    joint_block_sweep,
+    JointDiscreteBlock,
+    MomentReducer,
+    MomentReducerState,
+    parallel_tempering_step,
+    ParallelTempering,
+    ParallelTemperingInfo,
+    ParallelTemperingState,
+    reduce_gibbs_chain,
+    ReducedGibbsResult,
+    wolff_cluster_step,
+)
 from ._structured import ising_factor_graph, potts_factor_graph
 from ._training import (
     contrastive_divergence_loss,
@@ -56,6 +125,17 @@ from ._training import (
     ExactNormalizerResult,
     factor_graph_moments,
     FactorGraphTrainingDiagnostics,
+)
+from ._training_advanced import (
+    bethe_negative_log_likelihood,
+    expectation_maximization_step,
+    ExpectationMaximizationResult,
+    initialize_persistent_training,
+    persistent_contrastive_divergence_step,
+    PersistentFactorGraphTrainingState,
+    PersistentTrainingResult,
+    pseudolikelihood_loss,
+    stochastic_maximum_likelihood_step,
 )
 from ._types import (
     BeliefPropagationDiagnostics,
@@ -69,6 +149,69 @@ from ._types import (
 
 
 __all__ = [
+    "AbstractChainReducer",
+    "AbstractDiscreteFactorKernel",
+    "AdvancedBeliefPropagationResult",
+    "BatchedBeliefPropagationResult",
+    "BatchedBeliefPropagationState",
+    "BeliefPropagationSchedulePolicy",
+    "BestStateReducer",
+    "BestStateReducerState",
+    "CallableFactorKernel",
+    "DualLPResult",
+    "ExpectationMaximizationResult",
+    "FactorExecutionEvidence",
+    "FactorGraphCheckpoint",
+    "FactorGraphPrecisionPolicy",
+    "FactorGraphResourcePolicy",
+    "FactorGraphShardingPolicy",
+    "FactorKernelCapabilities",
+    "GibbsScanPolicy",
+    "JointDiscreteBlock",
+    "JunctionTreePlan",
+    "JunctionTreeResult",
+    "KernelFactorGroup",
+    "MomentReducer",
+    "MomentReducerState",
+    "NormalizedFactorGraphLaw",
+    "PackedFactorGraphBatch",
+    "ParallelTempering",
+    "ParallelTemperingInfo",
+    "ReducedGibbsResult",
+    "ParallelTemperingState",
+    "PerturbAndMAPResult",
+    "PersistentFactorGraphTrainingState",
+    "PersistentTrainingResult",
+    "SmoothDualLP",
+    "VariableEliminationMethod",
+    "VariableEliminationPlan",
+    "VariableEliminationResult",
+    "batch_belief_propagation",
+    "bethe_negative_log_likelihood",
+    "enumerate_packed_factor_graphs",
+    "expectation_maximization_step",
+    "gibbs_sweep_with_policy",
+    "initialize_parallel_tempering",
+    "initialize_persistent_training",
+    "joint_block_sweep",
+    "junction_tree_calibrate",
+    "pack_factor_graphs",
+    "parallel_tempering_step",
+    "reduce_gibbs_chain",
+    "perturb_and_map_log_normalizer",
+    "persistent_contrastive_divergence_step",
+    "plan_junction_tree",
+    "plan_variable_elimination",
+    "pseudolikelihood_loss",
+    "read_factor_graph_checkpoint",
+    "run_accelerated_belief_propagation",
+    "run_implicit_belief_propagation",
+    "sample_gibbs_per_chain_clamps",
+    "solve_smooth_dual_lp",
+    "stochastic_maximum_likelihood_step",
+    "variable_elimination",
+    "wolff_cluster_step",
+    "write_factor_graph_checkpoint",
     "BeliefPropagationDiagnostics",
     "BeliefPropagationMethod",
     "BeliefPropagationResult",
@@ -108,6 +251,7 @@ __all__ = [
     "exact_factor_graph_negative_log_likelihood",
     "factor_graph_contains",
     "factor_graph_log_score",
+    "factor_group_capabilities",
     "factor_graph_moments",
     "gibbs_sweep",
     "initialize_belief_propagation",

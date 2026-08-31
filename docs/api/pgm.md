@@ -1,8 +1,8 @@
 # Probabilistic graphical models
 
-`phydrax.pgm` provides immutable finite-discrete factor graphs, exact enumeration,
-belief propagation, chromatic Gibbs sampling, structured Ising/Potts/logical factors,
-and composable training objectives.
+`phydrax.pgm` provides immutable finite-discrete factor graphs, sparse and open factor
+kernels, bounded exact inference, scheduled/accelerated belief propagation, advanced
+Gibbs-family samplers, MAP bounds, checkpointing, and composable training objectives.
 
 ## Variables, factors, and graph structure
 
@@ -42,6 +42,32 @@ and composable training objectives.
 
 ---
 
+::: phydrax.pgm.KernelFactorGroup
+
+---
+
+::: phydrax.pgm.AbstractDiscreteFactorKernel
+
+---
+
+::: phydrax.pgm.CallableFactorKernel
+
+---
+
+::: phydrax.pgm.FactorKernelCapabilities
+
+---
+
+::: phydrax.pgm.FactorGraphPrecisionPolicy
+
+---
+
+::: phydrax.pgm.FactorGraphResourcePolicy
+
+---
+
+::: phydrax.pgm.FactorExecutionEvidence
+
 ::: phydrax.pgm.factor_graph_log_score
 
 ---
@@ -63,6 +89,46 @@ and composable training objectives.
 ---
 
 ::: phydrax.pgm.ExactFactorGraphStatus
+
+---
+
+::: phydrax.pgm.VariableEliminationMethod
+
+---
+
+::: phydrax.pgm.plan_variable_elimination
+
+---
+
+::: phydrax.pgm.variable_elimination
+
+---
+
+::: phydrax.pgm.VariableEliminationResult
+
+---
+
+::: phydrax.pgm.plan_junction_tree
+
+---
+
+::: phydrax.pgm.junction_tree_calibrate
+
+---
+
+::: phydrax.pgm.NormalizedFactorGraphLaw
+
+---
+
+::: phydrax.pgm.SmoothDualLP
+
+---
+
+::: phydrax.pgm.solve_smooth_dual_lp
+
+---
+
+::: phydrax.pgm.perturb_and_map_log_normalizer
 
 ## Belief propagation
 
@@ -108,6 +174,38 @@ and composable training objectives.
 
 ::: phydrax.pgm.BeliefPropagationStatus
 
+---
+
+::: phydrax.pgm.BeliefPropagationSchedulePolicy
+
+---
+
+::: phydrax.pgm.run_accelerated_belief_propagation
+
+---
+
+::: phydrax.pgm.run_implicit_belief_propagation
+
+## Factor-graph batching
+
+::: phydrax.pgm.BatchedBeliefPropagationState
+
+---
+
+::: phydrax.pgm.batch_belief_propagation
+
+---
+
+::: phydrax.pgm.PackedFactorGraphBatch
+
+---
+
+::: phydrax.pgm.pack_factor_graphs
+
+---
+
+::: phydrax.pgm.FactorGraphShardingPolicy
+
 ## Chromatic Gibbs sampling
 
 ::: phydrax.pgm.ChromaticGibbs
@@ -152,6 +250,38 @@ and composable training objectives.
 
 ::: phydrax.pgm.GibbsDiagnostics
 
+---
+
+::: phydrax.pgm.GibbsScanPolicy
+
+---
+
+::: phydrax.pgm.gibbs_sweep_with_policy
+
+---
+
+::: phydrax.pgm.JointDiscreteBlock
+
+---
+
+::: phydrax.pgm.joint_block_sweep
+
+---
+
+::: phydrax.pgm.ParallelTempering
+
+---
+
+::: phydrax.pgm.parallel_tempering_step
+
+---
+
+::: phydrax.pgm.wolff_cluster_step
+
+---
+
+::: phydrax.pgm.reduce_gibbs_chain
+
 ## Structured constructors and training
 
 ::: phydrax.pgm.ising_factor_graph
@@ -175,3 +305,35 @@ and composable training objectives.
 ---
 
 ::: phydrax.pgm.FactorGraphTrainingDiagnostics
+
+---
+
+::: phydrax.pgm.pseudolikelihood_loss
+
+---
+
+::: phydrax.pgm.bethe_negative_log_likelihood
+
+---
+
+::: phydrax.pgm.initialize_persistent_training
+
+---
+
+::: phydrax.pgm.persistent_contrastive_divergence_step
+
+---
+
+::: phydrax.pgm.stochastic_maximum_likelihood_step
+
+---
+
+::: phydrax.pgm.expectation_maximization_step
+
+---
+
+::: phydrax.pgm.write_factor_graph_checkpoint
+
+---
+
+::: phydrax.pgm.read_factor_graph_checkpoint

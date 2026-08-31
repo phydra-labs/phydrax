@@ -20,14 +20,21 @@ from ..discretization.finite_volume import (
     ConservativeDiffusionPlan,
     PreparedFiniteVolumeDynamics,
 )
-from ..equations import CompressibleNavierStokesSystem, EulerSystem
+from ..equations import (
+    CompressibleNavierStokesSystem,
+    EulerSystem,
+    IdealMHDSystem,
+)
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
     BalanceLawProcessAdvance,
     BalanceLawProcessState,
 )
-from ._finite_volume_runtime import FiniteVolumeRuntimeState, PreparedFiniteVolumeRuntime
+from ._balance_law_transport import (
+    AbstractPreparedBalanceLawTransport,
+    BalanceLawSourceView,
+)
 
 
 class NewtonianGravityDiagnostics(eqx.Module):
@@ -79,14 +86,14 @@ class NewtonianSelfGravityPlan(AbstractBalanceLawProcessPlan):
         )
 
     def prepare(
-        self, runtime: PreparedFiniteVolumeRuntime, /
-    ) -> "PreparedNewtonianSelfGravity":
-        return PreparedNewtonianSelfGravity(self, runtime)
+        self, transport: AbstractPreparedBalanceLawTransport, /
+    ) -> PreparedNewtonianSelfGravity:
+        return PreparedNewtonianSelfGravity(self, transport)
 
 
 class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
     plan: NewtonianSelfGravityPlan
-    runtime: PreparedFiniteVolumeRuntime
+    transport: AbstractPreparedBalanceLawTransport
     dynamics: PreparedFiniteVolumeDynamics
     diffusion: Any
     poisson: FDLaplacianSolvePlan
@@ -98,28 +105,33 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
     def __init__(
         self,
         plan: NewtonianSelfGravityPlan,
-        runtime: PreparedFiniteVolumeRuntime,
+        transport: AbstractPreparedBalanceLawTransport,
         /,
     ):
         if not isinstance(plan, NewtonianSelfGravityPlan):
             raise TypeError("plan must be NewtonianSelfGravityPlan.")
-        if not isinstance(runtime, PreparedFiniteVolumeRuntime) or not isinstance(
-            runtime.dynamics, PreparedFiniteVolumeDynamics
-        ):
+        if not isinstance(
+            transport, AbstractPreparedBalanceLawTransport
+        ) or not isinstance(transport.dynamics, PreparedFiniteVolumeDynamics):
             raise TypeError(
-                "Newtonian self-gravity requires stationary structured FV runtime."
+                "Newtonian self-gravity requires stationary structured FV dynamics."
             )
-        dynamics = runtime.dynamics
-        if not isinstance(dynamics.system, (EulerSystem, CompressibleNavierStokesSystem)):
-            raise TypeError("Newtonian self-gravity requires Euler/Navier-Stokes.")
+        dynamics = transport.dynamics
+        if not isinstance(
+            dynamics.system,
+            (EulerSystem, CompressibleNavierStokesSystem, IdealMHDSystem),
+        ):
+            raise TypeError("Newtonian self-gravity requires a compressible system.")
         grid = dynamics.discretization.grid
         if any(not axis.periodic for axis in grid.structured_axes):
             raise ValueError("Initial Newtonian self-gravity support is fully periodic.")
         names = tuple(dynamics.system.component_names)
         density_index = names.index("density")
         momentum_indices = tuple(
-            names.index(f"momentum_{axis}") for axis in range(dynamics.system.dimension)
+            index for index, name in enumerate(names) if name.startswith("momentum_")
         )
+        if len(momentum_indices) != dynamics.system.dimension:
+            raise RuntimeError("Gravity system momentum layout is inconsistent.")
         energy_index = names.index("total_energy")
         boundaries = {name: ("periodic", "periodic") for name in grid.axis_names}
         diagonalization = diagonalize_fd_laplacian(grid, boundaries)
@@ -143,7 +155,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
                 "Gravity transform and conservative Laplacian actions disagree."
             )
         self.plan = plan
-        self.runtime = runtime
+        self.transport = transport
         self.dynamics = dynamics
         self.diffusion = diffusion
         self.poisson = poisson
@@ -155,7 +167,7 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
             {
                 "kind": "prepared-newtonian-self-gravity",
                 "plan": plan.process_id,
-                "runtime": runtime.runtime_id,
+                "transport": transport.transport_id,
                 "poisson": poisson.plan_id,
                 "diffusion": diffusion.operator_id,
             }
@@ -163,11 +175,14 @@ class PreparedNewtonianSelfGravity(AbstractPreparedBalanceLawProcess):
         self.requires_realization = False
         self.realization_name = None
         self.differentiability = "smooth_discrete"
+        self.modified_components = tuple(names[index] for index in momentum_indices) + (
+            "total_energy",
+        )
 
     def initialize(
-        self, transport_state: FiniteVolumeRuntimeState, args: Any = None, /
+        self, source_view: BalanceLawSourceView, args: Any = None, /
     ) -> BalanceLawProcessState:
-        del transport_state, args
+        del source_view, args
         return BalanceLawProcessState.empty(self.process_id)
 
     def _gravity(self, args: Any, dtype, /) -> Array:

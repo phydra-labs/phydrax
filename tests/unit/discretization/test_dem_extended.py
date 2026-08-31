@@ -20,8 +20,9 @@ def _materials(*, rolling=0.0):
 def _compile(
     normal,
     *,
+    cohesion=None,
     tangential=None,
-    rolling=None,
+    rotational=None,
     barriers=(),
     neighborhood=None,
     execution=None,
@@ -35,7 +36,10 @@ def _compile(
         jnp.asarray([0.5, 0.5]), jnp.asarray([0, 0])
     )
     contact = phx.discretization.DEMContactModelPlan(
-        normal, tangential=tangential, rolling=rolling
+        normal,
+        cohesion=cohesion,
+        tangential=tangential,
+        rotational=rotational,
     )
     method = phx.discretization.SoftSphereDEMMethodPlan(
         contact, maximum_overlap_fraction=maximum_overlap
@@ -171,7 +175,7 @@ def test_verlet_fused_hierarchical_and_batched_paths_preserve_authority():
 def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
     compiled = _compile(
         phx.discretization.LinearSpringDashpotNormalPlan(1.0e4),
-        rolling=phx.discretization.ConstantRollingResistancePlan(),
+        rotational=phx.discretization.ConstantRollingResistancePlan(),
         materials=_materials(rolling=0.1),
     )
     state = compiled.initialize_state(
@@ -183,10 +187,10 @@ def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
     evaluation = compiled.dynamics.evaluate(
         jnp.asarray(0.0), state, jnp.asarray(1.0e-4), None
     )
-    assert evaluation.particle_contact.rolling_dissipated_work[0] > 0.0
+    assert evaluation.particle_contact.rotational_dissipated_work[0] > 0.0
     assert jnp.allclose(
-        evaluation.particle_contact.rolling_torque_left,
-        -evaluation.particle_contact.rolling_torque_right,
+        evaluation.particle_contact.rotational_torque_left,
+        -evaluation.particle_contact.rotational_torque_right,
     )
 
     policy = phx.discretization.DEMSensitivityPolicy(
@@ -205,8 +209,9 @@ def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
         diagnostics,
         policy,
     )
-    assert result.usable
-    assert jnp.isclose(result.sensitivity, 4.0)
+    assert not result.usable
+    assert result.certificate.rolling_yield_margin == 0.0
+    assert jnp.isnan(result.sensitivity)
 
     replay = phx.discretization.checkpointed_dem_rollout(
         compiled.dynamics,
@@ -235,7 +240,7 @@ def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
     assert smooth.diagnostics(0.0, smooth_state).successful
 
 
-def test_moving_servo_curvature_dmt_plastic_and_contact_thermal_models():
+def test_moving_servo_curvature_dmt_and_plastic_models():
     geometry = phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
 
     def motion(base, time, points, args):
@@ -298,7 +303,10 @@ def test_moving_servo_curvature_dmt_plastic_and_contact_thermal_models():
     )
     assert hertz.diagnostics(0.0, hertz_state).successful
 
-    dmt = _compile(phx.discretization.DMTAdhesiveNormalPlan(0.05, 0.1))
+    dmt = _compile(
+        phx.discretization.HertzNormalContactPlan(),
+        cohesion=phx.discretization.DMTContactCohesionPlan(0.05, 0.1),
+    )
     dmt_state = dmt.initialize_state(
         0.0,
         jnp.asarray([[0.0, 0.0], [1.05, 0.0]]),
@@ -321,16 +329,4 @@ def test_moving_servo_curvature_dmt_plastic_and_contact_thermal_models():
         jnp.asarray(1.0e-4),
         None,
     )
-    assert plastic_step.candidate_state.particle_history.normal_plastic_overlap[0] > 0.0
-
-    thermal_plan = phx.discretization.LumpedContactThermalPlan(
-        jnp.asarray([1.0]), jnp.asarray([[2.0]])
-    )
-    thermal_state = thermal_plan.initialize(
-        plastic.dynamics.bodies, jnp.asarray([300.0, 400.0])
-    )
-    thermal_response = thermal_plan.evaluate(
-        plastic.dynamics.bodies, plastic_step.evaluation, thermal_state
-    )
-    assert jnp.isclose(jnp.sum(thermal_response.temperature_rate), 0.0)
-    assert thermal_response.entropy_production >= 0.0
+    assert plastic_step.candidate_state.particle_history.normal.plastic_overlap[0] > 0.0

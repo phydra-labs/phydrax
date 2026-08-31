@@ -16,7 +16,11 @@ import numpy as np
 from jaxtyping import Array, Key
 
 from .._strict import StrictModule
-from ._capabilities import ContactCurvatureProvider, GeometryCapability
+from ._capabilities import (
+    ContactCurvatureProvider,
+    GeometryCapability,
+    SupportMapProvider,
+)
 from ._certificate import FieldCertificate
 from .design._schema import (
     _ParameterCollector,
@@ -257,6 +261,12 @@ class CompiledGeometry(StrictModule):
                 "Contact-curvature provider must return ContactCurvatureResult."
             )
         return result
+
+    def support_map(self, directions: Array, /) -> Array:
+        kernel = self.require(GeometryCapability.SUPPORT_MAP)
+        if not isinstance(kernel, SupportMapProvider):
+            raise TypeError("Geometry advertises support mapping without a provider.")
+        return kernel.support_map(self.state, directions)
 
     @property
     def bounds(self) -> Array:
