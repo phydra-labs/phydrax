@@ -392,3 +392,73 @@ def test_generator_semigroup_and_exact_completion_are_jittable():
     assert jnp.all(jnp.isfinite(counts.total_counts))
     assert jnp.all(jnp.isfinite(statistics.total_statistics))
     assert jnp.allclose(jnp.sum(smoother.smoothed_probabilities, axis=-1), 1.0)
+
+
+def test_factor_graph_chain_matches_exact_finite_state_completion():
+    problem = _problem()
+    likelihood = phx.uq.exact_state_space_log_likelihood(problem)
+    filtered = likelihood.backend
+    smoother = phx.uq.finite_state_backward_smoother(filtered)
+    viterbi = phx.uq.finite_state_viterbi(filtered)
+    steps = problem.observations.num_steps
+
+    variables = phx.pgm.DiscreteVariableGroup(
+        "state",
+        shape=(steps + 1,),
+        num_states=2,
+    )
+    prior = phx.pgm.DenseTableFactorGroup(
+        (phx.pgm.VariableSelection(variables, [0]),),
+        jnp.log(problem.model.prior.probabilities)[None, :],
+    )
+    transition = phx.pgm.DenseTableFactorGroup(
+        (
+            phx.pgm.VariableSelection(variables, jnp.arange(steps)),
+            phx.pgm.VariableSelection(variables, jnp.arange(1, steps + 1)),
+        ),
+        jnp.log(filtered.transition_matrices),
+    )
+    observed_values = problem.observations.values[:, 0].astype(jnp.int32)
+    observed_mask = problem.observations.observation_mask[:, 0]
+    observation_tables = jnp.stack(
+        [
+            jnp.where(
+                observed_mask[index],
+                jnp.log(EMISSION[:, observed_values[index]]),
+                jnp.zeros((2,)),
+            )
+            for index in range(steps)
+        ]
+    )
+    observation = phx.pgm.DenseTableFactorGroup(
+        (phx.pgm.VariableSelection(variables, jnp.arange(1, steps + 1)),),
+        observation_tables,
+    )
+    graph = phx.pgm.DiscreteFactorGraph(
+        (variables,),
+        (prior, transition, observation),
+    )
+
+    sum_plan = phx.pgm.prepare_belief_propagation(graph)
+    sum_result = phx.pgm.run_belief_propagation(
+        sum_plan,
+        phx.pgm.initialize_belief_propagation(sum_plan),
+    )
+    max_plan = phx.pgm.prepare_belief_propagation(
+        graph,
+        phx.pgm.MaxProductBeliefPropagation(),
+    )
+    max_result = phx.pgm.run_belief_propagation(
+        max_plan,
+        phx.pgm.initialize_belief_propagation(max_plan),
+    )
+    probabilities = jnp.exp(sum_result.variable_log_probabilities.values).reshape(
+        (steps + 1, 2)
+    )
+
+    assert sum_result.marginals_exact
+    assert sum_result.log_normalizer == pytest.approx(likelihood.total_log_likelihood)
+    assert jnp.allclose(probabilities[0], smoother.initial_probabilities)
+    assert jnp.allclose(probabilities[1:], smoother.smoothed_probabilities)
+    assert int(max_result.map_assignment[0]) == int(viterbi.initial_state_indices)
+    assert jnp.array_equal(max_result.map_assignment[1:], viterbi.state_indices)

@@ -117,6 +117,12 @@
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
   deployment merging, and checksum-validated adapter artifacts bound to the
   complete base model content and structure.
+- Added `phydrax.pgm`: immutable finite-discrete factor graphs over native
+  bipartite `GraphIR` topology; dense, enumerated, Ising, Potts, logical, and
+  cardinality factors; explicitly capped exact enumeration; exact-forest and loopy
+  sum/max-product belief propagation with honest normalizer/MAP semantics; validated
+  persistent chromatic Gibbs sampling; correlated-chain integration; structured
+  constructors; and exact-likelihood, moment, and contrastive-divergence primitives.
 - Added `phydrax.topology`: compact active subcomplexes and relative pairs,
   exact prime-field homology with cycle/cocycle representatives, exact rational
   Betti dimensions, explicit cell-vertex supports, lower/upper-star filtrations,

@@ -944,6 +944,16 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [API → Stochastic → State-space models](api/stochastic/state_space.md),
   [API → UQ → Filtering](api/uq/filtering.md), and
   [API → UQ → Inference and ensembles](api/uq/inference.md).
+- **Finite-discrete probabilistic graphical models**: define stable named variable
+  groups and dense, enumerated, Ising, Potts, logical, or cardinality factors over
+  arbitrary hypergraph topology. Explicitly capped enumeration returns exact
+  normalizers, marginals, and MAP states. Sum/max-product belief propagation is exact
+  on forests and carries fixed-point-only evidence on loops; loopy sum-product labels
+  its normalizer as Bethe. Validated chromatic Gibbs preserves exact hard support,
+  clamping, persistent chain identity, and correlated-sample semantics. Parameter
+  refresh never silently changes topology. See
+  [Probabilistic graphical models](guides_probabilistic_graphical_models.md) and
+  [API → Probabilistic graphical models](api/pgm.md).
 - **Backward stochastic equations and semilinear high-dimensional PDEs**:
   evaluate terminal, local, and global BSDE residuals with explicit or
   autodifferentiated controls; fit one time-conditioned field from trajectory-node
