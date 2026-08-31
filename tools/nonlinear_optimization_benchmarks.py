@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -15,24 +14,15 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-
-
-def _block(tree: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
+from benchmarks._runtime import measure_host, measure_synchronized
 
 
 def _timed(operation: Callable[[], Any], /) -> tuple[Any, float]:
-    started = time.perf_counter()
-    result = operation()
-    _block(result)
-    return result, time.perf_counter() - started
+    return measure_synchronized(operation)
+
 
 def _compiled(operation: Callable[[], Any], /) -> tuple[Any, float]:
-    started = time.perf_counter()
-    executable = operation()
-    return executable, time.perf_counter() - started
-
-
+    return measure_host(operation)
 
 
 def _nonlinear_diagonal_objective(parameters: jax.Array, weights: jax.Array) -> jax.Array:
@@ -68,9 +58,7 @@ def _matrix_free_newton(size: int) -> dict[str, Any]:
     executable, compile_seconds = _compiled(
         lambda: jax.jit(solve).lower(weights).compile()
     )
-    compiled_result, first_execution_seconds = _timed(
-        lambda: executable(weights)
-    )
+    compiled_result, first_execution_seconds = _timed(lambda: executable(weights))
     _, steady_execution_seconds = _timed(lambda: executable(weights))
     return {
         "case": "matrix-free-newton-krylov",
@@ -110,6 +98,7 @@ def _newton_iteration_lifecycle(size: int) -> dict[str, Any]:
     state, setup_seconds = _timed(
         lambda: method.prepare_state(value_function, parameters)
     )
+
     def step(current_parameters, current_state):
         return method.step(
             value_function,
@@ -123,9 +112,7 @@ def _newton_iteration_lifecycle(size: int) -> dict[str, Any]:
     )
     first, first_step_seconds = _timed(lambda: executable(parameters, state))
     next_parameters, next_state, _ = first
-    second, steady_step_seconds = _timed(
-        lambda: executable(next_parameters, next_state)
-    )
+    second, steady_step_seconds = _timed(lambda: executable(next_parameters, next_state))
     _, steady_state, _ = second
     return {
         "case": "newton-prepared-refresh-lifecycle",
@@ -137,9 +124,7 @@ def _newton_iteration_lifecycle(size: int) -> dict[str, Any]:
         "setup_refreshes_after_first_step": int(next_state.setup_refreshes),
         "numeric_refreshes_after_first_step": int(next_state.numeric_refreshes),
         "setup_refreshes_after_steady_step": int(steady_state.setup_refreshes),
-        "numeric_refreshes_after_steady_step": int(
-            steady_state.numeric_refreshes
-        ),
+        "numeric_refreshes_after_steady_step": int(steady_state.numeric_refreshes),
     }
 
 
@@ -286,7 +271,9 @@ def _matrix_free_constraints(size: int) -> dict[str, Any]:
         lambda: phx.optim.minimize(
             problem,
             initial,
-            method=phx.optim.PrimalDualNewtonKrylov(),
+            method=phx.optim.PrimalDualInteriorPoint(
+                mode="matrix-free-centered",
+            ),
             termination=phx.optim.OptimizationTermination(
                 absolute_optimality=1e-7,
                 relative_optimality=0.0,
@@ -320,9 +307,7 @@ def _reduced_state_design(size: int) -> dict[str, Any]:
     initial_design = jnp.zeros((size,))
     problem = phx.optim.StateDesignProblem(
         lambda state, design, _: state - design,
-        lambda state, design, _: (
-            jnp.sum((state - 2.0) ** 2) + 0.1 * jnp.sum(design**2)
-        ),
+        lambda state, design, _: jnp.sum((state - 2.0) ** 2) + 0.1 * jnp.sum(design**2),
         problem_id=f"reduced-state-design-{size}",
     )
     result, wall_seconds = _timed(
@@ -350,9 +335,7 @@ def _reduced_state_design(size: int) -> dict[str, Any]:
         "setup_refreshes": int(result.diagnostics.setup_refreshes),
         "numeric_refreshes": int(result.diagnostics.numeric_refreshes),
         "state_design_bytes": int(initial_state.nbytes + initial_design.nbytes),
-        "dense_reduced_hessian_bytes": int(
-            size * size * initial_design.dtype.itemsize
-        ),
+        "dense_reduced_hessian_bytes": int(size * size * initial_design.dtype.itemsize),
     }
 
 

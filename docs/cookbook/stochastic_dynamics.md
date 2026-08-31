@@ -313,9 +313,17 @@ rather than pretending that all time nodes are independent. For fresh simulation
 optimizer update, pass a callable returning a `StochasticTrajectory` and select
 `sampling_mode="resample"`; the provider is called once outside differentiation.
 
-This workflow returns a score field, not a normalized density. Density reconstruction,
-likelihood evaluation, and sampling from a learned distribution require a separate
-flow, transport, or reverse-time model and are not implied by score matching.
+This workflow returns a score field, not a normalized density. For a prescribed VP or
+VE process, `DenoisingScoreMatchingTerm` offers a derivative-free alternative when
+the exact Gaussian transition score is known. A trained score becomes a stochastic
+generator only after composition with `phx.transport.ReverseDiffusion`; it becomes a
+deterministic density flow only after `probability_flow_system` is composed with
+`DiffraxEvolution`, `ContinuousTransport`, and `ContinuousFlowLaw`. Neither
+composition certifies model error, and a finite-time Gaussian terminal reference
+remains explicitly exact, asymptotic, or external.
+
+See [Gaussian score diffusions](../api/stochastic/diffusion.md) and
+[score-based diffusion transport](../api/transport/diffusion.md).
 
 The `implicit-score-matching` entry in
 `tools/high_dimensional_pde_benchmarks.py --suite methods` constructs

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -29,11 +30,11 @@ from ...linalg import (
 from .._finite_element_variational import (
     _interval_rule,
     _reference_rule_data,
-    _ResolvedCoefficient,
     CellResidualAction,
     coefficient,
     DiffusionAction,
     ExteriorFacetAction,
+    FiniteElementCoefficient,
     FiniteElementForm,
     InteriorFacetAction,
     PreparedOperatorAction,
@@ -98,7 +99,7 @@ def upwind_advection_form(
     *,
     interior_domain: IntegrationDomain | None = None,
     boundary_domain: IntegrationDomain | None = None,
-    inflow: _ResolvedCoefficient | ArrayLike | Callable = 0.0,
+    inflow: FiniteElementCoefficient | ArrayLike | Callable = 0.0,
     inflow_coefficient_id: str | None = None,
     source: ArrayLike | Callable | None = None,
     form_id: str = "upwind-advection",
@@ -112,7 +113,7 @@ def upwind_advection_form(
         raise ValueError("boundary_domain must select exterior facets.")
     inflow_ = (
         inflow
-        if isinstance(inflow, _ResolvedCoefficient)
+        if isinstance(inflow, FiniteElementCoefficient)
         else coefficient(inflow, coefficient_id=inflow_coefficient_id)
     )
 
@@ -532,7 +533,7 @@ def solve_hdg_poisson(
     discretization: FiniteElementDiscretization,
     field_name: str,
     source: ArrayLike,
-    boundary_values: ArrayLike | Callable,
+    boundary_values: ArrayLike | Callable[[Array], ArrayLike],
     /,
     *,
     diffusivity: ArrayLike = 1.0,
@@ -676,11 +677,11 @@ def solve_hdg_poisson(
         discretization.default_runtime.coordinates[edge_vertices],
         axis=1,
     )
-    prescribed = (
-        boundary_values(edge_midpoints)
-        if callable(boundary_values)
-        else jnp.asarray(boundary_values)
-    )
+    if callable(boundary_values):
+        evaluator = cast(Callable[[Array], ArrayLike], boundary_values)
+        prescribed = jnp.asarray(evaluator(edge_midpoints))
+    else:
+        prescribed = jnp.asarray(boundary_values)
     prescribed = jnp.broadcast_to(prescribed, (trace_space.trace_dof_count,))
     return _solve_hdg_local_system(
         plan,

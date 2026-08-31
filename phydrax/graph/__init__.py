@@ -37,6 +37,11 @@ from ._cochain import (
     triangle_mesh_to_cochain_complex,
 )
 from ._cochain_field import CochainField
+from ._cochain_homology import (
+    cochain_harmonic_kernel_certificate,
+    HodgeHomologyReport,
+    validate_hodge_homology,
+)
 from ._cochain_metric import cochain_metric_reduce, CochainMetricReduction
 from ._cochain_ops import (
     cochain_codifferential,
@@ -97,6 +102,12 @@ from ._geometry import (
     radius_query_graph,
 )
 from ._graph import ensure_graph, Graph, graph_counts, is_graph_like
+from ._harmonic_classes import (
+    CochainTransferCertificate,
+    HarmonicClassFrame,
+    prepare_harmonic_class_frame,
+)
+from ._hodge_tracking import HodgeSubspaceTracking
 from ._hypergraph import (
     hypergraph_to_bipartite_graph,
     HypergraphBipartiteGraph,
@@ -132,6 +143,8 @@ from ._kernels import (
     scatter_min,
     segment_max,
     segment_max_or_constant,
+    segment_log_normalize,
+    segment_logsumexp,
     segment_mean,
     segment_min,
     segment_min_or_constant,
@@ -330,6 +343,8 @@ __all__ = [
     "segment_normalize",
     "segment_max",
     "segment_max_or_constant",
+    "segment_log_normalize",
+    "segment_logsumexp",
     "segment_min",
     "segment_min_or_constant",
     "segment_softmax",
@@ -383,6 +398,13 @@ __all__ = [
     "cochain_complex_from_incidences",
     "cochain_complex_from_simplicial",
     "compute_harmonic_subspace",
+    "HodgeHomologyReport",
+    "cochain_harmonic_kernel_certificate",
+    "validate_hodge_homology",
+    "CochainTransferCertificate",
+    "HarmonicClassFrame",
+    "HodgeSubspaceTracking",
+    "prepare_harmonic_class_frame",
     "graph_to_cochain_complex",
     "reorient_cochain",
     "reorient_cochain_complex",

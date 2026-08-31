@@ -97,7 +97,23 @@ class AbstractNumericalFluxPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
-class AbstractSymmetricTwoPointFluxPlan(AbstractNumericalFluxPlan):
+class AbstractArbitraryNormalNumericalFluxPlan(AbstractNumericalFluxPlan):
+    """Typed capability for conservative fluxes on arbitrary unit normals."""
+
+    @abc.abstractmethod
+    def normal_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        raise NotImplementedError
+
+
+class AbstractSymmetricTwoPointFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
     """Symmetric consistent flux reusable in interface and volume methods."""
 
     symmetric: bool = eqx.field(static=True)
@@ -116,7 +132,7 @@ class AbstractSymmetricTwoPointFluxPlan(AbstractNumericalFluxPlan):
         raise NotImplementedError
 
 
-class RusanovFluxPlan(AbstractNumericalFluxPlan):
+class RusanovFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
     """Local Lax–Friedrichs flux with optional smooth wave-speed magnitude."""
 
     smooth_epsilon: float = eqx.field(static=True)
@@ -210,7 +226,7 @@ class RusanovFluxPlan(AbstractNumericalFluxPlan):
         return NumericalFluxResult(flux, speed)
 
 
-class HLLFluxPlan(AbstractNumericalFluxPlan):
+class HLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
     """Two-wave Harten–Lax–van Leer numerical flux."""
 
     def __init__(self):
@@ -317,7 +333,7 @@ class HLLFluxPlan(AbstractNumericalFluxPlan):
         return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
 
 
-class HLLCFluxPlan(AbstractNumericalFluxPlan):
+class HLLCFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
     """Contact-resolving HLLC flux for Euler-compatible state layouts."""
 
     def __init__(self):
@@ -1106,8 +1122,29 @@ class EntropyConservativeEulerFluxPlan(AbstractSymmetricTwoPointFluxPlan):
         speed = system.max_wave_speed(left, right, int(axis), args)
         return NumericalFluxResult(flux, speed)
 
+    def normal_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        normal_ = jnp.asarray(normal)
+        flux = jnp.stack(
+            tuple(
+                self.two_point_flux(system, left, right, axis, args)
+                for axis in range(system.dimension)
+            ),
+            axis=-1,
+        )
+        contracted = oe.contract("...id,...d->...i", flux, normal_, backend="jax")
+        speed = system.max_normal_wave_speed(left, right, normal_, args)
+        return NumericalFluxResult(contracted, speed)
 
-class EntropyStableEulerFluxPlan(AbstractNumericalFluxPlan):
+
+class EntropyStableEulerFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
     """Entropy-conservative central flux with Rusanov state dissipation."""
 
     central: EntropyConservativeEulerFluxPlan
@@ -1139,6 +1176,21 @@ class EntropyStableEulerFluxPlan(AbstractNumericalFluxPlan):
         ] * (right - left)
         return NumericalFluxResult(flux, central.max_speed)
 
+    def normal_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        central = self.central.normal_face_flux(system, left, right, normal, args)
+        flux = central.normal_flux - 0.5 * self.dissipation * central.max_speed[
+            ..., None
+        ] * (right - left)
+        return NumericalFluxResult(flux, central.max_speed)
+
     def entropy_dissipation(self, system: Any, left: Array, right: Array, /) -> Array:
         speed = system.max_wave_speed(left, right, 0, None)
         entropy_jump = system.entropy_variables(right) - system.entropy_variables(left)
@@ -1151,6 +1203,7 @@ class EntropyStableEulerFluxPlan(AbstractNumericalFluxPlan):
 
 
 __all__ = [
+    "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",
     "EntropyConservativeEulerFluxPlan",

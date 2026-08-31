@@ -34,3 +34,20 @@ not a benchmark failure.
 Qualification artifacts retain method, configuration, source, precision,
 backend, and evidence identities. Thresholds must be declared before evaluating
 the benchmark.
+
+## DEM qualification
+
+`DEMQualificationProfile` applies contact-specific thresholds to
+`DEMConstraintResiduals`: net internal force and torque, relative energy
+balance, negative dissipation, friction-cone defect, maximum relative overlap,
+wall action/reaction, and contact-history continuity.
+
+`DEMDifferentiabilityMargins` separately records distance to contact activation,
+distance to the friction stick/slip switch, and route-capacity success. These
+margins qualify only the executed branch; they do not claim a smooth derivative
+through a changed collision sequence.
+
+Soft-sphere DEM remains experimental. Dense/cell parity, restitution refinement,
+oblique frictional collision, restart equivalence, and fixed-capacity failure
+evidence are required before a qualified claim. Distributed and arbitrary-shape
+claims remain absent.

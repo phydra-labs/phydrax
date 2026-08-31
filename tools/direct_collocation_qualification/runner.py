@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-import time
 from typing import Literal
 
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_synchronized
 
 from .cases import DirectCollocationQualificationSetup
 from .contracts import DirectCollocationQualificationRecord
@@ -21,7 +21,9 @@ QualificationBackend = Literal["native", "ipopt"]
 
 def _method(backend: QualificationBackend):
     if backend == "native":
-        return phx.optim.FilterInteriorPoint(max_dense_dimension=512)
+        return phx.optim.PrimalDualInteriorPoint(
+            mode="dense-filter", max_dense_dimension=512
+        )
     if backend == "ipopt":
         return phx.optim.IpoptMinimize(options={"print_level": 0})
     raise ValueError("backend must be 'native' or 'ipopt'.")
@@ -51,9 +53,9 @@ def run_qualification_case(
         method=_method(backend),
         termination=termination,
     )
-    started = time.perf_counter()
-    result = phx.control.solve_prepared_direct_collocation(prepared)
-    elapsed = time.perf_counter() - started
+    result, elapsed = measure_synchronized(
+        lambda: phx.control.solve_prepared_direct_collocation(prepared)
+    )
     program = compilation.structured_program
     direction = jnp.linspace(0.1, 1.0, program.num_variables)
     sparse_action = program.jacobian_plan.operator(
@@ -108,9 +110,7 @@ def run_qualification_case(
         maximum_constraint_violation=float(
             result.diagnostics.maximum_constraint_violation
         ),
-        maximum_off_grid_defect=float(
-            result.diagnostics.maximum_off_grid_defect
-        ),
+        maximum_off_grid_defect=float(result.diagnostics.maximum_off_grid_defect),
         replay_error=replay_error,
         derivative_action_error=derivative_error,
         variables=program.num_variables,

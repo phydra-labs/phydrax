@@ -89,6 +89,12 @@ from ._calabi_yau_campaigns import (
     prepare_fermat_quintic,
     prepare_quartic_k3,
 )
+from ._cfd_dem import (
+    advance_cfd_dem_window,
+    CFDEMCouplingSchedulePlan,
+    CFDEMCouplingState,
+    CFDEMMacroStepResult,
+)
 from ._channel_flow import (
     CHANNEL_FLOW_INITIAL_CONSTRAINT,
     CHANNEL_FLOW_STOKES_FAILURE,
@@ -97,6 +103,15 @@ from ._channel_flow import (
     ChannelFlowSolution,
     ChannelSBDF2Method,
     solve_channel_sbdf2,
+)
+from ._characteristic_projection import (
+    CharacteristicProjectionProblem,
+    CharacteristicProjectionResult,
+    CharacteristicTraceResult,
+    CharacteristicVelocity,
+    CharacteristicWrap,
+    solve_characteristic_projection,
+    trace_characteristics,
 )
 from ._cochain_multirate import (
     CochainMultirateDiagnostics,
@@ -223,6 +238,7 @@ from ._differential import (
     DifferentialSolution,
     DifferentialVectorField,
     NoiseStructure,
+    WienerCoefficientRepresentation,
     WienerTerm,
 )
 from ._differential_algebraic import (
@@ -285,6 +301,12 @@ from ._fbsde import (
     CoupledFBSDEProblem,
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
+)
+from ._fem_multirate import (
+    conservative_multirate_flux,
+    DGInterfaceFluxResult,
+    DGMultirateTracePlan,
+    DGTraceHistory,
 )
 from ._fermionic_gaussian import (
     damped_fermionic_mode,
@@ -443,6 +465,7 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
+from ._harmonic_constraints import HarmonicConstraint, preserve_magnetic_periods
 from ._helmholtz import (
     ExteriorHelmholtzDirichletResult2D,
     solve_exterior_helmholtz_dirichlet_2d,
@@ -573,6 +596,16 @@ from ._neural_cde import (
     NeuralCDEVectorField,
     train_neural_cde,
 )
+from ._neural_galerkin import (
+    FieldProjectionMetric,
+    NeuralFieldEvolutionResult,
+    NeuralGalerkinAudit,
+    NeuralGalerkinProblem,
+    NeuralTangentSolvePolicy,
+    RateFunction,
+    solve_neural_galerkin,
+    TangentFormulation,
+)
 from ._neural_quantum_jump import (
     NeuralJumpProjectionProblem,
     NeuralJumpProjectionResult,
@@ -603,6 +636,7 @@ from ._particle_mesh_gravity import (
     ParticleMeshGravityStepResult,
 )
 from ._particle_methods import (
+    DEMFixedStepMethod,
     DFSPHFixedStepMethod,
     IISPHFixedStepMethod,
     TransportVelocityFixedStepMethod,
@@ -910,6 +944,8 @@ __all__ = [
     "ConstrainedMHDSSPRK3Plan",
     "ConstrainedMHDState",
     "ConstrainedMHDStepResult",
+    "HarmonicConstraint",
+    "preserve_magnetic_periods",
     "CalabiYauCampaign",
     "CalabiYauMetricArtifact",
     "CalabiYauMetricProblem",
@@ -1093,6 +1129,10 @@ __all__ = [
     "DAEAttemptHistory",
     "DAEAttemptStatus",
     "DAEContinuation",
+    "conservative_multirate_flux",
+    "DGInterfaceFluxResult",
+    "DGMultirateTracePlan",
+    "DGTraceHistory",
     "DAEFailureMode",
     "DAERegularityEvidence",
     "DAERegularityFailureMode",
@@ -1259,6 +1299,7 @@ __all__ = [
     "StochasticCollocationResult",
     "StochasticVolterraProblem",
     "WeakObservableEstimate",
+    "WienerCoefficientRepresentation",
     "WienerTerm",
     "SplitDifferentialProblem",
     "SSPRK33",
@@ -1527,8 +1568,28 @@ __all__ = [
     "SSPRK33FixedStepMethod",
     "SSPRK54FixedStepMethod",
     "solve_fixed_step",
+    "DEMFixedStepMethod",
     "DFSPHFixedStepMethod",
     "IISPHFixedStepMethod",
     "ShepardDensityRenormalizationTransform",
     "TransportVelocityFixedStepMethod",
+    "CFDEMCouplingSchedulePlan",
+    "CFDEMCouplingState",
+    "CFDEMMacroStepResult",
+    "advance_cfd_dem_window",
+    "CharacteristicProjectionProblem",
+    "CharacteristicProjectionResult",
+    "CharacteristicTraceResult",
+    "CharacteristicVelocity",
+    "CharacteristicWrap",
+    "FieldProjectionMetric",
+    "NeuralFieldEvolutionResult",
+    "NeuralGalerkinAudit",
+    "NeuralGalerkinProblem",
+    "NeuralTangentSolvePolicy",
+    "RateFunction",
+    "TangentFormulation",
+    "solve_characteristic_projection",
+    "solve_neural_galerkin",
+    "trace_characteristics",
 ]

@@ -64,7 +64,7 @@ assumption is recorded separately from algebraic PDE satisfaction.
 basis = phx.equations.PolyharmonicAlmansiBasis(
     5,
     2,
-    maximum_degree=(3, 2),
+    (3, 2),
 )
 ```
 
@@ -166,7 +166,7 @@ Use ordinary gradient or nonlinear least-squares optimization for resampled obje
 For a fixed realization and affine residual, use `solve_linear_trial_space` to assemble
 and solve the real coefficient least-squares problem directly:
 
-```python
+```text
 fixed = phx.integration.fixed(
     phx.integration.materialize(
         phx.integration.mean_over(boundary),
@@ -194,7 +194,7 @@ larger compatible domain preserves it.
 
 Inspect and audit explicitly:
 
-```python
+```text
 certificate = phx.equations.trial_space_certificate(solver["u"])
 batch = domain.component().sample(
     phx.domain.PointSampling(128),

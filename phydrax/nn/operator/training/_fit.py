@@ -31,12 +31,18 @@ from ...._training import (
     TrainingProgress,
     TrainingSignalGuard,
 )
-from ..._keys import split_eval_key
+from ...._training_objective import _ObjectiveContribution
 from ..._loss import model_loss_labels, model_loss_values
 from ...layers._dropout import inference_mode
+from ...parameters import ParameterSubspace
+from ...parameters._low_rank import (
+    contains_low_rank_updates,
+    validate_low_rank_subspace,
+)
 from ..capabilities import OperatorTrainingEvidence
 from ..data import OperatorBatch, OperatorTargetBatch
 from ..engine import AbstractOperatorModel
+from ..metrics import operator_l2_loss
 from ..sampling import OperatorCaseSource
 from ..sharding import (
     OperatorShardingPolicy,
@@ -53,11 +59,10 @@ from ._checkpoint import (
 from ._dataset import OperatorDataset
 from ._dtype import OperatorDTypePolicy, OperatorPrecisionEvidence
 from ._execution import (
+    _evaluate_operator_step,
     _operator_prediction,
-    executionize_prediction,
     nondimensionalize_batch,
     nondimensionalize_targets,
-    physicalize_prediction,
 )
 from ._fingerprint import operator_fit_schema
 from ._loader import OperatorBatchLoader, OperatorTrainingBatch
@@ -69,17 +74,31 @@ from ._loss_scale import (
 from ._losses import (
     AbstractOperatorLossTerm,
     OperatorLossContext,
+    ResidualOperatorRolloutLoss,
     SupervisedOperatorLoss,
+    SupervisedOperatorRolloutLoss,
 )
 from ._normalization import (
     fit_operator_normalization,
     OperatorNormalizationPolicy,
 )
 from ._physics import OperatorOutputPipeline
+from ._rollout import (
+    _operator_rollout_scan,
+    _ROLLOUT_MODEL_KEY_DOMAIN,
+    _validate_rollout_route,
+    OperatorRolloutPolicy,
+    OperatorRolloutRoute,
+)
 from ._trained_operator import (
     operator_contract_fingerprint,
     TrainedOperator,
 )
+
+
+_LOSS_TERM_KEY_DOMAIN = 200
+_RESIDUAL_ROLLOUT_KEY_DOMAIN = 300
+_MODEL_OBJECTIVE_KEY_DOMAIN = 400
 
 
 @dataclass(frozen=True)
@@ -225,13 +244,19 @@ def _nondimensionalize(
     targets: OperatorTargetBatch,
     task: OperatorTask | None,
     /,
+    *,
+    target_aliases: Mapping[str, str] | None = None,
 ) -> tuple[OperatorBatch, OperatorTargetBatch]:
     if task is None:
         return batch, targets
     task.validate_batch(batch)
     return (
         nondimensionalize_batch(batch, task),
-        nondimensionalize_targets(targets, task),
+        nondimensionalize_targets(
+            targets,
+            task,
+            target_aliases=target_aliases,
+        ),
     )
 
 
@@ -243,15 +268,24 @@ def _place_batch(
     normalization: OperatorNormalizationPolicy | None,
     dtype_policy: OperatorDTypePolicy,
     sharding_policy: OperatorShardingPolicy | None,
+    target_aliases: Mapping[str, str] | None = None,
 ) -> OperatorTrainingBatch:
     physical_batch = raw.batch if raw.physical_batch is None else raw.physical_batch
     physical_targets = (
         raw.targets if raw.physical_targets is None else raw.physical_targets
     )
-    batch, targets = _nondimensionalize(physical_batch, physical_targets, task)
+    batch, targets = _nondimensionalize(
+        physical_batch,
+        physical_targets,
+        task,
+        target_aliases=target_aliases,
+    )
     if normalization is not None:
         batch = normalization.normalize_batch(batch)
-        targets = normalization.normalize_targets(targets)
+        targets = normalization.normalize_targets(
+            targets,
+            target_aliases=target_aliases,
+        )
     batch = dtype_policy.cast_batch(batch)
     targets = dtype_policy.cast_targets(targets)
     if sharding_policy is not None:
@@ -280,13 +314,9 @@ def _resolve_output_map(
 ) -> dict[str, str]:
     declared = tuple(model.operator_output_specs)
     target_names = (
-        tuple(targets.fields)
-        if targets.fields
-        else (
-            tuple(field.name for field in task.target_fields)
-            if task is not None
-            else declared
-        )
+        tuple(field.name for field in task.target_fields)
+        if task is not None
+        else (tuple(targets.fields) if targets.fields else declared)
     )
     if output_field_map is None:
         if set(declared) == set(target_names):
@@ -379,6 +409,92 @@ def _metric_dict(names: tuple[str, ...], values: Sequence[Any], /) -> dict[str, 
     }
 
 
+def _rollout_target_aliases(
+    model: AbstractOperatorModel,
+    terms: Sequence[AbstractOperatorLossTerm],
+    route: OperatorRolloutRoute | None,
+    policy: OperatorRolloutPolicy | None,
+    task: OperatorTask | None,
+    /,
+) -> dict[str, str]:
+    rollout_terms = tuple(
+        term
+        for term in terms
+        if isinstance(
+            term,
+            (SupervisedOperatorRolloutLoss, ResidualOperatorRolloutLoss),
+        )
+    )
+    if not rollout_terms:
+        if route is not None or policy is not None:
+            raise ValueError(
+                "rollout_route and rollout_policy require rollout loss terms."
+            )
+        return {}
+    if task is None:
+        raise ValueError("Operator rollout losses require a task-bound fit.")
+    if not isinstance(route, OperatorRolloutRoute):
+        raise TypeError("Operator rollout losses require an OperatorRolloutRoute.")
+    if not isinstance(policy, OperatorRolloutPolicy):
+        raise TypeError("Operator rollout losses require an OperatorRolloutPolicy.")
+    if not model.operator_contract.capabilities.autoregressive_rollout:
+        raise ValueError("The configured operator architecture does not support rollout.")
+    if int(policy.maximum_horizon) > int(task.problem.rollout_steps):
+        raise ValueError(
+            "rollout_policy.maximum_horizon exceeds the task rollout contract."
+        )
+    supervised_terms = tuple(
+        term for term in rollout_terms if isinstance(term, SupervisedOperatorRolloutLoss)
+    )
+    if len(supervised_terms) > 1:
+        raise ValueError(
+            "Operator rollout training accepts one ordered future-target route."
+        )
+    if route.task_field not in task.field_by_name:
+        raise KeyError(f"Unknown rollout task field {route.task_field!r}.")
+    task_targets = {field.name for field in task.target_fields}
+    aliases: dict[str, str] = {}
+    for term in rollout_terms:
+        if len(term.time_weights) != int(policy.maximum_horizon):
+            raise ValueError(
+                f"Rollout loss {term.name!r} must provide one time weight per "
+                "maximum-horizon step."
+            )
+        if any(
+            sum(term.time_weights[:horizon]) <= 0.0
+            for horizon in range(
+                int(policy.initial_horizon),
+                int(policy.maximum_horizon) + 1,
+            )
+        ):
+            raise ValueError(
+                f"Rollout loss {term.name!r} must have positive time-weight "
+                "mass at every reachable horizon."
+            )
+        if isinstance(term, SupervisedOperatorRolloutLoss):
+            if len(term.target_fields) != int(policy.maximum_horizon):
+                raise ValueError(
+                    f"Rollout loss {term.name!r} must provide one ordered target "
+                    "alias per maximum-horizon step."
+                )
+            for alias in term.target_fields:
+                if alias in task_targets:
+                    raise ValueError(
+                        "Future-step aliases must not reuse canonical task output names."
+                    )
+                aliases[alias] = route.task_field
+    return aliases
+
+
+def _scan_step_value(tree: Any, index: int, /) -> Any:
+    if isinstance(tree, tuple):
+        return tree[index]
+    return jax.tree_util.tree_map(
+        lambda value: value[index] if eqx.is_array(value) else value,
+        tree,
+    )
+
+
 def fit_operator(
     model: AbstractOperatorModel,
     train: FitInput,
@@ -390,6 +506,8 @@ def fit_operator(
     output_field_map: Mapping[str, str] | None = None,
     loss_terms: Sequence[AbstractOperatorLossTerm] | None = None,
     output_pipeline: OperatorOutputPipeline | None = None,
+    rollout_route: OperatorRolloutRoute | None = None,
+    rollout_policy: OperatorRolloutPolicy | None = None,
     include_model_losses: bool = True,
     optimizer: optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
@@ -397,6 +515,7 @@ def fit_operator(
     optimizer_id: str | None = None,
     evaluation_parameters: EvaluationParametersFn | None = None,
     evaluation_parameters_id: str | None = None,
+    parameter_subspace: ParameterSubspace | None = None,
     learning_rate: float = 1e-3,
     epochs: int = 1,
     steps: int | None = None,
@@ -429,11 +548,29 @@ def fit_operator(
 
     ``evaluation_parameters`` maps ``(optimizer_state, training_parameters)`` to
     the parameter view used for validation, best-model selection, and returned
-    execution models. Checkpointed fits require ``evaluation_parameters_id`` so
-    resume cannot silently change that lifecycle contract.
+    execution models. ``parameter_subspace`` restricts differentiation and
+    optimizer state to exact model leaves. Checkpointed fits require
+    ``evaluation_parameters_id`` so resume cannot silently change that lifecycle
+    contract.
+
+    Rollout loss terms share one task-bound ``rollout_route`` and one static-
+    maximum ``rollout_policy``; future targets remain aliases rather than model
+    outputs.
     """
     if not isinstance(model, AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
+    if parameter_subspace is None:
+        parameter_paths: tuple[str, ...] | None = None
+        if contains_low_rank_updates(model):
+            raise ValueError(
+                "Low-rank operator fitting requires an explicit parameter_subspace."
+            )
+    else:
+        if not isinstance(parameter_subspace, ParameterSubspace):
+            raise TypeError("parameter_subspace must be a ParameterSubspace or None.")
+        parameter_subspace.validate_root(model)
+        validate_low_rank_subspace(model, parameter_subspace)
+        parameter_paths = parameter_subspace.leaf_paths
     if int(epochs) < 0:
         raise ValueError("epochs must be non-negative.")
     if steps is not None and int(steps) < 0:
@@ -470,6 +607,16 @@ def fit_operator(
             raise ValueError("output_pipeline requires a task-bound fit.")
         if not isinstance(output_pipeline, OperatorOutputPipeline):
             raise TypeError("output_pipeline must be an OperatorOutputPipeline.")
+    specified_terms = () if loss_terms is None else tuple(loss_terms)
+    if any(not isinstance(term, AbstractOperatorLossTerm) for term in specified_terms):
+        raise TypeError("loss_terms must contain AbstractOperatorLossTerm instances.")
+    target_aliases = _rollout_target_aliases(
+        model,
+        specified_terms,
+        rollout_route,
+        rollout_policy,
+        task,
+    )
     if optimizer is None:
         if learning_rate < 0.0:
             raise ValueError("learning_rate must be non-negative.")
@@ -561,6 +708,36 @@ def fit_operator(
     model = resolved_dtype.cast_model(model)
     if sharding_policy is not None:
         model = replicate_operator_model(model, sharding_policy)
+    if parameter_paths is None:
+        effective_parameter_shapes: tuple[tuple[int, ...], ...] = ()
+        effective_parameter_dtypes: tuple[str, ...] = ()
+        effective_parameter_dimension = None
+    else:
+        assert parameter_subspace is not None
+        effective_subspace = parameter_subspace.rebase(model, exact_dtype=False)
+        validate_low_rank_subspace(model, effective_subspace)
+        effective_parameter_shapes = effective_subspace.leaf_shapes
+        effective_parameter_dtypes = effective_subspace.leaf_dtypes
+        effective_parameter_dimension = effective_subspace.total_dimension
+
+    def partition_fit_model(current_model):
+        if parameter_paths is None:
+            return partition_trainable(current_model)
+        current_subspace = ParameterSubspace.from_leaf_paths(
+            current_model,
+            parameter_paths,
+        )
+        if current_subspace.leaf_shapes != effective_parameter_shapes:
+            raise ValueError("Operator fit parameter-subspace shapes changed.")
+        if current_subspace.leaf_dtypes != effective_parameter_dtypes:
+            raise ValueError("Operator fit parameter-subspace dtypes changed.")
+        validate_low_rank_subspace(current_model, current_subspace)
+        return current_subspace.initial, current_subspace.frozen
+
+    def reconstruct_fit_model(current_parameters, current_fixed):
+        if parameter_paths is None:
+            return combine_trainable(current_parameters, current_fixed)
+        return eqx.combine(current_parameters, current_fixed)
 
     if normalization == "fit":
         if not isinstance(train, OperatorDataset):
@@ -574,6 +751,7 @@ def fit_operator(
             train.batch,
             train.targets,
             task,
+            target_aliases=target_aliases,
         )
         resolved_normalization = fit_operator_normalization(
             normalization_batch,
@@ -581,6 +759,7 @@ def fit_operator(
             normalize_coordinates=normalize_coordinates,
             weighting=normalization_weighting,
             fields=() if task is None else task.fields,
+            target_aliases=target_aliases,
         )
     else:
         resolved_normalization = normalization
@@ -597,6 +776,7 @@ def fit_operator(
         normalization=resolved_normalization,
         dtype_policy=resolved_dtype,
         sharding_policy=sharding_policy,
+        target_aliases=target_aliases,
     )
     physical_first = first.batch if first.physical_batch is None else first.physical_batch
     physical_targets = (
@@ -653,15 +833,31 @@ def fit_operator(
     terms = (
         _default_losses(resolved_output_map, physical_names=task is not None)
         if loss_terms is None
-        else tuple(loss_terms)
+        else specified_terms
     )
     if not terms:
         raise ValueError("fit_operator requires at least one operator loss term.")
-    if any(not isinstance(term, AbstractOperatorLossTerm) for term in terms):
-        raise TypeError("loss_terms must contain AbstractOperatorLossTerm instances.")
     term_names = tuple(term.name for term in terms)
     if len(set(term_names)) != len(term_names):
         raise ValueError("Operator loss term names must be unique.")
+    rollout_terms = tuple(
+        term
+        for term in terms
+        if isinstance(
+            term,
+            (SupervisedOperatorRolloutLoss, ResidualOperatorRolloutLoss),
+        )
+    )
+    if rollout_terms:
+        assert task is not None
+        assert rollout_route is not None
+        assert rollout_policy is not None
+        _validate_rollout_route(
+            rollout_route,
+            task,
+            resolved_output_map,
+            physical_first,
+        )
 
     validation_config = (
         OperatorValidationPolicy()
@@ -683,52 +879,25 @@ def fit_operator(
         physical_batch,
         key,
     ):
-        if output_pipeline is None:
+        if task is None:
             raw_prediction = _operator_prediction(
                 evaluated_model,
                 batch,
                 key,
                 resolved_dtype,
             )
-            if task is None:
-                return raw_prediction, raw_prediction
-            physical_prediction = physicalize_prediction(
-                raw_prediction,
-                physical_batch,
-                task,
-                resolved_output_map,
-                resolved_normalization,
-            )
-            return raw_prediction, physical_prediction
-        assert task is not None
-        model_key, pipeline_key = split_eval_key(key, 2)
-        raw_prediction = _operator_prediction(
+            return raw_prediction, raw_prediction
+        return _evaluate_operator_step(
             evaluated_model,
             batch,
-            model_key,
+            physical_batch,
+            task,
+            resolved_output_map,
+            output_pipeline,
+            resolved_normalization,
             resolved_dtype,
+            key,
         )
-        physical_prediction = physicalize_prediction(
-            raw_prediction,
-            physical_batch,
-            task,
-            resolved_output_map,
-            resolved_normalization,
-        )
-        constrained_prediction = output_pipeline(
-            physical_prediction,
-            physical_batch,
-            key=pipeline_key,
-        )
-        execution_prediction = executionize_prediction(
-            constrained_prediction,
-            raw_prediction,
-            batch,
-            task,
-            resolved_output_map,
-            resolved_normalization,
-        )
-        return execution_prediction, constrained_prediction
 
     if output_pipeline is not None:
         predict_for_loss(
@@ -738,18 +907,19 @@ def fit_operator(
             jr.key(seed),
         )
 
-    parameters, fixed = partition_trainable(model)
+    parameters, fixed = partition_fit_model(model)
     optimizer_state = optimizer.init(parameters)
     evaluated_parameters = resolve_evaluation_parameters(
         evaluation_parameters,
         optimizer_state,
         parameters,
     )
-    evaluation_model = combine_trainable(evaluated_parameters, fixed)
+    evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     gradient_accumulator = _tree_zeros(parameters)
-    accumulated_cases = 0.0
+    accumulated_support = 0.0
     accumulated_microsteps = 0
-    accumulated_metrics = [0.0] * len(metric_names)
+    accumulated_metric_numerators = [0.0] * len(metric_names)
+    accumulated_metric_supports = [0.0] * len(metric_names)
     reduction_dtype = jnp.dtype(resolved_dtype.reduction_dtype)
     loss_scale_state = (
         OperatorLossScaleState(jnp.asarray(1.0, dtype=reduction_dtype))
@@ -765,17 +935,48 @@ def fit_operator(
         physical_targets,
         key,
         step,
+        active_rollout_horizon,
         *,
         training: bool,
     ):
         storage_model = current_model if training else inference_mode(current_model)
         evaluated_model = resolved_dtype.compute_model(storage_model)
-        execution_prediction, physical_prediction = predict_for_loss(
-            evaluated_model,
-            batch,
-            physical_batch,
-            key,
-        )
+        scanned = None
+        if rollout_terms:
+            assert task is not None
+            assert rollout_route is not None
+            assert rollout_policy is not None
+            _, scanned = _operator_rollout_scan(
+                _operator_prediction,
+                evaluated_model,
+                physical_batch,
+                batch,
+                rollout_route,
+                rollout_policy,
+                task,
+                resolved_output_map,
+                output_pipeline,
+                resolved_normalization,
+                resolved_dtype,
+                sharding_policy,
+                key,
+                active_horizon=active_rollout_horizon,
+            )
+            (
+                execution_predictions,
+                physical_predictions,
+                execution_batches,
+                physical_batches,
+            ) = scanned
+            execution_prediction = _scan_step_value(execution_predictions, 0)
+            physical_prediction = _scan_step_value(physical_predictions, 0)
+        else:
+            execution_prediction, physical_prediction = predict_for_loss(
+                evaluated_model,
+                batch,
+                physical_batch,
+                key,
+            )
         context = OperatorLossContext(
             execution_prediction=execution_prediction,
             execution_batch=batch,
@@ -786,14 +987,117 @@ def fit_operator(
             normalization=resolved_normalization,
             task=task,
         )
-        values = tuple(
-            resolved_dtype.reduction(
-                term(
+        case_support = jnp.asarray(_case_count(batch), dtype=reduction_dtype)
+
+        def recurrent_contribution(term, term_index):
+            assert scanned is not None
+            assert rollout_policy is not None
+            assert rollout_route is not None
+            assert active_rollout_horizon is not None
+            numerator = jnp.asarray(0.0, dtype=reduction_dtype)
+            support = jnp.asarray(0.0, dtype=reduction_dtype)
+            empty_targets = OperatorTargetBatch(
+                {},
+                case_axes=batch.case_axes,
+                case_shape=batch.case_shape,
+            )
+            for depth in range(int(active_rollout_horizon)):
+                active = jnp.asarray(1.0, dtype=reduction_dtype)
+                time_weight = jnp.asarray(
+                    term.time_weights[depth],
+                    dtype=reduction_dtype,
+                )
+                physical_step_prediction = _scan_step_value(
+                    physical_predictions,
+                    depth,
+                )
+                physical_step_batch = _scan_step_value(physical_batches, depth)
+                if isinstance(term, SupervisedOperatorRolloutLoss):
+                    predicted = physical_step_prediction.field(rollout_route.task_field)
+                    truth = physical_targets.field(term.target_fields[depth])
+                    query = physical_step_batch.query(predicted.query_name)
+                    mask = query.mask_array(case_shape=physical_step_batch.case_shape)
+                    trailing = (1,) * (predicted.values.ndim - mask.ndim)
+                    expanded_mask = mask.reshape(mask.shape + trailing)
+                    prediction_values = jnp.where(
+                        expanded_mask,
+                        predicted.values,
+                        0.0,
+                    )
+                    target_values = jnp.where(
+                        expanded_mask,
+                        truth.values,
+                        0.0,
+                    )
+                    per_case = operator_l2_loss(
+                        prediction_values,
+                        target_values,
+                        query,
+                        squared=True,
+                        reduction="none",
+                    )
+                    weighted = (
+                        jnp.asarray(term.weight, dtype=reduction_dtype)
+                        * active
+                        * time_weight
+                        * jnp.sum(per_case, dtype=reduction_dtype)
+                    )
+                    numerator = numerator + weighted
+                    support = support + active * time_weight * case_support
+                else:
+                    execution_step_prediction = _scan_step_value(
+                        execution_predictions,
+                        depth,
+                    )
+                    execution_step_batch = _scan_step_value(execution_batches, depth)
+                    residual_context = OperatorLossContext(
+                        execution_prediction=execution_step_prediction,
+                        execution_batch=execution_step_batch,
+                        execution_targets=empty_targets,
+                        physical_prediction=physical_step_prediction,
+                        physical_batch=physical_step_batch,
+                        physical_targets=empty_targets,
+                        normalization=resolved_normalization,
+                        task=task,
+                    )
+                    residual = term.residual_term.contribution(
+                        evaluated_model,
+                        physical_step_prediction,
+                        physical_step_batch,
+                        empty_targets,
+                        key=jr.fold_in(
+                            jr.fold_in(key, _RESIDUAL_ROLLOUT_KEY_DOMAIN),
+                            term_index * int(rollout_policy.maximum_horizon) + depth,
+                        ),
+                        step=step,
+                        training=training,
+                        context=residual_context,
+                    )
+                    numerator = numerator + (
+                        jnp.asarray(term.weight, dtype=reduction_dtype)
+                        * active
+                        * time_weight
+                        * residual.numerator
+                    )
+                    support = support + active * time_weight * residual.support
+            return _ObjectiveContribution(numerator, support)
+
+        term_contributions = tuple(
+            (
+                recurrent_contribution(term, index)
+                if isinstance(
+                    term,
+                    (SupervisedOperatorRolloutLoss, ResidualOperatorRolloutLoss),
+                )
+                else term.contribution(
                     evaluated_model,
                     physical_prediction,
                     physical_batch,
                     physical_targets,
-                    key=jr.fold_in(key, index),
+                    key=jr.fold_in(
+                        jr.fold_in(key, _LOSS_TERM_KEY_DOMAIN),
+                        index,
+                    ),
                     step=step,
                     training=training,
                     context=context,
@@ -803,19 +1107,29 @@ def fit_operator(
         )
         attached = (
             tuple(
-                resolved_dtype.reduction(value)
+                _ObjectiveContribution(
+                    resolved_dtype.reduction(value) * case_support,
+                    case_support,
+                )
                 for value in model_loss_values(
                     evaluated_model,
-                    key=jr.fold_in(key, len(terms)),
+                    key=jr.fold_in(key, _MODEL_OBJECTIVE_KEY_DOMAIN),
                     iter_=step,
                 )
             )
             if include_model_losses
             else ()
         )
-        components = values + attached
-        total = sum(components, start=jnp.asarray(0.0, dtype=jnp.float32))
-        return resolved_dtype.reduction(total), components
+        components = term_contributions + attached
+        total_value = sum(
+            (component.value for component in components),
+            start=jnp.asarray(0.0, dtype=reduction_dtype),
+        )
+        total = _ObjectiveContribution(
+            resolved_dtype.reduction(total_value) * case_support,
+            case_support,
+        )
+        return total, components
 
     def gradient_fn(
         current_parameters,
@@ -825,10 +1139,11 @@ def fit_operator(
         physical_targets,
         key,
         step,
+        active_rollout_horizon,
         loss_scale_state_,
     ):
         def objective(candidate):
-            current_model = combine_trainable(candidate, fixed)
+            current_model = reconstruct_fit_model(candidate, fixed)
             total, components = loss_components(
                 current_model,
                 batch,
@@ -837,16 +1152,24 @@ def fit_operator(
                 physical_targets,
                 key,
                 step,
+                active_rollout_horizon,
                 training=True,
             )
             scaled = (
-                total
+                total.numerator
                 if loss_scale_policy is None
-                else loss_scale_policy.scale_loss(total, loss_scale_state_)
+                else loss_scale_policy.scale_loss(
+                    total.numerator,
+                    loss_scale_state_,
+                )
             )
-            return scaled, (total, components)
+            total_arrays = (total.numerator, total.support)
+            component_arrays = tuple(
+                (component.numerator, component.support) for component in components
+            )
+            return scaled, (total_arrays, component_arrays)
 
-        (_, (total, components)), gradient = eqx.filter_value_and_grad(
+        (_, (total_arrays, component_arrays)), gradient = eqx.filter_value_and_grad(
             objective,
             has_aux=True,
         )(current_parameters)
@@ -855,10 +1178,10 @@ def fit_operator(
                 gradient,
                 loss_scale_state_,
             )
-        finite = tree_all_finite((gradient, total, components))
+        finite = tree_all_finite((gradient, total_arrays, component_arrays))
         if sharding_policy is not None:
             finite = eqx.filter_shard(finite, sharding_policy.replicated)
-        return total, components, gradient, finite
+        return total_arrays, component_arrays, gradient, finite
 
     def update_fn(current_parameters, current_state, gradient):
         updates, next_state = optimizer.update(
@@ -898,6 +1221,7 @@ def fit_operator(
                 normalization=resolved_normalization,
                 dtype_policy=resolved_dtype,
                 sharding_policy=sharding_policy,
+                target_aliases=target_aliases,
             )
             next_batch += 1
         with loader.epoch(epoch, start_batch=next_batch) as batches:
@@ -910,13 +1234,23 @@ def fit_operator(
                     normalization=resolved_normalization,
                     dtype_policy=resolved_dtype,
                     sharding_policy=sharding_policy,
+                    target_aliases=target_aliases,
                 )
 
+    def resolved_active_horizon(step: int) -> int | None:
+        if not rollout_terms:
+            return None
+        assert rollout_policy is not None
+        return int(
+            jax.device_get(rollout_policy.active_horizon(jnp.asarray(step, dtype=float)))
+        )
+
     def evaluate(current_model, loader: OperatorBatchLoader, step: int):
-        totals = [0.0] * len(metric_names)
-        total_cases = 0
+        numerators = [0.0] * len(metric_names)
+        supports = [0.0] * len(metric_names)
+        batch_count = 0
+        active_rollout_horizon = resolved_active_horizon(step)
         for batch_index, training_batch in enumerate(prepared_epoch(loader, 0)):
-            count = _case_count(training_batch.batch)
             total, components = loss_components(
                 current_model,
                 training_batch.batch,
@@ -933,17 +1267,24 @@ def fit_operator(
                 ),
                 jr.fold_in(jr.fold_in(master_key, int(step)), 1000 + batch_index),
                 jnp.asarray(step, dtype=float),
+                active_rollout_horizon,
                 training=False,
             )
-            values = (total,) + components
-            for index, value in enumerate(values):
-                totals[index] += float(jax.device_get(value)) * count
-            total_cases += count
-        if total_cases == 0:
+            contributions = (total,) + components
+            for index, contribution in enumerate(contributions):
+                numerators[index] += float(jax.device_get(contribution.numerator))
+                supports[index] += float(jax.device_get(contribution.support))
+            batch_count += 1
+        if batch_count == 0:
             raise ValueError("Evaluation data must contain at least one batch.")
         return {
-            name: value / total_cases
-            for name, value in zip(metric_names, totals, strict=True)
+            name: (0.0 if support == 0.0 else numerator / support)
+            for name, numerator, support in zip(
+                metric_names,
+                numerators,
+                supports,
+                strict=True,
+            )
         }
 
     maximum_steps = (
@@ -977,9 +1318,28 @@ def fit_operator(
         "task_fingerprint": None if task is None else task.fingerprint,
         "output_field_map": resolved_output_map,
         "loss_terms": [term.fingerprint for term in terms],
+        "objective_aggregation": "numerator_support",
+        "rollout_route": (None if rollout_route is None else asdict(rollout_route)),
+        "rollout_policy": (None if rollout_policy is None else asdict(rollout_policy)),
         "include_model_losses": bool(include_model_losses),
+        "key_domains": {
+            "rollout_model": _ROLLOUT_MODEL_KEY_DOMAIN,
+            "loss_term": _LOSS_TERM_KEY_DOMAIN,
+            "residual_rollout": _RESIDUAL_ROLLOUT_KEY_DOMAIN,
+            "model_objective": _MODEL_OBJECTIVE_KEY_DOMAIN,
+        },
         "optimizer_id": resolved_optimizer_id,
         "gradient_accumulation": int(gradient_accumulation),
+        "parameter_subspace": (
+            None
+            if parameter_paths is None
+            else {
+                "paths": list(parameter_paths),
+                "shapes": [list(shape) for shape in effective_parameter_shapes],
+                "dtypes": list(effective_parameter_dtypes),
+                "total_dimension": effective_parameter_dimension,
+            }
+        ),
         "normalization": (
             None if resolved_normalization is None else resolved_normalization.to_dict()
         ),
@@ -1026,13 +1386,7 @@ def fit_operator(
     initial_metrics: dict[str, float]
     if resume_manifest is not None:
         assert checkpoint is not None
-        state_template = (
-            optimizer_state,
-            gradient_accumulator,
-            jnp.asarray(accumulated_cases),
-            jnp.asarray(accumulated_microsteps, dtype=jnp.int32),
-            loss_scale_state,
-        )
+        state_template = (optimizer_state, loss_scale_state)
         restored = load_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
@@ -1042,16 +1396,12 @@ def fit_operator(
         if restored.metadata["fit_contract"] != fit_contract:
             raise ValueError("Operator fit checkpoint contract mismatch.")
         model, best_model = restored.model
-        (
-            optimizer_state,
-            gradient_accumulator,
-            accumulated_cases_array,
-            accumulated_microsteps_array,
-            loss_scale_state,
-        ) = restored.optimizer_state
-        accumulated_cases = float(jax.device_get(accumulated_cases_array))
-        accumulated_microsteps = int(jax.device_get(accumulated_microsteps_array))
+        optimizer_state, loss_scale_state = restored.optimizer_state
         metadata = restored.metadata
+        if metadata.get("update_boundary") is not True:
+            raise ValueError(
+                "Operator fit checkpoints must publish at optimizer-update boundaries."
+            )
         progress = TrainingProgress(**metadata["progress"])
         if progress.update_step != restored.step:
             raise ValueError("Checkpoint progress disagrees with its update step.")
@@ -1070,16 +1420,17 @@ def fit_operator(
         validation_steps = [int(value) for value in metadata["validation_steps"]]
         validation_history = [dict(values) for values in metadata["validation_metrics"]]
         initial_metrics = dict(metadata["initial_metrics"])
-        accumulated_metrics = [float(value) for value in metadata["accumulated_metrics"]]
+        accumulated_metric_numerators = [0.0] * len(metric_names)
+        accumulated_metric_supports = [0.0] * len(metric_names)
         prior_training_seconds = float(metadata["training_seconds"])
         resumed_from_step = progress.update_step
-        parameters, fixed = partition_trainable(model)
+        parameters, fixed = partition_fit_model(model)
         evaluated_parameters = resolve_evaluation_parameters(
             evaluation_parameters,
             optimizer_state,
             parameters,
         )
-        evaluation_model = combine_trainable(evaluated_parameters, fixed)
+        evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     else:
         initial_metrics = evaluate(evaluation_model, raw_train_loader, 0)
         if raw_validation_loader is not None:
@@ -1103,7 +1454,7 @@ def fit_operator(
             control.best_payload = evaluation_model
 
     def save_progress(training_seconds: float) -> None:
-        if checkpoint is None:
+        if checkpoint is None or accumulated_microsteps != 0:
             return
         primary = sharding_policy is None or sharding_policy.is_primary_process
         if not primary:
@@ -1114,13 +1465,7 @@ def fit_operator(
         save_operator_training_checkpoint(
             checkpoint,
             (model, best_model),
-            (
-                optimizer_state,
-                gradient_accumulator,
-                jnp.asarray(accumulated_cases),
-                jnp.asarray(accumulated_microsteps, dtype=jnp.int32),
-                loss_scale_state,
-            ),
+            (optimizer_state, loss_scale_state),
             step=control.progress.update_step,
             key=master_key,
             normalization=resolved_normalization,
@@ -1130,12 +1475,12 @@ def fit_operator(
                 "fit_contract": fit_contract,
                 "data_contract": current_data_contract,
                 "progress": asdict(control.progress),
+                "update_boundary": True,
                 "initial_metrics": initial_metrics,
                 "train_steps": train_steps,
                 "train_metrics": train_history,
                 "validation_steps": validation_steps,
                 "validation_metrics": validation_history,
-                "accumulated_metrics": accumulated_metrics,
                 "training_seconds": float(training_seconds),
             },
         )
@@ -1238,9 +1583,9 @@ def fit_operator(
                         ),
                         key,
                         jnp.asarray(control.progress.update_step + 1, dtype=float),
+                        resolved_active_horizon(control.progress.update_step + 1),
                         loss_scale_state,
                     )
-                    count = _case_count(training_batch.batch)
                     values = (total,) + components
                     finite = bool(jax.device_get(finite_array))
                     control.progress = replace(
@@ -1250,9 +1595,10 @@ def fit_operator(
                     )
                     if not finite:
                         gradient_accumulator = _tree_zeros(parameters)
-                        accumulated_cases = 0.0
+                        accumulated_support = 0.0
                         accumulated_microsteps = 0
-                        accumulated_metrics = [0.0] * len(metric_names)
+                        accumulated_metric_numerators = [0.0] * len(metric_names)
+                        accumulated_metric_supports = [0.0] * len(metric_names)
                         if loss_scale_policy is None or not loss_scale_policy.dynamic:
                             raise FloatingPointError(
                                 "Non-finite operator loss or gradient encountered."
@@ -1275,12 +1621,17 @@ def fit_operator(
                     gradient_accumulator = _tree_add_scaled(
                         gradient_accumulator,
                         gradient,
-                        float(count),
+                        1.0,
                     )
-                    accumulated_cases += float(count)
+                    accumulated_support += float(jax.device_get(total[1]))
                     accumulated_microsteps += 1
-                    for index, value in enumerate(values):
-                        accumulated_metrics[index] += float(jax.device_get(value)) * count
+                    for index, (numerator, support) in enumerate(values):
+                        accumulated_metric_numerators[index] += float(
+                            jax.device_get(numerator)
+                        )
+                        accumulated_metric_supports[index] += float(
+                            jax.device_get(support)
+                        )
                     if (
                         accumulated_microsteps < int(gradient_accumulation)
                         and training_batch.batch_index + 1
@@ -1290,7 +1641,7 @@ def fit_operator(
 
                     averaged_gradient = _tree_scale(
                         gradient_accumulator,
-                        1.0 / accumulated_cases,
+                        1.0 / accumulated_support,
                     )
                     (
                         candidate_parameters,
@@ -1308,23 +1659,25 @@ def fit_operator(
                         )
                     parameters = candidate_parameters
                     optimizer_state = candidate_optimizer_state
-                    model = combine_trainable(parameters, fixed)
+                    model = reconstruct_fit_model(parameters, fixed)
                     update_step = control.progress.update_step + 1
                     control.complete_update(update_step)
                     metrics = {
-                        name: value / accumulated_cases
-                        for name, value in zip(
+                        name: (0.0 if support == 0.0 else numerator / support)
+                        for name, numerator, support in zip(
                             metric_names,
-                            accumulated_metrics,
+                            accumulated_metric_numerators,
+                            accumulated_metric_supports,
                             strict=True,
                         )
                     }
                     train_steps.append(update_step)
                     train_history.append(metrics)
                     gradient_accumulator = _tree_zeros(parameters)
-                    accumulated_cases = 0.0
+                    accumulated_support = 0.0
                     accumulated_microsteps = 0
-                    accumulated_metrics = [0.0] * len(metric_names)
+                    accumulated_metric_numerators = [0.0] * len(metric_names)
+                    accumulated_metric_supports = [0.0] * len(metric_names)
                     if loss_scale_policy is not None:
                         loss_scale_state = loss_scale_policy.on_finite_update(
                             loss_scale_state
@@ -1351,7 +1704,7 @@ def fit_operator(
                             optimizer_state,
                             parameters,
                         )
-                        evaluation_model = combine_trainable(
+                        evaluation_model = reconstruct_fit_model(
                             evaluated_parameters,
                             fixed,
                         )
@@ -1402,7 +1755,7 @@ def fit_operator(
         optimizer_state,
         parameters,
     )
-    evaluation_model = combine_trainable(evaluated_parameters, fixed)
+    evaluation_model = reconstruct_fit_model(evaluated_parameters, fixed)
     if (
         raw_validation_loader is not None
         and validation_config is not None

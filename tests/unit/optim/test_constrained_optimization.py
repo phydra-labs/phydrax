@@ -335,7 +335,9 @@ def test_sqp_filtered_jit_restoration_failure_preserves_accepted_iterate():
             inner_maximum_steps=30,
         ),
         phx.optim.SQP(),
-        phx.optim.PrimalDualNewtonKrylov(),
+        phx.optim.PrimalDualInteriorPoint(
+            mode="matrix-free-centered",
+        ),
     ],
 )
 def test_native_constrained_methods_support_jvp_vmap_and_pytree_parameters(method):

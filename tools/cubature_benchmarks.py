@@ -6,26 +6,25 @@ from __future__ import annotations
 
 import json
 import math
-import time
 
-import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
 def _timed(callback, *, repeats: int = 5):
-    started = time.perf_counter()
-    first = callback()
-    jax.block_until_ready(first)
-    first_ms = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    value = first
-    for _ in range(repeats):
-        value = callback()
-        jax.block_until_ready(value)
-    steady_ms = 1e3 * (time.perf_counter() - started) / repeats
-    return float(value), first_ms, steady_ms
+    _first, first_seconds = measure_synchronized(callback)
+    value, distribution = measure_repeated(
+        callback,
+        warmup=0,
+        repeats=repeats,
+    )
+    return (
+        float(value),
+        1_000.0 * first_seconds,
+        1_000.0 * float(distribution.mean_seconds),
+    )
 
 
 def _disk_records():

@@ -13,7 +13,7 @@ def _mesh(nodes=(0.0, 0.5, 1.0), *, identity="solve-direct-mesh"):
 
 
 def _method():
-    return phx.optim.FilterInteriorPoint(max_dense_dimension=128)
+    return phx.optim.PrimalDualInteriorPoint(mode="dense-filter", max_dense_dimension=128)
 
 
 def _termination():
@@ -54,13 +54,19 @@ def _analytic_dae_problem():
     )
 
 
-def _plan(*, variable_duration=False, identity="analytic-direct-plan"):
+def _plan(
+    *,
+    variable_duration=False,
+    identity="analytic-direct-plan",
+    exact_hessian=False,
+):
     return phx.control.DirectCollocationPlan(
         _mesh(identity=f"{identity}:mesh"),
         method=phx.solver.ThetaMethod(0.5, endpoint=False),
         variable_duration=variable_duration,
         derivatives=phx.control.DirectCollocationDerivativePolicy(
             verify=True,
+            hessian="exact-sparse" if exact_hessian else "limited-memory",
             num_verification_probes=2,
         ),
         audit=phx.control.DirectCollocationAuditPolicy(
@@ -84,13 +90,32 @@ def test_native_direct_collocation_solves_analytic_controlled_dae():
     )
     assert bool(result.successful)
     assert bool(result.optimization_result.successful)
-    assert jnp.allclose(result.decision.states[:, 0], jnp.asarray((0.0, 0.5, 1.0)), atol=1e-6)
-    assert jnp.allclose(result.decision.states[:, 1], result.decision.states[:, 0], atol=1e-6)
+    assert jnp.allclose(
+        result.decision.states[:, 0], jnp.asarray((0.0, 0.5, 1.0)), atol=1e-6
+    )
+    assert jnp.allclose(
+        result.decision.states[:, 1], result.decision.states[:, 0], atol=1e-6
+    )
     assert jnp.allclose(result.decision.controls, 1.0, atol=1e-6)
     assert result.diagnostics.maximum_defect <= 1e-6
     assert result.diagnostics.maximum_constraint_violation <= 1e-6
     assert not result.diagnostics.off_grid_certified
     assert result.optimization_result.certificate is not None
+
+
+def test_native_sparse_augmented_direct_collocation_uses_exact_derivatives():
+    result = phx.control.solve_direct_collocation(
+        _analytic_dae_problem(),
+        _plan(exact_hessian=True, identity="analytic-direct-sparse"),
+        jnp.asarray(((0.0, 0.0), (0.5, 0.5), (1.0, 1.0))),
+        jnp.ones((2, 1)),
+        method=phx.optim.PrimalDualInteriorPoint(mode="sparse-augmented"),
+        termination=_termination(),
+    )
+    assert bool(result.successful)
+    assert result.structured_result is not None
+    assert result.diagnostics.maximum_defect <= 1e-6
+    assert result.diagnostics.maximum_constraint_violation <= 1e-6
 
 
 def test_variable_duration_recovers_unit_time_integrator_solution():
@@ -206,7 +231,6 @@ def test_off_grid_audit_preserves_matrix_state_and_control_events():
     assert bool(result.successful)
     assert result.decision.states.shape == (3, 2, 2)
     assert result.diagnostics.maximum_off_grid_defect <= 1e-7
-
 
 
 def test_direct_collocation_rejects_out_of_bound_initial_guess():

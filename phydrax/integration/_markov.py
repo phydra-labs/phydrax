@@ -7,7 +7,7 @@ from __future__ import annotations
 import coordax as cx
 import jax.numpy as jnp
 
-from .._sampling import MarkovSampleResult
+from .._sampling import AbstractChainSampleResult
 from ._targets import WeightedSampleTarget
 
 
@@ -18,15 +18,15 @@ def _dimension(value: str, name: str, /) -> str:
 
 
 def markov_chain_measure(
-    result: MarkovSampleResult,
+    result: AbstractChainSampleResult,
     /,
     *,
     chain_dim: str = "__phydrax_markov_chain",
     draw_dim: str = "__phydrax_markov_draw",
 ) -> WeightedSampleTarget:
     """Lower correlated chain-by-draw samples to an equal-weight empirical measure."""
-    if not isinstance(result, MarkovSampleResult):
-        raise TypeError("result must be a MarkovSampleResult.")
+    if not isinstance(result, AbstractChainSampleResult):
+        raise TypeError("result must implement AbstractChainSampleResult.")
     chain = _dimension(chain_dim, "chain_dim")
     draw = _dimension(draw_dim, "draw_dim")
     if chain == draw:
@@ -45,7 +45,7 @@ def markov_chain_measure(
         normalized=True,
         replicate_ids=replicate_ids,
         sample_axes=(chain, draw),
-        provenance=f"markov:{result.kernel_id}:{result.proposal_id}",
+        provenance=result.chain_provenance,
         independent=False,
     )
 

@@ -305,8 +305,6 @@ class NLoptMinimize(AbstractMinimizationMethod):
         )
 
 
-
-
 def ceres_least_squares(
     problem: NonlinearLeastSquaresProblem,
     initial_parameters: PyTree[Any],

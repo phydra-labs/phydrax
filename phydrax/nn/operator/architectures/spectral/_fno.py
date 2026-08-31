@@ -20,6 +20,7 @@ from jaxtyping import Array, ArrayLike, Key
 from phydrax._doc import DOC_KEY0
 from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
+from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._scan import (
     pack_scan_modules,
@@ -666,6 +667,17 @@ class _AbstractFNO(AbstractOperatorModel):
             replacements,
         )
 
+    def dependency_support(
+        self,
+        axes: Sequence[OperatorAxis] | None = None,
+        /,
+    ) -> OperatorDependencySupport:
+        support = OperatorDependencySupport.global_(
+            len(self.n_modes),
+            evidence="exact",
+        )
+        return support if axes is None else support.on_axes(axes)
+
     def _validate_axes(self, axes: tuple[OperatorAxis, ...], /) -> None:
         if len(axes) != len(self.n_modes):
             raise ValueError(
@@ -758,7 +770,9 @@ class _AbstractFNO(AbstractOperatorModel):
             spacing = jnp.diff(axis.nodes)
             array = eqx.error_if(
                 array,
-                jnp.logical_not(
+                jnp.any(~jnp.isfinite(axis.nodes))
+                | jnp.any(spacing <= 0.0)
+                | jnp.logical_not(
                     jnp.allclose(
                         spacing,
                         jnp.mean(spacing),
@@ -766,7 +780,8 @@ class _AbstractFNO(AbstractOperatorModel):
                         atol=1e-8,
                     )
                 ),
-                f"FNO requires uniformly spaced nodes; axis {axis.name!r} is nonuniform.",
+                f"FNO requires finite, strictly increasing uniform nodes; "
+                f"axis {axis.name!r} is invalid.",
             )
         if self.coordinate_embedding:
             array = jnp.concatenate(
@@ -898,7 +913,7 @@ def _execute_explicit_fno(
     key: EvalKey,
 ) -> Array:
     if model._scan_enabled and model._scan_static is not None:
-        dynamic = stack_scan_dynamics(model.blocks)
+        dynamic = stack_scan_dynamics(model.blocks, model._scan_static)
         if dynamic is not None:
             sites = jnp.arange(len(model.blocks), dtype=jnp.uint32)
             return scan_apply_with_data(

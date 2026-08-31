@@ -9,7 +9,10 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._spectral._spherical import (
+    _spherical_mode_layout_id,
+    _SPHERICAL_MODE_NORMALIZATION,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -71,7 +74,7 @@ class SphericalModeLayout(StrictModule, NonTrainableState):
         multiplicities = tuple(
             0 if ell < abs(spin_) else 2 * ell + 1 for ell in range(limit)
         )
-        normalization = "s2fft-orthonormal-condon-shortley"
+        normalization = _SPHERICAL_MODE_NORMALIZATION
         self.degrees = jnp.asarray(degrees)
         self.orders = jnp.asarray(orders)
         self.valid_mask = jnp.asarray(valid)
@@ -87,25 +90,12 @@ class SphericalModeLayout(StrictModule, NonTrainableState):
         self.level_multiplicities = multiplicities
         self.mode_ids = mode_ids
         self.normalization = normalization
-        self.layout_id = canonical_fingerprint(
-            {
-                "kind": "spherical-mode-layout-v1",
-                "bandlimit": limit,
-                "spin": spin_,
-                "reality": reality_,
-                "valid": array_tree_fingerprint(valid),
-                "independent": array_tree_fingerprint(independent),
-                "normalization": normalization,
-            }
-        )
+        self.layout_id = _spherical_mode_layout_id(limit, spin_, reality_)
 
     def _coefficient_axes(self, array: Array, /) -> tuple[int, int, bool]:
         if array.ndim >= 2 and tuple(array.shape[-2:]) == self.coefficient_shape:
             return array.ndim - 2, array.ndim - 1, False
-        if (
-            array.ndim >= 3
-            and tuple(array.shape[-3:-1]) == self.coefficient_shape
-        ):
+        if array.ndim >= 3 and tuple(array.shape[-3:-1]) == self.coefficient_shape:
             return array.ndim - 3, array.ndim - 2, True
         raise ValueError(
             "Spherical coefficients must end in (ell, m) or (ell, m, channels) "
@@ -145,7 +135,9 @@ class SphericalModeLayout(StrictModule, NonTrainableState):
         sign = self.conjugate_signs
         sign_shape = [1] * array.ndim
         sign_shape[order_axis] = sign.size
-        mirrored = jnp.conj(mirrored) * sign.reshape(tuple(sign_shape)).astype(array.dtype)
+        mirrored = jnp.conj(mirrored) * sign.reshape(tuple(sign_shape)).astype(
+            array.dtype
+        )
         negative = self._broadcast_mode_array(
             self.valid_mask & (self.orders < 0),
             array,

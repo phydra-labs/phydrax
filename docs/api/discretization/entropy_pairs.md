@@ -81,7 +81,7 @@ provides the explicit diagnostic using the declared entropy pair and physical ax
 
 Pass an entropy pair through the standard compiler:
 
-```python
+```text
 compiled = phx.equations.compile_conservation_problem(
     problem,
     discretization,

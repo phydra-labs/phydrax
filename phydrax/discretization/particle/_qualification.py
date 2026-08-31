@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
-from ..._strict import StrictModule
+from ..._strict import AbstractAttribute, StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -35,6 +35,9 @@ class ParticleQualificationClaim(StrEnum):
     ANGULAR_MOMENTUM_CONSERVATIVE = "angular-momentum-conservative"
     ENERGY_CONSERVATIVE = "energy-conservative"
     ENERGY_DISSIPATIVE = "energy-dissipative"
+    CONTACT_HISTORY_CONTINUITY = "contact-history-continuity"
+    FRICTION_CONE = "friction-cone"
+    RESTITUTION_ACCURACY = "restitution-accuracy"
     DENSITY_CONSTRAINT = "density-constraint"
     DIVERGENCE_CONSTRAINT = "divergence-constraint"
     WALL_ACTION_REACTION = "wall-action-reaction"
@@ -108,7 +111,11 @@ class ParticleConstraintResiduals(StrictModule):
     free_surface_dirichlet: Array
 
 
-class ParticleQualificationProfile(StrictModule, NonTrainableState):
+class AbstractParticleQualificationProfile(StrictModule, NonTrainableState):
+    profile_id: AbstractAttribute[str]
+
+
+class ParticleQualificationProfile(AbstractParticleQualificationProfile):
     density_linf_tolerance: float = eqx.field(static=True)
     density_l2_tolerance: float = eqx.field(static=True)
     divergence_linf_tolerance: float = eqx.field(static=True)
@@ -182,7 +189,7 @@ class ParticleQualificationResult(StrictModule, NonTrainableState):
     def __init__(
         self,
         maturity: ParticleMethodMaturity,
-        profile: ParticleQualificationProfile,
+        profile: AbstractParticleQualificationProfile,
         evidence: tuple[ParticleClaimEvidence, ...],
         execution_successful: ArrayLike,
         numerical_constraints_satisfied: ArrayLike,
@@ -190,8 +197,8 @@ class ParticleQualificationResult(StrictModule, NonTrainableState):
     ):
         if not isinstance(maturity, ParticleMethodMaturity):
             raise TypeError("maturity must be a ParticleMethodMaturity.")
-        if not isinstance(profile, ParticleQualificationProfile):
-            raise TypeError("profile must be a ParticleQualificationProfile.")
+        if not isinstance(profile, AbstractParticleQualificationProfile):
+            raise TypeError("profile must be an AbstractParticleQualificationProfile.")
         if any(not isinstance(value, ParticleClaimEvidence) for value in evidence):
             raise TypeError("evidence must contain ParticleClaimEvidence values.")
         claim_satisfied = (
@@ -299,6 +306,7 @@ def particle_constraint_residuals(
 
 
 __all__ = [
+    "AbstractParticleQualificationProfile",
     "ParticleBenchmarkIdentity",
     "ParticleClaimEvidence",
     "ParticleConstraintResiduals",

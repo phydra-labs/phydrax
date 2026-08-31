@@ -39,9 +39,10 @@ from ._conservation import (
 from ._constraints import (
     BoundaryLiftPlan,
     ConstrainedBasisPlan,
-    EndpointConstraint,
     PreparedBoundaryLift,
     SpectralBoundaryConditionPlan,
+    SpectralTraceConstraint,
+    SpectralTraceTerm,
 )
 from ._coordinates import HermitianSpectralCoordinates
 from ._dealias import (
@@ -51,12 +52,31 @@ from ._dealias import (
     ModalFilterPlan,
     NoDealiasingPlan,
     PaddingDealiasingPlan,
+    PolynomialClosureDealiasingPlan,
     PreparedDealiasingPlan,
+)
+from ._diagnostics import (
+    ModalDecayReport,
+    PreparedSpectralModalDiagnostics,
+    SpectralModalDiagnosticsPlan,
+)
+from ._eigen_verification import (
+    compare_spectral_eigen_resolutions,
+    SpectralEigenResolutionPolicy,
+    SpectralEigenResolutionReport,
 )
 from ._galerkin import PreparedSpectralGalerkin, SpectralGalerkinMethodPlan
 from ._incompressible import (
     IncompressibleSpectralDiagnostics,
     PeriodicLerayProjector,
+)
+from ._lattice import (
+    BrillouinZonePlan,
+    HarmonicTruncationKind,
+    LatticeHarmonicDiscretization,
+    LatticeHarmonicLayout,
+    LatticeHarmonicPlan,
+    PreparedBrillouinZone,
 )
 from ._method import (
     PreparedPseudospectralMethod,
@@ -67,9 +87,14 @@ from ._method import (
 from ._operators import (
     PreparedSpectralOperator,
     spectral_derivative_operator,
+    spectral_hilbert_operator,
     spectral_laplacian_operator,
 )
 from ._precision import SpectralPrecisionPolicy
+from ._rational import (
+    RationalChebyshevHalfLineBasisPlan,
+    RationalChebyshevLineBasisPlan,
+)
 from ._space import TensorSpectralDiscretization, TensorSpectralPlan
 from ._spherical import (
     spherical_laplacian_operator,
@@ -82,6 +107,12 @@ from ._symmetry import (
     TensorSpectralSymmetry,
 )
 from ._tau import GeneralizedTauPlan, PreparedTauSystem, TauSolveResult
+from ._transfer import (
+    prepare_spectral_modal_transfer,
+    PreparedSpectralModalTransfer,
+    SpectralModalTransferPlan,
+    SpectralModalTransferReport,
+)
 
 
 __all__ = [
@@ -97,26 +128,35 @@ __all__ = [
     "ChannelStokesPlan",
     "ChannelStokesSolveResult",
     "DealiasingKind",
+    "BrillouinZonePlan",
     "DealiasingReport",
-    "EndpointConstraint",
     "FourierBasisPlan",
     "HermitianSpectralCoordinates",
     "IncompressibleSpectralDiagnostics",
     "GeneralizedTauPlan",
+    "HarmonicTruncationKind",
     "LegendreBasisPlan",
+    "LatticeHarmonicDiscretization",
+    "LatticeHarmonicLayout",
+    "LatticeHarmonicPlan",
     "ModalFilterPlan",
+    "ModalDecayReport",
     "NoDealiasingPlan",
     "PaddingDealiasingPlan",
+    "PolynomialClosureDealiasingPlan",
     "PeriodicLerayProjector",
     "PreparedBoundaryLift",
     "PreparedDealiasingPlan",
     "PreparedPseudospectralMethod",
+    "PreparedSpectralModalDiagnostics",
+    "PreparedSpectralModalTransfer",
     "PreparedSpectralAxis",
     "PreparedSpectralConservationDynamics",
     "PreparedSpectralConservationMethod",
     "PreparedChannelStokesSolver",
     "PreparedSpectralGalerkin",
     "PreparedSpectralOperator",
+    "PreparedBrillouinZone",
     "PreparedTauSystem",
     "TensorSpectralSymmetry",
     "PseudospectralMethodPlan",
@@ -127,6 +167,8 @@ __all__ = [
     "SphericalSampling",
     "SphericalSpectralDiscretization",
     "SphericalSpectralPlan",
+    "RationalChebyshevHalfLineBasisPlan",
+    "RationalChebyshevLineBasisPlan",
     "SpectralBasisFamily",
     "SpectralBoundaryConditionPlan",
     "SpectralBoundaryKind",
@@ -136,13 +178,23 @@ __all__ = [
     "SpectralEntropyDiagnostics",
     "SpectralGalerkinMethodPlan",
     "SpectralModeLayout",
+    "SpectralEigenResolutionPolicy",
+    "SpectralEigenResolutionReport",
+    "SpectralModalDiagnosticsPlan",
+    "SpectralModalTransferPlan",
+    "SpectralModalTransferReport",
     "SpectralPrecisionPolicy",
+    "SpectralTraceConstraint",
+    "SpectralTraceTerm",
     "project_tensor_spectral_symmetries",
+    "compare_spectral_eigen_resolutions",
+    "prepare_spectral_modal_transfer",
     "SpectralResidualDiagnostics",
     "TauSolveResult",
     "TensorSpectralDiscretization",
     "TensorSpectralPlan",
     "spectral_derivative_operator",
+    "spectral_hilbert_operator",
     "spectral_laplacian_operator",
     "spherical_laplacian_operator",
 ]

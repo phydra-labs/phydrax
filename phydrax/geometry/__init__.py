@@ -18,6 +18,7 @@ from ._bvh_overlap import (
 )
 from ._capabilities import (
     BoundaryAtlasProvider,
+    ContactCurvatureProvider,
     GeometryCapability,
     SeamDiagnosticsProvider,
 )
@@ -28,8 +29,10 @@ from ._certificate import (
     SignReliability,
     ZeroSetAccuracy,
 )
+from ._certified_implicit import CertifiedImplicitCover, CertifiedImplicitTopology
 from ._contracts import (
     CompiledGeometry,
+    ContactCurvatureResult,
     GeometryKernel,
     GeometryKind,
     GeometrySource,
@@ -204,6 +207,8 @@ __all__ = [
     "design",
     "reconstruction",
     "simplicial",
+    "CertifiedImplicitCover",
+    "CertifiedImplicitTopology",
     "AbstractSurfacePatch",
     "AabbOverlapCandidate",
     "AabbOverlapQueryResult",
@@ -260,6 +265,8 @@ __all__ = [
     "ConePatch",
     "CylinderPatch",
     "Circle",
+    "ContactCurvatureProvider",
+    "ContactCurvatureResult",
     "CompiledGeometry",
     "Cube",
     "Coincident",

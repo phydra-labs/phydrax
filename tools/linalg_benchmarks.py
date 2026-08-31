@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import platform
 import time
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -16,41 +15,19 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-
-
-def _block(tree: Any, /) -> None:
-    for leaf in jax.tree.leaves(tree):
-        if isinstance(leaf, jax.Array):
-            leaf.block_until_ready()
+from benchmarks._runtime import capture_environment, measure_repeated, synchronize
 
 
 def _measure(
     operation: Callable[[], Any], /, *, repeats: int
 ) -> tuple[Any, float, float]:
-    result = operation()
-    _block(result)
-    durations = []
-    for _ in range(repeats):
-        started = time.perf_counter()
-        result = operation()
-        _block(result)
-        durations.append(1e3 * (time.perf_counter() - started))
-    values = jnp.asarray(durations)
+    result, distribution = measure_repeated(
+        operation,
+        warmup=1,
+        repeats=repeats,
+    )
+    values = 1_000.0 * jnp.asarray(distribution.samples_seconds)
     return result, float(jnp.mean(values)), float(jnp.std(values))
-
-
-def _environment() -> dict[str, Any]:
-    device = jax.devices()[0]
-    return {
-        "backend": jax.default_backend(),
-        "device_kind": device.device_kind,
-        "jax_version": jax.__version__,
-        "machine": platform.machine(),
-        "python_version": platform.python_version(),
-        "system": platform.system(),
-        "system_release": platform.release(),
-        "x64_enabled": bool(jax.config.read("jax_enable_x64")),
-    }
 
 
 def run_benchmarks(
@@ -105,11 +82,11 @@ def run_benchmarks(
     )
     cold_started = time.perf_counter()
     cold_value = cold(matrix, rhs)
-    _block(cold_value)
+    synchronize(cold_value)
     cold_ms = 1e3 * (time.perf_counter() - cold_started)
     prepare_started = time.perf_counter()
     prepared = phx.linalg.prepare(problem, policy)
-    _block(prepared)
+    synchronize(prepared)
     prepare_ms = 1e3 * (time.perf_counter() - prepare_started)
     reuse = jax.jit(lambda targets: phx.linalg.solve(prepared, targets).value)
     prepared_value, prepared_ms, prepared_std = _measure(
@@ -191,7 +168,7 @@ def run_benchmarks(
         structure=jacobian_pattern,
         compiler="native",
     )
-    _block(native_jacobian)
+    synchronize(native_jacobian)
     native_jacobian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     compile_started = time.perf_counter()
@@ -202,7 +179,7 @@ def run_benchmarks(
         target=sparse_target,
         compiler="asdex",
     )
-    _block(asdex_jacobian)
+    synchronize(asdex_jacobian)
     asdex_jacobian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     native_jacobian_evaluate = jax.jit(
@@ -268,7 +245,7 @@ def run_benchmarks(
         compiler="native",
         properties=properties,
     )
-    _block(native_hessian)
+    synchronize(native_hessian)
     native_hessian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     compile_started = time.perf_counter()
@@ -279,7 +256,7 @@ def run_benchmarks(
         compiler="asdex",
         properties=properties,
     )
-    _block(asdex_hessian)
+    synchronize(asdex_hessian)
     asdex_hessian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     native_hessian_evaluate = jax.jit(lambda values: native_hessian.coefficients(values))
@@ -365,7 +342,7 @@ def run_benchmarks(
         phx.linalg.LinearSystem(hessian_operator),
         block_policy,
     )
-    _block(block_prepared)
+    synchronize(block_prepared)
     block_prepare_ms = 1e3 * (time.perf_counter() - block_prepare_started)
     block_solve = jax.jit(lambda targets: phx.linalg.solve(block_prepared, targets))
     block_result, block_ms, block_std = _measure(
@@ -392,7 +369,7 @@ def run_benchmarks(
         assembly_plan,
         normal_operator,
     )
-    _block(prepared_assembly)
+    synchronize(prepared_assembly)
     sparse_assembly_prepare_ms = 1e3 * (time.perf_counter() - assembly_started)
     changed_jacobian = native_jacobian.operator(point + 0.01)
     changed_normal = (
@@ -403,7 +380,7 @@ def run_benchmarks(
         prepared_assembly,
         changed_normal,
     )
-    _block(refreshed_assembly)
+    synchronize(refreshed_assembly)
     sparse_assembly_refresh_ms = 1e3 * (time.perf_counter() - assembly_started)
     assembled_action = jax.jit(lambda vector: prepared_assembly.operator.mv(vector))
     assembled_value, assembled_ms, assembled_std = _measure(
@@ -440,7 +417,7 @@ def run_benchmarks(
         phx.linalg.LinearSystem(kronecker_sum),
         structured_policy,
     )
-    _block(structured_prepared)
+    synchronize(structured_prepared)
     structured_prepare_ms = 1e3 * (time.perf_counter() - structured_prepare_started)
     structured_solve = jax.jit(
         lambda targets: phx.linalg.solve(structured_prepared, targets)
@@ -579,7 +556,7 @@ def run_benchmarks(
             "repeats": repeats,
             "seed": seed,
         },
-        "environment": _environment(),
+        "environment": capture_environment().to_dict(),
         "dense": {
             "direct_jax_mean_ms": direct_ms,
             "direct_jax_standard_deviation_ms": direct_std,

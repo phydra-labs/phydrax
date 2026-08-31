@@ -38,7 +38,9 @@ def _source_result(*, bounds=None):
         0.5 * mesh.nodes[:, None] ** 2,
         jnp.zeros((mesh.num_steps, 1)),
         bounds=bounds,
-        method=phx.optim.FilterInteriorPoint(max_dense_dimension=128),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="dense-filter", max_dense_dimension=128
+        ),
         termination=phx.optim.OptimizationTermination(
             absolute_optimality=1.0e-8,
             relative_optimality=0.0,
@@ -132,7 +134,9 @@ def test_refinement_study_reduces_sampled_defect_and_converges():
     study = phx.control.solve_refined_direct_collocation(
         source,
         _policy(),
-        method=phx.optim.FilterInteriorPoint(max_dense_dimension=256),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="dense-filter", max_dense_dimension=256
+        ),
         termination=phx.optim.OptimizationTermination(
             absolute_optimality=1.0e-8,
             relative_optimality=0.0,
@@ -165,7 +169,9 @@ def test_refinement_capacity_and_failed_source_are_explicit():
     study = phx.control.solve_refined_direct_collocation(
         failed,
         _policy(),
-        method=phx.optim.FilterInteriorPoint(max_dense_dimension=128),
+        method=phx.optim.PrimalDualInteriorPoint(
+            mode="dense-filter", max_dense_dimension=128
+        ),
         termination=phx.optim.OptimizationTermination(),
     )
     assert int(study.status) == phx.control.DIRECT_REFINEMENT_SOURCE_FAILED

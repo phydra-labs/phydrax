@@ -18,7 +18,7 @@ solution.
 Gauss–Legendre source nodes, normals, Jacobians, physical weights, panel IDs, and a
 content-addressed singular-support identity.
 
-```python
+```text
 geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
 panelization = phx.operators.BoundaryPanelization2D(
     geometry.boundary_atlas,
@@ -32,7 +32,7 @@ panelization = phx.operators.BoundaryPanelization2D(
 Its `TrialSpaceCertificate` remains algebraic and has validity region
 `off-singular-support`. The certificate contains no numerical clearance threshold.
 
-```python
+```text
 evaluation = phx.operators.evaluate_layer_potential(
     potential,
     targets,
@@ -80,7 +80,7 @@ accuracy merely because the target-clearance policy passes.
 representation and the fixed interior jump convention. The principal-value matrix uses
 local removable-diagonal limits and is routed through `phydrax.linalg`.
 
-```python
+```text
 boundary_values = jnp.ones((panelization.node_count,))
 result = phx.solver.solve_interior_laplace_dirichlet_2d(
     panelization,

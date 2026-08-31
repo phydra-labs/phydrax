@@ -68,7 +68,18 @@ def test_qualification_artifact_fingerprint_and_coverage_are_independent():
         artifact_present=True,
     )
     artifact = DirectCollocationQualificationArtifact.create(
-        metadata={"source_id": "test", "package_fingerprint": "packages"},
+        metadata={
+            "qualification": "direct-collocation",
+            "source_id": "test",
+            "package_fingerprint": "packages",
+            "runtime": {"fingerprint": "runtime"},
+            "platform": "test-platform",
+            "python": "3.12.0",
+            "jax": "0.9.2",
+            "numpy": "2.4.6",
+            "dtype": "float64",
+            "backends": ["native"],
+        },
         cases=cases,
         records=records,
         graduation=graduation,

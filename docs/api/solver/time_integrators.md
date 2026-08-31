@@ -16,8 +16,15 @@ internal steps.
 | Slow/fast partition | `PartitionedDifferentialProblem` | Native fixed-ratio partitioned RK |
 | SDE | `DifferentialProblem` plus `WienerTerm` | Diffrax |
 | Manifold ODE/SDE | `DifferentialProblem` plus state geometry | Phydrax Diffrax solvers |
+| Neural field manifold | `NeuralGalerkinProblem` lowered to a parameter `DifferentialProblem` | Diffrax with fixed field metric |
 
 Phydrax never inverts a mass matrix or discards an additive split implicitly.
+
+Neural Galerkin accepts the ordinary deterministic Diffrax catalog after lowering
+selected model leaves to one parameter vector. Its integration realization and
+evaluation key remain fixed for the complete solve so embedded error estimates see
+one deterministic vector field. Saved-node audits, not hidden RK stages, retain the
+tangent linear status and projection defect.
 Unsupported problem/method/controller combinations fail before numerical execution.
 
 ## Method catalog
@@ -49,7 +56,7 @@ whether each claim is verified.
 
 ## Additive IMEX
 
-```python
+```text
 problem = phx.solver.SplitDifferentialProblem(
     explicit_drift,
     implicit_drift,
@@ -70,7 +77,7 @@ A certified `CompiledDiscreteDynamics.semilinear_drift` can be lowered with
 
 ## Residual BDF and theta
 
-```python
+```text
 policy = phx.solver.DAESolvePolicy(
     method=phx.solver.BDFMethod(5),
     adaptive=phx.solver.DAEAdaptivePolicy(
@@ -90,6 +97,7 @@ Continuation retains six state/rate slots and five accepted step sizes.
 The stiffly accurate endpoint theta form supports residual DAEs:
 
 ```python
+import phydrax as phx
 crank_nicolson = phx.solver.ThetaMethod(0.5, endpoint=True)
 ```
 

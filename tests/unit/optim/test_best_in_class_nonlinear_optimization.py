@@ -374,7 +374,9 @@ def test_scaled_constrained_model_sqp_ipm_and_kkt_inertia():
         problem,
         jnp.asarray([0.5, 0.5]),
         args=target,
-        method=opt.FilterInteriorPoint(),
+        method=opt.PrimalDualInteriorPoint(
+            mode="dense-filter",
+        ),
         termination=_termination(),
     )
     assert interior_point.status == int(opt.OptimizationStatus.CERTIFICATION_FAILED)

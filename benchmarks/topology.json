@@ -1,0 +1,24 @@
+{
+  "boundary_nonzeros": 616,
+  "edges": 161,
+  "faces": 98,
+  "frozen_steady_seconds": 0.00011158332927152514,
+  "homology": [
+    1,
+    0,
+    0
+  ],
+  "homology_operations": 4472,
+  "homology_seconds": 1.0140471670310944,
+  "intervals": 1,
+  "persistence_operations": 1428,
+  "persistence_peak_entries": 431,
+  "persistence_seconds": 0.6394494160194881,
+  "rational_betti": [
+    1,
+    0,
+    0
+  ],
+  "rational_seconds": 0.00902749999659136,
+  "vertices": 64
+}

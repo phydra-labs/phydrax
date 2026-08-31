@@ -71,12 +71,31 @@ def pack_scan_modules(modules: Sequence[Any]) -> tuple[Any | None, Any | None, b
     return stacked_dynamic, static0, True
 
 
-def stack_scan_dynamics(modules: Sequence[Any]) -> Any | None:
-    """Stack dynamic leaves across compatible modules along a new scan axis."""
-    if len(modules) == 0:
+def stack_scan_dynamics(
+    modules: Sequence[Any],
+    expected_static: Any | None = None,
+    /,
+) -> Any | None:
+    """Stack compatible dynamics or decline when cached static structure is stale."""
+    dynamic, current_static, enabled = pack_scan_modules(modules)
+    if not enabled or dynamic is None or current_static is None:
         return None
-    dynamics = [eqx.partition(module, eqx.is_array)[0] for module in modules]
-    return jtu.tree_map(lambda *xs: jnp.stack(xs, axis=0), *dynamics)
+    if expected_static is None:
+        return dynamic
+    if jtu.tree_structure(current_static) != jtu.tree_structure(expected_static):
+        return None
+    current_leaves = jtu.tree_leaves(current_static)
+    expected_leaves = jtu.tree_leaves(expected_static)
+    if any(
+        not _leaf_static_equal(current, expected)
+        for current, expected in zip(
+            current_leaves,
+            expected_leaves,
+            strict=True,
+        )
+    ):
+        return None
+    return dynamic
 
 
 def scan_apply(

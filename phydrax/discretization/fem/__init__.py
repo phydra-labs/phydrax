@@ -28,10 +28,15 @@ from ._constraints import (
     FiniteElementDirichletConstraint,
 )
 from ._distributed import (
+    distributed_finite_element_mortar_plan,
     DistributedFiniteElementConstraint,
+    DistributedFiniteElementMortarPlan,
     DistributedFiniteElementOperator,
+    finite_element_partition_workset_plan,
+    FiniteElementFacetOwnershipPlan,
     FiniteElementHaloPlan,
     FiniteElementPartition,
+    FiniteElementPartitionWorksetPlan,
     JaxCollectiveBackend,
     partition_cells_contiguous,
     PartitionedFiniteElementDofMap,
@@ -40,6 +45,11 @@ from ._embedded import (
     EmbeddedQuadrature,
     FiniteElementEnrichment,
     MultiscaleFiniteElementBasis,
+)
+from ._fast_diagonalization import (
+    FastDiagonalizationEligibility,
+    TensorFastDiagonalizationBuilder,
+    TensorFastDiagonalizationPreconditioner,
 )
 from ._generic import (
     FiniteElementCoordinateSpec,
@@ -59,14 +69,56 @@ from ._high_order import (
     ReferenceNodalFamily,
     SimplexNodalFamily,
     SumFactorizationPlan,
+    TensorOrder,
     TensorProductTabulation,
+)
+from ._hp import (
+    finite_element_hp_workset_plan,
+    FiniteElementHPAcceptedPlan,
+    FiniteElementHPCellKind,
+    FiniteElementHPLineage,
+    FiniteElementHPLineageKind,
+    FiniteElementHPTopology,
+    FiniteElementHPTransaction,
+    FiniteElementHPTransferKind,
+    FiniteElementHPTransferPlan,
+    FiniteElementHPWorksetPlan,
 )
 from ._io import evaluate_finite_element_field, write_finite_element_field
 from ._local_elimination import (
     FiniteElementLocalEliminationPlan,
     LocalEliminationResult,
 )
-from ._multigrid import PTransferData, quadrilateral_p_transfer
+from ._low_order_auxiliary import (
+    low_order_auxiliary_preconditioner_builder,
+    LowOrderAuxiliaryOperatorPlan,
+    LowOrderAuxiliaryPreconditioner,
+)
+from ._mortar import (
+    FiniteElementMortarEvidence,
+    FiniteElementMortarPlan,
+    serial_finite_element_mortar_plan,
+)
+from ._multigrid import (
+    finite_element_p_transfer,
+    FiniteElementPTransfer,
+    PTransferRole,
+    quadrilateral_p_transfer,
+)
+from ._p_multigrid import (
+    finite_element_p_multigrid_plan,
+    FiniteElementPMultigridPlan,
+    FiniteElementPMultigridPolicy,
+    PCoarseOperatorSource,
+    PDegreeCoarsening,
+    PLevelOrder,
+)
+from ._patch_preconditioning import (
+    FiniteElementPatchPlan,
+    FiniteElementPatchPreconditioner,
+    FiniteElementPatchPreconditionerBuilder,
+    one_ring_patch_plan,
+)
 from ._precision import FiniteElementPrecisionPolicy
 from ._reference import (
     discontinuous_element,
@@ -75,10 +127,25 @@ from ._reference import (
     nedelec_element,
     raviart_thomas_element,
 )
+from ._reference_operator import (
+    FiniteElementFacetReference,
+    FiniteElementReferenceReport,
+    PreparedFiniteElementReference,
+    ReferenceAction,
+)
 from ._reference_topology import (
     reference_cell_topology,
     REFERENCE_TOPOLOGIES,
     ReferenceCellTopology,
+)
+from ._sbp import (
+    ElementLocalSBPData,
+    ElementLocalSBPReport,
+    MappedTensorMetricPlan,
+    MappedTensorMetricReport,
+    MappedTensorMetrics,
+    MetricFacePair,
+    TensorGLLSBPPlan,
 )
 
 
@@ -96,24 +163,52 @@ __all__ = [
     "SimplexNodalFamily",
     "SumFactorizationPlan",
     "TensorProductTabulation",
+    "TensorOrder",
     "lagrange_1d_tabulation",
     "REFERENCE_TOPOLOGIES",
     "ReferenceCellTopology",
     "reference_cell_topology",
+    "ReferenceAction",
+    "FiniteElementFacetReference",
+    "FiniteElementReferenceReport",
+    "PreparedFiniteElementReference",
     "local_diagonal",
     "FiniteElementTransferRole",
     "coarsen_triangles_local",
+    "LowOrderAuxiliaryOperatorPlan",
+    "low_order_auxiliary_preconditioner_builder",
+    "LowOrderAuxiliaryPreconditioner",
     "dorfler_mark",
     "local_dual_weighted_residual",
     "maximum_mark",
     "refine_triangles_local",
-    "PTransferData",
+    "finite_element_p_transfer",
+    "FiniteElementPTransfer",
+    "PTransferRole",
     "quadrilateral_p_transfer",
+    "finite_element_p_multigrid_plan",
+    "FiniteElementPMultigridPlan",
+    "FiniteElementPMultigridPolicy",
+    "PCoarseOperatorSource",
+    "PLevelOrder",
+    "PDegreeCoarsening",
+    "FiniteElementPatchPlan",
+    "FiniteElementPatchPreconditioner",
+    "FiniteElementPatchPreconditionerBuilder",
+    "one_ring_patch_plan",
     "refine_triangles_uniform",
     "affine_dof_constraint",
     "dual_weighted_residual_estimate",
     "residual_jump_estimate",
+    "FastDiagonalizationEligibility",
+    "TensorFastDiagonalizationBuilder",
+    "TensorFastDiagonalizationPreconditioner",
     "DistributedFiniteElementConstraint",
+    "distributed_finite_element_mortar_plan",
+    "finite_element_partition_workset_plan",
+    "DistributedFiniteElementMortarPlan",
+    "FiniteElementFacetOwnershipPlan",
+    "FiniteElementPartitionWorksetPlan",
     "DistributedFiniteElementOperator",
     "EmbeddedQuadrature",
     "FiniteElementEnrichment",
@@ -123,6 +218,26 @@ __all__ = [
     "JaxCollectiveBackend",
     "PartitionedFiniteElementDofMap",
     "partition_cells_contiguous",
+    "finite_element_hp_workset_plan",
+    "FiniteElementHPAcceptedPlan",
+    "FiniteElementHPCellKind",
+    "FiniteElementHPLineage",
+    "FiniteElementHPLineageKind",
+    "FiniteElementHPTopology",
+    "FiniteElementHPTransaction",
+    "FiniteElementHPTransferKind",
+    "FiniteElementHPTransferPlan",
+    "FiniteElementHPWorksetPlan",
+    "FiniteElementMortarEvidence",
+    "FiniteElementMortarPlan",
+    "serial_finite_element_mortar_plan",
+    "ElementLocalSBPData",
+    "ElementLocalSBPReport",
+    "MappedTensorMetricPlan",
+    "MappedTensorMetricReport",
+    "MappedTensorMetrics",
+    "MetricFacePair",
+    "TensorGLLSBPPlan",
     "FiniteElementDirichletConstraint",
     "evaluate_finite_element_field",
     "write_finite_element_field",

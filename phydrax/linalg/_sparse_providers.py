@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import platform
+import sys
 from importlib.util import find_spec
 from typing import Literal, TypeAlias
 
@@ -15,6 +17,7 @@ from .._strict import StrictModule
 SparseProviderName: TypeAlias = Literal[
     "jax-cuda",
     "scipy-superlu",
+    "spineax-cudss",
     "umfpack",
     "cholmod",
     "spqr",
@@ -25,12 +28,18 @@ class SparseProviderCapabilities(StrictModule):
     """One immutable direct-provider capability declaration."""
 
     name: SparseProviderName = eqx.field(static=True)
-    factorization: Literal["lu", "cholesky", "qr"] = eqx.field(static=True)
+    factorization: Literal["lu", "cholesky", "qr", "ldlt"] = eqx.field(static=True)
     placement: Literal["device", "host"] = eqx.field(static=True)
     package: str | None = eqx.field(static=True)
     jit: bool = eqx.field(static=True)
     transpose_solve: bool = eqx.field(static=True)
     complex: bool = eqx.field(static=True)
+    batched_shared_pattern: bool = eqx.field(static=True, default=False)
+    numeric_refactorization: bool = eqx.field(static=True, default=False)
+    inertia: bool = eqx.field(static=True, default=False)
+    reliable_zero_inertia: bool = eqx.field(static=True, default=False)
+    multiple_rhs: bool = eqx.field(static=True, default=True)
+    explicit_release: bool = eqx.field(static=True, default=False)
 
 
 class SparseProviderAvailability(StrictModule):
@@ -59,6 +68,21 @@ SPARSE_PROVIDER_CATALOG = (
         jit=False,
         transpose_solve=True,
         complex=True,
+    ),
+    SparseProviderCapabilities(
+        name="spineax-cudss",
+        factorization="ldlt",
+        placement="device",
+        package="spineax",
+        jit=True,
+        transpose_solve=True,
+        complex=False,
+        batched_shared_pattern=True,
+        numeric_refactorization=True,
+        inertia=True,
+        reliable_zero_inertia=False,
+        multiple_rhs=True,
+        explicit_release=True,
     ),
     SparseProviderCapabilities(
         name="umfpack",
@@ -118,6 +142,33 @@ def sparse_provider_availability(
         available = any(device.platform == "gpu" for device in jax.devices())
         reason = (
             "CUDA device available." if available else "No JAX CUDA device is available."
+        )
+    elif name == "spineax-cudss":
+        import jax
+
+        package_available = _package_available("spineax")
+        platform_supported = sys.platform.startswith("linux")
+        architecture_supported = platform.machine().lower() in ("x86_64", "amd64")
+        cuda_available = any(device.platform == "gpu" for device in jax.devices())
+        available = (
+            package_available
+            and platform_supported
+            and architecture_supported
+            and cuda_available
+        )
+        missing = []
+        if not package_available:
+            missing.append("spineax is not installed")
+        if not platform_supported:
+            missing.append("Linux is required")
+        if not architecture_supported:
+            missing.append("x86-64 is required")
+        if not cuda_available:
+            missing.append("no JAX CUDA device is available")
+        reason = (
+            "Spineax cuDSS is available."
+            if available
+            else "Spineax cuDSS unavailable: " + "; ".join(missing) + "."
         )
     elif capabilities.package is None:
         available = True

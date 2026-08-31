@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import synchronize
 
 
 def _metric(dimension: int) -> phx.metrix.RiemannianMetric:
@@ -30,10 +31,6 @@ def _metric(dimension: int) -> phx.metrix.RiemannianMetric:
     return phx.metrix.RiemannianMetric(matrix, chart=chart)
 
 
-def _block(tree: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
-
-
 def _output_bytes(tree: Any) -> int:
     return sum(int(leaf.size * leaf.dtype.itemsize) for leaf in jax.tree.leaves(tree))
 
@@ -47,12 +44,12 @@ def _benchmark(
 ) -> tuple[Any, dict[str, float | int]]:
     compiled = jax.jit(function)
     started = time.perf_counter()
-    output = _block(compiled(argument))
+    output = synchronize(compiled(argument))
     compile_and_first_ms = 1e3 * (time.perf_counter() - started)
 
     started = time.perf_counter()
     for _ in range(repeats):
-        output = _block(compiled(argument))
+        output = synchronize(compiled(argument))
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
     return output, {
         "compile_and_first_ms": compile_and_first_ms,

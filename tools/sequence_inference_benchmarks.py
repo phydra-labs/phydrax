@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from pathlib import Path
 
 import jax
@@ -17,6 +16,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from benchmarks._runtime import measure_synchronized
 
 
 def _state_problem():
@@ -58,10 +58,7 @@ def _state_problem():
 
 
 def _timed(function):
-    started = time.perf_counter()
-    value = function()
-    jax.block_until_ready(value)
-    return value, time.perf_counter() - started
+    return measure_synchronized(function)
 
 
 def run_sequence_inference_benchmarks(*, quick: bool = False):

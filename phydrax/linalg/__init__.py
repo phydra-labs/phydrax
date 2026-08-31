@@ -110,6 +110,14 @@ from ._incomplete_factorizations import (
     SparseFactorizationPreconditioner,
     SparseFactorizationPreconditionerBuilder,
 )
+from ._initial_guess import (
+    HistoryLinearSolveResult,
+    LinearInitialGuessDiagnostics,
+    LinearInitialGuessStrategy,
+    LinearSolveHistory,
+    LinearSolveHistoryPolicy,
+    solve_with_history,
+)
 from ._linear_transform import (
     AbstractLinearTransform,
     DenseLinearTransform,
@@ -256,6 +264,7 @@ from ._policies import (
     RecyclingRefresh,
     SolveResourcePolicy,
     SparseCholesky,
+    SparseLDLT,
     SparseLU,
     SparseQR,
     StructuredDirect,
@@ -304,6 +313,12 @@ from ._properties import (
     OperatorCapabilities,
     OperatorProperties,
     PropertyEvidence,
+)
+from ._randomized_preconditioning import (
+    ProbeRefresh,
+    RandomizedNystromDiagnostics,
+    RandomizedNystromPreconditioner,
+    RandomizedNystromPreconditionerBuilder,
 )
 from ._rational_functions import (
     PartialFractionRationalFunction,
@@ -369,6 +384,7 @@ from ._runtime import (
     prepare_template,
     refresh,
     refresh_recycling,
+    release,
     solve,
     solve_adjoint,
     solve_many,
@@ -633,6 +649,7 @@ __all__ = [
     "GeneralizedLSMR",
     "GMRES",
     "SparseLU",
+    "SparseLDLT",
     "SparseFormat",
     "SparseStorage",
     "IdentityLinearOperator",
@@ -705,6 +722,12 @@ __all__ = [
     "FactoredMatrixEquationStatus",
     "FactoredMatrixSolution",
     "FactoredMatrixSolutionForm",
+    "HistoryLinearSolveResult",
+    "LinearInitialGuessDiagnostics",
+    "LinearInitialGuessStrategy",
+    "LinearSolveHistory",
+    "LinearSolveHistoryPolicy",
+    "solve_with_history",
     "MatrixEquationCostEstimate",
     "MatrixEquationDiagnostics",
     "MatrixEquationKind",
@@ -748,6 +771,10 @@ __all__ = [
     "PreconditionerRefreshPolicy",
     "PreconditionerSource",
     "PreconditioningPolicy",
+    "ProbeRefresh",
+    "RandomizedNystromDiagnostics",
+    "RandomizedNystromPreconditioner",
+    "RandomizedNystromPreconditionerBuilder",
     "PreconditioningSide",
     "PreparedFactorization",
     "PreparedLowRankSolve",
@@ -880,6 +907,7 @@ __all__ = [
     "prepare_recycling_subspace",
     "initialize_recycling",
     "refresh_recycling",
+    "release",
     "refresh",
     "refresh_factorization",
     "refresh_linear_structure",

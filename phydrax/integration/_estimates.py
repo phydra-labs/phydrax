@@ -66,6 +66,22 @@ class FixedQuadratureDiagnostics(StrictModule):
     rule: str = eqx.field(static=True)
 
 
+class BayesianQuadratureDiagnostics(StrictModule):
+    """Posterior-integral and delegated linear-solve evidence."""
+
+    status: Array
+    num_evaluations: Array
+    posterior_variance: Array
+    variance_roundoff_envelope: Array
+    kernel_mean: Array
+    kernel_double_mean: Array
+    observation_noise: Array
+    solve_regularization: Array
+    solve: Any
+    target_id: str = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
+
+
 class AdaptiveQuadratureDiagnostics(StrictModule):
     status: Array
     num_evaluations: Array
@@ -202,6 +218,7 @@ __all__ = [
     "AdaptiveTrianglePartition",
     "AdaptiveQuadratureDiagnostics",
     "AntitheticDiagnostics",
+    "BayesianQuadratureDiagnostics",
     "FixedQuadratureDiagnostics",
     "WeightedSampleDiagnostics",
     "IntegrationEstimate",

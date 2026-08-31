@@ -108,7 +108,35 @@ The RA34PW2 Rosenbrock-W tableau constants are adapted from PETSc's public TS
 method registry and executed through an independent native JAX matrix-free
 implementation. See LICENSES/PETSC-BSD-2-CLAUSE.txt.
 
+Spineax
+Copyright (c) 2025 John Viljoen
+Licensed under the MIT License.
+The optional `spineax-cudss` provider uses Spineax's public JAX FFI API for
+cuDSS symbolic analysis, numerical factorization/refactorization, multiple-RHS
+solves, inertia queries, and explicit resource release. Phydrax retains its own
+sparse operator, planning, precision, residual-certification, KKT, and result
+contracts. See LICENSES/SPINEAX-MIT.txt.
+
 Research and design acknowledgments
+
+The spectral-residual operator-learning design study considered ASK-Berkeley's
+Neural-Spectral-Methods repository at commit
+090e7a173f27734dbae5ec479a410ca1748981af, Copyright (c) 2023
+ASK-Berkeley, licensed under the MIT License, together with Du, Chalapathi, and
+Krishnapriyan, “Neural Spectral Methods: Self-supervised learning in the
+spectral domain,” ICLR 2024. Phydrax independently implements residual
+compilation, closure policies, physical measures, condition contracts,
+operator-loss integration, evidence, and tests against its native spectral and
+PDE IR substrates; no upstream source, fixtures, generated data, or runtime
+dependency is copied or redistributed.
+
+The low-rank adaptation design study considered Davis Yoshida's Lorax at commit
+1ebd0efa6c467974357bb9f73fe4a4967b487622, Copyright (c) 2023
+davisyoshida, licensed under the MIT License, together with Hu et al.,
+“LoRA: Low-Rank Adaptation of Large Language Models” (2021). Phydrax
+independently implements explicit native affine updates, exact parameter
+subspaces, trainer integration, base-bound artifacts, and deployment merging;
+no Lorax or Qax source or runtime dependency is copied or redistributed.
 
 The direct-collocation design study considered csu-hmc/opty at commit
 fdad07d0f0ae149e2eedb479e7a87298fd6722ef, Copyright (c) 2014-2025,
@@ -119,6 +147,14 @@ controlled-DAE contracts, normalized decision layouts, JAX sparse derivatives,
 solver boundaries, certificates, tests, and examples are independent
 implementations; no opty source, generated templates, fixtures, or runtime code
 is copied or redistributed.
+
+The structured nonlinear batching and iteration-pool design study considered
+JAXIPM at commit 3e6d2d29cd890b7a201b037110031ec0d9487df9 and Viljoen,
+Haffner, Tomizuka, and Mehr, “JAXIPM: Batched Nonlinear Programming on the
+GPU.” Phydrax independently implements its structured bound-form IR, ASDEX
+derivatives, KKT strategies, portable warm starts, task identity, certification,
+domain audits, and execution pools; no JAXIPM source or runtime dependency is
+included.
 
 The Markov-chain-cubature design study considered tttc3/MCCube at commit
 d5653d88005ef9a421f14aa0c1e9ee6cfee5cecc, licensed under the Apache License,
@@ -153,6 +189,24 @@ independently against its own kernel, Gaussian-process, posterior, search-eviden
 and state-space contracts. No Hyperoptax source code is copied or redistributed,
 and randomized Kriging Believer is not implemented.
 
+The learned-evolution and autoregressive-training design study considered
+Ceyron/pdequinox at commit 492fe6e676bddce20085d67f12d178688d54f1b3
+and Ceyron/trainax at commit 06b0694f42662bdfde54c5114b73987f6a80faa8,
+Copyright (c) 2024 Felix Koehler, both licensed under the MIT License, together
+with Koehler, Niedermayr, Westermann, and Thuerey, “APEBench: A Benchmark for
+Autoregressive Neural Emulators of PDEs,” NeurIPS 2024. Phydrax independently
+implements its model, trajectory, operator-field, physical-boundary, precision,
+objective, checkpoint, and artifact contracts; no upstream source, templates,
+fixtures, or runtime dependency are copied or redistributed.
+
+The causal rollout certification design study considered j-towns/scanagram at
+commit 9c923648a1d0b7c778b0c6daeb770a9abdfbcf96, Copyright Jamie Townsend,
+licensed under the Apache License, Version 2.0. Phydrax independently authors
+explicit recurrent steps and carries and uses full-sequence, prefix, chunk, and
+resume equivalence as validation evidence. It does not include Scanagram's
+JAXPR interpreter, primitive rules, custom decorator, source, fixtures, or
+runtime dependency.
+
 Accurate conservation accounting
 The cancellation-aware conservation reductions are independent implementations of
 the error-free TwoSum and Sum2 algorithms described by Takeshi Ogita, Siegfried M.
@@ -173,3 +227,29 @@ rmanak/FD, GFDFlow, mGFD, and fdtdx. Phydrax does not copy, translate, bundle, l
 or import their solver source, generated tables, runtime types, templates, fixtures,
 or executables. GPL/CC projects remain outside the distribution; neutral adapters
 accept data schemas only.
+
+FMMAX
+Copyright 2023 Meta Platforms, Inc. and affiliates.
+Copyright 2025 invrs.io LLC.
+Licensed under the MIT License.
+The reciprocal-lattice harmonic layout, Fourier material factorization, stable
+scattering composition, translated-layer covariance, source batching, and
+Brillouin-zone semantics are informed by FMMAX v1.7.1 at commit
+e13d422cbb8b77820a5e375eb9f5c415be01b81e. Phydrax reimplements these methods
+against its own discretization, linear-operator, boundary-cascade, diagnostic,
+refresh, and provenance contracts and does not depend on the upstream package.
+See LICENSES/FMMAX-MIT.txt.
+
+High-order and spectral finite elements
+The spectral-element design study considered Nek5000, nekRS, Neko, Nekbone,
+gslib, NekCEM, nekStab, Nektar++, ITHACA-SEM, SOD2D, HORSES2D, pySEMTools,
+StableSpectralElements.jl, ReproduceEntropyStableDSEM, SELF, SPECFEM, AxiSEM,
+specnm, TSPEED, Semtex, and the historical NEKTAR-3D sources. Phydrax's
+reference-element identities, quadrature contracts, tensor execution, mapped
+geometry, gather/scatter, mortar, SBP, entropy, multigrid, distributed-workset,
+and solver integrations are independent implementations against Phydrax's
+existing finite-element, linear-algebra, precision, differentiation, and
+provenance contracts. No source code, generated kernels, numerical tables,
+fixtures, serialized artifacts, runtime types, or executables from those
+projects are copied, translated, bundled, linked, imported, or redistributed.
+Copyleft and unclear-license projects remain design references only.

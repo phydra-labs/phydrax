@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -60,7 +60,13 @@ from ..linalg import (
 )
 from ..linalg.eigen import GeneralizedEigenproblem
 from ..nonlinear import LaggedLinearSolveUpdate, NonlinearSystemProblem
-from ..sparse import EdgeRelation, SparseCoordinateOperator
+from ..sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
+
+
+if TYPE_CHECKING:
+    from .fem._ir import LocalActionIR
+    from .fem._kernels import KernelTable
+    from .fem._worksets import WorksetProgram
 
 
 ReferenceRule: TypeAlias = Any
@@ -141,12 +147,19 @@ def _default_rule(cell_kind: str, /) -> ReferenceRule:
     raise ValueError(f"No finite-element rule exists for cell kind {cell_kind!r}.")
 
 
-class _ResolvedCoefficient(StrictModule, NonTrainableState):
-    """Typed constant or pure staged coefficient used by FE terms."""
+class FiniteElementCoefficient(StrictModule, NonTrainableState):
+    """Coefficient data bound to an explicit finite-element evaluation layout."""
 
     value: Array
     evaluator: Callable[[Array, object], ArrayLike] | None
     location: str = eqx.field(static=True)
+    support_id: str | None = eqx.field(static=True)
+    entity_set_id: str | None = eqx.field(static=True)
+    field_space_id: str | None = eqx.field(static=True)
+    rule_id: str | None = eqx.field(static=True)
+    side: str = eqx.field(static=True)
+    layout_axes: tuple[str, ...] = eqx.field(static=True)
+    layout_id: str = eqx.field(static=True)
     coefficient_id: str = eqx.field(static=True)
 
     def __init__(
@@ -156,43 +169,126 @@ class _ResolvedCoefficient(StrictModule, NonTrainableState):
         *,
         coefficient_id: str | None = None,
         location: str = "point",
+        support_id: str | None = None,
+        entity_set_id: str | None = None,
+        field_space_id: str | None = None,
+        rule_id: str | None = None,
+        side: str = "none",
+        layout_axes: Sequence[str] | None = None,
     ):
         location_ = str(location)
-        if location_ not in ("point", "cell", "facet", "quadrature"):
+        if location_ not in ("point", "cell", "facet", "quadrature", "dof"):
             raise ValueError(
-                "Coefficient location must be point, cell, facet, or quadrature."
+                "Coefficient location must be point, cell, facet, quadrature, or dof."
             )
+        side_ = str(side)
+        if side_ not in ("none", "plus", "minus"):
+            raise ValueError("Coefficient side must be none, plus, or minus.")
+        if side_ != "none" and location_ != "facet":
+            raise ValueError("Plus/minus coefficient sides require facet location.")
+        support = None if support_id is None else str(support_id)
+        entity_set = None if entity_set_id is None else str(entity_set_id)
+        field_space = None if field_space_id is None else str(field_space_id)
+        rule = None if rule_id is None else str(rule_id)
+        if any(value_ == "" for value_ in (support, entity_set, field_space, rule)):
+            raise ValueError("Coefficient identities must be non-empty or None.")
+        if location_ in ("cell", "facet", "quadrature") and (
+            support is None or entity_set is None
+        ):
+            raise ValueError(
+                "Entity and quadrature coefficients require support_id and entity_set_id."
+            )
+        if location_ == "quadrature" and rule is None:
+            raise ValueError("Quadrature coefficients require rule_id.")
+        if location_ == "dof" and (support is None or field_space is None):
+            raise ValueError("DOF coefficients require support_id and field_space_id.")
         if callable(value) and location_ != "point":
-            raise ValueError("Callable coefficients currently require point location.")
+            raise ValueError("Callable coefficients require point location.")
+        default_axes = {
+            "point": (),
+            "cell": ("entity",),
+            "facet": ("entity",),
+            "quadrature": ("entity", "quadrature"),
+            "dof": ("dof",),
+        }[location_]
+        axes = (
+            default_axes
+            if layout_axes is None
+            else tuple(str(axis) for axis in layout_axes)
+        )
+        if any(not axis for axis in axes) or len(set(axes)) != len(axes):
+            raise ValueError("Coefficient layout axes must be unique non-empty names.")
+        if axes != default_axes:
+            raise ValueError(
+                f"{location_} coefficients require canonical layout axes "
+                f"{default_axes!r}; got {axes!r}."
+            )
         if callable(value):
             if coefficient_id is None or not str(coefficient_id):
                 raise ValueError(
                     "Callable coefficients require an explicit coefficient_id."
                 )
-            self.value = jnp.asarray(0.0)
-            self.evaluator = value
-            self.location = location_
-            self.coefficient_id = str(coefficient_id)
+            array = jnp.asarray(0.0)
+            evaluator = cast(Callable[[Array, object], ArrayLike], value)
+            identifier = str(coefficient_id)
+            data_fingerprint = None
         else:
             array = jnp.asarray(value)
             if not jnp.issubdtype(array.dtype, jnp.inexact):
                 array = array.astype(float)
-            self.value = array
-            self.evaluator = None
-            self.location = location_
-            self.coefficient_id = (
+            evaluator = None
+            data_fingerprint = array_tree_fingerprint(np.asarray(array))
+            identifier = (
                 canonical_fingerprint(
                     {
-                        "kind": "finite-element-constant-coefficient",
-                        "value": array_tree_fingerprint(np.asarray(array)),
+                        "kind": "finite-element-coefficient",
+                        "data": data_fingerprint,
                         "location": location_,
+                        "support": support,
+                        "entity_set": entity_set,
+                        "field_space": field_space,
+                        "rule": rule,
+                        "side": side_,
+                        "layout_axes": list(axes),
                     }
                 )
                 if coefficient_id is None
                 else str(coefficient_id)
             )
-            if not self.coefficient_id:
+            if not identifier:
                 raise ValueError("coefficient_id must be non-empty.")
+        self.value = array
+        self.evaluator = evaluator
+        self.location = location_
+        self.support_id = support
+        self.entity_set_id = entity_set
+        self.field_space_id = field_space
+        self.rule_id = rule
+        self.side = side_
+        self.layout_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-coefficient-layout",
+                "callable": evaluator is not None,
+                "shape": None if evaluator is not None else list(array.shape),
+                "dtype": None if evaluator is not None else str(array.dtype),
+                "location": location_,
+                "support": support,
+                "entity_set": entity_set,
+                "field_space": field_space,
+                "rule": rule,
+                "side": side_,
+                "layout_axes": list(axes),
+            }
+        )
+        self.layout_axes = axes
+        self.coefficient_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-coefficient-binding",
+                "identity": identifier,
+                "layout": self.layout_id,
+                "data": data_fingerprint,
+            }
+        )
 
     @property
     def constant(self) -> bool:
@@ -205,7 +301,29 @@ class _ResolvedCoefficient(StrictModule, NonTrainableState):
         /,
         *,
         entity_indices: ArrayLike | None = None,
+        dof_indices: ArrayLike | None = None,
+        dof_orientations: ArrayLike | None = None,
+        basis_values: ArrayLike | None = None,
+        support_id: str | None = None,
+        entity_set_id: str | None = None,
+        field_space_id: str | None = None,
+        rule_id: str | None = None,
+        side: str | None = None,
     ) -> Array:
+        for name, declared, observed in (
+            ("support", self.support_id, support_id),
+            ("entity set", self.entity_set_id, entity_set_id),
+            ("field space", self.field_space_id, field_space_id),
+            ("quadrature rule", self.rule_id, rule_id),
+        ):
+            if declared is not None and declared != (
+                None if observed is None else str(observed)
+            ):
+                raise ValueError(
+                    f"Coefficient {name} identity does not match evaluation."
+                )
+        if side is not None and self.side != str(side):
+            raise ValueError("Coefficient facet side does not match evaluation.")
         if self.evaluator is not None:
             return jnp.asarray(self.evaluator(points, args))
         if self.location == "point":
@@ -213,6 +331,26 @@ class _ResolvedCoefficient(StrictModule, NonTrainableState):
                 self.value,
                 points.shape[:-1] + self.value.shape,
             )
+        if self.location == "dof":
+            if dof_indices is None or basis_values is None:
+                raise ValueError("DOF coefficient evaluation requires routes and basis.")
+            routes = jnp.asarray(dof_indices, dtype=jnp.int32)
+            basis = jnp.asarray(basis_values)
+            local = self.value[routes]
+            if dof_orientations is not None:
+                orientations = jnp.asarray(dof_orientations)
+                if orientations.shape != routes.shape:
+                    raise ValueError(
+                        "DOF coefficient orientations must match gathered routes."
+                    )
+                local = local * orientations.reshape(
+                    orientations.shape + (1,) * (local.ndim - orientations.ndim)
+                )
+            if basis.ndim == 2:
+                return oe.contract("qi,ci...->cq...", basis, local)
+            if basis.ndim == 3:
+                return oe.contract("cqi,ci...->cq...", basis, local)
+            raise ValueError("DOF coefficient basis must have rank two or three.")
         if entity_indices is None:
             raise ValueError("Entity/quadrature coefficients require entity indices.")
         indices = jnp.asarray(entity_indices, dtype=jnp.int32)
@@ -237,11 +375,23 @@ def coefficient(
     *,
     coefficient_id: str | None = None,
     location: str = "point",
-) -> _ResolvedCoefficient:
-    return _ResolvedCoefficient(
+    support_id: str | None = None,
+    entity_set_id: str | None = None,
+    field_space_id: str | None = None,
+    rule_id: str | None = None,
+    side: str = "none",
+    layout_axes: Sequence[str] | None = None,
+) -> FiniteElementCoefficient:
+    return FiniteElementCoefficient(
         value,
         coefficient_id=coefficient_id,
         location=location,
+        support_id=support_id,
+        entity_set_id=entity_set_id,
+        field_space_id=field_space_id,
+        rule_id=rule_id,
+        side=side,
+        layout_axes=layout_axes,
     )
 
 
@@ -253,6 +403,7 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
     lift: object
     lift_rate: object
     lift_acceleration: object
+    metric_data: object
     user_args: object
 
     def __init__(
@@ -264,6 +415,7 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
         lift: object = None,
         lift_rate: object = None,
         lift_acceleration: object = None,
+        metric_data: object = None,
         user_args: object = None,
     ):
         if not isinstance(runtime, FiniteElementRuntimeData):
@@ -279,13 +431,15 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
             if lift_acceleration is None
             else jax.tree.map(jnp.asarray, lift_acceleration)
         )
+        self.metric_data = metric_data
         self.user_args = user_args
 
 
 class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
-    """Operator realization and reduction policy for compiled FE forms."""
+    """Independent global realization, local-kernel, and reduction policy."""
 
     realization: str = eqx.field(static=True)
+    local_kernel: str = eqx.field(static=True)
     accumulation: str = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
@@ -293,20 +447,40 @@ class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
         self,
         *,
         realization: str = "sparse",
+        local_kernel: str = "auto",
         accumulation: str = "fast",
     ):
         realization_ = str(realization)
+        local_kernel_ = str(local_kernel)
         accumulation_ = str(accumulation)
         if realization_ not in ("matrix_free", "sparse"):
             raise ValueError("Unknown finite-element operator realization.")
+        if local_kernel_ not in (
+            "auto",
+            "dense",
+            "partial",
+            "sum_factorized",
+            "collocated",
+        ):
+            raise ValueError("Unknown finite-element local-kernel strategy.")
         if accumulation_ not in ("fast", "deterministic", "compensated"):
             raise ValueError("Unknown finite-element accumulation policy.")
+        if realization_ == "sparse" and local_kernel_ in (
+            "partial",
+            "sum_factorized",
+            "collocated",
+        ):
+            raise ValueError(
+                "Sparse realization requires auto or dense local-kernel strategy."
+            )
         self.realization = realization_
+        self.local_kernel = local_kernel_
         self.accumulation = accumulation_
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "finite-element-execution-policy",
                 "realization": realization_,
+                "local_kernel": local_kernel_,
                 "accumulation": accumulation_,
             }
         )
@@ -314,7 +488,7 @@ class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
 
 class DiffusionAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
-    diffusivity: _ResolvedCoefficient
+    diffusivity: FiniteElementCoefficient
     action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
@@ -322,7 +496,7 @@ class DiffusionAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        diffusivity: _ResolvedCoefficient | ArrayLike = 1.0,
+        diffusivity: FiniteElementCoefficient | ArrayLike = 1.0,
         /,
         *,
         action_id: str = "diffusion",
@@ -336,7 +510,7 @@ class DiffusionAction(StrictModule, NonTrainableState):
         self.field_name = field
         self.diffusivity = (
             diffusivity
-            if isinstance(diffusivity, _ResolvedCoefficient)
+            if isinstance(diffusivity, FiniteElementCoefficient)
             else coefficient(diffusivity)
         )
         if domain is not None and not isinstance(domain, IntegrationDomain):
@@ -350,7 +524,7 @@ class DiffusionAction(StrictModule, NonTrainableState):
 
 class MassAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
-    coefficient: _ResolvedCoefficient
+    coefficient: FiniteElementCoefficient
     action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
@@ -358,7 +532,7 @@ class MassAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        value: _ResolvedCoefficient | ArrayLike = 1.0,
+        value: FiniteElementCoefficient | ArrayLike = 1.0,
         /,
         *,
         action_id: str = "mass",
@@ -371,7 +545,7 @@ class MassAction(StrictModule, NonTrainableState):
             raise ValueError("Mass field and term IDs must be non-empty.")
         self.field_name = field
         self.coefficient = (
-            value if isinstance(value, _ResolvedCoefficient) else coefficient(value)
+            value if isinstance(value, FiniteElementCoefficient) else coefficient(value)
         )
         if domain is not None and not isinstance(domain, IntegrationDomain):
             raise TypeError("domain must be IntegrationDomain or None.")
@@ -384,7 +558,7 @@ class MassAction(StrictModule, NonTrainableState):
 
 class SourceAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
-    source: _ResolvedCoefficient
+    source: FiniteElementCoefficient
     action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
@@ -392,7 +566,7 @@ class SourceAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        source: _ResolvedCoefficient | ArrayLike,
+        source: FiniteElementCoefficient | ArrayLike,
         /,
         *,
         action_id: str = "source",
@@ -405,7 +579,9 @@ class SourceAction(StrictModule, NonTrainableState):
             raise ValueError("Source field and term IDs must be non-empty.")
         self.field_name = field
         self.source = (
-            source if isinstance(source, _ResolvedCoefficient) else coefficient(source)
+            source
+            if isinstance(source, FiniteElementCoefficient)
+            else coefficient(source)
         )
         if domain is not None and not isinstance(domain, IntegrationDomain):
             raise TypeError("domain must be IntegrationDomain or None.")
@@ -418,7 +594,7 @@ class SourceAction(StrictModule, NonTrainableState):
 
 class BoundaryLoadAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
-    load: _ResolvedCoefficient
+    load: FiniteElementCoefficient
     action_id: str = eqx.field(static=True)
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
@@ -426,7 +602,7 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        load: _ResolvedCoefficient | ArrayLike,
+        load: FiniteElementCoefficient | ArrayLike,
         /,
         *,
         action_id: str = "boundary-load",
@@ -438,7 +614,9 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
         if not field or not identifier:
             raise ValueError("Boundary-load field and term IDs must be non-empty.")
         self.field_name = field
-        self.load = load if isinstance(load, _ResolvedCoefficient) else coefficient(load)
+        self.load = (
+            load if isinstance(load, FiniteElementCoefficient) else coefficient(load)
+        )
         if domain is not None and not isinstance(domain, IntegrationDomain):
             raise TypeError("domain must be IntegrationDomain or None.")
         if domain is not None and domain.kind != "exterior_facet":
@@ -486,6 +664,42 @@ class CellResidualAction(StrictModule, NonTrainableState):
             raise ValueError("CellResidualAction requires a cell integration domain.")
         self.field_name = output
         self.input_fields = inputs
+        self.kernel = kernel
+        self.domain = domain
+        self.rules = _normalize_rules(rules)
+        self.action_id = identifier
+
+
+class PairwiseVolumeFluxAction(StrictModule, NonTrainableState):
+    """Collocated tensor-cell flux differencing from a symmetric two-point flux."""
+
+    field_name: str = eqx.field(static=True)
+    kernel: Callable
+    domain: IntegrationDomain | None
+    rules: tuple[tuple[str, ReferenceRule], ...]
+    action_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        field_name: str,
+        kernel: Callable,
+        /,
+        *,
+        domain: IntegrationDomain | None = None,
+        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
+        action_id: str,
+    ):
+        field = str(field_name)
+        identifier = str(action_id)
+        if not field or not callable(kernel) or not identifier:
+            raise ValueError(
+                "Pairwise volume-flux field, kernel, and action_id are required."
+            )
+        if domain is not None and (
+            not isinstance(domain, IntegrationDomain) or domain.kind != "cell"
+        ):
+            raise ValueError("PairwiseVolumeFluxAction requires a cell domain.")
+        self.field_name = field
         self.kernel = kernel
         self.domain = domain
         self.rules = _normalize_rules(rules)
@@ -626,8 +840,8 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
 
     kind: SIPGBoundaryKind = eqx.field(static=True)
     domain: IntegrationDomain
-    value: _ResolvedCoefficient
-    robin_coefficient: _ResolvedCoefficient | None
+    value: FiniteElementCoefficient
+    robin_coefficient: FiniteElementCoefficient | None
     penalty_policy: SIPGPenaltyPolicy | None
     condition_id: str = eqx.field(static=True)
 
@@ -635,10 +849,10 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
         self,
         kind: SIPGBoundaryKind,
         domain: IntegrationDomain,
-        value: _ResolvedCoefficient | ArrayLike | Callable,
+        value: FiniteElementCoefficient | ArrayLike | Callable,
         /,
         *,
-        robin_coefficient: _ResolvedCoefficient | ArrayLike | Callable | None = None,
+        robin_coefficient: FiniteElementCoefficient | ArrayLike | Callable | None = None,
         penalty_policy: SIPGPenaltyPolicy | None = None,
     ):
         if kind not in ("dirichlet", "neumann", "robin"):
@@ -649,10 +863,12 @@ class SIPGBoundaryCondition(StrictModule, NonTrainableState):
             penalty_policy, SIPGPenaltyPolicy
         ):
             raise TypeError("penalty_policy must be SIPGPenaltyPolicy or None.")
-        value_ = value if isinstance(value, _ResolvedCoefficient) else coefficient(value)
+        value_ = (
+            value if isinstance(value, FiniteElementCoefficient) else coefficient(value)
+        )
         robin = (
             robin_coefficient
-            if isinstance(robin_coefficient, _ResolvedCoefficient)
+            if isinstance(robin_coefficient, FiniteElementCoefficient)
             else (None if robin_coefficient is None else coefficient(robin_coefficient))
         )
         if kind == "robin" and robin is None:
@@ -682,7 +898,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
     """Executable SIPG interior or exterior facet action."""
 
     field_name: str = eqx.field(static=True)
-    diffusivity: _ResolvedCoefficient
+    diffusivity: FiniteElementCoefficient
     penalty_policy: SIPGPenaltyPolicy
     boundary: SIPGBoundaryCondition | None
     domain: IntegrationDomain
@@ -692,7 +908,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
     def __init__(
         self,
         field_name: str,
-        diffusivity: _ResolvedCoefficient | ArrayLike | Callable,
+        diffusivity: FiniteElementCoefficient | ArrayLike | Callable,
         penalty_policy: SIPGPenaltyPolicy,
         domain: IntegrationDomain,
         /,
@@ -720,7 +936,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
         self.field_name = field
         self.diffusivity = (
             diffusivity
-            if isinstance(diffusivity, _ResolvedCoefficient)
+            if isinstance(diffusivity, FiniteElementCoefficient)
             else coefficient(diffusivity)
         )
         self.penalty_policy = penalty_policy
@@ -837,6 +1053,7 @@ FiniteElementAction = (
     | SourceAction
     | BoundaryLoadAction
     | CellResidualAction
+    | PairwiseVolumeFluxAction
     | InteriorFacetAction
     | ExteriorFacetAction
     | SIPGFacetAction
@@ -862,6 +1079,9 @@ def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
     elif isinstance(term, CellResidualAction):
         coefficient_id = None
         kind = "cell-residual"
+    elif isinstance(term, PairwiseVolumeFluxAction):
+        coefficient_id = None
+        kind = "pairwise-volume-flux"
     elif isinstance(term, InteriorFacetAction):
         coefficient_id = None
         kind = "interior-facet"
@@ -958,6 +1178,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
                     SourceAction,
                     BoundaryLoadAction,
                     CellResidualAction,
+                    PairwiseVolumeFluxAction,
                     InteriorFacetAction,
                     ExteriorFacetAction,
                     SIPGFacetAction,
@@ -1251,9 +1472,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     constraint: FiniteElementDirichletConstraint | None
     constraints: tuple[FiniteElementDirichletConstraint | None, ...]
     execution_policy: FiniteElementExecutionPolicy
-    _action_ir: object
-    _workset_program: object
-    _kernel_table: object
+    _action_ir: LocalActionIR
+    _workset_program: WorksetProgram
+    _kernel_table: KernelTable
     lift: object
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
@@ -1348,10 +1569,17 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         )
 
         action_ir = lower_finite_element_form(form, discretization)
-        kernel_table = kernel_table_from_form(form)
         workset_program = compile_workset_program(
             action_ir,
             form,
+            discretization,
+            local_kernel=policy.local_kernel,
+            realization=policy.realization,
+        )
+        kernel_table = kernel_table_from_form(
+            form,
+            action_ir,
+            workset_program,
             discretization,
         )
         compilation_id = canonical_fingerprint(
@@ -1535,6 +1763,8 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             if constraint is None:
                 return self.full_space.validate(values)
             return constraint.constraint_map.expand(values, lifts)
+        if not isinstance(lifts, tuple):
+            raise ValueError("Mixed finite-element lifts must be field-block tuples.")
         expanded = []
         for value, lift, constraint, full_block in zip(
             values,
@@ -1583,6 +1813,58 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
         )
         return self.residual_space.validate(reduced)
+
+    def weak_residual(self, state: object, args: object = None, /):
+        """Return the assembled dual-valued weak residual without a mass inverse."""
+        return self.residual(state, args)
+
+    def mass_inverted_rate(
+        self,
+        state: object,
+        args: object = None,
+        /,
+        *,
+        mass_coefficient: ArrayLike = 1.0,
+        mass_policy: object = None,
+        linear_policy: LinearSolvePolicy | None = None,
+    ):
+        """Solve the explicitly selected mass operator for the negative residual."""
+        if len(self.form.field_names) != 1:
+            raise ValueError("Mass-inverted rates currently require one field.")
+        coefficient_ = jnp.asarray(mass_coefficient)
+        if coefficient_.shape != ():
+            raise ValueError("Mass-inverted rate coefficient must be scalar.")
+        context = self._execution_context(args)
+        _, mass = self._mass_operators(context, coefficient_, mass_policy)
+        weak = jax.tree.map(lambda value: -value, self.residual(state, context))
+        primal_mass = FunctionLinearOperator(
+            lambda value: self.state_space.inverse_riesz(mass.mv(value)),
+            source=self.state_space,
+            target=self.state_space,
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                positive_semidefinite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "construction",
+                    "positive_semidefinite": "construction",
+                },
+            ),
+            operator_id=canonical_fingerprint(
+                {
+                    "kind": "finite-element-mass-inverted-rate",
+                    "compilation": self.compilation_id,
+                    "runtime": context.runtime.runtime_id,
+                }
+            ),
+        )
+        right_hand_side = self.state_space.inverse_riesz(weak)
+        return solve(
+            LinearSystem(primal_mass),
+            right_hand_side,
+            policy=linear_policy,
+        ).value
 
     def residual_with_auxiliary(
         self,
@@ -1640,6 +1922,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )[1],
             source=self.state_space,
             target=self.residual_space,
+            transpose_action=lambda cotangent: jax.vjp(
+                lambda value: self.residual(value, context),
+                state_,
+            )[1](cotangent)[0],
             operator_id=canonical_fingerprint(
                 {
                     "kind": "finite-element-linearization",
@@ -1763,6 +2049,67 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             else compiled.linearization_operator(state, args)
         )
 
+    def exact_diagonal(
+        self,
+        state: object | None = None,
+        args: object = None,
+        /,
+        *,
+        allow_coordinate_fallback: bool = False,
+        maximum_coordinate_size: int = 4096,
+    ):
+        from .fem import FiniteElementDiagonalData
+
+        raw = (
+            self.affine_operator(args)
+            if state is None
+            else self.operator_function(self.state_space.validate(state), args)
+        )
+        method = "workset"
+        if isinstance(raw, SparseCoordinateOperator) and isinstance(
+            raw.relation, EdgeRelation
+        ):
+            relation = raw.relation
+            on_diagonal = relation.valid & (
+                relation.source_indices == relation.target_indices
+            )
+            diagonal = (
+                jnp.zeros((relation.source_size,), dtype=raw.coefficients.dtype)
+                .at[relation.source_indices]
+                .add(jnp.where(on_diagonal, raw.coefficients, 0.0))
+            )
+            method = "sparse-coordinate"
+        elif raw.capabilities.diagonal_assembly:
+            diagonal = assemble_diagonal(raw)
+        else:
+            if not allow_coordinate_fallback:
+                raise ValueError(
+                    "Exact diagonal lowering is unavailable; explicitly enable the "
+                    "bounded coordinate-linearization fallback."
+                )
+            limit = int(maximum_coordinate_size)
+            if limit < 1 or self.state_space.size > limit:
+                raise ValueError(
+                    "Coordinate diagonal fallback exceeds its explicit dimension cap."
+                )
+            coordinates = jnp.eye(
+                self.state_space.size,
+                dtype=self.state_space.flatten(self.state_space.zeros()).dtype,
+            )
+
+            def column(direction):
+                image = raw.mv(self.state_space.unflatten(direction))
+                return self.residual_space.flatten(image)
+
+            matrix_columns = jax.vmap(column)(coordinates)
+            diagonal = self.state_space.unflatten(jnp.diag(matrix_columns))
+            method = "coordinate-linearization"
+        return FiniteElementDiagonalData(
+            diagonal,
+            method,
+            raw.operator_id,
+        )
+
     def preconditioner_data(
         self,
         state: object | None = None,
@@ -1771,39 +2118,12 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     ):
         from .fem import FiniteElementPreconditionerData
 
-        raw = (
-            self.affine_operator(args)
-            if state is None
-            else self.operator_function(self.state_space.validate(state), args)
+        diagonal_data = self.exact_diagonal(
+            state,
+            args,
+            allow_coordinate_fallback=False,
         )
-        if isinstance(raw, BlockLinearOperator):
-            diagonal = tuple(
-                (
-                    jnp.zeros(space.structure().shape, dtype=space.structure().dtype)
-                    if raw.blocks[index][index] is None
-                    else assemble_diagonal(raw.blocks[index][index])
-                )
-                for index, space in enumerate(self.state_space.spaces)
-            )
-        else:
-            if isinstance(raw, SparseCoordinateOperator) and isinstance(
-                raw.relation, EdgeRelation
-            ):
-                relation = raw.relation
-                on_diagonal = relation.valid & (
-                    relation.source_indices == relation.target_indices
-                )
-                diagonal = (
-                    jnp.zeros((relation.source_size,), dtype=raw.coefficients.dtype)
-                    .at[relation.source_indices]
-                    .add(jnp.where(on_diagonal, raw.coefficients, 0.0))
-                )
-            else:
-                if not raw.capabilities.diagonal_assembly:
-                    raise ValueError(
-                        "Exact FE preconditioner data require diagonal-capable lowering."
-                    )
-                diagonal = assemble_diagonal(raw)
+        diagonal = diagonal_data.diagonal
         graph = (
             self.block_dependency_graph()
             if len(self.form.field_names) > 1
@@ -1888,90 +2208,59 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             policy=linear_policy,
         )
 
-    def affine_operator(self, args: object = None, /):
-        if len(self.form.field_names) > 1:
-            return self.block_linearization_operator(self.state_space.zeros(), args)
-        if any(
-            isinstance(
-                term,
-                (
-                    CellResidualAction,
-                    CellEnergyAction,
-                    CellBilinearAction,
-                    InteriorFacetAction,
-                    ExteriorFacetAction,
-                    PreparedOperatorAction,
-                    SIPGFacetAction,
-                ),
-            )
-            for term in self.form.actions
+    def _structural_affine_operator(self, args: object = None, /):
+        if (
+            self.execution_policy.realization != "sparse"
+            or len(self.form.field_names) != 1
+            or self.constraint is not None
         ):
-            return self.linearization_operator(self.state_space.zeros(), args)
-        field_index = self.field_index
-        dof_map = self.discretization.dof_maps[field_index]
+            return None
         context = self._execution_context(args)
-        mass_operator, stiffness_operator = self.discretization.assemble_field_operators(
+        if context.runtime.runtime_id != self.discretization.default_runtime.runtime_id:
+            return None
+        operators = []
+        mass, stiffness = self.discretization.assemble_field_operators(
             self.form.field_name,
             context.runtime,
         )
-        coefficients = None
-        relation = None
-        for term in self.form.actions:
-            if term.domain is not None or term.rules:
-                raise ValueError(
-                    "Sparse affine lowering currently requires default domains and rules."
-                )
-            if isinstance(term, DiffusionAction):
-                if not term.diffusivity.constant or term.diffusivity.value.shape != ():
-                    raise ValueError(
-                        "Sparse affine diffusion requires a scalar constant."
-                    )
-                operator = stiffness_operator
-                term_values = term.diffusivity.value * operator.coefficients
-            elif isinstance(term, MassAction):
-                if not term.coefficient.constant or term.coefficient.value.shape != ():
-                    raise ValueError("Sparse affine mass requires a scalar constant.")
-                operator = mass_operator
-                term_values = term.coefficient.value * operator.coefficients
-            else:
+        for action in self.form.actions:
+            if (
+                isinstance(action, DiffusionAction)
+                and action.domain is None
+                and not action.rules
+                and action.diffusivity.constant
+                and action.diffusivity.value.shape == ()
+            ):
+                operators.append(action.diffusivity.value * stiffness)
+            elif (
+                isinstance(action, MassAction)
+                and action.domain is None
+                and not action.rules
+                and action.coefficient.constant
+                and action.coefficient.value.shape == ()
+            ):
+                operators.append(action.coefficient.value * mass)
+            elif isinstance(action, (SourceAction, BoundaryLoadAction)):
                 continue
-            if relation is None:
-                relation = operator.relation
-                coefficients = term_values
             else:
-                if relation.route_shape != operator.relation.route_shape:
-                    raise ValueError("Affine FE term sparse relations are incompatible.")
-                coefficients = coefficients + term_values
-        if relation is None or coefficients is None:
-            raise ValueError("Finite-element form contains no affine operator term.")
-        full_operator = SparseCoordinateOperator(
-            relation,
-            coefficients,
-            source=self.full_space,
-            target=DualSpace(self.full_space),
-            operator_id=canonical_fingerprint(
-                {
-                    "kind": "finite-element-affine-operator",
-                    "compilation": self.compilation_id,
-                    "dof_map": dof_map.dof_map_id,
-                }
-            ),
-        )
-        if self.constraint is None:
-            return full_operator
-        constraint_map = self.constraint.constraint_map
-        return FunctionLinearOperator(
-            lambda reduced: constraint_map.pullback_dual(
-                full_operator.mv(constraint_map.homogeneous_correction(reduced))
-            ),
-            source=constraint_map.reduced_space,
-            target=DualSpace(constraint_map.reduced_space),
-            operator_id=canonical_fingerprint(
-                {
-                    "kind": "constrained-finite-element-affine-operator",
-                    "compilation": self.compilation_id,
-                }
-            ),
+                return None
+        if not operators:
+            return None
+        result = operators[0]
+        for operator in operators[1:]:
+            result = result + operator
+        return result
+
+    def affine_operator(self, args: object = None, /):
+        """Return exact structural storage or linearize the authoritative program."""
+        structural = self._structural_affine_operator(args)
+        if structural is not None:
+            return structural
+        zero = self.state_space.zeros()
+        return (
+            self.block_linearization_operator(zero, args)
+            if len(self.form.field_names) > 1
+            else self.linearization_operator(zero, args)
         )
 
     def to_scipy_csr(self, args: object = None, /):
@@ -1988,6 +2277,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         if not isinstance(sparse, SparseCoordinateOperator):
             raise TypeError("Sparse assembly did not produce coordinate storage.")
         relation = sparse.relation
+        if isinstance(relation, RowRelation):
+            relation = relation.as_edge_relation()
+        elif not isinstance(relation, EdgeRelation):
+            raise TypeError("Sparse coordinate storage has an unknown relation type.")
         valid = np.asarray(relation.valid, dtype=bool)
         rows = np.asarray(relation.target_indices)[valid]
         columns = np.asarray(relation.source_indices)[valid]
@@ -2183,25 +2476,205 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         self,
         context: FiniteElementExecutionContext,
         coefficient: Array,
+        mass_policy: object = None,
         /,
-    ) -> tuple[SparseCoordinateOperator, object]:
-        assembled, _ = self.discretization.assemble_field_operators(
-            self.form.field_name,
-            context.runtime,
+    ) -> tuple[AbstractLinearOperator, AbstractLinearOperator]:
+        from .fem._execution import FiniteElementMassPolicy
+
+        policy = FiniteElementMassPolicy() if mass_policy is None else mass_policy
+        if not isinstance(policy, FiniteElementMassPolicy):
+            raise TypeError("mass_policy must be FiniteElementMassPolicy or None.")
+        coefficient = eqx.error_if(
+            coefficient,
+            jnp.any(~jnp.isfinite(coefficient) | (jnp.real(coefficient) <= 0.0)),
+            "Finite-element mass coefficient must be positive and finite.",
         )
-        full_mass = SparseCoordinateOperator(
-            assembled.relation,
-            coefficient * assembled.coefficients,
+        local_kernel = "collocated" if policy.kind == "collocated_diagonal" else "auto"
+        mass_rules = {}
+        field_index = self.discretization._field_index(self.form.field_name)
+        if policy.kind in ("exact", "lumped"):
+            from ..integration import (
+                GaussLegendreRule,
+                ReferenceHexahedronRule,
+                ReferenceQuadrilateralRule,
+                ReferenceTetrahedronRule,
+                ReferenceTriangleRule,
+            )
+
+            for block, element, coordinate_element in zip(
+                self.discretization.mesh.blocks,
+                self.discretization.elements[field_index],
+                self.discretization.coordinate_elements,
+                strict=True,
+            ):
+                exact_degree = 2 * element.degree + element.topological_dimension * max(
+                    coordinate_element.degree - 1, 0
+                )
+                count = max(2, (exact_degree + 2) // 2)
+                if block.cell_kind == "triangle":
+                    count = max(count, (exact_degree + 3) // 2)
+                    rule = ReferenceTriangleRule(GaussLegendreRule(count))
+                elif block.cell_kind == "tetrahedron":
+                    count = max(count, (exact_degree + 4) // 2)
+                    rule = ReferenceTetrahedronRule(GaussLegendreRule(count))
+                elif block.cell_kind == "quadrilateral":
+                    tensor_degree = (
+                        2 * element.degree
+                        + element.topological_dimension * coordinate_element.degree
+                        - 1
+                    )
+                    count = max(2, (tensor_degree + 2) // 2)
+                    rule = ReferenceQuadrilateralRule(GaussLegendreRule(count))
+                elif block.cell_kind == "hexahedron":
+                    tensor_degree = (
+                        2 * element.degree
+                        + element.topological_dimension * coordinate_element.degree
+                        - 1
+                    )
+                    count = max(2, (tensor_degree + 2) // 2)
+                    rule = ReferenceHexahedronRule(GaussLegendreRule(count))
+                else:
+                    raise ValueError("Unsupported finite-element mass cell kind.")
+                mass_rules[block.name] = rule
+        if policy.kind == "collocated_diagonal":
+            from ..integration import (
+                GaussLobattoLegendreRule,
+                ReferenceHexahedronRule,
+                ReferenceQuadrilateralRule,
+            )
+
+            field_index = self.discretization._field_index(self.form.field_name)
+            for block, element in zip(
+                self.discretization.mesh.blocks,
+                self.discretization.elements[field_index],
+                strict=True,
+            ):
+                nodes = np.asarray(element.reference_nodes)
+                counts = tuple(
+                    np.unique(nodes[:, axis]).size for axis in range(nodes.shape[1])
+                )
+                if (
+                    element.family != "TensorProductLagrange"
+                    or element.representation != "point_value"
+                    or len(set(counts)) != 1
+                ):
+                    raise ValueError(
+                        "Collocated diagonal mass requires isotropic point-value "
+                        "tensor elements."
+                    )
+                axis_rule = GaussLobattoLegendreRule(counts[0])
+                rule = (
+                    ReferenceQuadrilateralRule(axis_rule)
+                    if block.cell_kind == "quadrilateral"
+                    else ReferenceHexahedronRule(axis_rule)
+                )
+                rule_nodes = np.unique(
+                    np.asarray(_reference_rule_data(rule).points)[:, 0]
+                )
+                if not np.allclose(
+                    np.unique(nodes[:, 0]), rule_nodes, rtol=0.0, atol=2.0e-13
+                ):
+                    raise ValueError(
+                        "Collocated diagonal mass requires Gauss--Lobatto nodes."
+                    )
+                mass_rules[block.name] = rule
+        mass_action = MassAction(
+            self.form.field_name,
+            1.0,
+            rules=mass_rules,
+            action_id="compiled-dynamics-mass",
+        )
+        mass_form = FiniteElementForm(
+            "compiled-dynamics-mass",
+            self.form.field_name,
+            (mass_action,),
+            properties=OperatorProperties(
+                self_adjoint=True,
+                positive_definite=True,
+                positive_semidefinite=True,
+                evidence={
+                    "self_adjoint": "construction",
+                    "positive_definite": "construction",
+                    "positive_semidefinite": "construction",
+                },
+            ),
+        )
+        compiled_mass = CompiledFiniteElementProblem(
+            mass_form,
+            self.discretization,
+            execution_policy=FiniteElementExecutionPolicy(
+                realization="matrix_free",
+                local_kernel=local_kernel,
+                accumulation=self.execution_policy.accumulation,
+            ),
+        )
+        unit_mass = compiled_mass.linearization_operator(
+            compiled_mass.state_space.zeros(),
+            context,
+        )
+        full_mass = FunctionLinearOperator(
+            lambda value: jax.tree.map(
+                lambda image: coefficient * image,
+                unit_mass.mv(value),
+            ),
             source=self.full_space,
             target=DualSpace(self.full_space),
+            transpose_action=lambda value: jax.tree.map(
+                lambda image: coefficient * image,
+                unit_mass.transpose_mv(value),
+            ),
+            properties=OperatorProperties(),
             operator_id=canonical_fingerprint(
                 {
-                    "kind": "finite-element-mass-operator",
+                    "kind": "scaled-finite-element-mass",
                     "compilation": self.compilation_id,
-                    "runtime": context.runtime.runtime_id,
+                    "unit_mass": unit_mass.operator_id,
                 }
             ),
         )
+        if policy.kind != "exact":
+            ones = jax.tree.map(jnp.ones_like, self.full_space.zeros())
+            diagonal = full_mass.mv(ones)
+            invalid = jax.tree.reduce(
+                lambda left, right: left | right,
+                jax.tree.map(
+                    lambda value: jnp.any(
+                        ~jnp.isfinite(value) | (jnp.real(value) <= 0.0)
+                    ),
+                    diagonal,
+                ),
+                initializer=jnp.asarray(False),
+            )
+            diagonal = jax.tree.map(
+                lambda value: eqx.error_if(
+                    value,
+                    invalid,
+                    "Diagonal finite-element mass must be positive and finite.",
+                ),
+                diagonal,
+            )
+            full_mass = FunctionLinearOperator(
+                lambda value: jax.tree.map(
+                    lambda diagonal_, value_: diagonal_ * value_,
+                    diagonal,
+                    value,
+                ),
+                source=self.full_space,
+                target=DualSpace(self.full_space),
+                transpose_action=lambda value: jax.tree.map(
+                    lambda diagonal_, value_: diagonal_ * value_,
+                    diagonal,
+                    value,
+                ),
+                properties=OperatorProperties(),
+                operator_id=canonical_fingerprint(
+                    {
+                        "kind": "diagonal-finite-element-mass",
+                        "compilation": self.compilation_id,
+                        "policy": policy.policy_id,
+                    }
+                ),
+            )
         if self.constraint is None:
             return full_mass, full_mass
         constraint_map = self.constraint.constraint_map
@@ -2216,6 +2689,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     "kind": "constrained-finite-element-mass",
                     "compilation": self.compilation_id,
                     "runtime": context.runtime.runtime_id,
+                    "policy": policy.policy_id,
                 }
             ),
         )
@@ -2226,6 +2700,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         /,
         *,
         mass_coefficient: ArrayLike = 1.0,
+        mass_policy: object = None,
         system_id: str | None = None,
     ) -> DifferentialAlgebraicSystem:
         coefficient_ = jnp.asarray(mass_coefficient)
@@ -2251,17 +2726,18 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 lift=base.lift,
                 lift_rate=base.lift_rate,
                 lift_acceleration=base.lift_acceleration,
+                metric_data=base.metric_data,
                 user_args=base.user_args,
             )
 
         def mass_matrix(time, state, args):
             context = execution_context(time, args)
-            _, reduced_mass = self._mass_operators(context, coefficient_)
+            _, reduced_mass = self._mass_operators(context, coefficient_, mass_policy)
             return reduced_mass
 
         def vector_field(time, state, args):
             context = execution_context(time, args)
-            full_mass, _ = self._mass_operators(context, coefficient_)
+            full_mass, _ = self._mass_operators(context, coefficient_, mass_policy)
             residual = self.residual(state, context)
             if self.constraint is not None and context.lift_rate is not None:
                 lift_rate = self.full_space.validate(context.lift_rate)
@@ -2283,6 +2759,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         /,
         *,
         mass_coefficient: ArrayLike = 1.0,
+        mass_policy: object = None,
         damping_coefficient: ArrayLike = 0.0,
         system_id: str | None = None,
     ) -> SecondOrderDifferentialSystem:
@@ -2310,9 +2787,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 lift=base.lift,
                 lift_rate=base.lift_rate,
                 lift_acceleration=base.lift_acceleration,
+                metric_data=base.metric_data,
                 user_args=base.user_args,
             )
-            full_mass, reduced_mass = self._mass_operators(context, mass_)
+            full_mass, reduced_mass = self._mass_operators(context, mass_, mass_policy)
             value = (
                 reduced_mass.mv(acceleration)
                 + damping_ * reduced_mass.mv(velocity)
@@ -2340,10 +2818,15 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
         /,
         *,
         mass_coefficient: ArrayLike = 1.0,
+        mass_policy: object = None,
     ) -> GeneralizedEigenproblem:
         context = self._execution_context(args)
         raw_stiffness = self.affine_operator(context)
-        _, raw_mass = self._mass_operators(context, jnp.asarray(mass_coefficient))
+        _, raw_mass = self._mass_operators(
+            context,
+            jnp.asarray(mass_coefficient),
+            mass_policy,
+        )
         properties = OperatorProperties(
             self_adjoint=True,
             positive_semidefinite=True,
@@ -2420,12 +2903,14 @@ __all__ = [
     "DiffusionAction",
     "ExteriorFacetAction",
     "FiniteElementAction",
+    "FiniteElementCoefficient",
     "FiniteElementExecutionContext",
     "FiniteElementExecutionPolicy",
     "FiniteElementForm",
     "FiniteElementFunctional",
     "InteriorFacetAction",
     "MassAction",
+    "PairwiseVolumeFluxAction",
     "PreparedOperatorAction",
     "SIPGBoundaryCondition",
     "SIPGFacetAction",

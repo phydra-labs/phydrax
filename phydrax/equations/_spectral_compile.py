@@ -199,23 +199,27 @@ class _SpectralEvaluator(StrictModule):
     method: Any
     parameter_defaults: tuple[Any | None, ...]
     rhs_expressions: tuple[PDEExpression, ...] = eqx.field(static=True)
+    output_names: tuple[str, ...] = eqx.field(static=True)
+    output_components: tuple[int, ...] = eqx.field(static=True)
     parameter_names: tuple[str, ...] = eqx.field(static=True)
     parameter_components: tuple[int, ...] = eqx.field(static=True)
     parameter_functional: tuple[bool, ...] = eqx.field(static=True)
     coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
-    time_coordinate: str = eqx.field(static=True)
+    time_coordinate: str | None = eqx.field(static=True)
     region_axes: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
 
     def __init__(
         self,
         problem: PDEProblemIR,
         rhs_expressions: Sequence[PDEExpression],
+        output_names: Sequence[str],
+        output_components: Sequence[int],
         layout: SpectralStateLayout,
         discretization: TensorSpectralDiscretization,
         method: Any,
         parameter_defaults: Sequence[Any | None],
         coordinate_axes: Sequence[tuple[str, tuple[int, ...]]],
-        time_coordinate: str,
+        time_coordinate: str | None,
         region_axes: Sequence[tuple[str, tuple[int, ...]]],
         /,
     ):
@@ -223,7 +227,23 @@ class _SpectralEvaluator(StrictModule):
         self.discretization = discretization
         self.method = method
         self.parameter_defaults = tuple(parameter_defaults)
-        self.rhs_expressions = tuple(rhs_expressions)
+        expressions = tuple(rhs_expressions)
+        names = tuple(str(name) for name in output_names)
+        components = tuple(int(count) for count in output_components)
+        if (
+            not expressions
+            or len(expressions) != len(names)
+            or len(expressions) != len(components)
+            or any(not name for name in names)
+            or any(count <= 0 for count in components)
+        ):
+            raise ValueError(
+                "Spectral evaluator outputs require aligned expressions, names, "
+                "and positive component counts."
+            )
+        self.rhs_expressions = expressions
+        self.output_names = names
+        self.output_components = components
         self.parameter_names = tuple(parameter.name for parameter in problem.parameters)
         self.parameter_components = tuple(
             parameter.components for parameter in problem.parameters
@@ -232,7 +252,7 @@ class _SpectralEvaluator(StrictModule):
             parameter.functional for parameter in problem.parameters
         )
         self.coordinate_axes = tuple(coordinate_axes)
-        self.time_coordinate = str(time_coordinate)
+        self.time_coordinate = None if time_coordinate is None else str(time_coordinate)
         self.region_axes = tuple(region_axes)
 
     @property
@@ -289,7 +309,7 @@ class _SpectralEvaluator(StrictModule):
         return self.method.dealiasing.reconstruct(self.discretization.project(array))
 
     def _coordinate(self, name: str, time: Array, /) -> Array:
-        if name == self.time_coordinate:
+        if self.time_coordinate is not None and name == self.time_coordinate:
             return jnp.asarray(time)
         axes = self._axes(name)
         components = []
@@ -572,13 +592,20 @@ class _SpectralEvaluator(StrictModule):
         cache[node] = result
         return result
 
-    def _coerce_physical(self, name: str, value: Any, /) -> Array:
+    def _coerce_physical(
+        self,
+        name: str,
+        components: int,
+        value: Any,
+        /,
+    ) -> Array:
         result = jnp.asarray(value)
-        count = self.layout.component_counts[self.layout.field_names.index(name)]
-        expected = self.evaluation.physical_shape + (() if count == 1 else (count,))
-        if result.shape == () or (count > 1 and result.shape == (count,)):
+        expected = self.evaluation.physical_shape + (
+            () if components == 1 else (components,)
+        )
+        if result.shape == () or (components > 1 and result.shape == (components,)):
             return jnp.broadcast_to(result, expected)
-        if count == 1 and result.shape == expected + (1,):
+        if components == 1 and result.shape == expected + (1,):
             return result[..., 0]
         compatible = result.ndim == len(expected) and all(
             actual in (1, target)
@@ -587,10 +614,10 @@ class _SpectralEvaluator(StrictModule):
         if compatible:
             return jnp.broadcast_to(result, expected)
         raise ValueError(
-            f"Spectral RHS for field {name!r} must have shape {expected}; got {result.shape}."
+            f"Spectral output {name!r} must have shape {expected}; got {result.shape}."
         )
 
-    def __call__(self, time: Array, state: Array, args: Any) -> Array:
+    def physical_outputs(self, time: Array, state: Array, args: Any) -> tuple[Array, ...]:
         value = jnp.asarray(state)
         if value.shape != self.layout.state_shape:
             raise ValueError(
@@ -598,17 +625,34 @@ class _SpectralEvaluator(StrictModule):
             )
         fields = self.layout.unpack(value)
         cache: dict[PDEExpression, Any] = {}
-        derivatives = {}
-        for name, expression in zip(
-            self.layout.field_names,
-            self.rhs_expressions,
-            strict=True,
-        ):
-            physical = self._coerce_physical(
+        return tuple(
+            self._coerce_physical(
                 name,
+                components,
                 self._evaluate(expression, time, args, fields, cache),
             )
-            derivatives[name] = self.method.dealiasing.project(physical)
+            for name, components, expression in zip(
+                self.output_names,
+                self.output_components,
+                self.rhs_expressions,
+                strict=True,
+            )
+        )
+
+    def __call__(self, time: Array, state: Array, args: Any) -> Array:
+        outputs = self.physical_outputs(time, state, args)
+        if len(outputs) != len(self.layout.field_names):
+            raise ValueError(
+                "Spectral dynamics require one evaluator output per state field."
+            )
+        derivatives = {
+            name: self.method.dealiasing.project(physical)
+            for name, physical in zip(
+                self.layout.field_names,
+                outputs,
+                strict=True,
+            )
+        }
         return self.layout.pack(derivatives)
 
 
@@ -892,7 +936,11 @@ def _linear_symbol(
         else:
             axis = axes[expression.axis]
         prepared = discretization.axes[axis]
-        if prepared.family != "fourier" and expression.order % 2:
+        if (
+            prepared.derivative_matrix is not None
+            or prepared.family not in ("fourier", "sine", "cosine")
+            or (prepared.family != "fourier" and expression.order % 2)
+        ):
             return None
         multiplier = prepared.derivative_multiplier(expression.order)
         shape = [1] * len(discretization.modal_shape)
@@ -907,6 +955,13 @@ def _linear_symbol(
             return None
         symbol = zero
         for axis in coordinate_axes[expression.coordinate]:
+            prepared = discretization.axes[axis]
+            if prepared.derivative_matrix is not None or prepared.family not in (
+                "fourier",
+                "sine",
+                "cosine",
+            ):
+                return None
             multiplier = discretization.axes[axis].derivative_multiplier(2)
             shape = [1] * len(discretization.modal_shape)
             shape[axis] = multiplier.size
@@ -943,13 +998,16 @@ def _coordinate_axes(
                     f"PDE coordinate {coordinate.name!r} periodicity does not match "
                     f"spectral basis {prepared.family!r}."
                 )
-            if coordinate.bounds is not None and not jnp.allclose(
-                jnp.asarray(coordinate.bounds), prepared.bounds
-            ):
-                raise ValueError(
-                    f"PDE coordinate {coordinate.name!r} bounds do not match "
-                    "the spectral basis."
-                )
+            if coordinate.bounds is not None:
+                actual_bounds = prepared.bounds
+                if actual_bounds is None or not jnp.allclose(
+                    jnp.asarray(coordinate.bounds),
+                    actual_bounds,
+                ):
+                    raise ValueError(
+                        f"PDE coordinate {coordinate.name!r} bounds do not match "
+                        "the spectral axis domain."
+                    )
         output.append((coordinate.name, axes))
         offset += coordinate.size
     return temporal[0].name, tuple(output)
@@ -1041,6 +1099,8 @@ def compile_spectral_pde(
     evaluator = _SpectralEvaluator(
         problem,
         rhs,
+        layout.field_names,
+        layout.component_counts,
         layout,
         discretization,
         prepared_method,

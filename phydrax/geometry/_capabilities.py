@@ -19,12 +19,20 @@ class GeometryCapability(str, Enum):
     REGION_QUERY = "region_query"
     SIGNED_DISTANCE = "signed_distance"
     BOUNDARY_NORMAL = "boundary_normal"
+    CONTACT_CURVATURE = "contact_curvature"
     MEASURE = "measure"
     INTERIOR_SAMPLING = "interior_sampling"
     BOUNDARY_SAMPLING = "boundary_sampling"
     BOUNDARY_ATLAS = "boundary_atlas"
     CUBATURE_ATLAS = "cubature_atlas"
     SEAM_DIAGNOSTICS = "seam_diagnostics"
+
+
+@runtime_checkable
+class ContactCurvatureProvider(Protocol):
+    """Provider of certified principal boundary curvatures."""
+
+    def contact_curvature(self, state: Any, points: Array, /) -> Any: ...
 
 
 @runtime_checkable
@@ -46,6 +54,7 @@ class SeamDiagnosticsProvider(Protocol):
 
 __all__ = [
     "BoundaryAtlasProvider",
+    "ContactCurvatureProvider",
     "CubatureAtlasProvider",
     "GeometryCapability",
     "SeamDiagnosticsProvider",

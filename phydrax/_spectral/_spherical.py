@@ -21,7 +21,7 @@ from s2fft.sampling import s2_samples
 from s2fft.transforms import spherical as s2fft_spherical
 from s2fft.utils import quadrature as s2fft_quadrature
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -29,6 +29,33 @@ from .._trainable import NonTrainableState
 SphericalSampling: TypeAlias = Literal["mw", "mwss", "dh", "gl"]
 SphericalExecution: TypeAlias = Literal["recursive", "precomputed"]
 _DEFAULT_PRECOMPUTE_BYTES = 512 * 1024**2
+_SPHERICAL_MODE_NORMALIZATION = "s2fft-orthonormal-condon-shortley"
+
+
+def _spherical_mode_layout_id(
+    bandlimit: int,
+    spin: int,
+    reality: bool,
+    /,
+) -> str:
+    degree = np.arange(bandlimit, dtype=np.int32)[:, None]
+    order = np.arange(-(bandlimit - 1), bandlimit, dtype=np.int32)[None, :]
+    shape = (bandlimit, 2 * bandlimit - 1)
+    degrees = np.broadcast_to(degree, shape)
+    orders = np.broadcast_to(order, shape)
+    valid = (np.abs(orders) <= degrees) & (degrees >= abs(spin))
+    independent = valid & (orders >= 0) if reality else valid
+    return canonical_fingerprint(
+        {
+            "kind": "spherical-mode-layout-v1",
+            "bandlimit": bandlimit,
+            "spin": spin,
+            "reality": reality,
+            "valid": array_tree_fingerprint(valid),
+            "independent": array_tree_fingerprint(independent),
+            "normalization": _SPHERICAL_MODE_NORMALIZATION,
+        }
+    )
 
 
 def _array_bytes(tree: object, /) -> int:
@@ -258,6 +285,7 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
     sample_shape: tuple[int, int]
     coefficient_shape: tuple[int, int]
     fingerprint: str
+    layout_id: str
 
     def __init__(
         self,
@@ -341,6 +369,11 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
             raise RuntimeError("S2FFT returned an invalid rank-two transform shape.")
         self.sample_shape = (sample_shape[0], sample_shape[1])
         self.coefficient_shape = (coefficient_shape[0], coefficient_shape[1])
+        self.layout_id = _spherical_mode_layout_id(
+            selected_bandlimit,
+            selected_spin,
+            selected_reality,
+        )
         self.fingerprint = canonical_fingerprint(
             {
                 "kind": "spherical-harmonic-plan-v1",
@@ -349,19 +382,6 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
                 "sampling": sampling_value,
                 "spin": selected_spin,
                 "reality": selected_reality,
-            }
-        )
-
-    @property
-    def layout_id(self) -> str:
-        """Identity of the mathematical coefficient layout, independent of sampling."""
-        return canonical_fingerprint(
-            {
-                "kind": "spherical-mode-layout-v1",
-                "bandlimit": self.bandlimit,
-                "spin": self.spin,
-                "reality": self.reality,
-                "normalization": "s2fft-orthonormal-condon-shortley",
             }
         )
 
@@ -386,7 +406,6 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
                 "precompute_bytes": self.precompute_bytes,
             }
         )
-
 
     def _forward_field(self, values: Array, /) -> Array:
         return self.transform.forward(

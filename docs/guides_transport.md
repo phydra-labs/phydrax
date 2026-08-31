@@ -80,6 +80,9 @@ affine changes. Never infer the same normalization for physical transport proble
 | Unequal-mass spatial or intensity discrepancy | `unbalanced_sinkhorn_divergence` | Requires explicit source/target KL penalties |
 | Differentiable sort/rank/quantile/top-k | soft-order functions | Relaxations, not hard order |
 | Fast unweighted relaxed sort/rank | `fast_soft_sort`, `fast_soft_rank` | No weights, coupling, or solver diagnostics |
+| Learn deterministic motion between endpoint laws | `FlowMatchingTerm` + `ContinuousTransport` | Learned velocity, not a reverse stochastic process |
+| Generate stochastically from a learned score | `ReverseDiffusion` | Real Euclidean vector states and scalar additive noise initially |
+| Obtain a deterministic score-induced density flow | `probability_flow_system` + `ContinuousFlowLaw` | Exact density retains continuous-flow dimension and geometry guards |
 
 The regularized Sinkhorn objective contains self-interaction bias. Use
 `sinkhorn_divergence` for a discrepancy expected to vanish on identical measures. Use
@@ -232,7 +235,7 @@ a bijection or probability law. `FlowMatchingTerm` regresses a state-shaped
 `DomainFunction` against `u_t`; the population optimum is the conditional expectation
 of endpoint velocity given the interpolated state.
 
-```python
+```text
 endpoints = phx.transport.independent_endpoint_coupling(
     source_samples,
     target_samples,
@@ -260,6 +263,24 @@ MCMC acceptance ratios.
 For fixed-query fields, `OperatorFlowMatchingMetric` measures velocity error with the
 query mask, physical quadrature, and channel metric. It does not grant resolution
 transfer or continuum-density semantics.
+
+## Score-based diffusion transport
+
+Flow matching regresses conditional endpoint velocity. Score diffusion instead
+prescribes a forward stochastic corruption process and learns the score of each
+perturbed marginal. `DenoisingScoreMatchingTerm` uses exact VP or VE Gaussian
+transition scores without differentiating the learned score field.
+
+After training, `ReverseDiffusion` materializes one explicit terminal state and Wiener
+path per sample and solves the reverse-time Itô SDE. The same score can produce a
+deterministic `ContinuousSystem` through `probability_flow_system`; ordinary
+`ContinuousTransport` and `ContinuousFlowLaw` then own sampling and density evidence.
+
+Choose flow matching when endpoint coupling and deterministic motion are the model.
+Choose reverse diffusion when stochastic generation is required. Choose probability
+flow when deterministic encoding or finite-dimensional likelihood evaluation is
+required. A finite-time Gaussian terminal reference remains labeled exact,
+asymptotic, or external in every case.
 
 ## 10. Scientific integrations
 

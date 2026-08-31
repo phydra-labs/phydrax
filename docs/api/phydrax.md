@@ -6,6 +6,8 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.discretization`: finite topology, support, field spaces, measures,
   prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,
   and approximation bundles/hierarchies
+- `phydrax.topology`: exact finite-complex homology, validated filtrations,
+  persistent homology, fixed-capacity diagram layouts, and topology–Hodge evidence
 - `phydrax.metrix`: coordinate charts, tensors, Riemannian metrics, curvature,
   embedded geometry, and metric-aware stochastic calculus
 - `phydrax.data_utils`: CSV loading and array scaling helpers

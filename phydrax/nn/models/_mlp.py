@@ -22,6 +22,19 @@ from .._scan import (
 from .._utils import _canonical_size, _get_value_shape, _identity, SizeLike
 from ..layers._dropout import _dropout_probabilities, Dropout
 from ..layers._linear import Linear
+from ..parameters import LowRankUpdate
+
+
+def _kfac_parameterization(
+    layer: Linear,
+) -> Literal["direct", "low_rank_update", "rwf", "transformed"]:
+    if isinstance(layer.weight, LowRankUpdate):
+        return "low_rank_update"
+    if layer.random_weight_factorization:
+        return "rwf"
+    if layer.weight_transform is not None:
+        return "transformed"
+    return "direct"
 
 
 class MLP(_AbstractBaseModel, KFACLayoutProvider):
@@ -240,13 +253,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                 name=f"layers/{index}",
                 weight=layer.weight,
                 bias=layer.bias,
-                parameterization=(
-                    "rwf"
-                    if layer.random_weight_factorization
-                    else "transformed"
-                    if layer.weight_transform is not None
-                    else "direct"
-                ),
+                parameterization=_kfac_parameterization(layer),
             )
             for index, layer in enumerate(self.layers)
         )
@@ -258,13 +265,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                 name="residual_projection",
                 weight=residual.weight,
                 bias=residual.bias,
-                parameterization=(
-                    "rwf"
-                    if residual.random_weight_factorization
-                    else "transformed"
-                    if residual.weight_transform is not None
-                    else "direct"
-                ),
+                parameterization=_kfac_parameterization(residual),
             ),
         )
 
@@ -294,7 +295,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
             repeated_blocks = tuple(
                 zip(self.layers[1:-1], self.dropouts[1:], strict=True)
             )
-            dynamic = stack_scan_dynamics(repeated_blocks)
+            dynamic = stack_scan_dynamics(repeated_blocks, self._scan_static)
             if dynamic is not None:
                 site_key = fold_in_eval_key(key, 0)
                 x = self.layers[0](x, key=site_key)
