@@ -160,6 +160,17 @@ external products. Native downstream contracts cover explicit power corrections,
 analytic halo foundations, compact Limber/RSD predictions, canonical CMB spectra, and
 small-N force qualification without claiming calibrated fits, survey likelihoods, or
 production tree gravity.
+Astrodynamics applications reuse the existing differential, geometric, particle,
+rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
+Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,
+universal Kepler and branch-explicit Lambert kernels, force composition, tabulated
+ephemerides, direct and nearly-Keplerian N-body dynamics, CR3BP, spacecraft loads, and
+orbit measurements. External coordinate, SPICE, and SGP4 providers are host-side
+adapters with explicit provenance; provider calls and file access never enter traced
+execution. Astrophysical observation applications add observer projection, physical
+occultation contacts, photon-counting bandpasses, concrete instrument responses, ray
+transfer, and static field operators without introducing a second observation or
+inference runtime.
 Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
 transactional adaptive realization and replay, plane-strain/plane-stress/3-D
 hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,

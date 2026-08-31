@@ -132,6 +132,26 @@ multiphysics simulations. `StructurePreservingFaceClosurePlan` and
 `ConstrainedMHDClosurePlan` provide dissipative face corrections, edge-EMF corrections,
 and explicit OOD fallback.
 
+## Astrodynamics and astrophysical observations
+
+`phydrax.applications.astrodynamics` binds scale, two-part epoch, and frame identity to
+Cartesian states while keeping numerical solver time relative and dense. Universal
+Kepler, modified-equinoctial conversion, Lambert branches, native force composition,
+tabulated ephemerides, orbital events, direct and nearly-Keplerian N-body dynamics,
+CR3BP, rigid-spacecraft loads, and measurement Jacobians delegate general integration,
+geometry, particles, roots, and control to their existing owners.
+
+`phydrax.applications.astrophysics` projects those states into an observer frame and
+composes polynomial limb-darkened occultation with immutable photon-counting
+bandpasses. Binned, image, frequency, ray-transfer, and complex-field response objects
+are concrete array operators. Existing likelihood, state-space, posterior, and
+BlackJAX contracts remain the only inference boundary.
+
+Contacts, transfer-branch selection, event brackets, collisions, classical-element
+singularities, provider loading, and capacity changes are discrete or singular
+boundaries. Smooth fixed branches retain ordinary JAX derivatives; every other path
+must be judged through its explicit validity/status evidence.
+
 ## Differentiability boundary
 
 Gradients are exact for the realized discrete program. Temporal nodes, topology epochs,

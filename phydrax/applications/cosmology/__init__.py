@@ -4,6 +4,8 @@ from ._background import FLRWBackground
 from ._cmb import (
     CMB_FIELDS,
     CMB_MODES,
+    CmbBandpowerResponsePlan,
+    CmbBandpowerResponseResult,
     CmbSpectrumTable,
     CmbSpectrumTransformPlan,
     PrimordialPowerLaw,
@@ -90,6 +92,8 @@ __all__ = [
     "CMB_FIELDS",
     "CMB_MODES",
     "CODE_COSMOLOGY_SCALE",
+    "CmbBandpowerResponsePlan",
+    "CmbBandpowerResponseResult",
     "CmbSpectrumTable",
     "CmbSpectrumTransformPlan",
     "ComovingEulerDiagnostics",

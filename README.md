@@ -131,6 +131,16 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Astrodynamics**: explicit scale/epoch/frame contexts, Cartesian and modified
+  equinoctial states, universal-variable Kepler propagation, branch-explicit Lambert
+  transfer, native force composition, tabulated ephemerides, orbital events, direct
+  and nearly-Keplerian N-body dynamics, CR3BP, rigid spacecraft loads, and measurement
+  Jacobians reuse the existing differential, geometric, particle, control, and
+  nonlinear substrates.
+- **Astrophysical observations**: observer projection, polynomial limb-darkened
+  occultation, photon-counting bandpasses, binned/image/frequency responses, ordered
+  ray transfer, static complex-field operators, and CMB bandpower responses compose
+  with existing likelihood, state-space, posterior, and BlackJAX contracts.
 - **Learned field evolution**: fixed physical measures project PDE rates onto
   selected model tangents, Diffrax evolves the resulting parameter ODE, and
   backward Diffrax characteristics feed optional time-slice field projection.

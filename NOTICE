@@ -67,6 +67,15 @@ designs are informed by SeqJAX at commit
 parameter, result, checkpoint, and experiment contracts.
 See LICENSES/SEQJAX-MIT.txt.
 
+jnkepler
+Copyright (c) 2022 Kento Masuda
+Licensed under the MIT License.
+The fixed-step nearly-Keplerian map uses the published TTVFast/Wisdom--Holman
+splitting and third-order mapping-coordinate corrector coefficients represented
+in jnkepler. Phydrax reimplements the map against its own universal Kepler,
+status, context, and particle contracts.
+See LICENSES/JNKEPLER-MIT.txt.
+
 ELK
 Copyright (c) 2024 Linderman Lab
 Licensed under the BSD 3-Clause License.
