@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added explicit cosmological length/mass/time scales, parameter-differentiable flat
+  FLRW backgrounds, native first/second Lagrangian growth, immutable expansion/growth
+  and linear-power products, state-ready 1LPT/2LPT, and transactional periodic
+  scale-factor particle-mesh rollout. The cosmological path reuses the existing
+  particle discretization, splat, self-gravity, and typed PM force evaluation;
+  synchronized baryon/particle orchestration remains distinct from physical coupling.
 - Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
   globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
   implicit root derivatives, physical position/velocity residual certification,

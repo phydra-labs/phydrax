@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-import jax.random as jr
 import numpy as np
 
 import phydrax as phx
 from phydrax.applications.cosmology import (
     CosmologicalKDKPlan,
+    CosmologyProductProvenance,
     FLRWBackground,
+    FLRWGrowthPlan,
     LagrangianPerturbationInitialConditionPlan,
+    MatterPowerTable,
 )
 from phydrax.discretization.finite_volume._mhd_boundary import (
     MHDOutflowBoundary,
@@ -476,16 +478,44 @@ def test_reflux_curl_preserves_constraint():
 
 def test_cosmology_inference_and_closure_contracts():
     background = FLRWBackground(1.0, 0.3)
-    kdk = CosmologicalKDKPlan(background, (1.0,))
-    state = kdk.initialize(
-        jnp.asarray([[0.25]]), jnp.asarray([[0.0]]), jnp.ones((1,)), 0.5
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(1), jnp.ones((1,)), ambient_dimension=1
+    ).prepare()
+    kdk = CosmologicalKDKPlan(particles, (1.0,))
+    state = kdk.initialize(jnp.asarray([[0.25]]), jnp.asarray([[0.0]]), 0.5)
+    advanced, diagnostics = kdk.advance(
+        background,
+        state,
+        0.6,
+        jnp.zeros((1, 1)),
+        jnp.zeros((1, 1)),
     )
-    advanced, diagnostics = kdk.advance(state, 0.6, jnp.zeros((1, 1)), jnp.zeros((1, 1)))
     assert bool(diagnostics.successful)
     assert advanced.scale_factor == 0.6
 
-    lpt = LagrangianPerturbationInitialConditionPlan((4,), (1.0,))
-    realized = lpt.realize(jr.normal(jr.key(0), (4,)), jnp.ones((4,)))
+    lpt_particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(4), jnp.ones((4,)), ambient_dimension=1
+    ).prepare()
+    growth = FLRWGrowthPlan(jnp.asarray([0.1, 1.0])).solve(background)
+    provenance = CosmologyProductProvenance(
+        producer="test",
+        producer_version="current",
+        model_id=background.model_id,
+        numerical_policy_id="test-power",
+        scale_id=background.scale.scale_id,
+        source_kind="external",
+        differentiability="constant",
+    )
+    power = MatterPowerTable(
+        [0.1, 1.0],
+        [1.0, 20.0],
+        [[1.0e-8, 1.0e-8], [1.0e-6, 1.0e-6]],
+        background.scale,
+        provenance,
+        spatial_dimension=1,
+    )
+    lpt = LagrangianPerturbationInitialConditionPlan(lpt_particles, (4,), (1.0,))
+    realized = lpt.realize(background, growth, power, jnp.ones((4,)), 0.1)
     assert realized.positions.shape == (4, 1)
 
     observation = FieldObservationPlan(

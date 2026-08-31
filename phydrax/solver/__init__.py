@@ -746,6 +746,7 @@ from ._particle_epoch import (
 )
 from ._particle_mesh_gravity import (
     ParticleMeshGravityDiagnostics,
+    ParticleMeshGravityForceResult,
     ParticleMeshGravityPlan,
     ParticleMeshGravityState,
     ParticleMeshGravityStepResult,
@@ -1567,6 +1568,7 @@ __all__ = [
     "SplitFieldPMLPlan",
     "StaggeredAcousticPlan",
     "StaggeredAcousticState",
+    "ParticleMeshGravityForceResult",
     "ParticleMeshGravityDiagnostics",
     "ParticleMeshGravityPlan",
     "ParticleMeshGravityState",
