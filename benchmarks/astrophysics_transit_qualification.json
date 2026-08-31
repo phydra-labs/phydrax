@@ -1,0 +1,10 @@
+{
+  "disjoint_flux_error": 0.0,
+  "dtype": "float64",
+  "full_cover_flux_error": 0.0,
+  "interior_derivative_finite": true,
+  "kind": "astrophysics-transit-qualification",
+  "maximum_quadrature_difference": 7.773954813217188e-10,
+  "passed": true,
+  "uniform_band_photon_rate": 503.41165675427095
+}

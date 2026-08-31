@@ -33,6 +33,24 @@
   scale-factor particle-mesh rollout. The cosmological path reuses the existing
   particle discretization, splat, self-gravity, and typed PM force evaluation;
   synchronized baryon/particle orchestration remains distinct from physical coupling.
+- Added `phydrax.applications.astrodynamics`: explicit scale, two-part epoch, and
+  frame contexts; Cartesian and modified-equinoctial states; bounded universal
+  Kepler propagation with implicit JVP; fixed-capacity multi-revolution Lambert
+  branches; pure force composition; adaptive and symplectic propagation; hybrid
+  orbital events; provenance-bearing time/frame/ephemeris products; third-body and
+  J2--J4 gravity; direct and nearly-Keplerian N-body dynamics; CR3BP; rigid
+  spacecraft, finite-burn, reaction-wheel, and orbit-measurement contracts; and
+  host-only coordinate, SPICE, and SGP4 adapters. No provider discovery, data
+  download, close-encounter regularization, DSST, or adaptive IAS15 is implied.
+- Added native astrophysical observation operators for observer projection,
+  polynomial limb-darkened circular occultation, photon-counting bandpasses,
+  transit count likelihood composition, binned and image responses,
+  frequency-domain detector likelihoods, ordered ray transfer, and static complex
+  field sequences. Contacts, event/branch selection, provider loading, and capacity
+  changes remain explicit non-smooth boundaries.
+- Added provenance-bearing CMB angular-power tables with explicit `Cl`/`Dl`
+  conversion and fixed response-window Gaussian likelihood composition. Spectrum
+  generation and experiment data remain external.
 - Added enhanced conforming scalar virtual elements of qualified degree one
   through three on arbitrary-arity polygonal cell blocks, including certified
   H1/L2 projectors, explicit stabilization, functional trace constraints,

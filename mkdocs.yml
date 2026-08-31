@@ -189,6 +189,8 @@ nav:
         - Structured finite-volume runtime: "guides_finite_volume_runtime.md"
         - Compressible multiphysics: "guides_compressible_multiphysics.md"
         - Advanced multiphysics: "guides_advanced_multiphysics.md"
+        - Astrodynamics: "guides_astrodynamics.md"
+        - Astrophysical observations: "guides_astrophysics_observations.md"
         - Unstructured finite volume: "guides_unstructured_finite_volume.md"
         - Kinetic methods: "guides_lattice_boltzmann.md"
         - Solver substrates: "guides_solver_substrates.md"
@@ -380,6 +382,8 @@ nav:
         - Dynamical systems, identification, and chaos: "api/dynamics.md"
         - Control: "api/control.md"
         - Circuit analysis: "api/circuit.md"
+        - Astrodynamics applications: "api/astrodynamics.md"
+        - Astrophysics applications: "api/astrophysics.md"
         - Solver:
             - Overview: "api/solver/index.md"
             - Time integrators: "api/solver/time_integrators.md"

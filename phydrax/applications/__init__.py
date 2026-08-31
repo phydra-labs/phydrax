@@ -5,6 +5,7 @@
 """Executable scientific application workflows built on Phydrax substrates."""
 
 from . import (
+    astrodynamics,
     astrophysics,
     contact,
     cosmology,
@@ -18,6 +19,7 @@ from . import (
 
 
 __all__ = [
+    "astrodynamics",
     "astrophysics",
     "contact",
     "cosmology",

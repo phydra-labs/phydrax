@@ -1,0 +1,11 @@
+{
+  "cadences": 65536,
+  "compile_seconds": 0.20944025000062538,
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "finite_gradient_fraction": 1.0,
+  "gradient_compile_seconds": 0.4421048330004851,
+  "gradient_warm_seconds": 0.2749172500007262,
+  "kind": "astrophysics-transit-benchmark",
+  "warm_seconds": 0.07269375000032596
+}

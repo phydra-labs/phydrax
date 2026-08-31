@@ -136,8 +136,20 @@ introducing a separate simulation substrate. Flat differentiable FLRW background
 first/second Lagrangian growth, unit-bearing expansion and linear-power products,
 state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose the
 existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
-as an explicit table; transfer, Boltzmann, halo, survey, and CMB calculations remain
-external capability boundaries.
+as an explicit table; transfer, Boltzmann, halo, survey, and native CMB spectrum
+generation remain external capability boundaries. Provenance-bearing CMB theory tables
+and fixed response/window likelihood composition are native downstream products.
+Astrodynamics applications reuse the existing differential, geometric, particle,
+rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
+Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,
+universal Kepler and branch-explicit Lambert kernels, force composition, tabulated
+ephemerides, direct and nearly-Keplerian N-body dynamics, CR3BP, spacecraft loads, and
+orbit measurements. External coordinate, SPICE, and SGP4 providers are host-side
+adapters with explicit provenance; provider calls and file access never enter traced
+execution. Astrophysical observation applications add observer projection, physical
+occultation contacts, photon-counting bandpasses, concrete instrument responses, ray
+transfer, and static field operators without introducing a second observation or
+inference runtime.
 Explicit material point dynamics compose that transfer with quadratic nodal B-splines, matched
 APIC momentum, first-Piola reference-volume forces, transactional USL updates,
 stability evidence, and fixed-temporal replay for plane-strain and

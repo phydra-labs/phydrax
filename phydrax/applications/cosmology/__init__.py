@@ -1,6 +1,12 @@
 """Differentiable cosmological backgrounds, growth, initial conditions, and PM."""
 
 from ._background import FLRWBackground
+from ._cmb import (
+    CMBAngularPowerTable,
+    CMBConvention,
+    CMBResponsePlan,
+    CMBResponseResult,
+)
 from ._coupled import (
     CosmologicalBaryonParticleDiagnostics,
     CosmologicalBaryonParticlePlan,
@@ -35,6 +41,10 @@ from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
 __all__ = [
     "CODE_COSMOLOGY_SCALE",
+    "CMBAngularPowerTable",
+    "CMBConvention",
+    "CMBResponsePlan",
+    "CMBResponseResult",
     "CosmologicalBaryonParticleDiagnostics",
     "CosmologicalBaryonParticlePlan",
     "CosmologicalBaryonParticleState",
