@@ -29,6 +29,7 @@ from ._certificate import (
     SignReliability,
     ZeroSetAccuracy,
 )
+from ._certified_implicit import CertifiedImplicitCover, CertifiedImplicitTopology
 from ._contracts import (
     CompiledGeometry,
     ContactCurvatureResult,
@@ -206,6 +207,8 @@ __all__ = [
     "design",
     "reconstruction",
     "simplicial",
+    "CertifiedImplicitCover",
+    "CertifiedImplicitTopology",
     "AbstractSurfacePatch",
     "AabbOverlapCandidate",
     "AabbOverlapQueryResult",

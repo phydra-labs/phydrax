@@ -152,11 +152,15 @@ class O3Representation(StrictModule, NonTrainableState):
         parts = (
             features.scalars,
             features.pseudoscalars,
-            features.vectors.reshape(features.vectors.shape[:-2] + (-1,)),
-            features.pseudovectors.reshape(features.pseudovectors.shape[:-2] + (-1,)),
-            tensor_coefficients.reshape(tensor_coefficients.shape[:-2] + (-1,)),
+            features.vectors.reshape(features.vectors.shape[:-2] + (3 * self.vectors,)),
+            features.pseudovectors.reshape(
+                features.pseudovectors.shape[:-2] + (3 * self.pseudovectors,)
+            ),
+            tensor_coefficients.reshape(
+                tensor_coefficients.shape[:-2] + (5 * self.tensors,)
+            ),
             pseudotensor_coefficients.reshape(
-                pseudotensor_coefficients.shape[:-2] + (-1,)
+                pseudotensor_coefficients.shape[:-2] + (5 * self.pseudotensors,)
             ),
         )
         return jnp.concatenate(parts, axis=-1)

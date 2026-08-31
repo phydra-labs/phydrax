@@ -162,6 +162,99 @@ on a nonlinear model.
 
 
 
+### 5b. Reuse fixed Gaussian evaluations with Bayesian quadrature
+
+When the uncertain input is one normalized Gaussian variable and forward solves
+have already been assigned to a fixed design, Bayesian quadrature provides a
+kernel-conditioned expectation through the ordinary integration interface:
+
+```python
+coefficient = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(0.4, 0.05),
+    label="coefficient",
+)
+target = phx.integration.expectation(
+    coefficient,
+    target_id="coefficient-expectation",
+)
+kernel_mean = phx.integration.GaussianKernelMean(
+    target,
+    phx.kernels.SquaredExponentialKernel(length_scale=0.08),
+)
+plan = phx.integration.BayesianQuadraturePlan(
+    kernel_mean,
+    phx.domain.PointSampling(24, design="hammersley"),
+    observation_noise=0.0,
+    solve_regularization=1e-10,
+)
+realization = phx.integration.materialize(target, plan)
+prediction_mean = phx.integration.reduce(
+    coefficient.Function("coefficient")(
+        lambda value: solve_forward(value, forcing=1.0)
+    ),
+    realization,
+)
+```
+
+The fixed realization can reduce scalar, array, field, or PyTree outputs without
+rebuilding the kernel system. `prediction_mean.error_estimate` is the GP
+posterior integral standard deviation, with
+`error_kind="bayesian-posterior-standard-deviation"`. It is **not a
+deterministic or frequentist error bound** and should not be combined with
+ensemble, aleatoric, or conformal uncertainties as though they had the same
+meaning.
+
+Keep observation noise separate from numerical solve regularization. Inspect
+`prediction_mean.diagnostics.solve` before using the result; singular designs,
+non-finite forward outputs, target-identity mismatch, and invalid posterior
+variance fail closed. This initial path does not perform active acquisition and
+does not support unnormalized evidence, non-Gaussian measures, or arbitrary
+kernel algebra.
+
+### 5c. Fit a reusable nonintrusive polynomial expansion
+
+For independent scalar Uniform and Normal inputs, project a finite orthonormal
+expansion with an explicit product quadrature:
+
+```python
+coefficient_factor = phx.domain.ProbabilityDomain(
+    phx.uq.Uniform(0.2, 0.6), label="coefficient"
+)
+forcing_factor = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(1.0, 0.1), label="forcing"
+)
+pce_basis = phx.uq.PolynomialChaosBasis(
+    (coefficient_factor, forcing_factor), 3
+)
+pce_quadrature = phx.integration.ProductIntegrationPlan(
+    {
+        "coefficient": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussLegendreRule(5)
+        ),
+        "forcing": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussHermiteRule(5)
+        ),
+    }
+)
+pce_fit = phx.uq.PolynomialChaosProjectionPlan(
+    pce_basis, pce_quadrature
+).fit(solve_forward)
+
+pce_prediction = pce_fit.expansion(
+    {"coefficient": jnp.asarray(0.4), "forcing": jnp.asarray(1.1)}
+)
+pce_mean = pce_fit.expansion.mean
+pce_variance = pce_fit.expansion.variance
+pce_first_order = pce_fit.expansion.first_order_sobol
+pce_total_order = pce_fit.expansion.total_order_sobol
+```
+
+Use `PolynomialChaosRegressionPlan` instead when an existing finite design owns the
+model values. Do not call that regression fit Galerkin: no stochastic residual
+equations are assembled. Increase degree only after measuring truncation error
+against withheld points or a higher-order projection; feature and storage ceilings
+stop combinatorial basis growth rather than truncating it.
+
 ## 6. Rank global effects
 
 ```python
@@ -648,6 +741,59 @@ gp_term = phx.uq.GaussianProcessMarginalLikelihood(
 Put positive bijectors and informative priors on those leaves. Always compare against
 a no-discrepancy model: the physical parameters and a flexible discrepancy may
 otherwise explain the same observations.
+
+### Use exact state space for supported temporal Matérn data
+
+When the GP input is only scalar time and the covariance is Matérn-3/2 or
+Matérn-5/2, the exact state-space path avoids dense observation-space storage:
+
+```python
+sensor_time = jnp.linspace(0.0, 1.0, 16)
+forecast_time = jnp.linspace(-0.1, 1.1, 24)
+sensor_available = jnp.ones(sensor_time.shape, dtype=bool)
+sensor_residual = 0.02 * jnp.sin(2.0 * jnp.pi * sensor_time)
+
+temporal_plan = phx.uq.compile_state_space_kernel(
+    phx.kernels.ScaleKernel(
+        phx.kernels.Matern52Kernel(length_scale=0.25),
+        0.03**2,
+    ),
+    sensor_time,
+    forecast_time,
+    train_mask=sensor_available,
+)
+temporal_result = phx.uq.fit_state_space_gaussian_process(
+    temporal_plan,
+    sensor_residual,
+    noise_scale=0.005,
+)
+
+latent_mean = temporal_result.posterior_mean
+latent_variance = temporal_result.posterior_variance
+future_observation_variance = temporal_result.predictive_variance
+log_marginal_likelihood = temporal_result.log_marginal_likelihood
+```
+
+Times may be irregular and unsorted, and forecasts may extrapolate before or after
+training. Supply a finite filler value wherever `sensor_available` is false; the
+mask, not a large covariance, removes that value from the likelihood. Training times
+must be unique. Repeated forecast times are allowed and restore repeated output
+positions. Inspect `successful`, `status`, and `query_valid` before using the
+marginals.
+
+The kernel's `ScaleKernel.scale` is covariance variance, whereas `noise_scale` is
+observation standard deviation. Kernel and schedule dtypes must agree. A transformed
+fit recomputes the stationary prior and interval covariance from the evaluated
+kernel on an origin-shifted internal schedule whose prior time is
+`-length_scale`. External timestamps remain unchanged. Concrete results distinguish
+prepared and
+evaluated content IDs; traced results export the exact evaluated parameter arrays
+when a host hash cannot be formed. Recompile when a new plan-level content identity
+is required. The linear-storage result deliberately returns marginal variances rather
+than a dense forecast covariance.
+Use the dense scalar GP when a complete joint query
+covariance, unsupported kernel algebra, multidimensional input, derivative
+observation, or non-Gaussian likelihood is required.
 
 The exact scalar GP is the correctness reference. Use explicit FITC only when dense
 $O(n^3)$ conditioning is a measured bottleneck. Compare held-out scores and

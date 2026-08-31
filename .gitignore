@@ -33,6 +33,7 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/pgm_native.py
 !benchmarks/dae_benchmark_artifact.json
 !benchmarks/direct_collocation.json
 !benchmarks/direct_collocation_ipopt.json
@@ -45,6 +46,7 @@ benchmarks/*
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/topology.json
+!benchmarks/advanced_topology.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/

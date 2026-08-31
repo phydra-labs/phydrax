@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._topology import phase_field_topology_plan
 from ._workflows import (
     allen_cahn_form,
     allen_cahn_schedule,
@@ -19,6 +20,7 @@ from ._workflows import (
 
 
 __all__ = [
+    "phase_field_topology_plan",
     "AllenCahnParameters",
     "CahnHilliardParameters",
     "DoubleWellFreeEnergy",

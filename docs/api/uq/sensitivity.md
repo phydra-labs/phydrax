@@ -15,6 +15,28 @@ plausible-looking index.
 
 ::: phydrax.uq.SobolResult
 
+### Polynomial-chaos coefficient effects
+
+For an orthonormal `PolynomialChaosExpansion`, `mean` is the constant coefficient
+and `variance` is the pointwise sum of squared nonconstant coefficients. The
+`first_order_sobol` and `total_order_sobol` mappings group that same coefficient
+energy by each labeled factor. Array, Field, and PyTree output axes are preserved.
+A zero-variance output receives zero coefficient effects; it is not divided by zero
+or reported as evidence from a sampling estimator.
+
+These effects are exact for the fitted expansion, not automatically exact for a
+model outside the selected finite polynomial span. They require the independent
+factor product measure declared by `PolynomialChaosBasis`.
+
+::: phydrax.uq.PolynomialChaosExpansion
+    options:
+        members:
+            - mean
+            - variance
+            - first_order_sobol
+            - total_order_sobol
+
+
 ## Stochastic gradient estimators
 
 `fixed_noise_pathwise_gradient` differentiates only the declared response at one fixed
