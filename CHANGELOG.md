@@ -9,6 +9,16 @@
   multiplier warm starts, and fail-closed candidate/accepted transitions. Contact,
   friction, compliance, motors, dynamic topology, two-dimensional joints, and PBD
   compatibility remain outside this contract.
+- Extended constrained mechanics with native planar fixed/ball joints, dimension-aware
+  prismatic and distance joints, canonical stable row/coordinate layouts, physical
+  compliant/dissipative laws, bounded effort motors and servos, unilateral joint
+  limits, hard velocity restitution, exact planar/spatial Coulomb-cone impulses,
+  irreversible joint breakage, and fixed-capacity topology transactions. Added
+  transactional implicit Newmark volumetric FEM, mixed pressure gauges,
+  rigid--deformable attachment KKT operators, objective two-/three-dimensional
+  Cosserat rods, triangular membrane/bending shells, fixed-capacity deformable
+  contact, and explicit rigid--MPM weld/penalty/impulse coupling with branch,
+  rank, energy, route, and rollback certificates.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional
