@@ -13,6 +13,17 @@
   runtime atmospheric pressure projection, bounded velocity extrapolation,
   explicit PIC/FLIP grid-delta blending, problem compilation, fixed-step
   rollback, and complete transfer/projection/energy evidence.
+- Added enhanced conforming scalar virtual elements of qualified degree one
+  through three on arbitrary-arity polygonal cell blocks, including certified
+  H1/L2 projectors, explicit stabilization, functional trace constraints,
+  matrix-free and sparse execution, fixed-topology geometry differentiation,
+  projected reconstruction, mass-matrix DAEs, and generalized eigenproblems.
+- Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
+  globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
+  implicit root derivatives, physical position/velocity residual certification,
+  multiplier warm starts, and fail-closed candidate/accepted transitions. Contact,
+  friction, compliance, motors, dynamic topology, two-dimensional joints, and PBD
+  compatibility remain outside this contract.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional
@@ -81,6 +92,22 @@
   backward Diffrax characteristic tracing with macro-step neural projection; and
   mass-preserving fixed-support residual-attention collocation with explicit ESS,
   KFAC, and controlled-policy contracts.
+- Added native athermal lattice-Boltzmann flow on uniform isotropic cell grids:
+  certified D2Q9/D3Q19 velocity sets, BGK/TRT collision with collision-coupled
+  Guo forcing, periodic and frozen halfway-wall link routing, fixed tangential
+  moving walls, explicit physical/lattice scaling and precision evidence,
+  fail-closed fixed-step integration, differentiable runtime controls, and a
+  memory-bounded generic fixed-step rollout with final/checkpoint/trajectory
+  retention.
+- Expanded kinetic methods with D3Q27, prepared moment bases and advanced collision
+  families, staged open/curved/moving-wall ownership, explicit local implicit forcing,
+  geometry epochs and conservative transfers, multiblock and ratio-2 refinement
+  contracts, colour-gradient/free-energy/thermal/species/reactive distributions,
+  certified D2V17 and off-lattice D2V37 smooth-compressible methods, fixed FV/kinetic
+  interfaces, sharded and AA/fused execution, block reverse replay, and a forward-only
+  stable-tuple IREE export contract. Advanced paths report capability, conservation,
+  realizability, equivalence, and qualification evidence without extending the
+  qualified low-Mach baseline by implication.
 - Added reciprocal-lattice harmonic discretization with true one-dimensional and
   oblique two-dimensional periodicity, selected FFT analysis/synthesis,
   pairwise-difference material convolution, translation covariance, resource

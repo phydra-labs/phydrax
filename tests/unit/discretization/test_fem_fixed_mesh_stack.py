@@ -48,7 +48,7 @@ def test_rectangular_element_tensor_has_exact_sparse_and_transpose_actions():
     matrices = jnp.asarray([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]])
     inputs = jnp.asarray([[0, 1]], dtype=jnp.int32)
     outputs = jnp.asarray([[0, 1, 2]], dtype=jnp.int32)
-    operator = phx.equations.fem.ElementTensorOperator(matrices, inputs, outputs, 2, 3)
+    operator = phx.sparse.ElementTensorOperator(matrices, inputs, outputs, 2, 3)
     value = jnp.asarray([2.0, -1.0])
     covector = jnp.asarray([1.0, 2.0, -1.0])
 

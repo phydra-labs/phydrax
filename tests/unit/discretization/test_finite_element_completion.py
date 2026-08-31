@@ -251,7 +251,7 @@ def test_curved_compatible_local_and_hdg_spaces_are_executable():
         ),
     ).prepare()
 
-    elimination = phx.discretization.FiniteElementLocalEliminationPlan(
+    elimination = phx.linalg.LocalEliminationPlan(
         3, jnp.asarray([1, 2])
     )
     local_matrix = jnp.asarray([[[2.0, -1.0, 0.0], [-1.0, 2.0, -1.0], [0.0, -1.0, 2.0]]])

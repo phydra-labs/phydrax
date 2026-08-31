@@ -4,7 +4,26 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
-from . import advanced, fem, trefftz
+from ..discretization.discrete_velocity._hybrid import (
+    AtomicHybridUpdateEvidence,
+    AtomicHybridUpdateResult,
+    CommonFVKineticFluxEvidence,
+    ConformingFVKineticState,
+    FixedConformingFVKineticInterfacePlan,
+    KineticShockSensorEvidence,
+    KineticShockSensorPlan,
+)
+from ..discretization.discrete_velocity._smooth_compressible import (
+    smooth_compressible_d2v17_method,
+    smooth_compressible_d2v37_off_lattice_method,
+    SmoothCompressibleCollisionEvidence,
+    SmoothCompressibleD2VKineticMethod,
+    SmoothCompressibleEquilibriumEvidence,
+    SmoothCompressibleKineticState,
+    SmoothCompressibleMoments,
+    SmoothCompressibleRealizabilityEvidence,
+)
+from . import advanced, fem, trefftz, vem
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
@@ -42,6 +61,8 @@ from ._discrete_element import (
     CompiledDiscreteElementProblem,
     DiscreteElementProblemIR,
 )
+from ._discrete_velocity import *  # noqa: F403
+from ._discrete_velocity import __all__ as _discrete_velocity_all
 from ._entropy_pair import (
     ConvexEntropyPair,
     ConvexEntropyValidationReport,
@@ -73,28 +94,43 @@ from ._finite_element_material import (
     FiniteElementMaterialState,
     FiniteElementMaterialTransaction,
 )
-from ._finite_element_variational import (
+from ._variational import (
     BoundaryLoadAction,
+    coefficient,
+    DiffusionAction,
+    MassAction,
+    SourceAction,
+    VariationalCoefficient,
+)
+from ._finite_element_variational import (
     CellBilinearAction,
     CellEnergyAction,
     CellResidualAction,
-    coefficient,
     compile_finite_element_problem,
     CompiledFiniteElementProblem,
-    DiffusionAction,
     ExteriorFacetAction,
     FiniteElementAction,
-    FiniteElementCoefficient,
     FiniteElementExecutionContext,
     FiniteElementExecutionPolicy,
     FiniteElementForm,
     FiniteElementFunctional,
     InteriorFacetAction,
-    MassAction,
     PairwiseVolumeFluxAction,
     PreparedOperatorAction,
     SIPGFacetAction,
-    SourceAction,
+)
+from .vem import (
+    CompiledVirtualElementProblem,
+    VirtualElementAction,
+    VirtualElementExecutionContext,
+    VirtualElementExecutionPolicy,
+    VirtualElementForm,
+    VirtualElementReconstruction,
+    VirtualElementRobinAction,
+    compile_virtual_element_problem,
+    evaluate_virtual_element_reconstruction,
+    evaluate_virtual_element_trace,
+    project_virtual_element_field,
 )
 from ._finite_volume_verification import (
     couette_velocity_profile,
@@ -158,6 +194,24 @@ from ._lagrangian_fluid import (
     compile_barotropic_sph_problem,
     CompiledBarotropicSPHProblem,
 )
+from ._lattice_boltzmann import (
+    compile_lattice_boltzmann_problem,
+    CompiledLatticeBoltzmannProblem,
+    LatticeBoltzmannProblem,
+    snapshot_lattice_boltzmann_geometry,
+)
+from ._lattice_boltzmann_colour_gradient import *  # noqa: F403
+from ._lattice_boltzmann_colour_gradient import (
+    __all__ as _lattice_boltzmann_colour_gradient_all,
+)
+from ._lattice_boltzmann_free_energy import *  # noqa: F403
+from ._lattice_boltzmann_free_energy import (
+    __all__ as _lattice_boltzmann_free_energy_all,
+)
+from ._lattice_boltzmann_species import *  # noqa: F403
+from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
+from ._lattice_boltzmann_thermal import *  # noqa: F403
+from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_all
 from ._mac_ib_cfd_dem import (
     evaluate_resolved_mac_ib_cfd_dem,
     ResolvedMACIBCFDEMCouplingPlan,
@@ -249,6 +303,14 @@ from ._particle_thermochemistry import (
     ParticleTransportBoundary,
     ParticleTransportEvaluation,
     ParticleTransportMaterialPlan,
+)
+from ._phase_field import (
+    AbstractBulkFreeEnergy,
+    BinaryFreeEnergyEvaluation,
+    double_well_chemical_derivative,
+    double_well_free_energy_density,
+    DoubleWellFreeEnergy,
+    evaluate_binary_free_energy,
 )
 from ._radiative import (
     RadiativeCoolingBoundsPolicy,
@@ -415,6 +477,18 @@ from .trefftz import (
 
 __all__ = [
     "advanced",
+    "vem",
+    "CompiledVirtualElementProblem",
+    "VirtualElementAction",
+    "VirtualElementExecutionContext",
+    "VirtualElementExecutionPolicy",
+    "VirtualElementForm",
+    "VirtualElementReconstruction",
+    "VirtualElementRobinAction",
+    "compile_virtual_element_problem",
+    "evaluate_virtual_element_reconstruction",
+    "evaluate_virtual_element_trace",
+    "project_virtual_element_field",
     "AbstractAdmissibleSystem",
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
@@ -466,7 +540,7 @@ __all__ = [
     "DiffusionAction",
     "ExteriorFacetAction",
     "FiniteElementAction",
-    "FiniteElementCoefficient",
+    "VariationalCoefficient",
     "FiniteElementExecutionContext",
     "FiniteElementExecutionPolicy",
     "FiniteElementForm",
@@ -576,6 +650,10 @@ __all__ = [
     "ResolvedMACIBCFDEMCouplingPlan",
     "ResolvedMACIBEvaluation",
     "ResolvedMACIBStatus",
+    "CompiledLatticeBoltzmannProblem",
+    "LatticeBoltzmannProblem",
+    "compile_lattice_boltzmann_problem",
+    "snapshot_lattice_boltzmann_geometry",
     "ChannelVelocityDiagnostics",
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
@@ -749,4 +827,43 @@ __all__ = [
     "ReactiveMonolithicRouteCertificate",
     "ReactiveMonolithicStage",
     "ReactiveMonolithicUnknown",
+]
+
+__all__ += [
+    name
+    for name in (
+        *_discrete_velocity_all,
+        *_lattice_boltzmann_colour_gradient_all,
+        *_lattice_boltzmann_free_energy_all,
+        *_lattice_boltzmann_species_all,
+        *_lattice_boltzmann_thermal_all,
+    )
+    if name not in __all__
+]
+
+__all__ += [
+    "AtomicHybridUpdateEvidence",
+    "AtomicHybridUpdateResult",
+    "CommonFVKineticFluxEvidence",
+    "ConformingFVKineticState",
+    "FixedConformingFVKineticInterfacePlan",
+    "KineticShockSensorEvidence",
+    "KineticShockSensorPlan",
+    "SmoothCompressibleCollisionEvidence",
+    "SmoothCompressibleD2VKineticMethod",
+    "SmoothCompressibleEquilibriumEvidence",
+    "SmoothCompressibleKineticState",
+    "SmoothCompressibleMoments",
+    "SmoothCompressibleRealizabilityEvidence",
+    "smooth_compressible_d2v17_method",
+    "smooth_compressible_d2v37_off_lattice_method",
+]
+
+__all__ += [
+    "AbstractBulkFreeEnergy",
+    "BinaryFreeEnergyEvaluation",
+    "DoubleWellFreeEnergy",
+    "double_well_chemical_derivative",
+    "double_well_free_energy_density",
+    "evaluate_binary_free_energy",
 ]

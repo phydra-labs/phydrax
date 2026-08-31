@@ -253,14 +253,153 @@ def _normalize_quaternion(value: Array, /) -> Array:
 
 
 def _quaternion_increment(rotation_vector: Array, /) -> Array:
-    angle = jnp.sqrt(jnp.sum(rotation_vector * rotation_vector, axis=-1, keepdims=True))
-    half = 0.5 * angle
-    scale = jnp.where(
-        angle > jnp.finfo(rotation_vector.dtype).eps,
-        jnp.sin(half) / angle,
-        0.5 - angle * angle / 48.0,
+    squared_angle = jnp.sum(rotation_vector * rotation_vector, axis=-1, keepdims=True)
+    threshold = jnp.finfo(rotation_vector.dtype).eps
+    safe_angle = jnp.sqrt(jnp.maximum(squared_angle, threshold))
+    exact_scale = jnp.sin(0.5 * safe_angle) / safe_angle
+    series_scale = 0.5 - squared_angle / 48.0 + squared_angle * squared_angle / 3840.0
+    scale = jnp.where(squared_angle > threshold, exact_scale, series_scale)
+    exact_scalar = jnp.cos(0.5 * safe_angle)
+    series_scalar = 1.0 - squared_angle / 8.0 + squared_angle * squared_angle / 384.0
+    scalar = jnp.where(squared_angle > threshold, exact_scalar, series_scalar)
+    return jnp.concatenate((scalar, scale * rotation_vector), axis=-1)
+
+
+def _quaternion_conjugate(value: Array, /) -> Array:
+    return jnp.concatenate((value[..., :1], -value[..., 1:]), axis=-1)
+
+
+def _quaternion_retract(value: Array, rotation_vector: Array, /) -> Array:
+    return _normalize_quaternion(
+        _quaternion_multiply(_quaternion_increment(rotation_vector), value)
     )
-    return jnp.concatenate((jnp.cos(half), scale * rotation_vector), axis=-1)
+
+
+def _quaternion_relative_rotation_vector(reference: Array, point: Array, /) -> Array:
+    relative = _normalize_quaternion(
+        _quaternion_multiply(point, _quaternion_conjugate(reference))
+    )
+    vector = relative[..., 1:]
+    squared_norm = jnp.sum(vector * vector, axis=-1, keepdims=True)
+    threshold = jnp.finfo(relative.dtype).eps
+    safe_norm = jnp.sqrt(jnp.maximum(squared_norm, threshold))
+    exact_scale = 2.0 * jnp.arctan2(safe_norm, relative[..., :1]) / safe_norm
+    series_scale = 2.0 + squared_norm / 3.0 + 3.0 * squared_norm * squared_norm / 20.0
+    scale = jnp.where(squared_norm > threshold, exact_scale, series_scale)
+    return scale * vector
+
+
+def _rigid_body_world_inertia(
+    bodies: PreparedRigidBodySet,
+    orientation: Array,
+    /,
+) -> tuple[Array, Array]:
+    rotation = quaternion_rotation_matrix(orientation)
+    inertia = contract(
+        "...ij,...jk,...lk->...il",
+        rotation,
+        bodies.inertia_body,
+        rotation,
+    )
+    inverse = contract(
+        "...ij,...jk,...lk->...il",
+        rotation,
+        bodies.inverse_inertia_body,
+        rotation,
+    )
+    return inertia, inverse
+
+
+def _rigid_body_half_kick(
+    bodies: PreparedRigidBodySet,
+    kinematics: RigidBodyKinematics,
+    load: RigidBodyLoad,
+    step_size: Array,
+    /,
+) -> RigidBodyKinematics:
+    mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
+    velocity = kinematics.velocity + 0.5 * step_size * (
+        bodies.inverse_masses[:, None] * load.force
+    )
+    angular = kinematics.angular_velocity + 0.5 * step_size * (
+        rigid_body_angular_acceleration(bodies, kinematics, load.torque)
+    )
+    return RigidBodyKinematics(
+        kinematics.position,
+        jnp.where(mobile, velocity, 0.0),
+        kinematics.orientation,
+        jnp.where(mobile, angular, 0.0),
+    )
+
+
+def _rigid_body_drift(
+    bodies: PreparedRigidBodySet,
+    kinematics: RigidBodyKinematics,
+    step_size: Array,
+    /,
+) -> RigidBodyKinematics:
+    mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
+    position = jnp.where(
+        mobile,
+        kinematics.position + step_size * kinematics.velocity,
+        kinematics.position,
+    )
+    if bodies.ambient_dimension == 2:
+        orientation = kinematics.orientation + step_size * kinematics.angular_velocity
+        orientation = (orientation + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
+    else:
+        orientation = _quaternion_retract(
+            kinematics.orientation,
+            step_size * kinematics.angular_velocity,
+        )
+    return RigidBodyKinematics(
+        position,
+        kinematics.velocity,
+        orientation,
+        kinematics.angular_velocity,
+    )
+
+
+def _rigid_body_close_kick(
+    bodies: PreparedRigidBodySet,
+    kinematics: RigidBodyKinematics,
+    load: RigidBodyLoad,
+    step_size: Array,
+    /,
+) -> RigidBodyKinematics:
+    mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
+    velocity = kinematics.velocity + 0.5 * step_size * (
+        bodies.inverse_masses[:, None] * load.force
+    )
+    angular = kinematics.angular_velocity + 0.5 * step_size * (
+        rigid_body_angular_acceleration(bodies, kinematics, load.torque)
+    )
+    return RigidBodyKinematics(
+        kinematics.position,
+        jnp.where(mobile, velocity, 0.0),
+        kinematics.orientation,
+        jnp.where(mobile, angular, 0.0),
+    )
+
+
+def _rigid_body_retract_pose(
+    bodies: PreparedRigidBodySet,
+    kinematics: RigidBodyKinematics,
+    translation: Array,
+    rotation: Array,
+    /,
+) -> RigidBodyKinematics:
+    mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
+    return RigidBodyKinematics(
+        jnp.where(mobile, kinematics.position + translation, kinematics.position),
+        kinematics.velocity,
+        jnp.where(
+            mobile,
+            _quaternion_retract(kinematics.orientation, rotation),
+            kinematics.orientation,
+        ),
+        kinematics.angular_velocity,
+    )
 
 
 def quaternion_rotation_matrix(quaternion: Array, /) -> Array:
@@ -290,18 +429,8 @@ def rigid_body_angular_acceleration(
 ) -> Array:
     if bodies.ambient_dimension == 2:
         return bodies.inverse_inertia_body[:, None] * torque
-    rotation = quaternion_rotation_matrix(kinematics.orientation)
-    inertia_world = contract(
-        "...ij,...jk,...lk->...il",
-        rotation,
-        bodies.inertia_body,
-        rotation,
-    )
-    inverse_world = contract(
-        "...ij,...jk,...lk->...il",
-        rotation,
-        bodies.inverse_inertia_body,
-        rotation,
+    inertia_world, inverse_world = _rigid_body_world_inertia(
+        bodies, kinematics.orientation
     )
     angular_momentum = contract(
         "...ij,...j->...i", inertia_world, kinematics.angular_velocity
@@ -322,45 +451,12 @@ def rigid_body_kick_drift_kick(
 ) -> RigidBodyStepResult:
     if not callable(load_function):
         raise TypeError("load_function must be callable.")
-    mobile = (bodies.particles.active_mask & ~bodies.fixed_mask)[:, None]
-    velocity_half = kinematics.velocity + 0.5 * step_size * (
-        bodies.inverse_masses[:, None] * load.force
-    )
-    angular_half = (
-        kinematics.angular_velocity
-        + 0.5
-        * step_size
-        * rigid_body_angular_acceleration(bodies, kinematics, load.torque)
-    )
-    position = jnp.where(
-        mobile,
-        kinematics.position + step_size * velocity_half,
-        kinematics.position,
-    )
-    if bodies.ambient_dimension == 2:
-        orientation = kinematics.orientation + step_size * angular_half
-        orientation = (orientation + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
-    else:
-        increment = _quaternion_increment(step_size * angular_half)
-        orientation = _normalize_quaternion(
-            _quaternion_multiply(increment, kinematics.orientation)
-        )
-    staged = RigidBodyKinematics(position, velocity_half, orientation, angular_half)
+    half = _rigid_body_half_kick(bodies, kinematics, load, step_size)
+    staged = _rigid_body_drift(bodies, half, step_size)
     next_load = load_function(time + step_size, staged, args)
     if not isinstance(next_load, RigidBodyLoad):
         raise TypeError("load_function must return RigidBodyLoad.")
-    velocity = velocity_half + 0.5 * step_size * (
-        bodies.inverse_masses[:, None] * next_load.force
-    )
-    angular = angular_half + 0.5 * step_size * rigid_body_angular_acceleration(
-        bodies, staged, next_load.torque
-    )
-    result = RigidBodyKinematics(
-        position,
-        jnp.where(mobile, velocity, 0.0),
-        orientation,
-        jnp.where(mobile, angular, 0.0),
-    )
+    result = _rigid_body_close_kick(bodies, staged, next_load, step_size)
     successful = (
         tree_allfinite(result)
         & jnp.all(jnp.isfinite(next_load.force))
@@ -407,9 +503,9 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
         if self.bodies.ambient_dimension == 2:
             orientation = state.orientation + local_tangent.orientation
         else:
-            increment = _quaternion_increment(local_tangent.orientation[..., 1:])
-            orientation = _normalize_quaternion(
-                _quaternion_multiply(increment, state.orientation)
+            orientation = _quaternion_retract(
+                state.orientation,
+                local_tangent.orientation[..., 1:],
             )
         return RigidBodyKinematics(position, velocity, orientation, angular)
 
@@ -417,16 +513,11 @@ class RigidBodyStateGeometry(AbstractStateGeometry):
         if self.bodies.ambient_dimension == 2:
             orientation = point.orientation - state.orientation
         else:
-            conjugate = state.orientation.at[..., 1:].multiply(-1.0)
-            relative = _normalize_quaternion(
-                _quaternion_multiply(point.orientation, conjugate)
+            rotation = _quaternion_relative_rotation_vector(
+                state.orientation, point.orientation
             )
-            vector = relative[..., 1:]
-            norm = jnp.sqrt(jnp.sum(vector**2, axis=-1, keepdims=True))
-            angle = 2.0 * jnp.arctan2(norm, relative[..., :1])
-            rotation = vector * jnp.where(norm > 0.0, angle / norm, 2.0)
             orientation = jnp.concatenate(
-                (jnp.zeros_like(relative[..., :1]), rotation), axis=-1
+                (jnp.zeros_like(rotation[..., :1]), rotation), axis=-1
             )
         return RigidBodyKinematics(
             point.position - state.position,

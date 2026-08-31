@@ -4,6 +4,11 @@
 
 The rigid-body step uses half translational/angular kicks, Lie-group orientation drift, a refreshed load, and a closing kick. Quaternion addition is never used. Invalid norm, non-SPD inertia, or nonfinite pose rejects.
 
+Hard fixed, ball, and hinge joints use the separate
+[constrained rigid-body dynamics](guides_constrained_rigid_bodies.md) contract.
+That solver shares the same pose conventions but does not turn holonomic joints
+into DEM contact laws.
+
 ## Sphere clumps
 
 `SphereClumpTemplatePlan` stores centered component offsets, radii, masses, materials, total mass, inertia, and bounding radius. `RigidSphereClumpSetPlan` stores only owner template IDs and owner state. Component keys include both owner stable IDs and immutable local component indices.

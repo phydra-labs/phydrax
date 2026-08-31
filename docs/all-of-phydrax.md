@@ -106,6 +106,12 @@ variable-density dynamics, implicit diffusion, resolved face-marker coupling,
 sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
 certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
 and distributed halo plans remain available to the wider finite-volume family.
+Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
+vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
+projections, explicit projector-kernel stabilization, matrix-free or sparse
+realization, trace constraints, projected reconstruction, heat/eigen reuse, and
+fixed-topology differentiable geometry. They remain distinct from reference
+finite elements and do not fabricate virtual interior basis values.
 Material particles retain stable entity IDs and a physical mass measure while
 current positions remain temporal state. Fixed-h conservative barotropic SPH
 uses canonical unordered pairs, normalized compact kernels, energy-derived
@@ -133,8 +139,12 @@ normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
 elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
 bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
-and wear, bonds/topology events, and certified sensitivity modes. Radial
-particle conversion adds typed thermochemistry, reactions, evaporation,
+and wear, bonds/topology events, and certified sensitivity modes. Static
+three-dimensional rigid-body graphs additionally provide globally coupled fixed,
+ball, and hinge constraints with SO(3) pose projection, velocity KKT projection,
+physical residual certification, and transactional rollback; contact, joint limits,
+compliance, and dynamic topology remain separate contracts. Radial particle
+conversion adds typed thermochemistry, reactions, evaporation,
 shrinking-core conversion, morphology, conservative continuum/contact/radiative
 exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
@@ -147,6 +157,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Particle thermochemistry](guides_particle_thermochemistry.md),
 [Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
+[Guide → Constrained rigid-body dynamics](guides_constrained_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
@@ -155,6 +166,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Multiphase and incompressible SPH](guides_multiphase_incompressible_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
+[Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
