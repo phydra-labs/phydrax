@@ -3,7 +3,12 @@
 #
 
 """Global stochastic realizations and coupling semantics."""
-
+from .._event_layout import (
+    AbstractEventLayout,
+    ArrayEventLayout,
+    ComplexEventLayout,
+    PyTreeEventLayout,
+)
 from ._bsde import (
     autodiff_bsde_control,
     bsde_diagnostics,
@@ -19,7 +24,28 @@ from ._bsde import (
     evaluate_bsde,
     semilinear_pde_residual,
 )
+from ._categorical_diffusion import (
+    categorical_denoising_loss,
+    CategoricalDiffusionSample,
+    CategoricalDiffusionSchedule,
+    CategoricalReverseDiffusion,
+    CategoricalTerminalRelationship,
+)
+from ._complex_diffusion import (
+    ComplexNormalLaw,
+    ComplexScoreConvention,
+    ComplexVariancePreservingDiffusion,
+)
 from ._cubature_path import straight_wiener_cubature_path, WienerCubaturePathData
+from ._discrete_diffusion import (
+    AncestralGaussianDiffusion,
+    DDIMTransport,
+    DiffusionPredictionKind,
+    discrete_denoising_loss,
+    DiscreteDiffusionSample,
+    DiscreteGaussianDiffusionSchedule,
+    DiscreteTerminalRelationship,
+)
 from ._euler_maruyama import (
     EulerMaruyamaParameters,
     EulerMaruyamaQuasiLikelihood,
@@ -53,6 +79,7 @@ from ._feynman_kac import (
     sample_feynman_kac_paths,
     trajectory_node_feynman_kac_labels,
 )
+from ._field_diffusion import FieldGaussianDiffusion, FieldNoiseGeometry
 from ._fluctuation_dissipation import (
     IsothermalPortHamiltonianDynamics,
     IsothermalPortHamiltonianTransitionKernel,
@@ -69,6 +96,11 @@ from ._gaussian_diffusion import (
     TerminalReferenceRelationship,
     VarianceExplodingDiffusion,
     VariancePreservingDiffusion,
+)
+from ._general_diffusion import (
+    AbstractItoScoreDiffusion,
+    MatrixGaussianDiffusion,
+    StateDependentItoDiffusion,
 )
 from ._hierarchy import (
     NoiseCoupling,
@@ -118,6 +150,13 @@ from ._linear_gaussian import (
     LinearGaussianParameterization,
     LinearGaussianParameters,
 )
+from ._manifold_diffusion import (
+    IsotropicRiemannianDiffusion,
+    ManifoldDiffusionSample,
+    ManifoldProbabilityLaw,
+    RiemannianScoreField,
+    sample_manifold_reverse_diffusion,
+)
 from ._martingale import (
     carre_du_champ,
     combined_generator_observable,
@@ -154,6 +193,11 @@ from ._measure_change import (
 )
 from ._ou import OrnsteinUhlenbeckRealization
 from ._path_dependent_bsde import ReflectedPathDependentBSDEProblem
+from ._path_diffusion import (
+    PathCoefficientDiffusion,
+    PathScoreDependency,
+    TrajectoryEventLayout,
+)
 from ._process import (
     AbstractMarginalTransitionLaw,
     AbstractPathwiseTransition,
@@ -281,6 +325,11 @@ from ._structural_state_space import (
     StructuralComponentProvenance,
     TrendComponent,
 )
+from ._subspace_diffusion import (
+    AffineSubspaceLayout,
+    SubspaceGaussianDiffusion,
+    SubspaceGaussianLaw,
+)
 from ._trajectory import (
     StochasticDriverSegmentReference,
     StochasticTrajectory,
@@ -291,6 +340,41 @@ from ._wiener import LevyAreaKind, WienerAlgorithm, WienerRealization
 
 
 __all__ = [
+    "AbstractEventLayout",
+    "AbstractItoScoreDiffusion",
+    "AffineSubspaceLayout",
+    "AncestralGaussianDiffusion",
+    "ArrayEventLayout",
+    "CategoricalDiffusionSample",
+    "CategoricalDiffusionSchedule",
+    "CategoricalReverseDiffusion",
+    "CategoricalTerminalRelationship",
+    "ComplexEventLayout",
+    "ComplexNormalLaw",
+    "ComplexScoreConvention",
+    "ComplexVariancePreservingDiffusion",
+    "DDIMTransport",
+    "DiffusionPredictionKind",
+    "DiscreteDiffusionSample",
+    "DiscreteGaussianDiffusionSchedule",
+    "DiscreteTerminalRelationship",
+    "FieldGaussianDiffusion",
+    "FieldNoiseGeometry",
+    "IsotropicRiemannianDiffusion",
+    "ManifoldDiffusionSample",
+    "ManifoldProbabilityLaw",
+    "MatrixGaussianDiffusion",
+    "PathCoefficientDiffusion",
+    "PathScoreDependency",
+    "PyTreeEventLayout",
+    "RiemannianScoreField",
+    "StateDependentItoDiffusion",
+    "SubspaceGaussianDiffusion",
+    "SubspaceGaussianLaw",
+    "TrajectoryEventLayout",
+    "categorical_denoising_loss",
+    "discrete_denoising_loss",
+    "sample_manifold_reverse_diffusion",
     "WienerCubaturePathData",
     "straight_wiener_cubature_path",
     "AccumulatedPathEvent",

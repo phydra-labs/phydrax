@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._pair_state import particle_wall_interaction_keys
 from ._rigid_contact import RigidContactGeometry
 from ._rigid_sphere import (
     PreparedRigidSphereSet,
@@ -24,6 +25,8 @@ class TriangleWallPlan(StrictModule, NonTrainableState):
     vertices: Array
     triangles: Array
     triangle_material: Array
+    vertex_ids: Array
+    triangle_ids: Array
     two_sided: bool = eqx.field(static=True)
     wall_id: str = eqx.field(static=True)
 
@@ -35,12 +38,24 @@ class TriangleWallPlan(StrictModule, NonTrainableState):
         /,
         *,
         two_sided: bool = False,
+        vertex_ids: ArrayLike | None = None,
+        triangle_ids: ArrayLike | None = None,
         area_tolerance: float = 1.0e-14,
         wall_id: str | None = None,
     ):
         vertices_ = np.asarray(vertices)
         triangles_ = np.asarray(triangles)
         materials = np.asarray(triangle_material)
+        vertex_ids_ = (
+            np.arange(vertices_.shape[0], dtype=np.int64)
+            if vertex_ids is None
+            else np.asarray(vertex_ids)
+        )
+        triangle_ids_ = (
+            np.arange(triangles_.shape[0], dtype=np.int64)
+            if triangle_ids is None
+            else np.asarray(triangle_ids)
+        )
         if vertices_.ndim != 2 or vertices_.shape[1] != 3:
             raise ValueError("vertices must have shape (vertices,3).")
         if (
@@ -58,8 +73,16 @@ class TriangleWallPlan(StrictModule, NonTrainableState):
             or np.any(triangles_ < 0)
             or np.any(triangles_ >= vertices_.shape[0])
             or np.any(materials < 0)
+            or vertex_ids_.shape != (vertices_.shape[0],)
+            or triangle_ids_.shape != (triangles_.shape[0],)
+            or not np.issubdtype(vertex_ids_.dtype, np.integer)
+            or not np.issubdtype(triangle_ids_.dtype, np.integer)
+            or np.any(vertex_ids_ < 0)
+            or np.any(triangle_ids_ < 0)
+            or np.unique(vertex_ids_).size != vertex_ids_.size
+            or np.unique(triangle_ids_).size != triangle_ids_.size
         ):
-            raise ValueError("Triangle wall geometry/material IDs are invalid.")
+            raise ValueError("Triangle wall geometry/material/stable IDs are invalid.")
         selected = vertices_[triangles_]
         cross = np.cross(selected[:, 1] - selected[:, 0], selected[:, 2] - selected[:, 0])
         doubled_area = np.linalg.norm(cross, axis=-1)
@@ -73,6 +96,8 @@ class TriangleWallPlan(StrictModule, NonTrainableState):
                         "vertices": vertices_,
                         "triangles": triangles_,
                         "materials": materials,
+                        "vertex_ids": vertex_ids_.astype(np.int64),
+                        "triangle_ids": triangle_ids_.astype(np.int64),
                     }
                 ),
                 "two_sided": bool(two_sided),
@@ -81,6 +106,8 @@ class TriangleWallPlan(StrictModule, NonTrainableState):
         self.vertices = jnp.asarray(vertices_)
         self.triangles = jnp.asarray(triangles_, dtype=jnp.int32)
         self.triangle_material = jnp.asarray(materials, dtype=jnp.int32)
+        self.vertex_ids = jnp.asarray(vertex_ids_, dtype=jnp.int64)
+        self.triangle_ids = jnp.asarray(triangle_ids_, dtype=jnp.int64)
         self.two_sided = bool(two_sided)
         self.wall_id = generated if wall_id is None else str(wall_id)
         if not self.wall_id:
@@ -97,6 +124,9 @@ class PreparedTriangleWall(StrictModule, NonTrainableState):
     aabb_lower: Array
     aabb_upper: Array
     triangle_ids: Array
+    edge_ids: Array
+    edge_owner_triangle_ids: Array
+    vertex_owner_triangle_ids: Array
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: TriangleWallPlan, /):
@@ -113,7 +143,36 @@ class PreparedTriangleWall(StrictModule, NonTrainableState):
         self.normals = normals
         self.aabb_lower = jnp.min(face_vertices, axis=1)
         self.aabb_upper = jnp.max(face_vertices, axis=1)
-        self.triangle_ids = jnp.arange(face_vertices.shape[0], dtype=jnp.int64)
+        self.triangle_ids = plan.triangle_ids
+        local_edges = np.asarray(plan.triangles)[:, ((0, 1), (1, 2), (2, 0))]
+        local_vertex_ids = np.asarray(plan.vertex_ids)[local_edges]
+        canonical_edges = np.sort(local_vertex_ids, axis=-1)
+        unique_edges = sorted(
+            {tuple(value) for value in canonical_edges.reshape((-1, 2)).tolist()}
+        )
+        edge_lookup = {value: index for index, value in enumerate(unique_edges)}
+        edge_ids = np.asarray(
+            [[edge_lookup[tuple(value)] for value in row] for row in canonical_edges],
+            dtype=np.int64,
+        )
+        triangle_ids_host = np.asarray(plan.triangle_ids, dtype=np.int64)
+        edge_owner = np.full((len(unique_edges),), np.iinfo(np.int64).max, dtype=np.int64)
+        for face_index, row in enumerate(edge_ids):
+            for edge_id in row:
+                edge_owner[edge_id] = min(
+                    edge_owner[edge_id], triangle_ids_host[face_index]
+                )
+        vertex_owner = np.full(
+            (plan.vertices.shape[0],), np.iinfo(np.int64).max, dtype=np.int64
+        )
+        for face_index, row in enumerate(np.asarray(plan.triangles)):
+            for vertex in row:
+                vertex_owner[vertex] = min(
+                    vertex_owner[vertex], triangle_ids_host[face_index]
+                )
+        self.edge_ids = jnp.asarray(edge_ids, dtype=jnp.int64)
+        self.edge_owner_triangle_ids = jnp.asarray(edge_owner, dtype=jnp.int64)
+        self.vertex_owner_triangle_ids = jnp.asarray(vertex_owner, dtype=jnp.int64)
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-triangle-wall", "plan": plan.wall_id}
         )
@@ -211,16 +270,41 @@ def sphere_triangle_contact_geometry(
     overlap = jnp.maximum(-gap, 0.0)
     active_owner = bodies.particles.active_mask[owner]
     degenerate = active_owner & (overlap > 0.0) & ~positive
-    valid = active_owner & front & ~degenerate
+    edge_index = jnp.clip(feature - 1, 0, 2)
+    vertex_local = jnp.clip(feature - 4, 0, 2)
+    edge_id = wall.edge_ids[face, edge_index]
+    vertex_index = wall.plan.triangles[face, vertex_local]
+    vertex_id = wall.plan.vertex_ids[vertex_index]
+    feature_kind = jnp.where(feature == 0, 0, jnp.where(feature <= 3, 1, 2))
+    feature_id = jnp.where(
+        feature == 0,
+        wall.triangle_ids[face],
+        jnp.where(feature <= 3, edge_id, vertex_id),
+    )
+    feature_owned = jnp.where(
+        feature == 0,
+        True,
+        jnp.where(
+            feature <= 3,
+            wall.edge_owner_triangle_ids[edge_id] == wall.triangle_ids[face],
+            wall.vertex_owner_triangle_ids[vertex_index] == wall.triangle_ids[face],
+        ),
+    )
+    valid = active_owner & front & ~degenerate & feature_owned
     owner_arm = closest - center
     contact_velocity = kinematics.velocity[owner] + sphere_spin_velocity(
         kinematics.angular_velocity[owner], owner_arm, 3
     )
     normal_velocity = jnp.sum(contact_velocity * normal, axis=-1)
     tangent_velocity = contact_velocity - normal_velocity[:, None] * normal
-    sorted_ids = jnp.sort(bodies.particles.particle_ids)
-    owner_rank = jnp.searchsorted(sorted_ids, bodies.particles.particle_ids[owner])
-    key = owner_rank.astype(jnp.int64) * faces + face.astype(jnp.int64)
+    object_id = jnp.where(feature == 0, wall.triangle_ids[face], 0)
+    key = particle_wall_interaction_keys(
+        bodies.particles.particle_ids[owner],
+        object_id,
+        feature_kind,
+        feature_id,
+        valid,
+    )
     geometry = RigidContactGeometry(
         jnp.where(valid[:, None], normal, 0.0),
         jnp.where(valid, gap, 0.0),
@@ -236,7 +320,7 @@ def sphere_triangle_contact_geometry(
         jnp.where(valid[:, None], tangent_velocity, 0.0),
         kinematics.angular_velocity[owner],
         jnp.zeros_like(kinematics.angular_velocity[owner]),
-        jnp.where(valid, key, -1),
+        key,
         feature,
         feature,
         valid,

@@ -15,9 +15,24 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
 from ._dem import DEMRuntimeState, PreparedSoftSphereDEMDynamics
-from ._particle_internal_mesh import PreparedParticleInternalBatch
+from ._particle_epoch import (
+    grow_particle_execution_epoch,
+    ParticleCapacityGrowthPolicy,
+    ParticleCapacityRequest,
+    ParticleEpochTransition,
+    ParticleExecutionEpoch,
+)
+from ._particle_internal_mesh import (
+    ParticleInternalBatchPlan,
+    PreparedParticleInternalBatch,
+)
 from ._particle_internal_state import ParticleInternalBatchState
-from ._particle_morphology import ParticleDynamicBodyProperties
+from ._particle_morphology import (
+    fragment_particle_internal_batch,
+    ParticleDynamicBodyProperties,
+    ThermochemicalFragmentationEvaluation,
+    ThermochemicalFragmentationPlan,
+)
 from ._rigid_sphere import RigidSphereKinematics
 
 
@@ -254,6 +269,7 @@ def insert_reactive_particles(
     /,
     *,
     args=None,
+    available_mask: ArrayLike | None = None,
 ) -> ParticleInsertionResult:
     if not isinstance(plan, ParticleInsertionPlan):
         raise TypeError("plan must be a ParticleInsertionPlan.")
@@ -267,6 +283,11 @@ def insert_reactive_particles(
     if molar.shape != (internal_batch.species_count,):
         raise ValueError("molar_masses must have internal species shape.")
     inactive = dynamics.bodies.particles.active_mask & ~dem_state.body_properties.active
+    if available_mask is not None:
+        available = jnp.asarray(available_mask, dtype=bool)
+        if available.shape != inactive.shape:
+            raise ValueError("available_mask must have particle-capacity shape.")
+        inactive = inactive & available
     slots = jnp.nonzero(
         inactive,
         size=plan.requested_count,
@@ -466,6 +487,351 @@ def insert_reactive_particles(
         capacity_available,
         successful,
         plan.plan_id,
+    )
+
+
+class ParticleEpochInsertionResult(StrictModule):
+    epoch: ParticleExecutionEpoch
+    internal_batch: PreparedParticleInternalBatch
+    internal_state: ParticleInternalBatchState
+    insertion: ParticleInsertionResult
+    transition: ParticleEpochTransition | None
+    successful: Array
+
+
+def _grow_internal_batch(
+    transition: ParticleEpochTransition,
+    batch: PreparedParticleInternalBatch,
+    state: ParticleInternalBatchState,
+    /,
+):
+    old_capacity = transition.source_epoch.dynamics.bodies.capacity
+    if batch.particle_count != old_capacity or not np.array_equal(
+        np.asarray(batch.owner_indices), np.arange(old_capacity)
+    ):
+        raise ValueError(
+            "Automatic insertion growth requires one all-particle internal batch."
+        )
+    new_particles = transition.candidate_epoch.dynamics.bodies.particles
+    plan = ParticleInternalBatchPlan(
+        jnp.arange(new_particles.capacity, dtype=jnp.int32),
+        batch.plan.mesh,
+        batch.species_count,
+        front_count=batch.front_count,
+    )
+    prepared = plan.prepare(new_particles)
+    extra = new_particles.capacity - old_capacity
+    energy = jnp.concatenate(
+        (
+            state.internal_energy,
+            jnp.zeros((extra, batch.cell_capacity), dtype=state.internal_energy.dtype),
+        )
+    )
+    species = jnp.concatenate(
+        (
+            state.species_amount,
+            jnp.zeros(
+                (extra, batch.cell_capacity, batch.species_count),
+                dtype=state.species_amount.dtype,
+            ),
+        )
+    )
+    pore = jnp.concatenate(
+        (
+            state.porosity,
+            jnp.zeros((extra, batch.cell_capacity), dtype=state.porosity.dtype),
+        )
+    )
+    area = jnp.concatenate(
+        (
+            state.internal_surface_area,
+            jnp.zeros(
+                (extra, batch.cell_capacity),
+                dtype=state.internal_surface_area.dtype,
+            ),
+        )
+    )
+    scale = jnp.concatenate(
+        (
+            state.outer_scale,
+            jnp.ones((extra,), dtype=state.outer_scale.dtype),
+        )
+    )
+    front = jnp.concatenate(
+        (
+            state.reaction_front,
+            jnp.zeros((extra, batch.front_count), dtype=state.reaction_front.dtype),
+        )
+    )
+    active = jnp.concatenate((state.active, jnp.zeros((extra,), dtype=bool)))
+    return prepared, ParticleInternalBatchState(
+        energy,
+        species,
+        pore,
+        area,
+        scale,
+        front,
+        active,
+        prepared.prepared_id,
+    )
+
+
+def insert_reactive_particles_with_growth(
+    insertion_plan: ParticleInsertionPlan,
+    distribution: ReactiveParticleTemplateDistributionPlan,
+    epoch: ParticleExecutionEpoch,
+    internal_batch: PreparedParticleInternalBatch,
+    internal_state: ParticleInternalBatchState,
+    molar_masses: ArrayLike,
+    key: Key[Array, ""],
+    time: Array,
+    growth_policy: ParticleCapacityGrowthPolicy,
+    /,
+    *,
+    args=None,
+) -> ParticleEpochInsertionResult:
+    available = ~epoch.ever_occupied & ~epoch.retired
+    free = int(np.count_nonzero(np.asarray(available)))
+    transition = None
+    current_epoch = epoch
+    current_batch = internal_batch
+    current_internal = internal_state
+    if free < insertion_plan.requested_count:
+        transition = grow_particle_execution_epoch(
+            epoch,
+            growth_policy,
+            ParticleCapacityRequest(
+                insertion_plan.requested_count - free,
+                reason="particle_insertion",
+            ),
+            time,
+            args=args,
+        )
+        if not bool(np.asarray(transition.successful)):
+            failed = insert_reactive_particles(
+                insertion_plan,
+                distribution,
+                epoch.dynamics,
+                epoch.state,
+                internal_batch,
+                internal_state,
+                molar_masses,
+                key,
+                time,
+                args=args,
+                available_mask=available,
+            )
+            return ParticleEpochInsertionResult(
+                epoch,
+                internal_batch,
+                internal_state,
+                failed,
+                transition,
+                jnp.asarray(False),
+            )
+        current_epoch = transition.accepted_epoch
+        current_batch, current_internal = _grow_internal_batch(
+            transition, internal_batch, internal_state
+        )
+        available = ~current_epoch.ever_occupied & ~current_epoch.retired
+    insertion = insert_reactive_particles(
+        insertion_plan,
+        distribution,
+        current_epoch.dynamics,
+        current_epoch.state,
+        current_batch,
+        current_internal,
+        molar_masses,
+        key,
+        time,
+        args=args,
+        available_mask=available,
+    )
+    occupied = current_epoch.ever_occupied.at[insertion.owner_slots].set(
+        insertion.inserted
+    )
+    accepted_epoch = ParticleExecutionEpoch(
+        current_epoch.dynamics,
+        insertion.accepted_dem_state,
+        occupied,
+        current_epoch.retired,
+        current_epoch.epoch_index,
+        current_epoch.epoch_id,
+    )
+    return ParticleEpochInsertionResult(
+        accepted_epoch,
+        current_batch,
+        insertion.accepted_internal_state,
+        insertion,
+        transition,
+        insertion.successful,
+    )
+
+
+class ParticleEpochFragmentationResult(StrictModule):
+    epoch: ParticleExecutionEpoch
+    internal_batch: PreparedParticleInternalBatch
+    internal_state: ParticleInternalBatchState
+    fragmentation: ThermochemicalFragmentationEvaluation
+    transition: ParticleEpochTransition | None
+    successful: Array
+
+
+def fragment_particle_with_growth(
+    fragmentation_plan: ThermochemicalFragmentationPlan,
+    epoch: ParticleExecutionEpoch,
+    internal_batch: PreparedParticleInternalBatch,
+    internal_state: ParticleInternalBatchState,
+    source_index: Array,
+    child_masses: ArrayLike,
+    child_outer_scale: ArrayLike,
+    child_valid: ArrayLike,
+    molar_masses: ArrayLike,
+    time: Array,
+    growth_policy: ParticleCapacityGrowthPolicy,
+    /,
+    *,
+    args=None,
+) -> ParticleEpochFragmentationResult:
+    valid = jnp.asarray(child_valid, dtype=bool)
+    required = int(np.count_nonzero(np.asarray(valid)))
+    available = ~epoch.ever_occupied & ~epoch.retired
+    free = int(np.count_nonzero(np.asarray(available)))
+    transition = None
+    current_epoch = epoch
+    current_batch = internal_batch
+    current_internal = internal_state
+    if free < required:
+        transition = grow_particle_execution_epoch(
+            epoch,
+            growth_policy,
+            ParticleCapacityRequest(required - free, reason="particle_fragmentation"),
+            time,
+            args=args,
+        )
+        if not bool(np.asarray(transition.successful)):
+            empty = ThermochemicalFragmentationEvaluation(
+                internal_state,
+                jnp.asarray(jnp.inf),
+                jnp.asarray(jnp.inf),
+                jnp.full((internal_state.species_amount.shape[-1],), jnp.inf),
+                jnp.asarray(False),
+                fragmentation_plan.plan_id,
+            )
+            return ParticleEpochFragmentationResult(
+                epoch,
+                internal_batch,
+                internal_state,
+                empty,
+                transition,
+                jnp.asarray(False),
+            )
+        current_epoch = transition.accepted_epoch
+        current_batch, current_internal = _grow_internal_batch(
+            transition, internal_batch, internal_state
+        )
+        available = ~current_epoch.ever_occupied & ~current_epoch.retired
+    child_indices = jnp.nonzero(
+        available,
+        size=fragmentation_plan.maximum_children,
+        fill_value=0,
+    )[0].astype(jnp.int32)
+    fragmentation = fragment_particle_internal_batch(
+        fragmentation_plan,
+        current_internal,
+        source_index,
+        child_indices,
+        valid,
+        child_masses,
+        child_outer_scale,
+        molar_masses,
+    )
+    source = jnp.asarray(source_index, dtype=jnp.int32)
+    properties = current_epoch.state.body_properties
+    active = properties.active.at[source].set(False)
+    active = active.at[child_indices].set(jnp.where(valid, True, active[child_indices]))
+    masses = properties.masses.at[source].set(0.0)
+    masses = masses.at[child_indices].set(
+        jnp.where(valid, jnp.asarray(child_masses), masses[child_indices])
+    )
+    radii = properties.radii.at[source].set(0.0)
+    radii = radii.at[child_indices].set(
+        jnp.where(valid, jnp.asarray(child_outer_scale), radii[child_indices])
+    )
+    inverse_masses = jnp.where(active, 1.0 / jnp.maximum(masses, 1.0e-30), 0.0)
+    inertias = jnp.where(active, 0.4 * masses * radii**2, 1.0)
+    inverse_inertias = jnp.where(active, 1.0 / inertias, 0.0)
+    body_properties = ParticleDynamicBodyProperties(
+        masses,
+        inverse_masses,
+        radii,
+        inertias,
+        inverse_inertias,
+        active,
+    )
+    position = current_epoch.state.kinematics.position
+    velocity = current_epoch.state.kinematics.velocity
+    angular_velocity = current_epoch.state.kinematics.angular_velocity
+    dimension = current_epoch.dynamics.bodies.ambient_dimension
+    for index in range(fragmentation_plan.maximum_children):
+        child = child_indices[index]
+        axis = (index + 1) % dimension
+        sign = 1.0 if index % 2 == 0 else -1.0
+        direction = jnp.zeros((dimension,), dtype=position.dtype).at[axis].set(sign)
+        separation = 1.05 * (
+            properties.radii[source] + jnp.asarray(child_outer_scale)[index]
+        )
+        child_position = position[source] + separation * direction
+        position = position.at[child].set(
+            jnp.where(valid[index], child_position, position[child])
+        )
+        velocity = velocity.at[child].set(
+            jnp.where(valid[index], velocity[source], velocity[child])
+        )
+        angular_velocity = angular_velocity.at[child].set(
+            jnp.where(valid[index], angular_velocity[source], angular_velocity[child])
+        )
+    staged_state = DEMRuntimeState(
+        RigidSphereKinematics(position, velocity, angular_velocity),
+        body_properties,
+        current_epoch.state.particle_history,
+        current_epoch.state.boundary_histories,
+        current_epoch.state.neighborhood_cache,
+        current_epoch.state.loads,
+        current_epoch.state.energy,
+    )
+    body_update = current_epoch.dynamics.apply_body_properties(
+        time,
+        staged_state,
+        body_properties,
+        jnp.asarray(True),
+        args=args,
+    )
+    successful = (
+        fragmentation.successful & body_update.successful & jnp.all(valid | ~valid)
+    )
+    occupied = current_epoch.ever_occupied.at[child_indices].set(
+        jnp.where(valid, True, current_epoch.ever_occupied[child_indices])
+    )
+    retired = current_epoch.retired.at[source].set(True)
+    accepted_epoch = ParticleExecutionEpoch(
+        current_epoch.dynamics,
+        tree_where(successful, body_update.accepted_state, current_epoch.state),
+        occupied,
+        retired,
+        current_epoch.epoch_index,
+        current_epoch.epoch_id,
+    )
+    accepted_internal = tree_where(
+        successful, fragmentation.candidate_state, current_internal
+    )
+    return ParticleEpochFragmentationResult(
+        accepted_epoch,
+        current_batch,
+        accepted_internal,
+        fragmentation,
+        transition,
+        successful,
     )
 
 
@@ -686,6 +1052,10 @@ def remove_particles_in_region(
 
 
 __all__ = [
+    "ParticleEpochInsertionResult",
+    "ParticleEpochFragmentationResult",
+    "fragment_particle_with_growth",
+    "insert_reactive_particles_with_growth",
     "MassFlowSurfacePlan",
     "ParticleInsertionPlan",
     "ParticleInsertionResult",

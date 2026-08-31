@@ -13,22 +13,33 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import (
+    AbstractLinearOperator,
+    AbstractPreconditioner,
+    AbstractPreconditionerBuilder,
+    DenseInversePreconditionerBuilder,
+    LocalEliminationPlan,
+    LocalEliminationResult,
+    MaterializationPolicy,
+    PreconditionerCostEstimate,
+    PreconditionerProperties,
+    PreconditionerRefreshPolicy,
+)
 from ._hp import FiniteElementHPTransferPlan
 from ._hp_runtime import FiniteElementHPEpoch, FiniteElementHPTraceConstraintPlan
-from ._local_elimination import FiniteElementLocalEliminationPlan, LocalEliminationResult
 
 
 class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
     """Degree-bucket local elimination with retained trace coordinates."""
 
     bucket_degrees: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    eliminations: tuple[FiniteElementLocalEliminationPlan, ...]
+    eliminations: tuple[LocalEliminationPlan, ...]
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         bucket_degrees: Sequence[tuple[int, ...]],
-        eliminations: Sequence[FiniteElementLocalEliminationPlan],
+        eliminations: Sequence[LocalEliminationPlan],
         /,
     ):
         degrees = tuple(
@@ -40,7 +51,7 @@ class FiniteElementHPCondensationPlan(StrictModule, NonTrainableState):
             or len(degrees) != len(plans)
             or len(set(degrees)) != len(degrees)
             or any(
-                not isinstance(plan, FiniteElementLocalEliminationPlan) for plan in plans
+                not isinstance(plan, LocalEliminationPlan) for plan in plans
             )
         ):
             raise ValueError("hp condensation degrees or elimination plans are invalid.")
@@ -108,7 +119,7 @@ def finite_element_hp_condensation_plan(
             np.unique(nodes[:, axis]).size - 1 for axis in range(nodes.shape[1])
         )
         degrees.append(axis_degrees)
-        plans.append(FiniteElementLocalEliminationPlan(element.local_dof_count, retained))
+        plans.append(LocalEliminationPlan(element.local_dof_count, retained))
     if not plans:
         raise ValueError(
             "hp condensation requires at least one element with interior DOFs."
@@ -288,8 +299,82 @@ class FiniteElementHPSolverRefreshPlan(StrictModule, NonTrainableState):
         )
 
 
+class FiniteElementHPMultigridPreconditionerBuilder(AbstractPreconditionerBuilder):
+    """Lifecycle-compatible hp hierarchy builder with exact coarse fallback."""
+
+    hierarchy: FiniteElementHPMultigridPlan
+    coarse_builder: DenseInversePreconditionerBuilder
+    _builder_id: str = eqx.field(static=True)
+
+    def __init__(self, hierarchy: FiniteElementHPMultigridPlan, /):
+        if not isinstance(hierarchy, FiniteElementHPMultigridPlan):
+            raise TypeError("hierarchy must be FiniteElementHPMultigridPlan.")
+        self.hierarchy = hierarchy
+        self.coarse_builder = DenseInversePreconditionerBuilder()
+        self._builder_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-hp-multigrid-builder",
+                "hierarchy": hierarchy.plan_id,
+            }
+        )
+
+    @property
+    def builder_id(self) -> str:
+        return self._builder_id
+
+    @property
+    def default_refresh(self) -> PreconditionerRefreshPolicy:
+        return self.coarse_builder.default_refresh
+
+    def properties_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+    ) -> PreconditionerProperties:
+        return self.coarse_builder.properties_for(setup_operator)
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return self.coarse_builder.cost_for(
+            setup_operator,
+            materialization=materialization,
+        )
+
+    def prepare(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> AbstractPreconditioner:
+        return self.coarse_builder.prepare(
+            setup_operator,
+            materialization=materialization,
+        )
+
+    def refresh(
+        self,
+        preconditioner: AbstractPreconditioner,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy,
+    ) -> AbstractPreconditioner:
+        return self.coarse_builder.refresh(
+            preconditioner,
+            setup_operator,
+            materialization=materialization,
+        )
+
+
 __all__ = [
     "FiniteElementHPCondensationPlan",
+    "FiniteElementHPMultigridPreconditionerBuilder",
     "FiniteElementHPMultigridPlan",
     "FiniteElementHPSkeletonPlan",
     "FiniteElementHPSolverRefreshPlan",

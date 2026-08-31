@@ -181,7 +181,7 @@
 
 ---
 
-::: phydrax.equations.fem.ElementTensorOperator
+::: phydrax.sparse.ElementTensorOperator
 
 ---
 
@@ -201,7 +201,7 @@
 
 ---
 
-::: phydrax.equations.FiniteElementCoefficient
+::: phydrax.equations.VariationalCoefficient
 
 ---
 
@@ -295,6 +295,50 @@
 
 ::: phydrax.discretization.fem.DistributedFiniteElementMortarPlan
 
+## Complete spectral hp
+
+::: phydrax.discretization.fem.AnisotropicHPattern
+
+---
+
+::: phydrax.discretization.fem.TensorDeRhamComplex
+
+---
+
+::: phydrax.discretization.fem.SimplexModalFamily
+
+---
+
+::: phydrax.discretization.fem.HybridReferenceFamily
+
+---
+
+::: phydrax.discretization.fem.NURBSPatch
+
+---
+
+::: phydrax.discretization.fem.PersistentSemanticCache
+
+---
+
+::: phydrax.equations.fem.BR1ViscousPlan
+
+---
+
+::: phydrax.equations.fem.SubcellFiniteVolumePlan
+
+---
+
+::: phydrax.equations.fem.ALEMetricState
+
+---
+
+::: phydrax.solver.HPNewtonKrylovBuilder
+
+---
+
+::: phydrax.solver.FrozenHPAdjointSchedule
+
 ## Materials and local algebra
 
 ::: phydrax.equations.ConstitutiveModel
@@ -325,7 +369,7 @@
 
 ---
 
-::: phydrax.discretization.FiniteElementLocalEliminationPlan
+::: phydrax.linalg.LocalEliminationPlan
 
 ---
 
@@ -338,9 +382,7 @@
 ## Hierarchy and embedding
 
 
-::: phydrax.discretization.FiniteElementTransferPlan
 
----
 
 ::: phydrax.discretization.FiniteElementAdaptationMap
 

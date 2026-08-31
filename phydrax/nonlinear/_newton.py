@@ -810,6 +810,7 @@ def _initial_root_state(
     prepared_linear, refresh_state = prepare_refresh_state(
         LinearSystem(linear_operator),
         _iteration_linear_policy(linear_policy),
+        setup_operator=problem.linear_setup(state, args),
     )
     recycling = (
         None
@@ -1406,7 +1407,8 @@ class NewtonKrylov(AbstractNonlinearMethod):
                 )
                 linear_operator = _jacobian_solve_operator(selected_jacobian.operator)
                 prepared, refresh_state = current_run.refresh_state.refresh(
-                    LinearSystem(linear_operator)
+                    LinearSystem(linear_operator),
+                    setup_operator=problem.linear_setup(current, args),
                 )
                 right_hand_side = _jacobian_solve_right_hand_side(
                     linear_operator, current_residual
@@ -1838,7 +1840,8 @@ class NewtonTrustRegion(AbstractNonlinearMethod):
                 )
                 linear_operator = _jacobian_solve_operator(selected_jacobian.operator)
                 prepared, refresh_state = current_run.refresh_state.refresh(
-                    LinearSystem(linear_operator)
+                    LinearSystem(linear_operator),
+                    setup_operator=problem.linear_setup(current, args),
                 )
                 right_hand_side = _jacobian_solve_right_hand_side(
                     linear_operator, current_residual

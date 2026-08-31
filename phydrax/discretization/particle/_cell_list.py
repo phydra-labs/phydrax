@@ -274,7 +274,9 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
         self.artifact_kind = "cell-list-particle-neighborhood"
         self.prepared_id = prepared_id
 
-    def _logical_cell_ids(self, position: Array, /) -> tuple[Array, Array]:
+    def _logical_cell_ids(
+        self, position: Array, active_mask: Array, /
+    ) -> tuple[Array, Array]:
         finite = jnp.all(jnp.isfinite(position), axis=-1)
         safe = jnp.where(finite[:, None], position, self.box.lower)
         relative = (safe - self.box.lower.astype(safe.dtype)) / self.cell_widths.astype(
@@ -296,16 +298,24 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
             resolved_coordinates.append(coordinate)
         coordinate_array = jnp.stack(resolved_coordinates, axis=-1)
         cell_ids = jnp.sum(coordinate_array * self.cell_strides, axis=-1)
-        active_valid = self.active_mask & domain_valid
-        return jnp.where(active_valid, cell_ids, -1), self.active_mask & ~domain_valid
+        active_valid = active_mask & domain_valid
+        return jnp.where(active_valid, cell_ids, -1), active_mask & ~domain_valid
 
-    def build(self, position: ArrayLike, /) -> ParticleNeighborhoodState:
+    def build(
+        self, position: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
         value = jnp.asarray(position)
         expected = (self.particle_capacity, self.ambient_dimension)
         if value.shape != expected:
             raise ValueError(f"Particle positions must have shape {expected}.")
-        cell_ids, domain_violations = self._logical_cell_ids(value)
-        active_valid = self.active_mask & ~domain_violations
+        active = self.active_mask
+        if active_mask is not None:
+            requested = jnp.asarray(active_mask, dtype=bool)
+            if requested.shape != (self.particle_capacity,):
+                raise ValueError("active_mask must have particle-capacity shape.")
+            active = active & requested
+        cell_ids, domain_violations = self._logical_cell_ids(value, active)
+        active_valid = active & ~domain_violations
         sentinel_cell = self.cell_count
         sortable_cells = jnp.where(active_valid, cell_ids, sentinel_cell)
         storage_to_logical = jax.lax.stop_gradient(

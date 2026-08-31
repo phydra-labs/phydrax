@@ -170,8 +170,10 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             }
         )
 
-    def build(self, positions: ArrayLike, /) -> ParticleNeighborhoodState:
-        state = self.base.build(positions)
+    def build(
+        self, positions: ArrayLike, /, *, active_mask: ArrayLike | None = None
+    ) -> ParticleNeighborhoodState:
+        state = self.base.build(positions, active_mask=active_mask)
         pairs = state.pair_relation
         geometry = particle_pair_geometry(positions, pairs, box=state.box)
         reach = (

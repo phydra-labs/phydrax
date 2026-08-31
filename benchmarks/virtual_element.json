@@ -1,0 +1,46 @@
+{
+  "polygon": [
+    {
+      "degree": 1,
+      "cells": 1,
+      "maximum_arity": 5,
+      "global_dofs": 5,
+      "preparation_seconds": 3.839203957999416,
+      "h1_reproduction_error": 5.551115123125783e-17,
+      "l2_reproduction_error": 2.220446049250313e-16,
+      "stabilization_polynomial_leakage": 2.3665827156630354e-30,
+      "matrix_free_sparse_error": 4.440892098500626e-16,
+      "maximum_g_condition": 1.010818167035915,
+      "maximum_h_condition": 13.038756702537052,
+      "passed": true
+    },
+    {
+      "degree": 2,
+      "cells": 1,
+      "maximum_arity": 5,
+      "global_dofs": 11,
+      "preparation_seconds": 2.9304113749967655,
+      "h1_reproduction_error": 1.1282378692587722e-15,
+      "l2_reproduction_error": 2.904594708659022e-15,
+      "stabilization_polynomial_leakage": 2.453219426877604e-30,
+      "matrix_free_sparse_error": 8.526512829121202e-14,
+      "maximum_g_condition": 6.205106706936174,
+      "maximum_h_condition": 220.68587518589925,
+      "passed": true
+    },
+    {
+      "degree": 3,
+      "cells": 1,
+      "maximum_arity": 5,
+      "global_dofs": 18,
+      "preparation_seconds": 3.083969375002198,
+      "h1_reproduction_error": 2.3915236633987816e-15,
+      "l2_reproduction_error": 2.181234530722177e-14,
+      "stabilization_polynomial_leakage": 5.794860830162402e-29,
+      "matrix_free_sparse_error": 3.637978807091713e-12,
+      "maximum_g_condition": 45.51909476351233,
+      "maximum_h_condition": 4488.663516660212,
+      "passed": true
+    }
+  ]
+}

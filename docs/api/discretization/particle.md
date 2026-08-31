@@ -191,6 +191,60 @@
 
 ---
 
+#### Holonomic rigid-body constraints
+
+::: phydrax.discretization.BallJointSetPlan
+
+---
+
+::: phydrax.discretization.FixedJointSetPlan
+
+---
+
+::: phydrax.discretization.HingeJointSetPlan
+
+---
+
+::: phydrax.discretization.RigidJointGraphPlan
+
+---
+
+::: phydrax.discretization.PreparedRigidJointGraph
+
+---
+
+::: phydrax.discretization.RigidConstraintSolverPlan
+
+---
+
+::: phydrax.discretization.RigidConstraintDynamicsPlan
+
+---
+
+::: phydrax.discretization.PreparedRigidConstraintDynamics
+
+---
+
+::: phydrax.discretization.RigidConstraintState
+
+---
+
+::: phydrax.discretization.RigidConstraintDiagnostics
+
+---
+
+::: phydrax.discretization.RigidConstraintEvaluation
+
+---
+
+::: phydrax.discretization.RigidConstraintStepResult
+
+---
+
+::: phydrax.discretization.RigidConstraintRejectionReason
+
+---
+
 ::: phydrax.discretization.SphereClumpTemplatePlan
 
 ---
@@ -304,6 +358,46 @@
 ---
 
 ::: phydrax.equations.ReactiveCFDDEMCouplingPlan
+
+## Adaptive particle runtime
+
+::: phydrax.discretization.ParticleCapacityGrowthPolicy
+
+---
+
+::: phydrax.discretization.ParticleCapacityRequest
+
+---
+
+::: phydrax.discretization.ParticleExecutionEpoch
+
+---
+
+::: phydrax.discretization.grow_particle_execution_epoch
+
+---
+
+::: phydrax.discretization.insert_reactive_particles_with_growth
+
+---
+
+::: phydrax.discretization.UnstructuredParticleInternalMeshPlan
+
+---
+
+::: phydrax.discretization.ParticleInternalAdaptationPolicy
+
+---
+
+::: phydrax.discretization.adapt_particle_internal_mesh
+
+---
+
+::: phydrax.discretization.SuperquadricTriangleContactPlan
+
+---
+
+::: phydrax.discretization.superquadric_triangle_contact_geometry
 
 ## SPH kernels and dynamics
 

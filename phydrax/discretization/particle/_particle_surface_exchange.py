@@ -18,6 +18,7 @@ from ._dem import DEMEvaluation, PreparedSoftSphereDEMDynamics
 from ._pairwise import scatter_pair_exchange, scatter_pair_sum
 from ._particle_internal_mesh import PreparedParticleInternalBatch
 from ._particle_internal_state import ParticleConversionState
+from ._particle_internal_unstructured import PreparedUnstructuredParticleInternalMesh
 
 
 class ContactAreaMode(StrEnum):
@@ -167,6 +168,7 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
             (dynamics.bodies.capacity,), dtype=dynamics.bodies.radii.dtype
         )
         owner_coverage = jnp.zeros((dynamics.bodies.capacity,), dtype=jnp.int32)
+        surface_routes = []
         for prepared, state, material in zip(
             batches, conversion_state.batches, materials, strict=True
         ):
@@ -177,8 +179,23 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
                 metrics.cell_measures,
                 state.porosity,
             )
+            if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+                boundary_mask = metrics.boundary_faces[None, :] & metrics.active_faces
+                weights = jnp.where(
+                    boundary_mask,
+                    metrics.face_measures
+                    / jnp.maximum(metrics.surface_measure[:, None], 1.0e-30),
+                    0.0,
+                )
+                surface_temperature = jnp.sum(
+                    weights * thermo.temperature[:, metrics.owner_cells], axis=1
+                )
+                surface_routes.append(metrics)
+            else:
+                surface_temperature = thermo.temperature[:, -1]
+                surface_routes.append(None)
             owner_temperature = owner_temperature.at[prepared.owner_indices].set(
-                thermo.temperature[:, -1]
+                surface_temperature
             )
             owner_coverage = owner_coverage.at[prepared.owner_indices].add(
                 state.active.astype(jnp.int32)
@@ -280,11 +297,47 @@ class ParticleContactExchangePlan(StrictModule, NonTrainableState):
             wall_heat = wall_heat + jnp.where(wall_active, wall_mechanical, 0.0)
             owner_heat = owner_heat + wall_heat
             boundary_heat.append(wall_heat)
+        direction = dynamics.bodies.particles.safe_masses[:, None] * 0.0
+        pair_vector = (
+            evaluation.loads.particle_contact.force[left] * 0.0
+            + evaluation.particle_contact.pair_force
+        )
+        direction = direction.at[left].add(jnp.abs(pair_heat_left)[:, None] * pair_vector)
+        direction = direction.at[right].add(
+            -jnp.abs(pair_heat_left)[:, None] * pair_vector
+        )
+        direction_norm = jnp.linalg.norm(direction, axis=-1, keepdims=True)
+        fallback_direction = jnp.zeros_like(direction).at[:, -1].set(1.0)
+        direction = jnp.where(
+            direction_norm > 0.0,
+            direction / jnp.maximum(direction_norm, 1.0e-30),
+            fallback_direction,
+        )
         batch_rates = []
         assigned_total = jnp.zeros((), dtype=owner_heat.dtype)
-        for prepared, state in zip(batches, conversion_state.batches, strict=True):
+        for prepared, state, route in zip(
+            batches, conversion_state.batches, surface_routes, strict=True
+        ):
             owner_rate = owner_heat[prepared.owner_indices]
-            batch_rate = jnp.zeros_like(state.internal_energy).at[:, -1].set(owner_rate)
+            if route is None:
+                batch_rate = (
+                    jnp.zeros_like(state.internal_energy).at[:, -1].set(owner_rate)
+                )
+            else:
+                local_direction = direction[prepared.owner_indices]
+                score = jnp.sum(route.face_normals * local_direction[:, None, :], axis=-1)
+                score = jnp.where(
+                    route.boundary_faces[None, :] & route.active_faces,
+                    score,
+                    -jnp.inf,
+                )
+                selected_face = jnp.argmax(score, axis=1)
+                selected_cell = route.owner_cells[selected_face]
+                batch_rate = (
+                    jnp.zeros_like(state.internal_energy)
+                    .at[jnp.arange(prepared.particle_count), selected_cell]
+                    .set(owner_rate)
+                )
             batch_rates.append(batch_rate)
             assigned_total = assigned_total + jnp.sum(owner_rate)
         active_contact_count = jnp.zeros_like(owner_coverage)

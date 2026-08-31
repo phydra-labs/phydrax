@@ -67,6 +67,21 @@ def run(*, side, bp_steps, chains, repeats):
     bp_state = phx.pgm.initialize_belief_propagation(bp_plan)
     bp_run = jax.jit(lambda state: phx.pgm.run_belief_propagation(bp_plan, state))
     bp_first, bp_steady = _measure(bp_run, bp_state, repeats=repeats)
+    batch_cases = min(chains, 16)
+    batch_state = phx.pgm.BatchedBeliefPropagationState(
+        jnp.broadcast_to(bp_state.messages, (batch_cases, bp_plan.message_count)),
+        jnp.broadcast_to(
+            bp_state.evidence.values,
+            (batch_cases, graph.num_variable_states),
+        ),
+        structure_id=graph.structure_id,
+    )
+    batch_run = jax.jit(lambda state: phx.pgm.batch_belief_propagation(bp_plan, state))
+    batch_first, batch_steady = _measure(
+        batch_run,
+        batch_state,
+        repeats=repeats,
+    )
 
     prepare_start = time.perf_counter()
     gibbs_plan = phx.pgm.prepare_chromatic_gibbs(graph)
@@ -80,6 +95,41 @@ def run(*, side, bp_steps, chains, repeats):
         jr.key(6),
         repeats=repeats,
     )
+    random_policy = phx.pgm.GibbsScanPolicy(
+        "random-scan",
+        updates_per_sweep=variables,
+    )
+    random_gibbs_run = jax.jit(
+        lambda state, key: phx.pgm.gibbs_sweep_with_policy(
+            gibbs_plan,
+            state,
+            key,
+            random_policy,
+        )[0]
+    )
+    random_first, random_steady = _measure(
+        random_gibbs_run,
+        gibbs_state,
+        jr.key(7),
+        repeats=repeats,
+    )
+
+    elimination_start = time.perf_counter()
+    elimination_plan = phx.pgm.plan_variable_elimination(
+        graph,
+        resources=phx.pgm.FactorGraphResourcePolicy(
+            maximum_treewidth=max(side, 1),
+            maximum_elimination_elements=max(2 ** (side + 1), 2),
+        ),
+    )
+    elimination_prepare_seconds = time.perf_counter() - elimination_start
+    elimination_first, elimination_steady = _measure(
+        phx.pgm.variable_elimination,
+        elimination_plan,
+        repeats=repeats,
+    )
+
+    packed = phx.pgm.pack_factor_graphs((graph, graph))
 
     return {
         "platform": jax.default_backend(),
@@ -94,12 +144,30 @@ def run(*, side, bp_steps, chains, repeats):
             "steady_seconds": bp_steady,
             "maximum_steps": bp_steps,
         },
+        "batch_bp": {
+            "cases": batch_cases,
+            "compile_and_first_seconds": batch_first,
+            "steady_seconds": batch_steady,
+        },
         "gibbs": {
             "chains": chains,
             "colors": len(gibbs_plan.stages),
             "prepare_seconds": gibbs_prepare_seconds,
             "compile_and_first_seconds": gibbs_first,
             "steady_sweep_seconds": gibbs_steady,
+            "random_scan_compile_and_first_seconds": random_first,
+            "random_scan_steady_sweep_seconds": random_steady,
+        },
+        "elimination": {
+            "treewidth": elimination_plan.treewidth,
+            "maximum_workspace_elements": elimination_plan.maximum_workspace_elements,
+            "prepare_seconds": elimination_prepare_seconds,
+            "first_seconds": elimination_first,
+            "steady_seconds": elimination_steady,
+        },
+        "packed_graphs": {
+            "graphs": packed.num_graphs,
+            "nodes": packed.topology.num_nodes,
         },
     }
 

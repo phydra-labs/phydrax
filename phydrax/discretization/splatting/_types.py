@@ -237,6 +237,44 @@ class SplatDepositResult(StrictModule):
         )
 
 
+class SplatRouteScatterResult(StrictModule):
+    """Unweighted route payload reduced onto the prepared target layout."""
+
+    values: Array
+    valid_route_count: Array
+    successful: Array
+    execution_policy_id: str = eqx.field(static=True)
+    precision_policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        values: ArrayLike,
+        valid_route_count: ArrayLike,
+        successful: ArrayLike,
+        /,
+        *,
+        execution_policy_id: str,
+        precision_policy_id: str,
+    ):
+        execution = str(execution_policy_id)
+        precision = str(precision_policy_id)
+        if not execution or not precision:
+            raise ValueError("Route-scatter policy IDs must be non-empty.")
+        self.values = jnp.asarray(values)
+        self.valid_route_count = jnp.asarray(valid_route_count, dtype=jnp.int32)
+        self.successful = jnp.asarray(successful, dtype=bool)
+        self.execution_policy_id = execution
+        self.precision_policy_id = precision
+
+    def require_success(self, value: ArrayLike, /) -> Array:
+        """Return ``value`` or fail unless route reduction completed successfully."""
+        return eqx.error_if(
+            jnp.asarray(value),
+            ~self.successful,
+            "Particle-grid route-payload scatter failed.",
+        )
+
+
 class SplatReconstructionResult(StrictModule):
     """Normalized intensive reconstruction with explicit numerator and coverage."""
 
@@ -294,5 +332,6 @@ __all__ = [
     "SplatDepositResult",
     "SplatExecutionPolicy",
     "SplatGeometryAD",
+    "SplatRouteScatterResult",
     "SplatReconstructionResult",
 ]

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
+from .._numerics._checkpointed_scan import checkpointed_scan
 from .._numerics._ssp_runge_kutta import ssprk33_step, ssprk54_step
 from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
@@ -436,56 +437,362 @@ class FixedStepSolution(StrictModule, NonTrainableState):
     discretization_bundle_id: str | None = eqx.field(static=True)
 
 
+FixedStepRetentionPolicy: TypeAlias = Literal["final", "checkpoints", "trajectory"]
+FixedStepReplayMode: TypeAlias = Literal["full", "step", "block"]
+
+
+class FixedStepReplayPolicy(StrictModule, NonTrainableState):
+    """Reverse-mode storage and deterministic recomputation for fixed-step scans."""
+
+    mode: FixedStepReplayMode = eqx.field(static=True)
+    block_size: int | None = eqx.field(static=True)
+    policy_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mode: FixedStepReplayMode = "full",
+        /,
+        *,
+        block_size: int | None = None,
+    ):
+        if mode not in ("full", "step", "block"):
+            raise ValueError("Unknown fixed-step replay mode.")
+        size = None if block_size is None else int(block_size)
+        if mode == "block":
+            if size is None or size <= 0:
+                raise ValueError("Block replay requires a positive block_size.")
+        elif size is not None:
+            raise ValueError("block_size is valid only for block replay.")
+        self.mode = mode
+        self.block_size = size
+        self.policy_id = canonical_fingerprint(
+            {"kind": "fixed-step-replay", "mode": mode, "block_size": size}
+        )
+
+
+FixedStepScalarDiagnostics: TypeAlias = Callable[
+    [Array, Array, PyTree[Array], Any], PyTree[Array]
+]
+
+
+def _fixed_step_advance(
+    problem: FixedStepProblem,
+    state_dtype: Any,
+    carry: tuple[PyTree[Array], Array],
+    step_index: Array,
+    /,
+):
+    state, previous_success = carry
+    step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
+    time = jnp.asarray(problem.t0, dtype=state_dtype) + step_index * step_size
+    result = problem.method.step(step_index, time, state, step_size, problem.args)
+    if not isinstance(result, FixedStepResult):
+        raise TypeError("Fixed-step methods must return FixedStepResult.")
+    _validate_result_state("candidate_state", result.candidate_state, state)
+    _validate_result_state("accepted_state", result.accepted_state, state)
+    _validate_scalar_result("successful", result.successful, boolean=True)
+    _validate_scalar_result("residual", result.residual)
+    _validate_scalar_result("iterations", result.iterations)
+    _validate_scalar_result("work", result.work)
+    _validate_scalar_result("transform_applied", result.transform_applied, boolean=True)
+    _validate_scalar_result("transform_correction_norm", result.transform_correction_norm)
+    accepted = tree_where(previous_success, result.accepted_state, state)
+    successful = previous_success & result.successful
+    payload = (
+        successful,
+        result.residual,
+        result.iterations,
+        result.work,
+        result.transform_applied,
+        result.transform_correction_norm,
+    )
+    return (accepted, successful), payload
+
+
+def _validate_scalar_diagnostics(diagnostics: PyTree[Array], /) -> None:
+    leaves = jax.tree.leaves(diagnostics)
+    if not leaves:
+        raise ValueError("Fixed-step diagnostics must contain scalar array leaves.")
+    if any(not eqx.is_array(leaf) or leaf.shape != () for leaf in leaves):
+        raise TypeError("Every fixed-step diagnostic leaf must be a scalar array.")
+
+
+class FixedStepRolloutResult(StrictModule, NonTrainableState):
+    final_state: PyTree[Array]
+    successful: Array
+    times: Array
+    states: PyTree[Array]
+    valid: Array
+    residuals: Array
+    iterations: Array
+    work: Array
+    transform_applied: Array
+    transform_correction_norm: Array
+    diagnostics: Any
+    problem_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    state_geometry_id: str = eqx.field(static=True)
+    discretization_bundle_id: str | None = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+
+class FixedStepRolloutPlan(StrictModule, NonTrainableState):
+    """Fixed-step retention with an orthogonal deterministic replay policy."""
+
+    retention: FixedStepRetentionPolicy = eqx.field(static=True)
+    checkpoint_stride: int = eqx.field(static=True)
+    replay: FixedStepReplayPolicy
+    diagnostics: FixedStepScalarDiagnostics | None
+    diagnostics_id: str | None = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        /,
+        *,
+        retention: FixedStepRetentionPolicy = "final",
+        checkpoint_stride: int = 1,
+        replay: FixedStepReplayPolicy | None = None,
+        diagnostics: FixedStepScalarDiagnostics | None = None,
+        diagnostics_id: str | None = None,
+    ):
+        if retention not in ("final", "checkpoints", "trajectory"):
+            raise ValueError("Unknown fixed-step retention policy.")
+        stride = int(checkpoint_stride)
+        if stride <= 0:
+            raise ValueError("checkpoint_stride must be positive.")
+        if retention != "checkpoints" and stride != 1:
+            raise ValueError(
+                "checkpoint_stride differs from one only for checkpoint retention."
+            )
+        replay_ = FixedStepReplayPolicy() if replay is None else replay
+        if not isinstance(replay_, FixedStepReplayPolicy):
+            raise TypeError("replay must be FixedStepReplayPolicy or None.")
+        if diagnostics is not None and not callable(diagnostics):
+            raise TypeError("diagnostics must be callable or None.")
+        if diagnostics is None:
+            if diagnostics_id is not None:
+                raise ValueError("diagnostics_id requires a diagnostics callback.")
+            diagnostic_identifier = None
+        else:
+            diagnostic_identifier = "" if diagnostics_id is None else str(diagnostics_id)
+            if not diagnostic_identifier:
+                raise ValueError(
+                    "A diagnostics callback requires a non-empty diagnostics_id."
+                )
+        self.retention = retention
+        self.checkpoint_stride = stride
+        self.replay = replay_
+        self.diagnostics = diagnostics
+        self.diagnostics_id = diagnostic_identifier
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "fixed-step-rollout-plan",
+                "retention": retention,
+                "checkpoint_stride": stride,
+                "replay": replay_.policy_id,
+                "diagnostics": diagnostic_identifier,
+            }
+        )
+
+    def rollout(
+        self,
+        problem: FixedStepProblem,
+        /,
+    ) -> FixedStepRolloutResult:
+        if not isinstance(problem, FixedStepProblem):
+            raise TypeError("problem must be a FixedStepProblem.")
+        state_dtype = _state_dtype(problem.initial_state)
+        step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
+
+        def advance(carry, step_index):
+            next_carry, built_in = _fixed_step_advance(
+                problem, state_dtype, carry, step_index
+            )
+            accepted, _ = next_carry
+            if self.diagnostics is None:
+                observed = ()
+            else:
+                endpoint = (
+                    jnp.asarray(problem.t0, dtype=state_dtype)
+                    + (step_index + 1) * step_size
+                )
+                observed = self.diagnostics(step_index, endpoint, accepted, problem.args)
+                _validate_scalar_diagnostics(observed)
+            return next_carry, (*built_in, observed)
+
+        step = advance
+        indices = jnp.arange(problem.step_count, dtype=jnp.int32)
+        initial_carry = (problem.initial_state, jnp.asarray(True))
+
+        if self.retention == "trajectory":
+
+            def trajectory_step(carry, step_index):
+                next_carry, payload = step(carry, step_index)
+                return next_carry, (next_carry[0], *payload)
+
+            (final_state, final_success), payload = checkpointed_scan(
+                trajectory_step,
+                initial_carry,
+                indices,
+                length=problem.step_count,
+                mode=self.replay.mode,
+                block_size=self.replay.block_size,
+            )
+            (
+                states,
+                valid,
+                residuals,
+                iterations,
+                work,
+                transformed,
+                correction,
+                observed,
+            ) = payload
+            retained_states = _prepend_initial_state(problem.initial_state, states)
+            retained_valid = jnp.concatenate((jnp.asarray([True]), valid), axis=0)
+            retained_times = jnp.asarray(
+                problem.t0, dtype=step_size.dtype
+            ) + step_size * jnp.arange(problem.step_count + 1)
+        elif self.retention == "final":
+            (final_state, final_success), payload = checkpointed_scan(
+                step,
+                initial_carry,
+                indices,
+                length=problem.step_count,
+                mode=self.replay.mode,
+                block_size=self.replay.block_size,
+            )
+            valid, residuals, iterations, work, transformed, correction, observed = (
+                payload
+            )
+            retained_states = jax.tree.map(lambda leaf: leaf[None, ...], final_state)
+            retained_valid = final_success[None]
+            retained_times = jnp.asarray([problem.t1], dtype=step_size.dtype)
+        else:
+            saved_indices = tuple(
+                range(0, problem.step_count + 1, self.checkpoint_stride)
+            )
+            if saved_indices[-1] != problem.step_count:
+                saved_indices = (*saved_indices, problem.step_count)
+            save_after_step = np.zeros((problem.step_count,), dtype=bool)
+            for endpoint in saved_indices[1:]:
+                save_after_step[endpoint - 1] = True
+            save_mask = jnp.asarray(save_after_step)
+            retained_states = jax.tree.map(
+                lambda leaf: (
+                    jnp.zeros((len(saved_indices), *leaf.shape), dtype=leaf.dtype)
+                    .at[0]
+                    .set(leaf)
+                ),
+                problem.initial_state,
+            )
+            retained_valid = jnp.zeros((len(saved_indices),), dtype=bool).at[0].set(True)
+
+            def checkpoint_step(carry, step_index):
+                state_carry, saved, saved_valid, cursor = carry
+                next_carry, payload = step(state_carry, step_index)
+                accepted, successful = next_carry
+
+                def store(values):
+                    states_, valid_, cursor_ = values
+                    states_ = jax.tree.map(
+                        lambda buffer, value: buffer.at[cursor_].set(value),
+                        states_,
+                        accepted,
+                    )
+                    valid_ = valid_.at[cursor_].set(successful)
+                    return states_, valid_, cursor_ + 1
+
+                saved, saved_valid, cursor = jax.lax.cond(
+                    save_mask[step_index],
+                    store,
+                    lambda values: values,
+                    (saved, saved_valid, cursor),
+                )
+                return (next_carry, saved, saved_valid, cursor), payload
+
+            checkpoint_carry = (
+                initial_carry,
+                retained_states,
+                retained_valid,
+                jnp.asarray(1, dtype=jnp.int32),
+            )
+            result_carry, payload = checkpointed_scan(
+                checkpoint_step,
+                checkpoint_carry,
+                indices,
+                length=problem.step_count,
+                mode=self.replay.mode,
+                block_size=self.replay.block_size,
+            )
+            (final_state, final_success), retained_states, retained_valid, _ = (
+                result_carry
+            )
+            valid, residuals, iterations, work, transformed, correction, observed = (
+                payload
+            )
+            retained_times = jnp.asarray(
+                problem.t0, dtype=step_size.dtype
+            ) + step_size * jnp.asarray(saved_indices, dtype=step_size.dtype)
+
+        bundle_id = (
+            None
+            if problem.discretization_bundle is None
+            else problem.discretization_bundle.bundle_id
+        )
+        return FixedStepRolloutResult(
+            final_state,
+            final_success,
+            retained_times,
+            retained_states,
+            retained_valid,
+            residuals,
+            iterations,
+            work,
+            transformed,
+            correction,
+            observed,
+            problem.problem_id,
+            problem.method.method_id,
+            problem.state_geometry.geometry_id,
+            bundle_id,
+            self.plan_id,
+        )
+
+
 def solve_fixed_step(
     problem: FixedStepProblem,
     /,
     *,
     save_every: int = 1,
+    replay: FixedStepReplayPolicy | None = None,
 ) -> FixedStepSolution:
-    """Run one pure fixed-step scan with fail-closed accepted states."""
+    """Run one pure fixed-step scan with orthogonal saving and replay policies."""
 
     if not isinstance(problem, FixedStepProblem):
         raise TypeError("problem must be a FixedStepProblem.")
     stride = int(save_every)
     if stride <= 0:
         raise ValueError("save_every must be positive.")
+    replay_ = FixedStepReplayPolicy() if replay is None else replay
+    if not isinstance(replay_, FixedStepReplayPolicy):
+        raise TypeError("replay must be FixedStepReplayPolicy or None.")
     state_dtype = _state_dtype(problem.initial_state)
     step_size = jnp.asarray(problem.step_size, dtype=state_dtype)
 
     def advance(carry, step_index):
-        state, previous_success = carry
-        time = jnp.asarray(problem.t0, dtype=state_dtype) + step_index * step_size
-        result = problem.method.step(step_index, time, state, step_size, problem.args)
-        _validate_result_state("candidate_state", result.candidate_state, state)
-        _validate_result_state("accepted_state", result.accepted_state, state)
-        _validate_scalar_result("successful", result.successful, boolean=True)
-        _validate_scalar_result("residual", result.residual)
-        _validate_scalar_result("iterations", result.iterations)
-        _validate_scalar_result("work", result.work)
-        _validate_scalar_result(
-            "transform_applied", result.transform_applied, boolean=True
-        )
-        _validate_scalar_result(
-            "transform_correction_norm", result.transform_correction_norm
-        )
-        accepted = tree_where(previous_success, result.accepted_state, state)
-        successful = previous_success & result.successful
-        payload = (
-            accepted,
-            successful,
-            result.residual,
-            result.iterations,
-            result.work,
-            result.transform_applied,
-            result.transform_correction_norm,
-        )
-        return (accepted, successful), payload
+        next_carry, payload = _fixed_step_advance(problem, state_dtype, carry, step_index)
+        return next_carry, (next_carry[0], *payload)
 
     indices = jnp.arange(problem.step_count, dtype=jnp.int32)
-    (_, final_success), payload = jax.lax.scan(
+    (_, final_success), payload = checkpointed_scan(
         advance,
         (problem.initial_state, jnp.asarray(True)),
         indices,
+        length=problem.step_count,
+        mode=replay_.mode,
+        block_size=replay_.block_size,
     )
     states, valid, residuals, iterations, work, transformed, correction = payload
     all_states = _prepend_initial_state(problem.initial_state, states)
@@ -527,6 +834,12 @@ __all__ = [
     "AcceptedStepTransformResult",
     "CompositeAcceptedStepTransform",
     "FixedStepProblem",
+    "FixedStepReplayMode",
+    "FixedStepReplayPolicy",
+    "FixedStepRetentionPolicy",
+    "FixedStepRolloutPlan",
+    "FixedStepRolloutResult",
+    "FixedStepScalarDiagnostics",
     "FixedStepResult",
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",

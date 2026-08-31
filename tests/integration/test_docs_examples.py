@@ -20,6 +20,7 @@ _REPO_ROOT = _DOCS_DIR.parent
 _LONG_RUNNING_DOCS = frozenset(
     {
         Path("docs/cookbook/uncertainty_quantification.md"),
+        Path("docs/cookbook/operator_learning.md"),
         Path("docs/guides_uncertainty.md"),
     }
 )

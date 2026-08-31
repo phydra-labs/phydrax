@@ -119,7 +119,6 @@ def _measure(backend, kernel_backend, repeats=20):
     elapsed = time.perf_counter() - start
     neighborhood = compiled.dynamics.neighborhood.build(state.kinematics.position)
     keys = compiled.dynamics.pair_key_space.keys(neighborhood.pair_relation)
-    maximum_key = max(compiled.dynamics.pair_key_space.pair_count - 1, 0)
 
     @jax.jit
     def remap(history):
@@ -128,7 +127,6 @@ def _measure(backend, kernel_backend, repeats=20):
             history.valid,
             keys.keys,
             keys.valid,
-            maximum_key=maximum_key,
         ).source_indices
 
     force = evaluate(state)

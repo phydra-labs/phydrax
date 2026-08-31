@@ -33,7 +33,7 @@ from ._spectral_compile import SpectralStateLayout
 
 
 class IncompressibleFlowProblem(StrictModule):
-    """Newtonian incompressible velocity dynamics with an optional modal forcing."""
+    """Newtonian incompressible velocity dynamics with compiler-space forcing."""
 
     viscosity: Array
     forcing: Any
@@ -157,7 +157,6 @@ class _PeriodicRotationalDrift(StrictModule):
             self.problem.forcing(time, value, args), owner="Modal forcing"
         )
         return self.projector.project(forcing)
-
 
     def unconstrained_rhs(self, time: Array, state: Array, args: Any, /) -> Array:
         value = self.projector.validate_state(state)
@@ -292,9 +291,7 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
             )
         dissipation = self.problem.viscosity * jnp.sum(weights * gradient_squared)
         nonlinear_modal = self.nonlinear_drift.nonlinear_rhs(admissible)
-        forcing_modal = self.nonlinear_drift.forcing_rhs(
-            time_, admissible, args
-        )
+        forcing_modal = self.nonlinear_drift.forcing_rhs(time_, admissible, args)
         viscous_modal = (
             -self.problem.viscosity
             * self.projector.wavenumber_squared[..., None]
@@ -304,18 +301,14 @@ class CompiledIncompressibleSpectralDynamics(StrictModule):
 
         def energy_rate(rate: Array, /) -> Array:
             physical_rate = self.discretization.reconstruct(rate)
-            density = jnp.sum(
-                jnp.real(jnp.conj(physical) * physical_rate), axis=-1
-            )
+            density = jnp.sum(jnp.real(jnp.conj(physical) * physical_rate), axis=-1)
             return jnp.sum(weights * density)
 
         nonlinear_energy_rate = energy_rate(nonlinear_modal)
         forcing_power = energy_rate(forcing_modal)
         viscous_energy_rate = energy_rate(viscous_modal)
         semidiscrete_energy_rate = energy_rate(total_modal)
-        energy_balance_defect = semidiscrete_energy_rate - (
-            forcing_power - dissipation
-        )
+        energy_balance_defect = semidiscrete_energy_rate - (forcing_power - dissipation)
         forbidden = value - self.projector.zero_forbidden_modes(value)
         pressure = self.pressure_coefficients(time_, admissible, args)
         zero_mode = self.projector.wavenumber_squared == 0.0

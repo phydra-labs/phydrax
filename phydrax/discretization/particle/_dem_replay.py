@@ -63,7 +63,9 @@ class DEMCheckpointVJPResult(StrictModule):
 def _route_digest(state: DEMRuntimeState, /) -> Array:
     history = state.particle_history
     slots = jnp.arange(history.pair_keys.shape[0], dtype=jnp.int64)
-    keys = jnp.where(history.valid, history.pair_keys + 1, 0)
+    identity = jnp.where(history.valid[:, None], history.pair_keys + 1, 0)
+    identity_weights = jnp.asarray([3, 5, 7, 11, 13], dtype=jnp.int64)
+    keys = jnp.sum(identity * identity_weights[None, :], axis=-1)
     active = history.active.astype(jnp.int64)
     sliding = history.tangential.sliding.astype(jnp.int64)
     cohesion = jnp.zeros_like(active)

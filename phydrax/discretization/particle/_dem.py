@@ -854,7 +854,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             jnp.zeros((), dtype=jnp.int32),
         )
         neighborhood_cache = (
-            self.neighborhood.initialize(kinematics.position)
+            self.neighborhood.initialize(
+                kinematics.position, active_mask=body_properties.active
+            )
             if isinstance(self.neighborhood, PreparedVerletParticleNeighborhood)
             else None
         )
@@ -949,7 +951,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Verlet morphology update requires a neighborhood cache."
                 )
-            initialized = self.neighborhood.initialize(kinematics.position)
+            initialized = self.neighborhood.initialize(
+                kinematics.position, active_mask=properties.active
+            )
             cache = tree_where(jnp.asarray(rebuild_neighborhood), initialized, cache)
         staged = DEMRuntimeState(
             kinematics,
@@ -1030,17 +1034,20 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                     "Prepared Verlet DEM state requires a neighborhood cache."
                 )
             neighborhood_cache = self.neighborhood.update(
-                kinematics.position, state.neighborhood_cache
+                kinematics.position,
+                state.neighborhood_cache,
+                active_mask=properties.active,
             )
             neighborhood = neighborhood_cache.neighborhood
             rebuilt = neighborhood_cache.rebuilt
         else:
             neighborhood_cache = None
-            neighborhood = self.neighborhood.build(kinematics.position)
+            neighborhood = self.neighborhood.build(
+                kinematics.position, active_mask=properties.active
+            )
             rebuilt = jnp.asarray(True)
         pairs = neighborhood.pair_relation
         keys = self.pair_key_space.keys(pairs)
-        maximum_key = max(self.pair_key_space.pair_count - 1, 0)
 
         def align_rebuilt(_):
             remap = match_particle_pair_keys(
@@ -1048,7 +1055,6 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 state.particle_history.valid,
                 keys.keys,
                 keys.valid,
-                maximum_key=maximum_key,
             )
             history = remap_dem_contact_history(
                 state.particle_history,
@@ -1059,9 +1065,11 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             return history, remap.continued, remap.successful
 
         def align_reused(_):
+            same_identity = jnp.all(
+                state.particle_history.pair_keys == keys.keys, axis=-1
+            )
             same_keys = jnp.all(
-                ~state.particle_history.valid
-                | (keys.valid & (state.particle_history.pair_keys == keys.keys))
+                ~state.particle_history.valid | (keys.valid & same_identity)
             )
             history = state.particle_history.with_routes(keys.keys, keys.valid)
             return history, keys.valid & history.valid, same_keys

@@ -16,6 +16,7 @@ from ._dem import DEMEvaluation, PreparedSoftSphereDEMDynamics
 from ._pairwise import scatter_pair_exchange
 from ._particle_internal_mesh import PreparedParticleInternalBatch
 from ._particle_internal_state import ParticleConversionState
+from ._particle_internal_unstructured import PreparedUnstructuredParticleInternalMesh
 
 
 _STEFAN_BOLTZMANN = 5.670374419e-8
@@ -117,6 +118,7 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
         owner_temperature = jnp.zeros((capacity,), dtype=dtype)
         owner_area = jnp.zeros((capacity,), dtype=dtype)
         coverage = jnp.zeros((capacity,), dtype=jnp.int32)
+        surface_routes = []
         for prepared, state, material in zip(
             batches, conversion_state.batches, materials, strict=True
         ):
@@ -127,8 +129,23 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
                 metrics.cell_measures,
                 state.porosity,
             )
+            if isinstance(prepared.mesh, PreparedUnstructuredParticleInternalMesh):
+                boundary_mask = metrics.boundary_faces[None, :] & metrics.active_faces
+                face_weight = jnp.where(
+                    boundary_mask,
+                    metrics.face_measures
+                    / jnp.maximum(metrics.surface_measure[:, None], 1.0e-30),
+                    0.0,
+                )
+                surface_temperature = jnp.sum(
+                    face_weight * thermo.temperature[:, metrics.owner_cells], axis=1
+                )
+                surface_routes.append((metrics.owner_cells, face_weight))
+            else:
+                surface_temperature = thermo.temperature[:, -1]
+                surface_routes.append(None)
             owner_temperature = owner_temperature.at[prepared.owner_indices].set(
-                thermo.temperature[:, -1]
+                surface_temperature
             )
             owner_area = owner_area.at[prepared.owner_indices].set(
                 metrics.surface_measure
@@ -186,11 +203,20 @@ class ReciprocalPairRadiationPlan(StrictModule, NonTrainableState):
             wall_source = wall_source.at[index].set(-jnp.sum(heat))
         batch_rates = []
         assigned = jnp.zeros((), dtype=dtype)
-        for prepared, state in zip(batches, conversion_state.batches, strict=True):
+        for prepared, state, route in zip(
+            batches, conversion_state.batches, surface_routes, strict=True
+        ):
             values = owner_heat[prepared.owner_indices]
-            batch_rates.append(
-                jnp.zeros_like(state.internal_energy).at[:, -1].set(values)
-            )
+            if route is None:
+                rate = jnp.zeros_like(state.internal_energy).at[:, -1].set(values)
+            else:
+                owner_cells, face_weight = route
+                rate = (
+                    jnp.zeros_like(state.internal_energy)
+                    .at[:, owner_cells]
+                    .add(values[:, None] * face_weight)
+                )
+            batch_rates.append(rate)
             assigned = assigned + jnp.sum(values)
         residual = assigned + jnp.sum(wall_source)
         pair_entropy = jnp.sum(

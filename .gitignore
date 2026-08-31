@@ -42,6 +42,7 @@ benchmarks/*
 !benchmarks/direct_collocation_qualification.json
 !benchmarks/integral_physics.json
 !benchmarks/hp_spectral_element.json
+!benchmarks/spectral_hp_completion.json
 !benchmarks/map_gp_search.json
 !benchmarks/fourier_modal_maxwell.json
 !benchmarks/fourier_modal_maxwell_qualification.json
@@ -55,6 +56,8 @@ benchmarks/*
 !benchmarks/structured_flow.json
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
+!benchmarks/material_point.json
+!benchmarks/material_point_qualification.json
 !benchmarks/iree_export.json
 !benchmarks/mma.json
 !benchmarks/topology.json

@@ -119,6 +119,17 @@ contracts. See LICENSES/SPINEAX-MIT.txt.
 
 Research and design acknowledgments
 
+The differentiable force-density design study considered arpastrana/jax_fdm at
+commit 71d449076d7384104108cfd133108be01278c18d, Copyright (c) 2026
+Rafael Pastrana, licensed under the MIT License, together with Schek, “The force
+density method for form finding and computation of general networks,” CMAME 3(1),
+1974, and Pastrana et al., “Differentiable force density method for the design of
+lightweight structures,” CMAME 458, 118783 (2026). Phydrax independently
+implements immutable topology, sparse equilibrium assembly, native linear/root
+solves, state/design integration, physical certification, tests, examples, and
+benchmarks; no upstream source, tests, fixtures, runtime types, or generated data
+are copied or redistributed.
+
 The spectral-residual operator-learning design study considered ASK-Berkeley's
 Neural-Spectral-Methods repository at commit
 090e7a173f27734dbae5ec479a410ca1748981af, Copyright (c) 2023

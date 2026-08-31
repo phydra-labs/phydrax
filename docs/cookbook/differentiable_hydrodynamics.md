@@ -1,7 +1,7 @@
 # Differentiable hydrodynamics inference
 
 The complete runnable workflow is
-[`examples/differentiable_hydrodynamics_inference.py`](../../examples/differentiable_hydrodynamics_inference.py).
+[`examples/differentiable_hydrodynamics_inference.py`](https://github.com/phydra-labs/phydrax/blob/dev/examples/differentiable_hydrodynamics_inference.py).
 It demonstrates a whitened latent initial field, a fixed finite-volume temporal mesh,
 block rematerialization, a physical observation map, and a normalized posterior.
 
@@ -67,6 +67,25 @@ The adapter reconstructs magnetic cell values for source thermodynamics but reta
 face magnetic flux as the authoritative state. Gravity and forcing may modify momentum
 and total energy; cooling may modify total energy. Any declared or actual attempt to
 modify a `magnetic_*` component is rejected transactionally.
+
+## Select high-order constrained MHD
+
+```text
+reconstruction = phx.solver.advanced.MHDPrimitiveReconstructionPlan("weno_z")
+uct = phx.solver.advanced.HLLUCTElectromotivePlan()
+spatial = phx.discretization.UpwindConstrainedTransportPlan(
+    dynamics,
+    cochain_bridge,
+    reconstruction=reconstruction,
+    electromotive_plan=uct,
+)
+```
+
+The magnetic layout follows the physical dimension: normal magnetic flux is
+cochain-owned, while transverse components that are not part of the divergence
+constraint remain cell-owned. Accepted SSPRK face and edge integrals are available
+through `ConstrainedMHDAcceptedIntegralLedger` for gravity coupling and reflux-curl.
+
 
 ## Gradient and inference semantics
 

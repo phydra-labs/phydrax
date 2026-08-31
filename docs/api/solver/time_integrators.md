@@ -115,6 +115,33 @@ state Jacobian is not materialized.
 two, and three stages have orders two, four, and six. `dense=True` retains the
 collocation polynomial for arbitrary query times.
 
+## Fixed-step rollout retention
+
+`FixedStepRolloutPlan` separates full-state retention from full, step, or block
+reverse-mode replay:
+
+- `retention="final"` returns only the terminal state;
+- `retention="checkpoints"` returns the initial state, every requested stride, and
+  the terminal state exactly once;
+- `retention="trajectory"` returns every endpoint and matches the legacy
+  `solve_fixed_step` state layout.
+
+Built-in scalar histories remain one value per physical step. An optional diagnostic
+callback observes the fail-closed accepted endpoint and must return scalar array
+leaves. It does not force population/state trajectory retention.
+
+`replay=FixedStepReplayPolicy("step")` rematerializes deterministic per-step work.
+`FixedStepReplayPolicy("block", block_size=...)` retains block-boundary carries and
+recomputes each block. Replay does not change primal values or output retention.
+
+::: phydrax.solver.FixedStepRolloutPlan
+
+---
+
+::: phydrax.solver.FixedStepRolloutResult
+
+::: phydrax.solver.FixedStepReplayPolicy
+
 ## Differentiation
 
 - Diffrax paths use the selected Diffrax adjoint.

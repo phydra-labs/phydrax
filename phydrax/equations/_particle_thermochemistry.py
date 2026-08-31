@@ -20,6 +20,9 @@ from ..discretization.particle._particle_internal_mesh import (
     PreparedParticleInternalBatch,
 )
 from ..discretization.particle._particle_internal_state import ParticleInternalBatchState
+from ..discretization.particle._particle_internal_unstructured import (
+    PreparedUnstructuredParticleInternalMesh,
+)
 
 
 _UNIVERSAL_GAS_CONSTANT = 8.31446261815324
@@ -401,6 +404,8 @@ def evaluate_particle_transport(
         raise ValueError("Particle transport state does not match prepared batch.")
     if material.thermodynamics.schema.species_count != batch.species_count:
         raise ValueError("Particle transport species schema does not match batch.")
+    if isinstance(batch.mesh, PreparedUnstructuredParticleInternalMesh):
+        return _evaluate_unstructured_particle_transport(batch, state, material, boundary)
     metrics = batch.mesh.metrics(state.outer_scale)
     thermodynamics = material.thermodynamics.state(
         state.internal_energy,
@@ -536,6 +541,189 @@ def evaluate_particle_transport(
         )
         & jnp.isfinite(entropy)
         & (entropy >= 0.0)
+        & ~jnp.isnan(restriction)
+    )
+    return ParticleTransportEvaluation(
+        energy_rate,
+        species_rate,
+        boundary_heat,
+        boundary_species,
+        energy_residual,
+        species_residual,
+        entropy,
+        restriction,
+        thermodynamics,
+        successful,
+        material.bundle_id,
+    )
+
+
+def _evaluate_unstructured_particle_transport(
+    batch,
+    state,
+    material,
+    boundary,
+):
+    _validate_boundary(boundary, batch, state.internal_energy.dtype)
+    active_cells = jnp.broadcast_to(
+        state.active[:, None], (batch.particle_count, batch.cell_capacity)
+    )
+    metrics = batch.mesh.metrics(state.outer_scale, active_cells=active_cells)
+    thermodynamics = material.thermodynamics.state(
+        state.internal_energy,
+        state.species_amount,
+        metrics.cell_measures,
+        state.porosity,
+    )
+    concentration = state.species_amount / metrics.cell_measures[:, :, None]
+    amount_sum = jnp.sum(state.species_amount, axis=-1, keepdims=True)
+    fraction = state.species_amount / jnp.maximum(amount_sum, 1.0e-30)
+    conductivity_cell = jnp.sum(
+        fraction * material.transport.thermal_conductivity, axis=-1
+    )
+    owner = metrics.owner_cells
+    neighbour = metrics.neighbour_cells
+    safe_neighbour = jnp.maximum(neighbour, 0)
+    interior = (~metrics.boundary_faces)[None, :] & metrics.active_faces
+    conductivity_face = _harmonic_mean(
+        conductivity_cell[:, owner], conductivity_cell[:, safe_neighbour]
+    )
+    heat_conductance = (
+        conductivity_face * metrics.face_measures / metrics.center_distances
+    )
+    heat_flux = jnp.where(
+        interior,
+        heat_conductance
+        * (
+            thermodynamics.temperature[:, owner]
+            - thermodynamics.temperature[:, safe_neighbour]
+        ),
+        0.0,
+    )
+    energy_rate = jnp.zeros_like(state.internal_energy)
+    energy_rate = energy_rate.at[:, owner].add(-heat_flux)
+    energy_rate = energy_rate.at[:, safe_neighbour].add(heat_flux)
+    effective_diffusivity = (
+        material.transport.species_diffusivity[None, None, :]
+        * state.porosity[:, :, None] ** material.transport.tortuosity_exponent
+    )
+    diffusivity_face = _harmonic_mean(
+        effective_diffusivity[:, owner, :],
+        effective_diffusivity[:, safe_neighbour, :],
+    )
+    species_conductance = (
+        diffusivity_face
+        * metrics.face_measures[:, :, None]
+        / metrics.center_distances[:, :, None]
+    )
+    species_flux = jnp.where(
+        interior[:, :, None],
+        species_conductance
+        * (concentration[:, owner, :] - concentration[:, safe_neighbour, :]),
+        0.0,
+    )
+    species_rate = jnp.zeros_like(state.species_amount)
+    species_rate = species_rate.at[:, owner, :].add(-species_flux)
+    species_rate = species_rate.at[:, safe_neighbour, :].add(species_flux)
+    boundary_faces = metrics.boundary_faces[None, :] & metrics.active_faces
+    boundary_owner_temperature = thermodynamics.temperature[:, owner]
+    boundary_owner_species = concentration[:, owner, :]
+    area_fraction = metrics.face_measures / jnp.maximum(
+        metrics.surface_measure[:, None], 1.0e-30
+    )
+    boundary_face_heat = jnp.where(
+        boundary_faces,
+        boundary.heat_transfer_coefficient[:, None]
+        * metrics.face_measures
+        * (boundary.temperature[:, None] - boundary_owner_temperature)
+        + boundary.prescribed_heat_rate[:, None] * area_fraction,
+        0.0,
+    )
+    boundary_face_species = jnp.where(
+        boundary_faces[:, :, None],
+        boundary.mass_transfer_coefficient[:, None, :]
+        * metrics.face_measures[:, :, None]
+        * (boundary.species_concentration[:, None, :] - boundary_owner_species)
+        + boundary.prescribed_species_rate[:, None, :] * area_fraction[:, :, None],
+        0.0,
+    )
+    energy_rate = energy_rate.at[:, owner].add(boundary_face_heat)
+    species_rate = species_rate.at[:, owner, :].add(boundary_face_species)
+    boundary_heat = jnp.sum(boundary_face_heat, axis=1)
+    boundary_species = jnp.sum(boundary_face_species, axis=1)
+    energy_residual = jnp.sum(energy_rate) - jnp.sum(boundary_heat)
+    species_residual = jnp.sum(species_rate, axis=(0, 1)) - jnp.sum(
+        boundary_species, axis=0
+    )
+    temperature_jump = (
+        thermodynamics.temperature[:, owner]
+        - thermodynamics.temperature[:, safe_neighbour]
+    )
+    entropy = jnp.sum(
+        jnp.where(
+            interior,
+            heat_conductance
+            * temperature_jump**2
+            / jnp.maximum(
+                thermodynamics.temperature[:, owner]
+                * thermodynamics.temperature[:, safe_neighbour],
+                1.0e-30,
+            ),
+            0.0,
+        )
+    )
+    heat_degree = jnp.zeros_like(state.internal_energy)
+    heat_degree = heat_degree.at[:, owner].add(
+        jnp.where(interior, heat_conductance, 0.0)
+        + jnp.where(
+            boundary_faces,
+            boundary.heat_transfer_coefficient[:, None] * metrics.face_measures,
+            0.0,
+        )
+    )
+    heat_degree = heat_degree.at[:, safe_neighbour].add(
+        jnp.where(interior, heat_conductance, 0.0)
+    )
+    species_degree = jnp.zeros_like(state.species_amount)
+    species_degree = species_degree.at[:, owner, :].add(
+        jnp.where(interior[:, :, None], species_conductance, 0.0)
+        + jnp.where(
+            boundary_faces[:, :, None],
+            boundary.mass_transfer_coefficient[:, None, :]
+            * metrics.face_measures[:, :, None],
+            0.0,
+        )
+    )
+    species_degree = species_degree.at[:, safe_neighbour, :].add(
+        jnp.where(interior[:, :, None], species_conductance, 0.0)
+    )
+    thermal_limit = jnp.where(
+        heat_degree > 0.0,
+        thermodynamics.heat_capacity / heat_degree,
+        jnp.inf,
+    )
+    species_limit = jnp.where(
+        species_degree > 0.0,
+        metrics.cell_measures[:, :, None] / species_degree,
+        jnp.inf,
+    )
+    restriction = jnp.minimum(jnp.min(thermal_limit), jnp.min(species_limit))
+    tolerance = 128.0 * jnp.finfo(state.internal_energy.dtype).eps
+    successful = (
+        metrics.successful
+        & thermodynamics.successful
+        & jnp.all(jnp.isfinite(energy_rate))
+        & jnp.all(jnp.isfinite(species_rate))
+        & (
+            jnp.abs(energy_residual)
+            <= tolerance * jnp.maximum(jnp.sum(jnp.abs(boundary_heat)), 1.0)
+        )
+        & jnp.all(
+            jnp.abs(species_residual)
+            <= tolerance * jnp.maximum(jnp.sum(jnp.abs(boundary_species), axis=0), 1.0)
+        )
+        & jnp.isfinite(entropy)
+        & (entropy >= -tolerance)
         & ~jnp.isnan(restriction)
     )
     return ParticleTransportEvaluation(

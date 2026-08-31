@@ -139,6 +139,7 @@ from ._local_blocks import (
     prepare_local_block_factorization,
     solve_local_blocks,
 )
+from ._local_elimination import LocalEliminationPlan, LocalEliminationResult
 from ._low_rank_boundary import LowRankBoundaryCorrectionPlan
 from ._low_rank_updates import (
     BaseNonsingularity,
@@ -514,6 +515,15 @@ from ._subspace_correction import (
     SubspaceCorrectionTerm,
 )
 from ._subspaces import LinearSubspace, NullspacePolicy
+from ._transform_line import (
+    PreparedTransformLineSolve,
+    TransformLineFactors,
+    TransformLineReport,
+    TransformLineRepresentation,
+    TransformLineResourceEstimate,
+    TransformLineSolvePlan,
+    TransformLineSolveResult,
+)
 from ._transform_operators import (
     OrthogonalTransformKind,
     SpectralProperty,
@@ -544,6 +554,8 @@ __all__ = [
     "LocalBlockFactorizationKind",
     "prepare_local_block_factorization",
     "solve_local_blocks",
+    "LocalEliminationPlan",
+    "LocalEliminationResult",
     "ConstraintMap",
     "HermitianFunctionResult",
     "HermitianSpectrum",
@@ -835,6 +847,13 @@ __all__ = [
     "SpectralBoundsEstimate",
     "SpectralInterval",
     "SpectralEstimate",
+    "PreparedTransformLineSolve",
+    "TransformLineFactors",
+    "TransformLineReport",
+    "TransformLineRepresentation",
+    "TransformLineResourceEstimate",
+    "TransformLineSolvePlan",
+    "TransformLineSolveResult",
     "TransformDiagonalRepresentation",
     "TransformDiagonalSolvePlan",
     "TransformDiagonalSolveResult",

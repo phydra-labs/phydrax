@@ -45,6 +45,12 @@
 The finite-element mesh, reference-element, field, constraint, form, functional,
 and compiler APIs are documented under [Finite elements](finite_element.md).
 
+## Virtual elements
+
+Polygonal mesh, functional-DOF, projection, stabilization, constraint, form,
+reconstruction, and compiler APIs are documented under
+[Virtual elements](virtual_element.md).
+
 ## Structured finite volume
 
 The complete finite-volume API is documented under

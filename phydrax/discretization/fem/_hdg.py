@@ -12,12 +12,9 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import LocalEliminationPlan, LocalEliminationResult
 from .._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from .._cell_mesh import CellMesh
-from ._local_elimination import (
-    FiniteElementLocalEliminationPlan,
-    LocalEliminationResult,
-)
 
 
 class HDGTraceSpace(StrictModule, NonTrainableState):
@@ -70,7 +67,7 @@ class HDGCondensationPlan(StrictModule, NonTrainableState):
     """Local interior elimination onto one mesh-facet trace skeleton."""
 
     trace_space: HDGTraceSpace
-    elimination: FiniteElementLocalEliminationPlan
+    elimination: LocalEliminationPlan
     interior_dof_count: int = eqx.field(static=True)
     local_trace_dof_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -88,7 +85,7 @@ class HDGCondensationPlan(StrictModule, NonTrainableState):
             raise ValueError("interior_dof_count must be positive.")
         local_trace = int(trace_space.cell_trace_dofs.shape[1])
         retained = np.arange(interior, interior + local_trace, dtype=np.int32)
-        elimination = FiniteElementLocalEliminationPlan(
+        elimination = LocalEliminationPlan(
             interior + local_trace,
             retained,
         )

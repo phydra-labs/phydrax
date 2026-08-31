@@ -15,10 +15,37 @@ from ...linalg import SmallLinearSolvePlan, solve_small_linear
 
 
 class NeoHookeanParameters(StrictModule, NonTrainableState):
-    shear_modulus: Array
-    bulk_modulus: Array
+    """Logarithmic compressible Neo-Hookean Lamé parameters."""
 
-    def __init__(self, shear_modulus: ArrayLike, bulk_modulus: ArrayLike, /):
+    shear_modulus: Array
+    lame_lambda: Array
+
+    def __init__(self, shear_modulus: ArrayLike, lame_lambda: ArrayLike, /):
+        shear = jnp.asarray(shear_modulus)
+        lambda_ = jnp.asarray(lame_lambda)
+        bulk = lambda_ + (2.0 / 3.0) * shear
+        if (
+            shear.shape != ()
+            or lambda_.shape != ()
+            or not bool(jnp.isfinite(shear))
+            or not bool(jnp.isfinite(lambda_))
+            or shear <= 0.0
+            or bulk <= 0.0
+        ):
+            raise ValueError(
+                "Neo-Hookean shear modulus and implied bulk modulus must be "
+                "positive finite scalars."
+            )
+        self.shear_modulus = shear
+        self.lame_lambda = lambda_
+
+    @classmethod
+    def from_shear_bulk(
+        cls,
+        shear_modulus: ArrayLike,
+        bulk_modulus: ArrayLike,
+        /,
+    ) -> "NeoHookeanParameters":
         shear = jnp.asarray(shear_modulus)
         bulk = jnp.asarray(bulk_modulus)
         if (
@@ -29,9 +56,14 @@ class NeoHookeanParameters(StrictModule, NonTrainableState):
             or shear <= 0.0
             or bulk <= 0.0
         ):
-            raise ValueError("Neo-Hookean moduli must be positive finite scalars.")
-        self.shear_modulus = shear
-        self.bulk_modulus = bulk
+            raise ValueError(
+                "Neo-Hookean shear and bulk moduli must be positive finite scalars."
+            )
+        return cls(shear, bulk - (2.0 / 3.0) * shear)
+
+    @property
+    def bulk_modulus(self) -> Array:
+        return self.lame_lambda + (2.0 / 3.0) * self.shear_modulus
 
 
 def neo_hookean_first_piola(
@@ -48,13 +80,38 @@ def neo_hookean_first_piola(
         deformation,
         jnp.broadcast_to(jnp.eye(3, dtype=deformation.dtype), deformation.shape),
     )
-    determinant = jnp.linalg.det(deformation)
+    determinant = inverse.determinant
     valid = inverse.successful & jnp.isfinite(determinant) & (determinant > 0.0)
     determinant = jnp.where(valid, determinant, jnp.nan)
-    return parameters.shear_modulus * (deformation - inverse.value.swapaxes(-1, -2)) + (
-        parameters.bulk_modulus
-        * jnp.log(determinant)[..., None, None]
-        * inverse.value.swapaxes(-1, -2)
+    inverse_transpose = inverse.value.swapaxes(-1, -2)
+    return parameters.shear_modulus * (deformation - inverse_transpose) + (
+        parameters.lame_lambda * jnp.log(determinant)[..., None, None] * inverse_transpose
+    )
+
+
+def neo_hookean_reference_energy(
+    deformation_gradient: ArrayLike,
+    parameters: NeoHookeanParameters,
+    /,
+) -> Array:
+    """Reference-volume logarithmic compressible Neo-Hookean energy."""
+    deformation = jnp.asarray(deformation_gradient)
+    if deformation.shape[-2:] != (3, 3):
+        raise ValueError("Neo-Hookean deformation gradients must end in 3x3.")
+    plan = SmallLinearSolvePlan(3)
+    inverse = solve_small_linear(
+        plan,
+        deformation,
+        jnp.broadcast_to(jnp.eye(3, dtype=deformation.dtype), deformation.shape),
+    )
+    determinant = inverse.determinant
+    valid = inverse.successful & jnp.isfinite(determinant) & (determinant > 0.0)
+    logarithm = jnp.log(jnp.where(valid, determinant, jnp.nan))
+    invariant = jnp.sum(deformation * deformation, axis=(-2, -1))
+    return (
+        0.5 * parameters.shear_modulus * (invariant - 3.0)
+        - parameters.shear_modulus * logarithm
+        + 0.5 * parameters.lame_lambda * logarithm**2
     )
 
 
@@ -195,5 +252,6 @@ __all__ = [
     "NeoHookeanParameters",
     "j2_radial_return",
     "neo_hookean_first_piola",
+    "neo_hookean_reference_energy",
     "neo_hookean_form",
 ]

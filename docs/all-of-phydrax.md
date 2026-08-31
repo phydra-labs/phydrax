@@ -97,10 +97,21 @@ cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
 resource identities. Exact-sampling round-sphere spaces separately expose S2FFT mode
 layouts, physical area measure, scalar Laplace--Beltrami actions, complete-degree noise
 bases, and the prepared discretization consumed by SFNO.
-Local stencil programs, structured compact line solves, periodic/bounded SBP
-calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
-WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose
-without treating quadrature sites, mesh entities, and field DOFs as interchangeable.
+Local stencil programs, structured compact and transform-line solves,
+periodic/bounded SBP calculus, entropy-conservative SBP flux differencing, and
+compatible finite-volume MAC flow compose without conflating quadrature sites, mesh
+entities, and field DOFs. The MAC substrate includes dynamic wall/inflow/open
+closures, symmetry-preserving momentum, named scalar/Boussinesq and conservative
+variable-density dynamics, implicit diffusion, resolved face-marker coupling,
+sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
+certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
+and distributed halo plans remain available to the wider finite-volume family.
+Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
+vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
+projections, explicit projector-kernel stabilization, matrix-free or sparse
+realization, trace constraints, projected reconstruction, heat/eigen reuse, and
+fixed-topology differentiable geometry. They remain distinct from reference
+finite elements and do not fabricate virtual interior basis values.
 Material particles retain stable entity IDs and a physical mass measure while
 current positions remain temporal state. Fixed-h conservative barotropic SPH
 uses canonical unordered pairs, normalized compact kernels, energy-derived
@@ -111,17 +122,33 @@ energy/dissipation ledgers, and native SSPRK integration. Structured
 particle-grid splatting adds measure-aware extensive deposition, intensive
 reconstruction, adjoint gather, explicit boundary loss, multilinear and
 degree-one through degree-three B-spline assignments, mixed entity layouts,
-route moments, and fast/deterministic/compensated reductions. DEM adds stable
-compositional normal/cohesion/tangential/rotational history, accepted-step
+route moments, and fast/deterministic/compensated reductions.
+Cosmological applications reuse those particle and transfer identities rather than
+introducing a separate simulation substrate. Flat differentiable FLRW backgrounds,
+first/second Lagrangian growth, unit-bearing expansion and linear-power products,
+state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose the
+existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
+as an explicit table; transfer, Boltzmann, halo, survey, and CMB calculations remain
+external capability boundaries.
+Explicit material point dynamics compose that transfer with quadratic nodal B-splines, matched
+APIC momentum, first-Piola reference-volume forces, transactional USL updates,
+stability evidence, and fixed-temporal replay for plane-strain and
+three-dimensional Neo-Hookean solids. DEM adds stable compositional
+normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
 elastic rolling–torsion, plasticity, multicontact correction, SO(2)/SO(3)
 bodies, clumps, triangle/convex/implicit/superquadric geometry, wall traction
-and wear, bonds/topology events, and certified sensitivity modes. Radial
-particle conversion adds typed thermochemistry, reactions, evaporation,
+and wear, bonds/topology events, and certified sensitivity modes. Static
+three-dimensional rigid-body graphs additionally provide globally coupled fixed,
+ball, and hinge constraints with SO(3) pose projection, velocity KKT projection,
+physical residual certification, and transactional rollback; contact, joint limits,
+compliance, and dynamic topology remain separate contracts. Radial particle
+conversion adds typed thermochemistry, reactions, evaporation,
 shrinking-core conversion, morphology, conservative continuum/contact/radiative
 exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. See
 [Guide → Particle methods](guides_particle_methods.md),
 [Guide → Particle-grid splatting](guides_particle_splatting.md),
+[Guide → Material point method](guides_material_point_method.md),
 [Guide → Discrete element method](guides_discrete_element_method.md),
 [Guide → Wet granular contact](guides_wet_granular_contact.md),
 [Guide → Superquadric DEM](guides_superquadric_dem.md),
@@ -129,6 +156,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Particle thermochemistry](guides_particle_thermochemistry.md),
 [Guide → Reactive CFD–DEM](guides_reactive_cfd_dem.md),
 [Guide → DEM rigid bodies](guides_dem_rigid_bodies.md),
+[Guide → Constrained rigid-body dynamics](guides_constrained_rigid_bodies.md),
 [Guide → Differentiable DEM](guides_differentiable_dem.md), and
 [Guide → CFD-DEM coupling](guides_cfd_dem.md),
 [Guide → Smoothed particle hydrodynamics](guides_sph.md),
@@ -137,10 +165,11 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Multiphase and incompressible SPH](guides_multiphase_incompressible_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
+[Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
-### Atomistic learning: finite molecular energies and conservative forces
+### Atomistic learning and conservative dynamics
 
 `phydrax.atomistic` specializes the existing material-particle and `GraphIR`
 substrates for scale-identified finite molecules. `AtomicStructure` and
@@ -164,13 +193,20 @@ fits loss normalization from the training split only, and reuses the shared key,
 callback, selection, patience, and deterministic-continuation lifecycle. The
 offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
 indices; the campaign tool compares matched PaiNN and NequIP runs across seeds.
-This is a finite nonperiodic molecular research capability: preserved cell or
-periodic metadata is rejected by both models, and the NequIP scope stops at
-degree two. There is no high-degree irreps or MACE claim, stress, long-range
-electrostatics, direct-force head, ASE integration, or molecular-dynamics
-stability claim. See [Guide → Atomistic learning](guides_atomistic.md),
-[Cookbook → Finite-molecule atomistic potentials](cookbook/atomistic.md), and
-[API → Atomistic molecular learning](api/atomistic.md).
+The existing learned models retain their finite nonperiodic training and prediction
+scope unless explicitly wrapped with periodic graph execution; execution capability
+does not certify rollout stability. The atomistic dynamics substrate separately
+provides complete unit systems, position-independent prepared systems, stable-ID
+molecular topology and pair exceptions, classical and learned scalar-energy
+programs, dense/cell/Verlet execution, NVE and BAOAB NVT, SHAKE/RATTLE,
+triclinic cells and stress, direct Ewald and native B-spline PME, isotropic NPT
+moves, bounded replay, exact checkpoints, hybrid composition, ring polymers,
+and variance-constrained semi-grand transitions. Every capacity or physical
+failure remains typed and fail-closed. See
+[Guide → Atomistic learning](guides_atomistic.md),
+[Guide → Atomistic dynamics](guides_atomistic_dynamics.md),
+[Cookbook → Atomistic dynamics](cookbook/atomistic_dynamics.md), and
+[API → Atomistic learning and dynamics](api/atomistic.md).
 
 ### Computational topology: exact invariants and filtered fields
 
@@ -569,6 +605,23 @@ Method of Moving Asymptotes adds a finite-box, feasible-start route for very
 large designs with few inequalities. Its reduced state/design form reuses exact
 adjoints and supports fixed-mesh SIMP compliance optimization with sparse
 physical-radius filtering and mandatory independent reanalysis evidence.
+
+Pin-jointed structural form-finding lives in
+`phydrax.applications.solid_mechanics`. `ForceDensityStructure` compiles graph,
+surface, external-ID, and coordinate or orthonormal affine-restraint topology.
+Sign-definite tension and compression expose certified positive-definite systems;
+mixed signs retain only self-adjoint evidence. Fixed nodal, reference line,
+self-weight, current/reference traction, follower pressure, and volume-coupled
+pneumatic loads share one component ledger. Linear and nonlinear plans preserve
+input-tree, derivative, preconditioner, precision, and numeric-refresh identity;
+same-topology cases vmap while disjoint graphs retain per-graph evidence.
+Pure geometry/force observables compose in reduced or structured state/design
+optimization. Rigidity spectra distinguish mechanisms and self stress, supplied
+axial rigidities enable constitutive tangent stability, and scalar parameter
+paths connect directly to continuation. Results retain member forces, reactions,
+physical residuals, nested solver evidence, and stable plan identities; they do
+not infer material behavior, buckling, or stability without the required
+constitutive evidence.
 
 Nonlinear algebraic systems live in `phydrax.nonlinear`. Certified scalar
 bracketing, Newton/trust methods, chord and limited-memory Broyden, DF-SANE,
@@ -1049,10 +1102,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `ReverseDiffusion` or `probability_flow_system`. Reverse samples retain distinct
   terminal states, global Wiener paths, solver status, and terminal-reference
   semantics. Probability flow composes with `ContinuousFlowLaw` instead of creating a
-  second density implementation. The initial contract is full-rank real Euclidean
-  vector state only; singular, manifold, and field diffusion remain explicit future
-  contracts. See [API → Gaussian score diffusions](api/stochastic/diffusion.md) and
-  [API → Score diffusion transport](api/transport/diffusion.md).
+  second density implementation. Structured extensions add matrix and
+  state-dependent Itô reversal, exactness-labeled conditioning, discrete Gaussian and
+  categorical chains, Hausdorff subspace laws, coefficient-space field/path
+  diffusion, intrinsic manifold and complex-coordinate semantics, and
+  latent/graph/atomistic composition without erasing their distinct measures.
+  See [API → Gaussian score diffusions](api/stochastic/diffusion.md),
+  [API → Score diffusion transport](api/transport/diffusion.md), and
+  [API → Advanced generative transport](api/transport/generative_expansion.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
   `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
   and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density
@@ -1087,6 +1144,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   [Guides → Integrals and measures](guides_integrals.md#fixed-design-bayesian-quadrature),
   [API → Positive-definite kernels](api/kernels.md), and
   [API → Uncertainty quantification](api/uq/index.md).
+- **Force-density structural form-finding**: build sparse or affine-restraint
+  tension, compression, or mixed-sign networks; compose self-weight, traction,
+  pressure, or pneumatic loads; optimize forces, supports, loads, gridshell
+  planarity, or target geometry; and inspect mechanisms, self stress, constitutive
+  tangent stability, per-case/per-graph evidence, and continuation branches. See
+  [Guides → Force-density form-finding](guides_force_density.md) and
+  [API → Force-density structural design](api/force_density.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).

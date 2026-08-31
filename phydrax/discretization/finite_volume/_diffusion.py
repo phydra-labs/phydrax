@@ -961,14 +961,25 @@ class PreparedConservativeAdvection(StrictModule):
                 raise ValueError(
                     "Face velocity tuple must align with every normal face layout."
                 )
-            return faces
+            return tuple(
+                eqx.error_if(
+                    value,
+                    jnp.any(~jnp.isfinite(value)),
+                    "Face velocity must be finite.",
+                )
+                for value in faces
+            )
         cell_velocity = plan.precision.flux(velocity)
         if cell_velocity.shape != plan.grid.shape + (dimension,):
             raise ValueError("Cell velocity must have one trailing spatial component.")
         interpolation = FaceCoefficientPlan(plan.grid, kind="arithmetic")
         return tuple(
-            plan.precision.flux(
-                interpolation.interpolate(cell_velocity[..., axis], axis_name)
+            eqx.error_if(
+                plan.precision.flux(
+                    interpolation.interpolate(cell_velocity[..., axis], axis_name)
+                ),
+                jnp.any(~jnp.isfinite(cell_velocity[..., axis])),
+                "Cell velocity must be finite.",
             )
             for axis, axis_name in enumerate(plan.grid.axis_names)
         )
@@ -1026,6 +1037,91 @@ class PreparedConservativeAdvection(StrictModule):
         if self.plan.reconstruction == "arithmetic":
             return 0.5 * (left + right)
         return jnp.where(velocity >= 0.0, left, right)
+
+    def face_values(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        velocity: ArrayLike | Sequence[ArrayLike] | None = None,
+        boundary_values: Mapping[str, tuple[ArrayLike, ArrayLike]] | None = None,
+    ) -> tuple[Array, ...]:
+        """Interpolate one cell scalar to faces with the declared reconstruction."""
+        value = jnp.asarray(state)
+        if value.shape != self.plan.grid.shape:
+            raise ValueError("Advection state must match the cell grid shape.")
+        self.plan.precision.validate_state(value)
+        value = eqx.error_if(
+            value,
+            jnp.any(~jnp.isfinite(value)),
+            "Advection state must be finite.",
+        )
+        targets = {} if boundary_values is None else dict(boundary_values)
+        unknown = set(targets).difference(self.plan.grid.axis_names)
+        if unknown:
+            raise ValueError(
+                f"Advection boundary data names unknown axes {sorted(unknown)!r}."
+            )
+        faces = (
+            self.face_velocity if velocity is None else self._resolve_velocity(velocity)
+        )
+        return tuple(
+            self.plan.precision.flux(
+                self._face_state(
+                    value,
+                    axis,
+                    targets.get(axis_name, (0.0, 0.0)),
+                    face_velocity,
+                )
+            )
+            for axis, (axis_name, face_velocity) in enumerate(
+                zip(self.plan.grid.axis_names, faces, strict=True)
+            )
+        )
+
+    def face_fluxes(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        velocity: ArrayLike | Sequence[ArrayLike] | None = None,
+        boundary_values: Mapping[str, tuple[ArrayLike, ArrayLike]] | None = None,
+    ) -> tuple[Array, ...]:
+        """Return conservative normal fluxes using the prepared face velocity."""
+        faces = (
+            self.face_velocity if velocity is None else self._resolve_velocity(velocity)
+        )
+        values = self.face_values(
+            state,
+            velocity=faces,
+            boundary_values=boundary_values,
+        )
+        return tuple(
+            self.plan.precision.flux(face_velocity * face_value)
+            for face_velocity, face_value in zip(faces, values, strict=True)
+        )
+
+    def divergence(self, fluxes: Sequence[ArrayLike], /) -> Array:
+        """Apply the conservative face-to-cell divergence to normal fluxes."""
+        values = tuple(jnp.asarray(value) for value in fluxes)
+        if len(values) != len(self.plan.grid.shape) or any(
+            value.shape != self.plan.grid.faces(axis_name).shape
+            for value, axis_name in zip(
+                values,
+                self.plan.grid.axis_names,
+                strict=True,
+            )
+        ):
+            raise ValueError("Advection fluxes must align with every normal face layout.")
+        values = tuple(
+            eqx.error_if(
+                value,
+                jnp.any(~jnp.isfinite(value)),
+                "Advection fluxes must be finite.",
+            )
+            for value in values
+        )
+        return self.plan.precision.reduction(self.geometry.divergence(values))
 
     def _flux_divergence(
         self,
