@@ -86,6 +86,18 @@ def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
         "higher_resolution",
     }
     assert all(jnp.isfinite(evaluation.relative_l2) for evaluation in result.evaluations)
+    assert all(evaluation.lowering_seconds >= 0.0 for evaluation in result.evaluations)
+    assert all(evaluation.compilation_seconds >= 0.0 for evaluation in result.evaluations)
+    assert all(
+        evaluation.first_execution_seconds >= 0.0 for evaluation in result.evaluations
+    )
+    assert all(
+        evaluation.inference_timing.count == 1 for evaluation in result.evaluations
+    )
+    assert all(
+        evaluation.compiler_evidence.source == "xla-cost-analysis"
+        for evaluation in result.evaluations
+    )
     assert dict(result.precision_configuration) == {
         "parameter_dtype": "float64",
         "compute_dtype": "float64",
@@ -431,9 +443,14 @@ def _aggregate(architecture, relative_l2, inference_seconds):
         spectral_mean=None,
         conservation_error_mean=0.0,
         maximum_absolute_error_mean=relative_l2,
-        compile_seconds_mean=0.1,
+        lowering_seconds_mean=0.01,
+        compilation_seconds_mean=0.09,
+        first_execution_seconds_mean=0.01,
+        inference_seed_medians_seconds=(inference_seconds,) * 3,
         inference_seconds_mean=inference_seconds,
+        inference_seconds_std=0.0,
         training_seconds_mean=1.0,
+        compiler_estimated_memory_bytes_mean=1024.0,
     )
 
 

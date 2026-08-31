@@ -15,10 +15,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
-
-
-def _block(tree: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
+from benchmarks._runtime import synchronize
 
 
 def _output_bytes(tree: Any) -> int:
@@ -39,11 +36,11 @@ def _benchmark(
 ) -> dict[str, Any]:
     compiled = jax.jit(function)
     started = time.perf_counter()
-    output = _block(compiled(argument))
+    output = synchronize(compiled(argument))
     first_seconds = time.perf_counter() - started
     started = time.perf_counter()
     for _ in range(repeats):
-        output = _block(compiled(argument))
+        output = synchronize(compiled(argument))
     steady_seconds = (time.perf_counter() - started) / repeats
     return {
         "name": name,
@@ -381,11 +378,11 @@ def _fit_csg(setup, strategy: str, seed: int, steps: int):
         widths = jnp.geomspace(0.4, 0.02, steps)
     compiled = jax.jit(step)
     started = time.perf_counter()
-    state, value, gradient = _block(compiled(state, widths[0]))
+    state, value, gradient = synchronize(compiled(state, widths[0]))
     compile_and_first_seconds = time.perf_counter() - started
     started = time.perf_counter()
     for width in widths[1:]:
-        state, value, gradient = _block(compiled(state, width))
+        state, value, gradient = synchronize(compiled(state, width))
     remaining_seconds = time.perf_counter() - started
     return {
         "parameters": state[0],
@@ -405,7 +402,7 @@ def _csg_metric_functions(setup, geometry: str, width: jax.Array):
 
 def _csg_record(setup, strategy: str, seed: int, fit, *, geometry: str):
     width = fit["final_width"]
-    evaluated = _block(
+    evaluated = synchronize(
         _csg_record_metrics(
             setup,
             fit["parameters"],
@@ -416,7 +413,7 @@ def _csg_record(setup, strategy: str, seed: int, fit, *, geometry: str):
     if geometry == "sharp":
         final_sharp = evaluated
     else:
-        final_sharp = _block(
+        final_sharp = synchronize(
             _csg_record_metrics(
                 setup,
                 fit["parameters"],

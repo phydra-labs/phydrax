@@ -4,15 +4,14 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Sequence
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated
 
 
 def _problem(horizon: int, seed: int, /):
@@ -33,21 +32,12 @@ def _problem(horizon: int, seed: int, /):
 
 
 def _measure(operation, warmup: int, repeats: int, /):
-    for _ in range(warmup):
-        jax.block_until_ready(operation())
-    samples = []
-    result = None
-    for _ in range(repeats):
-        started = time.perf_counter()
-        result = operation()
-        jax.block_until_ready(result)
-        samples.append(1_000.0 * (time.perf_counter() - started))
-    return result, {
-        "samples_ms": samples,
-        "median_ms": float(np.median(samples)),
-        "minimum_ms": float(np.min(samples)),
-        "maximum_ms": float(np.max(samples)),
-    }
+    result, distribution = measure_repeated(
+        operation,
+        warmup=warmup,
+        repeats=repeats,
+    )
+    return result, distribution.to_milliseconds_dict()
 
 
 def _certificate(problem, result, /):

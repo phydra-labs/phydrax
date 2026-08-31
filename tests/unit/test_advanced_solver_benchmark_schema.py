@@ -8,6 +8,7 @@ import copy
 
 import pytest
 
+from benchmarks._runtime import capture_environment
 from benchmarks.advanced_solvers.compare import (
     compare_reports,
     IncomparableReportsError,
@@ -384,14 +385,4 @@ def _measured_row():
 
 
 def _environment():
-    return {
-        "fingerprint": "environment",
-        "python_version": "3.12.0",
-        "platform": "test-platform",
-        "machine": "test-machine",
-        "processor": "test-processor",
-        "logical_cpus": 1,
-        "numpy_version": "2.0.0",
-        "jax": {"version": "0.0", "backend": "cpu", "devices": []},
-        "thread_environment": {},
-    }
+    return capture_environment().to_dict()

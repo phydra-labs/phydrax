@@ -10,10 +10,10 @@ import time
 from dataclasses import asdict, dataclass
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated, measure_synchronized
 
 
 @dataclass(frozen=True)
@@ -55,30 +55,32 @@ class AlgebraBenchmarkRecord:
 
 def _measure(function, left, right, repeats):
     compiled = eqx.filter_jit(function)
-    started = time.perf_counter()
-    value = compiled(left, right)
-    jax.block_until_ready(value)
-    first = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        value = compiled(left, right)
-        jax.block_until_ready(value)
-    steady = 1e3 * (time.perf_counter() - started) / repeats
-    return value, first, steady
+    value, first_seconds = measure_synchronized(lambda: compiled(left, right))
+    value, distribution = measure_repeated(
+        lambda: compiled(left, right),
+        warmup=0,
+        repeats=repeats,
+    )
+    return (
+        value,
+        1_000.0 * first_seconds,
+        1_000.0 * float(distribution.mean_seconds),
+    )
 
 
 def _measure_three(function, left, middle, right, repeats):
     compiled = eqx.filter_jit(function)
-    started = time.perf_counter()
-    value = compiled(left, middle, right)
-    jax.block_until_ready(value)
-    first = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        value = compiled(left, middle, right)
-        jax.block_until_ready(value)
-    steady = 1e3 * (time.perf_counter() - started) / repeats
-    return value, first, steady
+    value, first_seconds = measure_synchronized(lambda: compiled(left, middle, right))
+    value, distribution = measure_repeated(
+        lambda: compiled(left, middle, right),
+        warmup=0,
+        repeats=repeats,
+    )
+    return (
+        value,
+        1_000.0 * first_seconds,
+        1_000.0 * float(distribution.mean_seconds),
+    )
 
 
 def run_algebra_benchmark(level: int, /, *, repeats: int = 5) -> AlgebraBenchmarkRecord:

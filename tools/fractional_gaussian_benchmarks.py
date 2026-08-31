@@ -11,23 +11,11 @@ from collections.abc import Sequence
 from typing import Any
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-
-
-def _block(tree: Any, /) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
-
-
-def _array_bytes(tree: Any, /) -> int:
-    return sum(
-        int(leaf.size * leaf.dtype.itemsize)
-        for leaf in jax.tree.leaves(tree)
-        if isinstance(leaf, jax.Array)
-    )
+from benchmarks._runtime import logical_array_bytes, synchronize
 
 
 def _benchmark_method(
@@ -53,17 +41,17 @@ def _benchmark_method(
         sample_shape=(num_paths,),
         method=method,
     )
-    _block(realization)
+    synchronize(realization)
     setup_ms = 1e3 * (time.perf_counter() - started)
 
     compiled = eqx.filter_jit(lambda value: value.values)
     started = time.perf_counter()
-    values = _block(compiled(realization))
+    values = synchronize(compiled(realization))
     compile_and_first_ms = 1e3 * (time.perf_counter() - started)
 
     started = time.perf_counter()
     for _ in range(repeats):
-        values = _block(compiled(realization))
+        values = synchronize(compiled(realization))
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
 
     empirical_terminal_variance = jnp.var(values[..., -1, 0], ddof=1)
@@ -81,8 +69,8 @@ def _benchmark_method(
         "setup_ms": setup_ms,
         "compile_and_first_ms": compile_and_first_ms,
         "steady_ms": steady_ms,
-        "realization_bytes": _array_bytes(realization),
-        "output_bytes": _array_bytes(values),
+        "realization_bytes": logical_array_bytes(realization),
+        "output_bytes": logical_array_bytes(values),
         "terminal_variance_relative_error": terminal_variance_relative_error,
     }
 

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -16,6 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
+from benchmarks._runtime import measure_lower_and_compile, measure_synchronized
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,10 +35,6 @@ class TrefftzBenchmarkRecord:
     maximum_pde_residual: float
     certificate_id: str
     passed: bool
-
-
-def _ready(value):
-    return jax.block_until_ready(value)
 
 
 def _harmonic_record(
@@ -67,24 +63,26 @@ def _harmonic_record(
         functions={"u": field},
         terms=(phx.terms.ResidualPenalty(condition, source),),
     )
-    started = time.perf_counter()
-    result = phx.solver.solve_linear_trial_space(solver, key=solve_key)
-    _ready(result.final_residual_norm)
-    solve_ms = 1e3 * (time.perf_counter() - started)
+    result, solve_seconds = measure_synchronized(
+        lambda: phx.solver.solve_linear_trial_space(solver, key=solve_key)
+    )
+    solve_ms = 1_000.0 * solve_seconds
 
     batch = domain.component().sample(
         phx.domain.PointSampling(evaluation_points), key=evaluation_key
     )
     evaluate = eqx.filter_jit(lambda model: model(batch).data)
-    started = time.perf_counter()
-    first = evaluate(result.solver["u"])
-    _ready(first)
-    first_ms = 1e3 * (time.perf_counter() - started)
-    started = time.perf_counter()
-    predicted = evaluate(result.solver["u"])
-    _ready(predicted)
-    evaluation_ms = 1e3 * (time.perf_counter() - started)
-    compile_ms = max(first_ms - evaluation_ms, 0.0)
+    compiled_evaluate, compilation = measure_lower_and_compile(
+        lambda: evaluate.lower(result.solver["u"]),
+        lambda lowered: lowered.compile(),
+    )
+    predicted, evaluation_seconds = measure_synchronized(
+        lambda: compiled_evaluate(result.solver["u"])
+    )
+    evaluation_ms = 1_000.0 * evaluation_seconds
+    compile_ms = 1_000.0 * (
+        compilation.lowering_seconds + compilation.compilation_seconds
+    )
     expected = jnp.asarray(target(batch).data)
     relative_l2 = jnp.linalg.norm(predicted - expected) / jnp.linalg.norm(expected)
     audit = phx.equations.audit_trial_space(result.solver["u"], batch)
@@ -161,7 +159,9 @@ def _dimensions(value: str, /) -> tuple[int, ...]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark exact nD Trefftz trial spaces.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark exact nD Trefftz trial spaces."
+    )
     parser.add_argument("--dimensions", type=_dimensions, default=(2, 4, 8))
     parser.add_argument("--boundary-points", type=int, default=256)
     parser.add_argument("--evaluation-points", type=int, default=128)

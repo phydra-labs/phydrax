@@ -13,6 +13,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from benchmarks._runtime import synchronize
 from phydrax._interpolation import (
     apply_gather_stencil,
     bspline_evaluate,
@@ -24,10 +25,6 @@ from phydrax._interpolation import (
     local_cubic_slopes,
     rectilinear_stencil,
 )
-
-
-def _block(tree: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
 
 
 def _output_bytes(tree: Any) -> int:
@@ -65,12 +62,12 @@ def _benchmark(
 ) -> dict[str, float | int]:
     compiled = jax.jit(function)
     started = time.perf_counter()
-    output = _block(compiled(argument))
+    output = synchronize(compiled(argument))
     compile_and_first_ms = 1e3 * (time.perf_counter() - started)
 
     started = time.perf_counter()
     for _ in range(repeats):
-        output = _block(compiled(argument))
+        output = synchronize(compiled(argument))
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
     return {
         "compile_and_first_ms": compile_and_first_ms,

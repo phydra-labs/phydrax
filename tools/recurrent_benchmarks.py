@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
-import time
 from pathlib import Path
 from typing import Any
 
@@ -19,29 +17,30 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-
-
-def _ready(value: Any) -> Any:
-    return jax.block_until_ready(value)
+from benchmarks._runtime import (
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+)
 
 
 def _timings(function, argument, *, repetitions: int):
-    compiled = jax.jit(function)
-    started = time.perf_counter()
-    first = compiled(argument)
-    _ready(first)
-    cold = time.perf_counter() - started
-    warm = []
-    for _ in range(int(repetitions)):
-        started = time.perf_counter()
-        value = compiled(argument)
-        _ready(value)
-        warm.append(time.perf_counter() - started)
-    execution = statistics.median(warm)
+    jitted = jax.jit(function)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(argument),
+        lambda lowered: lowered.compile(),
+    )
+    first, first_execution_seconds = measure_synchronized(lambda: compiled(argument))
+    _, steady = measure_repeated(
+        lambda: compiled(argument),
+        warmup=0,
+        repeats=int(repetitions),
+    )
     return first, {
-        "cold_seconds": cold,
-        "compile_seconds": max(0.0, cold - execution),
-        "execute_seconds": execution,
+        "lowering_seconds": compilation.lowering_seconds,
+        "compilation_seconds": compilation.compilation_seconds,
+        "first_execution_seconds": first_execution_seconds,
+        "steady": steady.to_seconds_dict(),
     }
 
 

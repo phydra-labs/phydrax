@@ -7,7 +7,6 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
-from statistics import median
 from typing import Any
 
 import coordax as cx
@@ -20,6 +19,11 @@ import opt_einsum as oe
 import optax
 
 import phydrax as phx
+from benchmarks._runtime import (
+    measure_lower_and_compile,
+    measure_repeated,
+    measure_synchronized,
+)
 from phydrax.uq._conditional_moments import _condition_affine_gaussian_diagonal
 
 from .configuration import BenchmarkConfiguration
@@ -29,15 +33,8 @@ from .report import Metric, metric, ScenarioResult
 Scenario = Callable[[BenchmarkConfiguration, int], ScenarioResult]
 
 
-def _block_until_ready(value: Any) -> Any:
-    return jax.block_until_ready(value)
-
-
 def _timed_call(function: Callable[[], Any]) -> tuple[Any, float]:
-    started = time.perf_counter()
-    value = function()
-    _block_until_ready(value)
-    return value, time.perf_counter() - started
+    return measure_synchronized(function)
 
 
 def _jit_timings(
@@ -45,17 +42,23 @@ def _jit_timings(
     *args: Any,
     repetitions: int,
 ) -> tuple[float, float, float]:
-    compiled = jax.jit(function)
-    started = time.perf_counter()
-    _block_until_ready(compiled(*args))
-    cold_seconds = time.perf_counter() - started
-    warm_seconds: list[float] = []
-    for _ in range(int(repetitions)):
-        started = time.perf_counter()
-        _block_until_ready(compiled(*args))
-        warm_seconds.append(time.perf_counter() - started)
-    execution_seconds = median(warm_seconds)
-    return cold_seconds, max(0.0, cold_seconds - execution_seconds), execution_seconds
+    jitted = jax.jit(function)
+    compiled, compilation = measure_lower_and_compile(
+        lambda: jitted.lower(*args),
+        lambda lowered: lowered.compile(),
+    )
+    _, first_execution_seconds = measure_synchronized(lambda: compiled(*args))
+    _, steady = measure_repeated(
+        lambda: compiled(*args),
+        warmup=0,
+        repeats=int(repetitions),
+    )
+    compile_seconds = compilation.lowering_seconds + compilation.compilation_seconds
+    return (
+        compile_seconds + first_execution_seconds,
+        compile_seconds,
+        float(steady.median_seconds),
+    )
 
 
 def _performance_metrics(

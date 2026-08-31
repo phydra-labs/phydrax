@@ -15,10 +15,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
-
-
-def _block(tree: Any) -> Any:
-    return jax.tree.map(jax.block_until_ready, tree)
+from benchmarks._runtime import synchronize
 
 
 def _tree_bytes(tree: Any) -> int:
@@ -78,13 +75,13 @@ def _benchmark_case(
     compiled_step = eqx.filter_jit(step)
     initial_objective = float(objective(parameters))
     started = time.perf_counter()
-    parameters, state, _ = _block(compiled_step(parameters, state))
+    parameters, state, _ = synchronize(compiled_step(parameters, state))
     first_step_seconds = time.perf_counter() - started
 
     started = time.perf_counter()
     for _ in range(int(repeats)):
         parameters, state, _ = compiled_step(parameters, state)
-    parameters, state = _block((parameters, state))
+    parameters, state = synchronize((parameters, state))
     steady_step_seconds = (time.perf_counter() - started) / int(repeats)
 
     metrics = optimizer.step_metrics(state)
@@ -244,12 +241,12 @@ def _line_search_case(
     compiled_step = eqx.filter_jit(step)
     initial_objective = float(objective(point))
     started = time.perf_counter()
-    point, state = _block(compiled_step(point, state))
+    point, state = synchronize(compiled_step(point, state))
     first_step_seconds = time.perf_counter() - started
     started = time.perf_counter()
     for _ in range(repeats):
         point, state = compiled_step(point, state)
-    point, state = _block((point, state))
+    point, state = synchronize((point, state))
     steady_step_seconds = (time.perf_counter() - started) / repeats
 
     tangent = geometry.project_tangent(point, jnp.array([0.1, -0.2, 0.3]))
@@ -257,12 +254,14 @@ def _line_search_case(
     destination = geometry.retract(point, tangent_step)
     compiled_transport = eqx.filter_jit(geometry.transport)
     started = time.perf_counter()
-    transported = _block(compiled_transport(point, tangent_step, destination, tangent))
+    transported = synchronize(
+        compiled_transport(point, tangent_step, destination, tangent)
+    )
     transport_first_seconds = time.perf_counter() - started
     started = time.perf_counter()
     for _ in range(repeats):
         transported = compiled_transport(point, tangent_step, destination, tangent)
-    _block(transported)
+    synchronize(transported)
     transport_steady_seconds = (time.perf_counter() - started) / repeats
 
     return {
@@ -462,7 +461,7 @@ def _qualification_case(
             value=value,
             value_fn=objective,
         )
-        point, state = _block((point, state))
+        point, state = synchronize((point, state))
         accepted_count += int(state.line_search_accepted)
         restart_count += int(state.restarted)
         if optimizer_name == "riemannian_lbfgs":

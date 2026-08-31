@@ -8,7 +8,6 @@ import argparse
 import json
 import math
 import platform
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -18,16 +17,16 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from benchmarks._runtime import measure_repeated
 
 
 def _timed(call: Callable[[], Any], repeats: int, /) -> tuple[Any, float]:
-    value = call()
-    jax.block_until_ready(value)
-    started = time.perf_counter()
-    for _ in range(repeats):
-        value = call()
-    jax.block_until_ready(value)
-    return value, (time.perf_counter() - started) / repeats
+    value, distribution = measure_repeated(
+        call,
+        warmup=1,
+        repeats=repeats,
+    )
+    return value, float(distribution.mean_seconds)
 
 
 def _fd_case(size: int, repeats: int, /) -> dict[str, Any]:
@@ -482,9 +481,9 @@ def _finite_volume_case(cells: int, repeats: int, /) -> dict[str, Any]:
             precision.decision(1e-4),
         )
         execute = eqx.filter_jit(
-            lambda runtime=runtime, initial=initial: (
-                runtime.advance(initial).runtime_state.cell_average()
-            )
+            lambda runtime=runtime, initial=initial: runtime.advance(
+                initial
+            ).runtime_state.cell_average()
         )
         value, seconds = _timed(execute, repeats)
         advanced = runtime.advance(initial)
