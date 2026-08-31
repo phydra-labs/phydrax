@@ -32,6 +32,32 @@ def _batch(*, cases=2, size=8):
     )
 
 
+def _periodic_fourier_batch(*, cases=2, size=8):
+    axis = phx.nn.operator.OperatorAxis(
+        "x",
+        jnp.arange(size, dtype=float) / size,
+        quadrature_weights=jnp.full(size, 1.0 / size),
+        basis="fourier",
+        periodic=True,
+    )
+    return phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.arange(cases * size, dtype=float).reshape(cases, size),
+                axes=(axis,),
+            )
+        },
+        queries={
+            "solution-query": phx.nn.operator.FunctionSamples(
+                values=None,
+                axes=(axis,),
+            )
+        },
+        case_axes=("case",),
+        case_shape=(cases,),
+    )
+
+
 def _task(*, revision="1"):
     return phx.nn.operator.OperatorTask(
         "periodic-map",
@@ -455,6 +481,117 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     )
     assert int(resume.state["step"]) == 7
     assert resume.metadata == {"epoch": 2}
+
+
+@pytest.mark.parametrize(
+    ("model", "architecture_id"),
+    (
+        (
+            phx.nn.operator.architectures.CNO(
+                spatial_ndim=1,
+                width=4,
+                depth=1,
+                oversample_factor=1,
+                source_key="u",
+                key=jr.key(41),
+            ),
+            "phydrax.operator.architecture:periodic-fourier-cno",
+        ),
+        (
+            phx.nn.operator.architectures.UNO(
+                spatial_ndim=1,
+                widths=(4, 6),
+                oversample_factor=1,
+                source_key="u",
+                key=jr.key(42),
+            ),
+            "phydrax.operator.architecture:periodic-fourier-uno",
+        ),
+    ),
+)
+def test_periodic_fourier_cno_artifacts_round_trip_with_semantic_ids(
+    tmp_path,
+    model,
+    architecture_id,
+):
+    trained = phx.nn.operator.training.TrainedOperator(
+        model,
+        _task(),
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
+            regime="task_specific"
+        ),
+        output_field_map={"output": "solution"},
+    )
+    batch = _periodic_fourier_batch()
+    expected = trained.predict(batch).field("solution").values
+    destination = phx.nn.operator.training.save_operator_artifact(
+        tmp_path / type(model).__name__,
+        trained,
+    )
+    manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
+    restored = phx.nn.operator.training.load_trained_operator(destination)
+
+    assert manifest.execution_model_architecture_id == architecture_id
+    assert architecture_id in json.dumps(
+        manifest.execution_model_recipe,
+        sort_keys=True,
+    )
+    assert jnp.allclose(
+        restored.predict(batch).field("solution").values,
+        expected,
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "legacy_id"),
+    (
+        (
+            phx.nn.operator.architectures.CNO(
+                spatial_ndim=1,
+                width=3,
+                depth=1,
+                oversample_factor=1,
+                source_key="u",
+                key=jr.key(43),
+            ),
+            "phydrax.operator.architecture:CNO",
+        ),
+        (
+            phx.nn.operator.architectures.UNO(
+                spatial_ndim=1,
+                widths=(3, 4),
+                oversample_factor=1,
+                source_key="u",
+                key=jr.key(44),
+            ),
+            "phydrax.operator.architecture:UNO",
+        ),
+    ),
+)
+def test_periodic_fourier_cno_artifacts_reject_legacy_ids(
+    tmp_path,
+    model,
+    legacy_id,
+):
+    trained = phx.nn.operator.training.TrainedOperator(
+        model,
+        _task(),
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
+            regime="task_specific"
+        ),
+        output_field_map={"output": "solution"},
+    )
+    destination = phx.nn.operator.training.save_operator_artifact(
+        tmp_path / type(model).__name__,
+        trained,
+    )
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["execution_model_architecture_id"] = legacy_id
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unknown operator architecture ID"):
+        phx.nn.operator.training.load_trained_operator(destination)
 
 
 def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path):

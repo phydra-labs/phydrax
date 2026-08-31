@@ -32,6 +32,7 @@ from ...linalg import (
     SimilarityScaledLinearTransform,
 )
 from .._axis import AxisDiscretization
+from .._axis_domain import AxisDomain
 from .._spectral import ModalTransform
 from ._precision import SpectralPrecisionPolicy
 
@@ -42,11 +43,15 @@ SpectralBasisFamily: TypeAlias = Literal[
     "cosine",
     "chebyshev",
     "legendre",
+    "rational_chebyshev_line",
+    "rational_chebyshev_half_line",
 ]
 SpectralBoundaryKind: TypeAlias = Literal[
     "periodic",
     "homogeneous_dirichlet",
     "homogeneous_neumann",
+    "homogeneous_trace",
+    "decay",
     "unconstrained",
 ]
 
@@ -152,8 +157,7 @@ class AbstractSpectralBasisPlan(StrictModule, NonTrainableState):
     @abc.abstractmethod
     def prepare(
         self,
-        lower: ArrayLike,
-        upper: ArrayLike,
+        domain: AxisDomain,
         /,
         *,
         precision: SpectralPrecisionPolicy,
@@ -165,13 +169,29 @@ class AbstractSpectralBasisPlan(StrictModule, NonTrainableState):
         raise NotImplementedError
 
 
+def _finite_domain(
+    domain: AxisDomain,
+    /,
+    *,
+    periodic: bool,
+    basis: str,
+) -> tuple[Array, Array]:
+    if not isinstance(domain, AxisDomain):
+        raise TypeError("domain must be an AxisDomain.")
+    expected = "periodic" if periodic else "bounded"
+    if domain.kind != expected:
+        raise ValueError(f"{basis} bases require an {expected} axis domain.")
+    return domain.lower, domain.upper
+
+
 class PreparedSpectralAxis(StrictModule, NonTrainableState):
-    """Prepared nodes, modes, measure, and fast execution transform for one axis."""
+    """Prepared physical nodes, reference modes, measure, and transform."""
 
     plan: AbstractSpectralBasisPlan
     nodes: Array
+    reference_nodes: Array
     quadrature_weights: Array
-    bounds: Array
+    domain: AxisDomain
     modes: SpectralModeLayout
     execution_transform: AbstractLinearTransform
     precision: SpectralPrecisionPolicy
@@ -180,24 +200,37 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
     family: SpectralBasisFamily = eqx.field(static=True)
     periodic: bool = eqx.field(static=True)
     boundary: SpectralBoundaryKind = eqx.field(static=True)
+    lower_endpoint_included: bool = eqx.field(static=True)
+    upper_endpoint_included: bool = eqx.field(static=True)
+    derivative_exact: bool = eqx.field(static=True)
+    derivative_residual: float = eqx.field(static=True)
     axis_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         plan: AbstractSpectralBasisPlan,
         nodes: ArrayLike,
+        reference_nodes: ArrayLike,
         quadrature_weights: ArrayLike,
-        bounds: ArrayLike,
+        domain: AxisDomain,
         modes: SpectralModeLayout,
         execution_transform: AbstractLinearTransform,
         precision: SpectralPrecisionPolicy,
         /,
         *,
+        lower_endpoint_included: bool,
+        upper_endpoint_included: bool,
         derivative_matrix: ArrayLike | None = None,
+        derivative_exact: bool = True,
+        derivative_residual: float = 0.0,
         modal_transform: ModalTransform | None = None,
     ):
         if not isinstance(plan, AbstractSpectralBasisPlan):
             raise TypeError("plan must be an AbstractSpectralBasisPlan.")
+        if not isinstance(domain, AxisDomain):
+            raise TypeError("domain must be an AxisDomain.")
+        if plan.periodic != domain.periodic_axis:
+            raise ValueError("Basis periodicity must match its prepared axis domain.")
         if not isinstance(modes, SpectralModeLayout):
             raise TypeError("modes must be a SpectralModeLayout.")
         if not isinstance(execution_transform, AbstractLinearTransform):
@@ -207,20 +240,33 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         nodes_ = jnp.asarray(nodes, dtype=jnp.dtype(precision.physical_dtype)).reshape(
             (-1,)
         )
+        reference = jnp.asarray(
+            reference_nodes,
+            dtype=jnp.dtype(precision.physical_dtype),
+        ).reshape((-1,))
         weights = jnp.asarray(
             quadrature_weights,
             dtype=jnp.dtype(precision.physical_dtype),
         ).reshape((-1,))
-        bounds_ = jnp.asarray(bounds, dtype=jnp.dtype(precision.physical_dtype)).reshape(
-            (-1,)
-        )
-        if nodes_.shape != weights.shape or nodes_.size == 0:
+        if (
+            nodes_.shape != reference.shape
+            or nodes_.shape != weights.shape
+            or nodes_.size == 0
+        ):
             raise ValueError(
-                "Prepared spectral nodes and quadrature weights must align and "
-                "be non-empty."
+                "Prepared spectral nodes, reference nodes, and weights must align."
             )
-        if bounds_.shape != (2,):
-            raise ValueError("Prepared spectral bounds must have shape (2,).")
+        finite_positive = (
+            jnp.all(jnp.isfinite(nodes_))
+            & jnp.all(jnp.isfinite(reference))
+            & jnp.all(jnp.isfinite(weights))
+            & jnp.all(weights > 0.0)
+        )
+        weights = eqx.error_if(
+            weights,
+            ~finite_positive,
+            "Prepared spectral nodes and weights must be finite with positive weights.",
+        )
         if modes.count != plan.mode_count:
             raise ValueError("Prepared spectral mode layout must match the plan count.")
         if execution_transform.physical_space.shape != nodes_.shape:
@@ -246,10 +292,22 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
             modal_transform, ModalTransform
         ):
             raise TypeError("modal_transform must be a ModalTransform or None.")
+        lower = bool(lower_endpoint_included)
+        upper = bool(upper_endpoint_included)
+        if domain.periodic_axis and (lower or upper):
+            raise ValueError("Periodic spectral axes cannot include boundary endpoints.")
+        derivative_residual_ = float(derivative_residual)
+        if (
+            not np.isfinite(derivative_residual_)
+            or derivative_residual_ < 0.0
+            or (derivative_matrix is None and not derivative_exact)
+        ):
+            raise ValueError("Derivative exactness evidence is inconsistent.")
         self.plan = plan
         self.nodes = nodes_
+        self.reference_nodes = reference
         self.quadrature_weights = weights
-        self.bounds = bounds_
+        self.domain = domain
         self.modes = modes
         self.execution_transform = execution_transform
         self.derivative_matrix = derivative
@@ -258,19 +316,28 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         self.family = plan.family
         self.periodic = plan.periodic
         self.boundary = plan.boundary
+        self.lower_endpoint_included = lower
+        self.upper_endpoint_included = upper
+        self.derivative_exact = bool(derivative_exact)
+        self.derivative_residual = derivative_residual_
         self.axis_id = canonical_fingerprint(
             {
                 "kind": "prepared-spectral-axis",
                 "plan": plan.plan_id,
-                "bounds": array_tree_fingerprint(np.asarray(bounds_)),
+                "domain": domain.domain_id,
+                "reference_nodes": array_tree_fingerprint(np.asarray(reference)),
                 "modes": modes.layout_id,
                 "transform": execution_transform.transform_id,
                 "precision": precision.policy_id,
+                "lower_endpoint_included": lower,
+                "upper_endpoint_included": upper,
                 "derivative": (
                     None
                     if derivative is None
                     else array_tree_fingerprint(np.asarray(derivative))
                 ),
+                "derivative_exact": bool(derivative_exact),
+                "derivative_residual": derivative_residual_,
                 "modal_transform": (
                     None if modal_transform is None else modal_transform.transform_id
                 ),
@@ -286,8 +353,12 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         return int(self.nodes.size)
 
     @property
+    def bounds(self) -> Array | None:
+        return self.domain.finite_bounds
+
+    @property
     def length(self) -> Array:
-        return self.bounds[1] - self.bounds[0]
+        return self.domain.length
 
     def analyze(self, values: ArrayLike, /) -> Array:
         return self.execution_transform.analyze(self.precision.transform(values))
@@ -299,31 +370,31 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
 
     def at_count(self, mode_count: int, /) -> "PreparedSpectralAxis":
         return self.plan.resized(mode_count).prepare(
-            self.bounds[0],
-            self.bounds[1],
+            self.domain,
             precision=self.precision,
         )
 
     def axis_discretization(self) -> AxisDiscretization:
-        basis = (
-            self.family
-            if self.family in ("fourier", "sine", "cosine", "legendre")
-            else "legendre"
-        )
         primary = "interval" if self.family == "sine" else "point"
         return AxisDiscretization(
             nodes=self.nodes,
             quad_weights=self.quadrature_weights,
-            basis=basis,
-            periodic=self.periodic,
+            basis=self.family,
+            domain=self.domain,
             primary_entity=primary,
-            bounds=self.bounds,
+            lower_endpoint_included=self.lower_endpoint_included,
+            upper_endpoint_included=self.upper_endpoint_included,
         )
 
     def laplacian_eigenvalues(self) -> Array:
-        if self.family in ("chebyshev", "legendre"):
+        if self.family in (
+            "chebyshev",
+            "legendre",
+            "rational_chebyshev_line",
+            "rational_chebyshev_half_line",
+        ):
             raise ValueError(
-                "Unconstrained polynomial Laplacians are not diagonal eigenoperators."
+                "Polynomial and rational Laplacians are not diagonal eigenoperators."
             )
         values = self.modes.mode_numbers.astype(jnp.dtype(self.precision.physical_dtype))
         scale = jnp.asarray(jnp.pi, dtype=values.dtype) / self.length
@@ -335,13 +406,19 @@ class PreparedSpectralAxis(StrictModule, NonTrainableState):
         derivative_order = int(order)
         if derivative_order < 0:
             raise ValueError("Spectral derivative order must be non-negative.")
-        if self.family in ("chebyshev", "legendre"):
+        if self.derivative_matrix is not None:
             raise ValueError(
-                "Polynomial derivatives use prepared modal recurrence matrices."
+                "This basis uses a prepared modal derivative action, not a multiplier."
             )
         values = self.modes.mode_numbers.astype(
             jnp.dtype(self.precision.coefficient_dtype)
         )
+        if derivative_order == 0:
+            return jnp.ones_like(values)
+        if self.family not in ("fourier", "sine", "cosine"):
+            raise ValueError(
+                "This basis does not define a closed modal derivative multiplier."
+            )
         if self.family == "fourier":
             scale = 2.0 * jnp.asarray(jnp.pi, dtype=values.dtype) / self.length
             return (1j * scale * values) ** derivative_order
@@ -374,16 +451,21 @@ class FourierBasisPlan(AbstractSpectralBasisPlan):
 
     def prepare(
         self,
-        lower: ArrayLike,
-        upper: ArrayLike,
+        domain: AxisDomain,
         /,
         *,
         precision: SpectralPrecisionPolicy,
     ) -> PreparedSpectralAxis:
-        lower_ = jnp.asarray(lower, dtype=jnp.dtype(precision.physical_dtype)).reshape(())
-        upper_ = jnp.asarray(upper, dtype=jnp.dtype(precision.physical_dtype)).reshape(())
+        lower_, upper_ = _finite_domain(
+            domain,
+            periodic=True,
+            basis="Fourier",
+        )
+        lower_ = lower_.astype(jnp.dtype(precision.physical_dtype))
+        upper_ = upper_.astype(jnp.dtype(precision.physical_dtype))
         count = self.mode_count
-        nodes = lower_ + (upper_ - lower_) * jnp.arange(count) / float(count)
+        reference = jnp.arange(count, dtype=lower_.dtype) / float(count)
+        nodes = lower_ + (upper_ - lower_) * reference
         weights = jnp.full((count,), (upper_ - lower_) / float(count), dtype=nodes.dtype)
         numbers_host = np.rint(np.fft.fftfreq(count) * count).astype(np.int64)
         lookup = {int(value): index for index, value in enumerate(numbers_host)}
@@ -411,11 +493,14 @@ class FourierBasisPlan(AbstractSpectralBasisPlan):
         return PreparedSpectralAxis(
             self,
             nodes,
+            reference,
             weights,
-            jnp.stack((lower_, upper_)),
+            domain,
             modes,
             transform,
             precision,
+            lower_endpoint_included=False,
+            upper_endpoint_included=False,
         )
 
 
@@ -439,18 +524,22 @@ class SineBasisPlan(AbstractSpectralBasisPlan):
 
     def prepare(
         self,
-        lower: ArrayLike,
-        upper: ArrayLike,
+        domain: AxisDomain,
         /,
         *,
         precision: SpectralPrecisionPolicy,
     ) -> PreparedSpectralAxis:
-        lower_ = jnp.asarray(lower, dtype=jnp.dtype(precision.physical_dtype)).reshape(())
-        upper_ = jnp.asarray(upper, dtype=jnp.dtype(precision.physical_dtype)).reshape(())
+        lower_, upper_ = _finite_domain(
+            domain,
+            periodic=False,
+            basis="Sine",
+        )
+        lower_ = lower_.astype(jnp.dtype(precision.physical_dtype))
+        upper_ = upper_.astype(jnp.dtype(precision.physical_dtype))
         count = self.mode_count
-        nodes = lower_ + (upper_ - lower_) * (
-            jnp.arange(count, dtype=lower_.dtype) + 0.5
-        ) / float(count)
+        unit = (jnp.arange(count, dtype=lower_.dtype) + 0.5) / float(count)
+        reference = -1.0 + 2.0 * unit
+        nodes = lower_ + (upper_ - lower_) * unit
         weights = jnp.full((count,), (upper_ - lower_) / float(count), dtype=nodes.dtype)
         modes = SpectralModeLayout("sine", np.arange(1, count + 1, dtype=np.int64))
         base = RealTrigonometricTransform(
@@ -463,11 +552,14 @@ class SineBasisPlan(AbstractSpectralBasisPlan):
         return PreparedSpectralAxis(
             self,
             nodes,
+            reference,
             weights,
-            jnp.stack((lower_, upper_)),
+            domain,
             modes,
             transform,
             precision,
+            lower_endpoint_included=False,
+            upper_endpoint_included=False,
         )
 
 
@@ -491,16 +583,21 @@ class CosineBasisPlan(AbstractSpectralBasisPlan):
 
     def prepare(
         self,
-        lower: ArrayLike,
-        upper: ArrayLike,
+        domain: AxisDomain,
         /,
         *,
         precision: SpectralPrecisionPolicy,
     ) -> PreparedSpectralAxis:
-        lower_ = jnp.asarray(lower, dtype=jnp.dtype(precision.physical_dtype)).reshape(())
-        upper_ = jnp.asarray(upper, dtype=jnp.dtype(precision.physical_dtype)).reshape(())
+        lower_, upper_ = _finite_domain(
+            domain,
+            periodic=False,
+            basis="Cosine",
+        )
+        lower_ = lower_.astype(jnp.dtype(precision.physical_dtype))
+        upper_ = upper_.astype(jnp.dtype(precision.physical_dtype))
         count = self.mode_count
-        nodes = jnp.linspace(lower_, upper_, count, endpoint=True)
+        reference = jnp.linspace(-1.0, 1.0, count, endpoint=True)
+        nodes = lower_ + 0.5 * (reference + 1.0) * (upper_ - lower_)
         spacing = (upper_ - lower_) / float(count - 1)
         weights = jnp.full((count,), spacing, dtype=nodes.dtype)
         weights = weights.at[0].set(0.5 * spacing)
@@ -516,11 +613,14 @@ class CosineBasisPlan(AbstractSpectralBasisPlan):
         return PreparedSpectralAxis(
             self,
             nodes,
+            reference,
             weights,
-            jnp.stack((lower_, upper_)),
+            domain,
             modes,
             transform,
             precision,
+            lower_endpoint_included=True,
+            upper_endpoint_included=True,
         )
 
 
@@ -564,20 +664,18 @@ class ChebyshevBasisPlan(AbstractSpectralBasisPlan):
 
     def prepare(
         self,
-        lower: ArrayLike,
-        upper: ArrayLike,
+        domain: AxisDomain,
         /,
         *,
         precision: SpectralPrecisionPolicy,
     ) -> PreparedSpectralAxis:
+        lower, upper = _finite_domain(
+            domain,
+            periodic=False,
+            basis="Chebyshev",
+        )
         lower_value = float(np.asarray(lower))
         upper_value = float(np.asarray(upper))
-        if (
-            not np.isfinite(lower_value)
-            or not np.isfinite(upper_value)
-            or upper_value <= lower_value
-        ):
-            raise ValueError("Chebyshev bounds must be finite and increasing.")
         count = self.mode_count
         itemsize = np.dtype(precision.coefficient_dtype).itemsize
         estimate = 5 * count * count * itemsize
@@ -628,8 +726,9 @@ class ChebyshevBasisPlan(AbstractSpectralBasisPlan):
         return PreparedSpectralAxis(
             self,
             nodes,
+            reference_nodes,
             weights,
-            np.asarray((lower_value, upper_value)),
+            domain,
             SpectralModeLayout(
                 "chebyshev",
                 np.arange(count),
@@ -637,6 +736,8 @@ class ChebyshevBasisPlan(AbstractSpectralBasisPlan):
             ),
             execution,
             precision,
+            lower_endpoint_included=True,
+            upper_endpoint_included=True,
             derivative_matrix=derivative,
             modal_transform=modal,
         )
@@ -688,20 +789,18 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
 
     def prepare(
         self,
-        lower: ArrayLike,
-        upper: ArrayLike,
+        domain: AxisDomain,
         /,
         *,
         precision: SpectralPrecisionPolicy,
     ) -> PreparedSpectralAxis:
+        lower, upper = _finite_domain(
+            domain,
+            periodic=False,
+            basis="Legendre",
+        )
         lower_value = float(np.asarray(lower))
         upper_value = float(np.asarray(upper))
-        if (
-            not np.isfinite(lower_value)
-            or not np.isfinite(upper_value)
-            or upper_value <= lower_value
-        ):
-            raise ValueError("Legendre bounds must be finite and increasing.")
         count = self.mode_count
         itemsize = np.dtype(precision.coefficient_dtype).itemsize
         estimate = 5 * count * count * itemsize
@@ -752,8 +851,9 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
         return PreparedSpectralAxis(
             self,
             nodes,
+            reference_nodes,
             weights,
-            np.asarray((lower_value, upper_value)),
+            domain,
             SpectralModeLayout(
                 "legendre",
                 np.arange(count),
@@ -761,6 +861,8 @@ class LegendreBasisPlan(AbstractSpectralBasisPlan):
             ),
             execution,
             precision,
+            lower_endpoint_included=self.node_rule in ("radau", "lobatto"),
+            upper_endpoint_included=self.node_rule == "lobatto",
             derivative_matrix=derivative,
             modal_transform=modal,
         )

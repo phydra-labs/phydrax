@@ -47,6 +47,7 @@ benchmarks/*
 !benchmarks/fourier_modal_rasterization.json
 !benchmarks/maxwell_amoeba.json
 !benchmarks/incompressible_spectral.json
+!benchmarks/unbounded_spectral.json
 !benchmarks/structured_flow.json
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json

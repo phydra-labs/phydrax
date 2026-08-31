@@ -61,6 +61,23 @@ stationarity.
 IID standard error. Rank-normalized R-hat and effective sample sizes require a frozen
 target and remain part of the UQ chain-diagnostic layer.
 
+## Adaptive collocation
+
+`ResidualAttentionCollocation` keeps one immutable paired-point population and
+updates only its local residual multipliers. Scores are converted to a probability
+measure with an explicit uniform floor and minimum-ESS guard, then combined through
+an exponential moving average. Returned multipliers have arithmetic mean one, so
+attention does not silently change the scalar term scale.
+
+This is an adaptive biased training measure, not importance-corrected quadrature.
+Use independent fixed evaluation terms for model selection. Point replacement and
+nonzero controlled-collocation coverage anchors are deliberately unsupported because
+no attention-transfer rule has been declared.
+
+::: phydrax.sampling.collocation.ResidualAttentionCollocation
+
+::: phydrax.sampling.collocation.ResidualAttentionPopulation
+
 ## Free-boundary collocation
 
 `CausalTimeSlabSchedule` supplies ordered, optionally overlapping time slabs

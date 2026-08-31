@@ -243,11 +243,15 @@ class OperatorNormalizationPolicy:
         self,
         targets: OperatorTargetBatch,
         /,
+        *,
+        target_aliases: Mapping[str, str] | None = None,
     ) -> OperatorTargetBatch:
+        aliases = {} if target_aliases is None else dict(target_aliases)
         missing = tuple(
             name
             for name, field in targets.fields.items()
-            if field.spec.classification is None and name not in self.targets
+            if field.spec.classification is None
+            and aliases.get(name, name) not in self.targets
         )
         if missing:
             raise KeyError(f"Missing target normalizers for fields {missing}.")
@@ -257,7 +261,7 @@ class OperatorNormalizationPolicy:
                     (
                         field.values
                         if field.spec.classification is not None
-                        else self.targets[name].normalize(field.values)
+                        else self.targets[aliases.get(name, name)].normalize(field.values)
                     ),
                     query_name=field.query_name,
                     spec=field.spec,
@@ -272,11 +276,15 @@ class OperatorNormalizationPolicy:
         self,
         targets: OperatorTargetBatch,
         /,
+        *,
+        target_aliases: Mapping[str, str] | None = None,
     ) -> OperatorTargetBatch:
+        aliases = {} if target_aliases is None else dict(target_aliases)
         missing = tuple(
             name
             for name, field in targets.fields.items()
-            if field.spec.classification is None and name not in self.targets
+            if field.spec.classification is None
+            and aliases.get(name, name) not in self.targets
         )
         if missing:
             raise KeyError(f"Missing target normalizers for fields {missing}.")
@@ -286,7 +294,9 @@ class OperatorNormalizationPolicy:
                     (
                         field.values
                         if field.spec.classification is not None
-                        else self.targets[name].denormalize(field.values)
+                        else self.targets[aliases.get(name, name)].denormalize(
+                            field.values
+                        )
                     ),
                     query_name=field.query_name,
                     spec=field.spec,
@@ -422,6 +432,8 @@ class OperatorNormalizationPolicy:
             quadrature_weights=weights,
             mask=samples.mask,
             topology=samples.topology,
+            support_id=(samples.support_id if coordinate_normalizer is None else None),
+            measure_id=(samples.measure_id if coordinate_normalizer is None else None),
         )
 
     def normalize_batch(self, batch: OperatorBatch, /) -> OperatorBatch:
@@ -545,6 +557,7 @@ def fit_operator_normalization(
     weighting: Literal["uniform", "quadrature"] = "uniform",
     epsilon: float = 1e-6,
     fields: Sequence[OperatorFieldSpec] = (),
+    target_aliases: Mapping[str, str] | None = None,
 ) -> OperatorNormalizationPolicy:
     """Fit named field and query statistics from training cases only."""
     batch_tuple = (batches,) if isinstance(batches, OperatorBatch) else tuple(batches)
@@ -569,6 +582,13 @@ def fit_operator_normalization(
         raise ValueError("All normalization batches must have identical query names.")
     if any(set(target.fields) != set(target_names) for target in target_tuple[1:]):
         raise ValueError("All normalization targets must have identical field names.")
+    aliases = {} if target_aliases is None else dict(target_aliases)
+    unknown_aliases = set(aliases) - set(target_names)
+    if unknown_aliases:
+        raise ValueError(
+            "Target aliases must exist in every normalization target batch; "
+            f"unknown={tuple(sorted(unknown_aliases))!r}."
+        )
     field_specs = tuple(fields)
     if any(not isinstance(field, OperatorFieldSpec) for field in field_specs):
         raise TypeError("fields must contain OperatorFieldSpec objects.")
@@ -655,26 +675,41 @@ def fit_operator_normalization(
     configured_target_axes = (
         {} if target_channel_axes is None else dict(target_channel_axes)
     )
+    canonical_target_names = tuple(
+        dict.fromkeys(aliases.get(name, name) for name in target_names)
+    )
     target_normalizers: dict[str, AffineNormalizer] = {}
-    for name in target_names:
-        target_batches = tuple(target.field(name) for target in target_tuple)
-        if target_batches[0].spec.classification is not None:
+    for canonical_name in canonical_target_names:
+        grouped_names = tuple(
+            name for name in target_names if aliases.get(name, name) == canonical_name
+        )
+        target_batches = tuple(
+            target.field(name) for target in target_tuple for name in grouped_names
+        )
+        first_target = target_batches[0]
+        if first_target.spec.classification is not None:
             if any(
-                field.spec.to_dict() != target_batches[0].spec.to_dict()
+                field.spec.to_dict() != first_target.spec.to_dict()
                 for field in target_batches[1:]
             ):
                 raise ValueError(
-                    f"Classification target field {name!r} changed its output spec."
+                    f"Classification target field {canonical_name!r} changed its "
+                    "output spec."
                 )
             continue
-        query_name = target_batches[0].query_name
-        if query_name is None:
-            raise ValueError(f"Target field {name!r} has no query branch.")
-        if any(field.query_name != query_name for field in target_batches[1:]):
-            raise ValueError(f"Target field {name!r} must use one query branch.")
+        query_name = first_target.query_name
+        if any(
+            field.query_name != query_name
+            or field.spec.to_dict() != first_target.spec.to_dict()
+            for field in target_batches[1:]
+        ):
+            raise ValueError(
+                f"Target aliases for {canonical_name!r} must share one query and spec."
+            )
         masks = [
             batch.query(query_name).mask_array(case_shape=batch.case_shape)
             for batch in batch_tuple
+            for _ in grouped_names
         ]
         weights = (
             None
@@ -685,16 +720,17 @@ def fit_operator_normalization(
                     batch.case_shape,
                 )
                 for batch in batch_tuple
+                for _ in grouped_names
             ]
         )
-        target_field = target_fields.get(name)
+        target_field = target_fields.get(canonical_name)
         target_cochain = None if target_field is None else target_field.cochain
-        target_normalizers[name] = _fit_arrays(
+        target_normalizers[canonical_name] = _fit_arrays(
             [field.values for field in target_batches],
             masks,
             channel_axis=configured_target_axes.get(
-                name,
-                _infer_channel_axis(target_batches[0].values, masks[0].ndim),
+                canonical_name,
+                _infer_channel_axis(first_target.values, masks[0].ndim),
             ),
             epsilon=epsilon,
             weights=weights,

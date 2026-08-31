@@ -13,7 +13,12 @@ def _periodic_space(count=8):
         ),
         axis_names=("x", "y"),
         field_name="velocity",
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+        )
+    )
 
 
 def _channel_space():
@@ -25,7 +30,13 @@ def _channel_space():
         ),
         axis_names=("x", "y", "z"),
         field_name="velocity",
-    ).prepare(jnp.asarray([[0.0, -1.0, 0.0], [2.0 * jnp.pi, 1.0, 2.0 * jnp.pi]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.periodic(0.0, 2.0 * jnp.pi),
+            phx.discretization.AxisDomain.interval(-1.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 2.0 * jnp.pi),
+        )
+    )
 
 
 def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients():
@@ -68,6 +79,7 @@ def test_periodic_incompressible_dynamics_preserves_constraints_and_gradients():
     assert jnp.isfinite(derivative)
     np.testing.assert_allclose(np.asarray(derivative), 1.0, atol=1e-10)
 
+
 def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensions():
     space = phx.discretization.TensorSpectralPlan(
         (
@@ -77,23 +89,34 @@ def test_periodic_leray_removes_gradient_rhs_and_is_idempotent_in_three_dimensio
         ),
         axis_names=("x", "y", "z"),
         field_name="velocity",
-    ).prepare(jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+        )
+    )
     projector = phx.discretization.PeriodicLerayProjector(space)
     potential = jnp.ones(space.modal_shape, dtype=complex)
     gradient = jnp.stack(
         tuple(1j * wave * potential for wave in projector.wavenumbers), axis=-1
     )
     projected_gradient = projector.project(gradient)
-    candidate = jnp.arange(projector.state_size, dtype=float).reshape(
-        projector.state_shape
-    ).astype(complex)
+    candidate = (
+        jnp.arange(projector.state_size, dtype=float)
+        .reshape(projector.state_shape)
+        .astype(complex)
+    )
     projected = projector.project(candidate)
 
     np.testing.assert_allclose(projected_gradient, 0.0, atol=2e-12)
     np.testing.assert_allclose(projector.project(projected), projected, atol=2e-12)
     assert projector.divergence_norm(projected) < 2e-11
     pressure = projector.pressure_from_unconstrained_rhs(gradient)
-    assert jnp.max(jnp.abs(jnp.where(projector.wavenumber_squared == 0.0, pressure, 0.0))) < 1e-12
+    assert (
+        jnp.max(jnp.abs(jnp.where(projector.wavenumber_squared == 0.0, pressure, 0.0)))
+        < 1e-12
+    )
 
 
 def test_hermitian_coordinates_and_spectral_symmetry_preserve_real_field_norm():

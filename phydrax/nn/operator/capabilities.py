@@ -35,7 +35,9 @@ OperatorSourceQueryRelation: TypeAlias = Literal[
 OperatorAxisRequirement: TypeAlias = Literal[
     "none",
     "uniform",
+    "positive_uniform",
     "periodic_uniform",
+    "periodic_fourier_uniform",
     "periodic_square",
 ]
 OperatorQuadraturePolicy: TypeAlias = Literal[
@@ -77,6 +79,7 @@ OperatorCompatibilityCode: TypeAlias = Literal[
     "TOPOLOGY_UNUSED",
     "TENSOR_GRID_REQUIRED",
     "NONUNIFORM_AXIS",
+    "UNSUPPORTED_AXIS_BASIS",
     "NONPERIODIC_AXIS",
     "NON_SQUARE_GROUP_AXES",
     "AXIS_TOO_SMALL",
@@ -446,6 +449,19 @@ def _uniform_axis(nodes: object, /) -> bool:
     return bool(np.allclose(spacing, np.mean(spacing), rtol=1e-5, atol=1e-8))
 
 
+def _positive_uniform_axis(nodes: object, /) -> bool:
+    if _contains_tracer(nodes):
+        return True
+    array = np.asarray(nodes)
+    if array.size < 2 or np.any(~np.isfinite(array)):
+        return False
+    spacing = np.diff(array)
+    return bool(
+        np.all(spacing > 0.0)
+        and np.allclose(spacing, np.mean(spacing), rtol=1e-5, atol=1e-8)
+    )
+
+
 def _issue(
     code: OperatorCompatibilityCode,
     message: str,
@@ -605,7 +621,13 @@ def validate_operator_contract(
                     )
                 )
             else:
-                if any(not _uniform_axis(axis.nodes) for axis in samples.axes):
+                axis_validator = (
+                    _positive_uniform_axis
+                    if capability.axis_requirement
+                    in ("positive_uniform", "periodic_fourier_uniform")
+                    else _uniform_axis
+                )
+                if any(not axis_validator(axis.nodes) for axis in samples.axes):
                     issues.append(
                         _issue(
                             "NONUNIFORM_AXIS",
@@ -615,12 +637,23 @@ def validate_operator_contract(
                     )
                 if capability.axis_requirement in (
                     "periodic_uniform",
+                    "periodic_fourier_uniform",
                     "periodic_square",
                 ) and any(not axis.periodic for axis in samples.axes):
                     issues.append(
                         _issue(
                             "NONPERIODIC_AXIS",
                             "periodic axes are required",
+                            name,
+                        )
+                    )
+                if capability.axis_requirement == "periodic_fourier_uniform" and any(
+                    axis.basis not in ("uniform", "fourier") for axis in samples.axes
+                ):
+                    issues.append(
+                        _issue(
+                            "UNSUPPORTED_AXIS_BASIS",
+                            "periodic Fourier axes require uniform or Fourier basis metadata",
                             name,
                         )
                     )
@@ -670,7 +703,15 @@ def validate_operator_contract(
     ):
         inferred_relation = "shared_topology"
     required_relation = physical.source_query_relation or inferred_relation
-    if required_relation not in capability.source_query_relations:
+    if required_relation == "coincident" and inferred_relation != "coincident":
+        issues.append(
+            _issue(
+                "SOURCE_QUERY_RELATION",
+                "source and query geometry are not exactly coincident",
+                "query",
+            )
+        )
+    elif required_relation not in capability.source_query_relations:
         issues.append(
             _issue(
                 "SOURCE_QUERY_RELATION",

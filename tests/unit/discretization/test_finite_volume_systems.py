@@ -814,9 +814,10 @@ def test_nonuniform_weno_prepares_ghost_geometry_for_bounded_faces():
         nodes=centers,
         quad_weights=widths,
         basis="uniform",
-        periodic=False,
+        domain=phx.discretization.AxisDomain.interval(0.0, 1.0),
         primary_entity="interval",
-        bounds=jnp.asarray([0.0, 1.0]),
+        lower_endpoint_included=False,
+        upper_endpoint_included=False,
     )
     grid = phx.discretization.PreparedTensorGrid((axis,), axis_names=("x",))
     discretization = phx.discretization.FiniteVolumePlan(grid).prepare()

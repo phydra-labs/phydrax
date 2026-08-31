@@ -28,6 +28,7 @@ from ._adaptive import (
     CollocationPolicy,
     CollocationPopulation,
 )
+from ._attention import ResidualAttentionCollocation
 from ._coreset import CoresetCollocationPolicy
 from ._separable import HierarchicalAxisPolicy, SeparableCollocationPolicy
 
@@ -80,6 +81,11 @@ COLLOCATION_POLICY_SUPPORT: Mapping[str, CollocationPolicySupport] = MappingProx
             "conditional",
             "Residual importance with kernel-diverse paired support.",
         ),
+        "residual_attention": CollocationPolicySupport(
+            "residual_attention",
+            "conditional",
+            "Mass-preserving residual attention on one fixed point population.",
+        ),
         "periodic_separable": CollocationPolicySupport(
             "periodic_separable", "stable", "Coordinate-separable models."
         ),
@@ -107,6 +113,8 @@ def collocation_policy_support(
         name = policy.algorithm
     elif isinstance(policy, CoresetCollocationPolicy):
         name = "coreset"
+    elif isinstance(policy, ResidualAttentionCollocation):
+        name = "residual_attention"
     elif isinstance(policy, HierarchicalAxisPolicy):
         name = "hierarchical_axes"
     elif isinstance(policy, SeparableCollocationPolicy):
@@ -353,12 +361,20 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
                 else 1
             )
             schedule = RefreshSchedule(base_policy.refresh_every, start_at=start_at)
+        resolved_anchors = CoverageAnchors(0.0) if anchors is None else anchors
+        if (
+            isinstance(base_policy, ResidualAttentionCollocation)
+            and float(resolved_anchors.fraction) > 0.0
+        ):
+            raise ValueError(
+                "Residual attention keeps fixed support and does not accept coverage anchors."
+            )
         self.base_policy = base_policy
         self.schedule = schedule
         self.monitor = ResidualMonitor() if monitor is None else monitor
         self.guard = RefreshGuard() if guard is None else guard
         self.budget = AdaptationBudget() if budget is None else budget
-        self.anchors = CoverageAnchors(0.0) if anchors is None else anchors
+        self.anchors = resolved_anchors
         self.refresh_every = schedule.every
 
     def initialize(

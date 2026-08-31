@@ -40,8 +40,9 @@ Most workflows are composing a few primitives:
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, material-particle supports, conservative SPH, measure-aware
   particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
-  measures, transfers, temporal/stochastic
-  composition, and auditable plan/preparation identities.
+  measures, transfers, fixed-temporal differentiable replay, transactional
+  gravity/cooling/stochastic source processes, compatible constrained MHD,
+  temporal/stochastic composition, and auditable plan/preparation identities.
 - **Finite-molecule atomistic learning**: scale-identified atomic structures and
   padded case-isolated batches reuse material-particle identities and `GraphIR`;
   PaiNN scalar/vector interactions produce invariant molecular energies and
@@ -94,6 +95,9 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Learned field evolution**: fixed physical measures project PDE rates onto
+  selected model tangents, Diffrax evolves the resulting parameter ODE, and
+  backward Diffrax characteristics feed optional time-slice field projection.
 - **Electromagnetics**: compatible cochain Maxwell and a reciprocal-lattice
   Fourier-modal substrate cover general time-domain topology and periodic layered
   frequency-domain scattering, respectively, with full-tensor finite layers,
@@ -153,9 +157,10 @@ thin labeled-domain adapter used by sampling, integration, and constraints. See 
 [geometry substrate API](docs/api/geometry.md).
 
 Numerical supports and finite field spaces live in `phx.discretization`, including
-global tensor bases, material-particle supports and conservative SPH, and
-exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami actions,
-area measures, and SFNO interoperability. See the
+bounded, periodic, half-line, and real-line global tensor bases; rational Chebyshev
+transforms and spectral resolution evidence; material-particle supports and
+conservative SPH; and exact-sampling round-sphere spaces with S2FFT transforms,
+Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the

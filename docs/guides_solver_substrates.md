@@ -176,6 +176,21 @@ endpoint constraints, Galerkin solves, boundary lifts, and generalized tau block
 systems also route through `phydrax.linalg`; no parallel polynomial or solve substrate
 is introduced. Eligible diagonal semilinear systems integrate with `ETDRKMethod`.
 
+`AxisDomain` makes bounded, periodic, half-line, and real-line support part of
+the discretization identity. Rational Chebyshev transforms use endpoint-free
+Fejér nodes and mapped physical weights; their derivative actions report
+overresolved closure residuals rather than claiming finite-mode closure.
+`SpectralModalTransferPlan` is the sole resolution-change authority used by
+padding and eigen verification.
+
+General eigensolve convergence is local numerical evidence, not a resolution
+certificate. `compare_general_eigen_resolutions` matches homogeneous finite and
+infinite modes one-to-one. The spectral wrapper transfers modes into a common
+field space and compares physical subspaces. `ResolventScanProblem` reuses one
+pairing-canonical Schur form across declared shifts. `PolynomialEigenproblem`
+uses block companion pencils but accepts modes only against the original
+homogeneous operator-polynomial residual.
+
 Periodic one-dimensional FD stencils expose a certified FFT representation via
 `PreparedFiniteDifferenceDiscretization.transform_diagonalization`.
 `diagonalize_fd_laplacian` additionally certifies tensor FD2 operators on uniform point
@@ -346,6 +361,20 @@ interpolation, and saved trajectories cross this boundary through one prepared
 adapter. Diffusion control axes remain trailing, so both real components contract
 against the same declared Wiener controls. Nontrivial state geometry and the separate
 delay/jump Diffrax backends are not assigned an inferred packing contract.
+
+## Learned field manifolds and characteristic flows
+
+`NeuralGalerkinProblem` lowers selected model leaves to one array-valued parameter
+ODE. Each vector-field call rebuilds the enforced named fields, evaluates the
+physical rate on fixed integration realizations, and solves a weighted tangent
+projection with the ordinary linear runtime. Diffrax remains the sole temporal
+backend. Saved-node audits report the tangent status and physical projection defect
+without presenting hidden-stage work as measured evidence.
+
+`trace_characteristics` converts backward physical time to increasing pseudo-time
+and reuses `DifferentialProblem` plus `solve_diffrax`. The optional
+`solve_characteristic_projection` layer is deliberately macro-step orchestration:
+Diffrax computes feet, while `FunctionalSolver` fits fixed pulled-back targets.
 
 ## Execution, distribution, and production lifecycle
 

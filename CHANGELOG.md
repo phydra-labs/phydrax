@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- Added exact fixed-temporal finite-volume replay with full, step, or block
+  rematerialization; transactional balance-law source composition and persistence;
+  periodic Newtonian and particle-mesh gravity; replayable Hermitian spectral
+  Ornstein--Uhlenbeck forcing; implicitly differentiated tabulated cooling;
+  conservative trainable face closures; and periodic Cartesian constrained MHD with
+  integrated cochain face fluxes, edge circulations, coupled stage positivity, and
+  HLLD-to-HLL fallback evidence.
+- Added bounded adaptive balance-law realization with process-aware step limits,
+  transactional retry rollback, fixed-capacity decision journals, and exact scheduled
+  replay of accepted temporal meshes. Added global OU realizations whose innovations
+  obey the OU semigroup under interval subdivision, including antithetic coupling.
+- Added fixed-rank randomized Nyström preconditioning with auditable sketch and
+  refresh evidence; Diffrax-backed neural Galerkin evolution over fixed physical
+  field metrics with rectangular or Gram tangent solves and saved-node audits;
+  backward Diffrax characteristic tracing with macro-step neural projection; and
+  mass-preserving fixed-support residual-attention collocation with explicit ESS,
+  KFAC, and controlled-policy contracts.
 - Added reciprocal-lattice harmonic discretization with true one-dimensional and
   oblique two-dimensional periodicity, selected FFT analysis/synthesis,
   pairwise-difference material convolution, translation covariance, resource
@@ -146,6 +163,14 @@
   `FunctionalSolver`, safe scan fallback, explicit KFAC rejection, pure dense
   deployment merging, and checksum-validated adapter artifacts bound to the
   complete base model content and structure.
+- Added deterministic fixed-step learned discrete systems with lazy
+  mask/reset/control-aware trajectory windows, supervised, reference-branch,
+  and residual rollout objectives, evidence-weighted gradient accumulation,
+  exact update-boundary resume, and full/prefix/chunk causal equivalence.
+- Added task-bound recurrent neural-operator training with one pipeline-safe
+  physical state route, named future targets, supervised and residual rollout
+  losses, route-aware deployed continuation, and instance-authoritative
+  pointwise/finite/global/unknown dependency-support evidence.
 - Added advanced computational topology: exact cellular and filtered maps,
   induced maps and cone audits, extended and temporal field topology, diagram
   features and certified matching, rational and integral class algebra,
@@ -164,6 +189,12 @@
   ordinary and induced-relative persistent homology, natural and fixed-capacity
   diagrams, frozen-order endpoint derivatives, fail-closed resource evidence,
   and exact-nullity validation of metric cochain harmonic kernels.
+- Added explicit bounded, periodic, half-line, and real-line spectral domains;
+  endpoint-correct tensor measures; canonical modal transfers; rational
+  Chebyshev line and half-line bases; linear trace constraints; exact periodic
+  Hilbert transforms; physical modal-tail diagnostics; homogeneous
+  cross-resolution eigen and eigenspace evidence; pairing-aware resolvent scans;
+  and original-residual-certified polynomial eigenproblems.
 - Added a native linear-combinatorial substrate with separate logical decisions
   and objective features, content-addressed plans, deterministic ties, portable
   statuses, and independent certificates. Added exact streamed finite,
@@ -848,6 +879,14 @@
   resource accounting.
 
 ### Changed
+- Neural-operator autoregression now requires a task-bound physical state route
+  and the deployed normalization/constraint pipeline. The raw callable/advance
+  rollout, standalone autoregressive loss, and teacher-forcing schedule were
+  removed in one clean cutover.
+- CNO and UNO now have periodic-Fourier semantics: circular measure-aware local
+  convolution, endpoint-exclusive sine/cosine coordinate features, periodic
+  uniform axes, and new semantic architecture identities. Nonperiodic and
+  legacy artifact routes are rejected rather than reinterpreted.
 - Benchmark tooling now shares one synchronized PyTree timing runtime, normalized
   software/hardware fingerprints, raw duration distributions, official XLA
   cost/memory evidence, atomic artifact writes, and environment-checked bootstrap

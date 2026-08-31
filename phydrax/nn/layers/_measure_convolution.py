@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
+from .._dependency import AxisDependencyReach, OperatorDependencySupport
 
 
 Padding = Literal["SAME", "VALID"] | tuple[tuple[int, int], ...]
@@ -79,11 +80,12 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
 
     The numerator convolves ``where(source_mask, values, 0) * quadrature`` with
     the learned kernel. The denominator is the mean non-negative observed
-    quadrature over the in-domain geometric stencil, computed with a separate
-    all-ones kernel. Learned signed weights never enter the denominator.
-    Consequently, uniform full support exactly reproduces ordinary convolution,
-    physical missingness is renormalized, and boundary padding retains ordinary
-    convolution semantics.
+    quadrature over the geometric stencil, computed with a separate all-ones
+    kernel. Learned signed weights never enter the denominator. Uniform full
+    support therefore reproduces ordinary convolution exactly, while missing
+    physical measure is renormalized. Circular mode modularly extends values and
+    observed measure and evaluates a full periodic stencil with SAME output
+    semantics.
     """
 
     weight: Array
@@ -96,6 +98,7 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
     dilation: tuple[int, ...]
     padding: Padding
     epsilon: float
+    circular: bool
 
     def __init__(
         self,
@@ -107,6 +110,7 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
         strides: int | Sequence[int] = 1,
         dilation: int | Sequence[int] = 1,
         padding: str | Sequence[tuple[int, int]] = "SAME",
+        circular: bool = False,
         use_bias: bool = True,
         epsilon: float = 1e-12,
         dtype: Any = jnp.float32,
@@ -122,6 +126,15 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
         stride = _sizes(strides, ndim, owner="strides")
         dilation_value = _sizes(dilation, ndim, owner="dilation")
         padding_value = _padding(padding, ndim)
+        circular_value = bool(circular)
+        effective_kernel = tuple(
+            dilation * (size - 1) + 1
+            for size, dilation in zip(kernel, dilation_value, strict=True)
+        )
+        if circular_value and padding_value != "SAME":
+            raise ValueError("circular convolution owns SAME padding semantics.")
+        if circular_value and any(size % 2 == 0 for size in effective_kernel):
+            raise ValueError("circular convolution requires odd effective kernel sizes.")
         epsilon_value = float(epsilon)
         if not math.isfinite(epsilon_value) or epsilon_value <= 0.0:
             raise ValueError("epsilon must be finite and positive.")
@@ -150,16 +163,38 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
         self.dilation = dilation_value
         self.padding = padding_value
         self.epsilon = epsilon_value
+        self.circular = circular_value
 
-    def _convolve(self, values: Array, kernel: Array, /) -> Array:
+    def _convolve(
+        self,
+        values: Array,
+        kernel: Array,
+        /,
+        *,
+        padding: Padding | None = None,
+    ) -> Array:
         return jax.lax.conv_general_dilated(
             values,
             kernel,
             window_strides=self.strides,
-            padding=self.padding,
+            padding=self.padding if padding is None else padding,
             rhs_dilation=self.dilation,
             dimension_numbers=_dimension_numbers(self.spatial_ndim),
         )
+
+    def _circularly_extend(
+        self,
+        values: Array,
+        halo: tuple[int, ...],
+        /,
+    ) -> Array:
+        extended = values
+        for axis, width in enumerate(halo, start=1):
+            if width:
+                size = int(extended.shape[axis])
+                indices = jnp.mod(jnp.arange(-width, size + width), size)
+                extended = jnp.take(extended, indices, axis=axis)
+        return extended
 
     def __call__(
         self,
@@ -219,20 +254,53 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
         flat_inputs = jnp.reshape(inputs, flat_shape + (self.in_channels,))
         flat_valid = jnp.reshape(source_valid, flat_shape)
         flat_measure = jnp.reshape(measure, flat_shape)
-        measured_inputs = (
-            jnp.where(flat_valid[..., None], flat_inputs, jnp.zeros_like(flat_inputs))
-            * flat_measure[..., None]
+        sanitized_inputs = jnp.where(
+            flat_valid[..., None],
+            flat_inputs,
+            jnp.zeros_like(flat_inputs),
         )
-        numerator = self._convolve(measured_inputs, self.weight.astype(compute_dtype))
-
-        stencil = jnp.ones(self.kernel_size + (1, 1), dtype=compute_dtype)
         measured_support = jnp.where(
-            flat_valid, flat_measure, jnp.zeros_like(flat_measure)
+            flat_valid,
+            flat_measure,
+            jnp.zeros_like(flat_measure),
         )
-        support_sum = self._convolve(measured_support[..., None], stencil)
-        domain_count = self._convolve(
-            jnp.ones(flat_shape + (1,), dtype=compute_dtype), stencil
-        )
+        measured_inputs = sanitized_inputs * measured_support[..., None]
+        stencil = jnp.ones(self.kernel_size + (1, 1), dtype=compute_dtype)
+        if self.circular:
+            halo = tuple(
+                dilation * (size - 1) // 2
+                for size, dilation in zip(
+                    self.kernel_size,
+                    self.dilation,
+                    strict=True,
+                )
+            )
+            measured_inputs = self._circularly_extend(measured_inputs, halo)
+            measured_support = self._circularly_extend(
+                measured_support[..., None],
+                halo,
+            )
+            numerator = self._convolve(
+                measured_inputs,
+                self.weight.astype(compute_dtype),
+                padding="VALID",
+            )
+            support_sum = self._convolve(
+                measured_support,
+                stencil,
+                padding="VALID",
+            )
+            domain_count = jnp.full_like(support_sum, math.prod(self.kernel_size))
+        else:
+            numerator = self._convolve(
+                measured_inputs,
+                self.weight.astype(compute_dtype),
+            )
+            support_sum = self._convolve(measured_support[..., None], stencil)
+            domain_count = self._convolve(
+                jnp.ones(flat_shape + (1,), dtype=compute_dtype),
+                stencil,
+            )
         mean_measure = support_sum / domain_count
         has_support = support_sum > 0.0
         output = numerator / jnp.maximum(mean_measure, self.epsilon)
@@ -256,8 +324,51 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
         return output
 
 
+def _measure_dependency_support(
+    layer: _AbstractMeasureNormalizedConvND,
+    axes: Sequence[Any] | None = None,
+    /,
+) -> OperatorDependencySupport:
+
+    effective = tuple(
+        dilation * (size - 1)
+        for size, dilation in zip(
+            layer.kernel_size,
+            layer.dilation,
+            strict=True,
+        )
+    )
+    if layer.circular or layer.padding == "SAME":
+        reach = tuple(
+            AxisDependencyReach(size // 2, size - size // 2) for size in effective
+        )
+    elif layer.padding == "VALID":
+        reach = tuple(AxisDependencyReach(0, size) for size in effective)
+    else:
+        reach = tuple(
+            AxisDependencyReach(left, max(size - left, 0))
+            for size, (left, _) in zip(effective, layer.padding, strict=True)
+        )
+    evidence = (
+        "exact"
+        if all(stride == 1 for stride in layer.strides)
+        and all(dilation == 1 for dilation in layer.dilation)
+        else "conservative"
+    )
+    support = OperatorDependencySupport.finite(reach, evidence=evidence)
+    return support if axes is None else support.on_axes(axes)
+
+
 class MeasureNormalizedConvND(_AbstractMeasureNormalizedConvND):
     """Public measure-normalized convolution layer."""
+
+    def dependency_support(
+        self,
+        axes: Sequence[Any] | None = None,
+        /,
+    ) -> OperatorDependencySupport:
+        """Return the finite stencil authored by this configured layer."""
+        return _measure_dependency_support(self, axes)
 
 
 __all__ = ["MeasureNormalizedConvND"]

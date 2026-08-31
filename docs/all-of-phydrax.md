@@ -58,6 +58,11 @@ Fourier evaluation, sparse Smolyak approximation, sparse Gaussian processes,
 and stochastic estimators remain specialized methods rather than sparse
 storage types. See [API → Operators → Interpolation](api/operators/interpolation.md).
 
+Adaptive residual policies remain source-owned. R3, RAR-D, and coreset policies
+change point support; `ResidualAttentionCollocation` instead keeps support fixed and
+updates a unit-mean local multiplier with explicit uniform and effective-sample-size
+guards. Independent fixed evaluation terms remain the evidence surface.
+
 Finite-dimensional algebra above those storage kernels is shared through
 `phydrax.linalg`: paired array/PyTree/block spaces, composable explicit and
 matrix-free operators, exact/least-squares/minimum-norm problem contracts,
@@ -72,6 +77,12 @@ native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
 
+Certified positive-semidefinite actions may prepare a fixed-rank
+`RandomizedNystromPreconditioner`. Its deterministic sketch, positive shift,
+refresh mode, retained Ritz evidence, storage, and exact setup matvec count flow
+through the same preconditioner plan/prepare/refresh provenance as deterministic
+builders.
+
 ### Discretization: supports, field spaces, and formulations
 
 `phydrax.discretization` binds labeled continuum semantics to finite topology,
@@ -80,9 +91,12 @@ approximation bundles. Tensor support is independent of finite-difference,
 spectral, or collocation calculus. Global tensor spectral spaces separate mathematical
 modes, physical grids, modal DOFs, dealiasing, constrained/Galerkin/tau formulations,
 periodic Leray projection, channel Stokes constraints, and temporal integration.
-Exact-sampling round-sphere spaces instead expose S2FFT mode layouts, physical area
-measure, scalar Laplace--Beltrami actions, complete-degree noise bases, and the
-prepared discretization consumed by SFNO.
+Axis domains cover bounded, periodic, half-line, and real-line support; rational
+Chebyshev bases, canonical modal transfers, physical modal-tail diagnostics, and
+cross-resolution eigenspace evidence retain their mapping, trace, exactness, and
+resource identities. Exact-sampling round-sphere spaces separately expose S2FFT mode
+layouts, physical area measure, scalar Laplace--Beltrami actions, complete-degree noise
+bases, and the prepared discretization consumed by SFNO.
 Local stencil programs, structured compact line solves, periodic/bounded SBP
 calculus, entropy-conservative SBP flux differencing, finite-volume MAC projection,
 WENO fluxes, mapped grids, fixed-capacity AMR, and distributed halo plans compose
@@ -226,6 +240,13 @@ factorization, stability, and orthogonality maps live in
 `phydrax.nn.parameters`; raw arrays remain optimizer leaves and physical values
 are constructed on demand. The same package owns explicit model-PyTree
 selection through `ParameterSubspace`.
+
+`NeuralGalerkinProblem` evolves a selected model subspace as a Diffrax parameter
+ODE. Fixed physical integration realizations define the field metric; rectangular
+least squares or a damped empirical Gram solve supplies the tangent rate. The result
+retains ordinary Diffrax evidence plus independent saved-node projection audits and
+reconstructs valid parameter states as named fields. Backward characteristic maps
+reuse the same Diffrax substrate before optional macro-step field projection.
 
 Exact native `Linear` paths can instead carry factorized low-rank updates over
 a shared dense base. The factor-only `ParameterSubspace` is the complete
@@ -444,6 +465,12 @@ consistent segmented continuation, frozen-grid implicit replay derivatives,
 checkpointed reverse passes, guarded numerical reuse, and local regularity evidence
 without introducing a second identification representation.
 Array models bind into `ContinuousSystem` as explicit trainable PyTree children.
+Pointwise array models also bind as deterministic fixed-step `DiscreteSystem`
+maps with an explicit coordinate-step contract. Neural identification reads
+`TrajectoryData` through lazy validity/reset/control-aware windows and combines
+supervised, deterministic reference-branch, and residual rollout objectives.
+One authored recurrent step underlies full, prefix, chunked, rematerialized,
+and resumed execution; Phydrax does not infer carry state from a JAXPR trace.
 Structured Port-Hamiltonian fields provide state-dependent energy,
 interconnection, dissipation, control, and forcing components while preserving
 exact skew and semidefinite geometry; solver-owned isothermal dynamics add the
@@ -794,6 +821,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Autoregressive operator learning**: bind one coincident physical state
+  source and prediction with `OperatorRolloutRoute`. Training and deployment use
+  the same authored step: raw output is physicalized, constrained, restored to
+  the physical source, and reprocessed through source normalization before the
+  next call. Named future targets and recurrent residuals support traced
+  fixed-capacity horizons, while `final_batch` and an absolute step offset make
+  chunk continuation and semantic keys explicit. Dynamic controls, independent
+  queries, multiple recurrent states, and inferred carry are not accepted by
+  this route.
 - **Irregular-time sequence mixing**: use `DiagonalStateSpaceMixer` for an
   input-independent stable diagonal continuous-time baseline, or
   `SelectiveStateSpaceMixer` when input-dependent step, injection, and readout

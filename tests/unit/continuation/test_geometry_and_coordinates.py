@@ -139,7 +139,7 @@ def test_constrained_spectral_coordinates_preserve_the_declared_subspace():
     spectral = phx.discretization.TensorSpectralPlan(
         (phx.discretization.FourierBasisPlan(8),),
         axis_names=("x",),
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
     coordinates = phx.discretization.HermitianSpectralCoordinates(spectral)
     reference = spectral.project(jnp.sin(2.0 * jnp.pi * spectral.axes[0].nodes))
     representation = phx.continuation.ContinuationRepresentationPolicy(

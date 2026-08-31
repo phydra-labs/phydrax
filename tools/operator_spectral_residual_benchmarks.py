@@ -49,7 +49,7 @@ def _space(count: int):
         (phx.discretization.FourierBasisPlan(count),),
         axis_names=("x",),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    ).prepare((phx.discretization.AxisDomain.periodic(0.0, 1.0),))
 
 
 def _poisson_problem():
@@ -171,7 +171,12 @@ def run_operator_spectral_residual_benchmark(
         ),
         axis_names=("t", "x"),
         field_name="u",
-    ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
+    ).prepare(
+        (
+            phx.discretization.AxisDomain.interval(0.0, 1.0),
+            phx.discretization.AxisDomain.periodic(0.0, 1.0),
+        )
+    )
     mixed = phx.equations.compile_spectral_residual(
         _mixed_space_time_problem(),
         mixed_space,

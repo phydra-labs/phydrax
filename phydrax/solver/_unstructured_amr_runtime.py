@@ -437,8 +437,6 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 "last_status",
                 "controller_state",
                 "integrator_state",
-                "forcing_state",
-                "random_state",
                 "output_cursor",
             }
             unknown = set(kwargs) - allowed
@@ -537,8 +535,6 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
             last_status=state.last_status,
             controller_state=state.controller_state,
             integrator_state=state.integrator_state,
-            forcing_state=state.forcing_state,
-            random_state=state.random_state,
             output_cursor=state.output_cursor,
         )
 
@@ -1047,8 +1043,6 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
             last_status=state.last_status,
             controller_state=state.controller_state,
             integrator_state=state.integrator_state,
-            forcing_state=state.forcing_state,
-            random_state=state.random_state,
             output_cursor=state.output_cursor,
         )
 
@@ -1492,8 +1486,6 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 last_status=coarse_synced.last_status,
                 controller_state=coarse_synced.controller_state,
                 integrator_state=coarse_synced.integrator_state,
-                forcing_state=coarse_synced.forcing_state,
-                random_state=coarse_synced.random_state,
                 output_cursor=coarse_synced.output_cursor,
             )
             fine_final = FiniteVolumeRuntimeState(
@@ -1504,8 +1496,6 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 last_status=fine_final.last_status,
                 controller_state=fine_final.controller_state,
                 integrator_state=fine_final.integrator_state,
-                forcing_state=fine_final.forcing_state,
-                random_state=fine_final.random_state,
                 output_cursor=fine_final.output_cursor,
             )
             self._validate_level_state(coarse_synced, coarse_reprepared)

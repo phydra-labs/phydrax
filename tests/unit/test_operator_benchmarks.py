@@ -77,6 +77,7 @@ def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
         repeats=1,
     )
     assert result.parameter_count > 0
+    assert result.dependency_support["kind"] == "global"
     assert result.training_steps == 1
     assert jnp.isfinite(result.initial_loss)
     assert jnp.isfinite(result.final_loss)

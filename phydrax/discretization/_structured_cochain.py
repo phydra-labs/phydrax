@@ -257,6 +257,72 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
             output.append(value[offset : offset + count].reshape(shape))
         return tuple(output)
 
+    def pack_edge_circulation(
+        self, components: tuple[ArrayLike, ArrayLike, ArrayLike], /
+    ) -> Array:
+        """Integrate Cartesian vector components along oriented primal edges."""
+
+        if self.dimension != 3:
+            raise ValueError(
+                "Edge-circulation packing requires a three-dimensional bridge."
+            )
+        measures = self.unpack(1, self.cochain.primal_measures[1])
+        return self.pack(
+            1,
+            tuple(
+                jnp.asarray(component) * measure
+                for component, measure in zip(components, measures, strict=True)
+            ),
+        )
+
+    def unpack_edge_circulation(self, values: ArrayLike, /) -> tuple[Array, Array, Array]:
+        """Recover Cartesian edge-tangent values from integrated circulations."""
+
+        if self.dimension != 3:
+            raise ValueError(
+                "Edge-circulation unpacking requires a three-dimensional bridge."
+            )
+        integrated = self.unpack(1, values)
+        measures = self.unpack(1, self.cochain.primal_measures[1])
+        return tuple(
+            value / measure for value, measure in zip(integrated, measures, strict=True)
+        )
+
+    def pack_face_flux(
+        self, components: tuple[ArrayLike, ArrayLike, ArrayLike], /
+    ) -> Array:
+        """Integrate ``(Bx, By, Bz)`` through oriented Cartesian primal faces."""
+
+        if self.dimension != 3:
+            raise ValueError("Face-flux packing requires a three-dimensional bridge.")
+        bx, by, bz = (jnp.asarray(component) for component in components)
+        measure_xy, measure_xz, measure_yz = self.unpack(
+            2, self.cochain.primal_measures[2]
+        )
+        return self.pack(
+            2,
+            (
+                bz * measure_xy,
+                -by * measure_xz,
+                bx * measure_yz,
+            ),
+        )
+
+    def unpack_face_flux(self, values: ArrayLike, /) -> tuple[Array, Array, Array]:
+        """Recover ``(Bx, By, Bz)`` normal-face values from integrated fluxes."""
+
+        if self.dimension != 3:
+            raise ValueError("Face-flux unpacking requires a three-dimensional bridge.")
+        flux_xy, flux_xz, flux_yz = self.unpack(2, values)
+        measure_xy, measure_xz, measure_yz = self.unpack(
+            2, self.cochain.primal_measures[2]
+        )
+        return (
+            flux_yz / measure_yz,
+            -flux_xz / measure_xz,
+            flux_xy / measure_xy,
+        )
+
     def exterior_derivative(
         self,
         degree: int,
