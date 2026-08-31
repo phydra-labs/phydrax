@@ -55,6 +55,17 @@ four-layer model and integration-source choices, see
       batches, per-step integration realizations, adaptive weights, evaluation
       keys, and the iteration value are reused by every candidate evaluation and
       by term diagnostics for that update.
+    - A constitutive energy that is defined only for admissible states can use
+      `IntegralFunctional(nonfinite_integrand="propagate")` with a tested Optax
+      line search such as `optax.lbfgs`. The default remains strict. Propagation
+      does not convert adaptive-budget or measure failures into optimizer trials.
+    - Fixed sampled signed energies should normally use `keep_best=False`.
+      Selection against the same quadrature realization rewards quadrature
+      overfitting; evaluate the returned field on a larger independent fixed
+      realization instead.
+    - KFAC and least-squares methods are not energy minimizers. Use them only when
+      the training objective supplies the residual-root contract they require.
+
     - `solve(..., log_terms=True)` logs the training and evaluation term breakdown;
       `tensorboard_log_dir` enables TensorBoard scalar logs.
     - KFAC accepts only `ResidualPenalty` training terms with a nonnegative
