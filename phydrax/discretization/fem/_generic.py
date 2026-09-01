@@ -32,13 +32,17 @@ from .._hexahedral import (
     _quadrilateral_tensor_permutation,
     HexahedralConnectivity,
 )
+from .._integration_domain import IntegrationDomain
 from .._lifecycle import (
     AbstractDiscretizationPlan,
-    AbstractPreparedDiscretization,
     validate_prepared_metadata,
 )
+from .._local_variational import (
+    AbstractPreparedLocalDiscretization,
+    LocalFieldBinding,
+    PreparedLocalRegion,
+)
 from .._measure import DiscreteMeasure
-from .._integration_domain import IntegrationDomain
 from .._spaces import BlockDofLayout, DiscreteFieldSpace, EntityDofLayout
 from .._support import DiscreteSupport
 from .._topology import EntitySelection
@@ -951,7 +955,6 @@ class FiniteElementRuntimeData(StrictModule, NonTrainableState):
         )
 
 
-
 def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
     connectivity = mesh.connectivity
     if isinstance(connectivity, PolygonalConnectivity):
@@ -1122,7 +1125,7 @@ class FiniteElementPlan(AbstractDiscretizationPlan):
         return FiniteElementDiscretization(self, numeric_version=numeric_version)
 
 
-class FiniteElementDiscretization(AbstractPreparedDiscretization):
+class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
     mesh: CellMesh
     dof_maps: tuple[FiniteElementDofMap, ...]
     default_runtime: FiniteElementRuntimeData
@@ -1390,6 +1393,34 @@ class FiniteElementDiscretization(AbstractPreparedDiscretization):
             numeric_version=numeric_version,
             geometry_layout_id=self.default_runtime.geometry_layout_id,
         )
+
+    def local_field_binding(self, name: str, /) -> LocalFieldBinding:
+        from ._local_provider import FiniteElementLocalProvider
+
+        return FiniteElementLocalProvider(self).local_field_binding(name)
+
+    def prepare_local_regions(
+        self,
+        domain: IntegrationDomain,
+        /,
+        *,
+        field_names: tuple[str, ...],
+        maximum_derivative_order: int,
+        kernel_mode: str,
+    ) -> tuple[PreparedLocalRegion, ...]:
+        from ._local_provider import FiniteElementLocalProvider
+
+        return FiniteElementLocalProvider(self).prepare_local_regions(
+            domain,
+            field_names=field_names,
+            maximum_derivative_order=maximum_derivative_order,
+            kernel_mode=kernel_mode,
+        )
+
+    def validate_local_runtime(self, runtime: object, /) -> None:
+        from ._local_provider import FiniteElementLocalProvider
+
+        FiniteElementLocalProvider(self).validate_local_runtime(runtime)
 
     @property
     def mass(self) -> SparseLinearMap:

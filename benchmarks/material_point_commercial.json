@@ -1,0 +1,59 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "cases": {
+    "transfer-pic": {
+      "compile_and_first_seconds": 1.7354181250047986,
+      "steady_seconds": 0.0012360833328178462,
+      "particles": 4,
+      "routes": 36
+    },
+    "transfer-flip": {
+      "compile_and_first_seconds": 1.53254525000375,
+      "steady_seconds": 0.0012998750001618948,
+      "particles": 4,
+      "routes": 36
+    },
+    "transfer-pic-flip": {
+      "compile_and_first_seconds": 1.4041653340027551,
+      "steady_seconds": 0.0005685693346701252,
+      "particles": 4,
+      "routes": 36
+    },
+    "transfer-apic": {
+      "compile_and_first_seconds": 1.1467241249993094,
+      "steady_seconds": 0.0005047219989743704,
+      "particles": 4,
+      "routes": 36
+    },
+    "kway-contact": {
+      "compile_and_first_seconds": 0.4199826660042163,
+      "steady_seconds": 0.0013473333334938313,
+      "nodes": 256,
+      "pairs_per_node": 3
+    },
+    "drucker-prager-tangent": {
+      "compile_and_first_seconds": 0.6116712080038269,
+      "steady_seconds": 0.0032782910056994297,
+      "particles": 1024
+    },
+    "distributed-reduction": {
+      "compile_and_first_seconds": 0.0671778340038145,
+      "steady_seconds": 0.00014365266542881727,
+      "shards": 8,
+      "values_per_shard": 4096
+    },
+    "checkpoint": {
+      "write_seconds": 0.0030021250058780424,
+      "restore_seconds": 0.005006124993087724,
+      "bytes": 8575,
+      "payload_id": "c1fb11a3b2284810f5dc14f93aa9dd37033cd149b9bebd9e9452931095f580c4"
+    },
+    "capacity-certificate": {
+      "execution_id": "5a35dcffd4fd1048885aacc851c35b2811bf56c434b24238900380208ba609e3",
+      "certificate_id": "26960bb54743cef945fe77b1a315c22b544d03bd50cfa262f4fd2a4b62253c2a",
+      "peak_memory_bytes": 13696,
+      "routes_per_second": 71326.39368435388
+    }
+  },
+  "passed": true
+}

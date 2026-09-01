@@ -100,31 +100,78 @@ supplies radial/transverse comoving distance, angular/luminosity distance, volum
 finite-epoch time integrals. Native first/second Lagrangian growth remains an explicitly
 flat, smooth-dark-energy, matter-era Newtonian approximation.
 
-Every tabulated product carries a dynamic physical-realization signature, static
-producer/provenance, an enforced differentiability policy, and semantic field metadata.
-`MatterPowerTable` distinguishes cold+baryon, total-matter, and massive-neutrino fields,
-auto/cross power, gauge, linear/nonlinear stage, shot noise, and spatial dimension.
-`LinearTransferTable` preserves signed field transfers. Precision Boltzmann and
-massive-neutrino perturbations remain isolated external calculations through
-`SubprocessLinearTheoryBackend`; their arrays are immutable constant products, not
-custom-gradient primitives.
+Cosmology products separate canonical physical state, dependency projections,
+content identity, producer lineage, and independent derivative capabilities. Immutable
+artifacts carry build, license, resource, parent, completion, and failure evidence.
+`CoordinateLayout`, `LinearObservationPlan`, `PrecisionCovarianceAction`, and
+`CorrelatedGaussianPlan` provide one ordered theory→window→covariance→likelihood path
+for survey and CMB products.
 
-Native product consumers include model-card-checked multiplicative power corrections,
-spherical-overdensity/NFW/linear-variance halo foundations, flat Limber density and
-lensing predictions, linear Kaiser/AP multipoles, canonical CMB spectra/transforms, and
-small-N periodic force qualification. Phydrax does not silently select Halofit, HMcode,
-an emulator, a halo fit/finder, a survey likelihood, or a complete CMB solver.
+Precision transfer products use concrete `ClassLinearTheoryBackend` and
+`CambLinearTheoryBackend` wrappers around user-installed, manifest-pinned isolated
+executables. Their atomic cache keys include the physical request, binary digest, and
+resource policy; cached and fresh products share content identity. The bounded native
+fixed-hierarchy Einstein--Boltzmann/CMB solver returns canonical reference products,
+but precision CLASS/CAMB parity remains intentionally unclaimed.
+
+Bounded native closures include fixed-quadrature one-loop EdS SPT, a locked
+Tinker08/Tinker10/Duffy08 200m halo triplet, a matter halo model, immutable halo
+catalogs, Zheng07 expectation HOD, a release-locked DESI DR1 LRG full-shape Gaussian
+likelihood, a six-species primordial H/He chemistry/cooling source solve, relic/BBN/
+recombination histories, halo/nonlinear composition, lensing planes, light cones, and
+baryonic-feedback reference products. Each retains model/domain/artifact evidence
+rather than acting as an automatic fallback.
+
+`LocalCurvatureValidityPlan` quantifies local-flat geometry indicators without relaxing
+the explicit flat-torus guards. `PeriodicEwaldForcePlan` supplies a converged small-N
+periodic reference, while `MeshMatchedNearFieldGate` only approves a future correction
+when error and pair-capacity budgets pass. Snapshot and distributed-PM classes remain
+interop/feasibility contracts, not production distributed TreePM.
+
+CMB instrument closure uses supplied immutable harmonic synthesis factors, explicit
+HEALPix/IAU products, beam/pointing/white-noise TOD, per-pixel matrix-free normal
+equations, rank evidence, and bandpower handoff. It does not hide an experiment
+pipeline, foreground model, calibrated survey product, or precision theory provider.
 
 Particles use comoving position `x` and canonical momentum `p = m a^2 dx/dt`.
 `ParticleMeshGravityPlan.acceleration` solves the rescaled potential `psi = a Phi` from
 comoving density, `nabla_x^2 psi = 4 pi G (rho_com - mean(rho_com))`. Periodic LPT,
 KDK, collisionless PM, and gas-particle gravity reject nonzero spatial curvature.
 
-`CosmologicalGasParticleGravityPlan` physically couples adiabatic comoving Euler cell
-averages and collisionless particles through one shared periodic density, Poisson solve,
-and endpoint force refresh. It commits or rolls back gas and particles atomically.
-Cooling, chemistry, stars, feedback, MHD, radiation, tree gravity, AMR, and distributed
-particle migration are separate unsupported capabilities.
+Maximal native profiles are isolated behind explicit names rather than enabling broad
+flags on these foundations. `RestrictedScalarTransferPlan` evolves a fixed scalar
+hierarchy from an immutable operator/source table; native thermodynamics, approximation
+phases, spherical-Bessel kernels, line-of-sight projection, and `ParityProfile` evidence
+bound the claim to its declared flat scalar profile. `S3ManifoldPlan` provides global
+closed-manifold geodesics, tangent KDK, supplied hyperspherical basis assets, diagonal
+Laplace--Beltrami Poisson, and measure-aware particle transfer without weakening any
+flat-plan guard.
+
+`ParticleOctreePlan3D` is the single Morton hierarchy for isolated Barnes--Hut,
+uniform Cartesian FMM, and BH-short-range TreePM. `CosmologicalPopulationPlan` owns
+dynamic star/BH slots and replayable event ledgers; stochastic star formation and
+thermal feedback exchange mass, momentum, energy, and reservoirs conservatively.
+Native FoF, direct unbinding, M200m properties, density-peak candidates, and
+core-overlap merger matching remain configuration-space, fixed-capacity, discrete
+products. `TwoLevelAMRPlan` provides ratio-two prolong/restrict, reflux, average-down,
+fine-authoritative composite gravity, particle routing, and atomic epoch commit.
+
+`SurveyCoordinate`, explicit theory products, response/covariance likelihood plans, and
+three concrete slice manifests demonstrate capability composition without a survey god
+object or runtime plugin registry. Every maximal path reports capacity, topology,
+parity, or approximation evidence; distributed particle layout is an ownership contract,
+not an undeclared communication implementation.
+
+Cross-domain reconciliation moves reusable mechanics out of applications:
+`DimensionalScaleContract` owns length/mass/time and physical/comoving/code coordinate
+identity; `phydrax.artifacts` owns checksummed artifacts and derivative capabilities;
+`phydrax.observation` owns labelled products, linear responses, covariance actions, and
+Gaussian likelihoods; core solver gravity owns direct kernels, runtime Morton octrees,
+Barnes--Hut, Cartesian FMM, periodic Ewald, and TreePM; core AMR owns ratio-two
+prolong/restrict/reflux; core KDK owns coefficient-driven proposal/completion; and core
+events own fixed-capacity replay statuses. Cosmology retains scale-factor/canonical/
+periodic/manifold semantics, while astrodynamics retains physical velocity, epoch,
+frame, encounter, and mission semantics.
 
 `WhitenedFieldInferencePlan`, `ParticleMarginalLikelihoodPlan`, and
 `SimulationSensitivityReport` compose existing inference substrates with field-valued

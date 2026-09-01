@@ -19,7 +19,7 @@ def _table():
         physics_policy_id="raw-unlensed-cmb",
         scale_id=background.scale.scale_id,
         source_kind="external",
-        differentiability="constant",
+        differentiation="constant",
     )
     spectra = jnp.zeros((1, 2, 4, 4))
     spectra = spectra.at[0, :, 0, 0].set(jnp.asarray([2.0, 3.0]))

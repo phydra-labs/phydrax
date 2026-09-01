@@ -1,0 +1,11 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "sparse_implicit",
+  "metrics": {
+    "successful": true,
+    "residual_defect": 0.0,
+    "jvp_defect": 0.0,
+    "transpose_defect": 0.0
+  },
+  "passed": true
+}

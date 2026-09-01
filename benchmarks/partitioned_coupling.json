@@ -1,0 +1,15 @@
+{
+  "anderson_execution_seconds": 0.000534875005541835,
+  "anderson_iterations": 4,
+  "anderson_participant_evaluations": 10,
+  "coupling_coefficient": 0.9,
+  "explicit_interface_defect": 0.09999999999999998,
+  "final_interface_residual": 2.55351295663786e-15,
+  "finite": true,
+  "implicit_derivative_error": 1.1102230246251565e-16,
+  "passed": true,
+  "picard_execution_seconds": 0.00035937500069849193,
+  "picard_iterations": 175,
+  "picard_participant_evaluations": 177,
+  "solution_error": 2.1649348980190553e-14
+}

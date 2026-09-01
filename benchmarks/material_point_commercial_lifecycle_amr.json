@@ -1,0 +1,9 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "lifecycle_amr",
+  "metrics": {
+    "restriction_prolongation_parity": 0.0,
+    "levels": 2
+  },
+  "passed": true
+}

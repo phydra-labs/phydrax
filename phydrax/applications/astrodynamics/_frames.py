@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._context import AstrodynamicsContext, AstrodynamicsFrame
+from ._context import AstrodynamicsContext, FrameDefinition
 from ._state import CartesianOrbitState
 from ._status import AstrodynamicsStatus
 
@@ -34,8 +34,8 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
     """Pure source-to-target rotation and moving-origin transform."""
 
     evaluator: Callable
-    source_frame: AstrodynamicsFrame
-    target_frame: AstrodynamicsFrame
+    source_frame: FrameDefinition
+    target_frame: FrameDefinition
     transform_id: str = eqx.field(static=True)
 
     def __init__(
@@ -43,20 +43,18 @@ class KinematicFrameTransform(StrictModule, NonTrainableState):
         evaluator: Callable[
             [Array, Any], tuple[ArrayLike, ArrayLike, ArrayLike, ArrayLike]
         ],
-        source_frame: AstrodynamicsFrame,
-        target_frame: AstrodynamicsFrame,
+        source_frame: FrameDefinition,
+        target_frame: FrameDefinition,
         /,
         *,
         transform_id: str,
     ):
         if not callable(evaluator):
             raise TypeError("evaluator must be callable.")
-        if not isinstance(source_frame, AstrodynamicsFrame) or not isinstance(
-            target_frame, AstrodynamicsFrame
+        if not isinstance(source_frame, FrameDefinition) or not isinstance(
+            target_frame, FrameDefinition
         ):
-            raise TypeError(
-                "Frame transform endpoints must be AstrodynamicsFrame objects."
-            )
+            raise TypeError("Frame transform endpoints must be FrameDefinition objects.")
         identifier = str(transform_id).strip()
         if not identifier:
             raise ValueError("transform_id must be non-empty.")

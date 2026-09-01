@@ -9,8 +9,8 @@ def main():
     astro = phx.applications.astrodynamics
     context = astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
-        astro.ReferenceEpoch(2451545.0, 0.0, "TT"),
-        astro.AstrodynamicsFrame("barycenter", "inertial", pseudo_inertial=True),
+        astro.ReferenceEpoch(astro.TimeInstant(astro.JulianDate(2451545.0, 0.0), "TT")),
+        astro.FrameDefinition("barycenter", "inertial", pseudo_inertial=True),
     )
     particles = phx.discretization.particle.ParticleSetPlan(
         jnp.asarray([0, 1]),

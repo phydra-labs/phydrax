@@ -10,109 +10,99 @@ import equinox as eqx
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import DimensionalScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
-AstrodynamicsTimeScale: TypeAlias = Literal["TAI", "TT", "TDB"]
+AstrodynamicsTimeScale: TypeAlias = Literal[
+    "UTC", "TAI", "GPS", "TT", "TCG", "TDB", "TCB", "UT1"
+]
 
 
-class AstrodynamicsScaleContract(StrictModule, NonTrainableState):
-    """Explicit length, mass, and time scale identity for astrodynamics arrays."""
+AstrodynamicsScaleContract = DimensionalScaleContract
 
-    length_unit: str = eqx.field(static=True)
-    mass_unit: str = eqx.field(static=True)
-    time_unit: str = eqx.field(static=True)
-    length_to_reference: float = eqx.field(static=True)
-    mass_to_reference: float = eqx.field(static=True)
-    time_to_reference: float = eqx.field(static=True)
-    scale_id: str = eqx.field(static=True)
 
-    def __init__(
-        self,
-        length_unit: str,
-        mass_unit: str,
-        time_unit: str,
-        /,
-        *,
-        length_to_reference: float = 1.0,
-        mass_to_reference: float = 1.0,
-        time_to_reference: float = 1.0,
-    ):
-        units = tuple(str(value).strip() for value in (length_unit, mass_unit, time_unit))
-        factors = tuple(
-            float(value)
-            for value in (length_to_reference, mass_to_reference, time_to_reference)
-        )
-        if any(not value for value in units):
-            raise ValueError("Astrodynamics unit names must be non-empty.")
-        if any(not np.isfinite(value) or value <= 0.0 for value in factors):
-            raise ValueError(
-                "Astrodynamics reference factors must be finite and positive."
-            )
-        self.length_unit, self.mass_unit, self.time_unit = units
-        (
-            self.length_to_reference,
-            self.mass_to_reference,
-            self.time_to_reference,
-        ) = factors
-        self.scale_id = canonical_fingerprint(
+class JulianDate(StrictModule, NonTrainableState):
+    """Normalized two-part Julian date without an attached time scale."""
+
+    high: float = eqx.field(static=True)
+    low: float = eqx.field(static=True)
+    date_id: str = eqx.field(static=True)
+
+    def __init__(self, high: float, low: float = 0.0, /):
+        high_ = float(high)
+        low_ = float(low)
+        if not np.isfinite(high_) or not np.isfinite(low_):
+            raise ValueError("Julian-date parts must be finite.")
+        carry = float(np.floor(low_ + 0.5))
+        normalized_high = high_ + carry
+        normalized_low = low_ - carry
+        self.high = normalized_high
+        self.low = normalized_low
+        self.date_id = canonical_fingerprint(
             {
-                "kind": "astrodynamics-scale-contract",
-                "units": list(units),
-                "reference_factors": list(factors),
+                "kind": "julian-date",
+                "high": normalized_high,
+                "low": normalized_low,
             }
         )
 
-    @classmethod
-    def si(cls) -> AstrodynamicsScaleContract:
-        return cls("m", "kg", "s")
+    def difference_seconds(self, other: JulianDate, /) -> float:
+        if not isinstance(other, JulianDate):
+            raise TypeError("other must be a JulianDate.")
+        return ((self.high - other.high) + (self.low - other.low)) * 86400.0
 
-    @property
-    def velocity_unit(self) -> str:
-        return f"{self.length_unit}/{self.time_unit}"
 
-    @property
-    def acceleration_unit(self) -> str:
-        return f"{self.length_unit}/{self.time_unit}^2"
+class TimeInstant(StrictModule, NonTrainableState):
+    """One physical instant represented in an explicit astronomical time scale."""
 
-    @property
-    def gravitational_parameter_unit(self) -> str:
-        return f"{self.length_unit}^3/{self.time_unit}^2"
+    julian_date: JulianDate
+    scale: AstrodynamicsTimeScale = eqx.field(static=True)
+    instant_id: str = eqx.field(static=True)
+
+    def __init__(self, julian_date: JulianDate, scale: AstrodynamicsTimeScale, /):
+        if not isinstance(julian_date, JulianDate):
+            raise TypeError("julian_date must be a JulianDate.")
+        scale_ = str(scale).upper()
+        if scale_ not in ("UTC", "TAI", "GPS", "TT", "TCG", "TDB", "TCB", "UT1"):
+            raise ValueError("Unknown astronomical time scale.")
+        self.julian_date = julian_date
+        self.scale = scale_  # type: ignore[assignment]
+        self.instant_id = canonical_fingerprint(
+            {
+                "kind": "time-instant",
+                "date": julian_date.date_id,
+                "scale": scale_,
+            }
+        )
 
 
 class ReferenceEpoch(StrictModule, NonTrainableState):
-    """Two-part Julian date defining the origin of relative solver time."""
+    """Exact origin from which traced numerical time is measured in seconds."""
 
-    jd1: float = eqx.field(static=True)
-    jd2: float = eqx.field(static=True)
-    time_scale: AstrodynamicsTimeScale = eqx.field(static=True)
+    instant: TimeInstant
     epoch_id: str = eqx.field(static=True)
 
-    def __init__(self, jd1: float, jd2: float, time_scale: AstrodynamicsTimeScale, /):
-        first = float(jd1)
-        second = float(jd2)
-        scale = str(time_scale).upper()
-        if not np.isfinite(first) or not np.isfinite(second):
-            raise ValueError("Reference epoch parts must be finite.")
-        if abs(second) >= 1.0:
-            raise ValueError("Reference epoch jd2 must have magnitude below one day.")
-        if scale not in ("TAI", "TT", "TDB"):
-            raise ValueError("Reference epoch scale must be TAI, TT, or TDB.")
-        self.jd1 = first
-        self.jd2 = second
-        self.time_scale = scale  # type: ignore[assignment]
+    def __init__(self, instant: TimeInstant, /):
+        if not isinstance(instant, TimeInstant):
+            raise TypeError("instant must be a TimeInstant.")
+        if instant.scale == "UTC":
+            raise ValueError("UTC cannot be used as a continuous solver epoch.")
+        self.instant = instant
         self.epoch_id = canonical_fingerprint(
             {
                 "kind": "astrodynamics-reference-epoch",
-                "jd1": first,
-                "jd2": second,
-                "time_scale": scale,
+                "instant": instant.instant_id,
             }
         )
 
+    @property
+    def time_scale(self) -> AstrodynamicsTimeScale:
+        return self.instant.scale
 
-class AstrodynamicsFrame(StrictModule, NonTrainableState):
+
+class FrameDefinition(StrictModule, NonTrainableState):
     """Reference-frame identity for Cartesian astrodynamics states."""
 
     origin_id: str = eqx.field(static=True)
@@ -152,22 +142,22 @@ class AstrodynamicsContext(StrictModule, NonTrainableState):
 
     scale: AstrodynamicsScaleContract
     epoch: ReferenceEpoch
-    frame: AstrodynamicsFrame
+    frame: FrameDefinition
     context_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         scale: AstrodynamicsScaleContract,
         epoch: ReferenceEpoch,
-        frame: AstrodynamicsFrame,
+        frame: FrameDefinition,
         /,
     ):
         if not isinstance(scale, AstrodynamicsScaleContract):
             raise TypeError("scale must be an AstrodynamicsScaleContract.")
         if not isinstance(epoch, ReferenceEpoch):
             raise TypeError("epoch must be a ReferenceEpoch.")
-        if not isinstance(frame, AstrodynamicsFrame):
-            raise TypeError("frame must be an AstrodynamicsFrame.")
+        if not isinstance(frame, FrameDefinition):
+            raise TypeError("frame must be a FrameDefinition.")
         self.scale = scale
         self.epoch = epoch
         self.frame = frame
@@ -189,8 +179,10 @@ class AstrodynamicsContext(StrictModule, NonTrainableState):
 
 __all__ = [
     "AstrodynamicsContext",
-    "AstrodynamicsFrame",
+    "FrameDefinition",
     "AstrodynamicsScaleContract",
     "AstrodynamicsTimeScale",
+    "JulianDate",
     "ReferenceEpoch",
+    "TimeInstant",
 ]

@@ -191,7 +191,7 @@ class FLRWDistancePlan(StrictModule, NonTrainableState):
             physics_policy_id="flrw-background-geometry",
             scale_id=background.scale.scale_id,
             source_kind="native",
-            differentiability="native-parameter",
+            differentiation="native-parameter",
         )
         return FLRWDistanceResult(
             redshift=z,

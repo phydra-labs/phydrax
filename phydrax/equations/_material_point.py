@@ -32,11 +32,17 @@ from ..discretization.mpm import (
     PrescribedGridVelocityPlan,
     RigidMPMContactPlan,
 )
+from ..discretization.mpm._commercial import (
+    MPMClaimTuple,
+    MPMIntendedUse,
+    MPMSupportDecision,
+)
 from ..discretization.particle import ParticleDiscretization
 from ..discretization.splatting import PreparedParticleGridSplat
 
 
 MPMKinematics: TypeAlias = Literal[
+    "one_dimensional",
     "plane_strain",
     "plane_stress",
     "three_dimensional",
@@ -215,6 +221,8 @@ class MaterialPointProblemIR(StrictModule, NonTrainableState):
     material: AbstractMPMConstitutivePlan
     external_acceleration: ExternalMPMAcceleration | None
     external_acceleration_id: str | None = eqx.field(static=True)
+    intended_use: MPMIntendedUse | None
+    claim: MPMClaimTuple | None
     problem_id: str = eqx.field(static=True)
 
     def __init__(
@@ -225,6 +233,8 @@ class MaterialPointProblemIR(StrictModule, NonTrainableState):
         *,
         external_acceleration: ExternalMPMAcceleration | None = None,
         external_acceleration_id: str | None = None,
+        intended_use: MPMIntendedUse | None = None,
+        claim: MPMClaimTuple | None = None,
         problem_id: str | None = None,
     ):
         name_ = str(name)
@@ -238,12 +248,24 @@ class MaterialPointProblemIR(StrictModule, NonTrainableState):
             raise ValueError("external_acceleration_id requires external acceleration.")
         if external_acceleration is not None and not external_acceleration_id:
             raise ValueError("External acceleration requires a stable non-empty ID.")
+        if (intended_use is None) != (claim is None):
+            raise ValueError(
+                "MPM intended use and claim tuple must be supplied together."
+            )
+        if intended_use is not None and not isinstance(intended_use, MPMIntendedUse):
+            raise TypeError("intended_use must be MPMIntendedUse or None.")
+        if claim is not None and not isinstance(claim, MPMClaimTuple):
+            raise TypeError("claim must be MPMClaimTuple or None.")
         generated = canonical_fingerprint(
             {
                 "kind": "material-point-problem-ir",
                 "name": name_,
                 "material": material.plan_id,
                 "external_acceleration": external_acceleration_id,
+                "intended_use": (
+                    None if intended_use is None else intended_use.intended_use_id
+                ),
+                "claim": None if claim is None else claim.claim_id,
             }
         )
         identifier = generated if problem_id is None else str(problem_id)
@@ -253,6 +275,8 @@ class MaterialPointProblemIR(StrictModule, NonTrainableState):
         self.material = material
         self.external_acceleration = external_acceleration
         self.external_acceleration_id = external_acceleration_id
+        self.intended_use = intended_use
+        self.claim = claim
         self.problem_id = identifier
 
 
@@ -260,6 +284,9 @@ class CompiledMaterialPointProblem(StrictModule, NonTrainableState):
     problem: MaterialPointProblemIR
     dynamics: PreparedMPMDynamics
     discretization_bundle: DiscretizationBundle
+    claim_id: str = eqx.field(static=True)
+    intended_use_id: str | None = eqx.field(static=True)
+    support_decision_id: str | None = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
 
     def __init__(
@@ -268,6 +295,8 @@ class CompiledMaterialPointProblem(StrictModule, NonTrainableState):
         dynamics: PreparedMPMDynamics,
         discretization_bundle: DiscretizationBundle,
         /,
+        *,
+        support_decision: MPMSupportDecision | None = None,
     ):
         if not isinstance(problem, MaterialPointProblemIR):
             raise TypeError("problem must be MaterialPointProblemIR.")
@@ -275,15 +304,38 @@ class CompiledMaterialPointProblem(StrictModule, NonTrainableState):
             raise TypeError("dynamics must be PreparedMPMDynamics.")
         if not isinstance(discretization_bundle, DiscretizationBundle):
             raise TypeError("discretization_bundle must be DiscretizationBundle.")
+        if support_decision is not None:
+            if not isinstance(support_decision, MPMSupportDecision):
+                raise TypeError("support_decision must be MPMSupportDecision or None.")
+            support_decision.require_supported()
+            if (
+                problem.claim is None
+                or support_decision.claim.claim_id != problem.claim.claim_id
+            ):
+                raise ValueError("Support decision does not match the problem claim.")
+        elif problem.claim is not None:
+            raise ValueError("Claimed MPM problems require an explicit support decision.")
         self.problem = problem
         self.dynamics = dynamics
         self.discretization_bundle = discretization_bundle
+        self.claim_id = (
+            "experimental-unclaimed" if problem.claim is None else problem.claim.claim_id
+        )
+        self.intended_use_id = (
+            None if problem.intended_use is None else problem.intended_use.intended_use_id
+        )
+        self.support_decision_id = (
+            None if support_decision is None else support_decision.decision_id
+        )
         self.compilation_id = canonical_fingerprint(
             {
                 "kind": "compiled-material-point-problem",
                 "problem": problem.problem_id,
                 "dynamics": dynamics.prepared_id,
                 "bundle": discretization_bundle.bundle_id,
+                "claim": self.claim_id,
+                "intended_use": self.intended_use_id,
+                "support_decision": self.support_decision_id,
             }
         )
 
@@ -320,6 +372,7 @@ def compile_material_point_problem(
     nodal_fields: MPMNodalFieldPlan | None = None,
     active_blocks: MPMActiveBlockPlan | None = None,
     resource_policy: MPMResourcePolicy | None = None,
+    support_decision: MPMSupportDecision | None = None,
 ) -> CompiledMaterialPointProblem:
     if not isinstance(problem, MaterialPointProblemIR):
         raise TypeError("problem must be MaterialPointProblemIR.")
@@ -366,18 +419,23 @@ def compile_material_point_problem(
         resource_evidence_id=dynamics.resource_evidence_id,
     )
     bundle = DiscretizationBundle((particle_record, transfer_record, method_record))
-    return CompiledMaterialPointProblem(problem, dynamics, bundle)
+    return CompiledMaterialPointProblem(
+        problem,
+        dynamics,
+        bundle,
+        support_decision=support_decision,
+    )
 
 
 __all__ = [
-    "AbstractMPMConstitutivePlan",
     "AbstractImplicitMPMConstitutivePlan",
+    "AbstractMPMConstitutivePlan",
     "CompiledMaterialPointProblem",
     "ExternalMPMAcceleration",
-    "MPMConstitutiveResponse",
     "MPMConstitutiveCapabilities",
-    "MPMLinearizedConstitutiveResponse",
+    "MPMConstitutiveResponse",
     "MPMKinematics",
+    "MPMLinearizedConstitutiveResponse",
     "MaterialPointArguments",
     "MaterialPointProblemIR",
     "compile_material_point_problem",

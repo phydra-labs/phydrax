@@ -1,0 +1,11 @@
+{
+  "qualification": "deformable-contact",
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "barrier_derivative_defect": 3.1172078251984203e-09,
+  "candidate_complete": true,
+  "ccd_successful": true,
+  "ccd_step_size": 0.39999999403953557,
+  "ccd_interval_count": 108,
+  "qualified": true
+}

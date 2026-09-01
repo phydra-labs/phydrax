@@ -1,0 +1,9 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "commercial_release",
+  "metrics": {
+    "releasable": true,
+    "reasons": []
+  },
+  "passed": true
+}

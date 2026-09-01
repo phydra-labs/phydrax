@@ -7,14 +7,18 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...observation import (
+    CholeskyCovarianceAction,
+    CoordinateLayout,
+    LinearObservationPlan,
+    TheoryVector,
+)
 from ._products import CosmologyProductProvenance, CosmologyRealizationSignature
 
 
@@ -160,7 +164,7 @@ class CmbSpectrumTable(StrictModule):
             | jnp.any(jnp.abs(values - jnp.swapaxes(values, -1, -2)) > 1.0e-10),
             "CMB spectra must be finite and symmetric.",
         )
-        if provenance.differentiability != "native-parameter":
+        if not provenance.differentiation.stored_values:
             ell = jax.lax.stop_gradient(ell)
             values = jax.lax.stop_gradient(values)
         self.multipoles = ell
@@ -255,12 +259,13 @@ class CmbBandpowerResponseResult(StrictModule):
 
 
 class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
-    """Fixed theory-vector windows and Cholesky-whitened bandpower likelihood."""
+    """CMB-specific packing over the core response and covariance actions."""
 
     transform: CmbSpectrumTransformPlan
-    windows: Array
+    response: LinearObservationPlan
+    covariance: CholeskyCovarianceAction
+    window_shape: tuple[int, int, int] = eqx.field(static=True)
     observed_bandpowers: Array
-    covariance_cholesky: Array
     expected_temperature_unit: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -295,20 +300,41 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
         identifier = str(response_id).strip()
         if not unit or not identifier:
             raise ValueError("CMB response unit and ID must be non-empty.")
+        source = CoordinateLayout(
+            tuple(
+                f"{identifier}:theory:{index}"
+                for index in range(windows_host.shape[1] * windows_host.shape[2])
+            )
+        )
+        target = CoordinateLayout(
+            tuple(f"{identifier}:band:{index}" for index in range(bands))
+        )
         self.transform = transform
-        self.windows = jnp.asarray(windows_host)
+        self.response = LinearObservationPlan(
+            windows_host.reshape((bands, -1)), source, target
+        )
+        self.covariance = CholeskyCovarianceAction(cholesky_host, target)
+        self.window_shape = tuple(int(value) for value in windows_host.shape)
         self.observed_bandpowers = jnp.asarray(observed_host)
-        self.covariance_cholesky = jnp.asarray(cholesky_host)
         self.expected_temperature_unit = unit
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "cmb-bandpower-response",
+                "kind": "cmb-bandpower-response-adapter",
                 "response_id": identifier,
                 "transform": transform.plan_id,
-                "shape": list(windows_host.shape),
+                "response": self.response.plan_id,
+                "covariance": self.covariance.action_id,
                 "temperature_unit": unit,
             }
         )
+
+    @property
+    def windows(self) -> Array:
+        return self.response.matrix.reshape(self.window_shape)
+
+    @property
+    def covariance_cholesky(self) -> Array:
+        return self.covariance.lower_cholesky
 
     def evaluate(self, table: CmbSpectrumTable, /) -> CmbBandpowerResponseResult:
         if not isinstance(table, CmbSpectrumTable):
@@ -316,13 +342,17 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
         if table.temperature_unit != self.expected_temperature_unit:
             raise ValueError("CMB table temperature unit does not match response.")
         packed = self.transform.pack(table)
-        if packed.shape != self.windows.shape[1:]:
+        if packed.size != self.response.source.size:
             raise ValueError("CMB packed theory grid does not match response windows.")
-        predicted = contract("brl,rl->b", self.windows, packed)
+        predicted = self.response.apply(
+            TheoryVector(
+                packed.reshape((-1,)),
+                self.response.source,
+                table.provenance.provenance_id,
+            )
+        ).values
         residual = self.observed_bandpowers - predicted
-        whitened = jsp.linalg.solve_triangular(
-            self.covariance_cholesky, residual, lower=True
-        )
+        whitened = self.covariance.whiten(residual)
         valid = jnp.all(jnp.isfinite(predicted)) & jnp.all(jnp.isfinite(whitened))
         return CmbBandpowerResponseResult(
             predicted,

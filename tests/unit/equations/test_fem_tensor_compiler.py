@@ -16,12 +16,12 @@ from phydrax.discretization.fem._precision import FiniteElementPrecisionPolicy
 from phydrax.discretization.fem._reference_operator import (
     PreparedFiniteElementReference,
 )
-from phydrax.equations._variational import VariationalCoefficient
 from phydrax.equations._finite_element_variational import (
     FiniteElementForm,
     MassAction,
     PairwiseVolumeFluxAction,
 )
+from phydrax.equations._variational import VariationalCoefficient
 from phydrax.equations.fem._execution import (
     FiniteElementMassPolicy,
     TensorProductPartialAssemblyOperator,
@@ -300,14 +300,15 @@ def test_compiler_keys_bind_reference_layout_and_semantics_not_coefficient_value
     second = programs[1].worksets[0].signature
 
     assert first.signature_id == second.signature_id
-    assert first.prepared_reference_id == programs[0].worksets[0].reference.prepared_id
-    assert first.element_id == discretization.elements[0][0].element_id
-    assert first.coordinate_element_id == discretization.coordinate_elements[0].element_id
-    assert first.representation == "point_value"
-    assert first.mapping == "identity"
+    assert first.reference_action_ids == second.reference_action_ids
+    assert first.field_layout_ids == second.field_layout_ids
+    assert first.geometry_action_id == second.geometry_action_id
     assert first.coefficient_layout_ids == second.coefficient_layout_ids
     assert first.local_kernel == "collocated"
-    assert tables[0].bindings[0].reference_ids == tables[1].bindings[0].reference_ids
+    assert (
+        tables[0].bindings[0].reference_action_ids
+        == tables[1].bindings[0].reference_action_ids
+    )
     assert tables[0].bindings[0].ir_semantics_id == programs[0].ir.actions[0].action_id
 
 

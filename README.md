@@ -44,10 +44,18 @@ Most workflows are composing a few primitives:
   microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
   response, fixed-population and dynamically reseeded free-surface/multiphase
   FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
-  fluxes, fixed-capacity AMR, field spaces, measures, transfers,
-  fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
-  source processes, compatible constrained MHD, temporal/stochastic composition,
-  and auditable plan/preparation identities.
+  fluxes, fixed-capacity AMR, collision surfaces, deterministic contact candidate
+  epochs, conservative continuous-collision and simplex-inversion bounds,
+  convergent barrier contact, lagged friction, field spaces, measures, transfers,
+  fixed-temporal differentiable replay, typed transactional partitioned coupling,
+  fixed-grid waveform exchange, transactional gravity/cooling/stochastic source
+  processes, compatible constrained MHD, temporal/stochastic composition, and
+  auditable plan/preparation identities.
+- **Isogeometric analysis**: a deliberately bounded S1 path prepares regular,
+  untrimmed, full-dimensional two-dimensional single-patch NURBS maps and
+  exactly isoparametric scalar H1 fields with frozen clamped isotropic knot
+  grids, positive gauge-fixed weights, explicit Gauss rules, homogeneous trace
+  constraints, and matrix-free sum-factorized finite-element forms.
 - **Virtual elements**: enhanced conforming degree-one-through-three polygonal
   functional spaces expose certified H1/L2 projectors, explicit stabilization,
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
@@ -132,16 +140,19 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
-- **Astrodynamics**: explicit scale/epoch/frame contexts, Cartesian and modified
-  equinoctial states, universal-variable Kepler propagation, branch-explicit Lambert
-  transfer, native force composition, tabulated ephemerides, orbital events, direct
-  and nearly-Keplerian N-body dynamics, CR3BP, rigid spacecraft loads, and measurement
-  Jacobians reuse the existing differential, geometric, particle, control, and
-  nonlinear substrates.
-- **Astrophysical observations**: observer projection, polynomial limb-darkened
-  occultation, photon-counting bandpasses, binned/image/frequency responses, ordered
-  ray transfer, static complex-field operators, and CMB bandpower responses compose
-  with existing likelihood, state-space, posterior, and BlackJAX contracts.
+- **Astrodynamics**: exact astronomical time routes, IERS Earth orientation,
+  compiled frame graphs, pinned ephemerides and interchange, universal/analytical/
+  DSST/IAS15 propagation, harmonic/environment/relativistic forces, bounded events
+  and maneuvers, direct and hierarchical N-body gravity, coupled variable-mass
+  spacecraft, tracking, variational dynamics, orbit determination, access,
+  targeting, and conjunction products reuse the existing solver, geometry,
+  particle, linear-algebra, nonlinear, control, state-space, and UQ owners.
+- **Astrophysics and cosmology**: calibrated TAN/SIP imaging, surveys, scalar and
+  polarized radiative transfer, waveform/QNM detectors, oblate occultation,
+  microlensing, native relic/BBN/recombination/Einstein--Boltzmann evolution,
+  nonlinear halo/lensing/light-cone products, and compact-object EOS/TOV models
+  compose existing observation, integration, spherical, likelihood, posterior,
+  and BlackJAX contracts.
 - **Learned field evolution**: fixed physical measures project PDE rates onto
   selected model tangents, Diffrax evolves the resulting parameter ODE, and
   backward Diffrax characteristics feed optional time-slice field projection.
@@ -205,10 +216,12 @@ thin labeled-domain adapter used by sampling, integration, and constraints. See 
 
 Numerical supports and finite field spaces live in `phx.discretization`, including
 bounded, periodic, half-line, and real-line global tensor bases; rational Chebyshev
-transforms and spectral resolution evidence; material-particle supports and
-conservative SPH; and exact-sampling round-sphere spaces with S2FFT transforms,
-Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
+transforms and spectral resolution evidence; the bounded two-dimensional
+single-patch isogeometric path; material-particle supports and conservative SPH;
+and exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami
+actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
+[isogeometric-analysis guide](docs/guides_isogeometric_analysis.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the
@@ -218,6 +231,13 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [MPM domain guide](docs/guides_mpm_particle_domains.md), the
 [MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
 [MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
+[commercial MPM architecture guide](docs/guides_mpm_commercial_architecture.md), the
+[commercial MPM transfer guide](docs/guides_mpm_commercial_transfers.md), the
+[commercial MPM contact/implicit guide](docs/guides_mpm_commercial_contact_implicit.md), the
+[commercial MPM geomechanics guide](docs/guides_mpm_commercial_geomechanics.md), the
+[commercial MPM scale/operations guide](docs/guides_mpm_commercial_scale_operations.md), the
+[commercial MPM derivatives/VVUQ guide](docs/guides_mpm_commercial_derivatives_vvuq.md), the
+[deformable-contact guide](docs/guides_deformable_contact.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -226,7 +246,8 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
-[solver-substrate guide](docs/guides_solver_substrates.md), and the
+[solver-substrate guide](docs/guides_solver_substrates.md), the
+[partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 
 Finite molecular learning and conservative atomistic dynamics live in
