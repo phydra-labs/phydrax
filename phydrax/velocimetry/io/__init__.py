@@ -43,15 +43,6 @@ from ._openptv import (
     write_openptv_tracks,
 )
 from ._pivlab import PIVlabStage, PIVlabYAxis, read_pivlab, write_pivlab
-from ._report import (
-    AdapterDirection,
-    AdapterError,
-    AdapterLoss,
-    AdapterLossCategory,
-    AdapterReport,
-    AdapterStatus,
-    require_lossless,
-)
 from ._xarray import (
     from_pivpy,
     from_xarray,
@@ -66,12 +57,6 @@ from ._xarray import (
 
 
 __all__ = [
-    "AdapterDirection",
-    "AdapterError",
-    "AdapterLoss",
-    "AdapterLossCategory",
-    "AdapterReport",
-    "AdapterStatus",
     "ImageLoader",
     "LazyImageSequence2D",
     "LearnedPIVArtifact",
@@ -101,7 +86,6 @@ __all__ = [
     "read_pivlab",
     "read_velocimetry_archive",
     "register_learned_piv_model",
-    "require_lossless",
     "require_pivpy",
     "require_xarray",
     "save_learned_piv_artifact",

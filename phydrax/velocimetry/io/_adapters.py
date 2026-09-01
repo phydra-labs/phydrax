@@ -12,11 +12,11 @@ import numpy as np
 
 from ...discretization import AxisDiscretization, AxisDomain, PreparedTensorGrid
 from ...dynamics import StateLayout, TrajectoryData
+from ...interchange import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 from ...stochastic import ObservationSequence
 from ..piv import PhysicalPIVResult2D
 from ..tracking import to_trajectory_data as native_tracks_to_trajectory_data, TrackResult
 from ._openptv import OpenPTVTrackRecords
-from ._report import AdapterError, AdapterLoss, AdapterReport, AdapterStatus
 
 
 PhysicalPIVValue = Literal["displacement", "velocity"]

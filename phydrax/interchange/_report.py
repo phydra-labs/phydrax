@@ -6,16 +6,18 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Literal
+from typing import final, Literal
 
 import equinox as eqx
 
-from ..._strict import StrictModule
-from ..._trainable import NonTrainableState
+from .._strict import StrictModule
+from .._trainable import NonTrainableState
 
 
-AdapterDirection = Literal["import", "export"]
-AdapterLossCategory = Literal["dropped", "synthesized", "transformed", "unsupported"]
+_AdapterDirection = Literal["import", "export"]
+_AdapterLossCategory = Literal[
+    "dropped", "synthesized", "transformed", "unsupported"
+]
 
 
 class AdapterStatus(IntEnum):
@@ -29,20 +31,21 @@ class AdapterStatus(IntEnum):
     INCONSISTENT_SOURCE = 5
 
 
+@final
 class AdapterLoss(StrictModule, NonTrainableState):
     """One exact semantic change made by an external-format adapter."""
 
     path: str = eqx.field(static=True)
-    direction: AdapterDirection = eqx.field(static=True)
-    category: AdapterLossCategory = eqx.field(static=True)
+    direction: _AdapterDirection = eqx.field(static=True)
+    category: _AdapterLossCategory = eqx.field(static=True)
     rationale: str = eqx.field(static=True)
     changes_interpretation: bool = eqx.field(static=True)
 
     def __init__(
         self,
         path: str,
-        direction: AdapterDirection,
-        category: AdapterLossCategory,
+        direction: _AdapterDirection,
+        category: _AdapterLossCategory,
         rationale: str,
         /,
         *,
@@ -63,6 +66,7 @@ class AdapterLoss(StrictModule, NonTrainableState):
         self.changes_interpretation = bool(changes_interpretation)
 
 
+@final
 class AdapterReport(StrictModule, NonTrainableState):
     """Auditable status and semantic accounting for one conversion."""
 
@@ -144,10 +148,8 @@ def _strings(values: Sequence[str], owner: str, /) -> tuple[str, ...]:
 
 
 __all__ = [
-    "AdapterDirection",
     "AdapterError",
     "AdapterLoss",
-    "AdapterLossCategory",
     "AdapterReport",
     "AdapterStatus",
     "require_lossless",

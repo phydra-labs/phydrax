@@ -15,7 +15,7 @@ import numpy as np
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._report import (
+from ...interchange import (
     AdapterError,
     AdapterLoss,
     AdapterReport,

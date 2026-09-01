@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...interchange import AdapterError, AdapterStatus
 from ..imaging import DenseDisplacementField2D
-from ._report import AdapterError, AdapterStatus
 
 
 def field_from_columns(
