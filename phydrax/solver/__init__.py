@@ -123,7 +123,15 @@ from ._characteristic_projection import (
     solve_characteristic_projection,
     trace_characteristics,
 )
+from ._chemical_reactor import (
+    ChemicalReactorKind,
+    ChemicalReactorPlan,
+    ChemicalReactorSolution,
+    ChemicalReactorThermodynamicState,
+    PreparedChemicalReactorDynamics,
+)
 from ._cochain_electrostatic import (
+    CochainElectrostaticBoundaryPlan,
     CochainElectrostaticPlan,
     CochainElectrostaticResult,
     ElectrostaticBoundaryKind,
@@ -181,6 +189,8 @@ from ._convergence import (
     weak_observable_estimate,
     WeakObservableEstimate,
 )
+from ._convolution_quadrature import *  # noqa: F403
+from ._convolution_quadrature import __all__ as _convolution_quadrature_all
 from ._coupled import (
     CoupledCost,
     CoupledHierarchyResult,
@@ -189,6 +199,12 @@ from ._coupled import (
     CoupledObservable,
     CoupledValidity,
     solve_coupled_hierarchy,
+)
+from ._coupled_field_checkpoint import (
+    CoupledFieldCheckpoint,
+    CoupledFieldCheckpointPlan,
+    read_coupled_field_checkpoint,
+    write_coupled_field_checkpoint,
 )
 from ._dae_initialization import (
     DAEInitializationMode,
@@ -308,6 +324,18 @@ from ._driving_path import (
     PiecewiseLinearDrivingPath,
 )
 from ._dynamics_evolution import DiffraxEvolution
+from ._elasticity_boundary import *  # noqa: F403
+from ._elasticity_boundary import __all__ as _elasticity_boundary_all
+from ._electrode_reaction import (
+    ReactiveElectrodeEvaluation,
+    ReactiveElectrodePlan,
+    ReactiveElectrodeState,
+    ReactiveElectrodeStepResult,
+)
+from ._electrohydrodynamic import (
+    CochainMACTransferPlan,
+    ElectrohydrodynamicCouplingEvaluation,
+)
 from ._electromagnetic_pic import (
     ElectromagneticPICDiagnostics,
     ElectromagneticPICFixedStepMethod,
@@ -339,6 +367,10 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._fem_bem_scalar import *  # noqa: F403
+from ._fem_bem_scalar import __all__ as _fem_bem_scalar_all
+from ._fem_bem_vector import *  # noqa: F403
+from ._fem_bem_vector import __all__ as _fem_bem_vector_all
 from ._fem_multirate import (
     conservative_multirate_flux,
     DGInterfaceFluxResult,
@@ -567,6 +599,8 @@ from ._hybrid_schedule import (
     HybridScheduleResult,
     ScheduledHybridEvent,
 )
+from ._hydrodynamic_response import *  # noqa: F403
+from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
 from ._ias15 import IAS15Plan, IAS15Result
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -895,6 +929,8 @@ from ._material_point_rollout import (
     ScheduledMPMRolloutPlan,
 )
 from ._material_point_supervisor import MPMOperationalResult, MPMRunSupervisor
+from ._maxwell_boundary import *  # noqa: F403
+from ._maxwell_boundary import __all__ as _maxwell_boundary_all
 from ._maxwell_reduced import (
     CompatibleMaxwell1DPlan,
     CompatibleMaxwell1DState,
@@ -941,6 +977,14 @@ from ._multirate import (
     MultiratePartitionedRK,
     PartitionedDifferentialProblem,
     solve_multirate,
+)
+from ._nematic import (
+    MACNematicCouplingEvaluation,
+    MACNematicCouplingPlan,
+    NematicEvaluation,
+    NematicStepResult,
+    PreparedNematicDynamics,
+    PreparedNematicSemiImplicitStepPlan,
 )
 from ._neural_cde import (
     neural_cde_loss,
@@ -1050,10 +1094,19 @@ from ._particles import (
     ParticleVectorField,
     solve_interacting_particles,
 )
+from ._periodic_vector_boundary import *  # noqa: F403
+from ._periodic_vector_boundary import __all__ as _periodic_vector_boundary_all
 from ._pic_current_source import (
     PICMaxwellCurrentSourcePlan,
     PreparedPICMaxwellCurrentSource,
 )
+from ._poisson_nernst_planck import (
+    PoissonNernstPlanckEvaluation,
+    PoissonNernstPlanckPlan,
+    PoissonNernstPlanckStepResult,
+)
+from ._potential_flow_hydrodynamics import *  # noqa: F403
+from ._potential_flow_hydrodynamics import __all__ as _hydrodynamics_all
 from ._probabilistic_ode import (
     PROBABILISTIC_ODE_NONFINITE,
     probabilistic_ode_status_name,
@@ -1234,6 +1287,10 @@ from ._rough_delay import (
 )
 from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 from ._rough_logode import LinearLogODE, LogODE
+from ._scalar_boundary3d import *  # noqa: F403
+from ._scalar_boundary3d import __all__ as _scalar_boundary_all
+from ._scalar_interfaces3d import *  # noqa: F403
+from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
 from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
 from ._self_gravity import (
     NewtonianGravityDiagnostics,
@@ -1308,6 +1365,8 @@ from ._stinespring_tomography import (
     StinespringTomographyProblem,
     StinespringTomographyResult,
 )
+from ._stokes_boundary import *  # noqa: F403
+from ._stokes_boundary import __all__ as _stokes_boundary_all
 from ._structured_incompressible import (
     MACPressureProjectionPlan,
     MACPressureProjectionResult,
@@ -1577,6 +1636,31 @@ __all__ = [
     "CochainMultirateDiagnostics",
     "CochainMultiratePlan",
     "CochainRatePartition",
+    "ChemicalReactorKind",
+    "ChemicalReactorPlan",
+    "ChemicalReactorSolution",
+    "ChemicalReactorThermodynamicState",
+    "PreparedChemicalReactorDynamics",
+    "CochainMACTransferPlan",
+    "ElectrohydrodynamicCouplingEvaluation",
+    "MACNematicCouplingEvaluation",
+    "MACNematicCouplingPlan",
+    "NematicEvaluation",
+    "NematicStepResult",
+    "PoissonNernstPlanckEvaluation",
+    "PoissonNernstPlanckPlan",
+    "PoissonNernstPlanckStepResult",
+    "PreparedNematicDynamics",
+    "PreparedNematicSemiImplicitStepPlan",
+    "ReactiveElectrodeEvaluation",
+    "ReactiveElectrodePlan",
+    "ReactiveElectrodeState",
+    "ReactiveElectrodeStepResult",
+    "CoupledFieldCheckpoint",
+    "CoupledFieldCheckpointPlan",
+    "read_coupled_field_checkpoint",
+    "write_coupled_field_checkpoint",
+    "CochainElectrostaticBoundaryPlan",
     "CochainElectrostaticPlan",
     "CochainElectrostaticResult",
     "ElectrostaticBoundaryKind",
@@ -2431,6 +2515,29 @@ __all__ += [
         *_vortex_lattice_all,
         *_vortex_panels_all,
         *_vortex_step_all,
+    )
+    if name not in __all__
+]
+__all__ += [
+    name
+    for name in (
+        *_convolution_quadrature_all,
+        *_elasticity_boundary_all,
+        *_fem_bem_scalar_all,
+        *_hydrodynamics_all,
+        *_maxwell_boundary_all,
+        *_scalar_boundary_all,
+        *_stokes_boundary_all,
+    )
+    if name not in __all__
+]
+__all__ += [
+    name
+    for name in (
+        *_fem_bem_vector_all,
+        *_hydrodynamic_response_all,
+        *_periodic_vector_boundary_all,
+        *_scalar_interfaces_all,
     )
     if name not in __all__
 ]

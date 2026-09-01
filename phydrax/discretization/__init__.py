@@ -6,6 +6,7 @@
 
 from . import (
     amr,
+    bem as bem,
     collocation,
     contact,
     fem,
@@ -61,6 +62,11 @@ from ._cochain import (
     CochainFieldSpec,
     CochainSampling,
     CochainSide,
+)
+from ._cochain_electrochemical import (
+    CochainElectrochemicalFluxEvaluation,
+    PreparedCochainElectrochemicalFlux,
+    stable_bernoulli,
 )
 from ._core import (
     DiscretizationCapability,
@@ -214,6 +220,8 @@ from .amr import (
     TwoLevelAMRPlan,
     TwoLevelAMRState,
 )
+from .bem import *  # noqa: F403
+from .bem import __all__ as _bem_all
 from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
 from .contact import (
     canonical_contact_route_keys,
@@ -2258,6 +2266,9 @@ __all__ = [
     "periodic_finite_difference",
     "SpectralDecomposition",
     "StructuredAxis",
+    "CochainElectrochemicalFluxEvaluation",
+    "PreparedCochainElectrochemicalFlux",
+    "stable_bernoulli",
     "StructuredCochainBridge",
     "StructuredCoarsening",
     "StructuredMGCompatibility",
@@ -3191,3 +3202,4 @@ __all__ += [
     for name in (*_discrete_velocity_all, *_lattice_boltzmann_all, *_vortex_all)
     if name not in __all__
 ]
+__all__ += [name for name in _bem_all if name not in __all__]

@@ -19,15 +19,18 @@ def _problem(
     particles = phx.discretization.ParticleSetPlan(
         jnp.asarray([0]), jnp.ones((1,)), ambient_dimension=2
     ).prepare()
-    schema = phx.equations.ParticleSpeciesSchema(
+    schema = phx.equations.ChemicalSpeciesSchema(
         ("A",),
-        (phx.equations.ParticlePhase.SOLID,),
+        (phx.equations.ChemicalPhaseKind.SOLID,),
         jnp.asarray([1.0]),
         ("X",),
         jnp.asarray([[1]]),
+        jnp.zeros_like(jnp.asarray([1.0]), dtype=jnp.int32),
     )
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
-        schema, jnp.asarray([10.0]), jnp.asarray([0.0])
+        phx.equations.PolynomialSpeciesThermodynamicsPlan(
+            schema, jnp.asarray([10.0]), jnp.asarray([0.0])
+        )
     )
     material = phx.equations.ParticleThermochemicalMaterialBundle(
         thermodynamics,

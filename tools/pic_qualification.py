@@ -46,7 +46,9 @@ def run_pic_qualification(*, smoke=False):
         transfers.append(
             phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(charged)
         )
-    field = phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic")
+    field = phx.solver.CochainElectrostaticPlan(
+        bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+    )
     plan = phx.solver.ElectrostaticPICPlan(field, tuple(transfers))
     state = plan.initialize(
         (base + 0.002 * jnp.sin(2.0 * jnp.pi * base), base),
@@ -64,9 +66,7 @@ def run_pic_qualification(*, smoke=False):
         jnp.asarray([True]),
         1.0e-3,
     )
-    speed_defect = jnp.abs(
-        jnp.sum(pushed.proper_velocity**2) - jnp.sum(proper**2)
-    )
+    speed_defect = jnp.abs(jnp.sum(pushed.proper_velocity**2) - jnp.sum(proper**2))
     successful = bool(
         step.successful
         and pushed.successful

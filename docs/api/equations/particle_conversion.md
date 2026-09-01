@@ -2,11 +2,11 @@
 
 ## Species and thermodynamics
 
-::: phydrax.equations.ParticlePhase
+::: phydrax.equations.ChemicalPhaseKind
 
 ---
 
-::: phydrax.equations.ParticleSpeciesSchema
+::: phydrax.equations.ChemicalSpeciesSchema
 
 ---
 
@@ -30,7 +30,7 @@
 
 ## Reactions and phase change
 
-::: phydrax.equations.ParticleReactionNetworkPlan
+::: phydrax.equations.ParticleReactionProcessPlan
 
 ---
 

@@ -4,14 +4,11 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
@@ -23,100 +20,36 @@ from ..discretization.particle._particle_internal_state import ParticleInternalB
 from ..discretization.particle._particle_internal_unstructured import (
     PreparedUnstructuredParticleInternalMesh,
 )
+from ._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
+from ._chemical_thermodynamics import AbstractSpeciesThermodynamicsPlan
 
 
 _UNIVERSAL_GAS_CONSTANT = 8.31446261815324
 
 
-class ParticlePhase(StrEnum):
-    SOLID = "solid"
-    LIQUID = "liquid"
-    GAS = "gas"
-    INERT = "inert"
+@jax.custom_jvp
+def _implicit_temperature_value(
+    temperature,
+    internal_energy,
+    species_amount,
+    molar_internal_energy,
+    molar_heat_capacity,
+):
+    del internal_energy, species_amount, molar_internal_energy, molar_heat_capacity
+    return temperature
 
 
-class ParticleSpeciesSchema(StrictModule, NonTrainableState):
-    species_names: tuple[str, ...] = eqx.field(static=True)
-    phase_ids: Array
-    molar_masses: Array
-    element_names: tuple[str, ...] = eqx.field(static=True)
-    element_composition: Array
-    species_count: int = eqx.field(static=True)
-    element_count: int = eqx.field(static=True)
-    schema_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        species_names,
-        phases,
-        molar_masses: ArrayLike,
-        element_names,
-        element_composition: ArrayLike,
-        /,
-        *,
-        schema_id: str | None = None,
-    ):
-        names = tuple(str(value) for value in species_names)
-        phase_values = tuple(phases)
-        masses = np.asarray(molar_masses, dtype=float)
-        elements = tuple(str(value) for value in element_names)
-        composition = np.asarray(element_composition)
-        if (
-            not names
-            or any(not value for value in names)
-            or len(set(names)) != len(names)
-            or masses.shape != (len(names),)
-            or np.any(~np.isfinite(masses))
-            or np.any(masses <= 0.0)
-        ):
-            raise ValueError("Species names and molar masses are invalid.")
-        if len(phase_values) != len(names) or any(
-            not isinstance(value, ParticlePhase) for value in phase_values
-        ):
-            raise TypeError("phases must contain one ParticlePhase per species.")
-        if (
-            not elements
-            or any(not value for value in elements)
-            or len(set(elements)) != len(elements)
-            or composition.shape != (len(elements), len(names))
-            or not np.issubdtype(composition.dtype, np.integer)
-            or np.any(composition < 0)
-        ):
-            raise ValueError("Element schema/composition is invalid.")
-        phase_ids = np.asarray(
-            [list(ParticlePhase).index(value) for value in phase_values], dtype=np.int32
-        )
-        generated = canonical_fingerprint(
-            {
-                "kind": "particle-species-schema",
-                "species": list(names),
-                "phases": [value.value for value in phase_values],
-                "molar_masses": array_tree_fingerprint(masses),
-                "elements": list(elements),
-                "composition": array_tree_fingerprint(composition),
-            }
-        )
-        self.species_names = names
-        self.phase_ids = jnp.asarray(phase_ids)
-        self.molar_masses = jnp.asarray(masses)
-        self.element_names = elements
-        self.element_composition = jnp.asarray(composition, dtype=jnp.int32)
-        self.species_count = len(names)
-        self.element_count = len(elements)
-        self.schema_id = generated if schema_id is None else str(schema_id)
-        if not self.schema_id:
-            raise ValueError("schema_id must be nonempty.")
-
-    def phase_mask(self, phase: ParticlePhase, /) -> Array:
-        if not isinstance(phase, ParticlePhase):
-            raise TypeError("phase must be a ParticlePhase.")
-        return self.phase_ids == list(ParticlePhase).index(phase)
-
-    def element_amount(self, species_amount: ArrayLike, /) -> Array:
-        value = jnp.asarray(species_amount)
-        if value.shape[-1] != self.species_count:
-            raise ValueError("species_amount must end in species axis.")
-        return contract("es,...s->...e", self.element_composition, value)
+@_implicit_temperature_value.defjvp
+def _implicit_temperature_value_jvp(primals, tangents):
+    temperature, internal_energy, species_amount, molar_energy, molar_capacity = primals
+    _, energy_tangent, amount_tangent, molar_energy_tangent, _ = tangents
+    capacity = jnp.sum(species_amount * molar_capacity, axis=-1)
+    tangent = (
+        energy_tangent
+        - jnp.sum(amount_tangent * molar_energy, axis=-1)
+        - jnp.sum(species_amount * molar_energy_tangent, axis=-1)
+    ) / jnp.maximum(capacity, jnp.finfo(capacity.dtype).tiny)
+    return temperature, tangent
 
 
 class ParticleThermodynamicState(StrictModule):
@@ -130,10 +63,8 @@ class ParticleThermodynamicState(StrictModule):
 
 
 class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
-    schema: ParticleSpeciesSchema
-    heat_capacity_coefficients: Array
-    reference_molar_internal_energy: Array
-    reference_temperature: float = eqx.field(static=True)
+    schema: ChemicalSpeciesSchema
+    species_thermodynamics: AbstractSpeciesThermodynamicsPlan
     minimum_temperature: float = eqx.field(static=True)
     maximum_temperature: float = eqx.field(static=True)
     inversion_iterations: int = eqx.field(static=True)
@@ -141,60 +72,48 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        schema: ParticleSpeciesSchema,
-        molar_heat_capacity: ArrayLike,
-        reference_molar_internal_energy: ArrayLike,
+        species_thermodynamics: AbstractSpeciesThermodynamicsPlan,
         /,
         *,
-        reference_temperature: float = 298.15,
-        minimum_temperature: float = 1.0,
-        maximum_temperature: float = 5000.0,
-        inversion_iterations: int = 16,
+        minimum_temperature: float | None = None,
+        maximum_temperature: float | None = None,
+        inversion_iterations: int = 48,
         material_id: str | None = None,
     ):
-        if not isinstance(schema, ParticleSpeciesSchema):
-            raise TypeError("schema must be a ParticleSpeciesSchema.")
-        coefficients = np.asarray(molar_heat_capacity, dtype=float)
-        if coefficients.ndim == 1:
-            coefficients = coefficients[:, None]
-        reference = np.asarray(reference_molar_internal_energy, dtype=float)
-        t_ref = float(reference_temperature)
-        t_min = float(minimum_temperature)
-        t_max = float(maximum_temperature)
+        if not isinstance(species_thermodynamics, AbstractSpeciesThermodynamicsPlan):
+            raise TypeError(
+                "species_thermodynamics must implement AbstractSpeciesThermodynamicsPlan."
+            )
+        t_min = (
+            species_thermodynamics.minimum_temperature
+            if minimum_temperature is None
+            else float(minimum_temperature)
+        )
+        t_max = (
+            species_thermodynamics.maximum_temperature
+            if maximum_temperature is None
+            else float(maximum_temperature)
+        )
         iterations = int(inversion_iterations)
         if (
-            coefficients.ndim != 2
-            or coefficients.shape[0] != schema.species_count
-            or reference.shape != (schema.species_count,)
-            or np.any(~np.isfinite(coefficients))
-            or np.any(~np.isfinite(reference))
-            or not np.isfinite(t_ref)
-            or not np.isfinite(t_min)
+            not np.isfinite(t_min)
             or not np.isfinite(t_max)
-            or not 0.0 < t_min < t_ref < t_max
+            or not 0.0 < t_min < t_max
+            or t_min < species_thermodynamics.minimum_temperature
+            or t_max > species_thermodynamics.maximum_temperature
             or iterations <= 0
         ):
-            raise ValueError("Thermodynamic material inputs are invalid.")
-        sample = np.asarray((t_min, t_ref, t_max))
-        powers = sample[:, None] ** np.arange(coefficients.shape[1])[None, :]
-        sampled_capacity = powers @ coefficients.T
-        if np.any(sampled_capacity <= 0.0):
-            raise ValueError("Molar heat capacity must remain positive over bounds.")
+            raise ValueError("Thermodynamic inversion controls are invalid.")
         generated = canonical_fingerprint(
             {
                 "kind": "particle-thermodynamic-material",
-                "schema": schema.schema_id,
-                "heat_capacity": array_tree_fingerprint(coefficients),
-                "reference_energy": array_tree_fingerprint(reference),
-                "reference_temperature": t_ref,
+                "thermodynamics": species_thermodynamics.thermodynamics_id,
                 "bounds": [t_min, t_max],
                 "iterations": iterations,
             }
         )
-        self.schema = schema
-        self.heat_capacity_coefficients = jnp.asarray(coefficients)
-        self.reference_molar_internal_energy = jnp.asarray(reference)
-        self.reference_temperature = t_ref
+        self.schema = species_thermodynamics.schema
+        self.species_thermodynamics = species_thermodynamics
         self.minimum_temperature = t_min
         self.maximum_temperature = t_max
         self.inversion_iterations = iterations
@@ -203,24 +122,12 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
             raise ValueError("material_id must be nonempty.")
 
     def molar_heat_capacity(self, temperature: ArrayLike, /) -> Array:
-        value = jnp.asarray(temperature)
-        powers = value[..., None] ** jnp.arange(
-            self.heat_capacity_coefficients.shape[1], dtype=value.dtype
-        )
-        return contract("...k,sk->...s", powers, self.heat_capacity_coefficients)
+        return self.species_thermodynamics.evaluate(
+            temperature
+        ).molar_heat_capacity_volume
 
     def molar_internal_energy(self, temperature: ArrayLike, /) -> Array:
-        value = jnp.asarray(temperature)
-        order = jnp.arange(
-            1, self.heat_capacity_coefficients.shape[1] + 1, dtype=value.dtype
-        )
-        integral = (
-            value[..., None] ** order
-            - jnp.asarray(self.reference_temperature, dtype=value.dtype) ** order
-        ) / order
-        return self.reference_molar_internal_energy + contract(
-            "...k,sk->...s", integral, self.heat_capacity_coefficients
-        )
+        return self.species_thermodynamics.evaluate(temperature).molar_internal_energy
 
     def energy_from_temperature(
         self, temperature: ArrayLike, species_amount: ArrayLike, /
@@ -244,41 +151,74 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
             raise ValueError("species_amount must extend internal-energy shape.")
         if measure.shape != energy.shape or pore.shape != energy.shape:
             raise ValueError("Cell measure and porosity must match energy shape.")
-        reference_energy = jnp.sum(amount * self.reference_molar_internal_energy, axis=-1)
-        reference_capacity = jnp.sum(
-            amount * self.molar_heat_capacity(self.reference_temperature), axis=-1
+        low = jnp.full_like(energy, self.minimum_temperature)
+        high = jnp.full_like(energy, self.maximum_temperature)
+        low_energy = self.energy_from_temperature(low, amount)
+        high_energy = self.energy_from_temperature(high, amount)
+        energy_admissible = (
+            jnp.isfinite(energy)
+            & jnp.isfinite(low_energy)
+            & jnp.isfinite(high_energy)
+            & (energy >= low_energy)
+            & (energy <= high_energy)
+            & jnp.all(amount >= 0.0, axis=-1)
+            & (jnp.sum(amount, axis=-1) > 0.0)
         )
-        initial = self.reference_temperature + (energy - reference_energy) / jnp.maximum(
-            reference_capacity, 1.0e-30
+        target = jnp.where(
+            energy_admissible,
+            energy,
+            0.5 * (low_energy + high_energy),
         )
-        initial = jnp.clip(initial, self.minimum_temperature, self.maximum_temperature)
 
-        def iteration(_, temperature):
-            residual = self.energy_from_temperature(temperature, amount) - energy
-            capacity = jnp.sum(amount * self.molar_heat_capacity(temperature), axis=-1)
-            candidate = temperature - residual / jnp.maximum(capacity, 1.0e-30)
-            return jnp.clip(candidate, self.minimum_temperature, self.maximum_temperature)
+        def iteration(_, bracket):
+            lower, upper = bracket
+            midpoint = 0.5 * (lower + upper)
+            midpoint_energy = self.energy_from_temperature(midpoint, amount)
+            upper = jnp.where(midpoint_energy > target, midpoint, upper)
+            lower = jnp.where(midpoint_energy > target, lower, midpoint)
+            return lower, upper
 
-        temperature = jax.lax.fori_loop(0, self.inversion_iterations, iteration, initial)
-        capacity = jnp.sum(amount * self.molar_heat_capacity(temperature), axis=-1)
-        recovered = self.energy_from_temperature(temperature, amount)
+        low, high = jax.lax.fori_loop(
+            0,
+            self.inversion_iterations,
+            iteration,
+            (low, high),
+        )
+        raw_temperature = 0.5 * (low + high)
+        raw_thermo = self.species_thermodynamics.evaluate(raw_temperature)
+        temperature = _implicit_temperature_value(
+            raw_temperature,
+            energy,
+            amount,
+            raw_thermo.molar_internal_energy,
+            raw_thermo.molar_heat_capacity_volume,
+        )
+        thermo = self.species_thermodynamics.evaluate(temperature)
+        capacity = jnp.sum(
+            amount * thermo.molar_heat_capacity_volume,
+            axis=-1,
+        )
+        recovered = jnp.sum(amount * thermo.molar_internal_energy, axis=-1)
         residual = recovered - energy
-        gas_mask = self.schema.phase_mask(ParticlePhase.GAS).astype(amount.dtype)
+        gas_mask = self.schema.phase_mask(ChemicalPhaseKind.GAS).astype(amount.dtype)
         gas_amount = jnp.sum(amount * gas_mask, axis=-1)
         pore_volume = pore * measure
         pressure = (
             gas_amount
             * _UNIVERSAL_GAS_CONSTANT
             * temperature
-            / jnp.maximum(pore_volume, 1.0e-30)
+            / jnp.maximum(pore_volume, jnp.finfo(energy.dtype).tiny)
         )
+        bracket_error = capacity * (high - low)
         scale = jnp.maximum(jnp.abs(energy), 1.0)
         successful = (
-            jnp.all(jnp.isfinite(temperature))
-            & jnp.all(temperature >= self.minimum_temperature)
-            & jnp.all(temperature <= self.maximum_temperature)
+            jnp.all(energy_admissible)
+            & thermo.successful
             & jnp.all(capacity > 0.0)
-            & jnp.all(jnp.abs(residual) <= 128.0 * jnp.finfo(energy.dtype).eps * scale)
+            & jnp.all(
+                jnp.abs(residual)
+                <= bracket_error + 256.0 * jnp.finfo(energy.dtype).eps * scale
+            )
             & jnp.all(jnp.isfinite(pressure) & (pressure >= 0.0))
         )
         margin = jnp.minimum(
@@ -297,7 +237,7 @@ class ParticleThermodynamicMaterialPlan(StrictModule, NonTrainableState):
 
 
 class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
-    schema: ParticleSpeciesSchema
+    schema: ChemicalSpeciesSchema
     thermal_conductivity: Array
     species_diffusivity: Array
     tortuosity_exponent: float = eqx.field(static=True)
@@ -305,7 +245,7 @@ class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        schema: ParticleSpeciesSchema,
+        schema: ChemicalSpeciesSchema,
         thermal_conductivity: ArrayLike,
         species_diffusivity: ArrayLike,
         /,
@@ -313,8 +253,8 @@ class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
         tortuosity_exponent: float = 1.0,
         material_id: str | None = None,
     ):
-        if not isinstance(schema, ParticleSpeciesSchema):
-            raise TypeError("schema must be a ParticleSpeciesSchema.")
+        if not isinstance(schema, ChemicalSpeciesSchema):
+            raise TypeError("schema must be a ChemicalSpeciesSchema.")
         conductivity = np.asarray(thermal_conductivity, dtype=float)
         diffusivity = np.asarray(species_diffusivity, dtype=float)
         exponent = float(tortuosity_exponent)
@@ -768,8 +708,6 @@ def _harmonic_mean(left, right):
 
 
 __all__ = [
-    "ParticlePhase",
-    "ParticleSpeciesSchema",
     "ParticleThermochemicalMaterialBundle",
     "ParticleThermodynamicMaterialPlan",
     "ParticleThermodynamicState",

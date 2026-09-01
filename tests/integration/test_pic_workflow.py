@@ -23,12 +23,12 @@ def test_electrostatic_pic_fixed_step_workflow_retains_constraints():
             sign * jnp.ones((4,)), name
         ).prepare(particles)
         transfers.append(
-            phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(
-                charged
-            )
+            phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(charged)
         )
     plan = phx.solver.ElectrostaticPICPlan(
-        phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic"),
+        phx.solver.CochainElectrostaticPlan(
+            bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+        ),
         tuple(transfers),
     )
     position = jnp.asarray([[0.125], [0.375], [0.625], [0.875]])

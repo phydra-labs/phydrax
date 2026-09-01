@@ -16,6 +16,12 @@
   and scaling benchmarks. Advanced mapped, AMR, distributed, contact, sharp, and
   stochastic families retain explicit case-specific qualification gates rather than a
   blanket production claim.
+- Added an authoritative surface and boundary-integral platform with checked
+  linear solves, scalar Calderón formulations, periodic scalar kernels,
+  FEM–BEM coupling, finite-depth potential-flow hydrodynamics, adaptive and
+  block execution, portable archives, static elasticity and Stokes kernels,
+  convolution quadrature, RWG Maxwell support, and fail-closed commercial
+  qualification evidence.
 - Reconciled cosmology, astrodynamics, and astrophysical-observation foundations:
   dimensional scales, artifacts and derivative capabilities, labelled observation/
   covariance/likelihood algebra, direct and hierarchical particle gravity, KDK
@@ -87,6 +93,13 @@
   distributed-PM feasibility. Native full Boltzmann/CMB parity, global curved N-body,
   generic surveys, stochastic feedback, and production tree gravity remain explicit
   non-goals rather than fallbacks.
+- Added a common chemical species and phase schema, NASA and polynomial species
+  thermodynamics, prepared deterministic and stochastic mechanisms, native stiff
+  reactors, extended rate laws, YAML interchange, and calibration coordinates;
+  added compatible Poisson--Nernst--Planck transport, reactive electrodes,
+  electrohydrodynamic and multiphase electrolyte coupling; and added compact
+  Q-tensor Landau--de Gennes, Beris--Edwards, anchoring, active, chiral,
+  electrostatic, and electrolytic liquid-crystal dynamics.
 - Added one fixed-capacity runtime particle-population authority with activity,
   mass, incarnation-safe slot reuse, deterministic allocation/deactivation, DEM
   lifecycle migration, and runtime particle-splat masks.

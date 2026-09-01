@@ -271,6 +271,56 @@ def _materialize_by_basis(operator: "AbstractLinearOperator", /) -> Array:
     return jnp.swapaxes(columns, -1, -2)
 
 
+def _operator_block_action(
+    operator: "AbstractLinearOperator",
+    vectors: ArrayLike,
+    input_space: AbstractVectorSpace,
+    output_space: AbstractVectorSpace,
+    action: Callable[[PyTree[Any]], PyTree[Array]],
+    /,
+) -> Array:
+    coordinates = jnp.asarray(vectors)
+    expected_prefix = operator.batch_shape + (input_space.size,)
+    if (
+        coordinates.ndim != len(expected_prefix) + 1
+        or coordinates.shape[:-1] != expected_prefix
+    ):
+        raise ValueError(
+            "Canonical block coordinates must have operator batch axes, "
+            f"coordinate size {input_space.size}, and one block axis; "
+            f"got {coordinates.shape}."
+        )
+    block_size = int(coordinates.shape[-1])
+    if operator.supports_fused_block_action:
+        if not isinstance(input_space, ArraySpace) or not isinstance(
+            output_space, ArraySpace
+        ):
+            raise LinearCapabilityError(
+                "Fused block action was declared for non-array vector spaces."
+            )
+        vector = coordinates.reshape(
+            operator.batch_shape + input_space.shape + (block_size,)
+        )
+        image = jnp.asarray(action(vector))
+        return image.reshape(operator.batch_shape + (output_space.size, block_size))
+
+    def one_column(column: Array) -> Array:
+        if operator.batch_shape:
+            if not isinstance(input_space, ArraySpace) or not isinstance(
+                output_space, ArraySpace
+            ):
+                raise LinearCapabilityError(
+                    "Batched block action requires array vector spaces."
+                )
+            vector = column.reshape(operator.batch_shape + input_space.shape)
+            image = jnp.asarray(action(vector))
+            return image.reshape(operator.batch_shape + (output_space.size,))
+        vector = input_space.unflatten(column)
+        return output_space.flatten(action(vector))
+
+    return jax.vmap(one_column, in_axes=-1, out_axes=-1)(coordinates)
+
+
 class AbstractLinearOperator(StrictModule):
     """Rectangular linear map between explicitly declared vector spaces."""
 
@@ -296,6 +346,41 @@ class AbstractLinearOperator(StrictModule):
     @abc.abstractmethod
     def _materialize(self, /) -> Array:
         raise NotImplementedError
+
+    @property
+    def supports_fused_block_action(self) -> bool:
+        """Whether block methods use a real shared block action rather than vmap."""
+        return False
+
+    def mv_block(self, vectors: ArrayLike, /) -> Array:
+        """Apply to canonical ``(source.size, block_size)`` coordinates."""
+        return _operator_block_action(
+            self,
+            vectors,
+            self.source,
+            self.target,
+            self.mv,
+        )
+
+    def transpose_mv_block(self, vectors: ArrayLike, /) -> Array:
+        """Apply the algebraic transpose to canonical coordinate columns."""
+        return _operator_block_action(
+            self,
+            vectors,
+            self.target,
+            self.source,
+            self.transpose_mv,
+        )
+
+    def adjoint_mv_block(self, vectors: ArrayLike, /) -> Array:
+        """Apply the declared pairing adjoint to canonical coordinate columns."""
+        return _operator_block_action(
+            self,
+            vectors,
+            self.target,
+            self.source,
+            self.adjoint_mv,
+        )
 
     def __call__(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self.mv(vector)
@@ -408,6 +493,15 @@ class DenseLinearOperator(AbstractLinearOperator):
                 "target": target_.space_id,
                 "batch_shape": list(batch),
             },
+        )
+
+    @property
+    def supports_fused_block_action(self) -> bool:
+        return (
+            isinstance(self.source, ArraySpace)
+            and isinstance(self.target, ArraySpace)
+            and _has_diagonal_pairing(self.source)
+            and _has_diagonal_pairing(self.target)
         )
 
     def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
@@ -545,6 +639,10 @@ class DiagonalLinearOperator(AbstractLinearOperator):
             raise ValueError("Batched diagonal operators require ArraySpace values.")
         coordinates = self.source.flatten(vector)
         return self.source.unflatten(diagonal * coordinates)
+
+    @property
+    def supports_fused_block_action(self) -> bool:
+        return isinstance(self.source, ArraySpace) and _has_diagonal_pairing(self.source)
 
     def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         return self._action(self.diagonal, vector)
