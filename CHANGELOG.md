@@ -13,42 +13,6 @@
   nonorthogonal mapped Hodge, mixed pressure projection, strongly coupled
   second-order stepping, accepted work ledgers, strict restart/output,
   qualification, examples, and benchmarks.
-- Added `phydrax.bioinformatics`, an evidence-bearing native layer whose shared
-  foundation records feature/ontology identity, biospecimen lineage, experimental
-  units, exchangeability, biological splits, leakage audits, and independent
-  exact-model/approximate/relaxed/heuristic/learned, execution, and differentiation
-  claims. Public nested owners now cover alphabets and bounded sequence/quality data;
-  translation, motif, pair/profile-HMM, affine/progressive/partial-order alignment;
-  reference/coordinate/annotation/transcript/read/CIGAR/mapping contracts; small,
-  somatic, structural, copy-number, graph, phasing, assembly, and epigenomic variation;
-  fixed-tree substitution/rate/clock/pruning/ancestral and bounded NNI methods;
-  population cohorts, association, kinship, demography/SFS, recombination, imputation,
-  pedigrees, and numeric tree sequences; exact k-mer and MinHash-based metagenomics;
-  count/continuous assays, normalization, design, NB2 inference, multiple testing,
-  pseudobulk, composition, abundance, pathway, velocity, integration, and multiomics;
-  explicit-frame spatial assays, capacity-safe neighbor graphs, restricted
-  autocorrelation, registration, image metadata/patches, and morphology; unit-aware
-  spectrometry, acquisition, calibration, features, proteomics/protein inference,
-  metabolomics, and quantification; identity-preserving macromolecular records and
-  all-or-nothing atomistic lowering; exact declared pseudoknot-free RNA MFE/partition
-  DP plus explicitly heuristic restricted pseudoknots; typed stoichiometric, FBA/FVA,
-  kinetic, regulatory, and identifiability analysis; and native sequence/structure
-  models, objectives, constrained design, and provenance-bound foundation artifacts.
-  Host FASTX, GFF3/GTF/BED, VCF-like, SAM/BAM/CRAM, mmCIF, OME-NGFF metadata, SBML AST,
-  and mzML-like interchange remains outside JAX and lowers through explicit identity,
-  unit, capacity, loss, and status evidence. Added cross-domain workflow coverage,
-  opt-in qualification/benchmark producers with caller-supplied local datasets and
-  digests, focused guides, ten executable-style cookbooks, and nested API reference.
-  No data, references, annotations, model weights, libraries, chemistry dictionaries,
-  thermodynamic tables, or qualification corpora are downloaded. Optional local
-  readers are `pysam` through `phydrax[bioinformatics-hts]` and Pyteomics through
-  `phydrax[bioinformatics-spectrometry]`; accepting already-open external records does
-  not retain those runtimes in PyTrees. Exhaustive mapping/assembly/variant/taxonomy
-  discovery, base calling, clinical interpretation, generic VCF/SBML semantics,
-  unrestricted exact pseudoknots, bundled empirical RNA thermodynamics, automatic
-  structure repair/protonation/force-field assignment, remote/external model execution,
-  and learned-model generalization or intended-use certification remain explicit
-  unsupported boundaries rather than silent fallbacks.
 - Added hydrostatic primitive-equation ocean modeling with prognostic free surface,
   extensive layer transports and tracer inventories, implicit and split-explicit
   external modes, z-star and partial-cell geometry, freshwater volume sources,
