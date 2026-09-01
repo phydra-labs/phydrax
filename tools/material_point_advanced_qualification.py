@@ -295,15 +295,23 @@ def _contact_field_metrics():
         "dissipation": float(result.dissipation),
         "work": float(result.work),
     }
-    field = phx.discretization.project_two_field_contact(
-        jnp.asarray([[1.0], [2.0]]),
-        jnp.asarray([[[1.0, 0.4]], [[-0.5, 0.0]]]),
-        jnp.asarray([[[1.0, 0.0]], [[-1.0, 0.0]]]),
+    contact_plan = phx.discretization.KWayMPMContactPlan(
+        2,
         friction=phx.discretization.SharpCoulombMPMFrictionPlan(0.3),
+        maximum_steps=40,
+        tolerance=1e-8,
+    )
+    mass = jnp.asarray([[1.0], [2.0]])
+    gradients = jnp.asarray([[[1.0, 0.0]], [[-1.0, 0.0]]])
+    field = contact_plan.solve(
+        mass,
+        jnp.asarray([[[1.0, 0.4]], [[-0.5, 0.0]]]),
+        contact_plan.build_graph(mass, gradients),
+        0.01,
     )
     field_metrics = {
         "successful": bool(field.successful),
-        "contact": bool(field.contact_mask[0]),
+        "contact": bool(field.active_pairs[0, 0]),
         "action_reaction_defect": float(field.action_reaction_defect),
         "dissipation": float(field.dissipation),
     }

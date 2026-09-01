@@ -138,11 +138,15 @@ state-ready 1LPT/2LPT, and periodic scale-factor particle-mesh rollout compose t
 existing splat, self-gravity, and transactional KDK operations. Linear power is supplied
 as an explicit table; transfer, Boltzmann, halo, survey, and CMB calculations remain
 external capability boundaries.
-Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
-transactional adaptive realization and replay, plane-strain/plane-stress/3-D
-hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
-rigid and two-field Coulomb contact, matrix-free implicit roots, diffuse and
-sharp fracture alternatives, active-block masks, and compact block storage.
+Material point dynamics compose that transfer with PIC/FLIP/APIC families,
+USF/USL-minus/classical/affine/post-advection MUSL, adaptive realization and replay,
+isotropic or general plane stress, J2 and pressure-dependent geomechanics, porothermal
+field operators, simultaneous K-way and rigid contact, moving-domain and compact
+implicit actions, diffuse or sharp fracture, active/compact block storage, distributed
+ownership, particle lifecycle and ratio-two AMR. Commercial claim tuples, intended use,
+durable checkpoints/output, host supervision, event/topology journals, derivative
+taxonomy, standards traceability, and G0--G7 release evidence close each exact supported
+configuration without implying universal validation or certification.
 DEM adds stable compositional
 normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,

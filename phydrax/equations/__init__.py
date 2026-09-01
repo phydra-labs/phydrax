@@ -140,7 +140,6 @@ from ._hyperbolic_systems import (
     ScalarConservationSystem,
     ShallowWaterSystem,
 )
-from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._ib_cfd_dem import (
     evaluate_resolved_ib_cfd_dem,
     IBConstraintPlan,
@@ -195,6 +194,8 @@ from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_al
 from ._local_constitutive_root import (
     LocalConstitutiveRootDiagnostics,
     LocalConstitutiveRootPlan,
+    VectorLocalConstitutiveRootDiagnostics,
+    VectorLocalConstitutiveRootPlan,
 )
 from ._mac_ib_cfd_dem import (
     evaluate_resolved_mac_ib_cfd_dem,
@@ -345,6 +346,7 @@ from ._serialize import (
     pde_ir_to_dict,
     pde_ir_to_json,
 )
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._spectral_compile import (
     compile_spectral_pde,
     CompiledSpectralDynamics,
@@ -526,6 +528,8 @@ __all__ = [
     "ConstitutiveModel",
     "LocalConstitutiveRootDiagnostics",
     "LocalConstitutiveRootPlan",
+    "VectorLocalConstitutiveRootDiagnostics",
+    "VectorLocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
     "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",

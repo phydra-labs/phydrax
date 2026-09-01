@@ -103,9 +103,35 @@ from ._models import (
     neo_hookean_reference_energy,
     NeoHookeanParameters,
 )
+from ._mpm_coupled_fields import (
+    BiotPoromechanicsParameters,
+    MPMCoupledBoundaryPlan,
+    MPMCoupledFieldState,
+    MPMCoupledLinearization,
+    MPMCoupledResidual,
+    MPMFieldRole,
+    MPMPhysicalFieldPlan,
+    PreparedMPMCoupledFieldOperator,
+    ThermalMPMParameters,
+)
 from ._mpm_fracture import (
     MPMPhaseFieldParameters,
     PhaseFieldNeoHookeanMPMConstitutivePlan,
+)
+from ._mpm_general_plane_stress import (
+    GeneralPlaneStressMPMConstitutivePlan,
+    MPMMaterialOrientation,
+    OrientedMPMConstitutivePlan,
+)
+from ._mpm_geomechanics import (
+    DruckerPragerMPMConstitutivePlan,
+    DruckerPragerParameters,
+    GeomechanicalFailureEvidence,
+    ModifiedCamClayMPMConstitutivePlan,
+    ModifiedCamClayParameters,
+    MohrCoulombMPMConstitutivePlan,
+    MohrCoulombParameters,
+    NonlocalSofteningPlan,
 )
 from ._mpm_plane_stress import IsotropicPlaneStressMPMConstitutivePlan
 from ._mpm_plasticity import (
@@ -195,6 +221,26 @@ __all__ = [
     "ForceDensityTangentStabilityResult",
     "ForceDensityTolerances",
     "J2PlasticityParameters",
+    "BiotPoromechanicsParameters",
+    "DruckerPragerMPMConstitutivePlan",
+    "DruckerPragerParameters",
+    "GeneralPlaneStressMPMConstitutivePlan",
+    "GeomechanicalFailureEvidence",
+    "MPMCoupledBoundaryPlan",
+    "MPMCoupledFieldState",
+    "MPMCoupledLinearization",
+    "MPMCoupledResidual",
+    "MPMFieldRole",
+    "MPMMaterialOrientation",
+    "MPMPhysicalFieldPlan",
+    "ModifiedCamClayMPMConstitutivePlan",
+    "ModifiedCamClayParameters",
+    "MohrCoulombMPMConstitutivePlan",
+    "MohrCoulombParameters",
+    "NonlocalSofteningPlan",
+    "OrientedMPMConstitutivePlan",
+    "PreparedMPMCoupledFieldOperator",
+    "ThermalMPMParameters",
     "J2PlasticityState",
     "J2PlasticityUpdate",
     "FiniteStrainJ2MPMConstitutivePlan",

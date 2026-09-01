@@ -75,6 +75,8 @@ benchmarks/*
 !benchmarks/material_point_advanced.json
 !benchmarks/velocimetry.json
 !benchmarks/velocimetry_qualification.json
+!benchmarks/material_point_commercial_*.json
+!benchmarks/material_point_commercial.json
 !benchmarks/iree_export.json
 !benchmarks/mma.json
 !benchmarks/topology.json

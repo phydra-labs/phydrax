@@ -27,8 +27,10 @@ algorithmic tangent is the implicit Schur complement of the three-dimensional
 tangent. The conservative three-dimensional acoustic bound remains valid in plane
 stress.
 
-This scalar closure is only valid when the base material has block-diagonal isotropic
-membrane kinematics. General anisotropic/out-of-plane shear coupling is not claimed.
+This scalar adapter remains the minimal isotropic path. For anisotropy and coupled
+out-of-plane shear, `GeneralPlaneStressMPMConstitutivePlan` solves the three director
+components simultaneously and returns the full implicit Schur-complement tangent;
+`OrientedMPMConstitutivePlan` carries an explicit proper-orthogonal material frame.
 
 ## Multiplicative finite-strain J2
 

@@ -57,6 +57,7 @@ impulse and work remain explicit diagnostics. It does not claim collision/contac
 candidate history, admissibility, and a conservative current-state wave-speed bound.
 The baseline `NeoHookeanMPMConstitutivePlan` is stateless and supports:
 
+- one-dimensional mechanics;
 - two-dimensional plane strain;
 - three-dimensional mechanics.
 
@@ -70,9 +71,11 @@ psi0(F) = mu/2 (F:F - 3) - mu log(J) + lambda/2 log(J)^2
 P(F) = mu (F - F^-T) + lambda log(J) F^-T
 ```
 
-For plane strain, the two-dimensional deformation is embedded with out-of-plane stretch
-one. Plane stress is not implemented. Nonpositive `J` is a rejected material trial, not
-a clamped state.
+For one-dimensional mechanics and plane strain, the active deformation is embedded
+with inactive stretches fixed to one. Plane-stress models use either the scalar
+`IsotropicPlaneStressMPMConstitutivePlan` or the anisotropic,
+director-coupled `GeneralPlaneStressMPMConstitutivePlan`. Nonpositive `J` is a
+rejected material trial, not a clamped state.
 
 Material parameters remain rollout arguments. Place state initialization inside a
 parameterized objective when the initial constitutive response depends on trainable
@@ -198,18 +201,18 @@ A rollout retains scalar evidence independently of particle-state retention.
 
 | Capability | Qualified composition |
 |---|---|
-| USF, USL-minus, MUSL | Single nodal field; MUSL reapplies rigid/prescribed constraints |
-| Plane stress | Explicit schedules and dense implicit MPM |
-| Finite-strain J2 | Explicit schedules; dense implicit with tangent evidence |
-| uGIMP | Explicit schedules; fixed-domain implicit routes |
-| cpGIMP, CPDI, CPDI2 | Explicit schedules only |
-| Rigid sharp/smooth contact | Explicit schedules only |
-| Two material fields | USL-minus only; at most two contacting fields per node |
+| USF, USL-minus, MUSL variants | Every prepared nodal field; accepted constraints are reapplied simultaneously |
+| Plane stress | Scalar isotropic and vector director-coupled closures with algorithmic tangents |
+| Finite-strain J2 and geomechanics | Explicit schedules and tangent-bearing implicit operators |
+| uGIMP | Explicit schedules and fixed-domain dense implicit routes |
+| cpGIMP, CPDI, CPDI2 | Explicit schedules plus qualified moving-domain JVP/VJP route operators |
+| Rigid and nodal-field contact | Explicit projection plus sharp/smooth implicit complementarity operators |
+| Multiple material fields | All explicit schedules; simultaneous contact for up to three occupied fields per node |
 | Adaptive time | Explicit methods; scheduled replay carries derivative contract |
-| Active blocks | Dense-backed explicit mask |
-| Compact blocks | Explicit payload storage adapter |
-| Diffuse fracture | Explicit mechanics plus bounded grid damage solve |
-| Field partition or CPIC | Alternative sharp topology paths |
+| Active and compact blocks | Explicit storage plus compact residual, contact, fracture, and transpose operators |
+| Distributed execution | Static block ownership, owner migration, halo reduction, transactional checkpoints |
+| Particle lifecycle and ratio-two AMR | Fixed-capacity activation/split/merge and conservative multilevel transfer |
+| Diffuse and sharp fracture | Explicit mechanics plus bounded damage/topology epochs |
 
 ## Advanced capabilities and limits
 
@@ -223,11 +226,14 @@ separately:
 - [adaptive replay and dense implicit MPM](guides_mpm_adaptive_implicit.md);
 - [diffuse/sharp fracture and block storage](guides_mpm_fracture_sparse.md).
 
-The implementation does not claim PIC/FLIP, non-associated geomechanical plasticity,
-general multiway nodal contact, anisotropic plane-stress closure, sharp friction in
-implicit MPM, deformation-dependent CPDI implicit Jacobians, dynamic hash/tree grids,
-compact sparse implicit/fracture operators, or derivatives through adaptive decisions
-and fracture topology epochs.
+Commercial profiles extend these reference paths with transfer/advection families,
+K-way contact, general plane stress, pressure-dependent materials, coupled
+poro-thermal fields, sparse implicit actions, deterministic/distributed execution,
+particle lifecycle, ratio-two AMR, event-aware derivatives, and executable release
+gates. See the [commercial architecture](guides_mpm_commercial_architecture.md) and
+[derivative/VVUQ](guides_mpm_commercial_derivatives_vvuq.md) guides. Every supported
+composition is an exact `MPMClaimTuple`; absent or rejected tuples fail closed rather
+than inheriting support from a nearby case.
 
 Electrostatic/electromagnetic [PIC](guides_particle_in_cell.md) and
 free-surface [FLIP](guides_flip.md) are separate method families over the same

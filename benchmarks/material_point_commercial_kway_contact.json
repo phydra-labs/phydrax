@@ -1,0 +1,10 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "kway_contact",
+  "metrics": {
+    "successful": true,
+    "complementarity": 1.0912300316828771e-09,
+    "action_reaction": 0.0
+  },
+  "passed": true
+}

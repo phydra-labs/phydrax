@@ -39,6 +39,9 @@ python examples/material_point_materials.py
 python examples/material_point_domains_sparse.py
 python examples/material_point_contact_fracture.py
 python examples/material_point_implicit.py
+python examples/material_point_commercial_runtime.py
+python examples/material_point_commercial_mechanics.py
+python examples/material_point_commercial_scale.py
 python examples/electrostatic_pic.py
 python examples/electromagnetic_pic.py
 python examples/flip_dam_break.py
