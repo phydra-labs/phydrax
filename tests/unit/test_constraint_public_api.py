@@ -107,6 +107,7 @@ PUBLIC_TERM_API = {
     "TrajectoryCaseTime",
     "TrajectorySignal",
     "TrajectorySignalInterpolation",
+    "bind_functional",
     "cochain_residual_field",
     "deep_bsde_rollout",
     "deep_bsde_shooting_diagnostics",

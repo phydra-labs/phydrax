@@ -26,16 +26,26 @@ def _case():
             component_shape=(2,),
         ),
     ).prepare()
-    action = phx.equations.CellEnergyAction(
-        "u",
-        lambda values, gradients, points, context: (
-            10.0 * jnp.sum(gradients * gradients, axis=(-1, -2))
+    functional = phx.variational.Functional(
+        "benchmark-contact",
+        (
+            phx.variational.LocalIntegralTerm(
+                "benchmark-elasticity",
+                region="body",
+                fields=(phx.variational.FieldJetSpec("u", gradient=True),),
+                density=lambda fields, geometry, context: (
+                    10.0 * jnp.sum(fields["u"].gradient ** 2, axis=(-1, -2))
+                ),
+                density_id="benchmark-elasticity",
+            ),
         ),
-        action_id="benchmark-elasticity",
+        variable_fields=("u",),
     )
-    compiled = phx.equations.compile_finite_element_problem(
-        phx.equations.FiniteElementForm("benchmark-contact", "u", (action,)),
+    compiled = phx.equations.compile_finite_element_functional(
+        functional,
         discretization,
+        fields={"u": "u"},
+        regions={"body": None},
     )
     moving = phx.discretization.prepare_cell_mesh_collision_surface(
         mesh, compiled.state_space

@@ -113,10 +113,24 @@ def test_boundary_loading_reconstruction_and_functional_preserve_integrals():
     centroids = jnp.mean(
         discretization.vertices[discretization.mesh.blocks[0].vertices], axis=1
     )
-    functional = phx.equations.FiniteElementFunctional(
+    functional = phx.variational.Functional(
         "integral-u",
-        "u",
-        lambda values, gradients, points, args: values,
+        (
+            phx.variational.LocalIntegralTerm(
+                "integral-u",
+                region="body",
+                fields=(phx.variational.FieldJetSpec("u", value=True),),
+                density=lambda fields, geometry, context: fields["u"].value,
+                density_id="identity-density",
+            ),
+        ),
+        variable_fields=("u",),
+    )
+    compiled_functional = phx.equations.compile_finite_element_functional(
+        functional,
+        discretization,
+        fields={"u": "u"},
+        regions={"body": None},
     )
 
     assert jnp.allclose(jnp.sum(load), 4.0)
@@ -124,7 +138,7 @@ def test_boundary_loading_reconstruction_and_functional_preserve_integrals():
         reconstructed[:, 0],
         centroids[:, 0] - 2.0 * centroids[:, 1],
     )
-    assert jnp.allclose(functional.evaluate(discretization, jnp.ones((5,))), 1.0)
+    assert jnp.allclose(compiled_functional.potential(jnp.ones((5,))), 1.0)
 
 
 def test_fixed_topology_geometry_is_differentiable():

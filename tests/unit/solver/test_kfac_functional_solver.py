@@ -301,8 +301,10 @@ def test_kfac_honors_training_signal_stop(monkeypatch, tmp_path):
 def test_kfac_rejects_non_residual_training_terms_without_curvature_roots():
     domain = phx.domain.Interval1d(0.0, 1.0)
     signed_term = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+        ),
         integrand=lambda functions: functions["u"],
     )
 
@@ -413,9 +415,9 @@ def test_upstream_optax_lbfgs_decreases_deterministic_functional_loss():
 def _signed_integral_term():
     domain = phx.domain.Interval1d(0.0, 1.0)
     return phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(
-            phx.integration.GaussLegendreRule(4)
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
         ),
         integrand=lambda functions: -0.1 * functions["u"],
     )
@@ -434,18 +436,8 @@ def test_generalized_gauss_newton_supports_residual_and_signed_integral():
     )
 
     assert trained.loss(key=jr.key(31)) < initial
-    assert (
-        trained.training_diagnostics[
-            "optimizer/iterative/scalar_evaluations"
-        ]
-        > 0
-    )
-    assert (
-        trained.training_diagnostics[
-            "optimizer/iterative/scalar_hvp_evaluations"
-        ]
-        > 0
-    )
+    assert trained.training_diagnostics["optimizer/iterative/scalar_evaluations"] > 0
+    assert trained.training_diagnostics["optimizer/iterative/scalar_hvp_evaluations"] > 0
     assert jnp.isfinite(
         trained.training_diagnostics["optimizer/iterative/scalar_objective"]
     )
@@ -465,9 +457,7 @@ def test_generalized_gauss_newton_supports_model_level_scalar_losses():
 
     assert trained.loss(key=jr.key(32)) < 1e-8 * initial
     assert (
-        trained.training_diagnostics[
-            "optimizer/iterative/scalar_gradient_evaluations"
-        ]
+        trained.training_diagnostics["optimizer/iterative/scalar_gradient_evaluations"]
         > 0
     )
 

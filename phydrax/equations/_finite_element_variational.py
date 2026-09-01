@@ -11,11 +11,9 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._numerics._compensated import compensated_sum
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
@@ -67,7 +65,13 @@ from ..linalg import (
 )
 from ..linalg.eigen import GeneralizedEigenproblem
 from ..nonlinear import LaggedLinearSolveUpdate, NonlinearSystemProblem
+from ..optim import MinimizationProblem
 from ..sparse import EdgeRelation, RowRelation, SparseCoordinateOperator
+from ..variational import (
+    Functional,
+    FunctionalEvaluation,
+    LocalIntegralTerm,
+)
 from ._variational import (
     _normalize_rules,
     _rule_id,
@@ -546,7 +550,7 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
 
 
 class CellEnergyAction(StrictModule, NonTrainableState):
-    """Cell-local scalar energy differentiated into a residual."""
+    """Cell-local scalar energy differentiated into one field residual."""
 
     field_name: str = eqx.field(static=True)
     density: Callable
@@ -577,6 +581,85 @@ class CellEnergyAction(StrictModule, NonTrainableState):
         self.domain = domain
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
+
+
+class LocalFunctionalAction(StrictModule, NonTrainableState):
+    """One local functional term differentiated into all active field residuals."""
+
+    term: LocalIntegralTerm
+    field_bindings: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    variable_fields: tuple[str, ...] = eqx.field(static=True)
+    domain: IntegrationDomain | None
+    rules: tuple[tuple[str, ReferenceRule], ...]
+    action_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        term: LocalIntegralTerm,
+        field_bindings: Mapping[str, str],
+        variable_fields: Sequence[str],
+        /,
+        *,
+        domain: IntegrationDomain | None = None,
+        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
+        action_id: str,
+    ):
+        if not isinstance(term, LocalIntegralTerm):
+            raise TypeError("term must be a variational.LocalIntegralTerm.")
+        bindings = tuple(
+            (spec.field_name, str(field_bindings[spec.field_name]))
+            for spec in term.fields
+        )
+        if any(not field for _, field in bindings):
+            raise ValueError("Functional field bindings must be non-empty.")
+        variables = tuple(str(field) for field in variable_fields)
+        bound_fields = {field for _, field in bindings}
+        if not variables or any(field not in bound_fields for field in variables):
+            raise ValueError(
+                "Functional variable fields must be non-empty bound input fields."
+            )
+        if len(set(variables)) != len(variables):
+            raise ValueError("Functional variable fields must be unique.")
+        if domain is not None and (
+            not isinstance(domain, IntegrationDomain)
+            or domain.kind not in ("cell", "exterior_facet")
+        ):
+            raise ValueError(
+                "LocalFunctionalAction requires a cell or exterior-facet domain."
+            )
+        if (
+            domain is not None
+            and domain.kind == "exterior_facet"
+            and any(spec.gradient for spec in term.fields)
+        ):
+            raise ValueError(
+                "Exterior functional terms currently support value jets only."
+            )
+        if term.normal and (domain is None or domain.kind != "exterior_facet"):
+            raise ValueError(
+                "Functional normal requests require an exterior-facet domain."
+            )
+        identifier = str(action_id)
+        if not identifier:
+            raise ValueError("Functional action_id must be non-empty.")
+        self.term = term
+        self.field_bindings = bindings
+        self.variable_fields = variables
+        self.domain = domain
+        self.rules = _normalize_rules(rules)
+        self.action_id = identifier
+
+    @property
+    def input_fields(self) -> tuple[str, ...]:
+        return tuple(field for _, field in self.field_bindings)
+
+    @property
+    def output_fields(self) -> tuple[str, ...]:
+        return self.variable_fields
+
+    @property
+    def semantic_to_field(self) -> dict[str, str]:
+        return dict(self.field_bindings)
 
 
 class CellBilinearAction(StrictModule, NonTrainableState):
@@ -657,9 +740,22 @@ FiniteElementAction = (
     | ExteriorFacetAction
     | SIPGFacetAction
     | CellEnergyAction
+    | LocalFunctionalAction
     | CellBilinearAction
     | PreparedOperatorAction
 )
+
+
+def _action_output_fields(term: FiniteElementAction, /) -> tuple[str, ...]:
+    if isinstance(term, LocalFunctionalAction):
+        return term.output_fields
+    return (term.field_name,)
+
+
+def _action_input_fields(term: FiniteElementAction, /) -> tuple[str, ...]:
+    if isinstance(term, (CellResidualAction, LocalFunctionalAction)):
+        return term.input_fields
+    return (term.field_name,)
 
 
 def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
@@ -693,6 +789,9 @@ def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
     elif isinstance(term, CellEnergyAction):
         coefficient_id = None
         kind = "cell-energy"
+    elif isinstance(term, LocalFunctionalAction):
+        coefficient_id = term.term.term_id
+        kind = "functional"
     elif isinstance(term, CellBilinearAction):
         coefficient_id = None
         kind = "cell-bilinear"
@@ -704,13 +803,9 @@ def _action_payload(term: FiniteElementAction, /) -> dict[str, object]:
     return {
         "kind": kind,
         "action_id": term.action_id,
-        "field_name": term.field_name,
+        "output_fields": list(_action_output_fields(term)),
         "coefficient_id": coefficient_id,
-        "input_fields": (
-            list(term.input_fields)
-            if isinstance(term, CellResidualAction)
-            else [term.field_name]
-        ),
+        "input_fields": list(_action_input_fields(term)),
         "domain_id": None if term.domain is None else term.domain.domain_id,
         "rules": [[block_name, _rule_id(rule)] for block_name, rule in term.rules],
         "penalty_policy": (
@@ -731,6 +826,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
     declared_properties: OperatorProperties
     auxiliary_evaluator: Callable | None
     auxiliary_id: str | None = eqx.field(static=True)
+    functional: Functional | None
 
     def __init__(
         self,
@@ -742,6 +838,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
         properties: OperatorProperties | None = None,
         auxiliary_evaluator: Callable | None = None,
         auxiliary_id: str | None = None,
+        functional: Functional | None = None,
     ):
         identifier = str(form_id)
         fields = (
@@ -782,6 +879,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
                     ExteriorFacetAction,
                     SIPGFacetAction,
                     CellEnergyAction,
+                    LocalFunctionalAction,
                     CellBilinearAction,
                     PreparedOperatorAction,
                 ),
@@ -789,15 +887,36 @@ class FiniteElementForm(StrictModule, NonTrainableState):
             for action in action_values
         ):
             raise TypeError("FiniteElementForm contains an unsupported action type.")
-        if any(action.field_name not in fields for action in action_values):
-            raise ValueError("Every form action must target a declared field.")
-        action_ids = tuple(action.action_id for action in action_values)
         if any(
-            isinstance(action, CellResidualAction)
-            and any(input_field not in fields for input_field in action.input_fields)
+            output not in fields
             for action in action_values
+            for output in _action_output_fields(action)
         ):
-            raise ValueError("Cell residual inputs must be declared form fields.")
+            raise ValueError("Every form action output must be a declared field.")
+        if any(
+            input_field not in fields
+            for action in action_values
+            for input_field in _action_input_fields(action)
+        ):
+            raise ValueError("Every form action input must be a declared field.")
+        functional_ = functional
+        if functional_ is not None:
+            if not isinstance(functional_, Functional):
+                raise TypeError("functional must be variational.Functional or None.")
+            if not all(
+                isinstance(action, LocalFunctionalAction) for action in action_values
+            ):
+                raise ValueError(
+                    "A functional finite-element form may contain only "
+                    "LocalFunctionalAction values."
+                )
+            if tuple(action.term.term_id for action in action_values) != tuple(
+                term.term_id for term in functional_.terms
+            ):
+                raise ValueError(
+                    "Functional actions must match functional terms in declared order."
+                )
+        action_ids = tuple(action.action_id for action in action_values)
         if len(set(action_ids)) != len(action_ids):
             raise ValueError("Finite-element form action IDs must be unique.")
         self.form_id = canonical_fingerprint(
@@ -817,6 +936,9 @@ class FiniteElementForm(StrictModule, NonTrainableState):
                     "evidence": [list(item) for item in properties_.evidence],
                 },
                 "auxiliary": auxiliary_identifier,
+                "functional": (
+                    None if functional_ is None else functional_.functional_id
+                ),
             }
         )
         self.field_names = fields
@@ -824,6 +946,7 @@ class FiniteElementForm(StrictModule, NonTrainableState):
         self.declared_properties = properties_
         self.auxiliary_evaluator = auxiliary_evaluator
         self.auxiliary_id = auxiliary_identifier
+        self.functional = functional_
 
     @property
     def field_name(self) -> str:
@@ -866,181 +989,74 @@ def _action_rule(
     return rule
 
 
-class FiniteElementFunctional(StrictModule, NonTrainableState):
-    functional_id: str = eqx.field(static=True)
-    field_name: str = eqx.field(static=True)
-    density: Callable[[Array, Array, Array, object], ArrayLike]
-    domain: IntegrationDomain | None
-    rules: tuple[tuple[str, ReferenceRule], ...]
-
-    def __init__(
-        self,
-        functional_id: str,
-        field_name: str,
-        density: Callable[[Array, Array, Array, object], ArrayLike],
-        /,
-        *,
-        domain: IntegrationDomain | None = None,
-        rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
-    ):
-        identifier = str(functional_id)
-        field = str(field_name)
-        if not identifier or not field or not callable(density):
-            raise ValueError("Functional ID, field, and callable density are required.")
-        if domain is not None and not isinstance(domain, IntegrationDomain):
-            raise TypeError("domain must be IntegrationDomain or None.")
-        if domain is not None and domain.kind != "cell":
-            raise ValueError("FiniteElementFunctional currently requires a cell domain.")
-        normalized_rules = _normalize_rules(rules)
-        self.functional_id = canonical_fingerprint(
-            {
-                "kind": "finite-element-functional",
-                "declared_id": identifier,
-                "field_name": field,
-                "domain": None if domain is None else domain.domain_id,
-                "rules": [
-                    [block_name, _rule_id(rule)] for block_name, rule in normalized_rules
-                ],
-            }
+def finite_element_form_from_functional(
+    functional: Functional,
+    fields: Mapping[str, str],
+    regions: Mapping[str, IntegrationDomain | None],
+    /,
+    *,
+    rules: Mapping[
+        str,
+        Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]],
+    ]
+    | None = None,
+    form_id: str | None = None,
+) -> FiniteElementForm:
+    """Bind one physical functional to finite-element local actions."""
+    if not isinstance(functional, Functional):
+        raise TypeError("functional must be a variational.Functional.")
+    expected_fields = set(functional.field_names)
+    if set(fields) != expected_fields:
+        raise KeyError(
+            "Finite-element functional fields must match exactly; "
+            f"missing={tuple(sorted(expected_fields - set(fields)))}, "
+            f"extra={tuple(sorted(set(fields) - expected_fields))}."
         )
-        self.field_name = field
-        self.density = density
-        self.domain = domain
-        self.rules = normalized_rules
-
-    def evaluate(
-        self,
-        discretization: AbstractPreparedLocalDiscretization,
-        state: ArrayLike,
-        args: object = None,
-        /,
-    ) -> Array:
-        field_index = discretization._field_index(self.field_name)
-        values = discretization.field_spaces[field_index].vector_space.validate(state)
-        binding = discretization.local_field_binding(self.field_name)
-        execution_values = binding.flatten(values)
-        context = (
-            args
-            if isinstance(args, FiniteElementExecutionContext)
-            else FiniteElementExecutionContext(
-                discretization.default_runtime,
-                user_args=args,
+    bound_fields = tuple(str(fields[name]) for name in functional.field_names)
+    if any(not field for field in bound_fields):
+        raise ValueError("Finite-element functional field bindings must be non-empty.")
+    if len(set(bound_fields)) != len(bound_fields):
+        raise ValueError("Finite-element functional field bindings must be one-to-one.")
+    expected_regions = set(functional.region_names)
+    if set(regions) != expected_regions:
+        raise KeyError(
+            "Finite-element functional regions must match exactly; "
+            f"missing={tuple(sorted(expected_regions - set(regions)))}, "
+            f"extra={tuple(sorted(set(regions) - expected_regions))}."
+        )
+    rule_bindings = {} if rules is None else dict(rules)
+    unknown_rule_regions = tuple(sorted(set(rule_bindings).difference(expected_regions)))
+    if unknown_rule_regions:
+        raise KeyError(f"Unknown functional rule regions {unknown_rule_regions}.")
+    field_mapping = {name: str(fields[name]) for name in functional.field_names}
+    actions: list[LocalFunctionalAction] = []
+    for term in functional.terms:
+        term_semantic_fields = {spec.field_name for spec in term.fields}
+        output_fields = tuple(
+            field_mapping[name]
+            for name in functional.variable_fields
+            if name in term_semantic_fields
+        )
+        if not output_fields:
+            raise ValueError(
+                f"Functional term {term.identifier!r} has no active variable field."
+            )
+        actions.append(
+            LocalFunctionalAction(
+                term,
+                field_mapping,
+                output_fields,
+                domain=regions[term.region],
+                rules=rule_bindings.get(term.region, ()),
+                action_id=f"{functional.identifier}:{term.identifier}",
             )
         )
-        domain = (
-            discretization.integration_domain("cell")
-            if self.domain is None
-            else self.domain
-        )
-        if domain.support_id != discretization.support.support_id:
-            raise ValueError("Functional domain belongs to another support.")
-        discretization.validate_local_runtime(context.runtime)
-        if not self.rules or not isinstance(discretization, FiniteElementDiscretization):
-            mode = (
-                "dense"
-                if isinstance(discretization, FiniteElementDiscretization)
-                else "sum_factorized"
-            )
-            regions = discretization.prepare_local_regions(
-                domain,
-                field_names=(self.field_name,),
-                maximum_derivative_order=1,
-                kernel_mode=mode,
-            )
-            contributions = []
-            for region in regions:
-                reference = region.reference_actions[0].realize_reference_actions(
-                    context.runtime
-                )
-                metric = region.geometry_actions.realize(context.runtime)
-                local = execution_values[region.field_gathers[0]]
-                field_values = reference.interpolate(context.runtime, local)
-                reference_gradient = reference.reference_gradient(context.runtime, local)
-                gradients = jnp.moveaxis(
-                    metric.physical_gradient(reference_gradient), -1, 2
-                )
-                density = jnp.asarray(
-                    self.density(field_values, gradients, metric.points, context)
-                )
-                if density.shape != metric.physical_weights.shape:
-                    raise ValueError(
-                        "Finite-element functional density must return one scalar "
-                        "per local point."
-                    )
-                valid = jnp.asarray(region.valid) & jnp.asarray(metric.valid)
-                contributions.append(
-                    discretization.precision_policy.accumulation(
-                        density * metric.physical_weights * valid[:, None]
-                    ).reshape((-1,))
-                )
-            combined = jnp.concatenate(tuple(contributions))
-            if discretization.precision_policy.compensated_accumulation:
-                return discretization.precision_policy.output(compensated_sum(combined))
-            return discretization.precision_policy.output(jnp.sum(combined))
-        rules = dict(self.rules)
-        contributions = []
-        cell_offset = 0
-        for block_index, (block, dofs) in enumerate(
-            zip(
-                discretization.mesh.blocks,
-                discretization.dof_maps[field_index].cell_dofs,
-                strict=True,
-            )
-        ):
-            block_cells = jnp.arange(
-                cell_offset,
-                cell_offset + block.cell_count,
-                dtype=jnp.int32,
-            )
-            cell_offset += block.cell_count
-            selected = jnp.isin(block_cells, domain.entity_indices)
-            rule = rules.get(block.name, _default_rule(block.cell_kind))
-            data = _reference_rule_data(rule)
-            if data.cell != block.cell_kind:
-                raise ValueError("Functional rule does not match its cell block.")
-            geometry = discretization.evaluate_block_geometry(
-                self.field_name,
-                block_index,
-                context.runtime.coordinates,
-                data.points,
-                data.weights,
-            )
-            local = values[dofs]
-            field_values = oe.contract(
-                "qi,ci...->cq...",
-                geometry.basis_values,
-                local,
-            )
-            gradients = oe.contract(
-                "cqid,ci...->cqd...",
-                geometry.physical_gradients,
-                local,
-            )
-            density = jnp.asarray(
-                self.density(
-                    field_values,
-                    gradients,
-                    geometry.physical_points,
-                    context,
-                )
-            )
-            expected = geometry.physical_weights.shape
-            if density.shape != expected:
-                raise ValueError(
-                    "Finite-element functional density must return one scalar "
-                    "per selected quadrature point."
-                )
-            contributions.append(
-                discretization.precision_policy.accumulation(
-                    density * geometry.physical_weights * selected[:, None]
-                ).reshape((-1,))
-            )
-        if not contributions:
-            return discretization.precision_policy.output(jnp.asarray(0.0))
-        combined = jnp.concatenate(tuple(contributions))
-        if discretization.precision_policy.compensated_accumulation:
-            return discretization.precision_policy.output(compensated_sum(combined))
-        return discretization.precision_policy.output(jnp.sum(combined))
+    return FiniteElementForm(
+        functional.identifier if form_id is None else form_id,
+        bound_fields,
+        actions,
+        functional=functional,
+    )
 
 
 def _pure_neumann_sipg(form: FiniteElementForm, /) -> bool:
@@ -1482,52 +1498,105 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
 
     @property
     def potential_compatible(self) -> bool:
-        """Whether every residual action is generated by a declared scalar energy."""
-        return bool(self.form.actions) and all(
-            isinstance(action, CellEnergyAction) for action in self.form.actions
+        """Whether the residual is generated from one declared scalar functional."""
+        return (
+            self.form.functional is not None
+            and bool(self.form.actions)
+            and all(
+                isinstance(action, LocalFunctionalAction) for action in self.form.actions
+            )
+        )
+
+    def _full_potential_evaluation(
+        self,
+        state: object,
+        args: object = None,
+        /,
+    ) -> FunctionalEvaluation:
+        from .fem._executor import execute_finite_element_potential
+
+        if not self.potential_compatible or self.form.functional is None:
+            raise ValueError(
+                "Finite-element potential evaluation requires a form generated "
+                "from variational.Functional; arbitrary residual, flux, source, "
+                "and operator actions are not relabeled as conservative."
+            )
+        full = self.full_space.validate(state)
+        context = self._execution_context(args)
+        value, term_values = execute_finite_element_potential(
+            self._workset_program,
+            self.form,
+            self.discretization,
+            full,
+            context,
+        )
+        return FunctionalEvaluation(
+            value,
+            term_values,
+            functional_id=self.form.functional.functional_id,
+            binding_id=self.form.form_id,
         )
 
     def full_potential(self, state: object, args: object = None, /) -> Array:
-        """Evaluate the scalar potential represented by all cell-energy actions."""
-        if not self.potential_compatible:
-            raise ValueError(
-                "Finite-element potential evaluation requires only CellEnergyAction "
-                "terms; arbitrary residual, flux, source, and operator actions are "
-                "not implicitly relabeled as conservative."
-            )
-        full = self.full_space.validate(state)
-        states = full if isinstance(full, tuple) else (full,)
-        state_by_field = dict(zip(self.form.field_names, states, strict=True))
+        """Evaluate the declared scalar functional on the full state space."""
+        return self._full_potential_evaluation(state, args).value
+
+    def potential_evaluation(
+        self,
+        state: object,
+        args: object = None,
+        /,
+    ) -> FunctionalEvaluation:
+        """Evaluate ordered functional terms on the constrained state space."""
         context = self._execution_context(args)
-        contributions = tuple(
-            FiniteElementFunctional(
-                action.action_id,
-                action.field_name,
-                action.density,
-                domain=action.domain,
-                rules=action.rules,
-            ).evaluate(
-                self.discretization,
-                state_by_field[action.field_name],
-                context,
-            )
-            for action in self.form.actions
-        )
-        dtype = jnp.result_type(*(value.dtype for value in contributions))
-        return jnp.sum(
-            jnp.stack(tuple(jnp.asarray(value, dtype=dtype) for value in contributions))
-        )
+        return self._full_potential_evaluation(self.expand(state, context), context)
 
     def potential(self, state: object, args: object = None, /) -> Array:
-        """Evaluate the scalar potential on the constrained state space."""
-        context = self._execution_context(args)
-        return self.full_potential(self.expand(state, context), context)
+        """Evaluate the scalar functional on the constrained state space."""
+        return self.potential_evaluation(state, args).value
 
-    def potential_gradient(self, state: object, args: object = None, /):
-        """Differentiate the declared scalar potential on the reduced state space."""
+    def value_and_residual(self, state: object, args: object = None, /):
+        """Return the scalar functional and reduced variation in one local pass."""
+        from .fem._executor import execute_finite_element_value_and_residual
+
         state_ = self.state_space.validate(state)
         context = self._execution_context(args)
-        return jax.grad(lambda value: self.potential(value, context))(state_)
+        full = self.expand(state_, context)
+        value, _term_values, full_residual = execute_finite_element_value_and_residual(
+            self._workset_program,
+            self.form,
+            self.discretization,
+            full,
+            self.execution_policy.accumulation,
+            context,
+        )
+        if len(self.form.field_names) == 1:
+            constraint = self.constraints[0]
+            reduced = (
+                self.residual_space.validate(full_residual)
+                if constraint is None
+                else constraint.constraint_map.pullback_dual(full_residual)
+            )
+        else:
+            reduced = self.residual_space.validate(
+                tuple(
+                    block
+                    if constraint is None
+                    else constraint.constraint_map.pullback_dual(block)
+                    for block, constraint in zip(
+                        full_residual,
+                        self.constraints,
+                        strict=True,
+                    )
+                )
+            )
+        return value, reduced
+
+    def as_minimization_problem(self) -> MinimizationProblem:
+        """Expose the declared scalar functional to iterative optimization."""
+        if not self.potential_compatible:
+            raise ValueError("Only functional-generated forms define minimization.")
+        return MinimizationProblem(lambda state, args: self.potential(state, args))
 
     def full_residual(self, state: object, args: object = None, /):
         from .fem._executor import execute_finite_element_residual
@@ -1687,13 +1756,10 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     def block_dependency_graph(self, /) -> tuple[tuple[bool, ...], ...]:
         fields = self.form.field_names
         consumed = {
-            (fields.index(action.field_name), fields.index(input_field))
+            (fields.index(output_field), fields.index(input_field))
             for action in self.form.actions
-            for input_field in (
-                action.input_fields
-                if isinstance(action, CellResidualAction)
-                else (action.field_name,)
-            )
+            for output_field in _action_output_fields(action)
+            for input_field in _action_input_fields(action)
         }
         return tuple(
             tuple((row, column) in consumed for column in range(len(fields)))
@@ -2696,6 +2762,50 @@ def compile_finite_element_problem(
     )
 
 
+def compile_finite_element_functional(
+    functional: Functional,
+    discretization: AbstractPreparedLocalDiscretization | FiniteElementHPEpoch,
+    /,
+    *,
+    fields: Mapping[str, str],
+    regions: Mapping[str, IntegrationDomain | None],
+    rules: Mapping[
+        str,
+        Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]],
+    ]
+    | None = None,
+    constraint: ConstraintMap
+    | FiniteElementDirichletConstraint
+    | FiniteElementLinearConstraint
+    | None = None,
+    dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
+    constraints: Mapping[
+        str,
+        ConstraintMap | FiniteElementDirichletConstraint | FiniteElementLinearConstraint,
+    ]
+    | None = None,
+    dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
+    | None = None,
+    execution_policy: FiniteElementExecutionPolicy | None = None,
+) -> CompiledFiniteElementProblem:
+    """Bind and compile one functional on a prepared local discretization."""
+    form = finite_element_form_from_functional(
+        functional,
+        fields,
+        regions,
+        rules=rules,
+    )
+    return compile_finite_element_problem(
+        form,
+        discretization,
+        constraint=constraint,
+        dirichlet_values=dirichlet_values,
+        constraints=constraints,
+        dirichlet_values_by_field=dirichlet_values_by_field,
+        execution_policy=execution_policy,
+    )
+
+
 __all__ = [
     "BoundaryLoadAction",
     "CellBilinearAction",
@@ -2708,8 +2818,8 @@ __all__ = [
     "FiniteElementExecutionContext",
     "FiniteElementExecutionPolicy",
     "FiniteElementForm",
-    "FiniteElementFunctional",
     "InteriorFacetAction",
+    "LocalFunctionalAction",
     "MassAction",
     "PairwiseVolumeFluxAction",
     "PreparedOperatorAction",
@@ -2718,5 +2828,7 @@ __all__ = [
     "SIPGPenaltyPolicy",
     "SourceAction",
     "coefficient",
+    "compile_finite_element_functional",
     "compile_finite_element_problem",
+    "finite_element_form_from_functional",
 ]

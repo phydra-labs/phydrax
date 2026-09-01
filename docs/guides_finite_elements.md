@@ -83,8 +83,16 @@ The assembled weak residual belongs to `DualSpace(test_space)`. This preserves
 the distinction between a test functional, a primal field vector, the field
 Riesz map, and the physical mass operator.
 
-`FiniteElementFunctional` accepts selected domains and native reference rules;
-its reduction follows `FiniteElementPrecisionPolicy`.
+`finite_element_form_from_functional` and
+`compile_finite_element_functional` bind `phydrax.variational.Functional`
+terms to the same worksets used for scalar value, dual first variation, and
+matrix-free Hessian actions. Cell terms support value and gradient jets;
+two-dimensional polygonal exterior terms support value jets and outward normals.
+
+Prepared-local implementations, including IGA, consume the same portable term
+through their interpolation, gradient, geometry, and transpose actions.
+`CellEnergyAction` and `FiniteElementFunctional` remain lower-level adapters for
+representation-specific callbacks.
 
 ## Essential constraints
 

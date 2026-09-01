@@ -48,17 +48,23 @@ history/search/topology epoch.
 
 ## Static hyperelasticity
 
-`phydrax.applications.solid_mechanics.neo_hookean_form` constructs a
-`CellEnergyAction` from the canonical pointwise hyperelastic law. Plane strain,
-three-dimensional, and block-diagonal plane-stress adapters therefore share the
-same energy, first-Piola stress, tangent, admissibility, and Nanson conventions.
+`phydrax.applications.solid_mechanics.neo_hookean_functional` declares the
+representation-independent logarithmic compressible Neo-Hookean reference
+energy; `neo_hookean_form` is its finite-element convenience binding. Plane
+strain, three-dimensional, and block-diagonal plane-stress adapters share the
+canonical pointwise energy, first-Piola stress, tangent, admissibility, and
+Nanson conventions.
+
+The finite-element executor differentiates the realized scalar functional into
+the internal residual, so the residual and stored-energy definitions cannot
+drift. Conservative dead or certified pressure loads may contribute signed
+potential terms. General follower loads use `MechanicalLoadAction`, preserve
+their nonsymmetric tangent, and route through virtual work.
 
 Exact or finite-bulk incompressibility uses `MixedHyperelasticModel`,
 `mixed_hyperelastic_form`, a certified displacement/pressure space, and a
-nonlinear root. It is not routed through `FunctionalSolver` minimization.
-Conservative dead or certified pressure loads may contribute potential energy;
-general follower loads use `MechanicalLoadAction`, preserve their nonsymmetric
-tangent, and route through virtual work.
+nonlinear stationarity root; it is not routed through `FunctionalSolver`
+minimization. Strong Dirichlet conditions use the finite-element constraint map.
 
 ## Fixed-mesh topology optimization
 

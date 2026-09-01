@@ -91,6 +91,17 @@
   qualification producers, an end-to-end Poisson example, and record-only
   degree/span timing producers; sampled map evidence is not a global
   injectivity certificate or BRep/CAD support.
+- Added the representation-independent `phydrax.variational` functional substrate,
+  DomainFunction bindings, and prepared-local value/first-variation/Hessian
+  execution for coupled finite-element and isogeometric potentials.
+- Unified `IntegralFunctional`, `VariationalEigenspace`, and
+  `InvariantSubspaceResidual` on typed integration sources; fixed randomized
+  objectives now require explicit realizations.
+- Added `LocalFunctionalAction`, `finite_element_form_from_functional`, and
+  `compile_finite_element_functional` alongside representation-bound
+  `CellEnergyAction` and `FiniteElementFunctional` adapters.
+- Routed the portable Neo-Hookean functional, DomainFunction operators,
+  finite elements, and material points through the canonical finite-strain law.
 - Closed remaining advanced-cosmology boundaries with projected canonical physical
   state, content-addressed products/artifacts, dependency-aware derivatives, shared
   observation/covariance likelihood algebra, concrete pinned precision-process

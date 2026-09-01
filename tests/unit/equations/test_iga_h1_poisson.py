@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -102,6 +103,50 @@ def test_isogeometric_natural_load_uses_physical_boundary_measure():
 
     np.testing.assert_allclose(jnp.sum(residual), -4.0, rtol=1e-12, atol=1e-12)
 
+    def boundary_density(fields, geometry, context):
+        del context
+        if geometry.normal is None:
+            raise ValueError("Prepared boundary functional requires normals.")
+        return -fields["u"].value + 0.0 * jnp.sum(
+            geometry.normal**2,
+            axis=-1,
+        )
+
+    portable = phx.variational.Functional(
+        "iga-portable-boundary-work",
+        (
+            phx.variational.LocalIntegralTerm(
+                "boundary",
+                region="boundary",
+                fields=(phx.variational.FieldJetSpec("u", value=True),),
+                density=boundary_density,
+                density_id="iga-portable-boundary-work",
+                normal=True,
+            ),
+        ),
+        variable_fields=("u",),
+    )
+    portable_compiled = phx.equations.compile_finite_element_functional(
+        portable,
+        prepared,
+        fields={"u": "u"},
+        regions={
+            "boundary": prepared.integration_domain("exterior_facet"),
+        },
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free",
+            local_kernel="sum_factorized",
+        ),
+    )
+    portable_residual = portable_compiled.residual(portable_compiled.state_space.zeros())
+
+    np.testing.assert_allclose(
+        jnp.sum(portable_residual),
+        -4.0,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
 
 def test_isogeometric_functional_flattens_basis_coefficients():
     grid = iga.BSplineGrid.open_uniform(2, 1, interval=(0.0, 1.0))
@@ -126,3 +171,36 @@ def test_isogeometric_functional_flattens_basis_coefficients():
     value = functional.evaluate(prepared, xx)
 
     np.testing.assert_allclose(value, 1.0 / 3.0, rtol=1e-12, atol=1e-12)
+
+    portable = phx.variational.Functional(
+        "iga-portable-l2",
+        (
+            phx.variational.LocalIntegralTerm(
+                "body",
+                region="body",
+                fields=(phx.variational.FieldJetSpec("u", value=True),),
+                density=lambda fields, geometry, context: fields["u"].value ** 2,
+                density_id="iga-portable-square",
+            ),
+        ),
+        variable_fields=("u",),
+    )
+    compiled = phx.equations.compile_finite_element_functional(
+        portable,
+        prepared,
+        fields={"u": "u"},
+        regions={"body": None},
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free",
+            local_kernel="sum_factorized",
+        ),
+    )
+    portable_value, portable_residual = compiled.value_and_residual(xx)
+
+    np.testing.assert_allclose(portable_value, value, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        portable_residual,
+        jax.grad(compiled.potential)(xx),
+        rtol=1e-12,
+        atol=1e-12,
+    )

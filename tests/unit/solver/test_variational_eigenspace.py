@@ -31,11 +31,12 @@ def _energy(left, right):
 
 def _term(domain):
     return phx.terms.VariationalEigenspace(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(48)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(48)),
+        ),
         objective_vars=("u0", "u1"),
         stiffness_form=_energy,
-        materialization_policy="fixed",
     )
 
 
@@ -119,19 +120,17 @@ def _strong_residual_term(
     metric_action=None,
     pairing=None,
     residual_pairing=None,
-    materialization_policy="fixed",
-    fixed_realization=None,
 ):
     return phx.terms.InvariantSubspaceResidual(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(48)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(48)),
+        ),
         operator_action=lambda field: -phx.operators.laplacian(field, var="x"),
         metric_action=metric_action,
         pairing=pairing,
         residual_pairing=residual_pairing,
         objective_vars=objective_vars,
-        materialization_policy=materialization_policy,
-        fixed_realization=fixed_realization,
     )
 
 
@@ -212,8 +211,10 @@ def test_invariant_residual_is_trial_basis_invariant_and_cluster_safe():
     )
 
     identity_term = phx.terms.InvariantSubspaceResidual(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24)),
+        ),
         operator_action=lambda field: field,
         objective_vars=("u0", "u1"),
     )
@@ -266,8 +267,10 @@ def test_invariant_residual_is_complex_phase_invariant():
 def test_invariant_residual_rejects_non_self_adjoint_projection():
     domain, first, second = _dirichlet_modes()
     term = phx.terms.InvariantSubspaceResidual(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(32)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(32)),
+        ),
         operator_action=lambda field: phx.operators.partial_n(
             field,
             var="x",
@@ -288,8 +291,10 @@ def test_invariant_residual_rejects_indefinite_residual_pairing():
     domain = phx.domain.Interval1d(0.0, 1.0)
     first = domain.Function("x")(lambda x: x[0] * (1.0 - x[0]))
     term = phx.terms.InvariantSubspaceResidual(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(32)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(32)),
+        ),
         operator_action=lambda field: -phx.operators.laplacian(field, var="x"),
         residual_pairing=lambda left, right: -phx.operators.conjugate(left) * right,
         objective_vars=("u",),
@@ -322,9 +327,9 @@ def test_invariant_residual_weight_must_be_nonnegative():
     domain, _first, _second = _dirichlet_modes()
     with pytest.raises(ValueError, match="non-negative"):
         phx.terms.InvariantSubspaceResidual(
-            target=phx.integration.over(domain.component()),
-            plan=phx.integration.FixedQuadraturePlan(
-                phx.integration.GaussLegendreRule(8)
+            source=phx.integration.per_step(
+                phx.integration.over(domain.component()),
+                phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
             ),
             operator_action=lambda field: field,
             objective_vars=("u",),
@@ -332,42 +337,26 @@ def test_invariant_residual_weight_must_be_nonnegative():
         )
 
 
-def test_invariant_residual_materialization_policies_are_explicit():
+def test_invariant_residual_integration_sources_are_explicit():
     domain, first, _second = _dirichlet_modes()
     target = phx.integration.over(domain.component())
     plan = phx.integration.MonteCarloPlan(128)
-
-    with pytest.raises(ValueError, match="requires fixed_key"):
-        phx.terms.InvariantSubspaceResidual(
-            target=target,
-            plan=plan,
-            operator_action=lambda field: (
-                -phx.operators.laplacian(
-                    field,
-                    var="x",
-                )
-            ),
-            objective_vars=("u",),
-        )
-
+    fixed_realization = phx.integration.materialize(target, plan, key=jr.key(1))
     fixed = phx.terms.InvariantSubspaceResidual(
-        target=target,
-        plan=plan,
+        source=phx.integration.fixed(fixed_realization),
         operator_action=lambda field: -phx.operators.laplacian(field, var="x"),
         objective_vars=("u",),
-        fixed_key=jr.key(1),
     )
-    assert fixed.sample(key=jr.key(2)) is fixed.fixed_realization
+    assert fixed.sample(key=jr.key(2)) is fixed_realization
 
     realization = phx.integration.materialize(
         target,
         phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24)),
     )
     caller = phx.terms.InvariantSubspaceResidual(
-        target=target,
+        source=phx.integration.caller(target),
         operator_action=lambda field: -phx.operators.laplacian(field, var="x"),
         objective_vars=("u",),
-        materialization_policy="caller",
     )
     with pytest.raises(ValueError, match="requires batch"):
         caller.loss({"u": first})
@@ -413,14 +402,18 @@ def test_functional_solver_refines_held_out_strong_eigen_residual():
     amplitude = domain.Parameter(0.25)
     trial = first + amplitude * second
     training = phx.terms.InvariantSubspaceResidual(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24)),
+        ),
         operator_action=lambda field: -phx.operators.laplacian(field, var="x"),
         objective_vars=("u",),
     )
     held_out = phx.terms.InvariantSubspaceResidual(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(56)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(56)),
+        ),
         operator_action=lambda field: -phx.operators.laplacian(field, var="x"),
         objective_vars=("u",),
     )

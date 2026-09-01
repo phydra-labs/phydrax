@@ -20,6 +20,13 @@ Each \(\ell_i\) pairs a residual, moment, or observation condition with an
 explicit numerical integration source. Domain components and their induced
 measures define the semantics of those sources.
 
+`phydrax.variational.Functional` is the representation-independent physical
+case: named field jets and signed region terms can be bound either to
+`DomainFunction` integration terms or to a finite-element discretization. The
+neural optimizer derivative is a parameter pullback; the FE residual is a
+dual-valued discrete first variation. Neither is silently relabeled as a metric
+gradient.
+
 ## The compositional contract
 
 At a practical level, most workflows look like:

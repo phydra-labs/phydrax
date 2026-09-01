@@ -149,7 +149,7 @@ class RegionIR(StrictModule, NonTrainableState):
 
 class FiniteElementActionIR(StrictModule, NonTrainableState):
     action_kind: ActionKind = eqx.field(static=True)
-    output_slot: str = eqx.field(static=True)
+    output_slots: tuple[str, ...] = eqx.field(static=True)
     input_slots: tuple[str, ...] = eqx.field(static=True)
     operators: tuple[tuple[str, DifferentialOperator], ...] = eqx.field(static=True)
     region: RegionIR
@@ -159,19 +159,27 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
     def __init__(
         self,
         action_kind: ActionKind,
-        output_slot: str,
+        output_slots: Sequence[str],
         input_slots: Sequence[str],
         operators: Sequence[tuple[str, DifferentialOperator]],
         region: RegionIR,
         kernel_id: str,
         /,
     ):
-        output = str(output_slot)
+        outputs = tuple(str(name) for name in output_slots)
         inputs = tuple(str(name) for name in input_slots)
         operations = tuple((str(name), operation) for name, operation in operators)
         kernel = str(kernel_id)
-        if not output or not inputs or any(not name for name in inputs) or not kernel:
+        if (
+            not outputs
+            or any(not name for name in outputs)
+            or not inputs
+            or any(not name for name in inputs)
+            or not kernel
+        ):
             raise ValueError("Local action field/kernel identifiers must be non-empty.")
+        if len(set(outputs)) != len(outputs):
+            raise ValueError("Local action output slots must be unique.")
         if len(set(inputs)) != len(inputs):
             raise ValueError("Local action input slots must be unique.")
         if not isinstance(region, RegionIR):
@@ -187,7 +195,7 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
         ):
             raise ValueError("Unknown finite-element action kind.")
         self.action_kind = action_kind
-        self.output_slot = output
+        self.output_slots = outputs
         self.input_slots = inputs
         self.operators = operations
         self.region = region
@@ -196,7 +204,7 @@ class FiniteElementActionIR(StrictModule, NonTrainableState):
             {
                 "kind": "finite-element-action",
                 "action_kind": action_kind,
-                "output": output,
+                "outputs": list(outputs),
                 "inputs": list(inputs),
                 "operators": [list(item) for item in operations],
                 "region": region.region_id,
@@ -225,7 +233,7 @@ class LocalActionIR(StrictModule, NonTrainableState):
             raise ValueError("LocalActionIR slot names must be unique.")
         declared = set(names)
         for action in actions_:
-            if action.output_slot not in declared or any(
+            if any(name not in declared for name in action.output_slots) or any(
                 name not in declared for name in action.input_slots
             ):
                 raise ValueError("Finite-element action references an undeclared slot.")

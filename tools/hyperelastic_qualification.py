@@ -138,17 +138,40 @@ def _material(configuration: CaseConfiguration):
     )
 
 
-def _traction_coefficient(configuration: CaseConfiguration):
+def _total_functional(configuration: CaseConfiguration):
+    stored = phx.applications.solid_mechanics.neo_hookean_functional(
+        "u",
+        _material(configuration),
+        region="body",
+        functional_id="plane-strain-traction",
+    )
     traction = jnp.asarray((configuration.traction, 0.0))
 
-    def load(points, context):
+    def traction_work(fields, geometry, context):
         del context
-        right = points[..., 0] > 1.0 - 1e-10
-        return jnp.where(right[..., None], traction, jnp.zeros_like(traction))
+        load = jnp.where(
+            (geometry.points[..., 0] > 1.0 - 1e-10)[..., None],
+            traction,
+            jnp.zeros_like(traction),
+        )
+        return jnp.sum(load * fields["u"].value, axis=-1)
 
-    return phx.equations.coefficient(
-        load,
-        coefficient_id="right-reference-traction",
+    return phx.variational.Functional(
+        "plane-strain-traction",
+        stored.terms
+        + (
+            phx.variational.LocalIntegralTerm(
+                "traction-work",
+                region="traction",
+                fields=(phx.variational.FieldJetSpec("u", value=True),),
+                density=traction_work,
+                density_id=(
+                    f"right-reference-traction-work:{configuration.traction:.17g}"
+                ),
+                weight=-1.0,
+            ),
+        ),
+        variable_fields=("u",),
     )
 
 
@@ -161,22 +184,7 @@ def _finite_element_problem(configuration: CaseConfiguration, refinement: int):
         component_shape=(2,),
     )
     discretization = phx.discretization.FiniteElementPlan(mesh, field).prepare()
-    internal = phx.applications.solid_mechanics.neo_hookean_form(
-        "u", _material(configuration)
-    )
-    form = phx.equations.FiniteElementForm(
-        "plane-strain-traction",
-        "u",
-        internal.actions
-        + (
-            phx.equations.BoundaryLoadAction(
-                "u",
-                _traction_coefficient(configuration),
-                domain=discretization.exterior_facet_domain,
-                action_id="right-reference-traction",
-            ),
-        ),
-    )
+    functional = _total_functional(configuration)
     left = jnp.isclose(vertices[:, 0], 0.0)
     constraint = phx.discretization.dirichlet_constraint(
         discretization,
@@ -184,9 +192,14 @@ def _finite_element_problem(configuration: CaseConfiguration, refinement: int):
         boundary_mask=left,
         components=(0, 1),
     )
-    compiled = phx.equations.compile_finite_element_problem(
-        form,
+    compiled = phx.equations.compile_finite_element_functional(
+        functional,
         discretization,
+        fields={"u": "u"},
+        regions={
+            "body": None,
+            "traction": discretization.exterior_facet_domain,
+        },
         constraint=constraint,
         dirichlet_values=0.0,
     )
@@ -207,7 +220,11 @@ def _cell_kinematics(vertices, cells, displacement, material):
         ),
         axis=1,
     )
-    gradient_transpose = jax.vmap(jnp.linalg.solve)(reference_edges, displacement_edges)
+    gradient_transpose = phx.linalg.solve_small_linear(
+        phx.linalg.SmallLinearSolvePlan(2),
+        reference_edges,
+        displacement_edges,
+    ).value
     gradient = jnp.swapaxes(gradient_transpose, -1, -2)
     deformation_2d = jnp.eye(2) + gradient
     deformation_3d = (
@@ -221,34 +238,15 @@ def _cell_kinematics(vertices, cells, displacement, material):
     energy = phx.applications.solid_mechanics.neo_hookean_reference_energy(
         deformation_3d, material
     )
-    area = 0.5 * jnp.abs(jnp.linalg.det(reference_edges))
+    area = 0.5 * jnp.abs(
+        phx.linalg.solve_small_linear(
+            phx.linalg.SmallLinearSolvePlan(2),
+            reference_edges,
+            jnp.broadcast_to(jnp.eye(2), reference_edges.shape),
+        ).determinant
+    )
     centroids = jnp.mean(cell_points, axis=1)
     return deformation_2d, first_piola, energy, area, centroids
-
-
-def _finite_element_potential(
-    configuration: CaseConfiguration,
-    vertices,
-    cells,
-    displacement,
-):
-    deformation, first_piola, energy, area, centroids = _cell_kinematics(
-        vertices, cells, displacement, _material(configuration)
-    )
-    internal = jnp.sum(energy * area)
-    right = jnp.isclose(vertices[:, 0], 1.0)
-    order = jnp.argsort(vertices[right, 1])
-    right_values = displacement[right][order]
-    right_y = vertices[right, 1][order]
-    external = configuration.traction * jnp.trapezoid(right_values[:, 0], right_y)
-    return (
-        internal - external,
-        deformation,
-        first_piola,
-        energy,
-        area,
-        centroids,
-    )
 
 
 def _solve_finite_element(configuration: CaseConfiguration, refinement: int):
@@ -268,9 +266,13 @@ def _solve_finite_element(configuration: CaseConfiguration, refinement: int):
     jax.block_until_ready(result.state)
     full_state = jnp.asarray(compiled.expand(result.state))
     full_residual = jnp.asarray(compiled.full_residual(full_state))
-    potential, deformation, first_piola, _, area, centroids = _finite_element_potential(
-        configuration, vertices, cells, full_state
+    deformation, first_piola, _, area, centroids = _cell_kinematics(
+        vertices,
+        cells,
+        full_state,
+        _material(configuration),
     )
+    potential = compiled.full_potential(full_state)
     reaction = jnp.sum(full_residual[left], axis=0)
     applied = jnp.asarray((configuration.traction, 0.0))
     balance = jnp.linalg.norm(reaction + applied) / jnp.linalg.norm(applied)
@@ -282,7 +284,15 @@ def _solve_finite_element(configuration: CaseConfiguration, refinement: int):
         iterations=int(result.diagnostics.iterations),
         residual_evaluations=int(result.diagnostics.residual_evaluations),
         final_residual_norm=float(result.diagnostics.final_residual_norm),
-        minimum_jacobian=float(jnp.min(jnp.linalg.det(deformation))),
+        minimum_jacobian=float(
+            jnp.min(
+                phx.linalg.solve_small_linear(
+                    phx.linalg.SmallLinearSolvePlan(2),
+                    deformation,
+                    jnp.broadcast_to(jnp.eye(2), deformation.shape),
+                ).determinant
+            )
+        ),
         total_potential=float(potential),
         tip_displacement=tuple(float(value) for value in full_state[tip_index]),
         relative_force_balance=float(balance),
@@ -315,84 +325,73 @@ def _neural_problem(configuration: CaseConfiguration, seed: int):
     x_coordinate = domain.Function("x")(lambda x: x[0])
     displacement = 0.05 * x_coordinate * raw
 
-    @domain.Function("x")
-    def traction(x):
-        return jnp.where(
-            x[0] > 1.0 - 1e-10,
-            jnp.asarray((configuration.traction, 0.0)),
-            jnp.zeros(2),
-        )
-
-    def internal_density(functions):
-        return phx.operators.neo_hookean_reference_energy(
-            functions["u"],
-            mu=configuration.shear_modulus,
-            lambda_=configuration.lame_lambda,
-        )
-
-    def traction_work(functions):
-        return phx.operators.einsum("...i,...i->...", traction, functions["u"])
-
-    interior = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.MonteCarloPlan(configuration.training_interior_samples),
-        integrand=internal_density,
-        materialization_policy="fixed",
-        fixed_key=jr.key(seed + 1000),
-        nonfinite_integrand="propagate",
-        label="stored_energy",
+    body_target = phx.integration.over(domain.component())
+    body_plan = phx.integration.MonteCarloPlan(configuration.training_interior_samples)
+    boundary_target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
+    boundary_plan = phx.integration.MonteCarloPlan(
+        configuration.training_boundary_samples
     )
-    boundary = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component({"x": phx.domain.Boundary()})),
-        plan=phx.integration.MonteCarloPlan(configuration.training_boundary_samples),
-        integrand=traction_work,
-        weight=-1.0,
-        materialization_policy="fixed",
-        fixed_key=jr.key(seed + 2000),
+    terms = phx.terms.bind_functional(
+        _total_functional(configuration),
+        {"u": displacement},
+        {
+            "body": phx.integration.fixed(
+                phx.integration.materialize(
+                    body_target,
+                    body_plan,
+                    key=jr.key(seed + 1000),
+                )
+            ),
+            "traction": phx.integration.fixed(
+                phx.integration.materialize(
+                    boundary_target,
+                    boundary_plan,
+                    key=jr.key(seed + 2000),
+                )
+            ),
+        },
+        geometry_variables={"body": "x", "traction": "x"},
         nonfinite_integrand="propagate",
-        label="traction_work",
     )
     solver = phx.solver.FunctionalSolver(
         functions={"u": displacement},
-        terms=(interior, boundary),
+        terms=terms,
     )
     return domain, solver
 
 
 def _held_out_potential(configuration, domain, displacement, key):
     interior_key, boundary_key = jr.split(key)
-
-    @domain.Function("x")
-    def traction(x):
-        return jnp.where(
-            x[0] > 1.0 - 1e-10,
-            jnp.asarray((configuration.traction, 0.0)),
-            jnp.zeros(2),
-        )
-
-    internal = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.MonteCarloPlan(configuration.held_out_interior_samples),
-        integrand=lambda functions: phx.operators.neo_hookean_reference_energy(
-            functions["u"],
-            mu=configuration.shear_modulus,
-            lambda_=configuration.lame_lambda,
-        ),
-        materialization_policy="fixed",
-        fixed_key=interior_key,
-    )
-    external = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component({"x": phx.domain.Boundary()})),
-        plan=phx.integration.MonteCarloPlan(configuration.held_out_boundary_samples),
-        integrand=lambda functions: phx.operators.einsum(
-            "...i,...i->...", traction, functions["u"]
-        ),
-        weight=-1.0,
-        materialization_policy="fixed",
-        fixed_key=boundary_key,
+    body_target = phx.integration.over(domain.component())
+    boundary_target = phx.integration.over(domain.component({"x": phx.domain.Boundary()}))
+    terms = phx.terms.bind_functional(
+        _total_functional(configuration),
+        {"u": displacement},
+        {
+            "body": phx.integration.fixed(
+                phx.integration.materialize(
+                    body_target,
+                    phx.integration.MonteCarloPlan(
+                        configuration.held_out_interior_samples
+                    ),
+                    key=interior_key,
+                )
+            ),
+            "traction": phx.integration.fixed(
+                phx.integration.materialize(
+                    boundary_target,
+                    phx.integration.MonteCarloPlan(
+                        configuration.held_out_boundary_samples
+                    ),
+                    key=boundary_key,
+                )
+            ),
+        },
+        geometry_variables={"body": "x", "traction": "x"},
     )
     return phx.solver.FunctionalSolver(
-        functions={"u": displacement}, terms=(internal, external)
+        functions={"u": displacement},
+        terms=terms,
     ).loss()
 
 

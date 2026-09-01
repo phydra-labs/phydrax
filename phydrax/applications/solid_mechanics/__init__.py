@@ -163,6 +163,7 @@ from ._models import (
     J2PlasticityState,
     J2PlasticityUpdate,
     neo_hookean_form,
+    neo_hookean_functional,
 )
 from ._mpm_coupled_fields import (
     BiotPoromechanicsParameters,
@@ -421,6 +422,7 @@ __all__ = [
     "neo_hookean_cauchy",
     "neo_hookean_first_piola",
     "neo_hookean_form",
+    "neo_hookean_functional",
     "neo_hookean_reference_energy",
     "neo_hookean_response",
     "operator",

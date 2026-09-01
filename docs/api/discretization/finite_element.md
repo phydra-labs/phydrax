@@ -106,9 +106,13 @@
 
 ---
 
+::: phydrax.equations.LocalFunctionalAction
+
+---
 ::: phydrax.equations.CellEnergyAction
 
 ---
+
 
 ::: phydrax.equations.CellBilinearAction
 
@@ -121,8 +125,16 @@
 ::: phydrax.equations.FiniteElementForm
 
 ---
-
 ::: phydrax.equations.FiniteElementFunctional
+
+---
+
+
+::: phydrax.equations.compile_finite_element_functional
+
+---
+
+::: phydrax.equations.finite_element_form_from_functional
 
 ---
 

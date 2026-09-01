@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Literal
 
 from phydrax.conditions import AbstractResidualCondition
 from phydrax.domain import DomainFunction
@@ -14,23 +14,22 @@ from phydrax.operators.differential import (
     level_set_phase_indicator,
 )
 
+from ..integration import IntegrationSource
 from ._integral_functional import IntegralFunctional
 from ._residual import _squared_frobenius_field
 
 
 def implicit_interface_penalty(
     condition: AbstractResidualCondition,
-    target: Any,
+    source: IntegrationSource,
     /,
     *,
     level_set_field: str,
     width: float,
-    plan: Any = None,
     spatial_var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
     scale: float = 1.0,
     label: str | None = None,
-    materialization_policy: Literal["fixed", "per_step", "caller"] = "per_step",
 ) -> IntegralFunctional:
     """Integrate a squared residual over an implicit interface via coarea."""
 
@@ -54,28 +53,24 @@ def implicit_interface_penalty(
 
     fields = tuple(dict.fromkeys(condition.fields + (name,)))
     return IntegralFunctional(
-        target=target,
+        source=source,
         integrand=integrand,
-        plan=plan,
         objective_vars=fields,
         weight=scale,
         label=condition.label if label is None else label,
-        materialization_policy=materialization_policy,
     )
 
 
 def implicit_phase_penalty(
     condition: AbstractResidualCondition,
-    target: Any,
+    source: IntegrationSource,
     /,
     *,
     level_set_field: str,
     width: float,
     phase: Literal["inside", "outside"],
-    plan: Any = None,
     scale: float = 1.0,
     label: str | None = None,
-    materialization_policy: Literal["fixed", "per_step", "caller"] = "per_step",
 ) -> IntegralFunctional:
     """Integrate a squared residual over one diffuse phase of an ambient domain."""
 
@@ -100,13 +95,11 @@ def implicit_phase_penalty(
 
     fields = tuple(dict.fromkeys(condition.fields + (name,)))
     return IntegralFunctional(
-        target=target,
+        source=source,
         integrand=integrand,
-        plan=plan,
         objective_vars=fields,
         weight=scale,
         label=condition.label if label is None else label,
-        materialization_policy=materialization_policy,
     )
 
 

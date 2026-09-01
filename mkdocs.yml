@@ -269,6 +269,7 @@ nav:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
+        - Variational substrate: "api/variational.md"
         - Atomistic:
             - Core learning and dynamics: "api/atomistic.md"
             - Force fields and interaction sites: "api/atomistic_force_fields.md"
