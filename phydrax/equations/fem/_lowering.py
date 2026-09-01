@@ -30,81 +30,36 @@ from ._kernels import KernelBinding, KernelTable
 from ._worksets import CompiledWorkset, WorksetProgram, WorksetSignature
 
 
+def _descriptor(action):
+    try:
+        descriptor = action.descriptor
+    except AttributeError as error:
+        raise TypeError(
+            "Finite-element lowering requires an action with an explicit descriptor."
+        ) from error
+    return descriptor
+
+
 def _domain_for_action(action, discretization: AbstractPreparedLocalDiscretization):
     if action.domain is not None:
         return action.domain
-    action_kind = type(action).__name__
-    if action_kind in ("BoundaryLoadAction", "ExteriorFacetAction"):
-        return discretization.integration_domain("exterior_facet")
-    if action_kind == "InteriorFacetAction":
-        return discretization.integration_domain("interior_facet")
-    return discretization.integration_domain("cell")
+    return discretization.integration_domain(_descriptor(action).default_domain_kind)
 
 
 def _action_kind(action) -> str:
-    action_type = type(action).__name__
-    if action_type == "CellEnergyAction":
-        return "energy"
-    if action_type == "LocalFunctionalAction":
-        return "functional"
-    if action_type == "CellBilinearAction":
-        return "bilinear"
-    if action_type in ("SourceAction", "BoundaryLoadAction"):
-        return "linear"
-    if action_type == "PairwiseVolumeFluxAction":
-        return "pairwise-volume-flux"
-    return "residual"
+    return _descriptor(action).action_kind
 
 
 def _output_fields(action) -> tuple[str, ...]:
-    if type(action).__name__ == "LocalFunctionalAction":
-        return action.output_fields
-    return (action.field_name,)
+    return _descriptor(action).output_fields
 
 
 def _input_fields(action) -> tuple[str, ...]:
-    if type(action).__name__ in ("CellResidualAction", "LocalFunctionalAction"):
-        return action.input_fields
-    return (action.field_name,)
+    return _descriptor(action).input_fields
 
 
 def _operators(action) -> tuple[tuple[str, str], ...]:
-    inputs = _input_fields(action)
-    action_type = type(action).__name__
-    if action_type == "LocalFunctionalAction":
-        field_bindings = dict(action.field_bindings)
-        return tuple(
-            item
-            for specification in action.term.fields
-            for item in (
-                ((field_bindings[specification.field_name], "value"),)
-                if specification.value and not specification.gradient
-                else (
-                    ((field_bindings[specification.field_name], "grad"),)
-                    if specification.gradient and not specification.value
-                    else (
-                        (field_bindings[specification.field_name], "value"),
-                        (field_bindings[specification.field_name], "grad"),
-                    )
-                )
-            )
-        )
-    if action_type == "DiffusionAction":
-        return ((action.field_name, "grad"),)
-    if action_type == "InteriorFacetAction":
-        return ((action.field_name, "jump"), (action.field_name, "average"))
-    if action_type == "SIPGFacetAction":
-        return (
-            (action.field_name, "jump"),
-            (action.field_name, "average"),
-            (action.field_name, "grad"),
-            (action.field_name, "normal-trace"),
-        )
-    if action_type in ("CellResidualAction", "CellEnergyAction", "CellBilinearAction"):
-        return tuple(
-            item for field in inputs for item in ((field, "value"), (field, "grad"))
-        )
-    return ((action.field_name, "value"),)
+    return _descriptor(action).operators
 
 
 def _region_kind(kind: str) -> str:
@@ -149,23 +104,7 @@ def _rule_ids(action, discretization: AbstractPreparedLocalDiscretization):
 
 
 def _action_coefficients(action) -> tuple[Any, ...]:
-    action_type = type(action).__name__
-    if action_type == "DiffusionAction":
-        return (action.diffusivity,)
-    if action_type == "MassAction":
-        return (action.coefficient,)
-    if action_type == "SourceAction":
-        return (action.source,)
-    if action_type == "BoundaryLoadAction":
-        return (action.load,)
-    if action_type == "SIPGFacetAction":
-        values = [action.diffusivity]
-        if action.boundary is not None:
-            values.append(action.boundary.value)
-            if action.boundary.robin_coefficient is not None:
-                values.append(action.boundary.robin_coefficient)
-        return tuple(values)
-    return ()
+    return _descriptor(action).coefficient_values
 
 
 def _coefficient_layout_ids(action) -> tuple[str, ...]:
@@ -286,11 +225,7 @@ def _rule_ids_for_block(action, block) -> tuple[str, ...]:
     from .._finite_element_variational import _action_rule, _rule_id
 
     domain_kind = (
-        "interior_facet"
-        if type(action).__name__ == "InteriorFacetAction"
-        else "exterior_facet"
-        if type(action).__name__ in ("ExteriorFacetAction", "BoundaryLoadAction")
-        else "cell"
+        _descriptor(action).default_domain_kind
         if action.domain is None
         else action.domain.kind
     )
@@ -318,17 +253,17 @@ def _select_local_kernel(
     domain_kind: str,
     reference: PreparedFiniteElementReference | None,
 ) -> str:
-    action_type = type(action).__name__
+    action_kind = _action_kind(action)
     tensor = reference is not None and reference.tensor_tabulation is not None
     collocated = _collocated(reference)
-    if action_type == "LocalFunctionalAction":
+    if action_kind == "functional":
         if requested not in ("auto", "dense"):
             raise ValueError(
                 "Local functional actions currently require local_kernel='auto' "
                 "or 'dense'."
             )
         return "dense"
-    if action_type == "PairwiseVolumeFluxAction":
+    if action_kind == "pairwise-volume-flux":
         if domain_kind != "cell" or not collocated:
             raise ValueError(
                 "Pairwise volume flux requires a collocated tensor-cell reference."
@@ -454,21 +389,29 @@ def compile_workset_program(
     worksets = []
     common_action_indices = set()
     for action_index, action in enumerate(form.actions):
+        descriptor = _descriptor(action)
         domain = _domain_for_action(action, discretization)
-        action_name = type(action).__name__
-        common_action = (
-            domain.kind == "cell"
-            and (
-                action_name in ("DiffusionAction", "MassAction", "SourceAction")
-                or (
-                    action_name in ("CellEnergyAction", "LocalFunctionalAction")
-                    and not isinstance(discretization, FiniteElementDiscretization)
+        common_action = "prepared-local" in descriptor.provider_offers and (
+            (
+                domain.kind == "cell"
+                and (
+                    (
+                        descriptor.evaluator is None
+                        and descriptor.action_kind in ("residual", "linear")
+                    )
+                    or (
+                        descriptor.action_kind in ("energy", "functional")
+                        and not isinstance(discretization, FiniteElementDiscretization)
+                    )
                 )
             )
-        ) or (
-            domain.kind == "exterior_facet"
-            and action_name in ("BoundaryLoadAction", "LocalFunctionalAction")
-            and not isinstance(discretization, FiniteElementDiscretization)
+            or (
+                domain.kind == "exterior_facet"
+                and (
+                    descriptor.evaluator is None or descriptor.action_kind == "functional"
+                )
+                and not isinstance(discretization, FiniteElementDiscretization)
+            )
         )
         if not common_action:
             continue
@@ -876,23 +819,8 @@ def kernel_table_from_form(
         raise TypeError("Expected FiniteElementForm.")
     bindings = []
     for action_index, action in enumerate(form.actions):
-        action_type = type(action).__name__
-        evaluator = (
-            action.kernel
-            if action_type
-            in (
-                "CellResidualAction",
-                "PairwiseVolumeFluxAction",
-                "InteriorFacetAction",
-                "ExteriorFacetAction",
-                "CellBilinearAction",
-            )
-            else action.term.density
-            if action_type == "LocalFunctionalAction"
-            else action.density
-            if action_type == "CellEnergyAction"
-            else None
-        )
+        descriptor = _descriptor(action)
+        evaluator = descriptor.evaluator
         signatures = tuple(
             workset.signature
             for workset in workset_program.worksets
@@ -905,7 +833,7 @@ def kernel_table_from_form(
         bindings.append(
             KernelBinding(
                 action.action_id,
-                action_type,
+                descriptor.action_kind,
                 evaluator,
                 local_kernel=strategy,
                 reference_action_ids=tuple(

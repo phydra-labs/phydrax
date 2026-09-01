@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..equations import FiniteElementMaterialState
+from ..equations import MaterialSiteId, MaterialState, MaterialTransaction
 
 
 _CHECKPOINT_VERSION = 1
@@ -30,7 +30,8 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
     time: Array
     step: int = eqx.field(static=True)
     field_state: tuple[Array, ...]
-    material_states: tuple[FiniteElementMaterialState, ...]
+    materials: MaterialTransaction | None
+    material_payload_id: str | None = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
 
     def __init__(
@@ -42,30 +43,36 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
         field_state: tuple[ArrayLike, ...],
         /,
         *,
-        material_states: tuple[FiniteElementMaterialState, ...] = (),
+        materials: MaterialTransaction | None = None,
     ):
         prepared = str(prepared_id)
         compiled = str(compilation_id)
         time_ = jnp.asarray(time)
         step_ = int(step)
         fields = tuple(jnp.asarray(value) for value in field_state)
-        materials = tuple(material_states)
+        material_state = materials
         if not prepared or not compiled or time_.shape != () or step_ < 0:
             raise ValueError("FE checkpoint identity, time, or step is invalid.")
         if not fields or not all(
             jnp.issubdtype(value.dtype, jnp.inexact) for value in fields
         ):
             raise ValueError("FE checkpoint requires one or more inexact field arrays.")
-        if not all(isinstance(value, FiniteElementMaterialState) for value in materials):
-            raise TypeError(
-                "material_states must contain FiniteElementMaterialState values."
-            )
+        if material_state is not None and not isinstance(
+            material_state, MaterialTransaction
+        ):
+            raise TypeError("materials must be a MaterialTransaction or None.")
         self.prepared_id = prepared
         self.compilation_id = compiled
         self.time = time_
         self.step = step_
         self.field_state = fields
-        self.material_states = materials
+        self.materials = material_state
+        material_payload = (
+            None if material_state is None else material_state.checkpoint_payload()
+        )
+        self.material_payload_id = (
+            None if material_payload is None else material_payload.payload_id
+        )
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "finite-element-checkpoint",
@@ -75,7 +82,7 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
                 "time": array_tree_fingerprint(np.asarray(time_)),
                 "step": step_,
                 "fields": [array_tree_fingerprint(np.asarray(value)) for value in fields],
-                "materials": [value.state_id for value in materials],
+                "materials": self.material_payload_id,
             }
         )
 
@@ -95,13 +102,22 @@ def write_finite_element_checkpoint(
         "step": checkpoint.step,
         "checkpoint_id": checkpoint.checkpoint_id,
         "field_count": len(checkpoint.field_state),
-        "materials": [
-            {
-                "material_id": state.material_id,
-                "state_version": state.state_version,
-            }
-            for state in checkpoint.material_states
-        ],
+        "material_layout_id": (
+            None if checkpoint.materials is None else checkpoint.materials.layout_id
+        ),
+        "material_payload_id": checkpoint.material_payload_id,
+        "materials": (
+            []
+            if checkpoint.materials is None
+            else [
+                {
+                    "site_key": state.site_id.key,
+                    "model_id": state.model_id,
+                    "state_version": state.state_version,
+                }
+                for state in checkpoint.materials.states
+            ]
+        ),
     }
     arrays: dict[str, Any] = {
         "metadata": np.asarray(json.dumps(metadata, sort_keys=True)),
@@ -112,9 +128,10 @@ def write_finite_element_checkpoint(
             for index, value in enumerate(checkpoint.field_state)
         }
     )
-    for index, state in enumerate(checkpoint.material_states):
-        arrays[f"material_{index}"] = np.asarray(state.committed)
-    np.savez_compressed(Path(path), **arrays)
+    if checkpoint.materials is not None:
+        for index, state in enumerate(checkpoint.materials.states):
+            arrays[f"material_{index}"] = np.asarray(state.committed)
+    np.savez(Path(path), **arrays)
 
 
 def read_finite_element_checkpoint(
@@ -138,21 +155,34 @@ def read_finite_element_checkpoint(
         fields = tuple(
             archive[f"field_{index}"] for index in range(int(metadata["field_count"]))
         )
-        materials = tuple(
-            FiniteElementMaterialState(
-                item["material_id"],
+        material_states = tuple(
+            MaterialState(
+                MaterialSiteId(item["site_key"]),
+                item["model_id"],
                 archive[f"material_{index}"],
                 state_version=int(item["state_version"]),
             )
             for index, item in enumerate(metadata["materials"])
         )
+        materials = None if not material_states else MaterialTransaction(material_states)
+        if (
+            materials is not None
+            and materials.layout_id != metadata["material_layout_id"]
+        ):
+            raise ValueError("FE checkpoint material layout identity mismatch.")
+        if (
+            materials is not None
+            and materials.checkpoint_payload().payload_id
+            != metadata["material_payload_id"]
+        ):
+            raise ValueError("FE checkpoint material payload identity mismatch.")
     checkpoint = FiniteElementCheckpoint(
         prepared_id,
         compilation_id,
         metadata["time"],
         int(metadata["step"]),
         fields,
-        material_states=materials,
+        materials=materials,
     )
     if checkpoint.checkpoint_id != metadata["checkpoint_id"]:
         raise ValueError("FE checkpoint content identity mismatch.")

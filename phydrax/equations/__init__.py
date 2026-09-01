@@ -147,8 +147,11 @@ from ._finite_element_functional import FiniteElementFunctional
 from ._finite_element_material import (
     ConstitutiveModel,
     ConstitutiveResponse,
-    FiniteElementMaterialState,
-    FiniteElementMaterialTransaction,
+    MaterialCheckpointPayload,
+    MaterialIntegrationPlan,
+    MaterialSiteId,
+    MaterialState,
+    MaterialTransaction,
 )
 from ._finite_element_variational import (
     CellBilinearAction,
@@ -632,8 +635,11 @@ __all__ = [
     "MaterialPointArguments",
     "MaterialPointProblemIR",
     "ConstitutiveResponse",
-    "FiniteElementMaterialState",
-    "FiniteElementMaterialTransaction",
+    "MaterialCheckpointPayload",
+    "MaterialIntegrationPlan",
+    "MaterialSiteId",
+    "MaterialState",
+    "MaterialTransaction",
     "CompiledStencilDynamics",
     "BoundaryLoadAction",
     "CellBilinearAction",

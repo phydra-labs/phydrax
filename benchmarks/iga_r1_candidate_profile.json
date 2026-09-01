@@ -1,0 +1,72 @@
+{
+  "kind": "candidate-capability-profile",
+  "profile": {
+    "dependencies": [],
+    "kind": "capability-profile",
+    "name": "IGA.Core.Tensor",
+    "profile_id": "532ea8f6d790334b62d74ba42ba6909a45a3faa32b823b46a99384f8a12d928d",
+    "provider": "phydrax",
+    "release_evidence": [],
+    "released": false,
+    "required_gates": [
+      "code-verification",
+      "operational",
+      "solution-verification"
+    ],
+    "support_tuples": [
+      {
+        "attributes": {
+          "backend": "cpu",
+          "basis": "hierarchical",
+          "derivative": "Q6",
+          "distributed": "single",
+          "formulation": "basis_algebra",
+          "geometry": "fixed_tensor_geometry",
+          "interface": "none",
+          "precision": "float64",
+          "restart": "none",
+          "space": "thb_H1"
+        },
+        "capability": "IGA.Core.Tensor",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "2899dd98904e62059db78d57e825c1d16806227fba8eababc7bfca56515b293d"
+      },
+      {
+        "attributes": {
+          "backend": "cpu",
+          "basis": "direct_tensor",
+          "derivative": "Q0",
+          "distributed": "single",
+          "formulation": "complex_algebra",
+          "geometry": "full_dim_2d_nurbs",
+          "interface": "none",
+          "precision": "float64",
+          "restart": "none",
+          "space": "spline_de_rham"
+        },
+        "capability": "IGA.Core.Tensor",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "5894c6b9d844d271cc42801222959adeae37617a8342b0bdd336a839bfaada5f"
+      },
+      {
+        "attributes": {
+          "backend": "cpu",
+          "basis": "direct_tensor",
+          "derivative": "Q2",
+          "distributed": "single",
+          "formulation": "diffusion_reaction",
+          "geometry": "full_dim_2d_nurbs",
+          "interface": "none",
+          "precision": "float64",
+          "restart": "none",
+          "space": "scalar_H1"
+        },
+        "capability": "IGA.Core.Tensor",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "e2389dcabd3cf1e558bb3cba545a2f8e62d29a01362e905f8a0b908253355564"
+      }
+    ],
+    "version": "canonical"
+  },
+  "release_ready": false
+}

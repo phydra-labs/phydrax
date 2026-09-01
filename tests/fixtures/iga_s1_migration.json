@@ -1,0 +1,70 @@
+{
+  "cases": {
+    "exact_quadratic_poisson": {
+      "axis_names": [
+        "xi",
+        "eta"
+      ],
+      "control_shape": [
+        3,
+        3
+      ],
+      "degree": 2,
+      "expected_coefficients": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.25,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "field_name": "u",
+      "quadrature_points_per_axis": 3,
+      "span_count": 1
+    },
+    "natural_boundary_measure": {
+      "axis_names": [
+        "xi",
+        "eta"
+      ],
+      "control_shape": [
+        3,
+        3
+      ],
+      "degree": 2,
+      "field_name": "u",
+      "physical_scale": [
+        2.0,
+        3.0
+      ],
+      "quadrature_points_per_axis": 3,
+      "span_count": 1
+    },
+    "runtime_refresh": {
+      "axis_names": [
+        "xi",
+        "eta"
+      ],
+      "control_shape": [
+        3,
+        3
+      ],
+      "degree": 2,
+      "field_name": "u",
+      "initial_numeric_revision": "s1-geometry-0",
+      "quadrature_points_per_axis": 3,
+      "refreshed_numeric_revision": "s1-geometry-1",
+      "span_count": 1
+    }
+  },
+  "fixture_id": "iga.s1.migration"
+}

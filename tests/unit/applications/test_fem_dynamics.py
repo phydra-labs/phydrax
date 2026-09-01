@@ -163,9 +163,10 @@ def test_failed_inversion_hook_rolls_back_every_kinematic_field():
 
 def test_accepted_step_commits_material_history_atomically():
     _, compiled = _tetrahedral_elasticity()
-    material = phx.equations.FiniteElementMaterialTransaction(
+    material = phx.equations.MaterialTransaction(
         (
-            phx.equations.FiniteElementMaterialState(
+            phx.equations.MaterialState(
+                phx.equations.MaterialSiteId("history"),
                 "history",
                 jnp.zeros((1, 2)),
             ),

@@ -13,6 +13,7 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...qualification import ReleaseGateEvidence, SupportTuple
 
 
 class MPMClaimOutcome(IntEnum):
@@ -135,22 +136,9 @@ class MPMIntendedUse(StrictModule, NonTrainableState):
 
 
 class MPMClaimTuple(StrictModule, NonTrainableState):
-    equation_family: str = eqx.field(static=True)
-    dimension: int = eqx.field(static=True)
-    kinematics: str = eqx.field(static=True)
-    grid_assignment: str = eqx.field(static=True)
-    source_domain: str = eqx.field(static=True)
-    transfer: str = eqx.field(static=True)
-    schedule: str = eqx.field(static=True)
-    material: str = eqx.field(static=True)
-    field_contact: str = eqx.field(static=True)
-    fracture: str = eqx.field(static=True)
-    integrator: str = eqx.field(static=True)
-    storage_backend: str = eqx.field(static=True)
-    precision_accumulation: str = eqx.field(static=True)
-    capacity_envelope: str = eqx.field(static=True)
-    derivative_mode: str = eqx.field(static=True)
-    claim_id: str = eqx.field(static=True)
+    """MPM compatibility view over the canonical provider-neutral support tuple."""
+
+    support_tuple: SupportTuple
 
     def __init__(
         self,
@@ -193,9 +181,77 @@ class MPMClaimTuple(StrictModule, NonTrainableState):
             not value for key, value in values.items() if key != "dimension"
         ):
             raise ValueError("MPM claim tuple is incomplete or dimension is invalid.")
-        for key, value in values.items():
-            setattr(self, key, value)
-        self.claim_id = canonical_fingerprint({"kind": "mpm-claim-tuple", **values})
+        self.support_tuple = SupportTuple("material-point-method", values)
+
+    def _coordinate(self, name: str, /) -> str | int | bool:
+        for coordinate, value in self.support_tuple.attributes:
+            if coordinate == name:
+                return value
+        raise KeyError(f"No MPM support coordinate {name!r}.")
+
+    @property
+    def equation_family(self) -> str:
+        return str(self._coordinate("equation_family"))
+
+    @property
+    def dimension(self) -> int:
+        return int(self._coordinate("dimension"))
+
+    @property
+    def kinematics(self) -> str:
+        return str(self._coordinate("kinematics"))
+
+    @property
+    def grid_assignment(self) -> str:
+        return str(self._coordinate("grid_assignment"))
+
+    @property
+    def source_domain(self) -> str:
+        return str(self._coordinate("source_domain"))
+
+    @property
+    def transfer(self) -> str:
+        return str(self._coordinate("transfer"))
+
+    @property
+    def schedule(self) -> str:
+        return str(self._coordinate("schedule"))
+
+    @property
+    def material(self) -> str:
+        return str(self._coordinate("material"))
+
+    @property
+    def field_contact(self) -> str:
+        return str(self._coordinate("field_contact"))
+
+    @property
+    def fracture(self) -> str:
+        return str(self._coordinate("fracture"))
+
+    @property
+    def integrator(self) -> str:
+        return str(self._coordinate("integrator"))
+
+    @property
+    def storage_backend(self) -> str:
+        return str(self._coordinate("storage_backend"))
+
+    @property
+    def precision_accumulation(self) -> str:
+        return str(self._coordinate("precision_accumulation"))
+
+    @property
+    def capacity_envelope(self) -> str:
+        return str(self._coordinate("capacity_envelope"))
+
+    @property
+    def derivative_mode(self) -> str:
+        return str(self._coordinate("derivative_mode"))
+
+    @property
+    def claim_id(self) -> str:
+        return self.support_tuple.support_tuple_id
 
 
 class MPMSupportDecision(StrictModule, NonTrainableState):
@@ -312,12 +368,9 @@ class MPMDerivativeEvidence(StrictModule):
 
 
 class MPMReleaseGateEvidence(StrictModule, NonTrainableState):
-    gate: MPMReleaseGate = eqx.field(static=True)
-    passed: bool = eqx.field(static=True)
-    evidence_ids: tuple[str, ...] = eqx.field(static=True)
-    reviewer_id: str = eqx.field(static=True)
-    deviation_ids: tuple[str, ...] = eqx.field(static=True)
-    gate_id: str = eqx.field(static=True)
+    """MPM gate view over canonical, time-bounded release evidence."""
+
+    release_evidence: ReleaseGateEvidence
 
     def __init__(
         self,
@@ -328,32 +381,43 @@ class MPMReleaseGateEvidence(StrictModule, NonTrainableState):
         evidence_ids: Sequence[str],
         reviewer_id: str,
         deviation_ids: Sequence[str] = (),
+        issued_at: int = 0,
+        expires_at: int = 2**63 - 1,
     ):
         gate_ = MPMReleaseGate(gate)
-        evidence = tuple(str(value) for value in evidence_ids)
-        reviewer = str(reviewer_id)
-        deviations = tuple(str(value) for value in deviation_ids)
-        if (
-            not evidence
-            or not reviewer
-            or any(not value for value in evidence + deviations)
-        ):
-            raise ValueError("Release gate evidence is incomplete.")
-        self.gate = gate_
-        self.passed = bool(passed)
-        self.evidence_ids = evidence
-        self.reviewer_id = reviewer
-        self.deviation_ids = deviations
-        self.gate_id = canonical_fingerprint(
-            {
-                "kind": "mpm-release-gate",
-                "gate": int(gate_),
-                "passed": bool(passed),
-                "evidence_ids": evidence,
-                "reviewer_id": reviewer,
-                "deviation_ids": deviations,
-            }
+        self.release_evidence = ReleaseGateEvidence(
+            gate_.name,
+            passed=passed,
+            evidence_ids=evidence_ids,
+            reviewer_id=reviewer_id,
+            deviation_ids=deviation_ids,
+            issued_at=issued_at,
+            expires_at=expires_at,
         )
+
+    @property
+    def gate(self) -> MPMReleaseGate:
+        return MPMReleaseGate[self.release_evidence.gate]
+
+    @property
+    def passed(self) -> bool:
+        return self.release_evidence.passed
+
+    @property
+    def evidence_ids(self) -> tuple[str, ...]:
+        return self.release_evidence.evidence_ids
+
+    @property
+    def reviewer_id(self) -> str:
+        return self.release_evidence.reviewer_id
+
+    @property
+    def deviation_ids(self) -> tuple[str, ...]:
+        return self.release_evidence.deviation_ids
+
+    @property
+    def gate_id(self) -> str:
+        return self.release_evidence.evidence_id
 
 
 class MPMReleaseEvidenceBundle(StrictModule, NonTrainableState):

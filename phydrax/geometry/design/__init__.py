@@ -31,6 +31,20 @@ _SEARCH_EXPORTS = frozenset(
         "DesignSearchResult",
     }
 )
+_REDUCED_EXPORTS = frozenset(
+    {
+        "DesignBindingGraph",
+        "DesignEvaluation",
+        "DesignParameterization",
+        "ReducedDesignProblem",
+    }
+)
+_QUALIFICATION_EXPORTS = frozenset(
+    {
+        "DerivativeTier",
+        "DesignQualificationEvidence",
+    }
+)
 _SKETCH_EXPORTS = frozenset(
     {
         "AbstractSketchConstraint",
@@ -62,6 +76,10 @@ def __getattr__(name: str):
         from . import _constraints as module
     elif name in _SEARCH_EXPORTS:
         from . import _search as module
+    elif name in _QUALIFICATION_EXPORTS:
+        from . import _qualification as module
+    elif name in _REDUCED_EXPORTS:
+        from . import _reduced as module
     elif name in _SKETCH_EXPORTS:
         from . import _sketch as module
     else:
@@ -80,6 +98,11 @@ __all__ = [
     "Coincident",
     "ConstraintSolveResult",
     "DesignConstraintSystem",
+    "DerivativeTier",
+    "DesignBindingGraph",
+    "DesignEvaluation",
+    "DesignParameterization",
+    "DesignQualificationEvidence",
     "DesignSearchResult",
     "DesignState",
     "EqualLength",
@@ -100,6 +123,7 @@ __all__ = [
     "Sketch",
     "SketchConstraint",
     "SketchSolution",
+    "ReducedDesignProblem",
     "TangentCircles",
     "TangentLineCircle",
     "Vertical",

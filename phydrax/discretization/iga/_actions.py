@@ -62,6 +62,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
     """Runtime-rational tensor-spline interpolation with exact local transposes."""
 
     tensor_plan: TensorBSplineJetPlan
+    field_weights: Array | None
     entity_rows: Array
     query_permutation: tuple[int, ...] = eqx.field(static=True)
     entity_shape: tuple[int, ...] = eqx.field(static=True)
@@ -69,6 +70,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
     topology_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
     action_id: str = eqx.field(static=True)
+    realization_id: str = eqx.field(static=True)
     local_width: int = eqx.field(static=True)
     point_count: int = eqx.field(static=True)
     maximum_derivative_order: int = eqx.field(static=True)
@@ -78,6 +80,7 @@ class IsogeometricReferenceActions(LocalReferenceActions):
     def __init__(
         self,
         tensor_plan: TensorBSplineJetPlan,
+        field_weights: ArrayLike | None,
         entity_rows: ArrayLike,
         query_permutation: tuple[int, ...],
         entity_shape: tuple[int, ...],
@@ -93,21 +96,26 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         if not isinstance(tensor_plan, TensorBSplineJetPlan):
             raise TypeError("tensor_plan must be a TensorBSplineJetPlan.")
         rows = jnp.asarray(entity_rows, dtype=jnp.int32)
+        weights = None if field_weights is None else jnp.asarray(field_weights)
+        if weights is not None and weights.shape != tensor_plan.source_shape:
+            raise ValueError("IGA field rational weights do not match its tensor basis.")
         entity_count = prod(entity_shape)
         if rows.ndim != 1 or jnp.issubdtype(rows.dtype, jnp.bool_):
             raise ValueError("IGA reference entity rows must be rank-1 integer routes.")
         order = int(maximum_derivative_order)
-        if order < 0 or order > 1:
+        if order < 0 or order > 2:
             raise ValueError(
-                "S1 IGA reference actions support derivative order zero or one."
+                "IGA reference actions support derivative orders zero through two."
             )
         local_width = tensor_plan.local_size
         self.tensor_plan = tensor_plan
+        self.field_weights = weights
         self.entity_rows = rows
         self.query_permutation = tuple(int(value) for value in query_permutation)
         self.entity_shape = tuple(int(value) for value in entity_shape)
         self.point_shape = tuple(int(value) for value in point_shape)
         self.topology_id = str(topology_id)
+        self.realization_id = "isogeometric-direct-tensor"
         self.geometry_layout_id = str(geometry_layout_id)
         self.local_width = local_width
         self.point_count = prod(self.point_shape)
@@ -118,6 +126,12 @@ class IsogeometricReferenceActions(LocalReferenceActions):
             {
                 "kind": "isogeometric-reference-actions",
                 "structural": str(structural_id),
+                "field_weight_kind": "polynomial" if weights is None else "rational",
+                "field_weights": (
+                    None
+                    if weights is None
+                    else canonical_fingerprint({"weights": weights.tolist()})
+                ),
                 "tensor_source_shape": list(tensor_plan.source_shape),
                 "tensor_query_shape": list(tensor_plan.query_shape),
                 "tensor_multi_indices": [
@@ -133,12 +147,17 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         )
 
     def _rational(self, runtime: object, /) -> RationalSplineJet:
-        runtime_ = _runtime(
+        _runtime(
             runtime,
             topology_id=self.topology_id,
             geometry_layout_id=self.geometry_layout_id,
         )
-        return RationalSplineJet(self.tensor_plan, runtime_.weights)
+        weights = (
+            jnp.ones(self.tensor_plan.source_shape)
+            if self.field_weights is None
+            else self.field_weights
+        )
+        return RationalSplineJet(self.tensor_plan, weights)
 
     def _values(self, runtime: object, /) -> Array:
         rational = self._rational(runtime)
@@ -161,6 +180,17 @@ class IsogeometricReferenceActions(LocalReferenceActions):
             2,
         )
         return gradients[self.entity_rows]
+
+    def _hessians(self, runtime: object, /) -> Array:
+        rational = self._rational(runtime)
+        hessians = _query_view(
+            rational.hessians,
+            self.query_permutation,
+            self.entity_shape,
+            self.point_shape,
+            3,
+        )
+        return hessians[self.entity_rows]
 
     def realize_reference_actions(
         self, runtime: object, /
@@ -198,6 +228,26 @@ class IsogeometricReferenceActions(LocalReferenceActions):
         ):
             raise ValueError("IGA point gradients do not match reference actions.")
         return oe.contract("eqlr,eq...r->el...", self._gradients(runtime), gradients_)
+
+    def reference_hessian(
+        self, runtime: object, local_coefficients: ArrayLike, /
+    ) -> Array:
+        coefficients = jnp.asarray(local_coefficients)
+        if coefficients.shape[:2] != (self.entity_rows.size, self.local_width):
+            raise ValueError("IGA local coefficients do not match reference actions.")
+        return oe.contract("eqlrs,el...->eq...rs", self._hessians(runtime), coefficients)
+
+    def reference_hessian_transpose(
+        self, runtime: object, hessians: ArrayLike, /
+    ) -> Array:
+        hessians_ = jnp.asarray(hessians)
+        expected = (self.tensor_plan.dimension, self.tensor_plan.dimension)
+        if (
+            hessians_.shape[:2] != (self.entity_rows.size, self.point_count)
+            or hessians_.shape[-2:] != expected
+        ):
+            raise ValueError("IGA point Hessians do not match reference actions.")
+        return oe.contract("eqlrs,eq...rs->el...", self._hessians(runtime), hessians_)
 
     def trace(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         if not self.is_trace:

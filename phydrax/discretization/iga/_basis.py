@@ -19,7 +19,7 @@ from ..._trainable import NonTrainableState
 
 
 class SplineAxisPlan(StrictModule, NonTrainableState):
-    """One fixed, nonperiodic, clamped B-spline parameter axis."""
+    """One fixed, nonperiodic, clamped H1 B-spline parameter axis."""
 
     name: str = eqx.field(static=True)
     degree: int = eqx.field(static=True)
@@ -30,72 +30,56 @@ class SplineAxisPlan(StrictModule, NonTrainableState):
     axis_id: str = eqx.field(static=True)
 
     def __init__(
-        self,
-        name: str,
-        knots: ArrayLike,
-        /,
-        *,
-        degree: int,
-        periodic: bool = False,
+        self, name: str, knots: ArrayLike, /, *, degree: int, periodic: bool = False
     ):
-        name_ = str(name)
-        degree_ = int(degree)
-        knots_host = np.asarray(knots)
+        name_, degree_, knots_host = str(name), int(degree), np.asarray(knots)
         if not name_:
             raise ValueError("Spline axis name must be non-empty.")
         if periodic:
-            raise ValueError("S1 spline axes do not support periodic knots.")
+            raise ValueError("Spline axes do not support periodic knots.")
         if degree_ < 1:
-            raise ValueError("S1 spline axes require degree at least one.")
+            raise ValueError("H1 spline axes require degree at least one.")
         if knots_host.ndim != 1 or knots_host.size < 2 * (degree_ + 1):
             raise ValueError("Spline knots must be a sufficiently long rank-1 array.")
         if not np.issubdtype(knots_host.dtype, np.number):
             raise TypeError("Spline knots must be numeric.")
         knots_host = knots_host.astype(float, copy=False)
-        if np.any(~np.isfinite(knots_host)) or np.any(np.diff(knots_host) < 0.0):
+        if np.any(~np.isfinite(knots_host)) or np.any(np.diff(knots_host) < 0):
             raise ValueError("Spline knots must be finite and nondecreasing.")
-        control_count = int(knots_host.size) - degree_ - 1
-        if control_count < degree_ + 1:
-            raise ValueError("Spline knots define too few control coefficients.")
-        lower = knots_host[degree_]
-        upper = knots_host[control_count]
-        if not upper > lower:
-            raise ValueError("Spline knots must define a nonempty parameter interval.")
+        control_count = knots_host.size - degree_ - 1
+        lower, upper = knots_host[degree_], knots_host[control_count]
+        if control_count < degree_ + 1 or upper <= lower:
+            raise ValueError("Spline knots define an invalid parameter interval.")
         if not (
             np.all(knots_host[: degree_ + 1] == lower)
             and np.all(knots_host[control_count:] == upper)
         ):
-            raise ValueError("S1 spline axes require clamped endpoint knots.")
+            raise ValueError("Spline axes require clamped endpoint knots.")
         interior = knots_host[(knots_host > lower) & (knots_host < upper)]
-        if interior.size:
-            _, multiplicities = np.unique(interior, return_counts=True)
-            if np.any(multiplicities > degree_):
-                raise ValueError(
-                    "H1 spline axes require interior knot multiplicity at most degree."
-                )
-        positive_spans = np.flatnonzero(np.diff(knots_host) > 0.0)
-        positive_spans = positive_spans[
-            (positive_spans >= degree_) & (positive_spans < control_count)
-        ]
-        if positive_spans.size == 0:
+        if interior.size and np.any(np.unique(interior, return_counts=True)[1] > degree_):
+            raise ValueError(
+                "H1 spline axes require interior knot multiplicity at most degree."
+            )
+        spans = np.flatnonzero(np.diff(knots_host) > 0)
+        spans = spans[(spans >= degree_) & (spans < control_count)]
+        if not spans.size:
             raise ValueError("Spline axis must contain at least one active span.")
-        span_bounds = np.stack(
-            (knots_host[positive_spans], knots_host[positive_spans + 1]), axis=-1
+        self.name, self.degree, self.knots, self.control_count = (
+            name_,
+            degree_,
+            jnp.asarray(knots_host),
+            int(control_count),
         )
-        self.name = name_
-        self.degree = degree_
-        self.knots = jnp.asarray(knots_host)
-        self.control_count = control_count
-        self.span_indices = jnp.asarray(positive_spans, dtype=jnp.int32)
-        self.span_bounds = jnp.asarray(span_bounds)
+        self.span_indices = jnp.asarray(spans, dtype=jnp.int32)
+        self.span_bounds = jnp.asarray(
+            np.stack((knots_host[spans], knots_host[spans + 1]), axis=-1)
+        )
         self.axis_id = canonical_fingerprint(
             {
                 "kind": "spline-axis-plan",
                 "name": name_,
                 "degree": degree_,
                 "knots": array_tree_fingerprint(knots_host),
-                "control_count": control_count,
-                "span_indices": array_tree_fingerprint(positive_spans),
             }
         )
 
@@ -109,11 +93,11 @@ class SplineAxisPlan(StrictModule, NonTrainableState):
 
 
 class TensorSplineBasisSpec(StrictModule, NonTrainableState):
-    """Fixed isotropic tensor-product spline basis."""
+    """Fixed 1D--3D tensor-product H1 spline basis; degrees may be anisotropic."""
 
     axes: tuple[SplineAxisPlan, ...]
     axis_names: tuple[str, ...] = eqx.field(static=True)
-    degree: int = eqx.field(static=True)
+    degrees: tuple[int, ...] = eqx.field(static=True)
     control_shape: tuple[int, ...] = eqx.field(static=True)
     span_shape: tuple[int, ...] = eqx.field(static=True)
     basis_id: str = eqx.field(static=True)
@@ -127,61 +111,69 @@ class TensorSplineBasisSpec(StrictModule, NonTrainableState):
         axis_names: Sequence[str] | None = None,
     ):
         inputs = tuple(axes)
-        if not inputs or len(inputs) > 3:
+        if not 1 <= len(inputs) <= 3:
             raise TypeError(
                 "TensorSplineBasisSpec requires one to three fixed spline axes."
             )
         if all(isinstance(axis, BSplineGrid) for axis in inputs):
-            grids = tuple(axis for axis in inputs if isinstance(axis, BSplineGrid))
             names = (
-                ("x", "y", "z")[: len(grids)]
+                ("x", "y", "z")[: len(inputs)]
                 if axis_names is None
-                else tuple(str(name) for name in axis_names)
+                else tuple(map(str, axis_names))
             )
-            if len(names) != len(grids):
+            if len(names) != len(inputs):
                 raise ValueError("axis_names must provide one name per spline grid.")
-            axes_: tuple[SplineAxisPlan, ...] = tuple(
+            axes_ = tuple(
                 SplineAxisPlan(name, grid.knots, degree=grid.degree)
-                for name, grid in zip(names, grids, strict=True)
+                for name, grid in zip(names, inputs, strict=True)
             )
         elif all(isinstance(axis, SplineAxisPlan) for axis in inputs):
             if axis_names is not None:
-                raise ValueError("Internal named spline axes already define axis_names.")
-            axes_ = tuple(axis for axis in inputs if isinstance(axis, SplineAxisPlan))
+                raise ValueError("Named spline axes already define axis_names.")
+            axes_ = tuple(inputs)  # type: ignore[assignment]
         else:
             raise TypeError(
                 "Tensor spline axes must be all BSplineGrid or all SplineAxisPlan values."
             )
-        names = tuple(axis.name for axis in axes_)
+        names, degrees = (
+            tuple(axis.name for axis in axes_),
+            tuple(axis.degree for axis in axes_),
+        )
         if len(set(names)) != len(names):
             raise ValueError("Tensor spline axis names must be unique.")
-        degrees = tuple(axis.degree for axis in axes_)
-        if len(set(degrees)) != 1:
-            raise ValueError("S1 tensor splines require one isotropic degree.")
-        control_shape = tuple(axis.control_count for axis in axes_)
-        span_shape = tuple(axis.span_count for axis in axes_)
-        layout_id = canonical_fingerprint(
+        shape, spans = (
+            tuple(axis.control_count for axis in axes_),
+            tuple(axis.span_count for axis in axes_),
+        )
+        layout = canonical_fingerprint(
             {
                 "kind": "tensor-spline-layout",
                 "axis_names": list(names),
-                "control_shape": list(control_shape),
+                "control_shape": list(shape),
                 "order": "C",
             }
         )
-        self.axes = axes_
-        self.axis_names = names
-        self.degree = degrees[0]
-        self.control_shape = control_shape
-        self.span_shape = span_shape
-        self.layout_id = layout_id
+        (
+            self.axes,
+            self.axis_names,
+            self.degrees,
+            self.control_shape,
+            self.span_shape,
+            self.layout_id,
+        ) = axes_, names, degrees, shape, spans, layout
         self.basis_id = canonical_fingerprint(
             {
                 "kind": "tensor-spline-basis",
                 "axes": [axis.axis_id for axis in axes_],
-                "degree": degrees[0],
-                "layout": layout_id,
+                "degrees": list(degrees),
+                "layout": layout,
             }
         )
+
+    @property
+    def degree(self) -> int | tuple[int, ...]:
+        """Compatibility scalar for isotropic bases, otherwise per-axis degrees."""
+        return self.degrees[0] if len(set(self.degrees)) == 1 else self.degrees
 
     @property
     def parametric_dimension(self) -> int:
@@ -193,7 +185,7 @@ class TensorSplineBasisSpec(StrictModule, NonTrainableState):
 
     @property
     def local_coefficient_count(self) -> int:
-        return (self.degree + 1) ** self.parametric_dimension
+        return prod(degree + 1 for degree in self.degrees)
 
     @property
     def cell_count(self) -> int:
@@ -201,13 +193,14 @@ class TensorSplineBasisSpec(StrictModule, NonTrainableState):
 
 
 class IsogeometricFieldSpec(StrictModule, NonTrainableState):
-    """Exact isoparametric scalar-H1 spline field specification."""
+    """H1 scalar or vector tensor-spline field, polynomial or explicitly rational."""
 
     name: str = eqx.field(static=True)
     basis: TensorSplineBasisSpec
     conformity: str = eqx.field(static=True)
     component_shape: tuple[int, ...] = eqx.field(static=True)
     mapping: str = eqx.field(static=True)
+    weights: Array | None
     field_spec_id: str = eqx.field(static=True)
 
     def __init__(
@@ -219,26 +212,38 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
         conformity: str = "H1",
         component_shape: Sequence[int] = (),
         mapping: str = "identity",
+        weights: ArrayLike | None = None,
     ):
-        name_ = str(name)
-        components = tuple(int(size) for size in component_shape)
-        conformity_ = str(conformity)
-        mapping_ = str(mapping)
-        if not name_:
-            raise ValueError("Isogeometric field name must be non-empty.")
-        if not isinstance(basis, TensorSplineBasisSpec):
-            raise TypeError("basis must be a TensorSplineBasisSpec.")
-        if conformity_ != "H1":
-            raise ValueError("S1 isogeometric fields support only H1 conformity.")
-        if components:
-            raise ValueError("S1 isogeometric fields support only scalar values.")
-        if mapping_ != "identity":
-            raise ValueError("S1 isogeometric fields support only identity mapping.")
-        self.name = name_
-        self.basis = basis
-        self.conformity = conformity_
-        self.component_shape = components
-        self.mapping = mapping_
+        name_, components, conformity_, mapping_ = (
+            str(name),
+            tuple(int(x) for x in component_shape),
+            str(conformity),
+            str(mapping),
+        )
+        if not name_ or not isinstance(basis, TensorSplineBasisSpec):
+            raise ValueError(
+                "Isogeometric fields require a name and TensorSplineBasisSpec."
+            )
+        if conformity_ != "H1" or mapping_ != "identity":
+            raise ValueError("IGA fields support only identity-mapped H1 conformity.")
+        if any(x <= 0 for x in components):
+            raise ValueError("Field component dimensions must be positive.")
+        field_weights = None if weights is None else jnp.asarray(weights)
+        if field_weights is not None:
+            if field_weights.shape != basis.control_shape:
+                raise ValueError(
+                    "Field rational weights must match the field basis control shape."
+                )
+            if jnp.issubdtype(field_weights.dtype, jnp.complexfloating):
+                raise TypeError("Field rational weights must be real.")
+        (
+            self.name,
+            self.basis,
+            self.conformity,
+            self.component_shape,
+            self.mapping,
+            self.weights,
+        ) = name_, basis, conformity_, components, mapping_, field_weights
         self.field_spec_id = canonical_fingerprint(
             {
                 "kind": "isogeometric-field-spec",
@@ -247,40 +252,64 @@ class IsogeometricFieldSpec(StrictModule, NonTrainableState):
                 "conformity": conformity_,
                 "component_shape": list(components),
                 "mapping": mapping_,
+                "weights": None
+                if field_weights is None
+                else array_tree_fingerprint(np.asarray(field_weights)),
             }
         )
 
+    @property
+    def is_rational(self) -> bool:
+        return self.weights is not None
+
 
 class IsogeometricQuadraturePolicy(StrictModule, NonTrainableState):
-    """Explicit isotropic Gauss-Legendre quadrature for every nonzero span."""
+    """Explicit Gauss--Legendre quadrature with scalar or per-axis point counts."""
 
-    points_per_axis: int = eqx.field(static=True)
+    points_per_axis: int | tuple[int, ...] = eqx.field(static=True)
     policy_id: str = eqx.field(static=True)
 
-    def __init__(self, points_per_axis: int, /):
-        count = int(points_per_axis)
-        if count <= 0:
-            raise ValueError("Isogeometric quadrature points_per_axis must be positive.")
-        self.points_per_axis = count
+    def __init__(self, points_per_axis: int | Sequence[int], /):
+        scalar = isinstance(points_per_axis, (int, np.integer))
+        values = (
+            (int(points_per_axis),) if scalar else tuple(int(x) for x in points_per_axis)
+        )
+        if not values or len(values) > 3 or any(x <= 0 for x in values):
+            raise ValueError(
+                "Quadrature points_per_axis must be one to three positive counts."
+            )
+        self.points_per_axis = values[0] if scalar else values
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "isogeometric-quadrature-policy",
                 "rule": "gauss-legendre",
-                "points_per_axis": count,
-                "isotropic": True,
+                "points_per_axis": list(values),
             }
         )
 
-    def axis_rule(self, axis: SplineAxisPlan, /) -> tuple[Array, Array]:
-        if not isinstance(axis, SplineAxisPlan):
-            raise TypeError("axis must be a SplineAxisPlan.")
-        nodes, weights = np.polynomial.legendre.leggauss(self.points_per_axis)
+    def count_for_axis(self, axis_index: int, dimension: int, /) -> int:
+        values = (
+            (self.points_per_axis,)
+            if isinstance(self.points_per_axis, int)
+            else self.points_per_axis
+        )
+        if len(values) == 1:
+            return values[0]
+        if len(values) != dimension:
+            raise ValueError(
+                "Anisotropic quadrature requires one count per parameter axis."
+            )
+        return values[axis_index]
+
+    def axis_rule(
+        self, axis: SplineAxisPlan, /, *, axis_index: int = 0, dimension: int = 1
+    ) -> tuple[Array, Array]:
+        count = self.count_for_axis(axis_index, dimension)
+        nodes, weights = np.polynomial.legendre.leggauss(count)
         bounds = np.asarray(axis.span_bounds)
-        midpoint = 0.5 * (bounds[:, 0] + bounds[:, 1])
-        half_width = 0.5 * (bounds[:, 1] - bounds[:, 0])
-        points = midpoint[:, None] + half_width[:, None] * nodes[None, :]
-        scaled_weights = half_width[:, None] * weights[None, :]
-        return jnp.asarray(points), jnp.asarray(scaled_weights)
+        half = 0.5 * (bounds[:, 1] - bounds[:, 0])
+        points = 0.5 * (bounds[:, 0] + bounds[:, 1])[:, None] + half[:, None] * nodes
+        return jnp.asarray(points), jnp.asarray(half[:, None] * weights)
 
 
 __all__ = [

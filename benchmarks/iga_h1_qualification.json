@@ -12,7 +12,7 @@
           "duality_defect": 0.0,
           "geometry_evidence": {
             "coordinate_scale": 1.4142135623730951,
-            "evidence_id": "b2b27c376f240fdb8d94e9075b0be1b3f49356c4b87164b779ef452f9deb5be6",
+            "evidence_id": "49c8dcdc4579fc161b64b16a459cefe2b0c3707f1e8a80aaec2ed1fdd208c037",
             "minimum_orientation_ratio": 1.0,
             "minimum_rank_ratio": 0.49999999999999944,
             "minimum_weight_ratio": 0.9999999999999997,
@@ -37,7 +37,7 @@
           "duality_defect": 9.666280255099595e-17,
           "geometry_evidence": {
             "coordinate_scale": 1.4142135623730951,
-            "evidence_id": "e2488611a3178a230d740e9256263206f708a4ada9cebc4a4fbae6e21005d575",
+            "evidence_id": "75c693f986f6379acb0512365562234e92b126e4879f636ac1b4130253741cd6",
             "minimum_orientation_ratio": 1.0,
             "minimum_rank_ratio": 0.4999999999999988,
             "minimum_weight_ratio": 0.9999999999999996,
@@ -62,7 +62,7 @@
           "duality_defect": 1.6127961321013478e-16,
           "geometry_evidence": {
             "coordinate_scale": 1.4142135623730951,
-            "evidence_id": "e6b4f4fc4b1b86b809ee5b762b97dbe791fea6aeea30381c976d1d5bc633846b",
+            "evidence_id": "baadd13e6d4f43772cd098e84c26026627ba3b9772e4604957b2cb9ca2cbe5e2",
             "minimum_orientation_ratio": 1.0,
             "minimum_rank_ratio": 0.49999999999999756,
             "minimum_weight_ratio": 0.9999999999999996,
@@ -87,7 +87,7 @@
           "duality_defect": 9.845217880095574e-17,
           "geometry_evidence": {
             "coordinate_scale": 1.4142135623730951,
-            "evidence_id": "ae87f0fa8de2a60aee4c8fc4415a1ab8485fd832adaacf796d399cc175d1847e",
+            "evidence_id": "0ac968e16a3b0a0d026d08c0e8b7fe5572777e6e58e1e2b775c6259bd0c7eb0d",
             "minimum_orientation_ratio": 1.0,
             "minimum_rank_ratio": 0.49999999999999667,
             "minimum_weight_ratio": 0.9999999999999996,
@@ -151,7 +151,7 @@
           "duality_defect": 0.0,
           "geometry_evidence": {
             "coordinate_scale": 2.9288436284649952,
-            "evidence_id": "cbc0390bb8e36d02820ff1bddec240f1303018ed8ec5a5a774b4b471ce6b65d7",
+            "evidence_id": "9ccbcdf548ff27c78c26373d7a35eddb17e131b4d1a35a847e6cd6ac9ca6fc83",
             "minimum_orientation_ratio": 0.9999999999999999,
             "minimum_rank_ratio": 0.11657559198542765,
             "minimum_weight_ratio": 0.5306476304325538,
@@ -176,7 +176,7 @@
           "duality_defect": 9.262300348504433e-17,
           "geometry_evidence": {
             "coordinate_scale": 3.001057213324299,
-            "evidence_id": "d5d6837ed67f5edec8814eb61b360c29f7494c4869f12a6038e4578863807383",
+            "evidence_id": "afc31ee62dbe11631bdd99b346f637eaa68e723da55cca7be83405e9aaa7d666",
             "minimum_orientation_ratio": 0.9999999999999998,
             "minimum_rank_ratio": 0.11103284038986812,
             "minimum_weight_ratio": 0.5146943587821845,
@@ -201,7 +201,7 @@
           "duality_defect": 8.462283188607144e-17,
           "geometry_evidence": {
             "coordinate_scale": 3.0417571045655083,
-            "evidence_id": "bd80d3562061e691e44aaf8e668dd8e7dc8515142f17b0e7fab711af0c220bc9",
+            "evidence_id": "c47dcbb89cbded77f46891ab38eb0befb9ae69aec209ccd6a6615a2b0c7bcc2e",
             "minimum_orientation_ratio": 0.9999999999999998,
             "minimum_rank_ratio": 0.10808139408942441,
             "minimum_weight_ratio": 0.5071941045280851,
@@ -226,7 +226,7 @@
           "duality_defect": 8.832561448205425e-17,
           "geometry_evidence": {
             "coordinate_scale": 3.0648713012039166,
-            "evidence_id": "2f929c56664a4167c9743d9d67d83a153587614b87ac2a0be5dc7338ef3f9ea4",
+            "evidence_id": "813c1ea73f7833aa6e34fd932f2d249a8fd9dc78558df4443b5833480e301546",
             "minimum_orientation_ratio": 0.9999999999999998,
             "minimum_rank_ratio": 0.10645731658846269,
             "minimum_weight_ratio": 0.5035593140024298,
@@ -254,18 +254,18 @@
       "physical_linear_reproduction_defect": 6.661338147750939e-16,
       "taylor": {
         "errors": [
-          1.3441436200062893e-08,
-          8.48069492189127e-10,
-          5.350754823804231e-11,
-          3.3764942346319967e-12,
-          2.1325948411973322e-13,
-          1.490521592827384e-14
+          1.3441436200609951e-08,
+          8.480695287202605e-10,
+          5.3507593255475415e-11,
+          3.3765455958354607e-12,
+          2.133501664101356e-13,
+          1.492442109119253e-14
         ],
         "non_roundoff_slopes": [
-          2.000023724152779,
-          2.0000273147098677,
-          1.9999150653072717,
-          1.9992627636595393
+          2.0000236930030533,
+          2.0000267369153284,
+          1.9999046639864677,
+          1.9989660545602195
         ],
         "passed": true,
         "steps": [

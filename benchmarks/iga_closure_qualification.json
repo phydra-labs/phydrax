@@ -1,0 +1,30 @@
+{
+  "cases": {
+    "compatible_complex": {
+      "complex_id": "b65e8b0d8ae0f9a8d19aba518a8eb8e0fe74153d073abf19258abc1ad1624deb",
+      "d_squared_defect": 0.0,
+      "passed": true
+    },
+    "geometry_certificate": {
+      "cell_count": 1,
+      "certificate_id": "fa56535fd96028e4235f4b3c4f20003ac64b6db00c4e4cf352d6518c3296bfe0",
+      "diagnostics": [],
+      "passed": true
+    },
+    "linear_pod_rom": {
+      "artifact_id": "09dd9d6e67b1223e367558dc2694916d3731bfa346c5698aa4fadfe8c36b8c67",
+      "passed": true,
+      "relative_state_error": 2.220446049250313e-16
+    },
+    "thb_basis": {
+      "basis_count": 3,
+      "certificate_id": "33a22b42abc8e3ca6a9a95912c551f3d9e98de1be013be3fff9aa136f57b1887",
+      "hierarchy_id": "658e9079ad185de050f7454947e023cfd11b46ecc9ee65ee6ae18be3cde74e2c",
+      "partition_defect": 0.0,
+      "passed": true,
+      "rank": 3
+    }
+  },
+  "kind": "iga-closure-substrate-qualification",
+  "passed": true
+}
