@@ -54,6 +54,17 @@ freshwater volume, conservative wetting/drying, partial/z-star geometry,
 latitude-longitude metrics, nonlinear seawater thermodynamics, and vertical closures.
 See [Hydrostatic primitive-equation ocean modeling](../guides_hydrostatic_ocean.md).
 
+## One-phase free-surface hydrodynamics
+
+```text
+python examples/free_surface_ale_wave.py
+```
+
+The script exercises graph ALE geometry, extensive mapped momentum, mixed
+pressure projection, coupled surface kinematics, scalar GCL, and accepted work
+evidence. See
+[One-phase free-surface ALE hydrodynamics](../guides_free_surface_ale_hydrodynamics.md).
+
 ## Particle physics scripts
 
 The repository includes directly runnable scripts for the fixed-capacity particle stack:

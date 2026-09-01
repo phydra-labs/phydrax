@@ -516,6 +516,10 @@ from ._fractional_memory import (
     FractionalVectorField,
     solve_caputo_fractional,
 )
+from ._free_surface_ale_projection import (
+    FreeSurfaceProjectionResult,
+    MappedFreeSurfaceProjectionPlan,
+)
 from ._functional_differential import (
     FunctionalCollocationPlan,
     FunctionalDifferentialBoundaryProblem,
@@ -599,12 +603,12 @@ from ._hybrid_schedule import (
     HybridScheduleResult,
     ScheduledHybridEvent,
 )
+from ._hydrodynamic_response import *  # noqa: F403
+from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
 from ._hydrostatic_free_surface import (
     HydrostaticFreeSurfaceResult,
     LinearImplicitFreeSurfacePlan,
 )
-from ._hydrodynamic_response import *  # noqa: F403
-from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
 from ._ias15 import IAS15Plan, IAS15Result
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -644,6 +648,8 @@ from ._levy import (
     LevySmallJumpApproximation,
     solve_levy_sde,
 )
+from ._lifting_complete import *  # noqa: F403
+from ._lifting_complete import __all__ as _lifting_complete_all
 from ._lindblad import (
     amplitude_damping_problem,
     dephasing_problem,
@@ -1030,6 +1036,10 @@ from ._nonmarkov_campaign import (
     spin_boson_dephasing_comparison,
     SpinBosonComparisonResult,
 )
+from ._panel_complete import *  # noqa: F403
+from ._panel_complete import __all__ as _panel_complete_all
+from ._panels3d_complete import *  # noqa: F403
+from ._panels3d_complete import __all__ as _panels3d_complete_all
 from ._particle_conversion import (
     advance_particle_conversion,
     ParticleConversionBackend,
@@ -1109,6 +1119,8 @@ from ._poisson_nernst_planck import (
     PoissonNernstPlanckPlan,
     PoissonNernstPlanckStepResult,
 )
+from ._polar_complete import *  # noqa: F403
+from ._polar_complete import __all__ as _polar_complete_all
 from ._potential_flow_hydrodynamics import *  # noqa: F403
 from ._potential_flow_hydrodynamics import __all__ as _hydrodynamics_all
 from ._probabilistic_ode import (
@@ -1273,6 +1285,8 @@ from ._rosenbrock import (
     solve_rosenbrock,
     solve_rosenbrock_adaptive,
 )
+from ._rotor import *  # noqa: F403
+from ._rotor import __all__ as _rotor_all
 from ._rough import (
     AbstractRoughSolver,
     Davie,
@@ -1408,7 +1422,7 @@ from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
-from ._uvlm import *  # noqa: F403
+from ._uvlm import *  # noqa: F403  # noqa: F403
 from ._uvlm import __all__ as _uvlm_all
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
@@ -1450,12 +1464,20 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
-from ._vortex_lattice import *  # noqa: F403
+from ._viscous_vortex_wall import *  # noqa: F403
+from ._viscous_vortex_wall import __all__ as _viscous_vortex_wall_all
+from ._vortex_immersed import *  # noqa: F403
+from ._vortex_immersed import __all__ as _vortex_immersed_all
+from ._vortex_lattice import *  # noqa: F403  # noqa: F403
 from ._vortex_lattice import __all__ as _vortex_lattice_all
-from ._vortex_panels import *  # noqa: F403
+from ._vortex_loads import *  # noqa: F403
+from ._vortex_loads import __all__ as _vortex_loads_all
+from ._vortex_panels import *  # noqa: F403  # noqa: F403
 from ._vortex_panels import __all__ as _vortex_panels_all
-from ._vortex_step import *  # noqa: F403
+from ._vortex_step import *  # noqa: F403  # noqa: F403
 from ._vortex_step import __all__ as _vortex_step_all
+from ._wake_complete import *  # noqa: F403
+from ._wake_complete import __all__ as _wake_complete_all
 from ._wiener_operator import WienerNoiseBlock, WienerNoiseLayout
 from ._xxz_open import (
     boundary_driven_xxz_problem,
@@ -1468,32 +1490,6 @@ from .maxwell import (
     CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
 )
-from ._uvlm import *  # noqa: F403
-from ._uvlm import __all__ as _uvlm_all
-from ._vortex_lattice import *  # noqa: F403
-from ._vortex_lattice import __all__ as _vortex_lattice_all
-from ._vortex_panels import *  # noqa: F403
-from ._vortex_panels import __all__ as _vortex_panels_all
-from ._vortex_step import *  # noqa: F403
-from ._vortex_step import __all__ as _vortex_step_all
-from ._lifting_complete import *  # noqa: F403
-from ._lifting_complete import __all__ as _lifting_complete_all
-from ._panel_complete import *  # noqa: F403
-from ._panel_complete import __all__ as _panel_complete_all
-from ._panels3d_complete import *  # noqa: F403
-from ._panels3d_complete import __all__ as _panels3d_complete_all
-from ._polar_complete import *  # noqa: F403
-from ._polar_complete import __all__ as _polar_complete_all
-from ._rotor import *  # noqa: F403
-from ._rotor import __all__ as _rotor_all
-from ._vortex_immersed import *  # noqa: F403
-from ._vortex_immersed import __all__ as _vortex_immersed_all
-from ._vortex_loads import *  # noqa: F403
-from ._vortex_loads import __all__ as _vortex_loads_all
-from ._wake_complete import *  # noqa: F403
-from ._wake_complete import __all__ as _wake_complete_all
-from ._viscous_vortex_wall import *  # noqa: F403
-from ._viscous_vortex_wall import __all__ as _viscous_vortex_wall_all
 
 
 __all__ = [
@@ -1966,6 +1962,8 @@ __all__ = [
     "MACFreeSurfaceProjectionPlan",
     "MACFreeSurfaceProjectionResult",
     "LinearImplicitFreeSurfacePlan",
+    "FreeSurfaceProjectionResult",
+    "MappedFreeSurfaceProjectionPlan",
     "MACReplayCertification",
     "MACDeformableImmersedBackwardEulerMethod",
     "MACDeformableImmersedEnergyLedger",

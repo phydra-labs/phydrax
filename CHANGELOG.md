@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Added fixed-topology one-phase free-surface ALE hydrodynamics with graph
+  geometry, extensive mapped momentum/scalars, conservative kinematic GCL,
+  nonorthogonal mapped Hodge, mixed pressure projection, strongly coupled
+  second-order stepping, accepted work ledgers, strict restart/output,
+  qualification, examples, and benchmarks.
 - Added `phydrax.bioinformatics`, an evidence-bearing native layer whose shared
   foundation records feature/ontology identity, biospecimen lineage, experimental
   units, exchangeability, biological splits, leakage audits, and independent
