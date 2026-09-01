@@ -8,8 +8,8 @@ def _context(origin="earth", orientation="icrf"):
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
-        astro.ReferenceEpoch(2451545.0, 0.0, "TT"),
-        astro.AstrodynamicsFrame(origin, orientation, pseudo_inertial=True),
+        astro.ReferenceEpoch(astro.TimeInstant(astro.JulianDate(2451545.0, 0.0), "TT")),
+        astro.FrameDefinition(origin, orientation, pseudo_inertial=True),
     )
 
 
@@ -55,7 +55,7 @@ def test_time_frame_ephemeris_and_third_body_contracts():
     target_context = astro.AstrodynamicsContext(
         source_context.scale,
         source_context.epoch,
-        astro.AstrodynamicsFrame("earth", "rotated", pseudo_inertial=True),
+        astro.FrameDefinition("earth", "rotated", pseudo_inertial=True),
     )
     provenance = _provenance(source_context)
     offset = astro.TimeScaleTransform.tai_to_tt(provenance).apply(jnp.asarray(1.0))

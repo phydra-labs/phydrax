@@ -152,26 +152,29 @@ formulations, and fixed-tree/workflow evidence. See
 [Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle, grid, solver, operator, artifact, and
 likelihood identities rather than introducing a separate framework. Canonical physical
-states project only their declared dependencies into content-addressed products;
-concrete pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
+states project only declared dependencies into content-addressed products; concrete
+pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
 release-window Gaussian likelihoods, primordial H/He microphysics, local-curvature
-validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification, snapshots,
-and distributed-PM feasibility extend the curved/CPL background, named transfer/power,
-flat LPT/PM, and adiabatic gas--DM foundations. Complete native Boltzmann/CMB parity,
-global curved N-body, generic surveys, stochastic feedback, production tree gravity,
-AMR, and distributed execution remain explicit external, conditional, or rejected
-boundaries rather than hidden fallbacks.
+validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification,
+snapshots, and distributed-PM feasibility extend the curved/CPL background, named
+transfer/power, flat LPT/PM, and adiabatic gas--DM foundations. Native relic, BBN,
+recombination, fixed-hierarchy Einstein--Boltzmann/CMB, halo/nonlinear, lensing,
+light-cone, survey-selection, and baryonic-feedback reference products preserve those
+same realization and product conventions. Precision parity, global curved N-body,
+production tree gravity, AMR, calibrated fits, collaboration data, and distributed
+execution remain explicit external or qualification boundaries rather than hidden
+fallbacks.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
-Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,
-universal Kepler and branch-explicit Lambert kernels, force composition, tabulated
-ephemerides, direct and nearly-Keplerian N-body dynamics, CR3BP, spacecraft loads, and
-orbit measurements. External coordinate, SPICE, and SGP4 providers are host-side
-adapters with explicit provenance; provider calls and file access never enter traced
-execution. Astrophysical observation applications add observer projection, physical
-occultation contacts, photon-counting bandpasses, concrete instrument responses, ray
-transfer, and static field operators without introducing a second observation or
-inference runtime.
+Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,
+pinned ephemerides/interchange, high-fidelity forces, universal/analytical/DSST/IAS15
+propagation, bounded events and maneuvers, encounter/hierarchical gravity, coupled
+vehicles, tracking, variational dynamics, OD, access, targeting, and conjunction
+products remain dense fixed-capacity plans. Astrophysical observation applications
+add WCS/calibrated imaging, surveys, scalar/polarized transfer, waveform/QNM networks,
+oblate occultation, and finite-source microlensing without introducing a second
+observation or inference runtime. External provider calls and file access never enter
+traced execution.
 Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
 transactional adaptive realization and replay, plane-strain/plane-stress/3-D
 hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,

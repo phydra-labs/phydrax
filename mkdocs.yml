@@ -221,6 +221,7 @@ nav:
         - Advanced multiphysics: "guides_advanced_multiphysics.md"
         - Astrodynamics: "guides_astrodynamics.md"
         - Astrophysical observations: "guides_astrophysics_observations.md"
+        - Astronomy closure systems: "guides_astronomy_closure.md"
         - Unstructured finite volume: "guides_unstructured_finite_volume.md"
         - Kinetic methods: "guides_lattice_boltzmann.md"
         - Solver substrates: "guides_solver_substrates.md"
@@ -433,6 +434,7 @@ nav:
         - Circuit analysis: "api/circuit.md"
         - Astrodynamics applications: "api/astrodynamics.md"
         - Astrophysics applications: "api/astrophysics.md"
+        - Compact objects applications: "api/compact_objects.md"
         - Solver:
             - Overview: "api/solver/index.md"
             - Time integrators: "api/solver/time_integrators.md"

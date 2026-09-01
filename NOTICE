@@ -347,3 +347,12 @@ the resulting cochain, port, circuit, source, material, resource, failure,
 differentiation, and evidence contracts independently. No upstream source,
 tests, fixtures, generated kernels, runtime types, numerical tables, or
 executables are copied, translated, bundled, linked, imported, or redistributed.
+
+The astronomy-closure implementations follow public IAU 2000/2006, IERS 2010,
+CCSDS navigation-message, Vallado SGP4, Gauss--Radau collocation, Einstein--
+Boltzmann, Tolman--Oppenheimer--Volkoff, radiative-transfer, and gravitational
+hierarchy literature. Phydrax independently implements the numerical contracts
+against its native solver, particle, geometry, observation, cosmology, and
+evidence substrates. No IERS, JPL, NAIF, gravity, atmosphere, opacity, waveform,
+survey, or calibration dataset is copied or redistributed; every production
+asset remains an explicitly supplied checksummed artifact with its own license.

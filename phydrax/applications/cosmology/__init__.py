@@ -2,6 +2,7 @@
 # ruff: noqa: F401
 
 from ._background import FLRWBackground
+from ._boltzmann_native import EinsteinBoltzmannPlan, NativeBoltzmannResult
 from ._closure import (
     CoordinateLayout,
     CorrelatedGaussianPlan,
@@ -59,6 +60,13 @@ from ._curvature_validity import (
     LocalCurvatureValidityResult,
 )
 from ._distances import FLRWDistancePlan, FLRWDistanceResult
+from ._early_universe import (
+    BbnReactionNetworkPlan,
+    BbnResult,
+    RecombinationPlan,
+    RelicBackgroundPlan,
+    RelicBackgroundResult,
+)
 from ._force_resolution import PeriodicForceQualificationResult, PeriodicImageForcePlan
 from ._force_scalability import (
     CosmologySnapshotProduct,
@@ -92,9 +100,10 @@ from ._initial_conditions import (
     LagrangianPerturbationInitialConditionPlan,
 )
 from ._linear_theory import (
-    LinearTheoryOracleResult,
-    LinearTheoryRequest,
+    CosmologyModelRequest,
+    CosmologyModelResult,
     MassiveNeutrinoSpecies,
+    SubprocessCosmologyModelBackend,
 )
 from ._microphysics import (
     PRIMORDIAL_PROCESSES,
@@ -104,6 +113,16 @@ from ._microphysics import (
     PrimordialMicrophysicsResult,
     PrimordialRateTable,
     PrimordialSpeciesState,
+)
+from ._nonlinear_closure import (
+    BaryonicFeedbackPlan,
+    CmbLensingPlan,
+    HaloMassFunctionPlan,
+    HaloModelPlan,
+    HaloModelResult,
+    LensingPlanePlan,
+    LightConePlan,
+    LightConeResult,
 )
 from ._observables import (
     LensingConvergenceTracer,

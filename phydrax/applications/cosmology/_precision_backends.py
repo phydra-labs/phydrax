@@ -16,9 +16,9 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._closure import DifferentiationContract, ScientificArtifactEnvelope
 from ._linear_theory import (
-    LinearTheoryOracleResult,
-    LinearTheoryRequest,
-    SubprocessLinearTheoryBackend,
+    CosmologyModelRequest,
+    CosmologyModelResult,
+    SubprocessCosmologyModelBackend,
 )
 from ._products import (
     cosmology_product_content_id,
@@ -210,13 +210,13 @@ class LinearTheoryResourcePolicy(StrictModule, NonTrainableState):
 
 
 class PrecisionLinearTheoryResult(StrictModule):
-    products: LinearTheoryOracleResult
+    products: CosmologyModelResult
     artifact: ScientificArtifactEnvelope
     cache_hit: bool = eqx.field(static=True)
 
 
 def _provenance(
-    request: LinearTheoryRequest,
+    request: CosmologyModelRequest,
     build: BackendBuildManifest,
     resources: LinearTheoryResourcePolicy,
 ) -> CosmologyProductProvenance:
@@ -233,7 +233,7 @@ def _provenance(
     )
 
 
-def _save_products(path: Path, products: LinearTheoryOracleResult, /) -> None:
+def _save_products(path: Path, products: CosmologyModelResult, /) -> None:
     thermo = products.thermodynamics
     arrays = {
         "scale_factors": np.asarray(products.transfer.scale_factors),
@@ -253,16 +253,16 @@ def _save_products(path: Path, products: LinearTheoryOracleResult, /) -> None:
         )
     temporary = path.with_suffix(".tmp")
     with temporary.open("wb") as handle:
-        np.savez(handle, **arrays)
+        np.savez(handle, allow_pickle=False, **arrays)
     temporary.replace(path)
 
 
 def _load_products(
     path: Path,
-    request: LinearTheoryRequest,
+    request: CosmologyModelRequest,
     build: BackendBuildManifest,
     resources: LinearTheoryResourcePolicy,
-) -> LinearTheoryOracleResult:
+) -> CosmologyModelResult:
     with np.load(path, allow_pickle=False) as arrays:
         scales = jnp.asarray(arrays["scale_factors"])
         wavenumbers = jnp.asarray(arrays["wavenumbers"])
@@ -321,7 +321,7 @@ def _load_products(
         if thermo_values is not None
         else None
     )
-    return LinearTheoryOracleResult(
+    return CosmologyModelResult(
         transfer,
         power,
         thermodynamics,
@@ -334,7 +334,7 @@ def _load_products(
 def _run_backend(
     *,
     backend: str,
-    request: LinearTheoryRequest,
+    request: CosmologyModelRequest,
     build: BackendBuildManifest,
     resources: LinearTheoryResourcePolicy,
     cache_directory: str,
@@ -355,7 +355,7 @@ def _run_backend(
     if cache_hit:
         products = _load_products(path, request, build, resources)
     else:
-        runner = SubprocessLinearTheoryBackend(
+        runner = SubprocessCosmologyModelBackend(
             build.application,
             arguments=build.arguments,
             timeout_seconds=resources.timeout_seconds,
@@ -405,7 +405,7 @@ class ClassLinearTheoryBackend(StrictModule, NonTrainableState):
         self.resources = resources
         self.cache_directory = str(cache_directory)
 
-    def run(self, request: LinearTheoryRequest, /) -> PrecisionLinearTheoryResult:
+    def run(self, request: CosmologyModelRequest, /) -> PrecisionLinearTheoryResult:
         return _run_backend(
             backend="class",
             request=request,
@@ -433,7 +433,7 @@ class CambLinearTheoryBackend(StrictModule, NonTrainableState):
         self.resources = resources
         self.cache_directory = str(cache_directory)
 
-    def run(self, request: LinearTheoryRequest, /) -> PrecisionLinearTheoryResult:
+    def run(self, request: CosmologyModelRequest, /) -> PrecisionLinearTheoryResult:
         return _run_backend(
             backend="camb",
             request=request,

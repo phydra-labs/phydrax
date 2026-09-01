@@ -53,8 +53,19 @@
   interoperation, neutrino component algebra, model-card power corrections,
   adiabatic gas--particle shared gravity, analytic halo foundations, Limber/RSD
   predictions, canonical CMB spectra, and bounded periodic force qualification.
-  Periodic LPT/PM remains flat-only; complete Boltzmann/CMB evolution and production
-  tree gravity remain explicit external or unsupported boundaries.
+  Periodic LPT/PM remains flat-only; calibrated external spectra and production
+  distributed gravity remain explicit provider/qualification boundaries.
+- Closed the declared astronomy capability boundaries with exact astronomical time
+  instants and routes, IERS Earth orientation, compiled frame graphs, pinned
+  artifacts and Chebyshev ephemerides, CCSDS/TLE products, high-fidelity force and
+  light-time models, adaptive Gauss--Radau IAS15, analytical/DSST propagation,
+  bounded event and maneuver schedules, encounter and hierarchical gravity,
+  coupled variable-mass vehicles, tracking/variational/orbit-determination/mission
+  products, calibrated WCS imaging, surveys, radiative transfer, waveform and
+  exoplanet operators, native early-universe/Boltzmann/nonlinear cosmology, and
+  compact-object EOS/TOV models. Provider discovery, network access, external data
+  redistribution, and smooth-gradient claims across discrete topology remain
+  intentionally excluded.
 - Extended Material Point Method with explicit USF/USL-minus/MUSL schedules,
   fixed-capacity adaptive realization and scheduled replay, constitutive capability
   and algorithmic-tangent contracts, isotropic plane stress, multiplicative
