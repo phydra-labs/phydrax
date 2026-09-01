@@ -104,16 +104,16 @@ Every tabulated product carries a dynamic physical-realization signature, static
 producer/provenance, an enforced differentiability policy, and semantic field metadata.
 `MatterPowerTable` distinguishes cold+baryon, total-matter, and massive-neutrino fields,
 auto/cross power, gauge, linear/nonlinear stage, shot noise, and spatial dimension.
-`LinearTransferTable` preserves signed field transfers. Precision Boltzmann and
-massive-neutrino perturbations remain isolated external calculations through
-`SubprocessLinearTheoryBackend`; their arrays are immutable constant products, not
-custom-gradient primitives.
+`LinearTransferTable` preserves signed field transfers. Native fixed-hierarchy
+Einstein--Boltzmann and CMB evolution return canonical products, while precision
+external calculations remain isolated through `SubprocessCosmologyModelBackend`;
+their arrays are immutable constant products, not custom-gradient primitives.
 
 Native product consumers include model-card-checked multiplicative power corrections,
 spherical-overdensity/NFW/linear-variance halo foundations, flat Limber density and
 lensing predictions, linear Kaiser/AP multipoles, canonical CMB spectra/transforms, and
-small-N periodic force qualification. Phydrax does not silently select Halofit, HMcode,
-an emulator, a halo fit/finder, a survey likelihood, or a complete CMB solver.
+small-N periodic force qualification. Phydrax never silently selects Halofit, HMcode,
+an emulator, a halo fit/finder, survey data, or an external CMB provider.
 
 Particles use comoving position `x` and canonical momentum `p = m a^2 dx/dt`.
 `ParticleMeshGravityPlan.acceleration` solves the rescaled potential `psi = a Phi` from

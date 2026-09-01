@@ -89,7 +89,7 @@ class MassiveNeutrinoSpecies(StrictModule, NonTrainableState):
         }
 
 
-class LinearTheoryRequest(StrictModule, NonTrainableState):
+class CosmologyModelRequest(StrictModule, NonTrainableState):
     """Canonical host-only request for a narrowly declared precision calculation."""
 
     scale: CosmologyScaleContract
@@ -272,7 +272,7 @@ class LinearTheoryRequest(StrictModule, NonTrainableState):
         return mapping
 
 
-class LinearTheoryOracleResult(StrictModule):
+class CosmologyModelResult(StrictModule):
     transfer: LinearTransferTable
     power: MatterPowerTable
     thermodynamics: ThermodynamicsHistory | None
@@ -281,7 +281,7 @@ class LinearTheoryOracleResult(StrictModule):
     return_code: int = eqx.field(static=True)
 
 
-class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
+class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState):
     """Isolated JSON-request/NPZ-result precision-backend protocol."""
 
     application: str = eqx.field(static=True)
@@ -355,9 +355,9 @@ class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
             versions=((self.backend_name, self.backend_version),),
         )
 
-    def run(self, request: LinearTheoryRequest, /) -> LinearTheoryOracleResult:
-        if not isinstance(request, LinearTheoryRequest):
-            raise TypeError("request must be LinearTheoryRequest.")
+    def run(self, request: CosmologyModelRequest, /) -> CosmologyModelResult:
+        if not isinstance(request, CosmologyModelRequest):
+            raise TypeError("request must be CosmologyModelRequest.")
         availability = self.availability()
         if not availability.available:
             raise RuntimeError(
@@ -478,7 +478,7 @@ class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
             if thermodynamics_arrays is not None
             else None
         )
-        return LinearTheoryOracleResult(
+        return CosmologyModelResult(
             transfer=transfer,
             power=power,
             thermodynamics=thermodynamics,
@@ -489,8 +489,8 @@ class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
 
 
 __all__ = [
-    "LinearTheoryOracleResult",
-    "LinearTheoryRequest",
+    "CosmologyModelRequest",
+    "CosmologyModelResult",
     "MassiveNeutrinoSpecies",
-    "SubprocessLinearTheoryBackend",
+    "SubprocessCosmologyModelBackend",
 ]

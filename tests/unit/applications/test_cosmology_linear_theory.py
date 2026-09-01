@@ -18,7 +18,7 @@ def test_massive_neutrino_species_and_request_identity():
         cosmology.MassiveNeutrinoSpecies(0.05),
         cosmology.MassiveNeutrinoSpecies(0.01, degeneracy=2.0),
     )
-    request = cosmology.LinearTheoryRequest(
+    request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
@@ -30,7 +30,7 @@ def test_massive_neutrino_species_and_request_identity():
         "massive_neutrino_mass_0",
         "massive_neutrino_mass_1",
     )
-    changed = cosmology.LinearTheoryRequest(
+    changed = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
@@ -46,14 +46,14 @@ def test_subprocess_linear_theory_backend_returns_named_constant_products():
     root = Path(__file__).parents[2]
     worker = root / "_linear_theory_worker.py"
     scale = cosmology.CosmologyScaleContract("Mpc", "solar_mass", "Gyr")
-    request = cosmology.LinearTheoryRequest(
+    request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
         cold_dark_matter_density=0.25,
         neutrinos=(cosmology.MassiveNeutrinoSpecies(0.05),),
     )
-    backend = cosmology.SubprocessLinearTheoryBackend(
+    backend = cosmology.SubprocessCosmologyModelBackend(
         sys.executable,
         arguments=(str(worker), "{request}", "{output}"),
         backend_name="fixture-linear-theory",

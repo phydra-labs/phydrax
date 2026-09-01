@@ -128,16 +128,19 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
-- **Astrodynamics**: explicit scale/epoch/frame contexts, Cartesian and modified
-  equinoctial states, universal-variable Kepler propagation, branch-explicit Lambert
-  transfer, native force composition, tabulated ephemerides, orbital events, direct
-  and nearly-Keplerian N-body dynamics, CR3BP, rigid spacecraft loads, and measurement
-  Jacobians reuse the existing differential, geometric, particle, control, and
-  nonlinear substrates.
-- **Astrophysical observations**: observer projection, polynomial limb-darkened
-  occultation, photon-counting bandpasses, binned/image/frequency responses, ordered
-  ray transfer, static complex-field operators, and CMB bandpower responses compose
-  with existing likelihood, state-space, posterior, and BlackJAX contracts.
+- **Astrodynamics**: exact astronomical time routes, IERS Earth orientation,
+  compiled frame graphs, pinned ephemerides and interchange, universal/analytical/
+  DSST/IAS15 propagation, harmonic/environment/relativistic forces, bounded events
+  and maneuvers, direct and hierarchical N-body gravity, coupled variable-mass
+  spacecraft, tracking, variational dynamics, orbit determination, access,
+  targeting, and conjunction products reuse the existing solver, geometry,
+  particle, linear-algebra, nonlinear, control, state-space, and UQ owners.
+- **Astrophysics and cosmology**: calibrated TAN/SIP imaging, surveys, scalar and
+  polarized radiative transfer, waveform/QNM detectors, oblate occultation,
+  microlensing, native relic/BBN/recombination/Einstein--Boltzmann evolution,
+  nonlinear halo/lensing/light-cone products, and compact-object EOS/TOV models
+  compose existing observation, integration, spherical, likelihood, posterior,
+  and BlackJAX contracts.
 - **Learned field evolution**: fixed physical measures project PDE rates onto
   selected model tangents, Diffrax evolves the resulting parameter ODE, and
   backward Diffrax characteristics feed optional time-slice field projection.

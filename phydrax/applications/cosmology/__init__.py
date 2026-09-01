@@ -1,6 +1,7 @@
 """Differentiable cosmological geometry, products, simulation, and observables."""
 
 from ._background import FLRWBackground
+from ._boltzmann_native import EinsteinBoltzmannPlan, NativeBoltzmannResult
 from ._cmb import (
     CMB_FIELDS,
     CMB_MODES,
@@ -27,6 +28,13 @@ from ._coupled import (
     SharedGasParticleGravityResult,
 )
 from ._distances import FLRWDistancePlan, FLRWDistanceResult
+from ._early_universe import (
+    BbnReactionNetworkPlan,
+    BbnResult,
+    RecombinationPlan,
+    RelicBackgroundPlan,
+    RelicBackgroundResult,
+)
 from ._force_resolution import PeriodicForceQualificationResult, PeriodicImageForcePlan
 from ._growth import FLRWGrowthPlan
 from ._halos import (
@@ -41,10 +49,20 @@ from ._initial_conditions import (
     LagrangianPerturbationInitialConditionPlan,
 )
 from ._linear_theory import (
-    LinearTheoryOracleResult,
-    LinearTheoryRequest,
+    CosmologyModelRequest,
+    CosmologyModelResult,
     MassiveNeutrinoSpecies,
-    SubprocessLinearTheoryBackend,
+    SubprocessCosmologyModelBackend,
+)
+from ._nonlinear_closure import (
+    BaryonicFeedbackPlan,
+    CmbLensingPlan,
+    HaloMassFunctionPlan,
+    HaloModelPlan,
+    HaloModelResult,
+    LensingPlanePlan,
+    LightConePlan,
+    LightConeResult,
 )
 from ._observables import (
     LensingConvergenceTracer,
@@ -128,8 +146,8 @@ __all__ = [
     "LimberAngularPowerPlan",
     "LinearDensityTracer",
     "LinearRSDMultipolePlan",
-    "LinearTheoryOracleResult",
-    "LinearTheoryRequest",
+    "CosmologyModelRequest",
+    "CosmologyModelResult",
     "LinearTransferDescriptor",
     "LinearTransferTable",
     "LinearVariancePlan",
@@ -153,9 +171,24 @@ __all__ = [
     "ShotNoiseConvention",
     "SphericalCollapseEdS",
     "SphericalOverdensityMassDefinition",
-    "SubprocessLinearTheoryBackend",
+    "SubprocessCosmologyModelBackend",
     "ThermodynamicsHistory",
     "TransferGauge",
     "combine_differentiability",
     "reconstruct_total_matter_power",
+    "BaryonicFeedbackPlan",
+    "BbnReactionNetworkPlan",
+    "BbnResult",
+    "CmbLensingPlan",
+    "EinsteinBoltzmannPlan",
+    "HaloMassFunctionPlan",
+    "HaloModelPlan",
+    "HaloModelResult",
+    "LensingPlanePlan",
+    "LightConePlan",
+    "LightConeResult",
+    "NativeBoltzmannResult",
+    "RecombinationPlan",
+    "RelicBackgroundPlan",
+    "RelicBackgroundResult",
 ]

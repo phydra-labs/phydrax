@@ -146,23 +146,23 @@ Cosmological applications reuse those particle and transfer identities rather th
 introducing a separate simulation substrate. Differentiable curved/CPL FLRW geometry,
 fixed-quadrature distances, realization-safe named transfer and matter-power products,
 state-ready flat 1LPT/2LPT, collisionless PM, and adiabatic gas--DM gravity compose the
-existing splat, self-gravity, finite-volume, and transactional KDK operations. Precision
-Boltzmann, massive-neutrino perturbation, and complete CMB evolution remain isolated
-external products. Native downstream contracts cover explicit power corrections,
-analytic halo foundations, compact Limber/RSD predictions, canonical CMB spectra, and
-small-N force qualification without claiming calibrated fits, survey likelihoods, or
-production tree gravity.
+existing splat, self-gravity, finite-volume, and transactional KDK operations. Native
+relic/BBN/recombination, fixed-hierarchy Einstein--Boltzmann/CMB, halo/nonlinear,
+lensing, light-cone, survey-selection, and baryonic-feedback products preserve the
+same realization and product conventions. Precision external providers remain
+process-isolated constant products; calibrated fits and collaboration datasets are
+never selected or redistributed implicitly.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
-Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,
-universal Kepler and branch-explicit Lambert kernels, force composition, tabulated
-ephemerides, direct and nearly-Keplerian N-body dynamics, CR3BP, spacecraft loads, and
-orbit measurements. External coordinate, SPICE, and SGP4 providers are host-side
-adapters with explicit provenance; provider calls and file access never enter traced
-execution. Astrophysical observation applications add observer projection, physical
-occultation contacts, photon-counting bandpasses, concrete instrument responses, ray
-transfer, and static field operators without introducing a second observation or
-inference runtime.
+Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,
+pinned ephemerides/interchange, high-fidelity forces, universal/analytical/DSST/IAS15
+propagation, bounded events and maneuvers, encounter/hierarchical gravity, coupled
+vehicles, tracking, variational dynamics, OD, access, targeting, and conjunction
+products remain dense fixed-capacity plans. Astrophysical observation applications
+add WCS/calibrated imaging, surveys, scalar/polarized transfer, waveform/QNM networks,
+oblate occultation, and finite-source microlensing without introducing a second
+observation or inference runtime. External provider calls and file access never enter
+traced execution.
 Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
 transactional adaptive realization and replay, plane-strain/plane-stress/3-D
 hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,

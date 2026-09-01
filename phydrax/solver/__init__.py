@@ -551,6 +551,12 @@ from ._hybrid_event import (
     HybridEventSensitivityResult,
     localize_hybrid_event,
 )
+from ._hybrid_schedule import (
+    HybridSchedulePlan,
+    HybridScheduleResult,
+    ScheduledHybridEvent,
+)
+from ._ias15 import IAS15Plan, IAS15Result
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -1125,6 +1131,8 @@ from ._unstructured_incompressible import (
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
+from ._uvlm import *  # noqa: F403
+from ._uvlm import __all__ as _uvlm_all
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -1165,6 +1173,12 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
+from ._vortex_lattice import *  # noqa: F403
+from ._vortex_lattice import __all__ as _vortex_lattice_all
+from ._vortex_panels import *  # noqa: F403
+from ._vortex_panels import __all__ as _vortex_panels_all
+from ._vortex_step import *  # noqa: F403
+from ._vortex_step import __all__ as _vortex_step_all
 from ._wiener_operator import WienerNoiseBlock, WienerNoiseLayout
 from ._xxz_open import (
     boundary_driven_xxz_problem,
@@ -1177,14 +1191,6 @@ from .maxwell import (
     CompatibleMaxwellState,
     PreparedCompatibleMaxwell,
 )
-from ._uvlm import *  # noqa: F403
-from ._uvlm import __all__ as _uvlm_all
-from ._vortex_lattice import *  # noqa: F403
-from ._vortex_lattice import __all__ as _vortex_lattice_all
-from ._vortex_panels import *  # noqa: F403
-from ._vortex_panels import __all__ as _vortex_panels_all
-from ._vortex_step import *  # noqa: F403
-from ._vortex_step import __all__ as _vortex_step_all
 
 
 __all__ = [
@@ -2073,4 +2079,12 @@ __all__ += [
         *_vortex_step_all,
     )
     if name not in __all__
+]
+
+__all__ += [
+    "HybridSchedulePlan",
+    "HybridScheduleResult",
+    "IAS15Plan",
+    "IAS15Result",
+    "ScheduledHybridEvent",
 ]
