@@ -6,6 +6,25 @@
     "multirate_source_subcycling": "implemented",
     "general_imex_tableau": "implemented"
   },
+  "marker_flow": {
+    "regularized_prescribed_mac": "qualified",
+    "true_stage_inverse_kkt": "qualified",
+    "kernel_and_route_policies": "qualified",
+    "variable_density_and_viscosity": "implemented",
+    "physical_boundaries": "implemented",
+    "nonuniform_and_mapped_transfer": "implemented",
+    "ale_and_remesh_epochs": "implemented",
+    "rigid_accepted_time": "implemented",
+    "deformable_newmark": "implemented",
+    "joint_contact_lubrication": "implemented",
+    "composite_amr_and_impulse_reflux": "implemented",
+    "distributed_single_owner": "implemented",
+    "marker_topology_epochs": "implemented",
+    "divergence_free_transfer": "implemented",
+    "sharp_and_immersed_interface": "implemented",
+    "fluctuating_inertial_and_overdamped": "implemented",
+    "checkpoint_replay_output": "implemented"
+  },
   "constrained_mhd": {
     "one_dimensional_periodic": "implemented",
     "two_point_five_dimensional_periodic": "implemented",

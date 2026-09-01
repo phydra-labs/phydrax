@@ -1,56 +1,205 @@
-# Immersed-boundary coupling
+# Immersed-boundary and marker-flow coupling
 
-Phydrax couples fixed-topology Lagrangian markers to uniform, unit-density MAC flow through one material-measure adjoint interpolation/spreading operator. The qualified marker assignment is the cubic tensor B-spline: four routes per axis, fixed route indices inside one routing program, nonnegative weights, partition of unity, and affine reproduction.
+Phydrax exposes two enforcement families:
+
+- regularized-delta marker coupling on Cartesian, nonuniform, mapped, AMR-composite,
+  and distributed MAC layouts;
+- sharp cut-cell coupling through `MACSharpInterfaceProjectionPlan`.
+
+They share accepted-state, conservation, failure, differentiation, checkpoint, and
+qualification conventions. They are not interchangeable numerically: regularized
+markers enforce a smoothed velocity constraint, while cut cells retain a sharp
+geometric interface and integrate pressure/viscous traction on that interface.
 
 ## Marker measure and force convention
 
-`LagrangianMarkerSetPlan` owns stable marker IDs, reference positions, a static active mask, and positive material quadrature weights. Current positions and velocities are temporal state. Changing marker activity or cardinality is a topology event and requires re-preparation.
+`LagrangianMarkerSetPlan` owns stable marker IDs, reference positions, a static active
+mask, and positive material quadrature weights. Current positions and velocities are
+temporal state. `ImmersedMarkerQuadraturePlan` materializes differentiable positions,
+surface Jacobians, physical quadrature weights, and source-entity IDs from any
+`BoundaryAtlas`.
 
-`PreparedMACMarkerTransfer.interpolation_operator(relation)` is J. Its Hilbert adjoint is S:
+`PreparedMACMarkerTransfer.interpolation_operator(relation)` is J. Its Hilbert adjoint
+is S:
 
 ```text
 S = W_E⁻¹ Jᵀ W_L
 ```
 
-`W_E` is the MAC face-dual measure and `W_L` is marker material quadrature. `spread(relation, value)` accepts force density per marker measure; callers must not multiply marker quadrature first. Diagnostics expose partition, first-moment and gradient-sum defects, force, torque, and virtual-work residuals.
+`W_E` is the MAC face-dual measure and `W_L` is marker material quadrature.
+`spread(relation, value)` accepts force density per marker measure; callers must not
+multiply by marker quadrature first. Diagnostics expose partition, first-moment,
+gradient-sum, force, torque, and virtual-work defects.
 
-Route indices and masks are nondifferentiable. With piecewise geometry differentiation, weights remain differentiable while one routing program is fixed. A converged moving-geometry solve is accepted only when rebuilding its canonical routes yields the same indices and masks.
+`MACMarkerKernelPlan` selects cubic B-spline, Peskin four-point, or Roma three-point
+assignment. Uniform axes use their native regularized-delta formula. Nonuniform axes
+use local affine-constrained weights. `MappedMACMarkerTransferPlan` reconstructs
+physical vector velocity from mapped normal-face values and applies its exact
+measure-adjoint spread.
+
+`MACMarkerRouteState` makes the nondifferentiable routing state explicit. Newton and
+implicit solves recompute smooth weights on the fixed route and fail closed if the
+canonical accepted route differs. Route refresh is an outer accepted-step policy, not
+a hidden derivative.
 
 ## Exact fixed and prescribed coupling
 
-`MACImmersedBoundaryProjectionPlan` enforces outer-boundary closure, incompressibility, and prescribed marker velocity in one pressure-plus-marker solve. The public physical constraint is
+`MACImmersedBoundaryProjectionPlan` enforces the shared physical-boundary correction,
+incompressibility, and prescribed marker velocity in one pressure-plus-marker solve:
 
 ```text
-J u = U_b.
+J u = U_b
 ```
 
-The returned marker multiplier is force density exerted by the body on the fluid. The fluid receives its spread; a body receives the exact negative marker-measure adjoint load. Pressure and marker constraints are solved iteratively; pressure transform solves may be used by ordinary pressure projection but are not exact coupled-IB solvers.
+The returned marker multiplier is force density exerted by the body on the fluid. The
+fluid receives its spread; a body receives the exact negative marker-measure adjoint
+load.
 
-`MACImmersedBoundaryIMEXEulerMethod` evaluates prescribed geometry at the attempted time and applies a coefficient of dt. `MACImmersedBoundarySBDF2Method` uses exact IMEX startup and a coefficient of 2 dt / 3 on subsequent steps. Both commit pressure, multiplier, and fluid history atomically or retain the previous accepted state.
+The projection consumes an actual stage inverse momentum operator. Available
+implementations are:
 
-## Penalty CFD–DEM
+- `MACDiagonalStageInverseMomentum` for diagonal stages;
+- `MACHelmholtzStageInverseMomentum` for repeated homogeneous Helmholtz solves;
+- `MACVariableDensityStageInverseMomentum` for face-density mass stages;
+- `MACOperatorStageInverseMomentum` for a certified SPD variable-coefficient momentum
+  operator.
 
-`MACPenaltyIBCFDEMCouplingPlan` remains an explicitly approximate penalty family. It shares the same marker transfer but computes
+`MACImmersedBoundaryIMEXEulerMethod` and `MACImmersedBoundarySBDF2Method` construct
+their inverse from the same Helmholtz stage used for the tentative velocity. Pressure,
+multiplier, route state, and multistep history commit atomically or retain the previous
+accepted state.
 
-```text
-slip = J u − U_body
-fluid force density = −penalty × slip
-```
+The default coupled solve is matrix-free GMRES with a right pressure/marker block
+factorization and Jacobi approximations on the two diagonal blocks.
+Rank certification and a configurable mobility condition limit are mandatory by
+default. Problems larger than the configured exact rank-audit capacity require an
+explicit rank-certification policy; they are not silently accepted.
 
-The body receives the opposite quadrature-integrated force and torque. Numerical validity and slip qualification are reported separately. `IBPenaltyPlan(require_slip_for_acceptance=True)` preserves strict acceptance by default. DEM contact subcycling remains confined to this penalty family.
+## Physical boundaries and variable coefficients
 
-## Free rigid bodies
+`MACBoundaryCorrectionDescriptor` is the shared correction-space contract. Tentative
+momentum, pressure gradient, KKT correction, and diagnostics use the same prepared
+boundary identity and stage. Periodic, wall, inflow/outflow, and mixed pressure closure
+therefore do not acquire a second boundary interpretation inside the immersed solve.
 
-`RigidMarkerMapPlan` binds body-frame markers to `PreparedRigidBodySet`. It rotates marker arms with SO(2) or SO(3), constructs rigid marker velocity, and exposes the paired generalized force/torque pullback. `MACRigidImmersedEulerMethod` performs a contact-free synchronized fluid/body velocity solve at one predicted accepted pose. It is separate from DEM subcycling.
+Variable density is advanced by the native conservative MAC density/momentum path.
+For explicit viscosity, use `MACVariableDensityStageInverseMomentum`.
+`MACVariableViscosityStagePlan` constructs a native SPD momentum action from the
+discrete variable-viscosity strain energy; `MACOperatorStageInverseMomentum` also
+accepts another certified SPD momentum operator.
 
-## Deformable structures
+## Rigid and deformable accepted-time coupling
 
-`FiniteElementImmersedMarkerMapPlan` binds a fixed FE interpolation H and its material-measure adjoint H*. `MACDeformableImmersedBackwardEulerMethod` combines a `SecondOrderDifferentialSystem`, structural configuration update, fluid momentum, pressure, and marker no-slip in one nonlinear accepted step. Its energy ledger reports fluid kinetic energy, supplied structural energy, coupling powers, and their residual. Area or volume conservation is not claimed unless the selected structural model contains that constraint.
+`RigidMarkerMapPlan` rotates body-frame markers with SO(2) or SO(3), constructs marker
+velocity, and exposes the paired generalized force/torque pullback.
 
-## Failure and differentiation
+- `MACRigidImmersedEulerMethod` is the baseline synchronized contact-free step.
+- `MACRigidImmersedBackwardEulerMethod` iterates the body pose and fluid constraint at
+  accepted time.
+- `MACRigidImmersedMidpointMethod` uses a pose-centred second-order update.
+- `MACRigidImmersedJointMethod` couples native rigid-joint dynamics.
+- `MACRigidImmersedContactMethod` couples native hard-contact complementarity.
 
-All exact paths fail closed on nonfinite state, truncated support, failed linear/nonlinear solves, divergence, gauge, slip, KKT residual, or route inconsistency. Mathematical solve differentiation is certified only for a successful primal/adjoint solve with fixed marker activity and routing. `rhs-only` differentiation intentionally freezes operator geometry.
+Rigid results include accepted and attempted time, status, fluid/rigid kinetic energy,
+coupling power, external work, and total energy change.
 
-## Current boundaries
+`FiniteElementImmersedMarkerMapPlan` binds a fixed FE interpolation H and material
+adjoint H*. `MACDeformableImmersedBackwardEulerMethod` supplies the first-order
+implicit baseline. `MACDeformableImmersedNewmarkMethod` solves configuration,
+velocity, acceleration, fluid momentum, pressure, and marker no-slip in one
+monolithic Newmark nonlinear system. `structural_contact_residual` admits the native
+deformable-contact residual inside either solve. Acceptance includes nonlinear/KKT,
+divergence, slip, gauge, route, transfer, coupling-work, and finite-state gates.
 
-The qualified scope is uniform 2-D/3-D, unit-density MAC flow with fixed marker topology. Variable-density coupling, mapped/ALE grids, AMR, distributed marker ownership, remeshing, contact/lubrication extensions, fluctuating hydrodynamics, divergence-free interpolation, and sharp embedded-boundary changes are outside this contract.
+`ResolvedLubricationCorrectionPlan` adds only the asymptotic near-gap normal
+resistance not already resolved by the grid. It uses a finite minimum gap, smooth
+cutoff, nonnegative residual resistance, and an explicit dissipation report.
+
+## Mapped grids, ALE, remeshing, AMR, and distribution
+
+`MappedMACGeometryPlan` provides compatible physical-space divergence, gradient,
+pressure action, velocity reconstruction, and metric evidence. The solver-level
+`MACALEGeometryPlan` and `MACRemeshEpochPlan` own accepted-time geometric-conservation
+and conservative remap contracts.
+
+`CompositeMACMarkerTransferPlan` selects the finest valid owner level, enforces local
+partition and first-moment constraints, applies a measure-adjoint spread across all
+levels, and records accepted substep impulse. `CompositeMACProjectionPlan` projects
+through caller-supplied compatible composite divergence, gradient, inverse momentum,
+and gauge operators.
+
+`DistributedMarkerOwnershipPlan` assigns every stable marker ID one deterministic
+owner and records all support ranks. `DistributedMACMarkerTransfer` separates
+owner-computes gather/spread, explicit halo exchange, and global force/work reduction.
+
+`MarkerEpochPlan` and `MarkerEpochTransferPlan` make activation, deactivation,
+refinement, coarsening, and migration explicit topology events. The primal map
+preserves constants and weighted integrals; the dual is its material-measure adjoint.
+Differentiation is either a frozen event schedule or an explicitly certified event
+map.
+
+## Sharp-interface family
+
+`MACSharpInterfaceProjectionPlan` consumes cell fluid fractions, face apertures,
+interface area/centroid/normal, and body IDs. It performs a cut-cell pressure
+projection, applies moving-wall fluxes, stabilizes small cells with a reported defect,
+accepts a pressure-jump source, and integrates pressure plus supplied viscous traction
+into body force and torque. Its acceptance gate covers geometry, linear convergence,
+divergence, and finite traction.
+
+## Fluctuating hydrodynamics and FIB
+
+`MACFluctuatingHydrodynamicsPlan` samples thermal momentum through a supplied noise
+factor B and verifies the declared covariance action B B* = D against the dissipation
+operator. `MACInertialStochasticStepPlan` applies the result through the inertial mass
+inverse.
+
+`FIBOverdampedPlan` advances marker position with deterministic mobility, a Krylov
+square-root Brownian increment, and random-finite-difference stochastic drift. Random
+streams use `StochasticReplayKey(seed, accepted_step, stage, sample)`. Pathwise
+derivatives are certified only for fixed routes/topology and fixed semantic random
+keys; weak derivatives are reported as a separate policy.
+
+## Checkpoint, replay, output, and qualification
+
+`MarkerFlowCheckpointPayload` stores accepted fluid, pressure, marker, multiplier,
+rigid, deformable, contact, route, topology, AMR, stochastic, and solver-history
+state. `MarkerFlowReplayPlan` replays accepted events and states its route, topology,
+event-map, and pathwise-noise derivative boundary.
+
+`HydrodynamicLoadPlan` combines pressure, viscous, marker, lubrication, and contact
+force/torque/impulse into one interval power/work record.
+`MarkerFlowAdaptiveStepPlan` selects the strictest advection, diffusion, marker,
+contact, lubrication, geometry, stochastic, or maximum-step restriction.
+`MarkerFlowTrajectoryAdapter` exposes accepted states to trajectory consumers.
+`marker_flow_artifact_reference` binds checkpoint/output/benchmark paths to content
+digests. `MarkerFlowCompiledExportPlan` rejects dynamic route, topology, random
+schedule, or state-shape export.
+
+`MarkerFlowOutputPlan` writes accepted HDF5/XDMF time series and optional VTK point
+snapshots for Eulerian, marker, rigid, deformable, contact, and diagnostic fields.
+
+`MarkerFlowQualificationPlan` gates divergence/slip, force/torque/work/energy,
+spatial/temporal order, stochastic covariance, interface, lubrication/contact, and
+replay evidence. A method is production-qualified only after its profile passes
+independent refinement, conservation, failure-injection, and reproducibility runs.
+
+## Method scope
+
+| Family | Implemented scope | Qualification state |
+| --- | --- | --- |
+| Regularized prescribed markers | 2-D/3-D, uniform/nonuniform Cartesian, physical boundaries, true stage inverse | production baseline; requalification required for a new kernel/coefficient policy |
+| Rigid accepted-time coupling | free bodies, midpoint/backward Euler, joints, hard contact, lubrication adapter | implemented; case-specific convergence/contact qualification required |
+| Deformable accepted-time coupling | FE marker map, nonlinear implicit structure, injected native contact residual | implemented; structural-model qualification required |
+| Mapped/ALE/remesh | mapped normal-face operators, accepted geometry, GCL/remesh contracts, mapped marker transfer | implemented; mapping-specific GCL and convergence qualification required |
+| AMR/distributed/topology epochs | finest-owner transfer, composite projection contract, owner-computes exchange, conservative epoch transfer | implemented; backend scaling and hierarchy qualification required |
+| Sharp cut-cell | moving-wall cut-cell projection, pressure jump, traction, small-cell defect | implemented; geometry-family convergence qualification required |
+| Stochastic inertial/FIB | factored fluctuating forcing, inertial update, overdamped mobility square root and drift | implemented; equilibrium/FDT statistical qualification required |
+
+## Failure semantics
+
+Exact paths fail closed on nonfinite state, invalid geometry, truncated support, rank
+or condition failure, linear/nonlinear failure, divergence, gauge, slip, KKT residual,
+route inconsistency, contact failure, or failed conservation evidence. Mathematical
+solve differentiation is certified only when the primal and adjoint solve contracts,
+route/topology policy, event policy, and stochastic-key policy all pass.

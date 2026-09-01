@@ -25,8 +25,8 @@ from ...linalg import (
     solve as solve_linear,
 )
 from ._rigid_body import (
-    _rigid_body_world_inertia,
     PreparedRigidBodySet,
+    rigid_body_world_inertia,
     RigidBodyKinematics,
     RigidBodyLoad,
 )
@@ -1035,7 +1035,7 @@ class PreparedHardContact(StrictModule, NonTrainableState):
         if self.ambient_dimension == 2:
             angular_velocity = self.bodies.inverse_inertia_body[:, None] * angular_impulse
         else:
-            _, inverse_world = _rigid_body_world_inertia(
+            _, inverse_world = rigid_body_world_inertia(
                 self.bodies, kinematics.orientation
             )
             angular_velocity = contract("bij,bj->bi", inverse_world, angular_impulse)
@@ -1188,7 +1188,7 @@ class PreparedHardContact(StrictModule, NonTrainableState):
                 kinematics.angular_velocity * kinematics.angular_velocity, axis=-1
             )
         else:
-            inertia_world, _ = _rigid_body_world_inertia(
+            inertia_world, _ = rigid_body_world_inertia(
                 self.bodies, kinematics.orientation
             )
             rotational_density = contract(

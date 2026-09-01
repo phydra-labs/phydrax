@@ -3,14 +3,19 @@
 ## Unreleased
 
 ### Added
-- Added fixed-topology material-measure immersed-boundary coupling on uniform
-  unit-density MAC grids: local cubic B-spline marker routes, force/torque/work
-  certificates, exact prescribed pressure-plus-marker projection, IMEX-Euler and
-  SBDF2 execution, explicitly separate penalty CFD–DEM, generic free rigid-body
-  coupling, fixed FE marker H/H* maps, synchronized deformable coupling, and
-  fixed-routing implicit sensitivities. Variable density, mapped/AMR/distributed
-  markers, remeshing, contact extensions, fluctuating hydrodynamics,
-  divergence-free interpolation, and sharp-interface changes remain unsupported.
+- Extended marker-flow coupling from the fixed uniform baseline to a shared
+  stage-inverse KKT contract with explicit route state, physical-boundary correction,
+  rank/condition gates, multiple regularized kernels, deterministic/compensated
+  transpose reduction, variable-density and SPD variable-viscosity stages, nonuniform
+  and mapped transfer, accepted-time rigid backward-Euler/midpoint, monolithic FE
+  Newmark, native joint/contact adapters, resolved-subtraction lubrication, composite
+  AMR impulse reflux, distributed single-owner transfer, conservative marker topology
+  epochs, divergence-free projected transfer, sharp cut-cell and immersed-interface
+  families, moving sharp epochs, fluctuating inertial and overdamped FIB methods,
+  complete checkpoint/replay/output/runtime records, canonical examples, qualification,
+  and scaling benchmarks. Advanced mapped, AMR, distributed, contact, sharp, and
+  stochastic families retain explicit case-specific qualification gates rather than a
+  blanket production claim.
 - Added field-valued logarithmic compressible Neo-Hookean reference energy,
   line-search-safe nonfinite integral propagation, and an experimental matched
   neural-variational/finite-element hyperelastic qualification.

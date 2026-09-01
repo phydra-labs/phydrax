@@ -49,6 +49,17 @@ def test_node_plane_signed_gap_witness_velocity_and_stable_key():
 
     first = prepared.evaluate(position, velocity, position, jnp.zeros_like(position))
     second = prepared.evaluate(position, velocity, position, jnp.zeros_like(position))
+    residual_plan = phx.solver.DeformableContactResidualPlan(
+        prepared,
+        lambda q, v, _args: (q, v),
+        lambda q, v, _args: (q, jnp.zeros_like(v)),
+        lambda query, _surface, _plane, _args: query,
+        stiffness=10.0,
+        damping=0.5,
+        kinematics_id="identity-nodes",
+        assembly_id="query-residual",
+    )
+    residual = residual_plan.evaluate(position, velocity)
 
     assert bool(first.successful)
     assert bool(first.valid[0])
@@ -61,6 +72,10 @@ def test_node_plane_signed_gap_witness_velocity_and_stable_key():
     assert first.validity_margin[0] > 0.0
     assert first.feature_margin[0] > 0.0
     assert bool(first.finite)
+    assert residual.successful
+    assert residual.elastic_energy > 0.0
+    assert residual.dissipation_rate > 0.0
+    assert residual.residual[0, 1] < 0.0
 
 
 def test_segment_geometry_and_interpolation_transpose_duality():

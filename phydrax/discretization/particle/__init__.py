@@ -435,6 +435,10 @@ from ._qualification import (
     ParticleQualificationProfile,
     ParticleQualificationResult,
 )
+from ._resolved_lubrication import (
+    ResolvedLubricationCorrectionPlan,
+    ResolvedLubricationResult,
+)
 from ._rigid_body import (
     PreparedRigidBodySet,
     quaternion_rotation_matrix,
@@ -1152,6 +1156,8 @@ __all__ = [
     "HardContactState",
     "HardContactStepResult",
     "PreparedHardContact",
+    "ResolvedLubricationCorrectionPlan",
+    "ResolvedLubricationResult",
     "project_friction_ball",
     "project_isotropic_coulomb_impulse",
     "RestitutionClassification",

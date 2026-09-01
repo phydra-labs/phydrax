@@ -10,8 +10,7 @@ import phydrax as phx
 def _flow(count=6):
     grid = phx.discretization.TensorGridPlan(
         tuple(
-            phx.discretization.UniformCellAxisSpec(count, periodic=True)
-            for _ in range(2)
+            phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
         ),
         axis_names=("x", "y"),
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
@@ -39,15 +38,11 @@ def test_free_rigid_projection_preserves_zero_coupled_state():
     bodies = phx.discretization.RigidBodySetPlan(
         jnp.asarray([0]), jnp.asarray([0.1])
     ).prepare(particles)
-    offsets = jnp.asarray(
-        [[-0.05, -0.05], [0.05, -0.05], [0.05, 0.05], [-0.05, 0.05]]
-    )
+    offsets = jnp.asarray([[-0.05, -0.05], [0.05, -0.05], [0.05, 0.05], [-0.05, 0.05]])
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.arange(4), offsets, jnp.full((4,), 0.25)
     ).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(
-        operators, markers
-    ).prepare()
+    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
     rigid_map = phx.discretization.RigidMarkerMapPlan(
         markers, bodies, jnp.zeros((4,), dtype=jnp.int32)
     ).prepare()
@@ -65,11 +60,60 @@ def test_free_rigid_projection_preserves_zero_coupled_state():
         tolerance=1.0e-8,
     )
     result = projection.project(zero, kinematics, 1.0e-3)
-    method = phx.solver.MACRigidImmersedEulerMethod(
-        dynamics, projection, 1.0e-3
+    method = phx.solver.MACRigidImmersedEulerMethod(dynamics, projection, 1.0e-3)
+    coupled = method.step(0.0, dynamics.project_state(zero), kinematics)
+    backward = phx.solver.MACRigidImmersedBackwardEulerMethod(
+        method, maximum_iterations=1, tolerance=1.0e-8
     )
-    coupled = method.step(
+    midpoint = phx.solver.MACRigidImmersedMidpointMethod(backward).step(
         0.0, dynamics.project_state(zero), kinematics
+    )
+    hard_contact = phx.discretization.HardContactRoutePlan(
+        jnp.asarray([0]),
+        jnp.asarray([-1]),
+        jnp.asarray([17]),
+        position_stabilization=0.0,
+    ).prepare(bodies)
+
+    def separated_geometry(_kinematics):
+        normal = jnp.asarray([[0.0, 1.0]])
+        zero_vector = jnp.zeros((1, 2))
+        zero_scalar = jnp.zeros((1,))
+        zero_angular = jnp.zeros((1, 1))
+        zero_index = jnp.zeros((1,), dtype=jnp.int32)
+        return phx.discretization.RigidContactGeometry(
+            normal,
+            jnp.asarray([0.1]),
+            zero_scalar,
+            jnp.ones((1,)),
+            zero_vector,
+            zero_vector,
+            zero_vector,
+            zero_vector,
+            zero_vector,
+            zero_vector,
+            zero_scalar,
+            zero_vector,
+            zero_angular,
+            zero_angular,
+            jnp.asarray([17], dtype=jnp.int32),
+            zero_index,
+            zero_index,
+            jnp.asarray([True]),
+            zero_index,
+            jnp.asarray([0.1]),
+            jnp.asarray(True),
+            "separated-rigid-contact",
+        )
+
+    contacted = phx.solver.MACRigidImmersedContactMethod(
+        backward, hard_contact, maximum_iterations=1, tolerance=1.0e-8
+    ).step(
+        0.0,
+        dynamics.project_state(zero),
+        kinematics,
+        hard_contact.initial_state(),
+        separated_geometry,
     )
 
     assert result.successful
@@ -78,6 +122,10 @@ def test_free_rigid_projection_preserves_zero_coupled_state():
     assert jnp.linalg.norm(result.body_kinematics.velocity) < 1.0e-10
     assert coupled.successful
     assert jnp.linalg.norm(coupled.projection.marker_slip) < 1.0e-8
+    assert contacted.accepted
+    assert contacted.contact.successful
+    assert midpoint.accepted
+    assert jnp.linalg.norm(midpoint.projection.marker_slip) < 1.0e-8
 
 
 def test_deformable_backward_euler_preserves_zero_state_and_energy():
@@ -86,9 +134,7 @@ def test_deformable_backward_euler_preserves_zero_state_and_energy():
     markers = phx.discretization.LagrangianMarkerSetPlan(
         jnp.arange(2), marker_position, jnp.asarray([0.5, 0.5])
     ).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(
-        operators, markers
-    ).prepare()
+    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
     exact = phx.solver.MACImmersedBoundaryProjectionPlan(
         operators, transfer, boundaries=boundaries, tolerance=1.0e-8
     )
@@ -114,9 +160,18 @@ def test_deformable_backward_euler_preserves_zero_state_and_energy():
     configuration = marker_position.reshape((-1,))
     state = method.initialize(fluid_state, configuration, jnp.zeros_like(configuration))
     result = method.step(0.0, state)
+    newmark = phx.solver.MACDeformableImmersedNewmarkMethod(method)
+    newmark_state = newmark.initialize(
+        fluid_state, configuration, jnp.zeros_like(configuration)
+    )
+    newmark_result = newmark.step(0.0, newmark_state)
 
     assert result.successful
     assert result.route_unchanged
     assert jnp.linalg.norm(result.divergence) < 1.0e-8
     assert jnp.linalg.norm(result.marker_slip) < 1.0e-8
     assert jnp.abs(result.energy.coupling_power_residual) < 1.0e-8
+    assert newmark_result.successful
+    assert newmark_result.route_unchanged
+    assert jnp.linalg.norm(newmark_result.divergence) < 1.0e-8
+    assert jnp.linalg.norm(newmark_result.marker_slip) < 1.0e-8

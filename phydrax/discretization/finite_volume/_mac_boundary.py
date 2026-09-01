@@ -626,8 +626,71 @@ class PreparedMACBoundaryPlan(StrictModule, NonTrainableState):
         volumes = self.operators.discretization.cell_volumes.astype(divergence.dtype)
         return jnp.sum(volumes * divergence)
 
+    def correction_descriptor(
+        self, stage: MACBoundaryStageData, /
+    ) -> MACBoundaryCorrectionDescriptor:
+        return MACBoundaryCorrectionDescriptor(self, self.validate_stage(stage))
+
+
+class MACBoundaryCorrectionDescriptor(StrictModule, NonTrainableState):
+    """Affine boundary state and its homogeneous correction space."""
+
+    boundaries: PreparedMACBoundaryPlan
+    stage: MACBoundaryStageData
+    descriptor_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        boundaries: PreparedMACBoundaryPlan,
+        stage: MACBoundaryStageData,
+        /,
+    ):
+        self.boundaries = boundaries
+        self.stage = boundaries.validate_stage(stage)
+        self.descriptor_id = canonical_fingerprint(
+            {
+                "kind": "mac-boundary-correction-descriptor",
+                "boundaries": boundaries.prepared_id,
+                "stage": stage.stage_id,
+            }
+        )
+
+    @property
+    def closure_kind(self) -> MACPressureClosureKind:
+        return self.boundaries.closure_kind
+
+    def affine_velocity(self, velocity: FaceVelocity, /) -> FaceVelocity:
+        return self.boundaries.enforce(velocity, self.stage)
+
+    def homogeneous(self, correction: FaceVelocity, /) -> FaceVelocity:
+        return self.boundaries.homogeneous_rate(correction)
+
+    def pressure_gradient(
+        self, pressure: ArrayLike, /, *, homogeneous: bool
+    ) -> FaceVelocity:
+        return self.boundaries.pressure_gradient(
+            pressure,
+            self.stage,
+            homogeneous=homogeneous,
+        )
+
+    def compatibility_project(self, rhs: ArrayLike, /) -> Array:
+        value = self.boundaries.operators.validate_pressure(rhs)
+        return (
+            self.boundaries.operators.compatibility_project(value)
+            if self.closure_kind == "neumann"
+            else value
+        )
+
+    def boundary_defect(self, velocity: FaceVelocity, /) -> Array:
+        return self.boundaries.defect(velocity, self.stage)
+
+    def integrated_mass_flux(self, velocity: FaceVelocity, /) -> Array:
+        return self.boundaries.integrated_mass_flux(velocity)
+
 
 __all__ = [
+    "MACBoundaryCorrectionDescriptor",
     "MACBoundaryKind",
     "MACBoundaryPlan",
     "MACBoundaryProvider",
