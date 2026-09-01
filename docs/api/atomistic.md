@@ -5,6 +5,12 @@
 Material particles, sparse relations, graph IR, precision, replay, and qualification remain
 shared native substrates.
 
+Classical force fields, interaction sites, trajectory interoperability, enhanced sampling,
+uncertainty, advanced ensembles, polarization, quantum nuclei, many-body methods, and
+distributed execution are documented on the split
+[force-field](atomistic_force_fields.md), [interoperability](atomistic_interop.md),
+[sampling](atomistic_sampling.md), and [advanced-method](atomistic_advanced.md) API pages.
+
 ## Structures, units, systems, and topology
 
 ::: phydrax.atomistic.AtomisticScaleContract

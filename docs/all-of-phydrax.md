@@ -131,6 +131,14 @@ discrete continuity. Fixed-population free-surface FLIP separately binds cell an
 staggered-face splats to a runtime atmospheric MAC projection and an explicit
 PIC/FLIP grid-delta update; it neither reuses MPM constitutive state nor claims
 SPH/VOF interface geometry.
+Advanced particle-grid methods preserve those authorities while adding runtime
+population/incarnation state, integer PIC charge and microphysics events,
+one/two-dimensional mixed Maxwell blocks, open-boundary and moving-window
+ledgers, affine simplicial ownership and Whitney current, and a matrix-free
+semi-implicit response. Advanced FLIP derives one particle interface geometry
+for ghost pressure, capillarity, free-surface viscosity and multiphase material
+reconstruction, with moving-solid cut measures and fixed-pool reseeding treated
+as explicit accepted-step transactions.
 Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
 to stable particle supports without reinterpreting material mass. Qualified
 routes include Gaussian free-space direct evaluation, periodic
@@ -142,16 +150,20 @@ formulations, and fixed-tree/workflow evidence. See
 [Guide → Vortex methods](guides_vortex_methods.md),
 [Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
 [Guide → Vortex boundaries](guides_vortex_boundaries.md).
-Cosmological applications reuse those particle and transfer identities rather than
-introducing a separate simulation substrate. Differentiable curved/CPL FLRW geometry,
-fixed-quadrature distances, realization-safe named transfer and matter-power products,
-state-ready flat 1LPT/2LPT, collisionless PM, and adiabatic gas--DM gravity compose the
-existing splat, self-gravity, finite-volume, and transactional KDK operations. Native
-relic/BBN/recombination, fixed-hierarchy Einstein--Boltzmann/CMB, halo/nonlinear,
-lensing, light-cone, survey-selection, and baryonic-feedback products preserve the
-same realization and product conventions. Precision external providers remain
-process-isolated constant products; calibrated fits and collaboration datasets are
-never selected or redistributed implicitly.
+Cosmological applications reuse those particle, grid, solver, operator, artifact, and
+likelihood identities rather than introducing a separate framework. Canonical physical
+states project only declared dependencies into content-addressed products; concrete
+pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
+release-window Gaussian likelihoods, primordial H/He microphysics, local-curvature
+validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification,
+snapshots, and distributed-PM feasibility extend the curved/CPL background, named
+transfer/power, flat LPT/PM, and adiabatic gas--DM foundations. Native relic, BBN,
+recombination, fixed-hierarchy Einstein--Boltzmann/CMB, halo/nonlinear, lensing,
+light-cone, survey-selection, and baryonic-feedback reference products preserve those
+same realization and product conventions. Precision parity, global curved N-body,
+production tree gravity, AMR, calibrated fits, collaboration data, and distributed
+execution remain explicit external or qualification boundaries rather than hidden
+fallbacks.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,
@@ -237,17 +249,20 @@ offline rMD17 utility parses only local NPZ data and fingerprints disjoint split
 indices; the campaign tool compares matched PaiNN and NequIP runs across seeds.
 The existing learned models retain their finite nonperiodic training and prediction
 scope unless explicitly wrapped with periodic graph execution; execution capability
-does not certify rollout stability. The atomistic dynamics substrate separately
-provides complete unit systems, position-independent prepared systems, stable-ID
-molecular topology and pair exceptions, classical and learned scalar-energy
-programs, dense/cell/Verlet execution, NVE and BAOAB NVT, SHAKE/RATTLE,
-triclinic cells and stress, direct Ewald and native B-spline PME, isotropic NPT
-moves, bounded replay, exact checkpoints, hybrid composition, ring polymers,
-and variance-constrained semi-grand transitions. Every capacity or physical
-failure remains typed and fail-closed. See
-[Guide → Atomistic learning](guides_atomistic.md),
+does not certify rollout stability. The atomistic runtime additionally provides complete
+unit systems, interaction-site coordinate maps and differentiable virtual sites, stable-ID
+topology, native force-field bundles and adapters, dense/cell/Verlet and distributed
+execution, constrained NVE/NVT/NPT and rigid dynamics, polarization, implicit solvent,
+quantum-nuclear propagation, many-body and soft-matter models, H5MD/XYZ reporting and
+rerun, MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases,
+replica exchange, free-energy estimators, and committee uncertainty/acquisition. State,
+labels, bias history, transport resources, and analysis frames remain separate typed
+contracts. Every capacity, convergence, protocol, or physical failure is typed and
+fail-closed. See [Guide → Atomistic learning](guides_atomistic.md),
 [Guide → Atomistic dynamics](guides_atomistic_dynamics.md),
-[Cookbook → Atomistic dynamics](cookbook/atomistic_dynamics.md), and
+[Guide → Atomistic force fields](guides_atomistic_force_fields.md),
+[Guide → Atomistic interoperability](guides_atomistic_interop.md),
+[Guide → Enhanced atomistic sampling](guides_atomistic_sampling.md), and
 [API → Atomistic learning and dynamics](api/atomistic.md).
 
 ### Experimental velocimetry from images to trajectories
@@ -1233,9 +1248,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   volumetric FEM with material-state/admissibility ledgers; couple rigid bodies
   through exact interpolation/transpose attachment KKT blocks and mixed pressure
   gauges; evolve objective two-/three-dimensional Cosserat rods and triangular
-  membrane/bending shells; and construct fixed-capacity deformable or rigid–MPM
-  contact/coupling routes. See
-  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md).
+  membrane/bending shells; construct exact-map collision surfaces, deterministic
+  candidate epochs, conservative continuous-collision/simplex-inversion bounds,
+  convergent barrier contact, lagged friction, and fixed-route sensitivities; and
+  retain explicit rigid–MPM coupling routes. See
+  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md)
+  and [Guide → Deformable contact](guides_deformable_contact.md).
 - **Force-density structural form-finding**: build sparse or affine-restraint
   tension, compression, or mixed-sign networks; compose self-weight, traction,
   pressure, or pneumatic loads; optimize forces, supports, loads, gridshell

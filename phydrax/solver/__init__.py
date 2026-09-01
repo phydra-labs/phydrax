@@ -315,6 +315,11 @@ from ._electromagnetic_pic import (
     ElectromagneticPICState,
     ElectromagneticPICStepResult,
 )
+from ._electrostatic_conductors import (
+    ConductorCircuitSolveResult,
+    ElectrostaticConductorCoupling,
+    ElectrostaticConductorState,
+)
 from ._electrostatic_pic import (
     ElectrostaticPICDiagnostics,
     ElectrostaticPICFixedStepMethod,
@@ -631,6 +636,10 @@ from ._mac_free_surface import (
     MACFreeSurfaceProjectionPlan,
     MACFreeSurfaceProjectionResult,
 )
+from ._mac_ghost_fluid import (
+    MACGhostFluidProjectionPlan,
+    MACGhostFluidProjectionResult,
+)
 from ._mac_immersed_boundary import (
     MACImmersedBoundaryProjectionPlan,
     MACImmersedBoundaryProjectionResult,
@@ -659,6 +668,10 @@ from ._mac_immersed_step import (
     MACImmersedBoundaryStepStatus,
     MarkerMotionProvider,
 )
+from ._mac_multiphase_projection import (
+    MACMultiphaseProjectionPlan,
+    MACMultiphaseProjectionResult,
+)
 from ._mac_penalty_ib_cfd_dem import (
     advance_mac_penalty_ib_cfd_dem_window,
     MACPenaltyIBCouplingSchedulePlan,
@@ -681,6 +694,10 @@ from ._mac_variable_density import (
     MACVariableDensityProjectionPlan,
     MACVariableDensityProjectionResult,
     MACVariableDensityRateProjectionResult,
+)
+from ._mac_variational_viscosity import (
+    MACVariationalViscosityPlan,
+    MACVariationalViscosityResult,
 )
 from ._mac_viscous import (
     MAC_VISCOUS_BOUNDARY_FAILURE,
@@ -738,6 +755,13 @@ from ._material_point_rollout import (
     MPMRolloutResult,
     ScheduledMPMRolloutPlan,
 )
+from ._maxwell_reduced import (
+    CompatibleMaxwell1DPlan,
+    CompatibleMaxwell1DState,
+    CompatibleMaxwell2DPlan,
+    CompatibleMaxwell2DState,
+    ReducedMaxwellDiagnostics,
+)
 from ._memory import (
     ConvolutionKernel,
     ConvolutionVolterraProblem,
@@ -760,6 +784,11 @@ from ._memory_kernel import (
     solve_memory_kernel,
     solve_time_local_open_system,
     TimeLocalOpenSystemProblem,
+)
+from ._moving_window_pic import (
+    PICMovingWindowPlan,
+    PICMovingWindowResult,
+    PICMovingWindowState,
 )
 from ._mps_quantum_jump import (
     LocalMPSJump,
@@ -857,6 +886,10 @@ from ._particles import (
     InteractingParticleSolution,
     ParticleVectorField,
     solve_interacting_particles,
+)
+from ._pic_current_source import (
+    PICMaxwellCurrentSourcePlan,
+    PreparedPICMaxwellCurrentSource,
 )
 from ._probabilistic_ode import (
     PROBABILISTIC_ODE_NONFINITE,
@@ -989,6 +1022,11 @@ from ._reactive_replay import (
     ReactiveReplayRecord,
     ReactiveReplayResult,
 )
+from ._reduced_pic import (
+    ReducedElectromagneticPICPlan,
+    ReducedElectromagneticPICResult,
+    ReducedElectromagneticPICState,
+)
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -1038,6 +1076,14 @@ from ._self_gravity import (
     NewtonianGravityDiagnostics,
     NewtonianSelfGravityPlan,
     PreparedNewtonianSelfGravity,
+)
+from ._semi_implicit_pic import (
+    PICGaussCorrectionPlan,
+    PICGaussCorrectionResult,
+    SemiImplicitPICDiagnostics,
+    SemiImplicitPICPlan,
+    SemiImplicitPICResult,
+    SemiImplicitPICState,
 )
 from ._semilinear import (
     exact_modal_stochastic_convolution,
@@ -1124,6 +1170,11 @@ from ._unstructured_amr_runtime import (
     UnstructuredAMRAdvanceResult,
     UnstructuredAMRRefluxReport,
     UnstructuredAMRRuntimeState,
+)
+from ._unstructured_em_pic import (
+    UnstructuredElectromagneticPICPlan,
+    UnstructuredElectromagneticPICResult,
+    UnstructuredElectromagneticPICState,
 )
 from ._unstructured_incompressible import (
     UnstructuredPressureCorrectionPlan,
@@ -2068,6 +2119,37 @@ __all__ = [
     "MPMRetainedTrajectory",
     "MPMRolloutResult",
     "ScheduledMPMRolloutPlan",
+    "ConductorCircuitSolveResult",
+    "ElectrostaticConductorCoupling",
+    "ElectrostaticConductorState",
+    "MACGhostFluidProjectionPlan",
+    "MACGhostFluidProjectionResult",
+    "MACMultiphaseProjectionPlan",
+    "MACMultiphaseProjectionResult",
+    "MACVariationalViscosityPlan",
+    "MACVariationalViscosityResult",
+    "CompatibleMaxwell1DPlan",
+    "CompatibleMaxwell1DState",
+    "CompatibleMaxwell2DPlan",
+    "CompatibleMaxwell2DState",
+    "ReducedMaxwellDiagnostics",
+    "PICMovingWindowPlan",
+    "PICMovingWindowResult",
+    "PICMovingWindowState",
+    "PICMaxwellCurrentSourcePlan",
+    "PreparedPICMaxwellCurrentSource",
+    "ReducedElectromagneticPICPlan",
+    "ReducedElectromagneticPICResult",
+    "ReducedElectromagneticPICState",
+    "PICGaussCorrectionPlan",
+    "PICGaussCorrectionResult",
+    "SemiImplicitPICDiagnostics",
+    "SemiImplicitPICPlan",
+    "SemiImplicitPICResult",
+    "SemiImplicitPICState",
+    "UnstructuredElectromagneticPICPlan",
+    "UnstructuredElectromagneticPICResult",
+    "UnstructuredElectromagneticPICState",
 ]
 
 __all__ += [

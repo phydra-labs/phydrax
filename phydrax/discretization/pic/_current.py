@@ -55,9 +55,16 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         if transfer.bridge.dimension != 3:
             raise ValueError("Charge-conserving current currently requires a 3-D bridge.")
         if any(not axis.periodic for axis in transfer.bridge.grid.structured_axes):
-            raise ValueError("Charge-conserving current currently requires periodic axes.")
-        widths = tuple(np.asarray(axis.interval_widths) for axis in transfer.bridge.grid.structured_axes)
-        if any(not np.allclose(value, value[0], rtol=1e-12, atol=1e-14) for value in widths):
+            raise ValueError(
+                "Charge-conserving current currently requires periodic axes."
+            )
+        widths = tuple(
+            np.asarray(axis.interval_widths)
+            for axis in transfer.bridge.grid.structured_axes
+        )
+        if any(
+            not np.allclose(value, value[0], rtol=1e-12, atol=1e-14) for value in widths
+        ):
             raise ValueError("Charge-conserving current currently requires uniform axes.")
         segments = int(maximum_segments_per_particle)
         tolerance_ = float(tolerance)
@@ -82,7 +89,9 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
     def _segments(self, start: Array, end: Array, /):
         axes = self.transfer.bridge.grid.structured_axes
         lower = jnp.asarray([axis.bounds[0] for axis in axes], dtype=start.dtype)
-        spacing = jnp.asarray([axis.interval_widths[0] for axis in axes], dtype=start.dtype)
+        spacing = jnp.asarray(
+            [axis.interval_widths[0] for axis in axes], dtype=start.dtype
+        )
         q0 = (start - lower) / spacing
         q1 = (end - lower) / spacing
         delta = q1 - q0
@@ -94,9 +103,7 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         safe_delta = jnp.where(jnp.abs(delta) > epsilon, delta, 1.0)
         crossing = (boundary - q0) / safe_delta
         valid_crossing = (
-            (jnp.abs(delta) > epsilon)
-            & (crossing > epsilon)
-            & (crossing < 1.0 - epsilon)
+            (jnp.abs(delta) > epsilon) & (crossing > epsilon) & (crossing < 1.0 - epsilon)
         )
         crossing = jnp.where(valid_crossing, crossing, 1.0)
         times = jnp.sort(
@@ -115,16 +122,14 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         valid = segment_end - segment_start > epsilon
         midpoint_t = 0.5 * (segment_start + segment_end)
         midpoint = q0[:, None, :] + midpoint_t[..., None] * delta[:, None, :]
-        cell_unwrapped = jnp.floor(midpoint + epsilon * direction[:, None, :]).astype(jnp.int32)
+        cell_unwrapped = jnp.floor(midpoint + epsilon * direction[:, None, :]).astype(
+            jnp.int32
+        )
         local_start = (
-            q0[:, None, :]
-            + segment_start[..., None] * delta[:, None, :]
-            - cell_unwrapped
+            q0[:, None, :] + segment_start[..., None] * delta[:, None, :] - cell_unwrapped
         )
         local_end = (
-            q0[:, None, :]
-            + segment_end[..., None] * delta[:, None, :]
-            - cell_unwrapped
+            q0[:, None, :] + segment_end[..., None] * delta[:, None, :] - cell_unwrapped
         )
         overflow = jnp.any(jnp.abs(delta) > 1.0 + epsilon, axis=-1)
         return local_start, local_end, cell_unwrapped, valid, overflow
@@ -194,10 +199,17 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
                     for coordinate_axis in range(3):
                         if coordinate_axis == axis:
                             index_components.append(
-                                jnp.mod(cell[..., coordinate_axis], interval_counts[coordinate_axis])
+                                jnp.mod(
+                                    cell[..., coordinate_axis],
+                                    interval_counts[coordinate_axis],
+                                )
                             )
                         else:
-                            bit = first_bit if coordinate_axis == transverse[0] else second_bit
+                            bit = (
+                                first_bit
+                                if coordinate_axis == transverse[0]
+                                else second_bit
+                            )
                             index_components.append(
                                 jnp.mod(
                                     cell[..., coordinate_axis] + bit,
@@ -213,12 +225,12 @@ class ChargeConservingCurrentPlan(StrictModule, NonTrainableState):
         indices = jnp.stack(tuple(contribution_indices), axis=-1).reshape((-1,))
         values = jnp.stack(tuple(contribution_values), axis=-1).reshape((-1,))
         valid = jnp.stack(tuple(contribution_valid), axis=-1).reshape((-1,))
-        flux_content = jnp.zeros(
-            (bridge.cochain.cell_counts[1],), dtype=start.dtype
-        )
+        flux_content = jnp.zeros((bridge.cochain.cell_counts[1],), dtype=start.dtype)
 
         def scatter(index, carry):
-            return carry.at[indices[index]].add(jnp.where(valid[index], values[index], 0.0))
+            return carry.at[indices[index]].add(
+                jnp.where(valid[index], values[index], 0.0)
+            )
 
         flux_content = jax.lax.fori_loop(0, indices.size, scatter, flux_content)
         current = bridge.cochain.solve_hodge(1, flux_content)
@@ -265,26 +277,9 @@ class PICMaxwellCurrentArguments(StrictModule):
     external_arguments: object
 
 
-class PICMaxwellCurrentSource(StrictModule, NonTrainableState):
-    """Stable Maxwell callback extracting a deposited midpoint edge current."""
-
-    source_id: str = eqx.field(static=True)
-
-    def __init__(self, source_id: str = "pic-midpoint-current", /):
-        identifier = str(source_id)
-        if not identifier:
-            raise ValueError("source_id must be nonempty.")
-        self.source_id = identifier
-
-    def __call__(self, time: Array, coordinates: Array, args: object, /) -> Array:
-        del time, coordinates
-        if not isinstance(args, PICMaxwellCurrentArguments):
-            raise TypeError("Maxwell PIC current requires PICMaxwellCurrentArguments.")
-        return args.particle_current
 
 
 __all__ = [
     "ChargeConservingCurrentPlan",
     "PICMaxwellCurrentArguments",
-    "PICMaxwellCurrentSource",
 ]

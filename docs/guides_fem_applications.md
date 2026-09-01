@@ -28,10 +28,13 @@ and accepted material state remain fixed during one global nonlinear attempt.
 
 ## Contact
 
-`phydrax.applications.contact` provides persistent pair IDs and a frictionless
-penalty law. Search/pair selection and active-set changes are discrete accepted-
-step decisions. The tangent differentiates the current active branch; it does
-not differentiate pair search.
+`phydrax.applications.contact` combines collision surfaces, deterministic
+fixed-capacity candidate epochs, an area-weighted physical barrier, conservative
+linear-trajectory CCD, optional T3/T4 inversion bounds, static equilibrium, and
+transactional implicit Newmark dynamics. Lagged isotropic Coulomb friction and
+fixed-route implicit sensitivities remain explicit extensions of the same
+stationarity problem. Search, feature selection, CCD, and lag refresh are
+discrete derivative boundaries.
 
 ## Fracture and XFEM
 
@@ -91,8 +94,10 @@ retains the accepted mesh and state.
 
 ## Current scope
 
-These workflows are single-device. Contact uses supplied persistent pairs rather
-than a general self-contact search. XFEM currently classifies fitted T3 cells
-against one fixed two-dimensional crack segment. Topology decisions, retry
-branches, active sets, and crack propagation are not advertised as smooth
-operations.
+These workflows are single-device. Deformable contact currently uses a host
+sweep-and-prune/nonlinear loop with JAX-local energies and supports certified
+simplex inversion bounds only for nodal T3/T4 fields. Candidate capacity and
+topology changes require an accepted host boundary. XFEM currently classifies
+fitted T3 cells against one fixed two-dimensional crack segment. Topology
+decisions, retry branches, active sets, and crack propagation are not
+advertised as smooth operations.

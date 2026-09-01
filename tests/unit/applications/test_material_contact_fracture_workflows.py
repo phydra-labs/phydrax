@@ -25,34 +25,6 @@ def test_cpfem_identity_update_is_objective_and_admissible():
     assert jnp.allclose(jnp.linalg.det(result.state.plastic_deformation), 1.0)
 
 
-def test_contact_pair_ids_persist_through_accepted_commit():
-    contact = phx.applications.contact
-    pairs = contact.ContactPairState(
-        jnp.asarray([11]),
-        jnp.asarray([1]),
-        jnp.asarray([2]),
-        jnp.asarray([0.1]),
-        jnp.asarray([[1.0, 0.0]]),
-    )
-    workflow = contact.ContactWorkflow(contact.FrictionlessContactLaw(100.0), pairs)
-    evaluation = workflow.evaluate(jnp.asarray([[-0.2, 0.0]]), jnp.zeros((1, 2)))
-    accepted = phx.solver.FiniteElementAcceptedState(
-        (jnp.zeros((1, 2)),), 0.0, 0, "topology", "prepared", "compiled"
-    )
-
-    def solve_attempt(state, start, end, time_law, args):
-        return workflow.attempt((jnp.asarray([[-0.2, 0.0]]),), evaluation, True)
-
-    promoted, diagnostics = phx.solver.FiniteElementAcceptedStepSchedule(
-        solve_attempt
-    ).advance(accepted, 1.0, phx.solver.TimeLaw.constant(1.0))
-
-    assert bool(evaluation.active[0])
-    assert int(evaluation.pair_ids[0]) == 11
-    assert bool(diagnostics.accepted)
-    assert promoted.materials.states[0].state_version == 1
-
-
 def test_fracture_history_is_irreversible_and_xfem_classification_is_stable():
     fracture = phx.applications.fracture
     history = fracture.FractureHistoryState(jnp.zeros((2, 1)), jnp.asarray([0.1, 0.2]))

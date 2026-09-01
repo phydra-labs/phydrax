@@ -75,19 +75,39 @@ Topology changes inside a compiled epoch are limited to predeclared slots. Capac
 
 `RodPlan` describes fixed two- or three-dimensional centerline topology, material frames, mass/inertia, and PSD stretch/shear/bend/twist stiffness. `PreparedRod` evaluates objective discrete Cosserat strains, energy-gradient force/moment loads, kinetic energy, chart evidence, and endpoint wrench transfer.
 
-`PreparedRodDynamics` provides bounded symplectic candidate/accepted evolution with an optional fixed-work inextensibility projection. Rods are not force-density networks or distance-only particle chains.
+`PreparedRodDynamics` provides bounded symplectic candidate/accepted evolution
+with an optional fixed-work inextensibility projection.
+`PreparedRod.collision_surface()` maps the centerline into the shared segment
+contact substrate without relabeling rod constitutive state. Rods are not
+force-density networks or distance-only particle chains.
 
 ## Shells and cloth
 
 `TriangularShellPlan` prepares surface rest metrics, areas, interior-edge bending stencils, thickness, density, and membrane/bending parameters. `PreparedTriangularShell` evaluates objective membrane and hinge-bending energies and gradient-derived forces.
 
-`PreparedShellDynamics` provides damped fixed-node candidate/accepted dynamics with area/orientation/degeneracy certificates. Its fixed-capacity self-contact output is a `RigidContactGeometry`-compatible payload; shell constitutive response remains distinct from contact.
+`PreparedShellDynamics` provides damped fixed-node candidate/accepted dynamics
+with area/orientation/degeneracy certificates. Its fixed-capacity
+`RigidContactGeometry` payload remains the hard-contact view;
+`PreparedTriangularShell.collision_surface()` exposes the same shell through the
+shared triangle barrier-contact substrate. Shell constitutive response remains
+distinct from both contact models.
 
-## Deformable and MPM coupling
+## Deformable contact and MPM coupling
 
-`DeformableContactPlan` provides fixed-capacity node/plane, node, segment, and triangle routes with signed gaps, witnesses, interpolation/scatter weights, stable keys, and exact transpose action.
+`CollisionSurfacePlan` separates segment/triangle collision topology from
+numeric surface positions and an exact mechanics-to-surface linear map.
+`DenseContactSearchPlan` is the small-problem authority;
+`SweepAndPruneContactSearchPlan` packs complete deterministic candidate epochs
+under explicit capacities. `ConvergentContactPotentialPlan` supplies the
+area-weighted physical barrier, while finite-element contact equilibrium and
+Newmark dynamics add conservative inclusion CCD, optional T3/T4 inversion
+limits, transactional rollback, and fixed-route implicit sensitivities. See
+[Deformable contact](guides_deformable_contact.md).
 
-`RigidMPMCouplingPlan` keeps weld, penalty, and unilateral impulse coupling modes explicit. It preserves MPM route, stability, material-state, and candidate/accepted ownership while reporting equal/opposite rigid and particle/grid action plus route/cache certificates.
+`RigidMPMCouplingPlan` keeps weld, penalty, and unilateral impulse coupling
+modes explicit. It preserves MPM route, stability, material-state, and
+candidate/accepted ownership while reporting equal/opposite rigid and particle/grid
+action plus route/cache certificates.
 
 ## Failure and differentiation
 

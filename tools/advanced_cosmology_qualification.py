@@ -22,17 +22,14 @@ def main() -> None:
     eds_growth = cosmo.FLRWGrowthPlan(eds_nodes).solve(cosmo.FLRWBackground(1.0, 1.0))
 
     background = cosmo.FLRWBackground(1.0, 0.3)
-    provenance = cosmo.CosmologyProductProvenance(
-        producer="advanced-qualification",
-        producer_version="native",
-        model_form_id=background.model_form_id,
-        request_id="qualification-power",
-        numerical_policy_id="qualification-grid",
-        physics_policy_id="linear-components",
-        scale_id=background.scale.scale_id,
-        source_kind="native",
-        differentiability="native-parameter",
-    )
+    provenance = cosmo.CosmologyProductProvenance(producer="advanced-qualification",
+    producer_version="native",
+    model_form_id=background.model_form_id,
+    request_id="qualification-power",
+    numerical_policy_id="qualification-grid",
+    physics_policy_id="linear-components",
+    scale_id=background.scale.scale_id,
+    source_kind="native", differentiation="native-parameter")
     descriptor = lambda left, right: cosmo.MatterPowerDescriptor(left, right)
     common = (
         [0.5, 1.0],
