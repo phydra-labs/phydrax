@@ -10,6 +10,8 @@ from ._chaos import (
     PolynomialChaosMeasure,
     PolynomialMultiIndexSet,
 )
+from ._multiindex import total_degree_multiindices
+from ._scaled_monomial import ScaledMonomialBasis
 
 
 __all__ = [
@@ -17,4 +19,6 @@ __all__ = [
     "normalized_vandermonde",
     "PolynomialChaosMeasure",
     "PolynomialMultiIndexSet",
+    "ScaledMonomialBasis",
+    "total_degree_multiindices",
 ]

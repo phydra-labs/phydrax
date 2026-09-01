@@ -22,6 +22,12 @@ from ._evaluation import (
     LayerEvaluationResult,
 )
 from ._fmm2d import LaplaceFMMBackend2D, LaplaceFMMEvaluation2D
+from ._galerkin3d import (
+    LaplaceSingleLayerDP0AssemblyReport3D,
+    LaplaceSingleLayerDP0Galerkin3D,
+    LaplaceSingleLayerDP0GalerkinPolicy3D,
+    prepare_laplace_single_layer_dp0_3d,
+)
 from ._global_qbx_fmm2d import evaluate_global_qbx_fmm_2d, GlobalQBXFMMEvaluation2D
 from ._helmholtz2d import (
     HelmholtzCombinedField2D,
@@ -72,6 +78,10 @@ __all__ = [
     "LayerEvaluationReport",
     "LayerEvaluationResult",
     "LayerPotentialTargetReport",
+    "LaplaceSingleLayerDP0AssemblyReport3D",
+    "LaplaceSingleLayerDP0Galerkin3D",
+    "LaplaceSingleLayerDP0GalerkinPolicy3D",
+    "prepare_laplace_single_layer_dp0_3d",
     "evaluate_layer_potential",
     "AdaptiveLayerEvaluation2D",
     "PanelInteractionReport2D",

@@ -1,0 +1,13 @@
+{
+  "angular_momentum_defect": 0.0,
+  "circular_position_error": 0.0,
+  "circular_velocity_error": 0.0,
+  "cr3bp_lagrange_max_residual": 1.8865117801247777e-16,
+  "dtype": "float64",
+  "energy_defect": 0.0,
+  "kind": "astrodynamics-qualification",
+  "lambert_valid_branches": 1,
+  "lambert_zero_revolution_residual": 4.440892098500626e-16,
+  "passed": true,
+  "time_tangent_error": 1.1102230246251565e-16
+}

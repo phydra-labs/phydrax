@@ -38,11 +38,20 @@ Most workflows are composing a few primitives:
   boundary atlases, topology identities, and design parameters.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
-  volumes, material-particle supports, conservative SPH, measure-aware
-  particle-grid splatting, WENO fluxes, fixed-capacity AMR, field spaces,
-  measures, transfers, fixed-temporal differentiable replay, transactional
-  gravity/cooling/stochastic source processes, compatible constrained MHD,
-  temporal/stochastic composition, and auditable plan/preparation identities.
+  volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,
+  measure-aware particle-grid splatting, compatible electrostatic and
+  electromagnetic particle-in-cell dynamics, runtime charge/collision/ionization
+  microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
+  response, fixed-population and dynamically reseeded free-surface/multiphase
+  FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
+  fluxes, fixed-capacity AMR, field spaces, measures, transfers,
+  fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
+  source processes, compatible constrained MHD, temporal/stochastic composition,
+  and auditable plan/preparation identities.
+- **Virtual elements**: enhanced conforming degree-one-through-three polygonal
+  functional spaces expose certified H1/L2 projectors, explicit stabilization,
+  matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
+  fixed-topology differentiable geometry.
 - **Discrete structural form-finding**: sparse pin-jointed force-density
   equilibrium supports coordinate and general affine restraints, tension,
   compression, mixed signs, prepared linear/nonlinear refresh, weighted
@@ -51,12 +60,29 @@ Most workflows are composing a few primitives:
   force/support/load optimization, mechanism/self-stress analysis, constitutive
   tangent stability, and continuation with physical residual, reaction, status,
   load-component, and provenance evidence.
+- **Member-network structural verification**: constitutive stress-free lengths,
+  exact cable unilateral sets, corotational frames, discrete rods, hinge bending,
+  local/global buckling, nonlinear continuation, prestress realizability,
+  construction-stage replay, physical section catalogs, sizing, and explicit
+  certified/failed/incomplete evidence build on force-density geometry without
+  relabeling form-finding as structural safety.
+- **Advanced structural evidence**: extensible catenaries, contact and friction,
+  generalized DOFs, auditable section orientations, semirigid joints, warping
+  beams, fiber plasticity, GBT/finite-strip local buckling, collapse and dynamics,
+  exact construction-order search, standards clauses, reliability, calibration,
+  evidence acquisition, and immutable digital-twin ancestry extend member-network
+  mechanics without erasing model fidelity or applicability.
 - **Atomistic learning, force fields, and sampling**: scale-identified structures,
   interaction-site coordinate maps, stable-ID topology, classical/learned/many-body
   energy programs, polarization, dense/cell/Verlet and distributed execution,
   constrained NVE/NVT/NPT and quantum-nuclear methods, resumable trajectories,
   external-tool interoperability, enhanced sampling, free energy, committee
   uncertainty, replay, checkpoints, diagnostics, and provenance share explicit plans.
+- **Experimental velocimetry**: mask-aware multipass PIV, calibrated
+  multi-camera particle reconstruction and tracking, residual-image Lagrangian
+  refinement, deterministic synthetic qualification, and optional learned dense
+  displacement preserve image/physical coordinate frames, raw validity,
+  uncertainty, capacity, and provenance.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -106,6 +132,16 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Astrodynamics**: explicit scale/epoch/frame contexts, Cartesian and modified
+  equinoctial states, universal-variable Kepler propagation, branch-explicit Lambert
+  transfer, native force composition, tabulated ephemerides, orbital events, direct
+  and nearly-Keplerian N-body dynamics, CR3BP, rigid spacecraft loads, and measurement
+  Jacobians reuse the existing differential, geometric, particle, control, and
+  nonlinear substrates.
+- **Astrophysical observations**: observer projection, polynomial limb-darkened
+  occultation, photon-counting bandpasses, binned/image/frequency responses, ordered
+  ray transfer, static complex-field operators, and CMB bandpower responses compose
+  with existing likelihood, state-space, posterior, and BlackJAX contracts.
 - **Learned field evolution**: fixed physical measures project PDE rates onto
   selected model tangents, Diffrax evolves the resulting parameter ODE, and
   backward Diffrax characteristics feed optional time-slice field projection.
@@ -176,12 +212,20 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the
+[MPM schedule/adaptivity guide](docs/guides_mpm_schedules.md), the
+[MPM constitutive guide](docs/guides_mpm_constitutive_extensions.md), the
+[MPM contact/field guide](docs/guides_mpm_contact_fields.md), the
+[MPM domain guide](docs/guides_mpm_particle_domains.md), the
+[MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
+[MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
 [particle qualification guide](docs/guides_particle_qualification.md), the
 [global spectral guide](docs/guides_spectral_methods.md), the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
+[virtual-element guide](docs/guides_virtual_elements.md), the
+[lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
 [solver-substrate guide](docs/guides_solver_substrates.md), and the
 [API](docs/api/discretization/index.md).
 
@@ -297,6 +341,9 @@ is not imported by ordinary Phydrax or linear-algebra use.
 ## Documentation
 
 Can be found [here](https://phydra-labs.github.io/phydrax).
+The [velocimetry guide](docs/guides_velocimetry.md) covers classical and learned
+PIV, calibrated multi-camera PTV, residual-image Lagrangian refinement,
+qualification, and explicit-loss interoperability.
 
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
@@ -304,6 +351,14 @@ Mathematical guides include
 The [force-density form-finding guide](docs/guides_force_density.md) covers
 pin-jointed equilibrium, follower loads, implicit derivatives, and inverse
 structural design while keeping these distinct from constitutive FEM analysis.
+The [member-network structural verification guide](docs/guides_member_network_structures.md)
+adds constitutive compatibility, slackness, bending, buckling, staged construction,
+prestress realizability, and material sizing while retaining explicit evidence
+boundaries.
+The [advanced structural evidence guide](docs/guides_advanced_structural_evidence.md)
+covers catenaries, contact, warping and plastic sections, local buckling,
+construction-order search, standards, reliability, calibration, and digital
+evidence graphs.
 The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
 demonstrates correlated empirical integration outside quantum mechanics, while the
 [VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian

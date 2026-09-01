@@ -3,12 +3,147 @@
 ## Unreleased
 
 ### Added
+- Added one fixed-capacity runtime particle-population authority with activity,
+  mass, incarnation-safe slot reuse, deterministic allocation/deactivation, DEM
+  lifecycle migration, and runtime particle-splat masks.
+- Added advanced PIC capabilities: integer charge states, conservative binary and
+  background collisions, impact/field ionization, 1D3V/2D3V compatible Maxwell,
+  reduced PIC current projection, open particle ledgers, CPML compatibility,
+  integer moving windows, affine simplicial electrostatic/Whitney-current PIC,
+  conductor KKT coupling, unstructured electromagnetic PIC, and matrix-free
+  semi-implicit particle response with bounded Gauss correction.
+- Added advanced FLIP capabilities: deterministic fixed-pool reseeding, particle
+  level-set and ghost-fluid geometry, sharp capillary pressure jumps, moving-solid
+  cut-cell and particle collision ledgers, free-surface viscous measures,
+  variational symmetric-strain viscosity, and two-phase one-velocity FLIP.
+- Added fixed-geometry 3D Laplace DP0 surface Galerkin capacitance solves with
+  explicit weak/strong maps, bounded singular and near-pair quadrature,
+  nonmaterializable blocked actions, immutable conductor selections, physical
+  charge integration, and reuse of the existing direct and QBX layer evaluators.
+- Added fixed-capacity two- and three-dimensional vortex methods with
+  Gaussian free-space direct fields, periodic vortex-in-cell inversion,
+  conservative particle-strength exchange, classic stretching, regularized
+  filaments, steady and unsteady lifting surfaces, rigid polygonal vortex
+  panels, boundary-sheet transfer, conservative remeshing, explicit rVPM and
+  relaxation operators, nonlinear polar closure, fixed-tree acceleration,
+  actuator/rigid/stochastic/learned workflows, qualification evidence, and
+  fixed-topology differentiation contracts.
+- Added fixed-topology material-measure immersed-boundary coupling on uniform
+  unit-density MAC grids: local cubic B-spline marker routes, force/torque/work
+  certificates, exact prescribed pressure-plus-marker projection, IMEX-Euler and
+  SBDF2 execution, explicitly separate penalty CFD–DEM, generic free rigid-body
+  coupling, fixed FE marker H/H* maps, synchronized deformable coupling, and
+  fixed-routing implicit sensitivities. Variable density, mapped/AMR/distributed
+  markers, remeshing, contact extensions, fluctuating hydrodynamics,
+  divergence-free interpolation, and sharp-interface changes remain unsupported.
+- Added field-valued logarithmic compressible Neo-Hookean reference energy,
+  line-search-safe nonfinite integral propagation, and an experimental matched
+  neural-variational/finite-element hyperelastic qualification.
+- Added advanced cosmology contracts: curved/CPL FLRW geometry and distances,
+  realization-safe semantic transfer/power products, process-isolated linear-theory
+  interoperation, neutrino component algebra, model-card power corrections,
+  adiabatic gas--particle shared gravity, analytic halo foundations, Limber/RSD
+  predictions, canonical CMB spectra, and bounded periodic force qualification.
+  Periodic LPT/PM remains flat-only; complete Boltzmann/CMB evolution and production
+  tree gravity remain explicit external or unsupported boundaries.
+- Extended Material Point Method with explicit USF/USL-minus/MUSL schedules,
+  fixed-capacity adaptive realization and scheduled replay, constitutive capability
+  and algorithmic-tangent contracts, isotropic plane stress, multiplicative
+  finite-strain J2 plasticity, uGIMP/cpGIMP/CPDI/CPDI2 particle domains, rigid and
+  two-field Coulomb contact, material/velocity-field identity state, active-block
+  semantics, compact block storage, dense matrix-free implicit roots, AT2 diffuse
+  fracture, and separate field-partition/CPIC sharp-fracture paths. Each family
+  carries transactional rollback, branch/topology evidence, qualification artifacts,
+  compatibility limits, and explicit differentiation semantics.
+- Added one- and two-dimensional Cartesian wet/dry shallow-water finite volumes with
+  exact dry-state semantics, prepared static bathymetry, Chen--Noelle hydrostatic HLL
+  face contributions, equilibrium-aware MUSCL reconstruction, SSPRK-stage conservative
+  positivity, accepted one-sided bed-integral evidence, f/beta-plane Coriolis forcing,
+  renderer-neutral observables, output support, qualification cases, and benchmarks.
+  Removed the unqualified one-dimensional shallow-water f-wave path.
+- Added native experimental velocimetry with mask-aware multipass and ensemble
+  PIV, explicit peak/validation/replacement evidence, calibrated physical
+  conversion, pinhole/distorted/refractive camera rigs, robust calibration and
+  triangulation, conflict-free multi-view particle reconstruction, streaming and
+  globally refined PTV tracks, frozen-association smoothing, radiometric
+  particle-image formation, residual-image Lagrangian refinement, deterministic
+  synthetic qualification, optional learned dense displacement, canonical
+  archives, and explicit-loss ecosystem adapters.
+- Added fixed-population compatible particle-in-cell dynamics over stable charged
+  particle supports: measure-aware endpoint charge, physical cochain E/B gather,
+  matrix-free compatible electrostatics, relativistic Boris stepping, periodic
+  cubical-Whitney trajectory current with discrete-continuity evidence, and
+  transactional coupling to the existing compatible Maxwell runtime.
+- Added constant-density fixed-population free-surface FLIP over prepared
+  particle splats and MAC grids: cell and staggered-face mass/momentum transfer,
+  runtime atmospheric pressure projection, bounded velocity extrapolation,
+  explicit PIC/FLIP grid-delta blending, problem compilation, fixed-step
+  rollback, and complete transfer/projection/energy evidence.
+- Added `phydrax.circuit`: block-valued typed wave ports, dense and matrix-free
+  hierarchical scattering, grounded dense/sparse MNA, causal implicit element laws,
+  native DAE/DC/continuation/descriptor analysis, rational macromodels, periodic
+  analysis, correlated noise, metrology/de-embedding, field/electrothermal coupling,
+  SPICE and restricted behavioral interchange, certified learned dissipative laws,
+  Touchstone I/O, and thin native optimization/UQ adapters.
+- Generalized compatible time-domain Maxwell to explicit full-3D, TEz, and TMz
+  cochain roles; added resource-preflighted final-state runs, sparse magnetic
+  constraint projection with proved elision, boundary-packed CPML, prepared paired
+  electric/magnetic sources and mode ports, harmonic-defect evidence, scalar
+  geometry material assembly, and independent case batching.
+- Added sparse metric-aware conic density filtering with explicit fixed-region
+  semantics, finite-beta tanh projection, differentiable composed transforms, and
+  separate forward-only hard thresholding.
+- Added explicit cosmological length/mass/time scales, parameter-differentiable flat
+  FLRW backgrounds, native first/second Lagrangian growth, immutable expansion/growth
+  and linear-power products, state-ready 1LPT/2LPT, and transactional periodic
+  scale-factor particle-mesh rollout. The cosmological path reuses the existing
+  particle discretization, splat, self-gravity, and typed PM force evaluation;
+  synchronized baryon/particle orchestration remains distinct from physical coupling.
+- Added `phydrax.applications.astrodynamics`: explicit scale, two-part epoch, and
+  frame contexts; Cartesian and modified-equinoctial states; bounded universal
+  Kepler propagation with implicit JVP; fixed-capacity multi-revolution Lambert
+  branches; pure force composition; adaptive and symplectic propagation; hybrid
+  orbital events; provenance-bearing time/frame/ephemeris products; third-body and
+  J2--J4 gravity; direct and nearly-Keplerian N-body dynamics; CR3BP; rigid
+  spacecraft, finite-burn, reaction-wheel, and orbit-measurement contracts; and
+  host-only coordinate, SPICE, and SGP4 adapters. No provider discovery, data
+  download, close-encounter regularization, DSST, or adaptive IAS15 is implied.
+- Added native astrophysical observation operators for observer projection,
+  polynomial limb-darkened circular occultation, photon-counting bandpasses,
+  transit count likelihood composition, binned and image responses,
+  frequency-domain detector likelihoods, ordered ray transfer, and static complex
+  field sequences. Contacts, event/branch selection, provider loading, and capacity
+  changes remain explicit non-smooth boundaries.
+- Added provenance-bearing CMB angular-power tables with explicit `Cl`/`Dl`
+  conversion and fixed response-window Gaussian likelihood composition. Spectrum
+  generation and experiment data remain external.
+- Consolidated kinetic multiphysics around one thermodynamic closure for energy,
+  variational derivative, symmetric stress, and explicit force representation.
+  Added auditable kinetic field/stage manifests, exact portable checkpoints,
+  production prepared sharding, signed-distance geometry-to-link compilation,
+  parabolic and Womersley targets, collision-aware ratio-two AMR transfer with
+  half-time interface data, and graduated scientific qualification evidence.
+- Added enhanced conforming scalar virtual elements of qualified degree one
+  through three on arbitrary-arity polygonal cell blocks, including certified
+  H1/L2 projectors, explicit stabilization, functional trace constraints,
+  matrix-free and sparse execution, fixed-topology geometry differentiation,
+  projected reconstruction, mass-matrix DAEs, and generalized eigenproblems.
 - Added static three-dimensional fixed, ball, and hinge rigid-body graphs with
   globally coupled mass-metric SO(3) pose projection, full velocity KKT projection,
   implicit root derivatives, physical position/velocity residual certification,
   multiplier warm starts, and fail-closed candidate/accepted transitions. Contact,
   friction, compliance, motors, dynamic topology, two-dimensional joints, and PBD
   compatibility remain outside this contract.
+- Extended constrained mechanics with native planar fixed/ball joints, dimension-aware
+  prismatic and distance joints, canonical stable row/coordinate layouts, physical
+  compliant/dissipative laws, bounded effort motors and servos, unilateral joint
+  limits, hard velocity restitution, exact planar/spatial Coulomb-cone impulses,
+  irreversible joint breakage, and fixed-capacity topology transactions. Added
+  transactional implicit Newmark volumetric FEM, mixed pressure gauges,
+  rigid--deformable attachment KKT operators, objective two-/three-dimensional
+  Cosserat rods, triangular membrane/bending shells, fixed-capacity deformable
+  contact, and explicit rigid--MPM weld/penalty/impulse coupling with branch,
+  rank, energy, route, and rollback certificates.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional
@@ -85,6 +220,22 @@
   backward Diffrax characteristic tracing with macro-step neural projection; and
   mass-preserving fixed-support residual-attention collocation with explicit ESS,
   KFAC, and controlled-policy contracts.
+- Added native athermal lattice-Boltzmann flow on uniform isotropic cell grids:
+  certified D2Q9/D3Q19 velocity sets, BGK/TRT collision with collision-coupled
+  Guo forcing, periodic and frozen halfway-wall link routing, fixed tangential
+  moving walls, explicit physical/lattice scaling and precision evidence,
+  fail-closed fixed-step integration, differentiable runtime controls, and a
+  memory-bounded generic fixed-step rollout with final/checkpoint/trajectory
+  retention.
+- Expanded kinetic methods with D3Q27, prepared moment bases and advanced collision
+  families, staged open/curved/moving-wall ownership, explicit local implicit forcing,
+  geometry epochs and conservative transfers, multiblock and ratio-2 refinement
+  contracts, colour-gradient/free-energy/thermal/species/reactive distributions,
+  certified D2V17 and off-lattice D2V37 smooth-compressible methods, fixed FV/kinetic
+  interfaces, sharded and AA/fused execution, block reverse replay, and a forward-only
+  stable-tuple IREE export contract. Advanced paths report capability, conservation,
+  realizability, equivalence, and qualification evidence without extending the
+  qualified low-Mach baseline by implication.
 - Added reciprocal-lattice harmonic discretization with true one-dimensional and
   oblique two-dimensional periodicity, selected FFT analysis/synthesis,
   pairwise-difference material convolution, translation covariance, resource
@@ -115,6 +266,19 @@
   force/support/load design, pure geometry/force observables, same-topology
   batches, per-graph evidence, mechanism/self-stress spectra, supplied-rigidity
   tangent stability, and continuation bridges.
+- Added member-network constitutive verification over force-density topology:
+  stress-free reference states, exact tension-only cable active sets,
+  corotational frame and discrete-rod bending, surface hinges, local and global
+  buckling, nonlinear continuation bridges, prestress fabrication/actuation
+  evidence, staged construction replay, continuous and catalog sizing, and
+  explicit certified/failed/incomplete structural verdicts.
+- Added advanced structural evidence: generalized coordinate channels, explicit
+  section-orientation fields, semirigid connections and nonlinear supports,
+  extensible catenaries, cable/saddle contact, warping beam and bracing energy,
+  fiber-section plasticity transactions, imperfections, collapse and dynamics,
+  thin-walled GBT/finite-strip/shell-submodel evidence, exact precedence
+  branch-and-bound, standards clauses, reliability, calibration, evidence
+  acquisition, and immutable structural-twin snapshots.
 - Added pickle-free StableHLO/IREE inference export with matched optional
   compiler/runtime versions, in-process compilation and loading, exact
   shape/dtype ABI checks, checksummed manifests, and native parity evidence.
@@ -836,7 +1000,7 @@
   to tensor support; supports uniform/nonuniform Cartesian and stationary mapped
   geometry, typed physical boundaries, piecewise-constant/MUSCL/WENO-Z/TENO/MP5 and
   characteristic reconstruction, Rusanov/HLL/HLLC/Roe and entropy fluxes, normal and
-  transverse wave propagation, shallow-water f-wave balancing, multidimensional
+  transverse wave propagation, hydrostatic wet/dry shallow water, multidimensional
   split/unsplit execution, Euler/multispecies/MHD systems, positivity and
   differentiability policies, conservative diffusion and compressible viscous fluxes,
   MAC pressure projection, matrix-free linearization, conforming/nested multiblock
@@ -987,6 +1151,9 @@
   resource accounting.
 
 ### Changed
+- Neo-Hookean field stress operators now name Lamé's first parameter `lambda_`
+  instead of incorrectly describing the same coefficient as bulk modulus
+  `kappa`; the old keyword is removed in one clean cutover.
 - Neural-operator autoregression now requires a task-bound physical state route
   and the deployed normalization/constraint pipeline. The raw callable/advance
   rollout, standalone autoregressive loss, and teacher-forcing schedule were
@@ -1069,6 +1236,9 @@
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.
 
 ### Fixed
+- Neo-Hookean finite-element forms now derive their residual from cell energy
+  and support explicit two-dimensional plane strain as well as three-dimensional
+  kinematics.
 - Causal interval clustering now uses the Jacobian of the original reference
   coordinate, and zero-duration convolution and Caputo evaluations return exact
   zeros without evaluating singular kernels.

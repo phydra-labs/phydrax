@@ -110,6 +110,12 @@ tests = [
     "pytest-tia>=1.1.1",
     "pytest-xdist>=3.8.0",
 ]
+velocimetry-images = [
+    "imageio>=2.35",
+]
+velocimetry-xarray = [
+    "xarray>=2024.10",
+]
 qa = [
     "ruff==0.16.3",
     "scikit-learn>=1.4,<1.11",

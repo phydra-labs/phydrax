@@ -55,6 +55,7 @@ class ParticleGridSplatState(StrictModule):
 
     stencil: GatherStencil
     assignment_state: SplatAssignmentState
+    source_active_mask: Array
     supported_mask: Array
     truncated_support_mask: Array
     out_of_domain_mask: Array
@@ -73,6 +74,7 @@ class ParticleGridSplatState(StrictModule):
         *,
         stencil: GatherStencil,
         assignment_state: SplatAssignmentState,
+        source_active_mask: ArrayLike,
         supported_mask: ArrayLike,
         truncated_support_mask: ArrayLike,
         out_of_domain_mask: ArrayLike,
@@ -103,12 +105,16 @@ class ParticleGridSplatState(StrictModule):
             raise ValueError(
                 "Splat state source arrays must match the particle capacity."
             )
+        source_active = jnp.asarray(source_active_mask, dtype=bool)
+        if source_active.shape != supported.shape:
+            raise ValueError("source_active_mask must match particle capacity.")
         identifier = str(prepared_id)
         if not identifier:
             raise ValueError("prepared_id must be non-empty.")
         self.stencil = stencil
         self.assignment_state = assignment_state
         self.supported_mask = supported
+        self.source_active_mask = source_active
         self.truncated_support_mask = truncated
         self.out_of_domain_mask = outside
         self.invalid_geometry_mask = invalid
@@ -381,7 +387,14 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     def resource_evidence_id(self) -> str:
         return self.preparation.report_id
 
-    def build(self, position: ArrayLike, /) -> ParticleGridSplatState:
+    def build(
+        self,
+        position: ArrayLike,
+        /,
+        *,
+        active_mask: ArrayLike | None = None,
+        assignment_input: object = None,
+    ) -> ParticleGridSplatState:
         """Build fixed assignment routes for one runtime particle configuration."""
         raw = jnp.asarray(position)
         expected = (self.particles.capacity, self.particles.ambient_dimension)
@@ -392,7 +405,19 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         geometry = self.plan.precision.geometry(raw)
         if self.plan.execution.geometry_ad == "frozen":
             geometry = jax.lax.stop_gradient(geometry)
+            assignment_input = jax.tree.map(
+                lambda value: (
+                    jax.lax.stop_gradient(value) if eqx.is_array(value) else value
+                ),
+                assignment_input,
+                is_leaf=lambda value: value is None,
+            )
         active = self.particles.active_mask
+        if active_mask is not None:
+            runtime_active = jnp.asarray(active_mask, dtype=bool)
+            if runtime_active.shape != active.shape:
+                raise ValueError("active_mask must have particle-capacity shape.")
+            active = active & runtime_active
         finite = jnp.all(jnp.isfinite(geometry), axis=-1)
         invalid = active & ~finite
         fallback = jnp.asarray(
@@ -405,6 +430,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
             self.axis_bounds,
             safe,
             active & finite,
+            assignment_input=assignment_input,
         )
         captured = assignment_state.captured_fractions.astype(
             self.plan.precision.evaluation_dtype
@@ -451,6 +477,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         boundary_ok = (self.plan.boundary == "drop") | ~jnp.any(truncated)
         successful = ~jnp.any(invalid) & boundary_ok
         return ParticleGridSplatState(
+            source_active_mask=active,
             stencil=stencil,
             assignment_state=assignment_state,
             supported_mask=supported,
@@ -473,14 +500,20 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
         if state.prepared_id != self.prepared_id:
             raise ValueError("Splat state was built by a different prepared transfer.")
 
-    def _source_payload(self, value: ArrayLike, name: str, /) -> Array:
+    def _source_payload(
+        self,
+        state: ParticleGridSplatState,
+        value: ArrayLike,
+        name: str,
+        /,
+    ) -> Array:
         array = jnp.asarray(value)
         if array.ndim < 1 or int(array.shape[0]) != self.particles.capacity:
             raise ValueError(
                 f"{name} must begin with particle capacity {self.particles.capacity}."
             )
         evaluated = cast_stage(array, self.plan.precision.evaluation_dtype)
-        active = self.particles.active_mask
+        active = state.source_active_mask
         mask = active.reshape(active.shape + (1,) * (evaluated.ndim - 1))
         evaluated = eqx.error_if(
             evaluated,
@@ -565,7 +598,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     ) -> SplatDepositResult:
         """Deposit extensive particle content and derive target density."""
         self._require_state(state)
-        source = self._source_payload(content, "content")
+        source = self._source_payload(state, content, "content")
         target_flat = self._deposit_flat(state, source)
         payload_shape = source.shape[1:]
         target_content = target_flat.reshape(self.target_shape + payload_shape)
@@ -669,7 +702,7 @@ class PreparedParticleGridSplat(StrictModule, NonTrainableState):
     ) -> SplatReconstructionResult:
         """Reconstruct one intensive field with explicit nonnegative sample weights."""
         self._require_state(state)
-        source_values = self._source_payload(values, "sample")
+        source_values = self._source_payload(state, values, "sample")
         weights = jnp.asarray(sample_weights)
         if weights.shape != (self.particles.capacity,):
             raise ValueError("sample_weights must have the particle-capacity shape.")

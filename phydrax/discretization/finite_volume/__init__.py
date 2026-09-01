@@ -155,6 +155,9 @@ from ._mac_distributed import (
     MACLocalStencilPlan,
     PreparedMACDistributedTopology,
 )
+from ._mac_capillarity import MACCapillaryResult, MACGhostFluidCapillaryPlan
+from ._mac_cut_cell import MACCutCellGeometryPlan, MACCutCellGeometryState
+from ._mac_interface_state import MACFreeSurfaceGeometryState
 from ._mac_marker_transfer import (
     MACMarkerRelation,
     MACMarkerTransferDiagnostics,
@@ -181,6 +184,10 @@ from ._mac_scalar import (
     MACScalarStepRestriction,
     MACScalarTransport,
     PreparedMACScalarTransport,
+)
+from ._mac_viscous_measures import (
+    MACFreeSurfaceViscousMeasurePlan,
+    MACFreeSurfaceViscousMeasures,
 )
 from ._mac_variable_density import (
     FaceMomentumFlux,
@@ -213,6 +220,7 @@ from ._physical_boundaries import (
     SupersonicOutflowBoundary,
 )
 from ._positivity import (
+    BalancedPositivityBlendResult,
     EinfeldtHLLFluxPlan,
     FiniteVolumeAdmissibilityReport,
     FluxPositivityPlan,
@@ -242,6 +250,15 @@ from ._riemann import (
     NumericalFluxResult,
     RoeFluxPlan,
     RusanovFluxPlan,
+)
+from ._shallow_water import (
+    PreparedShallowWaterBathymetry,
+    shallow_water_observables,
+    ShallowWaterAcceptedFaceIntegrals,
+    ShallowWaterBalancedFaceResult,
+    ShallowWaterHydrostaticHLLPlan,
+    ShallowWaterObservables,
+    ShallowWaterWetDryPolicy,
 )
 from ._small_cell import (
     ConservativeSmallCellRedistributionEvidence,
@@ -348,7 +365,6 @@ from ._unstructured_weno import (
 from ._viscous import ViscousFluxPlan, ViscousStabilityReport
 from ._wave import (
     AbstractWavePropagationPlan,
-    FWaveShallowWaterPlan,
     RoeWavePropagationPlan,
     TransverseWaveSolverPlan,
     WaveDecomposition,
@@ -500,7 +516,6 @@ __all__ = [
     "flux_register_from_accepted_steps",
     "EntropyStableEulerFluxPlan",
     "ExtrapolationBoundary",
-    "FWaveShallowWaterPlan",
     "FiniteVolumeBoundaryPair",
     "FiniteVolumeBoundarySet",
     "FiniteVolumeHaloPlan",
@@ -538,6 +553,13 @@ __all__ = [
     "MACMarkerRelation",
     "MACMarkerTransferDiagnostics",
     "MACMarkerTransferPlan",
+    "MACCapillaryResult",
+    "MACCutCellGeometryPlan",
+    "MACCutCellGeometryState",
+    "MACFreeSurfaceViscousMeasurePlan",
+    "MACFreeSurfaceGeometryState",
+    "MACFreeSurfaceViscousMeasures",
+    "MACGhostFluidCapillaryPlan",
     "MACMomentumDiagnostics",
     "MACMomentumPlan",
     "MACMomentumReport",
@@ -579,6 +601,14 @@ __all__ = [
     "EinfeldtHLLFluxPlan",
     "FiniteVolumeAdmissibilityReport",
     "FluxPositivityPlan",
+    "BalancedPositivityBlendResult",
+    "PreparedShallowWaterBathymetry",
+    "ShallowWaterAcceptedFaceIntegrals",
+    "shallow_water_observables",
+    "ShallowWaterBalancedFaceResult",
+    "ShallowWaterHydrostaticHLLPlan",
+    "ShallowWaterObservables",
+    "ShallowWaterWetDryPolicy",
     "PositivityBlendResult",
     "HighResolutionMethod",
     "HighResolutionReconstructionPlan",

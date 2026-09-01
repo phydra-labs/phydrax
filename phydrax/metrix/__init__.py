@@ -221,6 +221,7 @@ from ._patchwise import (
 )
 from ._precision import GeometryPrecisionPolicy
 from ._product_spectrum import product_laplacian_eigenbasis
+from ._product_state_geometry import ProductStateGeometry, ProductStateGeometryBlock
 from ._quantum_density import (
     bures_squared_distance,
     BuresDensityManifold,
@@ -385,6 +386,8 @@ __all__ = [
     "ManifoldValidationReport",
     "MetricGeodesicResult",
     "MetricJet",
+    "ProductStateGeometry",
+    "ProductStateGeometryBlock",
     "MetricSignature",
     "MetricValidationReport",
     "PoincareBallManifold",

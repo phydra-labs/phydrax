@@ -280,9 +280,20 @@ def _cost_estimate(problem: FourierModalMaxwellProblem) -> FourierModalCostEstim
     count = problem.harmonics.harmonic_count
     layers = problem.layer_count
     itemsize = np.dtype(problem.harmonics.plan.precision.coefficient_dtype).itemsize
-    matrices_per_layer = 18 + 16 + 16
-    preparation = layers * matrices_per_layer * count**2 * itemsize
-    workspace = (8 * count) ** 2 * itemsize
+    sample_points = int(np.prod(problem.harmonics.plan.sample_shape))
+    # Per layer: base and translated materials (36), the complete layer operator
+    # including retained constitutive references (42), and its boundary relation
+    # (16). Global storage covers the composed boundary (16), both port bases
+    # (16), and the interface and reference-shifted scattering operators (32).
+    matrix_elements = (94 * layers + 64) * count**2
+    tangent_field_elements = 4 * layers * sample_points
+    port_vector_elements = 18 * count
+    preparation = (
+        matrix_elements + tangent_field_elements + port_vector_elements
+    ) * itemsize
+    # The largest conversion forms two 4N-by-4N systems while retaining solve
+    # factors and products; three copies of each system are budgeted.
+    workspace = 6 * (4 * count) ** 2 * itemsize
     return FourierModalCostEstimate(count, layers, preparation, workspace, 4 * count)
 
 

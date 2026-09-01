@@ -245,6 +245,54 @@
 
 ---
 
+::: phydrax.discretization.PrismaticJointSetPlan
+
+---
+
+::: phydrax.discretization.DistanceJointSetPlan
+
+---
+
+::: phydrax.discretization.PreparedRigidJointCoordinates
+
+---
+
+::: phydrax.discretization.CompliantRigidJointLawPlan
+
+---
+
+::: phydrax.discretization.DissipativeRigidJointLawPlan
+
+---
+
+::: phydrax.discretization.RigidJointEffortMotorPlan
+
+---
+
+::: phydrax.discretization.RigidJointPDServoPlan
+
+---
+
+::: phydrax.discretization.JointLimitPlan
+
+---
+
+::: phydrax.discretization.HardContactRoutePlan
+
+---
+
+::: phydrax.discretization.RigidTopologyPlan
+
+---
+
+::: phydrax.discretization.DeformableContactPlan
+
+---
+
+::: phydrax.discretization.RigidMPMCouplingPlan
+
+---
+
 ::: phydrax.discretization.SphereClumpTemplatePlan
 
 ---
@@ -349,7 +397,7 @@
 
 ---
 
-::: phydrax.equations.ResolvedIBCFDEMCouplingPlan
+::: phydrax.equations.MACPenaltyIBCFDEMCouplingPlan
 
 ---
 

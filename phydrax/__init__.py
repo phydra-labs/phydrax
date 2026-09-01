@@ -45,6 +45,8 @@ from . import (
     terms,
     transport,
     uq,
+    circuit,
+    velocimetry,
     weighting,
 )
 
@@ -60,6 +62,7 @@ __all__ = [
     "applications",
     "backends",
     "combinatorial",
+    "circuit",
     "conditions",
     "control",
     "continuation",
@@ -88,6 +91,7 @@ __all__ = [
     "pgm",
     "sampling",
     "sparse",
+    "velocimetry",
     "special",
     "solver",
     "stochastic",

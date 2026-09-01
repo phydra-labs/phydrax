@@ -24,6 +24,7 @@ from ._maxwell import (
     AbstractMaxwellConstitutivePlan,
     CompatibleMaxwellState,
     MaxwellAuxiliaryState,
+    MaxwellCochainLayout,
     MaxwellPrimaryState,
 )
 
@@ -323,6 +324,7 @@ class UnstructuredMaxwellPlan(StrictModule):
     """Compatible D/B evolution on an arbitrary three-dimensional cochain complex."""
 
     cochain: CochainDiscretization
+    layout: MaxwellCochainLayout
     constitutive: AbstractMaxwellConstitutivePlan
     spectral_upper_bound: float = eqx.field(static=True)
     courant_factor: float = eqx.field(static=True)
@@ -347,7 +349,9 @@ class UnstructuredMaxwellPlan(StrictModule):
             raise ValueError("spectral_upper_bound must be finite and positive.")
         if not np.isfinite(factor) or factor <= 0.0 or factor > 1.0:
             raise ValueError("courant_factor must lie in (0, 1].")
+        layout = MaxwellCochainLayout(cochain, "full_3d")
         self.cochain = cochain
+        self.layout = layout
         self.constitutive = constitutive
         self.spectral_upper_bound = bound
         self.courant_factor = factor
@@ -355,6 +359,7 @@ class UnstructuredMaxwellPlan(StrictModule):
             {
                 "kind": "unstructured-maxwell-plan",
                 "cochain": cochain.prepared_id,
+                "layout": layout.layout_id,
                 "constitutive": constitutive.plan_id,
                 "spectral_upper_bound": bound,
                 "courant_factor": factor,
@@ -372,7 +377,7 @@ class PreparedUnstructuredMaxwell(StrictModule):
     prepared_id: str = eqx.field(static=True)
 
     def __init__(self, plan: UnstructuredMaxwellPlan, /):
-        constitutive = plan.constitutive.prepare(plan.cochain)
+        constitutive = plan.constitutive.prepare(plan.cochain, plan.layout)
         self.plan = plan
         self.constitutive = constitutive
         self.stable_dt = (
@@ -416,6 +421,8 @@ class PreparedUnstructuredMaxwell(StrictModule):
         state: CompatibleMaxwellState,
         step_size: ArrayLike,
         /,
+        *,
+        electric_current: ArrayLike | None = None,
     ) -> CompatibleMaxwellState:
         dt = jnp.asarray(step_size)
         dt = eqx.error_if(
@@ -432,9 +439,18 @@ class PreparedUnstructuredMaxwell(StrictModule):
         magnetic = self.constitutive.magnetic_field(
             magnetic_half, state.auxiliary.material
         )
+        current = (
+            jnp.zeros_like(state.primary.electric_displacement)
+            if electric_current is None
+            else jnp.asarray(
+                electric_current, dtype=state.primary.electric_displacement.dtype
+            )
+        )
+        if current.shape != state.primary.electric_displacement.shape:
+            raise ValueError("Unstructured Maxwell current must be a degree-one cochain.")
         displacement = (
             state.primary.electric_displacement
-            + dt * self.plan.cochain.codifferential(2, magnetic)
+            + dt * (self.plan.cochain.codifferential(2, magnetic) - current)
         )
         electric_new = self.constitutive.electric_field(
             displacement, state.auxiliary.material
@@ -443,8 +459,11 @@ class PreparedUnstructuredMaxwell(StrictModule):
             1, electric_new
         )
         del time
+        charge = state.primary.charge - dt * self.plan.cochain.codifferential(
+            1, current
+        )
         return CompatibleMaxwellState(
-            MaxwellPrimaryState(displacement, magnetic_new, state.primary.charge),
+            MaxwellPrimaryState(displacement, magnetic_new, charge),
             state.auxiliary,
             state.observations,
         )

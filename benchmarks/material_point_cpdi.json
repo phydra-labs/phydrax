@@ -1,0 +1,11 @@
+{
+  "maturity": "experimental",
+  "capability": "cpdi",
+  "metrics": {
+    "partition_defect": 1.1102230246251565e-16,
+    "gradient_defect": 1.5543122344752192e-15,
+    "first_moment_defect": 3.946495907847236e-17,
+    "successful": true
+  },
+  "passed": true
+}

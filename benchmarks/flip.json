@@ -1,0 +1,14 @@
+{
+  "maturity": "experimental",
+  "phydrax_version": "0.2.2",
+  "jax_version": "0.9.1",
+  "device": "TFRT_CPU_0",
+  "particle_count": 144,
+  "grid_count": 24,
+  "compile_and_first_ms": 2090.4957090024254,
+  "steady_step_ms": 0.4296980000617623,
+  "mass_balance_defect": 0.0,
+  "momentum_balance_defect": 5.551115123125783e-16,
+  "divergence_norm": 2.2236183931721104e-19,
+  "successful": true
+}

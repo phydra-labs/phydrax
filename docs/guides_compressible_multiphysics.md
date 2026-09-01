@@ -78,9 +78,30 @@ including cell, magnetic-cochain, retention, and divergence evidence.
 ## Particle mesh gravity
 
 `ParticleMeshGravityPlan` reuses one `PreparedParticleGridSplat` for conservative mass
-deposition and grid-field gathering. Its kick-drift-kick update preserves stable
-material particle identities. Particle routing is piecewise differentiable; cell-route
-changes remain discrete.
+deposition and grid-field gathering. Its ordinary-time kick-drift-kick update preserves
+stable material particle identities. `ParticleMeshGravityForceResult` exposes the
+deposited field, Poisson convergence, gathered acceleration, support, mass balance, and
+net force without imposing an evolution coordinate. Particle routing is piecewise
+differentiable; cell-route changes remain discrete.
+
+`CosmologicalParticleMeshPlan` composes that same acceleration evaluation with
+`CosmologicalKDKPlan`; it never nests the ordinary-time PM step or creates a second
+deposition/Poisson path. The cosmological plan advances canonical momentum over an
+explicit scale-factor schedule, recomputes endpoint force, reuses one authoritative
+particle discretization, and rolls back on failed force or state evidence.
+
+`ComovingEulerPlan` reuses a prepared finite-volume Euler residual while changing the
+evolution coordinate to scale factor. It applies the exact `1/(a^2 H)` transport scaling,
+Hubble momentum/internal-energy work, and shared rescaled-potential gravity source.
+`CosmologicalGasParticleGravityPlan` predicts and corrects gas transport, deposits DM,
+solves one total-density periodic potential, gathers the same field to particles, and
+atomically accepts or rolls back the complete epoch. Its first scope is adiabatic ideal
+gas plus collisionless DM; it has no cooling, chemistry, feedback, or tree-force claim.
+
+`PeriodicImageForcePlan` is a small-N softened periodic image-shell qualification tool.
+It reports absolute/relative force error and net-force evidence for a supplied candidate.
+It is not an Ewald solver, short-range correction, Barnes--Hut tree, FMM, or production
+TreePM implementation.
 
 ## Constrained transport MHD
 

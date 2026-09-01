@@ -58,10 +58,28 @@
     "composite_gravity": "implemented"
   },
   "applications": {
-    "flrw_background": "implemented",
-    "cosmological_kdk": "implemented",
-    "first_order_lagrangian_initial_conditions": "implemented",
-    "coupled_baryon_dark_matter_runtime": "implemented"
+    "parameter_differentiable_curved_cpl_flrw": "implemented",
+    "flrw_distance_geometry": "implemented",
+    "first_and_second_order_flat_lagrangian_growth": "implemented",
+    "semantic_matter_power_and_transfer_products": "implemented",
+    "external_linear_theory_process_boundary": "implemented",
+    "massive_neutrino_component_algebra": "implemented",
+    "state_ready_first_and_second_order_lpt": "implemented",
+    "cosmological_particle_mesh_rollout": "implemented",
+    "synchronized_baryon_particle_orchestration": "implemented",
+    "universal_two_body_astrodynamics": "implemented",
+    "branch_explicit_lambert_transfer": "implemented",
+    "tabulated_ephemeris_and_frame_transforms": "implemented",
+    "direct_and_nearly_keplerian_nbody": "implemented",
+    "cr3bp_and_spacecraft_dynamics": "implemented",
+    "transit_photometry_and_instrument_response": "implemented",
+    "cmb_theory_response_products": "implemented",
+    "adiabatic_gas_particle_shared_gravity": "implemented",
+    "matter_power_correction_contract": "implemented",
+    "analytic_halo_foundations": "implemented",
+    "limber_and_linear_rsd_predictions": "implemented",
+    "canonical_cmb_spectrum_products": "implemented",
+    "periodic_small_n_force_qualification": "implemented"
   },
   "inference": {
     "whitened_field_log_density": "implemented",

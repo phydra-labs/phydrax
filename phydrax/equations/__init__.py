@@ -4,7 +4,26 @@
 
 """Serializable, validated equation representations for physics-aware models."""
 
-from . import advanced, fem, trefftz
+from ..discretization.discrete_velocity._hybrid import (
+    AtomicHybridUpdateEvidence,
+    AtomicHybridUpdateResult,
+    CommonFVKineticFluxEvidence,
+    ConformingFVKineticState,
+    FixedConformingFVKineticInterfacePlan,
+    KineticShockSensorEvidence,
+    KineticShockSensorPlan,
+)
+from ..discretization.discrete_velocity._smooth_compressible import (
+    smooth_compressible_d2v17_method,
+    smooth_compressible_d2v37_off_lattice_method,
+    SmoothCompressibleCollisionEvidence,
+    SmoothCompressibleD2VKineticMethod,
+    SmoothCompressibleEquilibriumEvidence,
+    SmoothCompressibleKineticState,
+    SmoothCompressibleMoments,
+    SmoothCompressibleRealizabilityEvidence,
+)
+from . import advanced, fem, trefftz, vem
 from ._barotropic import AbstractBarotropicMaterial, TaitBarotropicMaterial
 from ._cfd_dem import (
     AbstractHydrodynamicClosurePlan,
@@ -42,6 +61,8 @@ from ._discrete_element import (
     CompiledDiscreteElementProblem,
     DiscreteElementProblemIR,
 )
+from ._discrete_velocity import *  # noqa: F403
+from ._discrete_velocity import __all__ as _discrete_velocity_all
 from ._entropy_pair import (
     ConvexEntropyPair,
     ConvexEntropyValidationReport,
@@ -74,27 +95,21 @@ from ._finite_element_material import (
     FiniteElementMaterialTransaction,
 )
 from ._finite_element_variational import (
-    BoundaryLoadAction,
     CellBilinearAction,
     CellEnergyAction,
     CellResidualAction,
-    coefficient,
     compile_finite_element_problem,
     CompiledFiniteElementProblem,
-    DiffusionAction,
     ExteriorFacetAction,
     FiniteElementAction,
-    FiniteElementCoefficient,
     FiniteElementExecutionContext,
     FiniteElementExecutionPolicy,
     FiniteElementForm,
     FiniteElementFunctional,
     InteriorFacetAction,
-    MassAction,
     PairwiseVolumeFluxAction,
     PreparedOperatorAction,
     SIPGFacetAction,
-    SourceAction,
 )
 from ._finite_volume_verification import (
     couette_velocity_profile,
@@ -112,6 +127,7 @@ from ._finite_volume_verification import (
     sod_verification_case,
     woodward_colella_verification_case,
 )
+from ._flip import compile_flip_problem, CompiledFLIPProblem, FLIPProblemIR
 from ._hyperbolic_systems import (
     AbstractAdmissibleSystem,
     AbstractCharacteristicSystem,
@@ -123,13 +139,6 @@ from ._hyperbolic_systems import (
     MultispeciesEulerSystem,
     ScalarConservationSystem,
     ShallowWaterSystem,
-)
-from ._ib_cfd_dem import (
-    evaluate_resolved_ib_cfd_dem,
-    IBConstraintPlan,
-    ResolvedIBCFDEMCouplingPlan,
-    ResolvedIBEvaluation,
-    ResolvedIBGeometryPlan,
 )
 from ._incompressible import (
     compile_periodic_incompressible_flow,
@@ -157,17 +166,42 @@ from ._lagrangian_fluid import (
     compile_barotropic_sph_problem,
     CompiledBarotropicSPHProblem,
 )
-from ._mac_ib_cfd_dem import (
-    evaluate_resolved_mac_ib_cfd_dem,
-    ResolvedMACIBCFDEMCouplingPlan,
-    ResolvedMACIBEvaluation,
-    ResolvedMACIBStatus,
+from ._lattice_boltzmann import (
+    compile_lattice_boltzmann_problem,
+    CompiledLatticeBoltzmannProblem,
+    LatticeBoltzmannProblem,
+    snapshot_lattice_boltzmann_geometry,
+)
+from ._lattice_boltzmann_colour_gradient import *  # noqa: F403
+from ._lattice_boltzmann_colour_gradient import (
+    __all__ as _lattice_boltzmann_colour_gradient_all,
+)
+from ._lattice_boltzmann_free_energy import *  # noqa: F403
+from ._lattice_boltzmann_free_energy import (
+    __all__ as _lattice_boltzmann_free_energy_all,
+)
+from ._lattice_boltzmann_profiles import *  # noqa: F403
+from ._lattice_boltzmann_profiles import __all__ as _lattice_boltzmann_profiles_all
+from ._lattice_boltzmann_species import *  # noqa: F403
+from ._lattice_boltzmann_species import __all__ as _lattice_boltzmann_species_all
+from ._lattice_boltzmann_thermal import *  # noqa: F403
+from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_all
+from ._local_constitutive_root import (
+    LocalConstitutiveRootDiagnostics,
+    LocalConstitutiveRootPlan,
 )
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
     CompiledMACIncompressibleDynamics,
     MACIncompressibleDiagnostics,
     MACStepRestriction,
+)
+from ._mac_penalty_ib_cfd_dem import (
+    evaluate_mac_penalty_ib_cfd_dem,
+    IBPenaltyPlan,
+    MACPenaltyIBCFDEMCouplingPlan,
+    MACPenaltyIBEvaluation,
+    MACPenaltyIBStatus,
 )
 from ._mac_scalar_buoyancy import (
     compile_mac_scalar_buoyancy,
@@ -196,14 +230,17 @@ from ._manufactured import (
     ManufacturedSpatialOperator,
 )
 from ._material_point import (
+    AbstractImplicitMPMConstitutivePlan,
     AbstractMPMConstitutivePlan,
     compile_material_point_problem,
     CompiledMaterialPointProblem,
     ExternalMPMAcceleration,
     MaterialPointArguments,
     MaterialPointProblemIR,
+    MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
     MPMKinematics,
+    MPMLinearizedConstitutiveResponse,
 )
 from ._materials import (
     AbstractThermodynamicMaterial,
@@ -248,6 +285,14 @@ from ._particle_thermochemistry import (
     ParticleTransportBoundary,
     ParticleTransportEvaluation,
     ParticleTransportMaterialPlan,
+)
+from ._phase_field import (
+    AbstractBulkFreeEnergy,
+    BinaryFreeEnergyEvaluation,
+    double_well_chemical_derivative,
+    double_well_free_energy_density,
+    DoubleWellFreeEnergy,
+    evaluate_binary_free_energy,
 )
 from ._radiative import (
     RadiativeCoolingBoundsPolicy,
@@ -295,6 +340,7 @@ from ._serialize import (
     pde_ir_to_dict,
     pde_ir_to_json,
 )
+from ._shallow_water_sources import ShallowWaterCoriolisSource
 from ._spectral_compile import (
     compile_spectral_pde,
     CompiledSpectralDynamics,
@@ -311,6 +357,13 @@ from ._stencil_compile import (
     compile_stencil_dynamics,
     CompiledStencilDynamics,
     StencilStateLayout,
+)
+from ._thermodynamics import (
+    AbstractKineticThermodynamicClosure,
+    BinaryPhaseThermodynamicClosure,
+    BinaryThermodynamicLocalFields,
+    BinaryThermodynamicParameters,
+    ThermodynamicForceRepresentation,
 )
 from ._tokens import (
     pad_pde_tokens,
@@ -329,6 +382,19 @@ from ._transport_closures import (
     TransportProperties,
 )
 from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
+from ._variational import (
+    BoundaryLoadAction,
+    coefficient,
+    DiffusionAction,
+    MassAction,
+    SourceAction,
+    VariationalCoefficient,
+)
+from ._vortex_particles import (
+    compile_vortex_particle_flow,
+    CompiledVortexParticleFlow,
+    VortexParticleFlowProblem,
+)
 from ._weakly_compressible import (
     compile_weakly_compressible_sph_problem,
     CompiledWeaklyCompressibleSPHProblem,
@@ -410,10 +476,35 @@ from .trefftz import (
     TrialSpaceCertificate,
     TrialValidityRegion,
 )
+from .vem import (
+    compile_virtual_element_problem,
+    CompiledVirtualElementProblem,
+    evaluate_virtual_element_reconstruction,
+    evaluate_virtual_element_trace,
+    project_virtual_element_field,
+    VirtualElementAction,
+    VirtualElementExecutionContext,
+    VirtualElementExecutionPolicy,
+    VirtualElementForm,
+    VirtualElementReconstruction,
+    VirtualElementRobinAction,
+)
 
 
 __all__ = [
     "advanced",
+    "vem",
+    "CompiledVirtualElementProblem",
+    "VirtualElementAction",
+    "VirtualElementExecutionContext",
+    "VirtualElementExecutionPolicy",
+    "VirtualElementForm",
+    "VirtualElementReconstruction",
+    "VirtualElementRobinAction",
+    "compile_virtual_element_problem",
+    "evaluate_virtual_element_reconstruction",
+    "evaluate_virtual_element_trace",
+    "project_virtual_element_field",
     "AbstractAdmissibleSystem",
     "AbstractCharacteristicSystem",
     "AbstractConservationSystem",
@@ -436,13 +527,21 @@ __all__ = [
     "CompiledMACScalarBuoyancyDynamics",
     "CompiledMACVariableDensityDynamics",
     "CompiledIncompressibleSpectralDynamics",
+    "CompiledFLIPProblem",
     "CompiledSpectralDynamics",
     "CompiledSpectralResidual",
     "CompiledFiniteDifferenceDynamics",
     "ConstitutiveModel",
+    "LocalConstitutiveRootDiagnostics",
+    "LocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
+    "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",
+    "MPMConstitutiveCapabilities",
+    "MPMLinearizedConstitutiveResponse",
     "MPMKinematics",
+    "compile_flip_problem",
+    "FLIPProblemIR",
     "compile_material_point_problem",
     "CompiledMaterialPointProblem",
     "ExternalMPMAcceleration",
@@ -462,7 +561,7 @@ __all__ = [
     "DiffusionAction",
     "ExteriorFacetAction",
     "FiniteElementAction",
-    "FiniteElementCoefficient",
+    "VariationalCoefficient",
     "FiniteElementExecutionContext",
     "FiniteElementExecutionPolicy",
     "FiniteElementForm",
@@ -569,13 +668,19 @@ __all__ = [
     "MACVariableDensityState",
     "MACVariableDensityStepRestriction",
     "MACVariableDensityStepResult",
-    "ResolvedMACIBCFDEMCouplingPlan",
-    "ResolvedMACIBEvaluation",
-    "ResolvedMACIBStatus",
+    "IBPenaltyPlan",
+    "MACPenaltyIBCFDEMCouplingPlan",
+    "MACPenaltyIBEvaluation",
+    "MACPenaltyIBStatus",
+    "CompiledLatticeBoltzmannProblem",
+    "LatticeBoltzmannProblem",
+    "compile_lattice_boltzmann_problem",
+    "snapshot_lattice_boltzmann_geometry",
     "ChannelVelocityDiagnostics",
     "MultispeciesEulerSystem",
     "ScalarConservationSystem",
     "ShallowWaterSystem",
+    "ShallowWaterCoriolisSource",
     "PrandtlTransport",
     "StiffenedGasMaterial",
     "ideal_gas_euler_entropy_pair",
@@ -609,7 +714,7 @@ __all__ = [
     "MonogenicPolynomialBasis",
     "compile_mac_scalar_buoyancy",
     "compile_mac_variable_density_flow",
-    "evaluate_resolved_mac_ib_cfd_dem",
+    "evaluate_mac_penalty_ib_cfd_dem",
     "compile_mac_incompressible_flow",
     "compile_periodic_incompressible_flow",
     "compile_channel_flow",
@@ -702,13 +807,8 @@ __all__ = [
     "CFDEMCouplingEvaluation",
     "FluidParticleSample",
     "HydrodynamicClosureResult",
-    "IBConstraintPlan",
-    "ResolvedIBCFDEMCouplingPlan",
-    "ResolvedIBEvaluation",
-    "ResolvedIBGeometryPlan",
     "StokesDragPlan",
     "UnresolvedCFDEMCouplingPlan",
-    "evaluate_resolved_ib_cfd_dem",
     "evaluate_unresolved_cfd_dem",
     "AntoineSaturationPressurePlan",
     "EvaporationPhaseChangePlan",
@@ -745,4 +845,55 @@ __all__ = [
     "ReactiveMonolithicRouteCertificate",
     "ReactiveMonolithicStage",
     "ReactiveMonolithicUnknown",
+]
+
+__all__ += [
+    name
+    for name in (
+        *_discrete_velocity_all,
+        *_lattice_boltzmann_colour_gradient_all,
+        *_lattice_boltzmann_free_energy_all,
+        *_lattice_boltzmann_profiles_all,
+        *_lattice_boltzmann_species_all,
+        *_lattice_boltzmann_thermal_all,
+    )
+    if name not in __all__
+]
+
+__all__ += [
+    "AtomicHybridUpdateEvidence",
+    "AtomicHybridUpdateResult",
+    "CommonFVKineticFluxEvidence",
+    "ConformingFVKineticState",
+    "FixedConformingFVKineticInterfacePlan",
+    "KineticShockSensorEvidence",
+    "KineticShockSensorPlan",
+    "SmoothCompressibleCollisionEvidence",
+    "SmoothCompressibleD2VKineticMethod",
+    "SmoothCompressibleEquilibriumEvidence",
+    "SmoothCompressibleKineticState",
+    "SmoothCompressibleMoments",
+    "SmoothCompressibleRealizabilityEvidence",
+    "smooth_compressible_d2v17_method",
+    "smooth_compressible_d2v37_off_lattice_method",
+]
+
+__all__ += [
+    "AbstractBulkFreeEnergy",
+    "BinaryFreeEnergyEvaluation",
+    "DoubleWellFreeEnergy",
+    "double_well_chemical_derivative",
+    "double_well_free_energy_density",
+    "evaluate_binary_free_energy",
+    "AbstractKineticThermodynamicClosure",
+    "BinaryPhaseThermodynamicClosure",
+    "BinaryThermodynamicLocalFields",
+    "BinaryThermodynamicParameters",
+    "ThermodynamicForceRepresentation",
+]
+
+__all__ += [
+    "CompiledVortexParticleFlow",
+    "VortexParticleFlowProblem",
+    "compile_vortex_particle_flow",
 ]

@@ -1,0 +1,15 @@
+{
+  "maturity": "experimental",
+  "phydrax_version": "0.2.2",
+  "jax_version": "0.9.1",
+  "device": "TFRT_CPU_0",
+  "particle_count": 512,
+  "grid_count": 8,
+  "charge_routes": 4096,
+  "compile_and_first_ms": 1401.169458997174,
+  "steady_step_ms": 0.6826301246292132,
+  "continuity_defect": 6.566551746800542e-10,
+  "gauss_defect": 6.566551746800542e-10,
+  "charge_balance_defect": 4.773959005888173e-15,
+  "successful": true
+}

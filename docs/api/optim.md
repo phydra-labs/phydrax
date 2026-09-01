@@ -1747,3 +1747,39 @@ population-based algorithms require an explicit finite search-space contract and
 rejected there. Optimistix interoperation is deliberately explicit and standalone:
 wrap a compatible upstream minimizer in `OptimistixMethod`. Phydrax does not inspect an
 arbitrary upstream object or silently reinterpret its stopping rules.
+
+## Metric-aware density transforms
+
+`ConicDensityFilterPlan` prepares a sparse, positive, row-normalized conic
+filter from physical sample coordinates, an optional positive measure, and
+explicit design/fixed-region values. The radius is a physical distance rather
+than a grid-index count. Zero radius is the identity, fixed values participate
+in boundary context, and fixed locations are restored after filtering.
+
+`TanhDensityProjectionPlan` applies a finite-beta monotone tanh projection.
+`DensityTransformPlan` composes filtering and projection while leaving density
+and beta as differentiable numeric arrays. Hard binarization is a separate
+`threshold_density` operation with stopped derivatives; it is not an
+optimization-gradient claim.
+
+::: phydrax.optim.ConicDensityFilterPlan
+
+---
+
+::: phydrax.optim.PreparedConicDensityFilter
+
+---
+
+::: phydrax.optim.TanhDensityProjectionPlan
+
+---
+
+::: phydrax.optim.DensityTransformPlan
+
+---
+
+::: phydrax.optim.PreparedDensityTransform
+
+---
+
+::: phydrax.optim.threshold_density

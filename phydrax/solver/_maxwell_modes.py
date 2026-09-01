@@ -4,9 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -17,13 +14,21 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import eigen as eigen_linalg
 from ._maxwell_frequency import _verified_dense_operator
+from ._maxwell_observers import ModeAmplitudeObserverPlan
+from ._maxwell_sources import (
+    AbstractMaxwellSourcePlan,
+    MaxwellPairedCurrentSourcePlan,
+    PreparedMaxwellSource,
+)
 
 
 class MaxwellModeResult(StrictModule):
     propagation_constants: Array
-    modes: Array
+    electric_modes: Array
+    magnetic_modes: Array
     residuals: Array
-    power_norms: Array
+    mass_norms: Array
+    signed_powers: Array
     status: Array
     diagnostics: eigen_linalg.EigenSolveDiagnostics
     result_id: str = eqx.field(static=True)
@@ -35,6 +40,9 @@ class TransverseMaxwellModePlan(StrictModule, NonTrainableState):
     operator: Array
     mass: Array
     mode_count: int = eqx.field(static=True)
+    magnetic_reconstruction: Array
+    power_pairing: Array
+    propagation_direction: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -44,21 +52,40 @@ class TransverseMaxwellModePlan(StrictModule, NonTrainableState):
         mode_count: int,
         /,
         *,
+        magnetic_reconstruction: ArrayLike,
+        power_pairing: ArrayLike,
+        propagation_direction: int = 1,
         maximum_dofs: int = 4096,
     ):
         operator_ = np.asarray(operator)
         mass_ = np.asarray(mass)
+        reconstruction = np.asarray(magnetic_reconstruction)
+        pairing = np.asarray(power_pairing)
         if operator_.ndim != 2 or operator_.shape[0] != operator_.shape[1]:
             raise ValueError("Mode operator must be square.")
         if mass_.shape != operator_.shape:
             raise ValueError("Mode mass must match operator shape.")
-        if operator_.shape[0] > int(maximum_dofs):
+        if reconstruction.ndim != 2 or reconstruction.shape[1] != operator_.shape[0]:
+            raise ValueError("Mode magnetic reconstruction has the wrong electric axis.")
+        if pairing.shape != (operator_.shape[0], reconstruction.shape[0]):
+            raise ValueError("Mode power pairing must map magnetic to electric traces.")
+        if propagation_direction not in (-1, 1):
+            raise ValueError("Mode propagation_direction must be -1 or +1.")
+        maximum = int(maximum_dofs)
+        if maximum <= 0 or operator_.shape[0] > maximum:
             raise ValueError("Mode solve exceeds maximum_dofs.")
         count = int(mode_count)
         if count <= 0 or count > operator_.shape[0]:
             raise ValueError("mode_count is outside the operator dimension.")
-        if np.any(~np.isfinite(operator_)) or np.any(~np.isfinite(mass_)):
-            raise ValueError("Mode operator/mass must be finite.")
+        if (
+            np.any(~np.isfinite(operator_))
+            or np.any(~np.isfinite(mass_))
+            or np.any(~np.isfinite(reconstruction))
+            or np.any(~np.isfinite(pairing))
+        ):
+            raise ValueError(
+                "Mode operator, mass, reconstruction, and pairing must be finite."
+            )
         tolerance = np.finfo(operator_.real.dtype).eps * max(
             1.0, np.linalg.norm(operator_)
         )
@@ -73,12 +100,18 @@ class TransverseMaxwellModePlan(StrictModule, NonTrainableState):
         self.operator = jnp.asarray(operator_)
         self.mass = jnp.asarray(mass_)
         self.mode_count = count
+        self.magnetic_reconstruction = jnp.asarray(reconstruction)
+        self.power_pairing = jnp.asarray(pairing)
+        self.propagation_direction = int(propagation_direction)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "transverse-maxwell-mode-plan",
                 "operator": array_tree_fingerprint(operator_),
                 "mass": array_tree_fingerprint(mass_),
                 "mode_count": count,
+                "magnetic_reconstruction": array_tree_fingerprint(reconstruction),
+                "power_pairing": array_tree_fingerprint(pairing),
+                "propagation_direction": propagation_direction,
             }
         )
 
@@ -103,13 +136,37 @@ class TransverseMaxwellModePlan(StrictModule, NonTrainableState):
             ),
         )
         values = jnp.real(solved.eigenvalues)
-        modes = solved.eigenvectors
-        power_norms = jnp.real(jnp.sum(jnp.conj(modes) * (self.mass @ modes), axis=0))
+        electric_modes = solved.eigenvectors
+        magnetic_modes = self.propagation_direction * (
+            self.magnetic_reconstruction @ electric_modes
+        )
+        signed_power = 0.5 * jnp.real(
+            jnp.sum(
+                jnp.conj(electric_modes) * (self.power_pairing @ magnetic_modes),
+                axis=0,
+            )
+        )
+        invalid_power = jnp.any(~jnp.isfinite(signed_power)) | jnp.any(
+            jnp.abs(signed_power) <= jnp.finfo(signed_power.dtype).eps
+        )
+        electric_modes = eqx.error_if(
+            electric_modes,
+            invalid_power,
+            "Propagating Maxwell modes require finite nonzero signed power.",
+        )
+        normalization = jnp.sqrt(jnp.abs(signed_power))
+        electric_modes = electric_modes / normalization[None, :]
+        magnetic_modes = magnetic_modes / normalization[None, :]
+        mass_norms = jnp.real(
+            jnp.sum(jnp.conj(electric_modes) * (self.mass @ electric_modes), axis=0)
+        )
         return MaxwellModeResult(
             propagation_constants=jnp.sqrt(jnp.maximum(values, 0.0)),
-            modes=modes,
+            electric_modes=electric_modes,
+            magnetic_modes=magnetic_modes,
             residuals=solved.diagnostics.residual_norms,
-            power_norms=power_norms,
+            mass_norms=mass_norms,
+            signed_powers=jnp.sign(signed_power),
             status=solved.status,
             diagnostics=solved.diagnostics,
             result_id=canonical_fingerprint(
@@ -122,34 +179,123 @@ class TransverseMaxwellModePlan(StrictModule, NonTrainableState):
         )
 
 
-class MaxwellModeSource(StrictModule):
-    """Charge-compatible modal current source with a scalar time envelope."""
+class MaxwellHuygensSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
+    """Orientation-certified paired equivalent currents on one discrete surface."""
 
-    mode: Array
-    envelope: Callable[[Array, Any], ArrayLike] = eqx.field(static=True)
+    paired: MaxwellPairedCurrentSourcePlan
+    direction: int = eqx.field(static=True)
+    signed_power: float = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        mode: ArrayLike,
-        envelope: Callable[[Array, Any], ArrayLike],
+        electric_indices: ArrayLike,
+        magnetic_trace: ArrayLike,
+        magnetic_indices: ArrayLike,
+        electric_trace: ArrayLike,
         /,
+        *,
+        signed_power: float,
+        direction: int = 1,
+        angular_frequency: ArrayLike = 0.0,
+        phase: ArrayLike = 0.0,
+        amplitude: ArrayLike = 1.0,
+        control_key: str | None = None,
+        magnetic_closedness_preserving: bool = False,
     ):
-        mode_ = jnp.asarray(mode)
-        if mode_.ndim != 1 or not callable(envelope):
-            raise TypeError("Mode source requires a vector mode and callable envelope.")
-        self.mode = mode_
-        self.envelope = envelope
-        self.source_id = canonical_fingerprint(
-            {"kind": "maxwell-mode-source", "mode": array_tree_fingerprint(mode_)}
+        if direction not in (-1, 1):
+            raise ValueError("Huygens launch direction must be -1 or +1.")
+        power = float(signed_power)
+        if not np.isfinite(power) or power == 0.0:
+            raise ValueError("Huygens launch requires finite nonzero signed power.")
+        identifier = canonical_fingerprint(
+            {
+                "kind": "maxwell-huygens-source-plan",
+                "electric_indices": array_tree_fingerprint(electric_indices),
+                "magnetic_indices": array_tree_fingerprint(magnetic_indices),
+                "direction": direction,
+                "signed_power": power,
+            }
+        )
+        self.paired = MaxwellPairedCurrentSourcePlan(
+            electric_indices,
+            direction * jnp.asarray(magnetic_trace),
+            magnetic_indices,
+            -direction * jnp.asarray(electric_trace),
+            angular_frequency=angular_frequency,
+            phase=phase,
+            amplitude=amplitude / np.sqrt(abs(power)),
+            control_key=control_key,
+            magnetic_closedness_preserving=magnetic_closedness_preserving,
+            source_id=identifier,
+        )
+        self.direction, self.signed_power, self.source_id = (
+            int(direction),
+            power,
+            identifier,
         )
 
-    def __call__(self, time: Array, coordinates: Array, args: Any, /) -> Array:
-        del coordinates
-        amplitude = jnp.asarray(self.envelope(time, args))
-        if amplitude.shape != ():
-            raise ValueError("Mode source envelope must return a scalar.")
-        return amplitude * self.mode
+    def prepare(self, bridge, layout, /) -> PreparedMaxwellSource:
+        return self.paired.prepare(bridge, layout)
+
+
+class MaxwellModePortResponse(StrictModule):
+    incident: Array
+    reflected: Array
+    transmitted: Array
+    reflection: Array
+    transmission: Array
+    power_balance: Array
+
+
+class MaxwellModePortPlan(StrictModule):
+    source: MaxwellHuygensSourcePlan
+    observer: ModeAmplitudeObserverPlan
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source: MaxwellHuygensSourcePlan,
+        observer: ModeAmplitudeObserverPlan,
+        /,
+    ):
+        if not isinstance(source, MaxwellHuygensSourcePlan) or not isinstance(
+            observer, ModeAmplitudeObserverPlan
+        ):
+            raise TypeError("Mode port requires a paired mode source and modal observer.")
+        self.source, self.observer = source, observer
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "maxwell-mode-port-plan",
+                "source": source.source_id,
+                "observer": observer.plan_id,
+            }
+        )
+
+    def response(
+        self,
+        incident: ArrayLike,
+        reflected: ArrayLike,
+        transmitted: ArrayLike,
+        /,
+    ) -> MaxwellModePortResponse:
+        incident_, reflected_, transmitted_ = (
+            jnp.asarray(value) for value in (incident, reflected, transmitted)
+        )
+        if incident_.shape != reflected_.shape or incident_.shape != transmitted_.shape:
+            raise ValueError("Mode-port amplitude arrays must have matching shapes.")
+        valid = jnp.abs(incident_) > 0.0
+        safe = jnp.where(valid, incident_, 1.0)
+        reflection = jnp.where(valid, reflected_ / safe, jnp.nan)
+        transmission = jnp.where(valid, transmitted_ / safe, jnp.nan)
+        return MaxwellModePortResponse(
+            incident_,
+            reflected_,
+            transmitted_,
+            reflection,
+            transmission,
+            jnp.abs(reflection) ** 2 + jnp.abs(transmission) ** 2,
+        )
 
 
 class MaxwellModeDecomposition(StrictModule, NonTrainableState):
@@ -180,38 +326,6 @@ class MaxwellModeDecomposition(StrictModule, NonTrainableState):
         if value.shape != self.modes.shape[:1]:
             raise ValueError("Field shape does not match mode basis.")
         return jnp.conj(self.modes.T) @ (self.mass @ value)
-
-
-class MaxwellScatteringParameters(StrictModule):
-    incident: Array
-    reflected: Array
-    transmitted: Array
-    s11: Array
-    s21: Array
-    power_balance: Array
-
-
-def scattering_parameters(
-    incident: ArrayLike,
-    reflected: ArrayLike,
-    transmitted: ArrayLike,
-    /,
-) -> MaxwellScatteringParameters:
-    incident_ = jnp.asarray(incident)
-    reflected_ = jnp.asarray(reflected)
-    transmitted_ = jnp.asarray(transmitted)
-    if incident_.shape != reflected_.shape or incident_.shape != transmitted_.shape:
-        raise ValueError("Scattering amplitudes must have matching shapes.")
-    safe = jnp.where(jnp.abs(incident_) > 0.0, incident_, 1.0)
-    s11 = reflected_ / safe
-    s21 = transmitted_ / safe
-    valid = jnp.abs(incident_) > 0.0
-    s11 = jnp.where(valid, s11, jnp.nan)
-    s21 = jnp.where(valid, s21, jnp.nan)
-    balance = jnp.abs(s11) ** 2 + jnp.abs(s21) ** 2
-    return MaxwellScatteringParameters(
-        incident_, reflected_, transmitted_, s11, s21, balance
-    )
 
 
 class MaxwellNearToFarPlan(StrictModule, NonTrainableState):
@@ -305,11 +419,11 @@ class MaxwellNearToFarPlan(StrictModule, NonTrainableState):
 
 
 __all__ = [
+    "MaxwellHuygensSourcePlan",
     "MaxwellModeDecomposition",
+    "MaxwellModePortPlan",
+    "MaxwellModePortResponse",
     "MaxwellModeResult",
-    "MaxwellModeSource",
     "MaxwellNearToFarPlan",
-    "MaxwellScatteringParameters",
     "TransverseMaxwellModePlan",
-    "scattering_parameters",
 ]

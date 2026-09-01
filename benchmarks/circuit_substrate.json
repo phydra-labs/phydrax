@@ -1,0 +1,71 @@
+{
+  "backend": "cpu",
+  "dtype": "float64/complex128",
+  "dynamic": {
+    "dae_residual": 1.3322676295501878e-15,
+    "final_state": 0.6317232811600609,
+    "operating_prepare_seconds": 0.035362125,
+    "operating_residual": 0.0,
+    "operating_solve_seconds": 0.633105875,
+    "operating_state": 1.0,
+    "prepare_seconds": 0.343238959,
+    "state_size": 1,
+    "successful": true,
+    "transient_seconds": 5.543075042
+  },
+  "jax": "0.9.1",
+  "kind": "circuit-substrate-benchmark",
+  "macromodel": {
+    "fit_seconds": 1.365017583,
+    "frequencies": 256,
+    "maximum_error": 1.3506446028928517e-15,
+    "poles": 2,
+    "relative_residual": 5.253755161944492e-16,
+    "successful": true
+  },
+  "network": [
+    {
+      "action_first_seconds": 1.962837375,
+      "action_prepare_seconds": 0.322966041,
+      "action_relative_residual": 2.898520229824656e-17,
+      "action_retained_bytes": 1150,
+      "action_warm_seconds": 0.740158958,
+      "channels": 16,
+      "dense_first_seconds": 1.289577666,
+      "dense_prepare_seconds": 1.078101791,
+      "dense_relative_residual": 0.0,
+      "dense_retained_bytes": 8192,
+      "sections": 8,
+      "successful": true
+    },
+    {
+      "action_first_seconds": 1.843253292,
+      "action_prepare_seconds": 0.284633625,
+      "action_relative_residual": 5.093913684082705e-17,
+      "action_retained_bytes": 4750,
+      "action_warm_seconds": 0.762156834,
+      "channels": 64,
+      "dense_first_seconds": 0.748315375,
+      "dense_prepare_seconds": 0.971955791,
+      "dense_relative_residual": 0.0,
+      "dense_retained_bytes": 131072,
+      "sections": 32,
+      "successful": true
+    },
+    {
+      "action_first_seconds": 2.21854525,
+      "action_prepare_seconds": 0.387712791,
+      "action_relative_residual": 4.8113158994813946e-17,
+      "action_retained_bytes": 19150,
+      "action_warm_seconds": 0.776957416,
+      "channels": 256,
+      "dense_first_seconds": 0.53584275,
+      "dense_prepare_seconds": 1.018303333,
+      "dense_relative_residual": 0.0,
+      "dense_retained_bytes": 2097152,
+      "sections": 128,
+      "successful": true
+    }
+  ],
+  "python": "3.12.8"
+}

@@ -94,14 +94,63 @@ when a compatible cochain complex is available.
 
 ## Cosmology, inference, and learned closures
 
-`phydrax.applications.cosmology` provides a flat `FLRWBackground`, scale-factor KDK
-particle dynamics, and first-order Lagrangian initial conditions.
+`phydrax.applications.cosmology` provides a parameter-differentiable FLRW background
+with radiation, matter, signed spatial curvature, and CPL dark energy. Fixed quadrature
+supplies radial/transverse comoving distance, angular/luminosity distance, volume, and
+finite-epoch time integrals. Native first/second Lagrangian growth remains an explicitly
+flat, smooth-dark-energy, matter-era Newtonian approximation.
+
+Every tabulated product carries a dynamic physical-realization signature, static
+producer/provenance, an enforced differentiability policy, and semantic field metadata.
+`MatterPowerTable` distinguishes cold+baryon, total-matter, and massive-neutrino fields,
+auto/cross power, gauge, linear/nonlinear stage, shot noise, and spatial dimension.
+`LinearTransferTable` preserves signed field transfers. Precision Boltzmann and
+massive-neutrino perturbations remain isolated external calculations through
+`SubprocessLinearTheoryBackend`; their arrays are immutable constant products, not
+custom-gradient primitives.
+
+Native product consumers include model-card-checked multiplicative power corrections,
+spherical-overdensity/NFW/linear-variance halo foundations, flat Limber density and
+lensing predictions, linear Kaiser/AP multipoles, canonical CMB spectra/transforms, and
+small-N periodic force qualification. Phydrax does not silently select Halofit, HMcode,
+an emulator, a halo fit/finder, a survey likelihood, or a complete CMB solver.
+
+Particles use comoving position `x` and canonical momentum `p = m a^2 dx/dt`.
+`ParticleMeshGravityPlan.acceleration` solves the rescaled potential `psi = a Phi` from
+comoving density, `nabla_x^2 psi = 4 pi G (rho_com - mean(rho_com))`. Periodic LPT,
+KDK, collisionless PM, and gas-particle gravity reject nonzero spatial curvature.
+
+`CosmologicalGasParticleGravityPlan` physically couples adiabatic comoving Euler cell
+averages and collisionless particles through one shared periodic density, Poisson solve,
+and endpoint force refresh. It commits or rolls back gas and particles atomically.
+Cooling, chemistry, stars, feedback, MHD, radiation, tree gravity, AMR, and distributed
+particle migration are separate unsupported capabilities.
 
 `WhitenedFieldInferencePlan`, `ParticleMarginalLikelihoodPlan`, and
 `SimulationSensitivityReport` compose existing inference substrates with field-valued
 multiphysics simulations. `StructurePreservingFaceClosurePlan` and
 `ConstrainedMHDClosurePlan` provide dissipative face corrections, edge-EMF corrections,
 and explicit OOD fallback.
+
+## Astrodynamics and astrophysical observations
+
+`phydrax.applications.astrodynamics` binds scale, two-part epoch, and frame identity to
+Cartesian states while keeping numerical solver time relative and dense. Universal
+Kepler, modified-equinoctial conversion, Lambert branches, native force composition,
+tabulated ephemerides, orbital events, direct and nearly-Keplerian N-body dynamics,
+CR3BP, rigid-spacecraft loads, and measurement Jacobians delegate general integration,
+geometry, particles, roots, and control to their existing owners.
+
+`phydrax.applications.astrophysics` projects those states into an observer frame and
+composes polynomial limb-darkened occultation with immutable photon-counting
+bandpasses. Binned, image, frequency, ray-transfer, and complex-field response objects
+are concrete array operators. Existing likelihood, state-space, posterior, and
+BlackJAX contracts remain the only inference boundary.
+
+Contacts, transfer-branch selection, event brackets, collisions, classical-element
+singularities, provider loading, and capacity changes are discrete or singular
+boundaries. Smooth fixed branches retain ordinary JAX derivatives; every other path
+must be judged through its explicit validity/status evidence.
 
 ## Differentiability boundary
 
