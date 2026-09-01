@@ -1,0 +1,369 @@
+{
+  "cases": {
+    "tensor.rational.quarter-annulus": {
+      "evidence_kind": "iga-h1-qualification",
+      "passed": true,
+      "support": {
+        "backend": "cpu",
+        "basis": "direct_tensor",
+        "derivative": "Q2",
+        "distributed": "single",
+        "formulation": "diffusion_reaction",
+        "geometry": "full_dim_2d_nurbs",
+        "interface": "none",
+        "precision": "float64",
+        "restart": "none",
+        "space": "scalar_H1"
+      }
+    }
+  },
+  "kind": "iga-r1-candidate-qualification",
+  "passed": true,
+  "reason": "Candidate evidence is unsigned and covers only the listed support tuples.",
+  "release_ready": false,
+  "source_evidence": {
+    "closure": {
+      "cases": {
+        "compatible_complex": {
+          "complex_id": "b65e8b0d8ae0f9a8d19aba518a8eb8e0fe74153d073abf19258abc1ad1624deb",
+          "d_squared_defect": 0.0,
+          "passed": true
+        },
+        "geometry_certificate": {
+          "cell_count": 1,
+          "certificate_id": "fa56535fd96028e4235f4b3c4f20003ac64b6db00c4e4cf352d6518c3296bfe0",
+          "diagnostics": [],
+          "passed": true
+        },
+        "linear_pod_rom": {
+          "artifact_id": "09dd9d6e67b1223e367558dc2694916d3731bfa346c5698aa4fadfe8c36b8c67",
+          "passed": true,
+          "relative_state_error": 2.220446049250313e-16
+        },
+        "thb_basis": {
+          "basis_count": 3,
+          "certificate_id": "33a22b42abc8e3ca6a9a95912c551f3d9e98de1be013be3fff9aa136f57b1887",
+          "hierarchy_id": "658e9079ad185de050f7454947e023cfd11b46ecc9ee65ee6ae18be3cde74e2c",
+          "partition_defect": 0.0,
+          "passed": true,
+          "rank": 3
+        }
+      },
+      "kind": "iga-closure-substrate-qualification",
+      "passed": true
+    },
+    "h1": {
+      "cases": [
+        {
+          "geometry_claim": "affine map; sampled regularity evidence",
+          "h1_rate": 2.14301345574818,
+          "h1_rate_bound": 1.75,
+          "l2_rate": 3.2554443526595773,
+          "l2_rate_bound": 2.75,
+          "levels": [
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 0.0,
+              "geometry_evidence": {
+                "coordinate_scale": 1.4142135623730951,
+                "evidence_id": "49c8dcdc4579fc161b64b16a459cefe2b0c3707f1e8a80aaec2ed1fdd208c037",
+                "minimum_orientation_ratio": 1.0,
+                "minimum_rank_ratio": 0.49999999999999944,
+                "minimum_weight_ratio": 0.9999999999999997,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.28002338675691596,
+              "l2_error": 0.02762635807787519,
+              "normalized_free_residual": 1.5670763103080146e-16,
+              "parity_bound": 1e-12,
+              "parity_defect": 0.0,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 0.0004033965681077932,
+              "quadrature_bound": 0.028002338675691598,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 2
+            },
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 9.666280255099595e-17,
+              "geometry_evidence": {
+                "coordinate_scale": 1.4142135623730951,
+                "evidence_id": "75c693f986f6379acb0512365562234e92b126e4879f636ac1b4130253741cd6",
+                "minimum_orientation_ratio": 1.0,
+                "minimum_rank_ratio": 0.4999999999999988,
+                "minimum_weight_ratio": 0.9999999999999996,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.05533982570268285,
+              "l2_error": 0.0023132663859938046,
+              "normalized_free_residual": 1.8587875184715686e-16,
+              "parity_bound": 1e-12,
+              "parity_defect": 1.8124900334164605e-16,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 5.540839050869299e-06,
+              "quadrature_bound": 0.0055339825702682855,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 4
+            },
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 1.6127961321013478e-16,
+              "geometry_evidence": {
+                "coordinate_scale": 1.4142135623730951,
+                "evidence_id": "baadd13e6d4f43772cd098e84c26026627ba3b9772e4604957b2cb9ca2cbe5e2",
+                "minimum_orientation_ratio": 1.0,
+                "minimum_rank_ratio": 0.49999999999999756,
+                "minimum_weight_ratio": 0.9999999999999996,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.013027067682456954,
+              "l2_error": 0.0002568163493096501,
+              "normalized_free_residual": 1.4226986084404818e-15,
+              "parity_bound": 1e-12,
+              "parity_defect": 2.2831207682920374e-16,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 8.376273295311171e-08,
+              "quadrature_bound": 0.0013027067682456954,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 8
+            },
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 9.845217880095574e-17,
+              "geometry_evidence": {
+                "coordinate_scale": 1.4142135623730951,
+                "evidence_id": "0ac968e16a3b0a0d026d08c0e8b7fe5572777e6e58e1e2b775c6259bd0c7eb0d",
+                "minimum_orientation_ratio": 1.0,
+                "minimum_rank_ratio": 0.49999999999999667,
+                "minimum_weight_ratio": 0.9999999999999996,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.0032078956950895095,
+              "l2_error": 3.11102354811436e-05,
+              "normalized_free_residual": 3.648084970161325e-15,
+              "parity_bound": 1e-12,
+              "parity_defect": 4.287704491011215e-16,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 1.2980323866256815e-09,
+              "quadrature_bound": 0.000320789569508951,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 16
+            }
+          ],
+          "map_defect": 3.3306690738754696e-16,
+          "name": "affine-square",
+          "passed": true,
+          "physical_linear_reproduction_bound": 1e-09,
+          "physical_linear_reproduction_defect": 2.220446049250313e-16,
+          "taylor": {
+            "errors": [
+              8.137127171700763e-09,
+              5.134186363207466e-10,
+              3.239473893539172e-11,
+              2.043983441454188e-12,
+              1.291778796439618e-13,
+              8.689088880205794e-15
+            ],
+            "non_roundoff_slopes": [
+              1.999999124329032,
+              1.9999952407954056,
+              1.9999951852843292,
+              1.9988153692552082
+            ],
+            "passed": true,
+            "steps": [
+              0.01,
+              0.0025118864315095794,
+              0.000630957344480193,
+              0.00015848931924611142,
+              3.9810717055349695e-05,
+              1e-05
+            ]
+          }
+        },
+        {
+          "geometry_claim": "exact rational quarter-annulus map; sampled regularity evidence",
+          "h1_rate": 2.127133240658081,
+          "h1_rate_bound": 1.75,
+          "l2_rate": 3.190731270283127,
+          "l2_rate_bound": 2.75,
+          "levels": [
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 0.0,
+              "geometry_evidence": {
+                "coordinate_scale": 2.9288436284649952,
+                "evidence_id": "9ccbcdf548ff27c78c26373d7a35eddb17e131b4d1a35a847e6cd6ac9ca6fc83",
+                "minimum_orientation_ratio": 0.9999999999999999,
+                "minimum_rank_ratio": 0.11657559198542765,
+                "minimum_weight_ratio": 0.5306476304325538,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.31314847812104857,
+              "l2_error": 0.03751667335322061,
+              "normalized_free_residual": 5.506168418842736e-16,
+              "parity_bound": 1e-12,
+              "parity_defect": 3.797058210552288e-16,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 0.004586403426954781,
+              "quadrature_bound": 0.031314847812104855,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 2
+            },
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 9.262300348504433e-17,
+              "geometry_evidence": {
+                "coordinate_scale": 3.001057213324299,
+                "evidence_id": "afc31ee62dbe11631bdd99b346f637eaa68e723da55cca7be83405e9aaa7d666",
+                "minimum_orientation_ratio": 0.9999999999999998,
+                "minimum_rank_ratio": 0.11103284038986812,
+                "minimum_weight_ratio": 0.5146943587821845,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.0648162548677101,
+              "l2_error": 0.003866437522532862,
+              "normalized_free_residual": 6.257783384159671e-16,
+              "parity_bound": 1e-12,
+              "parity_defect": 4.980047124597155e-16,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 6.442790097625275e-05,
+              "quadrature_bound": 0.00648162548677101,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 4
+            },
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 8.462283188607144e-17,
+              "geometry_evidence": {
+                "coordinate_scale": 3.0417571045655083,
+                "evidence_id": "c47dcbb89cbded77f46891ab38eb0befb9ae69aec209ccd6a6615a2b0c7bcc2e",
+                "minimum_orientation_ratio": 0.9999999999999998,
+                "minimum_rank_ratio": 0.10808139408942441,
+                "minimum_weight_ratio": 0.5071941045280851,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.015162623768894838,
+              "l2_error": 0.0004135577049390657,
+              "normalized_free_residual": 1.0303790111191433e-15,
+              "parity_bound": 1e-12,
+              "parity_defect": 6.651539749611112e-16,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 7.396585016334782e-07,
+              "quadrature_bound": 0.001516262376889484,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 8
+            },
+            {
+              "duality_bound": 1e-12,
+              "duality_defect": 8.832561448205425e-17,
+              "geometry_evidence": {
+                "coordinate_scale": 3.0648713012039166,
+                "evidence_id": "813c1ea73f7833aa6e34fd932f2d249a8fd9dc78558df4443b5833480e301546",
+                "minimum_orientation_ratio": 0.9999999999999998,
+                "minimum_rank_ratio": 0.10645731658846269,
+                "minimum_weight_ratio": 0.5035593140024298,
+                "orientation_tolerance": 1.4901161193847656e-08,
+                "rank_tolerance": 1.4901161193847656e-08,
+                "weight_tolerance": 1.4901161193847656e-08
+              },
+              "h1_error": 0.00372921248541995,
+              "l2_error": 4.96740855121682e-05,
+              "normalized_free_residual": 5.081021621712564e-15,
+              "parity_bound": 1e-12,
+              "parity_defect": 1.2839978507521743e-15,
+              "passed": true,
+              "q_vs_q_plus_2_defect": 1.1551473590805496e-08,
+              "quadrature_bound": 0.000372921248541995,
+              "residual_bound": 1e-09,
+              "solver_successful": true,
+              "span_count_per_axis": 16
+            }
+          ],
+          "map_defect": 1.1102230246251565e-15,
+          "name": "quarter-annulus",
+          "passed": true,
+          "physical_linear_reproduction_bound": 1e-09,
+          "physical_linear_reproduction_defect": 6.661338147750939e-16,
+          "taylor": {
+            "errors": [
+              1.3441436200609951e-08,
+              8.480695287202605e-10,
+              5.3507593255475415e-11,
+              3.3765455958354607e-12,
+              2.133501664101356e-13,
+              1.492442109119253e-14
+            ],
+            "non_roundoff_slopes": [
+              2.0000236930030533,
+              2.0000267369153284,
+              1.9999046639864677,
+              1.9989660545602195
+            ],
+            "passed": true,
+            "steps": [
+              0.01,
+              0.0025118864315095794,
+              0.000630957344480193,
+              0.00015848931924611142,
+              3.9810717055349695e-05,
+              1e-05
+            ]
+          }
+        }
+      ],
+      "degree": 2,
+      "kind": "iga-h1-qualification",
+      "passed": true,
+      "policy": {
+        "duality_epsilon_factor": 4096.0,
+        "duality_factor": 0.01,
+        "h1_rate_slack": 0.25,
+        "l2_rate_slack": 0.25,
+        "orientation_tolerance": null,
+        "parity_epsilon_factor": 1024.0,
+        "parity_factor": 0.01,
+        "policy_id": "9887d7572a46c12129acff379f60e43b81729bd9a414356e0fa711388d675391",
+        "quadrature_error_fraction": 0.1,
+        "quadrature_reference_increment": 2,
+        "rank_tolerance": null,
+        "refinement_levels": 4,
+        "residual_epsilon_factor": 1024.0,
+        "residual_factor": 10.0,
+        "taylor_minimum_intervals": 3,
+        "taylor_slope_max": 2.2,
+        "taylor_slope_min": 1.8,
+        "taylor_step_count": 6,
+        "weight_tolerance": null
+      },
+      "solver_relative_tolerance": 1e-10,
+      "span_counts_per_axis": [
+        2,
+        4,
+        8,
+        16
+      ]
+    }
+  }
+}

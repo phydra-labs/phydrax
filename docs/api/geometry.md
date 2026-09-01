@@ -282,11 +282,30 @@ resolved bounds, root key, design signature, and termination reason. Its global
 local phase. Keeping the phases separate makes extra evaluations and failure modes
 observable.
 
-Global search currently requires
-`geometry.field_certificate.validity_region == "all_space"`. Restricted regions such
-as fixed-topology B-Rep validity cannot yet provide an executable per-candidate
-validity predicate, so search fails before objective evaluation rather than silently
-crossing an uncertified region.
+Global search evaluates `CompiledGeometry.validity()` for every candidate. Parameter
+finiteness and declared `ParameterSpec.bounds` are always checked. Restricted
+representations require a `GeometryValidityProvider`; without one their disposition
+is `INCONCLUSIVE` and search fails before objective evaluation. Invalid provider-backed
+candidates become explicit invalid objective evaluations.
+
+## Exact sweeps and fixed-topology realization
+
+`Extrusion` and `Revolution` lift two-dimensional region sources into local-frame
+three-dimensional fields while propagating field certificates conservatively.
+`CompiledGeometry.validity()` exposes parameter and representation validity as
+`GeometryValidityEvidence`.
+
+`ImplicitPointProjectionPlan` supplies fixed-shape normal-gauge boundary motion.
+`discover_implicit_surface` creates a host-side `ImplicitSurfacePlan` whose JAX
+runtime preserves triangle connectivity and reports sign, root, QEF, orientation,
+and intersection evidence.
+
+`FiniteElementMeshMotionPlan` is owned by `phydrax.discretization`; it consumes any
+structural fixed-route boundary provider, performs graph-harmonic interior motion,
+and returns a safe `FiniteElementRuntimeData` plus signed-Jacobian evidence.
+
+See [Differentiable fixed-topology geometry](../guides_differentiable_geometry.md)
+for contracts, nonclaims, and a complete workflow.
 
 ## Reconstruction with provenance
 
@@ -312,6 +331,25 @@ a primitive constructor.
 ::: phydrax.geometry.FieldCertificate
 
 ---
+---
+
+::: phydrax.geometry.GeometryValidityEvidence
+
+---
+
+::: phydrax.geometry.Extrusion
+
+---
+
+::: phydrax.geometry.Revolution
+
+---
+
+::: phydrax.geometry.ImplicitPointProjectionPlan
+
+---
+
+::: phydrax.geometry.ImplicitSurfacePlan
 
 ::: phydrax.geometry.BoundaryAtlas
 

@@ -64,6 +64,28 @@
 
 ::: phydrax.discretization.FiniteElementPrecisionPolicy
 
+## Fixed-topology mesh motion
+
+`FiniteElementMeshMotionPlan` consumes a fixed-route boundary coordinate provider,
+solves a graph-harmonic interior extension, and returns `FiniteElementMeshRealization`.
+Its runtime preserves the prepared topology and coordinate layout. Signed-Jacobian,
+displacement, boundary-provider, and linear-solve evidence determine acceptance;
+rejected proposals expose the base runtime and remain explicitly rejected.
+
+::: phydrax.discretization.FiniteElementMeshMotionPlan
+
+---
+
+::: phydrax.discretization.FiniteElementMeshMotionPolicy
+
+---
+
+::: phydrax.discretization.FiniteElementMeshRealization
+
+---
+
+::: phydrax.discretization.FiniteElementGeometryEvidence
+
 ## Constraints
 
 ::: phydrax.linalg.ConstraintMap
@@ -358,11 +380,11 @@
 
 ---
 
-::: phydrax.equations.FiniteElementMaterialState
+::: phydrax.equations.MaterialState
 
 ---
 
-::: phydrax.equations.FiniteElementMaterialTransaction
+::: phydrax.equations.MaterialTransaction
 
 ---
 

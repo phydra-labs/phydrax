@@ -21,6 +21,8 @@ from .._local_variational import (
     LocalGeometryActions,
     LocalMetricResult,
     LocalReferenceActions,
+    LocalVariationalCapabilities,
+    LocalVariationalOffer,
     PreparedLocalRegion,
 )
 
@@ -33,6 +35,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
     """Dense FE reference actions; runtime is intentionally ignored."""
 
     action_id: str = eqx.field(static=True)
+    realization_id: str = eqx.field(static=True)
     local_width: int = eqx.field(static=True)
     point_count: int = eqx.field(static=True)
     maximum_derivative_order: int = eqx.field(static=True)
@@ -82,6 +85,7 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         )
         if not identifier:
             raise ValueError("action_id must be non-empty.")
+        self.realization_id = "finite-element-dense"
         self.action_id = identifier
         self.local_width = width
         self.point_count = point_count
@@ -127,6 +131,18 @@ class FiniteElementReferenceActions(LocalReferenceActions):
         if self.basis_gradients.ndim == 3:
             return oe.contract("qir,cq...r->ci...", self.basis_gradients, gradients_)
         return oe.contract("cqir,cq...r->ci...", self.basis_gradients, gradients_)
+
+    def reference_hessian(
+        self, runtime: object, local_coefficients: ArrayLike, /
+    ) -> Array:
+        del runtime, local_coefficients
+        raise ValueError("FE reference Hessian actions were not prepared.")
+
+    def reference_hessian_transpose(
+        self, runtime: object, hessians: ArrayLike, /
+    ) -> Array:
+        del runtime, hessians
+        raise ValueError("FE reference Hessian transpose actions were not prepared.")
 
     def trace(self, runtime: object, local_coefficients: ArrayLike, /) -> Array:
         return self.interpolate(runtime, local_coefficients)
@@ -224,6 +240,83 @@ class FiniteElementLocalProvider(StrictModule):
         if not isinstance(discretization, FiniteElementDiscretization):
             raise TypeError("discretization must be FiniteElementDiscretization.")
         self.discretization = discretization
+
+    def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:
+        common_semantics = (
+            "exact_interpolation_transpose",
+            "exact_gradient_transpose",
+            "exact_trace_transpose",
+        )
+        return LocalVariationalCapabilities(
+            "finite-element-local-provider",
+            (
+                LocalVariationalOffer(
+                    "prepared-local",
+                    ("cell",),
+                    ("diffusion", "mass", "source"),
+                    ("value", "grad"),
+                    ("value", "gradient"),
+                    (
+                        "dense",
+                        "partial",
+                        "sum_factorized",
+                        "collocated",
+                    ),
+                    ("matrix_free", "sparse"),
+                    ("finite-element-dense",),
+                    automatic_kernel_mode="dense",
+                    automatic_operator_realization="sparse",
+                    automatic_reference_realization_id="finite-element-dense",
+                    action_semantics=common_semantics,
+                ),
+                LocalVariationalOffer(
+                    "native",
+                    ("cell", "exterior_facet", "interior_facet"),
+                    (
+                        "diffusion",
+                        "mass",
+                        "source",
+                        "boundary-load",
+                        "cell-residual",
+                        "pairwise-volume-flux",
+                        "interior-facet",
+                        "exterior-facet",
+                        "sipg-facet",
+                        "cell-energy",
+                        "functional",
+                        "cell-bilinear",
+                        "operator-action",
+                    ),
+                    (
+                        "value",
+                        "grad",
+                        "sym-grad",
+                        "div",
+                        "curl",
+                        "normal-trace",
+                        "tangential-trace",
+                        "jump",
+                        "average",
+                    ),
+                    ("value", "gradient", "trace", "curl", "divergence"),
+                    (
+                        "dense",
+                        "partial",
+                        "sum_factorized",
+                        "collocated",
+                    ),
+                    ("matrix_free", "sparse"),
+                    ("finite-element-native",),
+                    automatic_kernel_mode="dense",
+                    automatic_operator_realization="sparse",
+                    automatic_reference_realization_id="finite-element-native",
+                    action_semantics=common_semantics,
+                    material_modes=("none", "local"),
+                    history_modes=("none", "local"),
+                    explicit_rules=True,
+                ),
+            ),
+        )
 
     def local_field_binding(self, name: str, /) -> LocalFieldBinding:
         discretization = self.discretization
@@ -381,6 +474,8 @@ class FiniteElementLocalProvider(StrictModule):
             runtime.topology_id != discretization.mesh.topology_id
             or runtime.geometry_layout_id
             != discretization.default_runtime.geometry_layout_id
+            or runtime.coordinates.shape
+            != discretization.default_runtime.coordinates.shape
         ):
             raise ValueError("Finite-element runtime does not match the prepared layout.")
 

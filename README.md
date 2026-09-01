@@ -33,9 +33,11 @@ functionals such as signed energies, and $r_k$ are model-level losses.
 Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space $\Omega=\Omega_x\times\Omega_t\times\cdots$.
-- **Geometry**: analytic, simplicial, B-Rep, CSG, and reconstructed sources compile
-  to one JAX kernel/state contract with explicit capabilities, field certificates,
-  boundary atlases, topology identities, and design parameters.
+- **Geometry**: analytic, swept, simplicial, B-Rep, CSG, and reconstructed sources
+  compile to one JAX kernel/state contract with explicit capabilities, field
+  certificates, runtime validity, boundary atlases, topology identities, and design
+  parameters. Dense implicit-surface discovery, normal-gauge fixed-anchor projection,
+  and evidence-bearing FE mesh motion keep connectivity static while coordinates vary.
 - **Discretization and solver substrates**: tensor supports, local finite
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,
@@ -52,11 +54,14 @@ Most workflows are composing a few primitives:
   partitioned coupling, fixed-grid waveform exchange, transactional
   gravity/cooling/stochastic source processes, compatible constrained MHD,
   temporal/stochastic composition, and auditable plan/preparation identities.
-- **Isogeometric analysis**: a deliberately bounded S1 path prepares regular,
-  untrimmed, full-dimensional two-dimensional single-patch NURBS maps and
-  exactly isoparametric scalar H1 fields with frozen clamped isotropic knot
-  grids, positive gauge-fixed weights, explicit Gauss rules, homogeneous trace
-  constraints, and matrix-free sum-factorized finite-element forms.
+- **Isogeometric analysis**: the allow-listed `iga.tensor` R1 foundation
+  covers regular untrimmed full-dimensional 1D/2D/3D tensor-product maps,
+  anisotropic and independent geometry/field grids, direct-tensor and extracted
+  Bernstein realizations, common integration overlays, self-periodic traces,
+  conservative refinement transfer, scalar/vector/mixed H1 forms, linear
+  elasticity and generalized eigenspaces, differentiable numeric refresh, and
+  immutable native restart evidence. Exact supported combinations are listed in
+  the support matrix; unlisted tuples fail closed.
 - **Virtual elements**: enhanced conforming degree-one-through-three polygonal
   functional spaces expose certified H1/L2 projectors, explicit stabilization,
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
@@ -92,17 +97,6 @@ Most workflows are composing a few primitives:
   refinement, deterministic synthetic qualification, and optional learned dense
   displacement preserve image/physical coordinate frames, raw validity,
   uncertainty, capacity, and provenance.
-- **Bioinformatics**: evidence-bearing native sequence, genomics, phylogenetics,
-  population genetics, omics, spatial biology, spectrometry, metagenomics,
-  macromolecular structure, RNA, systems biology, biological-model, and interchange
-  contracts separate exact-model, approximate, relaxed, heuristic, and learned claims.
-  Host parsers and artifact identity stay outside JAX; kernels retain masks, capacities,
-  units, experimental units, leakage/provenance, validity, and status. No references,
-  annotations, weights, libraries, or qualification data are downloaded. Optional local
-  readers are `pysam` via `bioinformatics-hts` and Pyteomics via
-  `bioinformatics-spectrometry`; native primitives do not imply exhaustive
-  mapping/assembly/discovery, clinical interpretation, empirical RNA parameter tables,
-  automatic structure repair/force-field assignment, or learned-model validation.
 - **Computational topology**: compact active subcomplexes, exact field-qualified
   homology, rational Betti dimensions, validated filtrations, persistent homology,
   fixed-capacity diagrams, and independently verified topology–Hodge evidence over
@@ -224,16 +218,18 @@ If you are new to the library, the general recipe is:
 
 Geometry construction lives in `phx.geometry`; `phx.domain.GeometryDomain` is the
 thin labeled-domain adapter used by sampling, integration, and constraints. See the
-[geometry substrate API](docs/api/geometry.md).
+[geometry substrate API](docs/api/geometry.md) and
+[differentiable fixed-topology geometry guide](docs/guides_differentiable_geometry.md).
 
 Numerical supports and finite field spaces live in `phx.discretization`, including
 bounded, periodic, half-line, and real-line global tensor bases; rational Chebyshev
-transforms and spectral resolution evidence; the bounded two-dimensional
-single-patch isogeometric path; material-particle supports and conservative SPH;
+transforms and spectral resolution evidence; the allow-listed 1D/2D/3D
+tensor-product isogeometric foundation; material-particle supports and conservative SPH;
 and exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami
 actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [isogeometric-analysis guide](docs/guides_isogeometric_analysis.md), the
+[`iga.tensor` support matrix](docs/guides_isogeometric_analysis_support.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the

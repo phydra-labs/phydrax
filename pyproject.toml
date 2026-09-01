@@ -68,37 +68,6 @@ atomistic-interop = [
   "openmm>=8.2,<9",
   "ParmEd>=4.3,<5",
 ]
-bioinformatics-hts = [
-  "pysam>=0.24,<0.25",
-]
-bioinformatics-mudata = [
-  "mudata>=0.3,<0.4",
-]
-bioinformatics-ngff = [
-  "ome-zarr>=0.12,<0.13; python_version >= '3.12'",
-  "zarr>=3.0,<4; python_version >= '3.12'",
-]
-bioinformatics-omics = [
-  "anndata>=0.11,<0.13",
-]
-bioinformatics-phylo-interop = [
-  "biopython>=1.88,<2",
-]
-bioinformatics-sbml = [
-  "python-libsbml>=5.21,<5.22",
-]
-bioinformatics-spectrometry = [
-  "pyteomics>=5.0,<6",
-]
-bioinformatics-structure = [
-  "gemmi>=0.7,<0.8",
-]
-bioinformatics-tree-sequence = [
-  "tskit>=1.0,<2",
-]
-bioinformatics-zarr = [
-  "zarr>=3.0,<4; python_version >= '3.12'",
-]
 clarabel = [
     "clarabel==0.11.1",
 ]

@@ -1,0 +1,297 @@
+{
+  "closure": {
+    "case_ids": [
+      "compatible_complex",
+      "geometry_certificate",
+      "linear_pod_rom",
+      "thb_basis"
+    ],
+    "passed": true,
+    "seconds": 0.5805693750007777
+  },
+  "h1": {
+    "environment": {
+      "default_float_dtype": "float64",
+      "fingerprint": "0d1cafd70d36b994d3a454270cbc2f73aa6b31b08ea506c5088f88d3fe904d12",
+      "jax": {
+        "backend": "cpu",
+        "devices": [
+          {
+            "kind": "cpu",
+            "platform": "cpu"
+          }
+        ],
+        "version": "0.9.1",
+        "x64_enabled": true
+      },
+      "jaxlib_version": "0.9.1",
+      "logical_cpus": 10,
+      "machine": "arm64",
+      "numpy_version": "2.3.5",
+      "package_fingerprint": "ad203c8b8a750a2fb63109cf76b19bbe56a607e3c9e290dbcf799c031fa94ca5",
+      "performance_environment": {
+        "JAX_COMPILATION_CACHE_DIR": null,
+        "JAX_PLATFORMS": null,
+        "JAX_PLATFORM_NAME": null,
+        "MKL_NUM_THREADS": null,
+        "OMP_NUM_THREADS": null,
+        "OPENBLAS_NUM_THREADS": null,
+        "VECLIB_MAXIMUM_THREADS": null,
+        "XLA_FLAGS": null,
+        "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+        "XLA_PYTHON_CLIENT_PREALLOCATE": null
+      },
+      "phydrax_version": "0.2.2",
+      "platform": "macOS-15.7.2-arm64-arm-64bit",
+      "processor": "arm",
+      "python_version": "3.12.8"
+    },
+    "kind": "iga-h1-record-only-timing",
+    "record_only": true,
+    "rows": [
+      {
+        "apply": {
+          "count": 1,
+          "max_seconds": 0.049297083,
+          "mean_seconds": 0.049297083,
+          "median_seconds": 0.049297083,
+          "min_seconds": 0.049297083,
+          "samples_seconds": [
+            0.049297083
+          ],
+          "std_seconds": 0.0
+        },
+        "coefficient_count": 16,
+        "compilation_seconds": 0.426314583,
+        "degree": 2,
+        "first_apply_seconds": 2.879895167,
+        "first_solve_seconds": 3.960920375,
+        "free_coefficient_count": 4,
+        "geometry_evidence": {
+          "minimum_orientation_ratio": 1.0,
+          "minimum_rank_ratio": 0.49999999999999944,
+          "minimum_weight_ratio": 0.9999999999999997
+        },
+        "logical_payload_bytes": 7256,
+        "normalized_free_residual": 1.7802558580310937e-16,
+        "preparation_seconds": 3.836980708,
+        "solve": {
+          "count": 1,
+          "max_seconds": 2.622994875,
+          "mean_seconds": 2.622994875,
+          "median_seconds": 2.622994875,
+          "min_seconds": 2.622994875,
+          "samples_seconds": [
+            2.622994875
+          ],
+          "std_seconds": 0.0
+        },
+        "solver_successful": true,
+        "span_count_per_axis": 2
+      },
+      {
+        "apply": {
+          "count": 1,
+          "max_seconds": 0.05781,
+          "mean_seconds": 0.05781,
+          "median_seconds": 0.05781,
+          "min_seconds": 0.05781,
+          "samples_seconds": [
+            0.05781
+          ],
+          "std_seconds": 0.0
+        },
+        "coefficient_count": 36,
+        "compilation_seconds": 0.460385834,
+        "degree": 2,
+        "first_apply_seconds": 2.789776834,
+        "first_solve_seconds": 3.433382084,
+        "free_coefficient_count": 16,
+        "geometry_evidence": {
+          "minimum_orientation_ratio": 1.0,
+          "minimum_rank_ratio": 0.4999999999999988,
+          "minimum_weight_ratio": 0.9999999999999996
+        },
+        "logical_payload_bytes": 18776,
+        "normalized_free_residual": 2.203834701469889e-16,
+        "preparation_seconds": 3.613363833,
+        "solve": {
+          "count": 1,
+          "max_seconds": 2.841470625,
+          "mean_seconds": 2.841470625,
+          "median_seconds": 2.841470625,
+          "min_seconds": 2.841470625,
+          "samples_seconds": [
+            2.841470625
+          ],
+          "std_seconds": 0.0
+        },
+        "solver_successful": true,
+        "span_count_per_axis": 4
+      },
+      {
+        "apply": {
+          "count": 1,
+          "max_seconds": 0.053070458,
+          "mean_seconds": 0.053070458,
+          "median_seconds": 0.053070458,
+          "min_seconds": 0.053070458,
+          "samples_seconds": [
+            0.053070458
+          ],
+          "std_seconds": 0.0
+        },
+        "coefficient_count": 25,
+        "compilation_seconds": 0.68153425,
+        "degree": 3,
+        "first_apply_seconds": 3.105464083,
+        "first_solve_seconds": 3.527276083,
+        "free_coefficient_count": 9,
+        "geometry_evidence": {
+          "minimum_orientation_ratio": 1.0,
+          "minimum_rank_ratio": 0.49999999999999933,
+          "minimum_weight_ratio": 0.9999999999999992
+        },
+        "logical_payload_bytes": 11980,
+        "normalized_free_residual": 8.93016617702484e-15,
+        "preparation_seconds": 4.126859792,
+        "solve": {
+          "count": 1,
+          "max_seconds": 2.689856708,
+          "mean_seconds": 2.689856708,
+          "median_seconds": 2.689856708,
+          "min_seconds": 2.689856708,
+          "samples_seconds": [
+            2.689856708
+          ],
+          "std_seconds": 0.0
+        },
+        "solver_successful": true,
+        "span_count_per_axis": 2
+      },
+      {
+        "apply": {
+          "count": 1,
+          "max_seconds": 0.054300542,
+          "mean_seconds": 0.054300542,
+          "median_seconds": 0.054300542,
+          "min_seconds": 0.054300542,
+          "samples_seconds": [
+            0.054300542
+          ],
+          "std_seconds": 0.0
+        },
+        "coefficient_count": 49,
+        "compilation_seconds": 0.675390834,
+        "degree": 3,
+        "first_apply_seconds": 2.982591542,
+        "first_solve_seconds": 3.628075958,
+        "free_coefficient_count": 25,
+        "geometry_evidence": {
+          "minimum_orientation_ratio": 1.0,
+          "minimum_rank_ratio": 0.4999999999999982,
+          "minimum_weight_ratio": 0.9999999999999992
+        },
+        "logical_payload_bytes": 30492,
+        "normalized_free_residual": 2.1020126986781475e-15,
+        "preparation_seconds": 4.327680208,
+        "solve": {
+          "count": 1,
+          "max_seconds": 2.686729,
+          "mean_seconds": 2.686729,
+          "median_seconds": 2.686729,
+          "min_seconds": 2.686729,
+          "samples_seconds": [
+            2.686729
+          ],
+          "std_seconds": 0.0
+        },
+        "solver_successful": true,
+        "span_count_per_axis": 4
+      },
+      {
+        "apply": {
+          "count": 1,
+          "max_seconds": 0.0543235,
+          "mean_seconds": 0.0543235,
+          "median_seconds": 0.0543235,
+          "min_seconds": 0.0543235,
+          "samples_seconds": [
+            0.0543235
+          ],
+          "std_seconds": 0.0
+        },
+        "coefficient_count": 36,
+        "compilation_seconds": 0.928453958,
+        "degree": 4,
+        "first_apply_seconds": 3.382592042,
+        "first_solve_seconds": 3.269134917,
+        "free_coefficient_count": 16,
+        "geometry_evidence": {
+          "minimum_orientation_ratio": 1.0,
+          "minimum_rank_ratio": 0.49999999999999833,
+          "minimum_weight_ratio": 0.9999999999999992
+        },
+        "logical_payload_bytes": 18024,
+        "normalized_free_residual": 1.639098544781978e-15,
+        "preparation_seconds": 4.827678875,
+        "solve": {
+          "count": 1,
+          "max_seconds": 2.801910833,
+          "mean_seconds": 2.801910833,
+          "median_seconds": 2.801910833,
+          "min_seconds": 2.801910833,
+          "samples_seconds": [
+            2.801910833
+          ],
+          "std_seconds": 0.0
+        },
+        "solver_successful": true,
+        "span_count_per_axis": 2
+      },
+      {
+        "apply": {
+          "count": 1,
+          "max_seconds": 0.054378167,
+          "mean_seconds": 0.054378167,
+          "median_seconds": 0.054378167,
+          "min_seconds": 0.054378167,
+          "samples_seconds": [
+            0.054378167
+          ],
+          "std_seconds": 0.0
+        },
+        "coefficient_count": 64,
+        "compilation_seconds": 0.960902709,
+        "degree": 4,
+        "first_apply_seconds": 3.631564458,
+        "first_solve_seconds": 3.774749709,
+        "free_coefficient_count": 36,
+        "geometry_evidence": {
+          "minimum_orientation_ratio": 1.0,
+          "minimum_rank_ratio": 0.4999999999999978,
+          "minimum_weight_ratio": 0.9999999999999987
+        },
+        "logical_payload_bytes": 45480,
+        "normalized_free_residual": 1.432496298489981e-15,
+        "preparation_seconds": 4.948330041,
+        "solve": {
+          "count": 1,
+          "max_seconds": 2.788686166,
+          "mean_seconds": 2.788686166,
+          "median_seconds": 2.788686166,
+          "min_seconds": 2.788686166,
+          "samples_seconds": [
+            2.788686166
+          ],
+          "std_seconds": 0.0
+        },
+        "solver_successful": true,
+        "span_count_per_axis": 4
+      }
+    ]
+  },
+  "kind": "iga-r1-record-only-benchmark",
+  "record_only": true,
+  "wall_seconds": 103.44592470799398
+}

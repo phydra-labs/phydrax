@@ -4,7 +4,7 @@
 
 """Representation-aware geometry sources, kernels, and realizations."""
 
-from . import analytic, brep, complex, design, reconstruction, simplicial
+from . import analytic, brep, complex, design, implicit, reconstruction, simplicial
 from ._atlas import (
     BoundaryAtlas,
     BoundaryFrame,
@@ -90,6 +90,11 @@ from ._tetra_intersections import (
     TetraIntersectionStatus,
     TetraIntersectionTolerance,
 )
+from ._validity import (
+    GeometryValidityDisposition,
+    GeometryValidityEvidence,
+    GeometryValidityProvider,
+)
 from .analytic import (
     BlendCSG,
     BlendDifference,
@@ -103,9 +108,11 @@ from .analytic import (
     Difference,
     Ellipse,
     Ellipsoid,
+    Extrusion,
     Intersection,
     Polygon,
     Rectangle,
+    Revolution,
     RigidFrame,
     RigidTransform,
     Scaling,
@@ -184,6 +191,19 @@ from .design._sketch import (
     TangentLineCircle,
     Vertical,
 )
+from .implicit import (
+    discover_implicit_surface,
+    ImplicitPointProjectionEvidence,
+    ImplicitPointProjectionPlan,
+    ImplicitPointProjectionResult,
+    ImplicitProjectionPolicy,
+    ImplicitProjectionStatus,
+    ImplicitSurfaceEvidence,
+    ImplicitSurfacePlan,
+    ImplicitSurfacePolicy,
+    ImplicitSurfaceRealization,
+    ImplicitSurfaceStatus,
+)
 from .reconstruction import (
     reconstruct_dem_region,
     reconstruct_lidar_region,
@@ -221,6 +241,7 @@ __all__ = [
     "analytic",
     "brep",
     "complex",
+    "implicit",
     "design",
     "reconstruction",
     "simplicial",
@@ -249,6 +270,17 @@ __all__ = [
     "regularized_heaviside_values",
     "intersect_convex_polygons",
     "TetraIntersectionEvidence",
+    "discover_implicit_surface",
+    "ImplicitPointProjectionEvidence",
+    "ImplicitPointProjectionPlan",
+    "ImplicitPointProjectionResult",
+    "ImplicitProjectionPolicy",
+    "ImplicitProjectionStatus",
+    "ImplicitSurfaceEvidence",
+    "ImplicitSurfacePlan",
+    "ImplicitSurfacePolicy",
+    "ImplicitSurfaceRealization",
+    "ImplicitSurfaceStatus",
     "TetraIntersectionLimits",
     "TetraIntersectionResult",
     "TetraIntersectionStatus",
@@ -301,6 +333,7 @@ __all__ = [
     "DesignState",
     "DistanceSemantics",
     "Cylinder",
+    "Extrusion",
     "Difference",
     "Ellipse",
     "Ellipsoid",
@@ -317,6 +350,9 @@ __all__ = [
     "GeometryKernel",
     "GeometryKind",
     "GeometrySource",
+    "GeometryValidityDisposition",
+    "GeometryValidityEvidence",
+    "GeometryValidityProvider",
     "Horizontal",
     "InteriorClearance",
     "LineAngle",
@@ -347,6 +383,7 @@ __all__ = [
     "reconstruct_surface_region",
     "ParameterId",
     "ParameterSchema",
+    "Revolution",
     "ParameterSpec",
     "Polygon",
     "PlanarMeshRegion",

@@ -23,6 +23,7 @@ from .._sampling import (
     RejectionSamplingPlan,
     SamplingResult,
 )
+from .._validity import combine_validity, representation_validity
 from ..design._schema import (
     _ParameterCollector,
     DesignState,
@@ -99,6 +100,9 @@ class _TranslationKernel(GeometryKernel):
     @property
     def field_certificate(self) -> FieldCertificate:
         return self.child.field_certificate.translated()
+
+    def geometry_validity(self, state, /):
+        return representation_validity(self.child, state)
 
     def _offset(self, state: DesignState) -> Array:
         return self.offset.read(state)
@@ -249,6 +253,12 @@ class _UnionKernel(GeometryKernel):
     def field_certificate(self) -> FieldCertificate:
         return sharp_union_certificate(
             tuple(child.field_certificate for child in self.children)
+        )
+
+    def geometry_validity(self, state, /):
+        return combine_validity(
+            tuple(representation_validity(child, state) for child in self.children),
+            contract_id="sharp_union",
         )
 
     def _fields(self, state: DesignState, points: Array) -> Array:

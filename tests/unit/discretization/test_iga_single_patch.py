@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from phydrax.discretization import iga
 
@@ -67,18 +66,29 @@ def test_single_patch_topology_runtime_and_trace_constraint():
     np.testing.assert_allclose(correction, 0.0)
 
 
-def test_s1_rejects_anisotropic_or_nonisoparametric_axes():
+def test_anisotropic_isoparametric_axes_prepare():
     quadratic = iga.BSplineGrid.open_uniform(2, 1)
     cubic = iga.BSplineGrid.open_uniform(3, 1)
+    xx, yy = jnp.meshgrid(
+        quadratic.greville_abscissae,
+        cubic.greville_abscissae,
+        indexing="ij",
+    )
+    plan = iga.IsogeometricPlan.isoparametric(
+        (quadratic, cubic),
+        iga.NURBSGeometryState(
+            jnp.stack((xx, yy), axis=-1),
+            jnp.ones((quadratic.coefficient_count, cubic.coefficient_count)),
+        ),
+        field_name="u",
+        axis_names=("xi", "eta"),
+        quadrature_policy=iga.IsogeometricQuadraturePolicy((3, 4)),
+    )
 
-    with pytest.raises(ValueError, match="isotropic"):
-        iga.IsogeometricPlan.isoparametric(
-            (quadratic, cubic),
-            iga.NURBSGeometryState(
-                jnp.zeros((quadratic.coefficient_count, cubic.coefficient_count, 2)),
-                jnp.ones((quadratic.coefficient_count, cubic.coefficient_count)),
-            ),
-            field_name="u",
-            axis_names=("xi", "eta"),
-            quadrature_policy=iga.IsogeometricQuadraturePolicy(4),
-        )
+    prepared = plan.prepare(numeric_version="anisotropic")
+
+    assert plan.basis.degrees == (2, 3)
+    assert prepared.field_spaces[0].layout.value_shape == (
+        quadratic.coefficient_count,
+        cubic.coefficient_count,
+    )

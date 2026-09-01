@@ -65,19 +65,3 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 - [Composite systems and a Bell state](quantum_composite.md)
 - [Open-system amplitude damping](quantum_open_system.md)
 
-### Bioinformatics workflows
-
-- [FASTX to affine alignment](bioinformatics_fastx_alignment.md)
-- [Annotation to translated CDS](bioinformatics_annotation_translation.md)
-- [Genotype inference from PL values](bioinformatics_genotype_inference.md)
-- [Fixed-tree phylogenetic likelihood](bioinformatics_fixed_tree_phylogenetics.md)
-- [Pseudobulk negative-binomial differential expression](bioinformatics_pseudobulk_de.md)
-- [Spatial neighbor graph and restricted autocorrelation](bioinformatics_spatial_analysis.md)
-- [mmCIF to macromolecular and atomistic state](bioinformatics_mmcif_atomistic.md)
-- [RNA partition function](bioinformatics_rna_partition.md)
-- [Stoichiometric flux balance analysis](bioinformatics_systems_flux.md)
-- [Bind a native biological model artifact](bioinformatics_model_artifacts.md)
-
-Each recipe retains capacities, scientific method status, experimental units, and
-host/JAX boundaries. They use local data only and do not download references, datasets,
-or model artifacts.

@@ -65,6 +65,15 @@ from ._eigen_verification import (
     SpectralEigenResolutionPolicy,
     SpectralEigenResolutionReport,
 )
+from ._fourier_shells import (
+    DCPolicy,
+    FinalEdgePolicy,
+    FourierShellStatisticResult,
+    ModeTransferCorrection,
+    NyquistPolicy,
+    PeriodicFourierField,
+    PeriodicFourierShellPlan,
+)
 from ._galerkin import PreparedSpectralGalerkin, SpectralGalerkinMethodPlan
 from ._incompressible import (
     IncompressibleSpectralDiagnostics,
@@ -127,6 +136,9 @@ __all__ = [
     "ChannelStokesDiagnostics",
     "ChannelStokesPlan",
     "ChannelStokesSolveResult",
+    "DCPolicy",
+    "FinalEdgePolicy",
+    "FourierShellStatisticResult",
     "DealiasingKind",
     "BrillouinZonePlan",
     "DealiasingReport",
@@ -141,6 +153,8 @@ __all__ = [
     "LatticeHarmonicPlan",
     "ModalFilterPlan",
     "ModalDecayReport",
+    "ModeTransferCorrection",
+    "NyquistPolicy",
     "NoDealiasingPlan",
     "PaddingDealiasingPlan",
     "PolynomialClosureDealiasingPlan",
@@ -157,6 +171,8 @@ __all__ = [
     "PreparedSpectralGalerkin",
     "PreparedSpectralOperator",
     "PreparedBrillouinZone",
+    "PeriodicFourierField",
+    "PeriodicFourierShellPlan",
     "PreparedTauSystem",
     "TensorSpectralSymmetry",
     "PseudospectralMethodPlan",

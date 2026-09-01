@@ -978,6 +978,12 @@ from ._mps_quantum_jump import (
     MPSQuantumTrajectoryResult,
     solve_mps_quantum_jump,
 )
+from ._multiphysics_inference import (
+    FieldObservationPlan,
+    ParticleMarginalLikelihoodPlan,
+    SimulationSensitivityReport,
+    WhitenedFieldInferencePlan,
+)
 from ._multirate import (
     multirate_amr_subcycling_plan,
     MultiratePartitionedRK,
@@ -2612,4 +2618,11 @@ __all__ += [
     "KDKCompletion",
     "KDKProposal",
     "KDKTransactionPlan",
+]
+
+__all__ += [
+    "FieldObservationPlan",
+    "ParticleMarginalLikelihoodPlan",
+    "SimulationSensitivityReport",
+    "WhitenedFieldInferencePlan",
 ]

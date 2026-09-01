@@ -380,3 +380,17 @@ against its native solver, particle, geometry, observation, cosmology, and
 evidence substrates. No IERS, JPL, NAIF, gravity, atmosphere, opacity, waveform,
 survey, or calibration dataset is copied or redistributed; every production
 asset remains an explicitly supplied checksummed artifact with its own license.
+
+Differentiable fixed-topology geometry design study
+The design study considered andrinr/cadjoint at commit
+33f9ab36e0b7b981647ac16c70bb70010d42dbdb together with Ju, Losasso, Schaefer,
+and Warren, “Dual Contouring of Hermite Data” (SIGGRAPH 2002), and Schaefer,
+Ju, and Warren, “Manifold Dual Contouring” (TVCG 2007). Phydrax independently
+implements geometry validity, exact analytic sweeps, fixed-anchor normal-gauge
+projection, manifold incidence discovery, regularized QEF realization,
+graph-harmonic finite-element mesh motion, signed-Jacobian acceptance, tests,
+qualification, and benchmarks against its native geometry, topology,
+linear-algebra, FEM, differentiation, evidence, and provenance contracts.
+No upstream source, tests, fixtures, generated data, numerical tables, runtime
+types, API, executable, or dependency is copied, translated, bundled, linked,
+imported, or redistributed.

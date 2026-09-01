@@ -29,7 +29,7 @@ from ..discretization.fem import (
     FiniteElementHPTransaction,
     prepare_finite_element_hp_epoch,
 )
-from ..equations import FiniteElementMaterialTransaction
+from ..equations import MaterialTransaction
 from ._finite_element_schedule import FiniteElementAcceptedState
 
 
@@ -122,7 +122,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
             candidate_fields.append(
                 jnp.tensordot(transfer.primal, field, axes=((1,), (0,)))
             )
-        candidate_materials: FiniteElementMaterialTransaction | None
+        candidate_materials: MaterialTransaction | None
         if accepted.materials is None:
             candidate_materials = None
         elif self.material_transfer is None:
@@ -140,7 +140,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 adaptation,
                 args,
             )
-            if not isinstance(transferred, FiniteElementMaterialTransaction):
+            if not isinstance(transferred, MaterialTransaction):
                 return FiniteElementTopologyResult(
                     state=accepted,
                     mesh=mesh,
@@ -223,7 +223,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                     args,
                 )
             )
-        candidate_materials: FiniteElementMaterialTransaction | None
+        candidate_materials: MaterialTransaction | None
         if accepted.materials is None:
             candidate_materials = None
         elif self.material_transfer is None:
@@ -244,7 +244,7 @@ class FiniteElementTopologyTransaction(StrictModule, NonTrainableState):
                 transaction,
                 args,
             )
-            if not isinstance(candidate_materials, FiniteElementMaterialTransaction):
+            if not isinstance(candidate_materials, MaterialTransaction):
                 return FiniteElementHPTopologyResult(
                     accepted,
                     transaction.accepted,

@@ -35,10 +35,14 @@ class _DesignObjective(StrictModule):
         self.base_state = base_state
 
     def __call__(self, vector: Array, /) -> Array:
-        residual = self.system.residual(
-            self.system.unpack(vector, base_state=self.base_state)
+        state = self.system.unpack(vector, base_state=self.base_state)
+        residual = self.system.residual(state)
+        objective = jnp.sum(residual * residual)
+        return jnp.where(
+            self.system.geometry.validity(state).accepted,
+            objective,
+            jnp.asarray(jnp.nan, dtype=objective.dtype),
         )
-        return jnp.sum(residual * residual)
 
 
 class DesignSearchResult(StrictModule):
@@ -218,11 +222,17 @@ def search_design_constraints(
         raise TypeError("system must be a DesignConstraintSystem.")
     if not isinstance(search, DifferentialEvolutionSearch):
         raise TypeError("search must be a DifferentialEvolutionSearch.")
-    if system.geometry.field_certificate.validity_region != "all_space":
+    initial_geometry_validity = system.geometry.validity(
+        system.geometry.state if initial_state is None else initial_state
+    )
+    if not bool(np.asarray(initial_geometry_validity.resolved)):
         raise NotImplementedError(
-            "Global design search requires a geometry validity region of 'all_space'; "
-            f"got {system.geometry.field_certificate.validity_region!r}."
+            "Global design search requires executable geometry validity for a "
+            f"restricted region; got "
+            f"{system.geometry.field_certificate.validity_region!r}."
         )
+    if not bool(np.asarray(initial_geometry_validity.accepted)):
+        raise ValueError("The initial geometry design state is invalid.")
     state = system.geometry.state if initial_state is None else initial_state
     if not isinstance(state, DesignState):
         raise TypeError("initial_state must be a DesignState or None.")
@@ -237,7 +247,16 @@ def search_design_constraints(
     )
     best_state = system.unpack(result.best_vector, base_state=state)
     residual = system.residual(best_state)
-    objective = jnp.sum(residual * residual)
+    best_valid = bool(np.asarray(system.geometry.validity(best_state).accepted))
+    objective = jnp.where(
+        best_valid,
+        jnp.sum(residual * residual),
+        jnp.asarray(jnp.nan, dtype=residual.dtype),
+    )
+    converged = result.converged and best_valid
+    termination_reason = (
+        result.termination_reason if best_valid else "best candidate has invalid geometry"
+    )
 
     return DesignSearchResult(
         state=best_state,
@@ -250,8 +269,8 @@ def search_design_constraints(
         upper_bounds=result.upper_bounds,
         key=result.key,
         search=result.search,
-        converged=result.converged,
-        termination_reason=result.termination_reason,
+        converged=converged,
+        termination_reason=termination_reason,
         generations=result.generations,
         objective_evaluations=result.objective_evaluations,
         invalid_evaluations=result.invalid_evaluations,

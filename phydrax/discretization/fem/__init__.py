@@ -62,6 +62,16 @@ from ._generic import (
     FiniteElementPlan,
     FiniteElementRuntimeData,
 )
+from ._geometry_motion import (
+    FiniteElementBoundaryProvider,
+    FiniteElementBoundaryRealization,
+    FiniteElementGeometryEvidence,
+    FiniteElementMeshMotionEvidence,
+    FiniteElementMeshMotionPlan,
+    FiniteElementMeshMotionPolicy,
+    FiniteElementMeshMotionStatus,
+    FiniteElementMeshRealization,
+)
 from ._hdg import HDGCondensationPlan, HDGTraceSpace
 from ._high_order import (
     lagrange_1d_tabulation,
@@ -391,6 +401,14 @@ __all__ = [
     "HDGCondensationPlan",
     "HDGTraceSpace",
     "FiniteElementRuntimeData",
+    "FiniteElementBoundaryProvider",
+    "FiniteElementBoundaryRealization",
+    "FiniteElementGeometryEvidence",
+    "FiniteElementMeshMotionEvidence",
+    "FiniteElementMeshMotionPlan",
+    "FiniteElementMeshMotionPolicy",
+    "FiniteElementMeshMotionStatus",
+    "FiniteElementMeshRealization",
     "FiniteElementPrecisionPolicy",
     "FiniteElementSpec",
     "IntegrationDomain",

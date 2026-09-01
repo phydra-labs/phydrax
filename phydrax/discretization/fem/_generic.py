@@ -40,6 +40,7 @@ from .._lifecycle import (
 from .._local_variational import (
     AbstractPreparedLocalDiscretization,
     LocalFieldBinding,
+    LocalVariationalCapabilities,
     PreparedLocalRegion,
 )
 from .._measure import DiscreteMeasure
@@ -1387,12 +1388,24 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         *,
         numeric_version: str,
     ) -> FiniteElementRuntimeData:
+        points = jnp.asarray(
+            self.default_runtime.coordinates if coordinates is None else coordinates
+        )
+        if points.shape != self.default_runtime.coordinates.shape:
+            raise ValueError(
+                "Fixed-topology FE runtime coordinates must preserve coordinate shape."
+            )
         return FiniteElementRuntimeData(
             self.mesh,
-            (self.default_runtime.coordinates if coordinates is None else coordinates),
+            points,
             numeric_version=numeric_version,
             geometry_layout_id=self.default_runtime.geometry_layout_id,
         )
+
+    def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:
+        from ._local_provider import FiniteElementLocalProvider
+
+        return FiniteElementLocalProvider(self).local_variational_capabilities()
 
     def local_field_binding(self, name: str, /) -> LocalFieldBinding:
         from ._local_provider import FiniteElementLocalProvider

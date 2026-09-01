@@ -28,6 +28,7 @@ from . import (
     geometry,
     graph,
     integration,
+    lifecycle,
     kernels,
     linalg,
     metrix,
@@ -37,6 +38,9 @@ from . import (
     operators,
     optim,
     pgm,
+    qualification,
+    rom,
+    service,
     sampling,
     solver,
     sparse,
@@ -54,7 +58,6 @@ from . import artifacts, events, observation
 from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
-from . import bioinformatics
 
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
@@ -65,7 +68,6 @@ __all__ = [
     "atomistic",
     "artifacts",
     "applications",
-    "bioinformatics",
     "backends",
     "combinatorial",
     "circuit",
@@ -87,6 +89,7 @@ __all__ = [
     "transport",
     "geometry",
     "graph",
+    "lifecycle",
     "kernels",
     "linalg",
     "metrix",
@@ -96,6 +99,9 @@ __all__ = [
     "observation",
     "operators",
     "optim",
+    "qualification",
+    "rom",
+    "service",
     "pgm",
     "sampling",
     "sparse",
