@@ -151,30 +151,42 @@ for ghost pressure, capillarity, free-surface viscosity and multiphase material
 reconstruction, with moving-solid cut measures and fixed-pool reseeding treated
 as explicit accepted-step transactions.
 Vortex methods bind scalar 2-D circulation or vector 3-D integrated vorticity
-to stable particle supports without reinterpreting material mass. Qualified
-routes include Gaussian free-space direct evaluation, periodic
-particle-to-grid Fourier inversion, conservative Gaussian strength exchange,
-classic 3-D stretching, regularized filaments, steady and fixed-capacity
-unsteady lifting wakes, polygonal vortex panels, rigid panel motion,
-boundary-sheet transfer, conservative remeshing, explicit advanced
-formulations, and fixed-tree/workflow evidence. See
-[Guide → Vortex methods](guides_vortex_methods.md),
-[Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
-[Guide → Vortex boundaries](guides_vortex_boundaries.md).
+to typed source states without reinterpreting material mass. Capability-driven
+direct, Ewald, free-space FFT, corrected P3M, hierarchical FMM, periodic VIC,
+PSE/core-spreading/redistribution, classic/rVPM/LES/baroclinic formulations,
+transactional populations, shared ring/sheet wakes, multi-surface lifting,
+native 2-D/3-D panels, no-slip and immersed wall coupling, native rigid/flexible
+FSI, rotors, control, acoustics, stochastic ensembles, learned reconstruction,
+assimilation, checkpoints, replay, export, and sharding retain explicit validity
+and derivative evidence. See [Guide → Vortex architecture](guides_vortex_architecture.md),
+[Guide → Vortex field backends](guides_vortex_backends.md),
+[Guide → Vortex diffusion and topology](guides_vortex_diffusion_topology.md),
+[Guide → Vortex FSI and control](guides_vortex_fsi_control.md), and
+[Guide → Stochastic and learned vortex methods](guides_vortex_stochastic_learning.md).
 Cosmological applications reuse those particle, grid, solver, operator, artifact, and
 likelihood identities rather than introducing a separate framework. Canonical physical
-states project only declared dependencies into content-addressed products; concrete
-pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
-release-window Gaussian likelihoods, primordial H/He microphysics, local-curvature
-validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification,
+states project only declared dependencies into content-addressed products; pinned
+precision processes, one-loop SPT, calibrated 200m halo ingredients, release-window
+likelihoods, primordial microphysics, CMB sky/TOD/mapmaking, periodic Ewald evidence,
 snapshots, and distributed-PM feasibility extend the curved/CPL background, named
-transfer/power, flat LPT/PM, and adiabatic gas--DM foundations. Native relic, BBN,
-recombination, fixed-hierarchy Einstein--Boltzmann/CMB, halo/nonlinear, lensing,
-light-cone, survey-selection, and baryonic-feedback reference products preserve those
-same realization and product conventions. Precision parity, global curved N-body,
-production tree gravity, AMR, calibrated fits, collaboration data, and distributed
-execution remain explicit external or qualification boundaries rather than hidden
-fallbacks.
+transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombination,
+nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
+share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
+global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
+merger products, stochastic star populations, two-level AMR, a shared Morton octree,
+isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM. Every profile
+states unsupported species, topology, approximation, capacity, distribution, and
+communication branches; precision parity beyond qualified profiles, multilevel
+distributed AMR, adaptive/distributed trees, production feedback, and full release
+coverage remain separate qualification claims rather than hidden flags.
+Cross-domain reconciliation keeps those domain states distinct while moving shared
+mechanics to core owners: dimensional scales, artifacts and derivative capabilities,
+labelled observation/covariance/likelihood algebra, direct and hierarchical particle
+gravity, coefficient-driven KDK, and ratio-two AMR transfer/reflux. Cosmology supplies
+comoving/canonical/scale-factor adapters; astrodynamics supplies physical velocity,
+epoch, frame, encounter, and mission adapters; astrophysics supplies concrete
+instrument/sky response. Application-local nominal FMM/TreePM and duplicate response
+or covariance implementations are removed rather than maintained beside the core.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,
@@ -1275,11 +1287,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   through exact interpolation/transpose attachment KKT blocks and mixed pressure
   gauges; evolve objective two-/three-dimensional Cosserat rods and triangular
   membrane/bending shells; construct exact-map collision surfaces, deterministic
-  candidate epochs, conservative continuous-collision/simplex-inversion bounds,
-  convergent barrier contact, lagged friction, and fixed-route sensitivities; and
+  candidate epochs, conservative and certified trajectory/simplex bounds,
+  smooth barrier/adhesive/friction closure, hard cone impact, mortar/Nitsche
+  and mesh tying, hydroelastic/rough patches, multiphysics transport,
+  route-state transfer, distributed ownership, and qualified derivatives; and
   retain explicit rigid–MPM coupling routes. See
-  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md)
-  and [Guide → Deformable contact](guides_deformable_contact.md).
+  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md),
+  [Guide → Deformable contact](guides_deformable_contact.md), and
+  [Guide → Contact formulations](guides_contact_formulations.md).
 - **Force-density structural form-finding**: build sparse or affine-restraint
   tension, compression, or mixed-sign networks; compose self-weight, traction,
   pressure, or pneumatic loads; optimize forces, supports, loads, gridshell

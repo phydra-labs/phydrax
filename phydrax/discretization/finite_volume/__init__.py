@@ -72,6 +72,12 @@ from ._distributed import (
     FiniteVolumeShardingReport,
     PreparedFiniteVolumeDecomposition,
 )
+from ._distributed_marker_transfer import (
+    DistributedMACMarkerTransfer,
+    DistributedMarkerExchange,
+    DistributedMarkerOwnershipPlan,
+    DistributedMarkerTransferDiagnostics,
+)
 from ._dynamics import (
     ConvexStateLimiterPlan,
     DifferentiabilityPolicy,
@@ -141,6 +147,7 @@ from ._mac_ale import (
     PreparedMappedMACGeometry,
 )
 from ._mac_boundary import (
+    MACBoundaryCorrectionDescriptor,
     MACBoundaryKind,
     MACBoundaryPlan,
     MACBoundaryProvider,
@@ -152,6 +159,15 @@ from ._mac_boundary import (
     PreparedMACBoundaryPlan,
 )
 from ._mac_capillarity import MACCapillaryResult, MACGhostFluidCapillaryPlan
+from ._mac_composite_marker_transfer import (
+    CompositeFaceVelocity,
+    CompositeMACMarkerRelation,
+    CompositeMACMarkerTransferDiagnostics,
+    CompositeMACMarkerTransferPlan,
+    CompositeMarkerImpulseLedger,
+    CompositeMarkerImpulseReflux,
+    reflux_composite_marker_impulse,
+)
 from ._mac_cut_cell import MACCutCellGeometryPlan, MACCutCellGeometryState
 from ._mac_distributed import (
     MACDistributedDiagnostics,
@@ -165,7 +181,11 @@ from ._mac_distributed import (
 )
 from ._mac_interface_state import MACFreeSurfaceGeometryState
 from ._mac_marker_transfer import (
+    MACMarkerAccumulation,
+    MACMarkerKernelName,
+    MACMarkerKernelPlan,
     MACMarkerRelation,
+    MACMarkerRouteState,
     MACMarkerTransferDiagnostics,
     MACMarkerTransferPlan,
     PreparedMACMarkerTransfer,
@@ -208,6 +228,13 @@ from ._mapped import (
     evaluate_mapped_finite_volume_geometry,
     MappedFiniteVolumeDiscretization,
     MappedFiniteVolumePlan,
+)
+from ._mapped_mac_marker_transfer import (
+    MappedMACMarkerRelation,
+    MappedMACMarkerRouteState,
+    MappedMACMarkerTransferDiagnostics,
+    MappedMACMarkerTransferPlan,
+    PreparedMappedMACMarkerTransfer,
 )
 from ._mhd_ct import MHDCTRateResult, UpwindConstrainedTransportPlan
 from ._multiblock import (
@@ -512,6 +539,10 @@ __all__ = [
     "ConservativeMultiblockFluxResult",
     "ConservativeMultiblockInterfacePlan",
     "CharacteristicReconstructionPlan",
+    "DistributedMACMarkerTransfer",
+    "DistributedMarkerExchange",
+    "DistributedMarkerOwnershipPlan",
+    "DistributedMarkerTransferDiagnostics",
     "CharacteristicSystem",
     "ConstantStateBoundary",
     "ConvexStateLimiterPlan",
@@ -543,11 +574,19 @@ __all__ = [
     "FiniteVolumePlan",
     "FaceVelocity",
     "MACBoundaryKind",
+    "MACBoundaryCorrectionDescriptor",
     "MACBoundaryPlan",
     "MACBoundaryProvider",
     "MACBoundaryProviderFunction",
     "MACBoundarySide",
     "MACBoundarySideName",
+    "CompositeFaceVelocity",
+    "CompositeMACMarkerRelation",
+    "CompositeMACMarkerTransferDiagnostics",
+    "CompositeMACMarkerTransferPlan",
+    "CompositeMarkerImpulseReflux",
+    "CompositeMarkerImpulseLedger",
+    "reflux_composite_marker_impulse",
     "MACBoundaryStageData",
     "MACDensityUpdateResult",
     "MACDistributedDiagnostics",
@@ -557,7 +596,11 @@ __all__ = [
     "MACHaloMetadata",
     "MACInterfaceFaceOwnership",
     "MACLocalStencilPlan",
+    "MACMarkerAccumulation",
+    "MACMarkerKernelName",
+    "MACMarkerKernelPlan",
     "MACMarkerRelation",
+    "MACMarkerRouteState",
     "MACMarkerTransferDiagnostics",
     "MACMarkerTransferPlan",
     "MACCapillaryResult",
@@ -573,6 +616,10 @@ __all__ = [
     "MACMomentumPlan",
     "MACMomentumReport",
     "MappedMACGeometryPlan",
+    "MappedMACMarkerRelation",
+    "MappedMACMarkerRouteState",
+    "MappedMACMarkerTransferDiagnostics",
+    "MappedMACMarkerTransferPlan",
     "MappedMACReport",
     "MACOperatorPlan",
     "MACOperatorReport",
@@ -595,6 +642,7 @@ __all__ = [
     "MACVariableDensityTransportResult",
     "FaceMomentumFlux",
     "PreparedMACBoundaryPlan",
+    "PreparedMappedMACMarkerTransfer",
     "PreparedMACDistributedTopology",
     "PreparedMACMarkerTransfer",
     "PreparedMACMomentumOperators",

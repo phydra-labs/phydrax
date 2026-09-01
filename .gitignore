@@ -47,6 +47,7 @@ benchmarks/*
 !benchmarks/direct_collocation_qualification.json
 !benchmarks/integral_physics.json
 !benchmarks/laplace_capacitance.json
+!benchmarks/potential_flow_hydrodynamics.json
 !benchmarks/hp_spectral_element.json
 !benchmarks/spectral_hp_completion.json
 !benchmarks/map_gp_search.json
@@ -66,6 +67,8 @@ benchmarks/*
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/mac_immersed_boundary.json
+!benchmarks/marker_flow_closure.py
+!benchmarks/marker_flow_closure.json
 !benchmarks/partitioned_coupling.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json
@@ -96,6 +99,7 @@ benchmarks/*
 !benchmarks/contact_search.json
 !benchmarks/contact_dynamics.json
 !benchmarks/contact_qualification.json
+!benchmarks/contact_closure.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/

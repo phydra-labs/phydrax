@@ -13,15 +13,16 @@ def main() -> None:
     count = 16
     grid = phx.discretization.TensorGridPlan(
         tuple(
-            phx.discretization.UniformCellAxisSpec(count, periodic=True)
-            for _ in range(2)
+            phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(2)
         ),
         axis_names=("x", "y"),
     ).prepare(jnp.asarray([[0.0, 0.0], [1.0, 1.0]]))
     finite_volume = phx.discretization.FiniteVolumePlan(grid).prepare()
     operators = phx.discretization.MACOperatorPlan(finite_volume).prepare()
-    momentum = phx.discretization.MACMomentumPlan(operators).prepare()
     boundaries = phx.discretization.MACBoundaryPlan(operators).prepare()
+    momentum = phx.discretization.MACMomentumPlan(
+        operators, boundaries=boundaries
+    ).prepare()
     pressure = phx.solver.MACPressureProjectionPlan(
         operators, boundaries=boundaries, solve_method="transform"
     )
@@ -41,9 +42,7 @@ def main() -> None:
         marker_position,
         jnp.full((marker_count,), 2.0 * jnp.pi * 0.15 / marker_count),
     ).prepare()
-    transfer = phx.discretization.MACMarkerTransferPlan(
-        operators, markers
-    ).prepare()
+    transfer = phx.discretization.MACMarkerTransferPlan(operators, markers).prepare()
     immersed_projection = phx.solver.MACImmersedBoundaryProjectionPlan(
         operators,
         transfer,
@@ -73,9 +72,7 @@ def main() -> None:
             "maximum_slip": float(
                 jnp.max(jnp.linalg.norm(result.projection.marker_slip, axis=-1))
             ),
-            "marker_force_norm": float(
-                jnp.linalg.norm(result.marker_force_density)
-            ),
+            "marker_force_norm": float(jnp.linalg.norm(result.marker_force_density)),
         }
     )
 

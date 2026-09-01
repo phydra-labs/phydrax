@@ -89,7 +89,11 @@ def test_wall_transfer_and_bilinear_remesh_preserve_circulation_and_first_moment
     geometry = phx.operators.FlowPanelGeometry2D.from_vertices(
         jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
     )
-    wall = phx.discretization.WallVorticityTransferPlan2D(16, 0.1, 0.15)
+    wall = phx.discretization.BoundarySheetParticleTransferPlan2D(
+        16,
+        0.1,
+        0.15,
+    )
     transfer = wall.transfer(
         wall.initialize(dtype=float),
         geometry,
@@ -117,7 +121,11 @@ def test_wall_transfer_overflow_preserves_the_accepted_pool():
     geometry = phx.operators.FlowPanelGeometry2D.from_vertices(
         jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
     )
-    plan = phx.discretization.WallVorticityTransferPlan2D(2, 0.1, 0.15)
+    plan = phx.discretization.BoundarySheetParticleTransferPlan2D(
+        2,
+        0.1,
+        0.15,
+    )
     initial = plan.initialize(dtype=float)
     result = plan.transfer(
         initial,

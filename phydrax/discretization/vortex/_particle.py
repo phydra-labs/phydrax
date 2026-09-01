@@ -116,6 +116,7 @@ class VortexParticleProperties(StrictModule):
 class VortexParticleState(StrictModule):
     position: Array
     strength: Array
+    core_radius: Array | None
 
 
 class VortexParticleStateLayout(StrictModule, NonTrainableState):
@@ -127,11 +128,22 @@ class VortexParticleStateLayout(StrictModule, NonTrainableState):
     strength_shape: tuple[int, ...] = eqx.field(static=True)
     position_size: int = eqx.field(static=True)
     strength_size: int = eqx.field(static=True)
+    dynamic_core: bool = eqx.field(static=True)
+    core_shape: tuple[int, ...] = eqx.field(static=True)
+    core_size: int = eqx.field(static=True)
     state_size: int = eqx.field(static=True)
     state_geometry_id: str = eqx.field(static=True)
     layout_id: str = eqx.field(static=True)
 
-    def __init__(self, capacity: int, dimension: int, /, *, layout_id: str | None = None):
+    def __init__(
+        self,
+        capacity: int,
+        dimension: int,
+        /,
+        *,
+        dynamic_core: bool = False,
+        layout_id: str | None = None,
+    ):
         capacity_, dimension_ = int(capacity), int(dimension)
         if capacity_ <= 0:
             raise ValueError("Vortex-particle state capacity must be positive.")
@@ -141,11 +153,15 @@ class VortexParticleStateLayout(StrictModule, NonTrainableState):
         strength_shape = (capacity_,) if dimension_ == 2 else (capacity_, 3)
         position_size = capacity_ * dimension_
         strength_size = capacity_ if dimension_ == 2 else capacity_ * 3
+        dynamic_core_ = bool(dynamic_core)
+        core_shape = (capacity_,) if dynamic_core_ else (0,)
+        core_size = capacity_ if dynamic_core_ else 0
         generated = canonical_fingerprint(
             {
                 "kind": "vortex-particle-state-layout",
                 "capacity": capacity_,
                 "dimension": dimension_,
+                "dynamic_core": dynamic_core_,
                 "packing": "position-then-strength-row-major",
             }
         )
@@ -155,13 +171,22 @@ class VortexParticleStateLayout(StrictModule, NonTrainableState):
         self.capacity, self.dimension = capacity_, dimension_
         self.position_shape, self.strength_shape = position_shape, strength_shape
         self.position_size, self.strength_size = position_size, strength_size
-        self.state_size = position_size + strength_size
+        self.dynamic_core = dynamic_core_
+        self.core_shape = core_shape
+        self.core_size = core_size
+        self.state_size = position_size + strength_size + core_size
         self.state_geometry_id = canonical_fingerprint(
             {"kind": "euclidean-vortex-particle-state", "layout": identifier}
         )
         self.layout_id = identifier
 
-    def pack(self, position: ArrayLike, strength: ArrayLike, /) -> Array:
+    def pack(
+        self,
+        position: ArrayLike,
+        strength: ArrayLike,
+        core_radius: ArrayLike | None = None,
+        /,
+    ) -> Array:
         position_, strength_ = jnp.asarray(position), jnp.asarray(strength)
         if position_.shape != self.position_shape:
             raise ValueError(
@@ -171,13 +196,19 @@ class VortexParticleStateLayout(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Vortex strength must have shape {self.strength_shape}, got {strength_.shape}."
             )
-        dtype = jnp.result_type(position_, strength_, jnp.float32)
-        return jnp.concatenate(
-            (
-                jnp.asarray(position_, dtype=dtype).reshape((-1,)),
-                jnp.asarray(strength_, dtype=dtype).reshape((-1,)),
-            )
-        )
+        if self.dynamic_core:
+            if core_radius is None:
+                raise ValueError("Dynamic-core vortex state requires core_radius.")
+            core = jnp.asarray(core_radius)
+            if core.shape != self.core_shape:
+                raise ValueError(f"Vortex core_radius must have shape {self.core_shape}.")
+            parts = (position_.reshape((-1,)), strength_.reshape((-1,)), core)
+        else:
+            if core_radius is not None:
+                raise ValueError("Fixed-core vortex state does not pack core_radius.")
+            parts = (position_.reshape((-1,)), strength_.reshape((-1,)))
+        dtype = jnp.result_type(*parts, jnp.float32)
+        return jnp.concatenate(tuple(jnp.asarray(part, dtype=dtype) for part in parts))
 
     def unpack(self, state: ArrayLike, /) -> VortexParticleState:
         value = jnp.asarray(state)
@@ -185,9 +216,15 @@ class VortexParticleStateLayout(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Packed vortex state must have shape ({self.state_size},), got {value.shape}."
             )
+        strength_start = self.position_size
+        strength_end = strength_start + self.strength_size
+        core = (
+            value[strength_end:].reshape(self.core_shape) if self.dynamic_core else None
+        )
         return VortexParticleState(
             value[: self.position_size].reshape(self.position_shape),
-            value[self.position_size :].reshape(self.strength_shape),
+            value[strength_start:strength_end].reshape(self.strength_shape),
+            core,
         )
 
 

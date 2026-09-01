@@ -69,6 +69,7 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
     """Stable vertex labels and explicit pair exclusions for one collision surface."""
 
     body_ids: Array
+    material_ids: Array
     patch_ids: Array
     static_mask: Array
     excluded_vertex_pairs: Array
@@ -80,6 +81,7 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
         /,
         *,
         body_ids: ArrayLike | None = None,
+        material_ids: ArrayLike | None = None,
         patch_ids: ArrayLike | None = None,
         static_mask: ArrayLike | None = None,
         excluded_vertex_pairs: ArrayLike | None = None,
@@ -92,6 +94,7 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
             if body_ids is None
             else np.asarray(body_ids)
         )
+        material = body if material_ids is None else np.asarray(material_ids)
         patch = (
             np.zeros((count,), dtype=np.int64)
             if patch_ids is None
@@ -107,12 +110,22 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
             if excluded_vertex_pairs is None
             else np.asarray(excluded_vertex_pairs)
         )
-        if body.shape != (count,) or patch.shape != (count,):
-            raise ValueError("Contact body and patch IDs must have vertex shape.")
-        if not np.issubdtype(body.dtype, np.integer) or not np.issubdtype(
-            patch.dtype, np.integer
+        if (
+            body.shape != (count,)
+            or material.shape != (count,)
+            or patch.shape != (count,)
         ):
-            raise TypeError("Contact body and patch IDs must contain integers.")
+            raise ValueError(
+                "Contact body, material, and patch IDs must have vertex shape."
+            )
+        if (
+            not np.issubdtype(body.dtype, np.integer)
+            or not np.issubdtype(material.dtype, np.integer)
+            or not np.issubdtype(patch.dtype, np.integer)
+        ):
+            raise TypeError(
+                "Contact body, material, and patch IDs must contain integers."
+            )
         if static.shape != (count,):
             raise ValueError("Contact static_mask must have vertex shape.")
         if (
@@ -121,8 +134,8 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
             or not np.issubdtype(excluded.dtype, np.integer)
         ):
             raise TypeError("excluded_vertex_pairs must be an integer (pairs, 2) array.")
-        if np.any(body < 0) or np.any(patch < 0):
-            raise ValueError("Contact body and patch IDs must be nonnegative.")
+        if np.any(body < 0) or np.any(material < 0) or np.any(patch < 0):
+            raise ValueError("Contact body, material, and patch IDs must be nonnegative.")
         excluded = np.sort(excluded.astype(np.int64, copy=False), axis=1)
         if excluded.size:
             if (
@@ -133,6 +146,7 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
                 raise ValueError("Excluded contact vertex pairs are invalid.")
             excluded = np.unique(excluded, axis=0)
         self.body_ids = jnp.asarray(body, dtype=jnp.int64)
+        self.material_ids = jnp.asarray(material, dtype=jnp.int64)
         self.patch_ids = jnp.asarray(patch, dtype=jnp.int64)
         self.static_mask = jnp.asarray(static)
         self.excluded_vertex_pairs = jnp.asarray(excluded, dtype=jnp.int64)
@@ -140,6 +154,7 @@ class ContactPairPolicy(StrictModule, NonTrainableState):
             {
                 "kind": "contact-pair-policy",
                 "body_ids": array_tree_fingerprint(body),
+                "material_ids": array_tree_fingerprint(material),
                 "patch_ids": array_tree_fingerprint(patch),
                 "static_mask": array_tree_fingerprint(static),
                 "excluded": array_tree_fingerprint(excluded),
@@ -159,9 +174,11 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
     orientable_mask: Array
     codimensional_mask: Array
     pair_policy: ContactPairPolicy
+    vertex_minimum_separation: Array
     ambient_dimension: int = eqx.field(static=True)
     intrinsic_dimension: int = eqx.field(static=True)
     minimum_separation: float = eqx.field(static=True)
+    allow_isolated_vertices: bool = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
 
     def __init__(
@@ -175,7 +192,8 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         orientable_mask: ArrayLike | None = None,
         codimensional_mask: ArrayLike | None = None,
         pair_policy: ContactPairPolicy | None = None,
-        minimum_separation: float = 0.0,
+        minimum_separation: float | ArrayLike = 0.0,
+        allow_isolated_vertices: bool = False,
         topology_id: str | None = None,
     ):
         identifiers = np.asarray(vertex_ids)
@@ -209,11 +227,17 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("edges must be an integer (edges, 2) array.")
         edge_array = edge_array.astype(np.int32, copy=False)
-        if edge_array.shape[0] == 0:
-            raise ValueError("Collision surfaces require at least one edge.")
+        allow_isolated = bool(allow_isolated_vertices)
+        if edge_array.shape[0] == 0 and not allow_isolated:
+            raise ValueError(
+                "Collision surfaces require an edge unless isolated vertices "
+                "are explicitly enabled."
+            )
         if dimension == 2 and face_array.shape[0] != 0:
             raise ValueError("Two-dimensional collision surfaces use edges, not faces.")
-        if dimension == 3 and face_array.shape[0] == 0:
+        if edge_array.shape[0] == 0:
+            intrinsic = 0
+        elif dimension == 3 and face_array.shape[0] == 0:
             intrinsic = 1
         else:
             intrinsic = dimension - 1
@@ -244,9 +268,16 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         policy = ContactPairPolicy(count) if pair_policy is None else pair_policy
         if not isinstance(policy, ContactPairPolicy) or policy.body_ids.shape != (count,):
             raise TypeError("pair_policy must match the collision vertex count.")
-        separation = float(minimum_separation)
-        if not np.isfinite(separation) or separation < 0.0:
-            raise ValueError("minimum_separation must be finite and nonnegative.")
+        separation_values = np.asarray(minimum_separation, dtype=float)
+        if separation_values.shape == ():
+            separation_values = np.full((count,), float(separation_values), dtype=float)
+        if separation_values.shape != (count,):
+            raise ValueError(
+                "minimum_separation must be scalar or have one value per vertex."
+            )
+        if np.any(~np.isfinite(separation_values)) or np.any(separation_values < 0.0):
+            raise ValueError("minimum_separation values must be finite and nonnegative.")
+        separation = float(np.max(separation_values, initial=0.0))
         generated = canonical_fingerprint(
             {
                 "kind": "collision-surface-topology",
@@ -258,7 +289,8 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
                 "orientable": array_tree_fingerprint(orientable),
                 "codimensional": array_tree_fingerprint(codimensional),
                 "pair_policy": policy.policy_id,
-                "minimum_separation": separation.hex(),
+                "minimum_separation": array_tree_fingerprint(separation_values),
+                "allow_isolated_vertices": allow_isolated,
             }
         )
         identifier = generated if topology_id is None else str(topology_id)
@@ -273,9 +305,11 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         self.orientable_mask = jnp.asarray(orientable)
         self.codimensional_mask = jnp.asarray(codimensional)
         self.pair_policy = policy
+        self.vertex_minimum_separation = jnp.asarray(separation_values)
         self.ambient_dimension = dimension
         self.intrinsic_dimension = intrinsic
         self.minimum_separation = separation
+        self.allow_isolated_vertices = allow_isolated
         self.topology_id = identifier
 
     @property
@@ -591,6 +625,12 @@ class PreparedCollisionScene(StrictModule, NonTrainableState):
         )
 
     @property
+    def vertex_material_ids(self) -> Array:
+        return jnp.concatenate(
+            tuple(value.plan.pair_policy.material_ids for value in self.surfaces)
+        )
+
+    @property
     def vertex_patch_ids(self) -> Array:
         return jnp.concatenate(
             tuple(value.plan.pair_policy.patch_ids for value in self.surfaces)
@@ -606,10 +646,8 @@ class PreparedCollisionScene(StrictModule, NonTrainableState):
     def minimum_separation(self) -> Array:
         return jnp.concatenate(
             tuple(
-                jnp.full(
-                    (value.plan.vertex_count,),
-                    value.plan.minimum_separation,
-                    dtype=value.precision.geometry_dtype,
+                value.plan.vertex_minimum_separation.astype(
+                    value.precision.geometry_dtype
                 )
                 for value in self.surfaces
             )

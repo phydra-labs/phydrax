@@ -17,9 +17,11 @@ from ..._trainable import NonTrainableState
 from ...discretization.vortex import (
     VortexFilamentState,
     VortexFilamentTopology,
-    VortexParticleStateLayout,
 )
-from ...solver import WienerTerm
+from ...discretization.vortex._source import (
+    VortexSourceState,
+    VortexTargetState,
+)
 
 
 class PassiveVortexProbes(StrictModule, NonTrainableState):
@@ -43,12 +45,15 @@ class PassiveVortexProbes(StrictModule, NonTrainableState):
             }
         )
 
-    def sample(self, prepared_velocity, source_position, strength, core_radius, /):
+    def sample(self, prepared_velocity, source: VortexSourceState, /):
+        if not isinstance(source, VortexSourceState):
+            raise TypeError("source must be VortexSourceState.")
         return prepared_velocity.evaluate(
-            source_position,
-            strength,
-            core_radius,
-            targets=self.position,
+            source,
+            VortexTargetState(
+                self.position,
+                target_id=self.probes_id,
+            ),
         )
 
 
@@ -133,157 +138,9 @@ class PrescribedVortexRigidMotion(StrictModule, NonTrainableState):
         return state
 
 
-class CoupledVortexRigidMotion(StrictModule, NonTrainableState):
-    mass: float = eqx.field(static=True)
-    inertia: float = eqx.field(static=True)
-    motion_id: str = eqx.field(static=True)
-
-    def __init__(self, mass: float, inertia: float, /):
-        if mass <= 0.0 or inertia <= 0.0:
-            raise ValueError("Coupled rigid mass/inertia must be positive.")
-        self.mass = float(mass)
-        self.inertia = float(inertia)
-        self.motion_id = canonical_fingerprint(
-            {
-                "kind": "coupled-vortex-rigid-motion",
-                "mass": self.mass,
-                "inertia": self.inertia,
-            }
-        )
-
-    def step(
-        self,
-        state: VortexRigidMotionState,
-        force: ArrayLike,
-        torque: ArrayLike,
-        time_step: ArrayLike,
-        /,
-    ) -> VortexRigidMotionState:
-        force_ = jnp.asarray(force, dtype=state.position.dtype)
-        torque_ = jnp.asarray(torque, dtype=state.position.dtype)
-        dt = jnp.asarray(time_step, dtype=state.position.dtype)
-        if force_.shape != state.position.shape or torque_.shape != () or dt.shape != ():
-            raise ValueError("Coupled rigid load/time shapes are invalid.")
-        velocity = state.velocity + dt * force_ / self.mass
-        angular_velocity = state.angular_velocity + dt * torque_ / self.inertia
-        return VortexRigidMotionState(
-            state.position + dt * velocity,
-            velocity,
-            state.angle + dt * angular_velocity,
-            angular_velocity,
-        )
-
-
-class RandomVortexDiffusion(StrictModule, NonTrainableState):
-    viscosity: float = eqx.field(static=True)
-    noise_name: str = eqx.field(static=True)
-    diffusion_id: str = eqx.field(static=True)
-
-    def __init__(
-        self, viscosity: float, /, *, noise_name: str = "vortex-brownian-diffusion"
-    ):
-        if viscosity <= 0.0 or not str(noise_name):
-            raise ValueError(
-                "Random vortex diffusion requires positive viscosity and a name."
-            )
-        self.viscosity = float(viscosity)
-        self.noise_name = str(noise_name)
-        self.diffusion_id = canonical_fingerprint(
-            {
-                "kind": "random-vortex-diffusion",
-                "viscosity": self.viscosity,
-                "noise_name": self.noise_name,
-            }
-        )
-
-    def wiener_term(self, layout: VortexParticleStateLayout, /) -> WienerTerm:
-        if not isinstance(layout, VortexParticleStateLayout):
-            raise TypeError("layout must be VortexParticleStateLayout.")
-        coefficient = (
-            jnp.zeros((layout.state_size,), dtype=float)
-            .at[: layout.position_size]
-            .set(jnp.sqrt(2.0 * self.viscosity))
-        )
-
-        def diagonal(time, state, args):
-            del time, args
-            return coefficient.astype(jnp.asarray(state).dtype)
-
-        return WienerTerm(
-            self.noise_name,
-            diagonal,
-            (layout.state_size,),
-            structure="additive",
-            basis_id=self.diffusion_id,
-            representation="diagonal",
-        )
-
-
-class LearnedVorticityResult(StrictModule):
-    model: Any
-    vorticity: Array
-    velocity: Array
-    finite: Array
-    workflow_id: str = eqx.field(static=True)
-
-
-class LearnedVorticityWorkflow(StrictModule, NonTrainableState):
-    trainer: Callable[[Array, Array, Any], Any]
-    evaluator: Callable[[Any, Array], ArrayLike]
-    velocity_reconstruction: Callable[[Array, Array, Any], ArrayLike]
-    workflow_id: str = eqx.field(static=True)
-
-    def __init__(
-        self, trainer, evaluator, velocity_reconstruction, /, *, workflow_id: str
-    ):
-        if (
-            not callable(trainer)
-            or not callable(evaluator)
-            or not callable(velocity_reconstruction)
-            or not str(workflow_id)
-        ):
-            raise ValueError(
-                "Learned vorticity workflow requires real callbacks and stable ID."
-            )
-        self.trainer = trainer
-        self.evaluator = evaluator
-        self.velocity_reconstruction = velocity_reconstruction
-        self.workflow_id = str(workflow_id)
-
-    def fit_and_reconstruct(
-        self,
-        sample_position: ArrayLike,
-        sample_weight: ArrayLike,
-        targets: ArrayLike,
-        args: Any = None,
-        /,
-    ) -> LearnedVorticityResult:
-        samples = jnp.asarray(sample_position)
-        weights = jnp.asarray(sample_weight)
-        target = jnp.asarray(targets)
-        if (
-            samples.ndim != 2
-            or weights.shape != samples.shape[:1]
-            or target.ndim != 2
-            or target.shape[1] != samples.shape[1]
-        ):
-            raise ValueError("Learned-vorticity sample/target shapes are invalid.")
-        model = self.trainer(samples, weights, args)
-        vorticity = jnp.asarray(self.evaluator(model, target))
-        velocity = jnp.asarray(self.velocity_reconstruction(vorticity, target, args))
-        finite = jnp.all(jnp.isfinite(vorticity)) & jnp.all(jnp.isfinite(velocity))
-        return LearnedVorticityResult(
-            model, vorticity, velocity, finite, self.workflow_id
-        )
-
-
 __all__ = [
-    "CoupledVortexRigidMotion",
-    "LearnedVorticityResult",
-    "LearnedVorticityWorkflow",
     "PassiveVortexProbes",
     "PrescribedVortexRigidMotion",
-    "RandomVortexDiffusion",
     "VortexRigidMotionState",
     "actuator_line_sources",
     "actuator_surface_sources",

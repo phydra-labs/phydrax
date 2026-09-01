@@ -36,7 +36,6 @@ from ._operators import (
 )
 from ._photometry import (
     ObservationDataProvenance,
-    ObservationDifferentiability,
     PhotonCountingBandpass,
     transit_poisson_likelihood,
     transit_poisson_log_prob,
@@ -81,7 +80,6 @@ __all__ = [
     "CircularOccultationPlan",
     "CircularOccultationResult",
     "ObservationDataProvenance",
-    "ObservationDifferentiability",
     "ObserverProjectionPlan",
     "ObserverProjectionResult",
     "PhotonCountingBandpass",

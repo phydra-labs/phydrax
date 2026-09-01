@@ -12,6 +12,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -29,6 +30,7 @@ from ._lifecycle import AbstractDiscretizationPlan
 AxisPrimaryEntity = Literal["point", "interval"]
 AxisBasis = Literal[
     "uniform",
+    "nonuniform",
     "fourier",
     "sine",
     "cosine",
@@ -72,6 +74,7 @@ class AxisDiscretization(StrictModule):
             raise TypeError("domain must be an AxisDomain.")
         if basis not in (
             "uniform",
+            "nonuniform",
             "fourier",
             "sine",
             "cosine",
@@ -346,6 +349,57 @@ class UniformCellAxisSpec(AbstractAxisSpec):
             nodes=centers,
             quad_weights=jnp.full((count,), width),
             basis="uniform",
+            domain=(
+                AxisDomain.periodic(a_, b_)
+                if self.periodic
+                else AxisDomain.interval(a_, b_)
+            ),
+            primary_entity="interval",
+            lower_endpoint_included=False,
+            upper_endpoint_included=False,
+        )
+
+
+class NonuniformCellAxisSpec(AbstractAxisSpec):
+    """Cell-centered axis defined by strictly increasing normalized edges."""
+
+    normalized_edges: Array
+    periodic: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        normalized_edges: ArrayLike,
+        /,
+        *,
+        periodic: bool = False,
+    ):
+        edges = np.asarray(normalized_edges, dtype=float)
+        if (
+            edges.ndim != 1
+            or edges.size < 5
+            or np.any(~np.isfinite(edges))
+            or np.any(np.diff(edges) <= 0.0)
+            or not np.isclose(edges[0], 0.0)
+            or not np.isclose(edges[-1], 1.0)
+        ):
+            raise ValueError(
+                "Nonuniform cell edges must be finite, increasing, span [0,1], "
+                "and define at least four cells."
+            )
+        super().__init__(edges.size - 1)
+        self.normalized_edges = jnp.asarray(edges)
+        self.periodic = bool(periodic)
+
+    def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
+        a_ = jnp.asarray(a, dtype=float).reshape(())
+        b_ = jnp.asarray(b, dtype=float).reshape(())
+        edges = a_ + (b_ - a_) * self.normalized_edges
+        widths = jnp.diff(edges)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        return AxisDiscretization(
+            nodes=centers,
+            quad_weights=widths,
+            basis="nonuniform",
             domain=(
                 AxisDomain.periodic(a_, b_)
                 if self.periodic
@@ -707,6 +761,7 @@ __all__ = [
     "FourierAxisSpec",
     "LegendreAxisSpec",
     "NestedDyadicAxisSpec",
+    "NonuniformCellAxisSpec",
     "SineAxisSpec",
     "TensorGridPlan",
     "UniformAxisSpec",

@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
+from opt_einsum import contract
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -682,10 +683,10 @@ class MACSegmentedShadowingPlan(StrictModule, NonTrainableState):
             )
             flow_norm_squared = jnp.sum(flow_directions**2, axis=-1)
             safe_flow_norm = jnp.maximum(flow_norm_squared, neutral_tolerance**2)
-            basis_projection = jnp.einsum(
+            basis_projection = contract(
                 "sln,slnk->slk", flow_directions, homogeneous_bases
             )
-            tangent_projection = jnp.einsum(
+            tangent_projection = contract(
                 "slm,slm->sl", flow_directions, inhomogeneous_tangents
             )
             projected_bases = (
@@ -716,15 +717,15 @@ class MACSegmentedShadowingPlan(StrictModule, NonTrainableState):
             neutral_minimum = jnp.asarray(jnp.inf, dtype=dtype)
 
         segment_eye = jnp.eye(segment_count, dtype=dtype)
-        sample_design = jnp.einsum(
-            "slnk,sr->slnrk", projected_bases, segment_eye
-        ).reshape((-1, segment_count * tangent_dimension))
+        sample_design = contract("slnk,sr->slnrk", projected_bases, segment_eye).reshape(
+            (-1, segment_count * tangent_dimension)
+        )
         sample_target = -projected_inhomogeneous.reshape((-1,))
         coefficient_eye = jnp.eye(tangent_dimension, dtype=dtype)
         if segment_count > 1:
-            continuity_blocks = -jnp.einsum(
+            continuity_blocks = -contract(
                 "eij,er->eirj", qr_factors[:-1], segment_eye[:-1]
-            ) + jnp.einsum("ij,er->eirj", coefficient_eye, segment_eye[1:])
+            ) + contract("ij,er->eirj", coefficient_eye, segment_eye[1:])
             continuity_design = continuity_blocks.reshape(
                 ((segment_count - 1) * tangent_dimension, -1)
             )
@@ -786,7 +787,7 @@ class MACSegmentedShadowingPlan(StrictModule, NonTrainableState):
         )
         if segment_count > 1:
             continuity_residual = (
-                jnp.einsum("sij,sj->si", qr_factors[:-1], coefficients[:-1])
+                contract("sij,sj->si", qr_factors[:-1], coefficients[:-1])
                 + offsets[:-1]
                 - coefficients[1:]
             )
@@ -807,11 +808,11 @@ class MACSegmentedShadowingPlan(StrictModule, NonTrainableState):
         qr_condition = jnp.max(
             qr_singular[:, 0] / jnp.maximum(qr_singular[:, -1], jnp.finfo(dtype).tiny)
         )
-        raw_tangent = inhomogeneous_tangents + jnp.einsum(
+        raw_tangent = inhomogeneous_tangents + contract(
             "slnk,sk->sln", homogeneous_bases, coefficients
         )
         if self.neutral_mode == "flow":
-            time_dilation = jnp.einsum(
+            time_dilation = contract(
                 "sln,sln->sl", flow_directions, raw_tangent
             ) / jnp.maximum(flow_norm_squared, neutral_tolerance**2)
             shadow_tangent = raw_tangent - time_dilation[..., None] * flow_directions

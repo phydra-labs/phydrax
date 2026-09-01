@@ -19,16 +19,18 @@ negative_particles = phx.discretization.ParticleSetPlan(
 positive_particles = phx.discretization.ParticleSetPlan(
     jnp.arange(100, 108), jnp.ones((8,)), ambient_dimension=1
 ).prepare()
-negative = phx.discretization.ChargedParticlePlan(
-    -jnp.ones((8,)), "electrons"
-).prepare(negative_particles)
-positive = phx.discretization.ChargedParticlePlan(
-    jnp.ones((8,)), "ions"
-).prepare(positive_particles)
+negative = phx.discretization.ChargedParticlePlan(-jnp.ones((8,)), "electrons").prepare(
+    negative_particles
+)
+positive = phx.discretization.ChargedParticlePlan(jnp.ones((8,)), "ions").prepare(
+    positive_particles
+)
 
 transfer_plan = phx.discretization.pic.PICParticleCochainTransferPlan(bridge)
 transfers = (transfer_plan.prepare(negative), transfer_plan.prepare(positive))
-field = phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic")
+field = phx.solver.CochainElectrostaticPlan(
+    bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+)
 pic = phx.solver.ElectrostaticPICPlan(field, transfers)
 
 base = (jnp.arange(8, dtype=float)[:, None] + 0.5) / 8.0

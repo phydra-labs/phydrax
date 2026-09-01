@@ -4,11 +4,11 @@ Particle conversion uses explicit species, phase, element, energy, and morpholog
 
 ## Species and phases
 
-`ParticleSpeciesSchema` declares:
+`ChemicalSpeciesSchema` declares:
 
 - stable species names;
-- one `ParticlePhase` per species;
-- molar masses;
+- one `ChemicalPhaseKind` per species;
+- molar masses and integer charge;
 - stable element names;
 - an element-by-species composition matrix.
 
@@ -16,25 +16,25 @@ Reaction and phase-change plans must carry the same schema fingerprint as their 
 
 ## Thermodynamic material
 
-`ParticleThermodynamicMaterialPlan` accepts polynomial molar heat-capacity coefficients and reference molar internal energies. It integrates the polynomial analytically. Temperature reconstruction uses a bounded, fixed-iteration Newton solve and reports the energy inversion residual and distance to both temperature bounds.
-
-Reference internal energies may be negative. Only finite extensive energy is required; admissibility comes from successful temperature inversion, positive mixture heat capacity, and the declared temperature bounds.
+`ParticleThermodynamicMaterialPlan` composes a common prepared species-thermodynamic
+model. Polynomial material data uses `PolynomialSpeciesThermodynamicsPlan`; NASA
+thermodynamics is available to gas mechanisms. Temperature reconstruction uses a
+bounded bisection solve and reports the energy residual and distance to both
+temperature bounds. Reference internal energies may be negative.
 
 `ParticleThermochemicalMaterialBundle` couples the thermodynamic and transport descriptions while retaining both fingerprints.
 
 ## Reaction networks
 
-`ParticleReactionNetworkPlan` uses nonnegative reactant and product stoichiometric matrices, Arrhenius prefactors, and activation energies. Construction rejects any reaction whose stoichiometric change violates the declared element matrix.
-
-At runtime the network returns extent rate, species amount rate, reaction energy rate, element residual, exhaustion margin, and an explicit reactant-depletion restriction. Reaction heat follows the same reference-energy convention as the thermodynamic material.
+`ParticleReactionProcessPlan` binds a common `PreparedChemicalMechanism` to particle
+reaction locations: bulk, internal surface, or outer surface. The mechanism owns
+stoichiometry, thermodynamics, and rate laws; the particle adapter owns only geometric
+measure. Preparation rejects elemental or charge imbalance.
 
 ```text
-reaction = phx.equations.ParticleReactionNetworkPlan(
-    schema,
-    reactant_stoichiometry,
-    product_stoichiometry,
-    pre_exponential_factors,
-    activation_energies,
+reaction = phx.equations.ParticleReactionProcessPlan(
+    prepared_mechanism,
+    locations=reaction_locations,
 )
 ```
 

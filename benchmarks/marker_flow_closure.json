@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "grid_count": 8,
+      "marker_count": 8,
+      "route_width": 16,
+      "relation_bytes": 13568,
+      "workspace_bytes": 1024,
+      "compile_and_first_ms": 165.25600000022678,
+      "execution_ms": 0.016391700046369806,
+      "work_residual": 5.551115123125783e-17,
+      "force_residual": 6.669156261854096e-17,
+      "successful": true
+    },
+    {
+      "grid_count": 8,
+      "marker_count": 16,
+      "route_width": 16,
+      "relation_bytes": 27136,
+      "workspace_bytes": 1024,
+      "compile_and_first_ms": 195.57441700453637,
+      "execution_ms": 0.16974169993773103,
+      "work_residual": 0.0,
+      "force_residual": 4.5817070908169173e-17,
+      "successful": true
+    },
+    {
+      "grid_count": 16,
+      "marker_count": 8,
+      "route_width": 16,
+      "relation_bytes": 13568,
+      "workspace_bytes": 4096,
+      "compile_and_first_ms": 107.81366599985631,
+      "execution_ms": 0.07731669975328259,
+      "work_residual": 0.0,
+      "force_residual": 4.212379549990361e-17,
+      "successful": true
+    },
+    {
+      "grid_count": 16,
+      "marker_count": 16,
+      "route_width": 16,
+      "relation_bytes": 27136,
+      "workspace_bytes": 4096,
+      "compile_and_first_ms": 184.7466670005815,
+      "execution_ms": 0.09294169940403663,
+      "work_residual": 1.3877787807814457e-17,
+      "force_residual": 1.9663446354034955e-17,
+      "successful": true
+    }
+  ],
+  "all_successful": true
+}

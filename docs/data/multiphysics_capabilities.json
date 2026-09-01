@@ -6,6 +6,25 @@
     "multirate_source_subcycling": "implemented",
     "general_imex_tableau": "implemented"
   },
+  "marker_flow": {
+    "regularized_prescribed_mac": "qualified",
+    "true_stage_inverse_kkt": "qualified",
+    "kernel_and_route_policies": "qualified",
+    "variable_density_and_viscosity": "implemented",
+    "physical_boundaries": "implemented",
+    "nonuniform_and_mapped_transfer": "implemented",
+    "ale_and_remesh_epochs": "implemented",
+    "rigid_accepted_time": "implemented",
+    "deformable_newmark": "implemented",
+    "joint_contact_lubrication": "implemented",
+    "composite_amr_and_impulse_reflux": "implemented",
+    "distributed_single_owner": "implemented",
+    "marker_topology_epochs": "implemented",
+    "divergence_free_transfer": "implemented",
+    "sharp_and_immersed_interface": "implemented",
+    "fluctuating_inertial_and_overdamped": "implemented",
+    "checkpoint_replay_output": "implemented"
+  },
   "constrained_mhd": {
     "one_dimensional_periodic": "implemented",
     "two_point_five_dimensional_periodic": "implemented",
@@ -102,7 +121,25 @@
     "local_curvature_validity": "implemented",
     "low_resolution_cmb_tod_mapmaking": "implemented",
     "periodic_ewald_force_reference": "implemented",
-    "snapshot_and_distributed_pm_contracts": "implemented"
+    "snapshot_and_distributed_pm_contracts": "implemented",
+    "bounded_physics_parity_profiles": "implemented",
+    "restricted_native_scalar_transfer_los": "implemented",
+    "global_s3_geometry_particle_poisson": "implemented",
+    "typed_multi_release_survey_framework": "implemented",
+    "native_fof_unbinding_merger_matching": "implemented",
+    "dynamic_stochastic_stellar_feedback": "implemented",
+    "two_level_cosmological_amr": "implemented",
+    "shared_particle_octree": "implemented",
+    "isolated_barnes_hut_gravity": "implemented",
+    "uniform_cartesian_fmm": "implemented",
+    "single_device_treepm_composition": "implemented",
+    "shared_dimensional_scale_contract": "implemented",
+    "shared_artifact_and_differentiation_contracts": "implemented",
+    "shared_observation_covariance_likelihood": "implemented",
+    "shared_direct_bh_fmm_ewald_treepm_gravity": "implemented",
+    "shared_coefficient_kdk_transaction": "implemented",
+    "shared_two_level_amr_mechanics": "implemented",
+    "shared_deterministic_event_replay": "implemented"
   },
   "inference": {
     "whitened_field_log_density": "implemented",
@@ -111,5 +148,22 @@
     "structure_preserving_face_closure": "implemented",
     "coupled_face_edge_mhd_closure": "implemented",
     "ood_fallback": "implemented"
+  },
+  "vortex_methods": {
+    "typed_source_target_capabilities": "qualified",
+    "direct_and_periodic_authorities": "qualified",
+    "free_space_fft_p3m_and_hierarchical_fmm": "implemented",
+    "classic_rvpm_diffusion_les_baroclinic": "implemented",
+    "transactional_population_remesh_replay": "qualified",
+    "shared_ring_sheet_and_adaptive_wakes": "implemented",
+    "multi_surface_vlm_uvlm_rotor_and_loads": "implemented",
+    "native_2d_3d_panel_methods": "implemented",
+    "boundary_integral_and_immersed_viscous_walls": "implemented",
+    "rigid_flexible_fsi_control_and_acoustics": "implemented",
+    "random_learned_and_assimilation_workflows": "implemented",
+    "portable_checkpoint_export_and_sharding": "implemented",
+    "ordinary_derivative_through_event_selection": "unsupported",
+    "universal_wall_turbulence_closure": "unsupported",
+    "purely_solenoidal_compressible_flow": "unsupported"
   }
 }

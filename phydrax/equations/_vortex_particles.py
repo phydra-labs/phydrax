@@ -15,6 +15,8 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import DiscretizationBundle, DiscretizationRecord
 from ..discretization.particle import ParticleDiscretization, ParticlePrecisionPolicy
+from ..discretization.vortex._compatibility import vortex_property_requirements
+from ..discretization.vortex._interfaces import VortexFieldRequest
 from ..discretization.vortex._method import (
     BackgroundVortexVelocity,
     PreparedVortexParticleDynamics,
@@ -184,14 +186,25 @@ def compile_vortex_particle_flow(
         or method.diffusion.dimension != problem.dimension
     ):
         raise ValueError("Vortex method and problem dimensions differ.")
+    requirements = vortex_property_requirements(
+        method.velocity.capabilities,
+        method.diffusion.capabilities,
+    )
     properties.validate(
         particles.capacity,
-        require_core_radius=True,
-        require_volume=True,
+        require_core_radius=requirements.core_radius,
+        require_volume=requirements.volume,
+    )
+    request = VortexFieldRequest(
+        velocity=True,
+        velocity_gradient=problem.dimension == 3,
     )
     velocity = method.velocity.prepare(
         source_capacity=particles.capacity,
         target_capacity=particles.capacity,
+        source_kind="particle",
+        target_topology="same-support",
+        request=request,
     )
     diffusion = method.diffusion.prepare(
         capacity=particles.capacity,

@@ -615,8 +615,8 @@ It does not reinterpret discretization or solver error as process uncertainty.
 
 Pure jump models implement `AbstractJumpProcess`. `JumpProcess` supplies
 callable intensities, jump maps, and optional marked jumps;
-`MassActionJumpProcess` supplies combinatorial reaction propensities and
-stoichiometric updates. A matching `PoissonClockRealization` owns unit-rate
+`ChemicalJumpProcess` supplies prepared-mechanism combinatorial reaction
+propensities and stoichiometric updates. A matching `PoissonClockRealization` owns unit-rate
 thresholds and mark keys for every channel and path.
 
 Use `solve_next_reaction` to advance channel-specific internal clocks or

@@ -11,15 +11,17 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ...._fingerprint import canonical_fingerprint
 from ...._strict import StrictModule
 from ....discretization.particle import ParticleBox
+from ....discretization.vortex._capabilities import VortexDiffusionCapabilities
 from ....discretization.vortex._interfaces import (
     AbstractPreparedVortexDiffusion,
     AbstractVortexDiffusionPlan,
     VortexDiffusionDiagnostics,
     VortexDiffusionEvaluation,
 )
+from ....discretization.vortex._source import VortexSourceState
 
 
 class ParticleStrengthExchangeEvidence(StrictModule):
@@ -40,9 +42,9 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
     cutoff_factor: float = eqx.field(static=True)
     maximum_interactions: int = eqx.field(static=True)
     box: ParticleBox | None
-    active_mask: Array | None
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    capabilities: VortexDiffusionCapabilities
 
     def __init__(
         self,
@@ -53,7 +55,6 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         cutoff_factor: float = 4.0,
         maximum_interactions: int = 1_000_000,
         box: ParticleBox | None = None,
-        active_mask: ArrayLike | None = None,
     ):
         dimension_ = int(dimension)
         epsilon = float(smoothing_scale)
@@ -76,12 +77,27 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
                 raise ValueError(
                     "Periodic PSE support must be less than half each period."
                 )
-        active = None if active_mask is None else jnp.asarray(active_mask, dtype=bool)
         self.smoothing_scale = epsilon
         self.cutoff_factor = cutoff
         self.maximum_interactions = maximum
         self.box = box
-        self.active_mask = active
+        periodic_domain = box is not None and bool(np.any(np.asarray(box.periodic)))
+        self.capabilities = VortexDiffusionCapabilities(
+            dimension_,
+            required_source_fields=(
+                "positions",
+                "strength",
+                "active_mask",
+                "volume",
+            ),
+            domain="periodic" if periodic_domain else "free-space",
+            derivatives=(
+                "source-position",
+                "source-strength",
+                "source-volume",
+            ),
+            acceleration="direct",
+        )
         self.dimension = dimension_
         self.plan_id = canonical_fingerprint(
             {
@@ -91,9 +107,7 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
                 "cutoff_factor": cutoff,
                 "maximum_interactions": maximum,
                 "box": None if box is None else box.box_id,
-                "active_mask": None
-                if active is None
-                else array_tree_fingerprint(np.asarray(active)),
+                "capabilities": self.capabilities.capabilities_id,
             }
         )
 
@@ -110,8 +124,7 @@ class GaussianParticleStrengthExchangePlan(AbstractVortexDiffusionPlan):
         pairs = capacity_ * (capacity_ - 1) // 2
         if pairs > self.maximum_interactions:
             raise ValueError("PSE pair count exceeds maximum_interactions.")
-        if self.active_mask is not None and self.active_mask.shape != (capacity_,):
-            raise ValueError("PSE active_mask must match capacity.")
+        # Runtime activity belongs to VortexSourceState, not the plan.
         left, right = np.triu_indices(capacity_, k=1)
         return PreparedGaussianParticleStrengthExchange(
             self,
@@ -124,7 +137,7 @@ class PreparedGaussianParticleStrengthExchange(AbstractPreparedVortexDiffusion):
     plan: GaussianParticleStrengthExchangePlan
     left: Array
     right: Array
-    active: Array
+    capabilities: VortexDiffusionCapabilities
     dimension: int = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
     pair_capacity: int = eqx.field(static=True)
@@ -137,19 +150,14 @@ class PreparedGaussianParticleStrengthExchange(AbstractPreparedVortexDiffusion):
         capacity = int(
             max(int(jnp.max(left, initial=0)), int(jnp.max(right, initial=0))) + 1
         )
-        active = (
-            jnp.ones((capacity,), dtype=bool)
-            if plan.active_mask is None
-            else plan.active_mask
-        )
         self.plan = plan
         self.left = left
         self.right = right
-        self.active = active
         self.dimension = plan.dimension
         self.capacity = capacity
         self.pair_capacity = int(left.size)
         self.backend_id = plan.plan_id
+        self.capabilities = plan.capabilities
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-gaussian-pse",
@@ -161,27 +169,23 @@ class PreparedGaussianParticleStrengthExchange(AbstractPreparedVortexDiffusion):
 
     def evaluate(
         self,
-        position: ArrayLike,
-        strength: ArrayLike,
-        volume: ArrayLike,
+        source: VortexSourceState,
         viscosity: ArrayLike,
         /,
     ) -> VortexDiffusionEvaluation:
-        positions = jnp.asarray(position)
-        strengths = jnp.asarray(strength)
-        volumes = jnp.asarray(volume, dtype=positions.dtype)
+        if not isinstance(source, VortexSourceState):
+            raise TypeError("source must be VortexSourceState.")
+        if source.capacity != self.capacity or source.dimension != self.dimension:
+            raise ValueError("PSE source does not match prepared capacity/dimension.")
+        if source.volume is None:
+            raise ValueError("PSE requires source volume.")
+        positions = source.safe_positions()
+        strengths = source.safe_strength()
+        volumes = source.safe_volume()
         viscosity_ = jnp.asarray(viscosity, dtype=positions.dtype)
-        expected_strength = (
-            (self.capacity,) if self.dimension == 2 else (self.capacity, 3)
-        )
-        if (
-            positions.shape != (self.capacity, self.dimension)
-            or strengths.shape != expected_strength
-        ):
-            raise ValueError("PSE arrays do not match prepared capacity/dimension.")
-        if volumes.shape != (self.capacity,) or viscosity_.shape != ():
-            raise ValueError("PSE volumes must be a vector and viscosity scalar.")
-        active = self.active
+        if viscosity_.shape != ():
+            raise ValueError("PSE viscosity must be scalar.")
+        active = source.active_mask
         inputs_finite = (
             jnp.all(jnp.where(active[:, None], jnp.isfinite(positions), True))
             & jnp.all(

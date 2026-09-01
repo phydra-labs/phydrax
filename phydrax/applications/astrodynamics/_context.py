@@ -10,6 +10,7 @@ import equinox as eqx
 import numpy as np
 
 from ..._fingerprint import canonical_fingerprint
+from ..._physical import DimensionalScaleContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -19,68 +20,7 @@ AstrodynamicsTimeScale: TypeAlias = Literal[
 ]
 
 
-class AstrodynamicsScaleContract(StrictModule, NonTrainableState):
-    """Explicit length, mass, and time scale identity for astrodynamics arrays."""
-
-    length_unit: str = eqx.field(static=True)
-    mass_unit: str = eqx.field(static=True)
-    time_unit: str = eqx.field(static=True)
-    length_to_reference: float = eqx.field(static=True)
-    mass_to_reference: float = eqx.field(static=True)
-    time_to_reference: float = eqx.field(static=True)
-    scale_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        length_unit: str,
-        mass_unit: str,
-        time_unit: str,
-        /,
-        *,
-        length_to_reference: float = 1.0,
-        mass_to_reference: float = 1.0,
-        time_to_reference: float = 1.0,
-    ):
-        units = tuple(str(value).strip() for value in (length_unit, mass_unit, time_unit))
-        factors = tuple(
-            float(value)
-            for value in (length_to_reference, mass_to_reference, time_to_reference)
-        )
-        if any(not value for value in units):
-            raise ValueError("Astrodynamics unit names must be non-empty.")
-        if any(not np.isfinite(value) or value <= 0.0 for value in factors):
-            raise ValueError(
-                "Astrodynamics reference factors must be finite and positive."
-            )
-        self.length_unit, self.mass_unit, self.time_unit = units
-        (
-            self.length_to_reference,
-            self.mass_to_reference,
-            self.time_to_reference,
-        ) = factors
-        self.scale_id = canonical_fingerprint(
-            {
-                "kind": "astrodynamics-scale-contract",
-                "units": list(units),
-                "reference_factors": list(factors),
-            }
-        )
-
-    @classmethod
-    def si(cls) -> AstrodynamicsScaleContract:
-        return cls("m", "kg", "s")
-
-    @property
-    def velocity_unit(self) -> str:
-        return f"{self.length_unit}/{self.time_unit}"
-
-    @property
-    def acceleration_unit(self) -> str:
-        return f"{self.length_unit}/{self.time_unit}^2"
-
-    @property
-    def gravitational_parameter_unit(self) -> str:
-        return f"{self.length_unit}^3/{self.time_unit}^2"
+AstrodynamicsScaleContract = DimensionalScaleContract
 
 
 class JulianDate(StrictModule, NonTrainableState):

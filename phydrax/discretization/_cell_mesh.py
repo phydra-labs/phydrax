@@ -470,7 +470,7 @@ class CellMesh(StrictModule, NonTrainableState):
     def entity_set(self, dimension: int, /) -> EntitySet:
         target = int(dimension)
         for entities in self.topology.entity_sets:
-            if entities.dimension == target:
+            if entities.intrinsic_dimension == target:
                 return entities
         raise KeyError(f"Cell mesh has no entity set of dimension {target}.")
 

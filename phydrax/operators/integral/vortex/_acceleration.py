@@ -11,16 +11,19 @@ from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
+from ....discretization.vortex._capabilities import VortexVelocityCapabilities
 from ....discretization.vortex._interfaces import (
     DEFAULT_VORTEX_FIELD_REQUEST,
     VortexFieldRequest,
     VortexVelocityDiagnostics,
     VortexVelocityEvaluation,
 )
+from ....discretization.vortex._precision import VortexPrecisionPolicy
+from ....discretization.vortex._source import VortexSourceState, VortexTargetState
 from ._gaussian2d import gaussian_vortex_velocity_2d
 
 
-class BarnesHutDiagnostics2D(StrictModule):
+class FixedClusterDiagnostics2D(StrictModule):
     far_cluster_count: Array
     direct_interaction_count: Array
     truncation_bound: Array
@@ -29,12 +32,11 @@ class BarnesHutDiagnostics2D(StrictModule):
     opening_angle: float = eqx.field(static=True)
 
 
-class BarnesHutVortexPlan2D(StrictModule):
-    """Fixed-leaf Barnes--Hut treecode with direct near interactions.
+class FixedClusterVortexPlan2D(StrictModule):
+    """Fixed-leaf cluster approximation with direct near interactions.
 
-    The leaf partition is built from reference positions. Numeric source positions may
-    vary until the declared refresh displacement is exceeded; evaluation then fails
-    closed with ``stale_topology`` rather than silently using an invalid hierarchy.
+    This intentionally is not an FMM. The leaf partition is built from reference
+    positions and becomes stale after the declared displacement bound.
     """
 
     reference_position: Array
@@ -47,6 +49,7 @@ class BarnesHutVortexPlan2D(StrictModule):
     source_capacity: int = eqx.field(static=True)
     leaf_size: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    capabilities: VortexVelocityCapabilities
 
     def __init__(
         self,
@@ -97,6 +100,26 @@ class BarnesHutVortexPlan2D(StrictModule):
         self.maximum_reference_displacement = displacement
         self.source_capacity = int(reference.shape[0])
         self.leaf_size = leaf
+        self.capabilities = VortexVelocityCapabilities(
+            2,
+            required_source_fields=(
+                "positions",
+                "strength",
+                "active_mask",
+                "core_radius",
+            ),
+            supported_fields=("velocity",),
+            domain="free-space",
+            precision=VortexPrecisionPolicy(),
+            derivatives=(
+                "source-position",
+                "source-strength",
+                "source-core-radius",
+                "target-position",
+            ),
+            target_topologies=("arbitrary-targets",),
+            acceleration="fixed-cluster",
+        )
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "fixed-leaf-barnes-hut-vortex-2d",
@@ -109,52 +132,64 @@ class BarnesHutVortexPlan2D(StrictModule):
 
     def evaluate(
         self,
-        position: ArrayLike,
-        circulation: ArrayLike,
-        core_radius: ArrayLike,
-        targets: ArrayLike,
+        source: VortexSourceState,
+        target: VortexTargetState,
         /,
         *,
         request: VortexFieldRequest = DEFAULT_VORTEX_FIELD_REQUEST,
     ) -> VortexVelocityEvaluation:
+        if not isinstance(source, VortexSourceState):
+            raise TypeError("source must be VortexSourceState.")
+        if not isinstance(target, VortexTargetState):
+            raise TypeError("target must be VortexTargetState.")
         if request.velocity_gradient or request.vorticity:
             raise ValueError(
-                "Barnes-Hut backend currently supports velocity requests only."
+                "Fixed-cluster backend currently supports velocity requests only."
             )
-        source = jnp.asarray(position)
-        gamma = jnp.asarray(circulation, dtype=source.dtype)
-        core = jnp.asarray(core_radius, dtype=source.dtype)
-        target = jnp.asarray(targets, dtype=source.dtype)
         if (
-            source.shape != (self.source_capacity, 2)
-            or gamma.shape != (self.source_capacity,)
-            or core.shape != (self.source_capacity,)
+            source.dimension != 2
+            or source.capacity != self.source_capacity
+            or source.core_radius is None
         ):
-            raise ValueError("Barnes-Hut sources do not match reference capacity.")
-        if target.ndim != 2 or target.shape[1] != 2:
-            raise ValueError("Barnes-Hut targets require shape (M,2).")
-        displacement = jnp.max(jnp.linalg.norm(source - self.reference_position, axis=-1))
+            raise ValueError(
+                "Fixed-cluster source does not match the reference capacity."
+            )
+        if target.dimension != 2:
+            raise ValueError("Fixed-cluster targets must be two-dimensional.")
+        positions = source.safe_positions()
+        gamma = source.safe_strength()
+        core = source.safe_core_radius()
+        targets = target.positions
+        active_source = source.active_mask
+        displacement = jnp.max(
+            jnp.linalg.norm(positions - self.reference_position, axis=-1)
+        )
         stale = displacement > self.maximum_reference_displacement
-        output = jnp.zeros_like(target)
+        output = jnp.zeros_like(targets)
         far_count = jnp.asarray(0, dtype=jnp.int32)
         direct_count = jnp.asarray(0, dtype=jnp.int32)
-        error_bound = jnp.asarray(0.0, dtype=source.dtype)
+        error_bound = jnp.asarray(0.0, dtype=positions.dtype)
         for group in range(int(self.groups.shape[0])):
             indices = self.groups[group]
             valid = self.group_valid[group]
             safe_indices = jnp.where(valid, indices, 0)
-            points = source[safe_indices]
-            strengths = jnp.where(valid, gamma[safe_indices], 0.0)
-            cores = jnp.where(valid, core[safe_indices], 1.0)
+            points = positions[safe_indices]
+            source_active = valid & active_source[safe_indices]
+            strengths = jnp.where(source_active, gamma[safe_indices], 0.0)
+            cores = jnp.where(source_active, core[safe_indices], 1.0)
             center = jnp.sum(
-                jnp.where(valid[:, None], points, 0.0), axis=0
-            ) / jnp.maximum(jnp.sum(valid), 1)
+                jnp.where(source_active[:, None], points, 0.0), axis=0
+            ) / jnp.maximum(jnp.sum(source_active), 1)
             radius = jnp.max(
-                jnp.where(valid, jnp.linalg.norm(points - center, axis=-1), 0.0)
+                jnp.where(
+                    source_active,
+                    jnp.linalg.norm(points - center, axis=-1),
+                    0.0,
+                )
             )
-            distance = jnp.linalg.norm(target - center, axis=-1)
+            distance = jnp.linalg.norm(targets - center, axis=-1)
             far = radius <= self.opening_angle * jnp.maximum(
-                distance, jnp.finfo(source.dtype).tiny
+                distance, jnp.finfo(positions.dtype).tiny
             )
             total_gamma = jnp.sum(strengths)
             absolute_gamma = jnp.sum(jnp.abs(strengths))
@@ -162,11 +197,14 @@ class BarnesHutVortexPlan2D(StrictModule):
             far = far & coherent
             effective_core = jnp.max(jnp.where(valid, cores, 0.0))
             far_velocity = gaussian_vortex_velocity_2d(
-                target - center,
+                targets - center,
                 total_gamma,
-                jnp.maximum(effective_core, jnp.finfo(source.dtype).eps),
+                jnp.maximum(
+                    effective_core,
+                    jnp.finfo(positions.dtype).eps,
+                ),
             )
-            pair_displacement = target[:, None, :] - points[None, :, :]
+            pair_displacement = targets[:, None, :] - points[None, :, :]
             pair_shape = pair_displacement.shape[:-1]
             pair_velocity = gaussian_vortex_velocity_2d(
                 pair_displacement,
@@ -174,30 +212,38 @@ class BarnesHutVortexPlan2D(StrictModule):
                 jnp.broadcast_to(cores[None, :], pair_shape),
             )
             direct_velocity = jnp.sum(
-                jnp.where(valid[None, :, None], pair_velocity, 0.0), axis=1
+                jnp.where(source_active[None, :, None], pair_velocity, 0.0),
+                axis=1,
             )
             output = output + jnp.where(far[:, None], far_velocity, direct_velocity)
             far_count = far_count + jnp.sum(far, dtype=jnp.int32)
             direct_count = direct_count + jnp.sum(~far, dtype=jnp.int32) * jnp.sum(
-                valid, dtype=jnp.int32
+                source_active, dtype=jnp.int32
             )
-            separation = jnp.maximum(distance - radius, jnp.finfo(source.dtype).eps)
+            separation = jnp.maximum(
+                distance - radius,
+                jnp.finfo(positions.dtype).eps,
+            )
             bound = jnp.sum(jnp.abs(strengths)) * radius / (2.0 * jnp.pi * separation**2)
             error_bound = error_bound + jnp.max(jnp.where(far, bound, 0.0))
         finite = (
             jnp.all(jnp.isfinite(output))
-            & jnp.all(jnp.isfinite(source))
+            & jnp.all(jnp.isfinite(positions))
             & jnp.all(jnp.isfinite(gamma))
-            & jnp.all(jnp.isfinite(core))
-            & jnp.all(core > 0.0)
+            & jnp.all(jnp.where(active_source, jnp.isfinite(core) & (core > 0.0), True))
         )
         successful = finite & ~stale
-        backend = BarnesHutDiagnostics2D(
-            far_count, direct_count, error_bound, displacement, stale, self.opening_angle
+        backend = FixedClusterDiagnostics2D(
+            far_count,
+            direct_count,
+            error_bound,
+            displacement,
+            stale,
+            self.opening_angle,
         )
         diagnostics = VortexVelocityDiagnostics(
             jnp.asarray(self.source_capacity, dtype=jnp.int32),
-            jnp.asarray(target.shape[0], dtype=jnp.int32),
+            jnp.asarray(target.capacity, dtype=jnp.int32),
             far_count + direct_count,
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
@@ -216,13 +262,13 @@ class BarnesHutVortexPlan2D(StrictModule):
             self.plan_id,
             canonical_fingerprint(
                 {
-                    "kind": "barnes-hut-vortex-evaluation-2d",
+                    "kind": "fixed-cluster-vortex-evaluation-2d",
                     "plan": self.plan_id,
-                    "target_count": int(target.shape[0]),
+                    "target_count": target.capacity,
                 }
             ),
             diagnostics,
         )
 
 
-__all__ = ["BarnesHutDiagnostics2D", "BarnesHutVortexPlan2D"]
+__all__ = ["FixedClusterDiagnostics2D", "FixedClusterVortexPlan2D"]

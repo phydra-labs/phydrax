@@ -277,6 +277,38 @@
 
 ---
 
+::: phydrax.discretization.MACMarkerKernelPlan
+
+---
+
+::: phydrax.discretization.MACMarkerRouteState
+
+---
+
+::: phydrax.discretization.MappedMACMarkerTransferPlan
+
+---
+
+::: phydrax.discretization.CompositeMACMarkerTransferPlan
+
+---
+
+::: phydrax.discretization.DistributedMarkerOwnershipPlan
+
+---
+
+::: phydrax.discretization.DistributedMACMarkerTransfer
+
+---
+
+::: phydrax.discretization.MarkerEpochTransferPlan
+
+---
+
+::: phydrax.discretization.ResolvedLubricationCorrectionPlan
+
+---
+
 ::: phydrax.discretization.MACDistributedTopologyPlan
 
 ---

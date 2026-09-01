@@ -75,12 +75,32 @@ def _direct_case(dimension, count):
     else:
         strength = jax.random.normal(jax.random.fold_in(key, 1), (count, 3))
         plan = phx.operators.GaussianErfDirectVortexPlan3D(
+            maximum_sources=count,
+            maximum_targets=count,
             source_chunk_size=min(32, count),
             target_chunk_size=min(32, count),
-            interaction_budget=count * count,
+            maximum_interactions=count * count,
         ).prepare(source_capacity=count, target_capacity=count)
-    apply = jax.jit(lambda p, g, c: plan.evaluate(p, g, c).velocity)
-    first_ms, steady_ms, value = _time(apply, (position, strength, core))
+    identity = jnp.arange(count, dtype=jnp.int32)
+    apply = jax.jit(
+        lambda p, g, c: (
+            plan.evaluate(
+                phx.discretization.VortexSourceState(
+                    p,
+                    g,
+                    core_radius=c,
+                ),
+                phx.discretization.VortexTargetState(
+                    p,
+                    source_indices=identity,
+                ),
+            ).velocity
+        )
+    )
+    first_ms, steady_ms, value = _time(
+        apply,
+        (position, strength, core),
+    )
     defect = (
         float(jnp.max(jnp.abs(jnp.sum(value, axis=0))))
         if dimension == 2
@@ -127,9 +147,26 @@ def _periodic_case(count, grid_count):
     strength = jax.random.normal(jax.random.fold_in(key, 1), (count,))
     strength = strength - jnp.mean(strength)
     core = jnp.full((count,), 1.0 / grid_count)
-    apply = jax.jit(lambda p, g, c: plan.evaluate(p, g, c).velocity)
-    first_ms, steady_ms, value = _time(apply, (position, strength, core))
-    evaluation = plan.evaluate(position, strength, core)
+    identity = jnp.arange(count, dtype=jnp.int32)
+
+    def evaluate(p, g, c):
+        source = phx.discretization.VortexSourceState(
+            p,
+            g,
+            core_radius=c,
+        )
+        target = phx.discretization.VortexTargetState(
+            p,
+            source_indices=identity,
+        )
+        return plan.evaluate(source, target)
+
+    apply = jax.jit(lambda p, g, c: evaluate(p, g, c).velocity)
+    first_ms, steady_ms, value = _time(
+        apply,
+        (position, strength, core),
+    )
+    evaluation = evaluate(position, strength, core)
     diagnostics = evaluation.diagnostics.backend_diagnostics
     defect = float(jnp.maximum(diagnostics.balance_defect, diagnostics.divergence_norm))
     return VortexBenchmarkCase(
@@ -153,8 +190,22 @@ def _pse_case(count):
     plan = phx.operators.GaussianParticleStrengthExchangePlan(
         2, 0.2, maximum_interactions=count * (count - 1) // 2
     ).prepare(capacity=count, dimension=2)
-    apply = jax.jit(lambda p, g, v: plan.evaluate(p, g, v, 0.01).rate)
-    first_ms, steady_ms, value = _time(apply, (position, strength, volume))
+    apply = jax.jit(
+        lambda p, g, v: (
+            plan.evaluate(
+                phx.discretization.VortexSourceState(
+                    p,
+                    g,
+                    volume=v,
+                ),
+                0.01,
+            ).rate
+        )
+    )
+    first_ms, steady_ms, value = _time(
+        apply,
+        (position, strength, volume),
+    )
     defect = float(jnp.abs(jnp.sum(value)))
     return VortexBenchmarkCase(
         "gaussian-pse-2d",

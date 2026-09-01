@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from itertools import product
 from pathlib import Path
 
 import equinox as eqx
@@ -13,172 +12,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...solver._particle_gravity import (
+    PeriodicEwaldEvidence,
+    PeriodicEwaldForcePlan,
+    PeriodicEwaldResult,
+)
 from ._closure import ScientificArtifactEnvelope
-
-
-class PeriodicEwaldEvidence(StrictModule):
-    real_space_acceleration: Array
-    reciprocal_acceleration: Array
-    net_force: Array
-    finite: Array
-    successful: Array
-
-
-class PeriodicEwaldResult(StrictModule):
-    acceleration: Array
-    evidence: PeriodicEwaldEvidence
-    successful: Array
-
-
-class PeriodicEwaldForcePlan(StrictModule, NonTrainableState):
-    """Small-N softened-neutral periodic Ewald acceleration reference."""
-
-    box_size: tuple[float, ...] = eqx.field(static=True)
-    gravitational_constant: float = eqx.field(static=True)
-    softening: float = eqx.field(static=True)
-    alpha: float = eqx.field(static=True)
-    real_offsets: Array
-    wavevectors: Array
-    volume: float = eqx.field(static=True)
-    plan_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        box_size: tuple[float, ...],
-        gravitational_constant: float,
-        /,
-        *,
-        softening: float,
-        alpha: float,
-        real_shells: int = 2,
-        reciprocal_modes: int = 4,
-    ):
-        lengths = tuple(float(value) for value in box_size)
-        gravity = float(gravitational_constant)
-        epsilon = float(softening)
-        alpha_ = float(alpha)
-        real = int(real_shells)
-        reciprocal = int(reciprocal_modes)
-        if (
-            not lengths
-            or any(not np.isfinite(value) or value <= 0.0 for value in lengths)
-            or not np.isfinite(gravity)
-            or gravity <= 0.0
-            or not np.isfinite(epsilon)
-            or epsilon <= 0.0
-            or not np.isfinite(alpha_)
-            or alpha_ <= 0.0
-            or real < 0
-            or reciprocal < 1
-        ):
-            raise ValueError("Periodic Ewald policy is invalid.")
-        dimension = len(lengths)
-        integer_offsets = np.asarray(
-            tuple(product(range(-real, real + 1), repeat=dimension)), dtype=float
-        )
-        reciprocal_indices = np.asarray(
-            tuple(
-                index
-                for index in product(range(-reciprocal, reciprocal + 1), repeat=dimension)
-                if any(value != 0 for value in index)
-            ),
-            dtype=float,
-        )
-        wavevectors = 2.0 * np.pi * reciprocal_indices / np.asarray(lengths)[None, :]
-        self.box_size = lengths
-        self.gravitational_constant = gravity
-        self.softening = epsilon
-        self.alpha = alpha_
-        self.real_offsets = jnp.asarray(integer_offsets * np.asarray(lengths)[None, :])
-        self.wavevectors = jnp.asarray(wavevectors)
-        self.volume = float(np.prod(lengths))
-        self.plan_id = canonical_fingerprint(
-            {
-                "kind": "periodic-ewald-force",
-                "box_size": list(lengths),
-                "gravitational_constant": gravity,
-                "softening": epsilon,
-                "alpha": alpha_,
-                "real_shells": real,
-                "reciprocal_modes": reciprocal,
-            }
-        )
-
-    def evaluate(self, positions: ArrayLike, masses: ArrayLike, /) -> PeriodicEwaldResult:
-        position = jnp.asarray(positions)
-        mass = jnp.asarray(masses, dtype=position.dtype)
-        if (
-            position.ndim != 2
-            or position.shape[1] != len(self.box_size)
-            or mass.shape != (position.shape[0],)
-        ):
-            raise ValueError("Periodic Ewald positions/masses have incompatible shapes.")
-        position = eqx.error_if(
-            position,
-            jnp.any(~jnp.isfinite(position))
-            | jnp.any(~jnp.isfinite(mass))
-            | jnp.any(mass <= 0.0),
-            "Periodic Ewald inputs must be finite with positive masses.",
-        )
-        target = position[:, None, None, :]
-        source = position[None, :, None, :] + self.real_offsets[None, None, :, :]
-        displacement = source - target
-        distance_squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
-        distance = jnp.sqrt(distance_squared)
-        zero_offset = jnp.all(self.real_offsets == 0.0, axis=-1)
-        self_pair = (
-            jnp.eye(position.shape[0], dtype=bool)[:, :, None]
-            & zero_offset[None, None, :]
-        )
-        screening = jax.scipy.special.erfc(self.alpha * distance) + (
-            2.0
-            * self.alpha
-            * distance
-            / jnp.sqrt(jnp.pi)
-            * jnp.exp(-((self.alpha * distance) ** 2))
-        )
-        inverse_cube = jnp.where(self_pair, 0.0, screening / distance**3)
-        real_acceleration = jnp.sum(
-            self.gravitational_constant
-            * mass[None, :, None, None]
-            * displacement
-            * inverse_cube[..., None],
-            axis=(1, 2),
-        )
-        k = self.wavevectors.astype(position.dtype)
-        k_squared = jnp.sum(k**2, axis=-1)
-        source_phase = contract("kd,nd->kn", k, position)
-        density_real = contract("n,kn->k", mass, jnp.cos(source_phase))
-        density_imag = -contract("n,kn->k", mass, jnp.sin(source_phase))
-        target_phase = source_phase.T
-        real_product = -density_real[None, :] * jnp.sin(target_phase) - density_imag[
-            None, :
-        ] * jnp.cos(target_phase)
-        coefficient = (
-            4.0
-            * jnp.pi
-            * self.gravitational_constant
-            / self.volume
-            * jnp.exp(-k_squared / (4.0 * self.alpha**2))
-            / k_squared
-        )
-        reciprocal_acceleration = contract("k,nk,kd->nd", coefficient, real_product, k)
-        acceleration = real_acceleration + reciprocal_acceleration
-        net_force = jnp.sum(mass[:, None] * acceleration, axis=0)
-        finite = jnp.all(jnp.isfinite(acceleration))
-        evidence = PeriodicEwaldEvidence(
-            real_acceleration,
-            reciprocal_acceleration,
-            net_force,
-            finite,
-            finite,
-        )
-        return PeriodicEwaldResult(acceleration, evidence, finite)
 
 
 class MeshMatchedNearFieldGate(StrictModule, NonTrainableState):
