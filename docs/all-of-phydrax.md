@@ -219,6 +219,16 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
 
+Native partitioned multiphysics coupling compiles exact participant ports and
+forward/paired-adjoint `FieldTransfer` exchanges into deterministic graph stages.
+Explicit Jacobi/Gauss–Seidel sweeps remain distinct from physically certified
+implicit interface roots. Candidate/accepted rollback, fixed-window replay,
+fixed-grid waveform exchange, subcycling, resource evidence, and implicit root
+sensitivities reuse the existing solver, discretization, and nonlinear substrates.
+No communication, mesh, or fallback-solver stack is introduced. See
+[Guide → Partitioned multiphysics coupling](guides_partitioned_coupling.md) and
+[API → Solver → Partitioned coupling](api/solver/coupling.md).
+
 ### Atomistic learning and conservative dynamics
 
 `phydrax.atomistic` specializes the existing material-particle and `GraphIR`

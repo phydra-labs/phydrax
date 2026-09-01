@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added native fixed-topology partitioned multiphysics coupling with exact typed
+  participant ports, direct and paired field transfers, deterministic SCC plans,
+  explicit Jacobi/Gauss–Seidel sweeps, physically certified implicit interface
+  roots, atomic rollback, fixed-window replay, fixed-grid waveform/subcycling
+  contracts, resource and work evidence, and explicit algorithmic or implicit
+  differentiation semantics.
 - Added one fixed-capacity runtime particle-population authority with activity,
   mass, incarnation-safe slot reuse, deterministic allocation/deactivation, DEM
   lifecycle migration, and runtime particle-splat masks.

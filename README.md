@@ -45,9 +45,10 @@ Most workflows are composing a few primitives:
   response, fixed-population and dynamically reseeded free-surface/multiphase
   FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
   fluxes, fixed-capacity AMR, field spaces, measures, transfers,
-  fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
-  source processes, compatible constrained MHD, temporal/stochastic composition,
-  and auditable plan/preparation identities.
+  fixed-temporal differentiable replay, typed transactional partitioned coupling,
+  fixed-grid waveform exchange, transactional gravity/cooling/stochastic source
+  processes, compatible constrained MHD, temporal/stochastic composition, and
+  auditable plan/preparation identities.
 - **Virtual elements**: enhanced conforming degree-one-through-three polygonal
   functional spaces expose certified H1/L2 projectors, explicit stabilization,
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
@@ -226,7 +227,8 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
-[solver-substrate guide](docs/guides_solver_substrates.md), and the
+[solver-substrate guide](docs/guides_solver_substrates.md), the
+[partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 
 Finite molecular learning and conservative atomistic dynamics live in
