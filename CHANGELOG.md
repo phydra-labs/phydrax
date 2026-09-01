@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added native fixed-topology partitioned multiphysics coupling with exact typed
+  participant ports, direct and paired field transfers, deterministic SCC plans,
+  explicit Jacobi/Gauss–Seidel sweeps, physically certified implicit interface
+  roots, atomic rollback, fixed-window replay, fixed-grid waveform/subcycling
+  contracts, resource and work evidence, and explicit algorithmic or implicit
+  differentiation semantics.
 - Added an S1 isogeometric-analysis path for regular untrimmed
   full-dimensional two-dimensional single-patch NURBS maps with clamped
   isotropic frozen B-spline grids, positive mean-one-gauge weights, exactly

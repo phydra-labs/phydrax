@@ -64,6 +64,7 @@ benchmarks/*
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/mac_immersed_boundary.json
+!benchmarks/partitioned_coupling.json
 !benchmarks/material_point.json
 !benchmarks/material_point_qualification.json
 !benchmarks/material_point_schedules.json

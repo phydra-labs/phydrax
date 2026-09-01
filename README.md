@@ -47,9 +47,10 @@ Most workflows are composing a few primitives:
   fluxes, fixed-capacity AMR, collision surfaces, deterministic contact candidate
   epochs, conservative continuous-collision and simplex-inversion bounds,
   convergent barrier contact, lagged friction, field spaces, measures, transfers,
-  fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
-  source processes, compatible constrained MHD, temporal/stochastic composition,
-  and auditable plan/preparation identities.
+  fixed-temporal differentiable replay, typed transactional partitioned coupling,
+  fixed-grid waveform exchange, transactional gravity/cooling/stochastic source
+  processes, compatible constrained MHD, temporal/stochastic composition, and
+  auditable plan/preparation identities.
 - **Isogeometric analysis**: a deliberately bounded S1 path prepares regular,
   untrimmed, full-dimensional two-dimensional single-patch NURBS maps and
   exactly isoparametric scalar H1 fields with frozen clamped isotropic knot
@@ -239,7 +240,8 @@ actions, area measures, and SFNO interoperability. See the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
-[solver-substrate guide](docs/guides_solver_substrates.md), and the
+[solver-substrate guide](docs/guides_solver_substrates.md), the
+[partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 
 Finite molecular learning and conservative atomistic dynamics live in
