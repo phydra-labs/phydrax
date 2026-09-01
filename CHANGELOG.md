@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added hydrostatic primitive-equation ocean modeling with prognostic free surface,
+  extensive layer transports and tracer inventories, implicit and split-explicit
+  external modes, z-star and partial-cell geometry, freshwater volume sources,
+  Flather/radiation boundaries, conservative wetting/drying, beta-plane and bounded
+  latitude-longitude metrics, checked vertical implicit mixing, nonlinear seawater
+  thermodynamics, Ri/KPP-like/TKE/Redi-GM closures, accepted ledgers, restart/output,
+  qualification scenarios, examples, and benchmarks.
 - Added experimental granular micro--macro completion: fitted finite-volume
   capillary bridges with analytic energy and fit margins, radius-derived contact
   envelopes, conserved film/bridge inventory and exposed-area evaporation,

@@ -567,6 +567,10 @@ from ._hybrid_schedule import (
     HybridScheduleResult,
     ScheduledHybridEvent,
 )
+from ._hydrostatic_free_surface import (
+    HydrostaticFreeSurfaceResult,
+    LinearImplicitFreeSurfacePlan,
+)
 from ._ias15 import IAS15Plan, IAS15Result
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
@@ -1640,6 +1644,7 @@ __all__ = [
     "ETDRKMethod",
     "HermitianCoordinateEvolution",
     "HERMITIAN_COORDINATE_INVALID",
+    "HydrostaticFreeSurfaceResult",
     "MACHelmholtzResourceEstimate",
     "MACHelmholtzResult",
     "MACHelmholtzSolveMethod",
@@ -1682,6 +1687,7 @@ __all__ = [
     "MACPressureSolveMethod",
     "MACFreeSurfaceProjectionPlan",
     "MACFreeSurfaceProjectionResult",
+    "LinearImplicitFreeSurfacePlan",
     "MACReplayCertification",
     "MACDeformableImmersedBackwardEulerMethod",
     "MACDeformableImmersedEnergyLedger",

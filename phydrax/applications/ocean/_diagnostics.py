@@ -14,6 +14,11 @@ from jaxtyping import Array, ArrayLike
 from ..._array_archive import write_array_archive
 from ..._strict import StrictModule
 from ._boussinesq import PreparedCartesianBoussinesqOcean
+from ._hydrostatic import HydrostaticOceanState, PreparedHydrostaticOcean
+from ._hydrostatic_step import (
+    HydrostaticContinuationState,
+    HydrostaticOceanLedger,
+)
 from ._step import OceanBoussinesqContinuationState
 
 
@@ -140,4 +145,126 @@ def write_ocean_output(
     )
 
 
-__all__ = ["OceanDiagnosticView", "ocean_diagnostic_view", "write_ocean_output"]
+class HydrostaticDiagnosticView(StrictModule):
+    eta: Array
+    total_depth: Array
+    layer_volume: Array
+    velocity: tuple[Array, Array]
+    tracers: dict[str, Array]
+    density: Array
+    hydrostatic_pressure: Array
+    vertical_flux: Array
+    wet_column: Array
+    kinetic_energy: Array
+    free_surface_energy: Array
+    volume: Array
+    tracer_content: dict[str, Array]
+    ledger: HydrostaticOceanLedger | None
+    successful: Array
+    ocean_id: str = eqx.field(static=True)
+
+
+def hydrostatic_diagnostic_view(
+    ocean: PreparedHydrostaticOcean,
+    state: HydrostaticContinuationState | HydrostaticOceanState,
+    /,
+) -> HydrostaticDiagnosticView:
+    if not isinstance(ocean, PreparedHydrostaticOcean):
+        raise TypeError("ocean must be PreparedHydrostaticOcean.")
+    physical = state.state if isinstance(state, HydrostaticContinuationState) else state
+    ledger = state.ledger if isinstance(state, HydrostaticContinuationState) else None
+    epoch = ocean.geometry.metric_epoch(physical.eta)
+    view = ocean.view(physical)
+    kinetic = (
+        0.5
+        * ocean.plan.reference_density
+        * (
+            jnp.sum(
+                jnp.where(
+                    epoch.x_face_area > 0.0,
+                    physical.transports[0] ** 2 / epoch.x_face_area,
+                    0.0,
+                )
+            )
+            + jnp.sum(
+                jnp.where(
+                    epoch.y_face_area > 0.0,
+                    physical.transports[1] ** 2 / epoch.y_face_area,
+                    0.0,
+                )
+            )
+        )
+    )
+    free_surface = (
+        0.5
+        * ocean.plan.reference_density
+        * ocean.plan.gravity
+        * jnp.sum(ocean.geometry.cell_area * physical.eta**2)
+    )
+    return HydrostaticDiagnosticView(
+        eta=physical.eta,
+        total_depth=epoch.total_depth,
+        layer_volume=epoch.cell_volume,
+        velocity=view.velocity,
+        tracers=view.tracers,
+        density=view.density,
+        hydrostatic_pressure=view.hydrostatic_pressure,
+        vertical_flux=view.vertical_flux,
+        wet_column=epoch.wet_column,
+        kinetic_energy=kinetic,
+        free_surface_energy=free_surface,
+        volume=jnp.sum(epoch.cell_volume),
+        tracer_content={
+            name: jnp.sum(value) for name, value in physical.tracer_inventory.items()
+        },
+        ledger=ledger,
+        successful=epoch.valid & jnp.all(jnp.isfinite(view.density)),
+        ocean_id=ocean.prepared_id,
+    )
+
+
+def write_hydrostatic_output(
+    path: str | Path,
+    ocean: PreparedHydrostaticOcean,
+    state: HydrostaticContinuationState | HydrostaticOceanState,
+    /,
+) -> Path:
+    view = hydrostatic_diagnostic_view(ocean, state)
+    arrays: dict[str, object] = {
+        "eta": view.eta,
+        "total_depth": view.total_depth,
+        "layer_volume": view.layer_volume,
+        "density": view.density,
+        "hydrostatic_pressure": view.hydrostatic_pressure,
+        "vertical_flux": view.vertical_flux,
+        "wet_column": view.wet_column,
+        "kinetic_energy": view.kinetic_energy,
+        "free_surface_energy": view.free_surface_energy,
+        "volume": view.volume,
+        "successful": view.successful,
+    }
+    for axis, component in enumerate(view.velocity):
+        arrays[f"velocity/{axis}"] = component
+    for name, value in view.tracers.items():
+        arrays[f"tracer/{name}"] = value
+    for name, value in view.tracer_content.items():
+        arrays[f"tracer_content/{name}"] = value
+    return write_array_archive(
+        path,
+        manifest={
+            "kind": "hydrostatic-ocean-output",
+            "ocean_id": ocean.prepared_id,
+            "tracer_names": sorted(view.tracers),
+        },
+        arrays=arrays,
+    )
+
+
+__all__ = [
+    "HydrostaticDiagnosticView",
+    "OceanDiagnosticView",
+    "hydrostatic_diagnostic_view",
+    "ocean_diagnostic_view",
+    "write_hydrostatic_output",
+    "write_ocean_output",
+]

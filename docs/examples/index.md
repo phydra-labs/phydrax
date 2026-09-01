@@ -41,6 +41,19 @@ They exercise weighted-skew f-plane rotation, state-dependent stratification bou
 directional T/S diffusion, and conservative surface heat flux. See
 [Cartesian ocean process modeling](../guides_ocean.md).
 
+## Hydrostatic and coastal ocean scripts
+
+```text
+python examples/hydrostatic_external_wave.py
+python examples/hydrostatic_wetdry_freshwater.py
+python examples/hydrostatic_spherical_thermodynamics.py
+```
+
+These exercise prognostic free surface, implicit and split-explicit external modes,
+freshwater volume, conservative wetting/drying, partial/z-star geometry,
+latitude-longitude metrics, nonlinear seawater thermodynamics, and vertical closures.
+See [Hydrostatic primitive-equation ocean modeling](../guides_hydrostatic_ocean.md).
+
 ## Particle physics scripts
 
 The repository includes directly runnable scripts for the fixed-capacity particle stack:
