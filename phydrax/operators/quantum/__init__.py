@@ -89,10 +89,21 @@ from ._open_contracts import (
     QuantumObservablePlan,
 )
 from ._open_system import lindblad_dissipator, lindblad_residual
+from ._operations import (
+    LocalKrausChannelOperation,
+    LocalUnitaryOperation,
+    QuantumOperation,
+    QuantumProgram,
+    QuantumStateKind,
+)
 from ._propagation import (
+    apply_local_kraus_to_density,
+    apply_local_unitary_to_state,
     apply_unitary_to_state,
     conjugate_density,
+    conjugate_local_density,
     density_invariant_residuals,
+    kraus_trace_preservation_residual,
     unitarity_residual,
 )
 from ._pseudomode import (
@@ -101,6 +112,7 @@ from ._pseudomode import (
     Pseudomode,
     ReactionCoordinateMapping,
 )
+from ._register import HilbertRegisterLayout
 from ._states import (
     density_expectation,
     density_from_factor,
@@ -116,6 +128,7 @@ __all__ = [
     "AbstractDiscreteQuantumOperator",
     "AmplitudeRatio",
     "HamiltonianAction",
+    "HilbertRegisterLayout",
     "anticommutator",
     "CallableDiscreteQuantumOperator",
     "ComplexParameterMode",
@@ -137,6 +150,8 @@ __all__ = [
     "lindblad_dissipator",
     "LocalOperatorEstimate",
     "LocalOperatorStatus",
+    "LocalKrausChannelOperation",
+    "LocalUnitaryOperation",
     "LogAmplitude",
     "lindblad_residual",
     "amplitude_ratio",
@@ -157,12 +172,19 @@ __all__ = [
     "von_neumann_residual",
     "von_neumann_entropy",
     "QuantumGeometricTensorResult",
+    "QuantumOperation",
+    "QuantumProgram",
+    "QuantumStateKind",
+    "apply_local_kraus_to_density",
+    "apply_local_unitary_to_state",
     "apply_unitary_to_state",
     "berry_link",
     "berry_loop_phase",
     "conjugate_density",
+    "conjugate_local_density",
     "density_invariant_residuals",
     "quantum_geometric_tensor",
+    "kraus_trace_preservation_residual",
     "unitarity_residual",
     "ApproximationAxis",
     "ApproximationQuantity",

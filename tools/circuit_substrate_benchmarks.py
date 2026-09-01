@@ -153,6 +153,43 @@ def _dynamic_row():
     }
 
 
+def _harmonic_balance_row():
+    dae = phx.circuit.prepare_circuit_dae(_rc_circuit())
+    waveform = jnp.ones((9, dae.plan.layout.size))
+    plan, plan_seconds = measure_synchronized(
+        lambda: phx.circuit.plan_harmonic_balance(dae, 1.0, waveform.shape[0])
+    )
+    prepared, prepare_seconds = measure_synchronized(
+        lambda: phx.circuit.prepare_harmonic_balance(dae, waveform, 1.0, plan)
+    )
+    result, solve_seconds = measure_synchronized(
+        lambda: phx.circuit.solve_prepared_harmonic_balance(prepared)
+    )
+    refreshed, refresh_seconds = measure_synchronized(
+        lambda: phx.circuit.refresh_harmonic_balance(prepared, dae, waveform, 2.0)
+    )
+    refreshed_result, refreshed_solve_seconds = measure_synchronized(
+        lambda: phx.circuit.solve_prepared_harmonic_balance(refreshed)
+    )
+    return {
+        "sample_count": plan.cost.sample_count,
+        "state_size": plan.cost.state_size,
+        "unknown_count": plan.cost.unknown_count,
+        "waveform_bytes": plan.cost.waveform_bytes,
+        "workspace_bytes": plan.cost.workspace_bytes,
+        "plan_seconds": plan_seconds,
+        "prepare_seconds": prepare_seconds,
+        "solve_seconds": solve_seconds,
+        "refresh_seconds": refresh_seconds,
+        "refreshed_solve_seconds": refreshed_solve_seconds,
+        "residual": float(result.diagnostics.residual_norm),
+        "refreshed_residual": float(refreshed_result.diagnostics.residual_norm),
+        "aliasing_tail": float(result.diagnostics.aliasing_tail),
+        "successful": bool(result.nonlinear.successful)
+        and bool(refreshed_result.nonlinear.successful),
+    }
+
+
 def _macromodel_row():
     poles = jnp.asarray([-1.0 + 0.0j, -10.0 + 0.0j])
     model = phx.circuit.RationalMatrixModel(
@@ -192,6 +229,7 @@ def main():
                 "dtype": "float64/complex128",
                 "network": _network_rows(),
                 "dynamic": _dynamic_row(),
+                "harmonic_balance": _harmonic_balance_row(),
                 "macromodel": _macromodel_row(),
             },
             indent=2,

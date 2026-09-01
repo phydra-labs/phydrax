@@ -270,6 +270,7 @@ nav:
         - Native machine learning: "guides/ml.md"
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
+        - Dense local quantum programs: "guides_quantum_programs.md"
     - Examples:
         - Overview: "examples/index.md"
     - API:
@@ -488,6 +489,7 @@ nav:
             - Maxwell: "api/solver/maxwell.md"
             - 3D Laplace capacitance: "api/solver/laplace_capacitance.md"
             - Non-Markovian and many-body quantum systems: "api/solver/nonmarkov_manybody.md"
+            - Dense local quantum programs: "api/solver/quantum_program.md"
             - Production open quantum systems: "api/solver/production_open_quantum.md"
             - Hardened open quantum systems: "api/solver/hardened_open_quantum.md"
             - Final open-system closure: "api/solver/final_open_quantum.md"
