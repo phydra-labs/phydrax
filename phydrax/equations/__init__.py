@@ -189,6 +189,8 @@ from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_al
 from ._local_constitutive_root import (
     LocalConstitutiveRootDiagnostics,
     LocalConstitutiveRootPlan,
+    VectorLocalConstitutiveRootDiagnostics,
+    VectorLocalConstitutiveRootPlan,
 )
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
@@ -539,6 +541,8 @@ __all__ = [
     "ConstitutiveModel",
     "LocalConstitutiveRootDiagnostics",
     "LocalConstitutiveRootPlan",
+    "VectorLocalConstitutiveRootDiagnostics",
+    "VectorLocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
     "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",

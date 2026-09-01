@@ -110,3 +110,79 @@
 ---
 
 ::: phydrax.applications.solid_mechanics.PhaseFieldNeoHookeanMPMConstitutivePlan
+
+## Commercial claims, execution, and derivatives
+
+::: phydrax.discretization.mpm.MPMIntendedUse
+
+---
+
+::: phydrax.discretization.mpm.MPMClaimTuple
+
+---
+
+::: phydrax.discretization.mpm.MPMSupportMatrix
+
+---
+
+::: phydrax.discretization.mpm.MPMExecutionPlan
+
+---
+
+::: phydrax.discretization.mpm.MPMGradientResult
+
+---
+
+::: phydrax.discretization.mpm.KWayMPMContactPlan
+
+---
+
+::: phydrax.discretization.mpm.MPMDistributedPlan
+
+---
+
+::: phydrax.discretization.mpm.MPMParticleLifecyclePlan
+
+---
+
+::: phydrax.discretization.mpm.MPMAMRPlan
+
+## Commercial runtime
+
+::: phydrax.solver.MPMCheckpointPlan
+
+---
+
+::: phydrax.solver.MPMOutputPlan
+
+---
+
+::: phydrax.solver.MPMRunSupervisor
+
+---
+
+::: phydrax.solver.MPMImplicitTopologyPlan
+
+---
+
+::: phydrax.solver.MPMCompactImplicitOperator
+
+## Commercial materials and coupled fields
+
+::: phydrax.applications.solid_mechanics.GeneralPlaneStressMPMConstitutivePlan
+
+---
+
+::: phydrax.applications.solid_mechanics.DruckerPragerMPMConstitutivePlan
+
+---
+
+::: phydrax.applications.solid_mechanics.MohrCoulombMPMConstitutivePlan
+
+---
+
+::: phydrax.applications.solid_mechanics.ModifiedCamClayMPMConstitutivePlan
+
+---
+
+::: phydrax.applications.solid_mechanics.PreparedMPMCoupledFieldOperator

@@ -25,7 +25,7 @@ from ...operators.mechanics import (
 
 
 class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
-    """Stateless logarithmic Neo-Hookean material for plane strain or 3-D MPM."""
+    """Stateless logarithmic Neo-Hookean material for 1-D, plane strain, or 3-D MPM."""
 
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
@@ -35,10 +35,14 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
 
     def __init__(self, dimension: int, /):
         dimension_ = int(dimension)
-        if dimension_ not in (2, 3):
-            raise ValueError("Neo-Hookean MPM supports plane strain and 3-D only.")
+        if dimension_ not in (1, 2, 3):
+            raise ValueError("Neo-Hookean MPM supports dimensions one, two, and three.")
         self.dimension = dimension_
-        self.kinematics = "plane_strain" if dimension_ == 2 else "three_dimensional"
+        self.kinematics = (
+            "one_dimensional"
+            if dimension_ == 1
+            else ("plane_strain" if dimension_ == 2 else "three_dimensional")
+        )
         self.state_shape = (0,)
         self.capabilities = MPMConstitutiveCapabilities(
             stateful=False,
@@ -56,6 +60,16 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
                 "energy_measure": "reference-volume",
             }
         )
+
+    def _embed(self, deformation):
+        if self.dimension == 3:
+            return deformation
+        shape = deformation.shape[:-2] + (3, 3)
+        embedded = jnp.zeros(shape, dtype=deformation.dtype)
+        embedded = embedded.at[..., : self.dimension, : self.dimension].set(deformation)
+        for axis in range(self.dimension, 3):
+            embedded = embedded.at[..., axis, axis].set(1.0)
+        return embedded
 
     def initialize_state(self, batch_shape, dtype, /):
         return jnp.empty(tuple(batch_shape) + (0,), dtype=dtype)
@@ -88,7 +102,7 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
         if density.shape != batch_shape:
             raise ValueError(f"Reference density must have shape {batch_shape}.")
 
-        kinematic_response = finite_strain_kinematics(deformation)
+        kinematic_response = finite_strain_kinematics(self._embed(deformation))
         determinant = kinematic_response.jacobian
         finite_input = jnp.all(
             jnp.isfinite(kinematic_response.deformation_gradient), axis=(-2, -1)
@@ -160,7 +174,9 @@ class NeoHookeanMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
             time,
             step_size,
         )
-        tangent_3d = neo_hookean_tangent(deformation_gradient, parameters)
+        tangent_3d = neo_hookean_tangent(
+            self._embed(jnp.asarray(deformation_gradient)), parameters
+        )
         tangent = tangent_3d[
             ...,
             : self.dimension,

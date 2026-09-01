@@ -737,6 +737,26 @@ from ._material_point_adaptive import (
     MPMAdaptivePolicy,
     MPMAdaptiveStatus,
 )
+from ._material_point_checkpoint import (
+    MPMCheckpointManifest,
+    MPMCheckpointMigration,
+    MPMCheckpointPlan,
+)
+from ._material_point_commercial_implicit import (
+    linearize_kway_contact,
+    MPMBlockJacobiPreconditioner,
+    MPMCompactImplicitOperator,
+    MPMCompactOperatorResult,
+    MPMImplicitContactLinearization,
+    MPMImplicitTopologyPlan,
+    MPMImplicitUnknownLayout,
+    MPMMovingDomainDerivative,
+    MPMRouteSupersetPlan,
+    MPMRouteSupersetState,
+    MPMSparseContactOperator,
+    MPMSparsePhaseFieldOperator,
+    MPMTwoLevelMultigrid,
+)
 from ._material_point_fracture import (
     MPMPhaseFieldEvidence,
     MPMPhaseFieldFracturePlan,
@@ -750,6 +770,11 @@ from ._material_point_implicit import (
     ImplicitMPMStepResult,
     PreparedImplicitMPMDynamics,
 )
+from ._material_point_output import (
+    MPMBoundedOutputBuffer,
+    MPMOutputManifest,
+    MPMOutputPlan,
+)
 from ._material_point_rollout import (
     MPMGradientKind,
     MPMGradientReport,
@@ -761,6 +786,7 @@ from ._material_point_rollout import (
     MPMRolloutResult,
     ScheduledMPMRolloutPlan,
 )
+from ._material_point_supervisor import MPMOperationalResult, MPMRunSupervisor
 from ._maxwell_reduced import (
     CompatibleMaxwell1DPlan,
     CompatibleMaxwell1DState,
@@ -2130,6 +2156,27 @@ __all__ = [
     "MPMRetainedTrajectory",
     "MPMRolloutResult",
     "ScheduledMPMRolloutPlan",
+    "MPMBoundedOutputBuffer",
+    "MPMBlockJacobiPreconditioner",
+    "MPMCheckpointManifest",
+    "MPMCheckpointMigration",
+    "MPMCheckpointPlan",
+    "MPMCompactImplicitOperator",
+    "MPMCompactOperatorResult",
+    "MPMImplicitContactLinearization",
+    "MPMImplicitTopologyPlan",
+    "MPMImplicitUnknownLayout",
+    "MPMMovingDomainDerivative",
+    "MPMOperationalResult",
+    "MPMOutputManifest",
+    "MPMOutputPlan",
+    "MPMRouteSupersetPlan",
+    "MPMRouteSupersetState",
+    "MPMSparseContactOperator",
+    "MPMSparsePhaseFieldOperator",
+    "MPMRunSupervisor",
+    "MPMTwoLevelMultigrid",
+    "linearize_kway_contact",
     "ConductorCircuitSolveResult",
     "ElectrostaticConductorCoupling",
     "ElectrostaticConductorState",

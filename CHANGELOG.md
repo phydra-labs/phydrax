@@ -9,6 +9,17 @@
   balance-audited particle and interaction-segment continuum fields, sparse
   multilevel polydisperse neighborhoods, and dense-authority deforming periodic
   DEM cells with mixed stress/strain control and cell-work rollback.
+- Added commercial Material Point Method closure contracts: exact claim tuples and
+  executable support decisions, intended-use and G0--G7 release evidence, durable
+  atomic checkpoint generations, HDF5/XDMF/VTK output, host-side supervision and
+  observability, PIC/FLIP/blended/APIC transfer and independent advection, affine and
+  post-advection MUSL, vector-root anisotropic plane stress, non-associated
+  Drucker--Prager and Mohr--Coulomb plus Modified Cam-Clay, typed porothermal fields,
+  simultaneous K-way contact with essential constraints and shared rigid reactions,
+  topology-aware moving-domain and compact implicit actions, deterministic execution
+  and capacity certificates, distributed ownership/global transactions, conservative
+  particle lifecycle and ratio-two AMR, and evidence-tagged branchwise, event-aware,
+  generalized, surrogate, stochastic, or nondifferentiable derivative products.
 - Added full nonlinear solid-mechanics closure: canonical finite-strain laws,
   safeguarded plane stress, mixed incompressibility, conservative and follower
   loads, transactional continuation, physical bifurcation/selection, current-
