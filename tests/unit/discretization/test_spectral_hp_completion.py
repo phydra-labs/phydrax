@@ -19,9 +19,7 @@ from phydrax.discretization.fem import (
     HybridRefinementPlan,
     initial_finite_element_hp_topology,
     LevelSetCutQuadrature,
-    MultipatchContinuityPlan,
     NIrregularMortarPlan,
-    NURBSPatch,
     refine_anisotropic_hp_cells,
     resize_hp_forest,
     SimplexModalFamily,
@@ -31,7 +29,6 @@ from phydrax.discretization.fem import (
     TensorDeRhamComplex,
     TensorDeRhamTransferPlan,
     TensorPiolaMap,
-    TrimmedCADQuadrature,
     UnfittedAggregationPlan,
 )
 
@@ -149,22 +146,6 @@ def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact():
     )
 
 
-def test_nurbs_patch_uses_exact_rational_bspline_partition():
-    patch = NURBSPatch(
-        jnp.asarray(
-            (
-                ((0.0, 0.0), (0.0, 1.0)),
-                ((1.0, 0.0), (1.0, 1.0)),
-            )
-        ),
-        jnp.ones((2, 2)),
-        (jnp.asarray((0.0, 0.0, 1.0, 1.0)),) * 2,
-        (1, 1),
-    )
-    center = patch.evaluate(jnp.asarray(((0.5, 0.5),)))
-    np.testing.assert_allclose(np.asarray(center[0]), (0.5, 0.5), atol=2.0e-14)
-
-
 def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction():
     source = TensorDeRhamComplex(1, 2)
     target = TensorDeRhamComplex(2, 2)
@@ -202,27 +183,10 @@ def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction():
     assert len(refinement.child_maps) == 2
 
 
-def test_simplex_sbp_multipatch_trimmed_and_unfitted_transfers_conserve():
+def test_simplex_sbp_unfitted_and_interface_transfers_conserve():
     family = SimplexModalFamily("triangle", 3)
     sbp = SimplexSBPPlan(family)
     assert sbp.polynomial_derivative_error < 1.0e-12
-    continuity = MultipatchContinuityPlan(4, jnp.asarray(((1, 2),), dtype=jnp.int32))
-    assert continuity.prolongation.shape == (4, 3)
-
-    patch = NURBSPatch(
-        jnp.asarray((((0.0, 0.0), (0.0, 1.0)), ((1.0, 0.0), (1.0, 1.0)))),
-        jnp.ones((2, 2)),
-        (jnp.asarray((0.0, 0.0, 1.0, 1.0)),) * 2,
-        (1, 1),
-    )
-    parameters = jnp.asarray(((0.25, 0.25), (0.75, 0.75)))
-    trimmed = TrimmedCADQuadrature(
-        patch,
-        parameters,
-        jnp.asarray((0.5, 0.5)),
-        jnp.asarray((-1.0, 1.0)),
-    )
-    np.testing.assert_allclose(np.asarray(trimmed.physical_weights), (0.5, 0.0))
 
     aggregation = UnfittedAggregationPlan(
         jnp.asarray((0.05, 0.8)),

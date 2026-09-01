@@ -95,9 +95,6 @@ through the normal preconditioner lifecycle.
 
 ## CAD and unfitted geometry
 
-`NURBSPatch` evaluates rational B-spline geometry with Cox–de Boor basis
-recursion. `MultipatchContinuityPlan` constructs shared coordinates.
-`TrimmedCADQuadrature` masks parameter quadrature through trim functions.
 `LevelSetCutQuadrature` and `UnfittedAggregationPlan` handle embedded domains and
 small-cut-cell aggregation. `ConservativeMovingInterfaceTransfer` applies a
 physical-mass projection between interface spaces.

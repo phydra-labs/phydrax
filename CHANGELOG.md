@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Added an S1 isogeometric-analysis path for regular untrimmed
+  full-dimensional two-dimensional single-patch NURBS maps with clamped
+  isotropic frozen B-spline grids, positive mean-one-gauge weights, exactly
+  isoparametric scalar H1 fields, explicit Gauss quadrature, homogeneous strong
+  traces or natural Neumann boundaries, and sum-factorized matrix-free
+  finite-element forms. Added affine and exact rational quarter-annulus
+  qualification producers, an end-to-end Poisson example, and record-only
+  degree/span timing producers; sampled map evidence is not a global
+  injectivity certificate or BRep/CAD support.
 - Closed remaining advanced-cosmology boundaries with projected canonical physical
   state, content-addressed products/artifacts, dependency-aware derivatives, shared
   observation/covariance likelihood algebra, concrete pinned precision-process

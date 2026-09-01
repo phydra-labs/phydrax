@@ -13,12 +13,14 @@ from jaxtyping import Array, ArrayLike
 
 from ...discretization._cell_complex import PolygonalConnectivity, TetrahedralConnectivity
 from ...discretization._hexahedral import HexahedralConnectivity
+from ...discretization._local_variational import (
+    AbstractPreparedLocalDiscretization,
+)
 from ...discretization.fem import FiniteElementDiscretization, IntegrationDomain
 from ...discretization.fem._high_order import SumFactorizationPlan
 from ...discretization.fem._sbp import MappedTensorMetrics
 from ...linalg import DualSpace
 from ...sparse import scatter_local as _scatter_local
-from .._variational import VariationalCoefficient
 from .._finite_element_variational import (
     _action_domain,
     _action_rule,
@@ -40,6 +42,7 @@ from .._finite_element_variational import (
     SIPGFacetAction,
     SourceAction,
 )
+from .._variational import VariationalCoefficient
 from ._ir import LocalActionIR
 from ._kernels import KernelTable
 from ._operators import (
@@ -135,8 +138,6 @@ def _coefficient_values(
             f"got {values.shape}."
         )
     return values
-
-
 
 
 def _cell_metric(
@@ -431,9 +432,246 @@ def _mortar_facet_residual(
     return result.at[neighbour_routes].add(neighbour_lift)
 
 
+def _prepared_local_basis(
+    reference, runtime, entity_count: int, /
+) -> tuple[Array, Array]:
+    identity = jnp.broadcast_to(
+        jnp.eye(reference.local_width),
+        (entity_count, reference.local_width, reference.local_width),
+    )
+    values = reference.interpolate(runtime, identity)
+    gradients = reference.reference_gradient(runtime, identity)
+    return values, gradients
+
+
+def _prepared_local_coefficient_values(
+    coefficient_: VariationalCoefficient,
+    discretization: AbstractPreparedLocalDiscretization,
+    workset,
+    references: dict[str, object],
+    metric,
+    context: FiniteElementExecutionContext,
+    /,
+    *,
+    value_shape: tuple[int, ...] = (),
+) -> Array:
+    gathers = dict(workset.gathers)
+    dof_indices = None
+    basis_values = None
+    if coefficient_.location == "dof":
+        coefficient_field = None
+        for field_name in workset.local_region.field_names:
+            binding = discretization.local_field_binding(field_name)
+            if binding.field_space.field_space_id == coefficient_.field_space_id:
+                coefficient_field = field_name
+                break
+        if coefficient_field is None:
+            raise ValueError(
+                "DOF coefficient field is not gathered by the local workset."
+            )
+        dof_indices = gathers[coefficient_field]
+        basis_values = _prepared_local_basis(
+            references[coefficient_field],
+            context.runtime,
+            dof_indices.shape[0],
+        )[0]
+    return _coefficient_values(
+        coefficient_,
+        metric.points,
+        context,
+        value_shape=value_shape,
+        entity_indices=workset.entity_indices,
+        dof_indices=dof_indices,
+        basis_values=basis_values,
+        support_id=workset.signature.support_id,
+        entity_set_id=workset.signature.entity_set_id,
+        field_space_id=coefficient_.field_space_id,
+        rule_id=workset.signature.rule_id,
+        side="none",
+    )
+
+
+def _prepared_local_volume_residual(
+    action,
+    discretization: AbstractPreparedLocalDiscretization,
+    workset,
+    state_by_field: dict[str, Array],
+    context: FiniteElementExecutionContext,
+    /,
+) -> tuple[str, Array, Array]:
+    region = workset.local_region
+    if region is None:
+        raise ValueError("Prepared-local volume execution requires a local region.")
+    metric = region.geometry_actions.realize(context.runtime)
+    references = {
+        name: reference.realize_reference_actions(context.runtime)
+        for name, reference in zip(
+            region.field_names, region.reference_actions, strict=True
+        )
+    }
+    output_field = action.field_name
+    output_state = state_by_field[output_field]
+    gathers = dict(workset.gathers)
+    dofs = gathers[output_field]
+    local_state = output_state[dofs]
+    reference = references[output_field]
+    physical_weights = metric.physical_weights
+
+    def weighted(values, scalar_weight):
+        return values * scalar_weight.reshape(
+            scalar_weight.shape + (1,) * (values.ndim - scalar_weight.ndim)
+        )
+
+    if isinstance(action, DiffusionAction):
+        coefficient_values = _prepared_local_coefficient_values(
+            action.diffusivity,
+            discretization,
+            workset,
+            references,
+            metric,
+            context,
+        )
+        reference_gradient = reference.reference_gradient(context.runtime, local_state)
+        physical_gradient = metric.physical_gradient(reference_gradient)
+        physical_flux = weighted(
+            physical_gradient,
+            physical_weights * coefficient_values,
+        )
+        local = reference.reference_gradient_transpose(
+            context.runtime,
+            metric.reference_gradient_transpose(physical_flux),
+        )
+    elif isinstance(action, MassAction):
+        coefficient_values = _prepared_local_coefficient_values(
+            action.coefficient,
+            discretization,
+            workset,
+            references,
+            metric,
+            context,
+        )
+        field_values = reference.interpolate(context.runtime, local_state)
+        local = reference.interpolate_transpose(
+            context.runtime,
+            weighted(field_values, physical_weights * coefficient_values),
+        )
+    elif isinstance(action, SourceAction):
+        component_shape = output_state.shape[1:]
+        source_values = _prepared_local_coefficient_values(
+            action.source,
+            discretization,
+            workset,
+            references,
+            metric,
+            context,
+            value_shape=component_shape,
+        )
+        local = -reference.interpolate_transpose(
+            context.runtime,
+            weighted(source_values, physical_weights),
+        )
+    elif isinstance(action, BoundaryLoadAction):
+        component_shape = output_state.shape[1:]
+        load_values = _prepared_local_coefficient_values(
+            action.load,
+            discretization,
+            workset,
+            references,
+            metric,
+            context,
+            value_shape=component_shape,
+        )
+        local = -reference.trace_transpose(
+            context.runtime,
+            weighted(load_values, physical_weights),
+        )
+    elif isinstance(action, CellResidualAction):
+        basis_values, reference_basis_gradients = _prepared_local_basis(
+            reference, context.runtime, local_state.shape[0]
+        )
+        physical_basis_gradients = metric.physical_gradient(reference_basis_gradients)
+        input_values = []
+        input_gradients = []
+        for input_field in action.input_fields:
+            input_reference = references[input_field]
+            local_input = state_by_field[input_field][gathers[input_field]]
+            input_values.append(input_reference.interpolate(context.runtime, local_input))
+            input_reference_gradient = input_reference.reference_gradient(
+                context.runtime, local_input
+            )
+            input_physical_gradient = metric.physical_gradient(input_reference_gradient)
+            input_gradients.append(jnp.moveaxis(input_physical_gradient, -1, 2))
+        local = jnp.asarray(
+            action.kernel(
+                tuple(input_values),
+                tuple(input_gradients),
+                metric.points,
+                physical_weights,
+                basis_values,
+                physical_basis_gradients,
+                context,
+            )
+        )
+        if local.shape != local_state.shape:
+            raise ValueError(
+                "Cell residual kernel must return one local test residual "
+                "per selected entity and output-field DOF."
+            )
+    elif isinstance(action, CellEnergyAction):
+
+        def energy(local_coefficients):
+            values = reference.interpolate(context.runtime, local_coefficients)
+            reference_gradient = reference.reference_gradient(
+                context.runtime, local_coefficients
+            )
+            physical_gradient = jnp.moveaxis(
+                metric.physical_gradient(reference_gradient), -1, 2
+            )
+            density = jnp.asarray(
+                action.density(values, physical_gradient, metric.points, context)
+            )
+            if density.shape != physical_weights.shape:
+                raise ValueError(
+                    "Cell energy density must return one scalar per local point."
+                )
+            return jnp.sum(density * physical_weights)
+
+        local = jax.grad(energy)(local_state)
+    elif isinstance(action, CellBilinearAction):
+        basis_values, reference_basis_gradients = _prepared_local_basis(
+            reference, context.runtime, local_state.shape[0]
+        )
+        physical_basis_gradients = metric.physical_gradient(reference_basis_gradients)
+        matrix = jnp.asarray(
+            action.kernel(
+                metric.points,
+                physical_weights,
+                basis_values,
+                physical_basis_gradients,
+                context,
+            )
+        )
+        expected = (local_state.shape[0], local_state.shape[1], local_state.shape[1])
+        if matrix.shape != expected:
+            raise ValueError(
+                "Cell bilinear kernel must return shape "
+                "(entities, local_dofs, local_dofs)."
+            )
+        local = oe.contract("cij,cj...->ci...", matrix, local_state)
+    else:
+        raise TypeError("Unsupported prepared-local volume action.")
+    valid = jnp.asarray(workset.valid) & jnp.asarray(metric.valid)
+    local = jnp.where(
+        valid.reshape((valid.shape[0],) + (1,) * (local.ndim - 1)),
+        local,
+        0.0,
+    )
+    return output_field, dofs, local
+
+
 def _full_residual(
     form: FiniteElementForm,
-    discretization: FiniteElementDiscretization,
+    discretization: AbstractPreparedLocalDiscretization,
     workset_program: WorksetProgram,
     state: Array | tuple[Array, ...],
     accumulation: str,
@@ -443,18 +681,46 @@ def _full_residual(
     states = state if isinstance(state, tuple) else (state,)
     if len(states) != len(form.field_names):
         raise ValueError("Finite-element state blocks must match form fields.")
-    state_by_field = dict(zip(form.field_names, states, strict=True))
+    bindings = {
+        name: discretization.local_field_binding(name) for name in form.field_names
+    }
+    state_by_field = {
+        name: bindings[name].flatten(value)
+        for name, value in zip(form.field_names, states, strict=True)
+    }
     residual_by_field = {
         field_name: jnp.zeros_like(value) for field_name, value in state_by_field.items()
     }
-    block_names = tuple(block.name for block in discretization.mesh.blocks)
-    cell_offsets = np.cumsum(
-        np.asarray(
-            (0,) + tuple(block.cell_count for block in discretization.mesh.blocks),
-            dtype=np.int32,
+    if isinstance(discretization, FiniteElementDiscretization):
+        block_names = tuple(block.name for block in discretization.mesh.blocks)
+        cell_offsets = np.cumsum(
+            np.asarray(
+                (0,) + tuple(block.cell_count for block in discretization.mesh.blocks),
+                dtype=np.int32,
+            )
         )
-    )
+    else:
+        block_names = ()
+        cell_offsets = np.empty((0,), dtype=np.int32)
     for workset in workset_program.worksets:
+        if workset.local_region is not None:
+            for raw_action_index in workset.action_index_values:
+                output_field, dofs, local = _prepared_local_volume_residual(
+                    form.actions[raw_action_index],
+                    discretization,
+                    workset,
+                    state_by_field,
+                    context,
+                )
+                residual_by_field[output_field] = _scatter_local(
+                    residual_by_field[output_field],
+                    dofs,
+                    local,
+                    accumulation,
+                )
+            continue
+        if not isinstance(discretization, FiniteElementDiscretization):
+            raise ValueError("Facet and legacy volume worksets require finite elements.")
         block_index = block_names.index(workset.signature.block_name)
         block = discretization.mesh.blocks[block_index]
         work_cells = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
@@ -985,7 +1251,7 @@ def _full_residual(
     residuals = tuple(
         DualSpace(
             discretization.field_spaces[discretization._field_index(name)].vector_space
-        ).validate(residual_by_field[name])
+        ).validate(bindings[name].unflatten(residual_by_field[name]))
         for name in form.field_names
     )
     return residuals[0] if len(residuals) == 1 else residuals
@@ -2268,7 +2534,7 @@ def execute_finite_element_residual(
     workset_program: WorksetProgram,
     form: FiniteElementForm,
     kernel_table: KernelTable,
-    discretization: FiniteElementDiscretization,
+    discretization: AbstractPreparedLocalDiscretization,
     state: Array | tuple[Array, ...],
     accumulation: str,
     context: FiniteElementExecutionContext,
@@ -2295,11 +2561,11 @@ def execute_finite_element_residual(
             )
             if (
                 not strategy_matches
-                or signature.prepared_reference_id not in binding.reference_ids
-                or signature.element_id not in binding.element_ids
-                or signature.coordinate_element_id not in binding.coordinate_element_ids
-                or signature.representation not in binding.representations
-                or signature.mapping not in binding.mappings
+                or not set(signature.reference_action_ids).issubset(
+                    binding.reference_action_ids
+                )
+                or not set(signature.field_layout_ids).issubset(binding.field_layout_ids)
+                or signature.geometry_action_id not in binding.geometry_action_ids
                 or signature.coefficient_layout_ids != binding.coefficient_layout_ids
                 or signature.precision_id != binding.precision_id
                 or signature.ir_semantics_id != binding.ir_semantics_id
@@ -2307,6 +2573,7 @@ def execute_finite_element_residual(
                 raise ValueError(
                     "A workset signature does not match its compiled kernel binding."
                 )
+    discretization.validate_local_runtime(context.runtime)
     return _full_residual(
         form,
         discretization,

@@ -12,19 +12,12 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ..._interpolation import bspline_stencil
+from ..._interpolation import (
+    bspline_jet_stencil,
+    RationalSplineJet,
+    TensorBSplineJetPlan,
+)
 from ..._strict import StrictModule
-
-
-def _rational_denominator(coefficients: Array, /) -> Array:
-    denominator = jnp.sum(coefficients)
-    scale = jnp.sum(jnp.abs(coefficients))
-    tolerance = jnp.finfo(coefficients.dtype).eps * scale
-    return eqx.error_if(
-        denominator,
-        ~jnp.isfinite(denominator) | (jnp.abs(denominator) <= tolerance),
-        "Rational B-spline weights produced a zero or non-finite denominator.",
-    )
 
 
 class AbstractSurfacePatch(StrictModule):
@@ -233,32 +226,22 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
         self.v_degree = int(v_degree)
 
     def _evaluate_one(self, parameters: Array) -> Array:
-        u_stencil = bspline_stencil(
+        u_stencil = bspline_jet_stencil(
             self.u_knots,
             parameters[0],
             degree=self.u_degree,
+            maximum_order=0,
             bounds="clip",
         )
-        v_stencil = bspline_stencil(
+        v_stencil = bspline_jet_stencil(
             self.v_knots,
             parameters[1],
             degree=self.v_degree,
+            maximum_order=0,
             bounds="clip",
         )
-        u_indices = u_stencil.indices
-        v_indices = v_stencil.indices
-        local_weights = self.weights[u_indices[:, None], v_indices[None, :]]
-        coefficients = (
-            u_stencil.weights[:, None] * v_stencil.weights[None, :] * local_weights
-        )
-        denominator = _rational_denominator(coefficients)
-        local_controls = self.control_points[
-            u_indices[:, None],
-            v_indices[None, :],
-        ]
-        return (
-            jnp.sum(coefficients[..., None] * local_controls, axis=(0, 1)) / denominator
-        )
+        plan = TensorBSplineJetPlan((u_stencil, v_stencil), maximum_order=0)
+        return RationalSplineJet(plan, self.weights).apply(self.control_points)
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.control_points.dtype)
@@ -295,20 +278,14 @@ class BSplineCurve(StrictModule):
         self.degree = int(degree)
 
     def _evaluate_one(self, parameter: Array) -> Array:
-        stencil = bspline_stencil(
+        stencil = bspline_jet_stencil(
             self.knots,
             parameter,
             degree=self.degree,
+            maximum_order=0,
         )
-        coefficient = stencil.weights * self.weights[stencil.indices]
-        denominator = _rational_denominator(coefficient)
-        return (
-            jnp.sum(
-                coefficient[:, None] * self.control_points[stencil.indices],
-                axis=0,
-            )
-            / denominator
-        )
+        plan = TensorBSplineJetPlan((stencil,), maximum_order=0)
+        return RationalSplineJet(plan, self.weights).apply(self.control_points)
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.control_points.dtype)
