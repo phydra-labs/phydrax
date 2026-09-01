@@ -126,6 +126,25 @@ solves, inertia queries, and explicit resource release. Phydrax retains its own
 sparse operator, planning, precision, residual-certification, KKT, and result
 contracts. See LICENSES/SPINEAX-MIT.txt.
 
+IPC Toolkit
+Copyright (c) 2020–2025 Zachary Ferguson
+Licensed under the MIT License.
+The collision-stencil, convergent barrier, and lagged-friction implementations
+are informed by IPC Toolkit 2.0.0 at commit
+bb36e293f03f0d9e179f1e7243aa5d8322ccaad6. Phydrax executes independent
+JAX-native topology, precision, fixed-capacity, solver, and evidence contracts.
+See LICENSES/IPC-TOOLKIT-MIT.txt.
+
+Tight Inclusion
+Copyright (c) 2020 Bolun Wang, Zachary Ferguson, Teseo Schneider, Xin Jiang,
+Marco Attene, and Daniele Panozzo
+Licensed under the MIT License.
+The conservative inclusion and numerical-error design was studied from Tight
+Inclusion 1.1.0. Phydrax independently implements a Hausdorff/Lipschitz
+time-interval enclosure with explicit tolerance and work-limit evidence; it
+does not redistribute the upstream runtime.
+See LICENSES/TIGHT-INCLUSION-MIT.txt.
+
 Research and design acknowledgments
 
 The differentiable force-density design study considered arpastrana/jax_fdm at

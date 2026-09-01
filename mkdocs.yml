@@ -166,6 +166,7 @@ nav:
         - DEM rigid bodies and shapes: "guides_dem_rigid_bodies.md"
         - Constrained rigid-body dynamics: "guides_constrained_rigid_bodies.md"
         - Extended constrained and deformable mechanics: "guides_extended_mechanics.md"
+        - Deformable contact: "guides_deformable_contact.md"
         - DEM bonds and fracture: "guides_dem_bonds_and_fracture.md"
         - Differentiable DEM: "guides_differentiable_dem.md"
         - CFD-DEM coupling: "guides_cfd_dem.md"
@@ -307,6 +308,7 @@ nav:
             - Field spaces and axes: "api/discretization/spaces.md"
             - Prepared methods: "api/discretization/methods.md"
             - Finite elements: "api/discretization/finite_element.md"
+            - Contact surfaces and safety: "api/discretization/contact.md"
             - Virtual elements: "api/discretization/virtual_element.md"
             - Particle methods: "api/discretization/particle.md"
             - Vortex methods: "api/discretization/vortex.md"
@@ -324,6 +326,7 @@ nav:
             - Unstructured finite volume: "api/discretization/unstructured_finite_volume.md"
             - Modal and constrained solvers: "api/discretization/modal_solvers.md"
             - Fixed-capacity AMR: "api/discretization/amr.md"
+        - Deformable-contact applications: "api/applications/contact.md"
         - Computational topology:
             - Overview: "api/topology/index.md"
             - Exact homology: "api/topology/homology.md"

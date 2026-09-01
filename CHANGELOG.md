@@ -150,9 +150,14 @@
   irreversible joint breakage, and fixed-capacity topology transactions. Added
   transactional implicit Newmark volumetric FEM, mixed pressure gauges,
   rigid--deformable attachment KKT operators, objective two-/three-dimensional
-  Cosserat rods, triangular membrane/bending shells, fixed-capacity deformable
-  contact, and explicit rigid--MPM weld/penalty/impulse coupling with branch,
-  rank, energy, route, and rollback certificates.
+  Cosserat rods and triangular membrane/bending shells. Replaced the partial
+  particle-local deformable-contact routes and 2-D penalty workflow with
+  exact-map collision surfaces, dense/sweep-and-prune candidate epochs,
+  area-weighted physical barrier contact, conservative inclusion CCD, T3/T4
+  inversion limits, static and transactional Newmark solves, lagged Coulomb
+  friction, fixed-route sensitivities, and direct rod/shell collision-surface
+  adapters. Explicit rigid--MPM weld/penalty/impulse coupling retains separate
+  branch, rank, energy, route, and rollback certificates.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional

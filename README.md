@@ -44,7 +44,9 @@ Most workflows are composing a few primitives:
   microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
   response, fixed-population and dynamically reseeded free-surface/multiphase
   FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
-  fluxes, fixed-capacity AMR, field spaces, measures, transfers,
+  fluxes, fixed-capacity AMR, collision surfaces, deterministic contact candidate
+  epochs, conservative continuous-collision and simplex-inversion bounds,
+  convergent barrier contact, lagged friction, field spaces, measures, transfers,
   fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
   source processes, compatible constrained MHD, temporal/stochastic composition,
   and auditable plan/preparation identities.
@@ -218,6 +220,7 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [MPM domain guide](docs/guides_mpm_particle_domains.md), the
 [MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
 [MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
+[deformable-contact guide](docs/guides_deformable_contact.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the

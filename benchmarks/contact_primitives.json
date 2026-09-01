@@ -1,0 +1,15 @@
+{
+  "benchmark": "contact-primitives",
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "batch_size": 4096,
+  "value_compile_seconds": 0.1553009999988717,
+  "value_seconds": 0.00012896459993498864,
+  "gradient_compile_seconds": 0.2103011660001357,
+  "gradient_seconds": 0.0005972979499347276,
+  "hvp_compile_seconds": 0.17498766700009583,
+  "hvp_seconds": 0.00023254999978234993,
+  "minimum_squared_distance": 0.010000000000000002,
+  "gradient_norm": 13.411609417602712,
+  "hvp_norm": 1.3334147110582915
+}
