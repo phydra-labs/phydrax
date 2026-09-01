@@ -43,6 +43,7 @@ benchmarks/*
 !benchmarks/direct_collocation_qualification.json
 !benchmarks/integral_physics.json
 !benchmarks/laplace_capacitance.json
+!benchmarks/potential_flow_hydrodynamics.json
 !benchmarks/hp_spectral_element.json
 !benchmarks/spectral_hp_completion.json
 !benchmarks/map_gp_search.json

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added an authoritative surface and boundary-integral platform with checked
+  linear solves, scalar Calderón formulations, periodic scalar kernels,
+  FEM–BEM coupling, finite-depth potential-flow hydrodynamics, adaptive and
+  block execution, portable archives, static elasticity and Stokes kernels,
+  convolution quadrature, RWG Maxwell support, and fail-closed commercial
+  qualification evidence.
 - Added one fixed-capacity runtime particle-population authority with activity,
   mass, incarnation-safe slot reuse, deterministic allocation/deactivation, DEM
   lifecycle migration, and runtime particle-splat masks.

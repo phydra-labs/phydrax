@@ -207,7 +207,9 @@ from .graph import (  # noqa: F401
     graph_poisson_residual,
     neighbor_aggregate,
 )
+from .integral import *  # noqa: F401,F403
 from .integral import (  # noqa: F401
+    __all__ as _integral_all,
     AbstractLayerBackend,
     AbstractLayerKernel,
     AdaptiveLayerEvaluation2D,
@@ -696,3 +698,4 @@ __all__ = [
 ]
 
 __all__ += [name for name in _vortex_all if name not in __all__]
+__all__ += [name for name in _integral_all if name not in __all__]

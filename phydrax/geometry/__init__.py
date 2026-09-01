@@ -200,6 +200,8 @@ from .simplicial import (
     TriangleSurface,
     TriangleTopology,
 )
+from .surface import *  # noqa: F403
+from .surface import __all__ as _surface_all
 
 
 __all__ = [
@@ -378,3 +380,5 @@ __all__ = [
     "bounded_rejection_sample",
     "sample_boundary_atlas",
 ]
+
+__all__ += [name for name in _surface_all if name not in __all__]

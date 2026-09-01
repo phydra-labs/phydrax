@@ -6,6 +6,7 @@
 
 from . import (
     amr,
+    bem as bem,
     collocation,
     fem,
     finite_difference,
@@ -192,6 +193,8 @@ from .amr import (
     PreparedFDAMRHierarchy,
     RefinementDecision,
 )
+from .bem import *  # noqa: F403
+from .bem import __all__ as _bem_all
 from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
 from .discrete_velocity import *  # noqa: F403
 from .discrete_velocity import __all__ as _discrete_velocity_all
@@ -2854,3 +2857,4 @@ __all__ += [
     for name in (*_discrete_velocity_all, *_lattice_boltzmann_all, *_vortex_all)
     if name not in __all__
 ]
+__all__ += [name for name in _bem_all if name not in __all__]

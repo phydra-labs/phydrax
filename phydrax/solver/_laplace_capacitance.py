@@ -59,32 +59,43 @@ def _conductors(
 ) -> tuple[tuple[str, ...], tuple[EntitySelection, ...], np.ndarray]:
     if not isinstance(conductors, Mapping):
         raise TypeError(
-            "conductors must be a mapping of names to EntitySelection values."
+            "[conductor-selection] conductors must be a mapping of names to "
+            "EntitySelection values."
         )
     items = tuple(
         sorted((str(name), selection) for name, selection in conductors.items())
     )
     if not items or any(not name for name, _ in items):
-        raise ValueError("conductors must contain one or more non-empty names.")
+        raise ValueError(
+            "[conductor-selection] conductors must contain one or more non-empty names."
+        )
     names = tuple(name for name, _ in items)
     if len(set(names)) != len(names):
-        raise ValueError("Conductor names must be unique.")
+        raise ValueError("[conductor-selection] Conductor names must be unique.")
     selections = tuple(selection for _, selection in items)
     if not all(isinstance(selection, EntitySelection) for selection in selections):
-        raise TypeError("Every conductor value must be an EntitySelection.")
+        raise TypeError(
+            "[conductor-selection] Every conductor value must be an EntitySelection."
+        )
     masks = []
     for selection in selections:
         if selection.entity_set_id != galerkin.surface_entities.entity_set_id:
-            raise ValueError("Conductor selection does not match the prepared surface.")
+            raise ValueError(
+                "[geometry] Conductor selection does not match the prepared surface."
+            )
         mask = np.asarray(selection.mask, dtype=bool)
         if mask.shape != (galerkin.face_count,) or not np.any(mask):
-            raise ValueError("Every conductor must select at least one surface face.")
+            raise ValueError(
+                "[conductor-selection] Every conductor must select at least one "
+                "surface face."
+            )
         masks.append(mask)
     matrix = np.stack(masks)
     ownership = np.sum(matrix, axis=0)
     if np.any(ownership != 1):
         raise ValueError(
-            "Conductor selections must be disjoint and cover every surface face."
+            "[conductor-selection] Conductor selections must be disjoint and cover "
+            "every surface face."
         )
     components = np.asarray(galerkin.face_component_ids, dtype=np.int32)
     for component in range(galerkin.component_count):
@@ -92,7 +103,8 @@ def _conductors(
         owners = np.flatnonzero(np.any(matrix[:, component_faces], axis=1))
         if owners.size != 1 or not np.all(matrix[owners[0], component_faces]):
             raise ValueError(
-                "Each connected surface component must belong to exactly one conductor."
+                "[geometry] Each connected surface component must belong to exactly "
+                "one conductor."
             )
     return names, selections, matrix
 
@@ -118,17 +130,22 @@ def solve_laplace_capacitance_3d(
     if not isinstance(galerkin, LaplaceSingleLayerDP0Galerkin3D):
         raise TypeError("galerkin must be LaplaceSingleLayerDP0Galerkin3D.")
     if not bool(galerkin.assembly_report.accuracy_supported):
-        raise ValueError("Galerkin assembly does not support the requested accuracy.")
+        raise ValueError(
+            "[quadrature] Galerkin assembly does not support the requested accuracy."
+        )
     names, selections, masks_host = _conductors(galerkin, conductors)
     epsilon = jnp.asarray(permittivity, dtype=galerkin.face_areas.dtype)
     if epsilon.shape != () or not bool(jnp.isfinite(epsilon) & (epsilon > 0.0)):
-        raise ValueError("permittivity must be one finite positive scalar.")
+        raise ValueError(
+            "[permittivity] permittivity must be one finite positive scalar."
+        )
     policy = _default_policy() if linear is None else linear
     if not isinstance(policy, LinearSolvePolicy):
         raise TypeError("linear must be LinearSolvePolicy or None.")
     if policy.differentiation.mode != "none":
         raise ValueError(
-            "Laplace capacitance solves currently require differentiation mode 'none'."
+            "[differentiation] Laplace capacitance solves currently require "
+            "differentiation mode 'none'."
         )
 
     problem = LinearSystem(
