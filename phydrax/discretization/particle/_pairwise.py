@@ -253,6 +253,7 @@ def particle_pair_geometry(
     /,
     *,
     box: ParticleBox | ParticleCell | None = None,
+    cell_vectors: ArrayLike | None = None,
 ) -> ParticlePairGeometry:
     """Evaluate finite, zero-safe geometry on canonical particle pairs."""
 
@@ -263,10 +264,14 @@ def particle_pair_geometry(
         raise ValueError("Particle positions do not match the pair relation size.")
     if box is not None and box.ambient_dimension != value.shape[1]:
         raise ValueError("ParticleBox dimension does not match particle positions.")
+    if cell_vectors is not None and not isinstance(box, ParticleCell):
+        raise ValueError("Dynamic cell vectors require a ParticleCell.")
     left = value[pairs.left_indices]
     right = value[pairs.right_indices]
     displacement = left - right
-    if box is not None:
+    if cell_vectors is not None:
+        displacement = box.minimum_image_with_vectors(displacement, cell_vectors)
+    elif box is not None:
         displacement = box.minimum_image(displacement)
     valid = pairs.valid
     safe_displacement = jnp.where(valid[:, None], displacement, 0.0)

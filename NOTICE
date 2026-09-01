@@ -328,3 +328,16 @@ the resulting cochain, port, circuit, source, material, resource, failure,
 differentiation, and evidence contracts independently. No upstream source,
 tests, fixtures, generated kernels, runtime types, numerical tables, or
 executables are copied, translated, bundled, linked, imported, or redistributed.
+
+Granular micro--macro and wet-contact design study
+The granular design study considered MercuryDPM, Ogarko and Luding, “A fast
+multilevel algorithm for contact detection of arbitrarily polydisperse
+particles” (CPC 2012), Weinhart, Luding, and Thornton, “From discrete particles
+to continuum fields in mixtures” (AIP 2013), and Bagheri et al., “Approximate
+Expressions for the Capillary Force and the Surface Area of a Liquid Bridge
+between Identical Spheres” (2024) and its SoftwareX implementation paper.
+PhydraX independently implements immutable multilevel routes, balance-audited
+particle and segment transfer, analytic capillary energy, fit certification,
+transactional liquid inventory, periodic-cell control, tests, and benchmarks.
+No upstream source, tests, fixtures, generated data, runtime types, or
+executables are copied, translated, linked, imported, or redistributed.

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Added experimental granular micro--macro completion: fitted finite-volume
+  capillary bridges with analytic energy and fit margins, radius-derived contact
+  envelopes, conserved film/bridge inventory and exposed-area evaporation,
+  balance-audited particle and interaction-segment continuum fields, sparse
+  multilevel polydisperse neighborhoods, and dense-authority deforming periodic
+  DEM cells with mixed stress/strain control and cell-work rollback.
 - Closed remaining advanced-cosmology boundaries with projected canonical physical
   state, content-addressed products/artifacts, dependency-aware derivatives, shared
   observation/covariance likelihood algebra, concrete pinned precision-process
