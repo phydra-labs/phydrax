@@ -48,6 +48,11 @@ Most workflows are composing a few primitives:
   fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
   source processes, compatible constrained MHD, temporal/stochastic composition,
   and auditable plan/preparation identities.
+- **Isogeometric analysis**: a deliberately bounded S1 path prepares regular,
+  untrimmed, full-dimensional two-dimensional single-patch NURBS maps and
+  exactly isoparametric scalar H1 fields with frozen clamped isotropic knot
+  grids, positive gauge-fixed weights, explicit Gauss rules, homogeneous trace
+  constraints, and matrix-free sum-factorized finite-element forms.
 - **Virtual elements**: enhanced conforming degree-one-through-three polygonal
   functional spaces expose certified H1/L2 projectors, explicit stabilization,
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
@@ -204,10 +209,12 @@ thin labeled-domain adapter used by sampling, integration, and constraints. See 
 
 Numerical supports and finite field spaces live in `phx.discretization`, including
 bounded, periodic, half-line, and real-line global tensor bases; rational Chebyshev
-transforms and spectral resolution evidence; material-particle supports and
-conservative SPH; and exact-sampling round-sphere spaces with S2FFT transforms,
-Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
+transforms and spectral resolution evidence; the bounded two-dimensional
+single-patch isogeometric path; material-particle supports and conservative SPH;
+and exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami
+actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
+[isogeometric-analysis guide](docs/guides_isogeometric_analysis.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the

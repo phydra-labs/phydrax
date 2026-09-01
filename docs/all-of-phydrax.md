@@ -106,6 +106,17 @@ variable-density dynamics, implicit diffusion, resolved face-marker coupling,
 sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
 certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
 and distributed halo plans remain available to the wider finite-volume family.
+The S1 isogeometric path binds two clamped isotropic B-spline grids to a
+positive, mean-one-gauge NURBS control net and an exactly isoparametric scalar
+H1 field. It covers regular, untrimmed, full-dimensional two-dimensional
+single-patch volume maps, explicit Gauss quadrature, homogeneous strong traces
+or natural Neumann boundaries, and matrix-free sum-factorized finite-element
+forms. Its regularity evidence is sampled at the declared quadrature sites:
+even when a quarter-annulus control net represents its rational map exactly,
+the sampled minimum denominator, orientation determinant, and reciprocal
+condition margins are not a global injectivity proof. These volume maps are not
+the repository's BRep surface geometry and do not imply trimming, CAD topology,
+shells, multipatch coupling, or three-dimensional solids.
 Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
 vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
 projections, explicit projector-kernel stabilization, matrix-free or sparse
@@ -215,6 +226,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Multiphase and incompressible SPH](guides_multiphase_incompressible_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
+[Guide → Isogeometric analysis](guides_isogeometric_analysis.md),
 [Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).

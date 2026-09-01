@@ -36,6 +36,8 @@ benchmarks/*
 !benchmarks/_comparison.py
 !benchmarks/_io.py
 !benchmarks/_runtime.py
+!benchmarks/iga_h1.json
+!benchmarks/iga_h1_qualification.json
 !benchmarks/pgm_native.py
 !benchmarks/dae_benchmark_artifact.json
 !benchmarks/direct_collocation.json

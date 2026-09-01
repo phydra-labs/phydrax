@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal, TYPE_CHECKING, TypeAlias
+from typing import cast, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
@@ -24,6 +24,9 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization._local_variational import (
+    AbstractPreparedLocalDiscretization,
+)
 from ..discretization.fem import (
     finite_element_hp_constraint,
     finite_element_hp_domains,
@@ -32,7 +35,6 @@ from ..discretization.fem import (
     FiniteElementHPEpoch,
     FiniteElementHPTraceConstraintPlan,
     FiniteElementLinearConstraint,
-    FiniteElementRuntimeData,
     IntegrationDomain,
 )
 from ..dynamics import (
@@ -70,12 +72,12 @@ from ._variational import (
     _normalize_rules,
     _rule_id,
     BoundaryLoadAction,
+    coefficient,
     DiffusionAction,
     IntegrationRule as ReferenceRule,
     MassAction,
     SourceAction,
     VariationalCoefficient,
-    coefficient,
 )
 
 
@@ -83,8 +85,6 @@ if TYPE_CHECKING:
     from .fem._ir import LocalActionIR
     from .fem._kernels import KernelTable
     from .fem._worksets import WorksetProgram
-
-
 
 
 def _reference_rule_data(rule: ReferenceRule, /):
@@ -123,8 +123,6 @@ def _hexahedron_rule():
     return ReferenceHexahedronRule()
 
 
-
-
 def _default_rule(cell_kind: str, /) -> ReferenceRule:
     if cell_kind == "triangle":
         return _triangle_rule()
@@ -137,15 +135,13 @@ def _default_rule(cell_kind: str, /) -> ReferenceRule:
     raise ValueError(f"No finite-element rule exists for cell kind {cell_kind!r}.")
 
 
-
-
 _UNIT_MASS_COEFFICIENT = coefficient(np.asarray(1.0))
 
 
 class FiniteElementExecutionContext(StrictModule, NonTrainableState):
     """Dynamic geometry, time, lift, and user arguments for FE execution."""
 
-    runtime: FiniteElementRuntimeData
+    runtime: object
     time: Array
     lift: object
     lift_rate: object
@@ -155,7 +151,7 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        runtime: FiniteElementRuntimeData,
+        runtime: object,
         /,
         *,
         time: ArrayLike = 0.0,
@@ -165,8 +161,6 @@ class FiniteElementExecutionContext(StrictModule, NonTrainableState):
         metric_data: object = None,
         user_args: object = None,
     ):
-        if not isinstance(runtime, FiniteElementRuntimeData):
-            raise TypeError("runtime must be FiniteElementRuntimeData.")
         self.runtime = runtime
         self.time = jnp.asarray(time)
         self.lift = None if lift is None else jax.tree.map(jnp.asarray, lift)
@@ -231,7 +225,6 @@ class FiniteElementExecutionPolicy(StrictModule, NonTrainableState):
                 "accumulation": accumulation_,
             }
         )
-
 
 
 class CellResidualAction(StrictModule, NonTrainableState):
@@ -841,17 +834,17 @@ class FiniteElementForm(StrictModule, NonTrainableState):
 
 def _action_domain(
     term: FiniteElementAction,
-    discretization: FiniteElementDiscretization,
+    discretization: AbstractPreparedLocalDiscretization,
     /,
 ) -> IntegrationDomain:
     if term.domain is not None:
         domain = term.domain
     elif isinstance(term, (BoundaryLoadAction, ExteriorFacetAction)):
-        domain = discretization.exterior_facet_domain
+        domain = discretization.integration_domain("exterior_facet")
     elif isinstance(term, InteriorFacetAction):
-        domain = discretization.interior_facet_domain
+        domain = discretization.integration_domain("interior_facet")
     else:
-        domain = discretization.cell_domain
+        domain = discretization.integration_domain("cell")
     if domain.support_id != discretization.support.support_id:
         raise ValueError("Finite-element term domain belongs to another support.")
     return domain
@@ -917,13 +910,15 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
 
     def evaluate(
         self,
-        discretization: FiniteElementDiscretization,
+        discretization: AbstractPreparedLocalDiscretization,
         state: ArrayLike,
         args: object = None,
         /,
     ) -> Array:
         field_index = discretization._field_index(self.field_name)
         values = discretization.field_spaces[field_index].vector_space.validate(state)
+        binding = discretization.local_field_binding(self.field_name)
+        execution_values = binding.flatten(values)
         context = (
             args
             if isinstance(args, FiniteElementExecutionContext)
@@ -932,9 +927,56 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
                 user_args=args,
             )
         )
-        domain = discretization.cell_domain if self.domain is None else self.domain
+        domain = (
+            discretization.integration_domain("cell")
+            if self.domain is None
+            else self.domain
+        )
         if domain.support_id != discretization.support.support_id:
             raise ValueError("Functional domain belongs to another support.")
+        discretization.validate_local_runtime(context.runtime)
+        if not self.rules or not isinstance(discretization, FiniteElementDiscretization):
+            mode = (
+                "dense"
+                if isinstance(discretization, FiniteElementDiscretization)
+                else "sum_factorized"
+            )
+            regions = discretization.prepare_local_regions(
+                domain,
+                field_names=(self.field_name,),
+                maximum_derivative_order=1,
+                kernel_mode=mode,
+            )
+            contributions = []
+            for region in regions:
+                reference = region.reference_actions[0].realize_reference_actions(
+                    context.runtime
+                )
+                metric = region.geometry_actions.realize(context.runtime)
+                local = execution_values[region.field_gathers[0]]
+                field_values = reference.interpolate(context.runtime, local)
+                reference_gradient = reference.reference_gradient(context.runtime, local)
+                gradients = jnp.moveaxis(
+                    metric.physical_gradient(reference_gradient), -1, 2
+                )
+                density = jnp.asarray(
+                    self.density(field_values, gradients, metric.points, context)
+                )
+                if density.shape != metric.physical_weights.shape:
+                    raise ValueError(
+                        "Finite-element functional density must return one scalar "
+                        "per local point."
+                    )
+                valid = jnp.asarray(region.valid) & jnp.asarray(metric.valid)
+                contributions.append(
+                    discretization.precision_policy.accumulation(
+                        density * metric.physical_weights * valid[:, None]
+                    ).reshape((-1,))
+                )
+            combined = jnp.concatenate(tuple(contributions))
+            if discretization.precision_policy.compensated_accumulation:
+                return discretization.precision_policy.output(compensated_sum(combined))
+            return discretization.precision_policy.output(jnp.sum(combined))
         rules = dict(self.rules)
         contributions = []
         cell_offset = 0
@@ -1074,11 +1116,9 @@ def _sipg_constant_subspace(
 
 class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     form: FiniteElementForm
-    discretization: FiniteElementDiscretization
-    constraint: FiniteElementDirichletConstraint | FiniteElementLinearConstraint | None
-    constraints: tuple[
-        FiniteElementDirichletConstraint | FiniteElementLinearConstraint | None, ...
-    ]
+    discretization: AbstractPreparedLocalDiscretization
+    constraint: ConstraintMap | None
+    constraints: tuple[ConstraintMap | None, ...]
     execution_policy: FiniteElementExecutionPolicy
     _action_ir: LocalActionIR
     _workset_program: WorksetProgram
@@ -1090,15 +1130,19 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     def __init__(
         self,
         form: FiniteElementForm,
-        discretization: FiniteElementDiscretization,
+        discretization: AbstractPreparedLocalDiscretization,
         /,
         *,
-        constraint: FiniteElementDirichletConstraint
+        constraint: ConstraintMap
+        | FiniteElementDirichletConstraint
         | FiniteElementLinearConstraint
         | None = None,
         dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
         constraints: Mapping[
-            str, FiniteElementDirichletConstraint | FiniteElementLinearConstraint
+            str,
+            ConstraintMap
+            | FiniteElementDirichletConstraint
+            | FiniteElementLinearConstraint,
         ]
         | None = None,
         dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
@@ -1107,10 +1151,17 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     ):
         if not isinstance(form, FiniteElementForm):
             raise TypeError("form must be a FiniteElementForm.")
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise TypeError("discretization must be FiniteElementDiscretization.")
+        if not isinstance(discretization, AbstractPreparedLocalDiscretization):
+            raise TypeError("discretization must be AbstractPreparedLocalDiscretization.")
         policy = (
-            FiniteElementExecutionPolicy()
+            (
+                FiniteElementExecutionPolicy()
+                if isinstance(discretization, FiniteElementDiscretization)
+                else FiniteElementExecutionPolicy(
+                    realization="matrix_free",
+                    local_kernel="sum_factorized",
+                )
+            )
             if execution_policy is None
             else execution_policy
         )
@@ -1118,6 +1169,23 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             raise TypeError(
                 "execution_policy must be FiniteElementExecutionPolicy or None."
             )
+        if not isinstance(discretization, FiniteElementDiscretization):
+            if policy.realization != "matrix_free":
+                raise ValueError(
+                    "Method-neutral local discretizations require matrix-free execution."
+                )
+            if any(
+                isinstance(
+                    action,
+                    (
+                        ExteriorFacetAction,
+                        InteriorFacetAction,
+                        SIPGFacetAction,
+                    ),
+                )
+                for action in form.actions
+            ):
+                raise ValueError("Non-load facet actions remain finite-element-gated.")
         if len(form.field_names) > 1 and (
             constraint is not None or dirichlet_values is not None
         ):
@@ -1159,28 +1227,45 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     )
                 lift_value = full_space.zeros()
             else:
-                if not isinstance(
+                if isinstance(constraint_value, ConstraintMap):
+                    if boundary_values is not None:
+                        raise ValueError(
+                            "Plain ConstraintMap values are homogeneous and do not "
+                            "accept Dirichlet values."
+                        )
+                    constraint_map = constraint_value
+                    lift_value = full_space.zeros()
+                elif isinstance(
                     constraint_value,
                     (FiniteElementDirichletConstraint, FiniteElementLinearConstraint),
                 ):
-                    raise TypeError(
-                        "constraints must contain finite-element constraint values."
-                    )
-                if constraint_value.field_name != field_name:
-                    raise ValueError("Constraint field does not match its map key.")
-                if isinstance(constraint_value, FiniteElementLinearConstraint):
-                    if boundary_values is not None:
-                        raise ValueError(
-                            "Homogeneous hp constraints do not accept Dirichlet values."
-                        )
-                    lift_value = constraint_value.lift()
+                    if constraint_value.field_name != field_name:
+                        raise ValueError("Constraint field does not match its map key.")
+                    constraint_map = constraint_value.constraint_map
+                    if isinstance(constraint_value, FiniteElementLinearConstraint):
+                        if boundary_values is not None:
+                            raise ValueError(
+                                "Homogeneous hp constraints do not accept "
+                                "Dirichlet values."
+                            )
+                        lift_value = constraint_value.lift()
+                    else:
+                        if boundary_values is None:
+                            raise ValueError(
+                                f"Constraint for {field_name!r} requires "
+                                "Dirichlet values."
+                            )
+                        lift_value = constraint_value.lift(boundary_values)
                 else:
-                    if boundary_values is None:
-                        raise ValueError(
-                            f"Constraint for {field_name!r} requires Dirichlet values."
-                        )
-                    lift_value = constraint_value.lift(boundary_values)
-            constraint_values.append(constraint_value)
+                    raise TypeError(
+                        "constraints must contain ConstraintMap or finite-element "
+                        "constraint values."
+                    )
+                if not constraint_map.full_space.compatible(full_space):
+                    raise ValueError(
+                        "Constraint full space does not match its declared field."
+                    )
+            constraint_values.append(None if constraint_value is None else constraint_map)
             lifts.append(lift_value)
         constraints_ = tuple(constraint_values)
         lift = lifts[0] if len(lifts) == 1 else tuple(lifts)
@@ -1284,7 +1369,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                     self.discretization._field_index(name)
                 ].vector_space
                 if constraint is None
-                else constraint.constraint_map.reduced_space
+                else constraint.reduced_space
             )
             for name, constraint in zip(
                 self.form.field_names,
@@ -1311,7 +1396,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
     def constraint_map(self) -> ConstraintMap | None:
         if len(self.form.field_names) == 1:
             constraint = self.constraints[0]
-            return None if constraint is None else constraint.constraint_map
+            return constraint
         blocks = []
         for row, (full_block, reduced_block, constraint) in enumerate(
             zip(
@@ -1328,7 +1413,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 elif constraint is None:
                     block_row.append(IdentityLinearOperator(full_block))
                 else:
-                    block_row.append(constraint.constraint_map.prolongation)
+                    block_row.append(constraint.prolongation)
             blocks.append(tuple(block_row))
         prolongation = BlockLinearOperator(
             tuple(blocks),
@@ -1366,14 +1451,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 lift=self.lift,
                 user_args=args,
             )
-        if (
-            context.runtime.topology_id != self.discretization.mesh.topology_id
-            or context.runtime.geometry_layout_id
-            != self.discretization.default_runtime.geometry_layout_id
-        ):
-            raise ValueError(
-                "Finite-element execution runtime does not match the compiled layout."
-            )
+        self.discretization.validate_local_runtime(context.runtime)
         return context
 
     def expand(self, state: object, args: object = None, /):
@@ -1384,7 +1462,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             constraint = self.constraints[0]
             if constraint is None:
                 return self.full_space.validate(values)
-            return constraint.constraint_map.expand(values, lifts)
+            return constraint.expand(values, lifts)
         if not isinstance(lifts, tuple):
             raise ValueError("Mixed finite-element lifts must be field-block tuples.")
         expanded = []
@@ -1398,7 +1476,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             expanded.append(
                 full_block.validate(value)
                 if constraint is None
-                else constraint.constraint_map.expand(value, lift)
+                else constraint.expand(value, lift)
             )
         return self.full_space.validate(tuple(expanded))
 
@@ -1425,9 +1503,9 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             constraint = self.constraints[0]
             if constraint is None:
                 return self.residual_space.validate(full_residual)
-            return constraint.constraint_map.pullback_dual(full_residual)
+            return constraint.pullback_dual(full_residual)
         reduced = tuple(
-            full if constraint is None else constraint.constraint_map.pullback_dual(full)
+            full if constraint is None else constraint.pullback_dual(full)
             for full, constraint in zip(
                 full_residual,
                 self.constraints,
@@ -2317,7 +2395,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             )
         if self.constraint is None:
             return full_mass, full_mass
-        constraint_map = self.constraint.constraint_map
+        constraint_map = self.constraint
         reduced_mass = FunctionLinearOperator(
             lambda reduced: constraint_map.pullback_dual(
                 full_mass.mv(constraint_map.homogeneous_correction(reduced))
@@ -2381,7 +2459,7 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
             residual = self.residual(state, context)
             if self.constraint is not None and context.lift_rate is not None:
                 lift_rate = self.full_space.validate(context.lift_rate)
-                residual = residual + self.constraint.constraint_map.pullback_dual(
+                residual = residual + self.constraint.pullback_dual(
                     full_mass.mv(lift_rate)
                 )
             return -residual
@@ -2440,11 +2518,11 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
                 + self.residual(configuration, context)
             )
             if self.constraint is not None and context.lift_rate is not None:
-                value = value + damping_ * self.constraint.constraint_map.pullback_dual(
+                value = value + damping_ * self.constraint.pullback_dual(
                     full_mass.mv(self.full_space.validate(context.lift_rate))
                 )
             if self.constraint is not None and context.lift_acceleration is not None:
-                value = value + self.constraint.constraint_map.pullback_dual(
+                value = value + self.constraint.pullback_dual(
                     full_mass.mv(self.full_space.validate(context.lift_acceleration))
                 )
             return self.state_space.inverse_riesz(value)
@@ -2516,13 +2594,17 @@ class CompiledFiniteElementProblem(StrictModule, NonTrainableState):
 
 def compile_finite_element_problem(
     form: FiniteElementForm,
-    discretization: FiniteElementDiscretization | FiniteElementHPEpoch,
+    discretization: AbstractPreparedLocalDiscretization | FiniteElementHPEpoch,
     /,
     *,
-    constraint: FiniteElementDirichletConstraint | None = None,
+    constraint: ConstraintMap
+    | FiniteElementDirichletConstraint
+    | FiniteElementLinearConstraint
+    | None = None,
     dirichlet_values: ArrayLike | Callable[[Array], ArrayLike] | None = None,
     constraints: Mapping[
-        str, FiniteElementDirichletConstraint | FiniteElementLinearConstraint
+        str,
+        ConstraintMap | FiniteElementDirichletConstraint | FiniteElementLinearConstraint,
     ]
     | None = None,
     dirichlet_values_by_field: Mapping[str, ArrayLike | Callable[[Array], ArrayLike]]
