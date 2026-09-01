@@ -14,8 +14,10 @@ import phydrax as phx
 astro = phx.applications.astrodynamics
 context = astro.AstrodynamicsContext(
     astro.AstrodynamicsScaleContract.si(),
-    astro.ReferenceEpoch(2451545.0, 0.0, "TT"),
-    astro.AstrodynamicsFrame("central", "inertial", pseudo_inertial=True),
+    astro.ReferenceEpoch(
+        astro.TimeInstant(astro.JulianDate(2451545.0), "TT")
+    ),
+    astro.FrameDefinition("central", "inertial", pseudo_inertial=True),
 )
 initial = astro.CartesianOrbitState(
     jnp.asarray([1.0, 0.0, 0.0]),

@@ -1,0 +1,57 @@
+{
+  "maturity": "experimental",
+  "passed": true,
+  "sections": {
+    "amortized_operator": {
+      "cvar": 4.0,
+      "effective_sample_size": 2.6666666666666665,
+      "passed": true,
+      "tail_mass": 0.5
+    },
+    "contact": {
+      "action_reaction_defect": 0.0,
+      "minimum_gap": -0.1,
+      "pairs": 2,
+      "passed": true
+    },
+    "continuation_bifurcation": {
+      "accepted_steps": 4,
+      "checkpoint_decisions": 5,
+      "passed": true,
+      "points": 5,
+      "status": 0
+    },
+    "follower_loads": {
+      "dead_force_norm": 6.244997998398398,
+      "follower_force_norm": 2.495495942693556,
+      "follower_is_nonconservative": true,
+      "passed": true
+    },
+    "fracture": {
+      "area_defect": 2.220446049250313e-16,
+      "cut_cells": 4,
+      "minimum_tip_radius": 0.04070079187812531,
+      "passed": true
+    },
+    "mixed_incompressibility": {
+      "augmented_pressure": 0.40000000000000036,
+      "exact_constraint_defect": 0.0,
+      "finite_bulk_constraint_defect": 0.0,
+      "passed": true
+    },
+    "plane_stress": {
+      "passed": true,
+      "residual": 1.4260814751310136e-13,
+      "tangent_error": 3.552713678800501e-15,
+      "thickness_stretch": 0.976295748516597
+    },
+    "topology": {
+      "hill_mandel_defect": 0.0,
+      "maximum_tie_sensitivity": [
+        0.5,
+        0.5
+      ],
+      "passed": true
+    }
+  }
+}

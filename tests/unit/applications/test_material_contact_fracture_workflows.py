@@ -27,45 +27,52 @@ def test_cpfem_identity_update_is_objective_and_admissible():
 
 def test_contact_pair_ids_persist_through_accepted_commit():
     contact = phx.applications.contact
-    pairs = contact.ContactPairState(
+    plus = contact.ContactSurface(
+        "plus",
+        jnp.asarray([1, 3]),
+        jnp.asarray([[0.25, -0.1], [0.75, 0.1]]),
+        jnp.asarray([[0, 1]], dtype=jnp.int32),
         jnp.asarray([11]),
-        jnp.asarray([1]),
-        jnp.asarray([2]),
-        jnp.asarray([0.1]),
-        jnp.asarray([[1.0, 0.0]]),
     )
-    workflow = contact.ContactWorkflow(contact.FrictionlessContactLaw(100.0), pairs)
-    evaluation = workflow.evaluate(jnp.asarray([[-0.2, 0.0]]), jnp.zeros((1, 2)))
-    accepted = phx.solver.FiniteElementAcceptedState(
-        (jnp.zeros((1, 2)),), 0.0, 0, "topology", "prepared", "compiled"
+    minus = contact.ContactSurface(
+        "minus",
+        jnp.asarray([2, 4]),
+        jnp.asarray([[0.0, 0.0], [1.0, 0.0]]),
+        jnp.asarray([[0, 1]], dtype=jnp.int32),
+        jnp.asarray([22]),
     )
+    query = contact.ContactQueryPlan(
+        contact.ContactConfiguration(plus, minus, epoch=0)
+    ).execute()
+    operator = contact.FixedEpochContactOperator(query, contact.PenaltyContactLaw(100.0))
+    accepted = operator.accepted_state()
+    transaction = operator.attempt(accepted)
+    promoted = transaction.commit()
 
-    def solve_attempt(state, start, end, time_law, args):
-        return workflow.attempt((jnp.asarray([[-0.2, 0.0]]),), evaluation, True)
-
-    promoted, diagnostics = phx.solver.FiniteElementAcceptedStepSchedule(
-        solve_attempt
-    ).advance(accepted, 1.0, phx.solver.TimeLaw.constant(1.0))
-
-    assert bool(evaluation.active[0])
-    assert int(evaluation.pair_ids[0]) == 11
-    assert bool(diagnostics.accepted)
-    assert promoted.materials.states[0].state_version == 1
+    assert bool(transaction.evaluation.active[0])
+    assert promoted.pair_ids == query.patches.pair_ids
+    assert promoted.state_version == accepted.state_version + 1
+    assert transaction.rollback() is accepted
 
 
-def test_fracture_history_is_irreversible_and_xfem_classification_is_stable():
+def test_diffuse_fracture_history_promotes_only_an_accepted_transaction():
     fracture = phx.applications.fracture
-    history = fracture.FractureHistoryState(jnp.zeros((2, 1)), jnp.asarray([0.1, 0.2]))
-    promoted = history.promote(jnp.asarray([[1.0], [0.5]]), jnp.asarray([0.2, 0.2]))
-    vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
-    cells = jnp.asarray([[0, 1, 3], [1, 2, 3]], dtype=jnp.int32)
-    mesh = phx.discretization.CellMesh.from_triangles(
-        vertices, cells, cell_global_ids=jnp.asarray([10, 20])
+    history = fracture.PhaseFieldHistoryState(
+        jnp.zeros((2, 1)),
+        jnp.asarray([0.1, 0.2]),
     )
-    enrichment = fracture.classify_crack_cells(
-        mesh, fracture.CrackGeometry([0.0, 0.5], [1.0, 0.5])
+    rejected = history.transaction(
+        jnp.asarray([[1.0], [0.5]]),
+        jnp.asarray([0.2, 0.2]),
+        accepted=False,
     )
+    accepted = history.transaction(
+        jnp.asarray([[1.0], [0.5]]),
+        jnp.asarray([0.2, 0.2]),
+        accepted=True,
+    )
+    promoted = accepted.commit(history)
 
+    assert rejected.commit(history) is history
     assert jnp.all(promoted.history >= history.history)
     assert jnp.all(promoted.accepted_damage >= history.accepted_damage)
-    assert jnp.array_equal(enrichment.active_cell_ids, jnp.asarray([10, 20]))

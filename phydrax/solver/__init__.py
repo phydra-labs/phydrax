@@ -45,7 +45,7 @@ term evaluation.
 """
 
 from .._hybrid_sensitivity import HybridSensitivityMode
-from . import advanced, maxwell
+from . import advanced, coupling, maxwell
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -352,6 +352,12 @@ from ._fermionic_gaussian import (
     open_kitaev_chain,
     solve_fermionic_gaussian,
 )
+from ._field_equilibrium import (
+    FieldEquilibriumFormulation,
+    prepare_functional_stationarity,
+    prepare_virtual_work_equilibrium,
+    PreparedFieldEquilibrium,
+)
 from ._finite_element_adaptivity import (
     FiniteElementHPTopologyResult,
     FiniteElementTopologyResult,
@@ -556,6 +562,12 @@ from ._hybrid_event import (
     HybridEventSensitivityResult,
     localize_hybrid_event,
 )
+from ._hybrid_schedule import (
+    HybridSchedulePlan,
+    HybridScheduleResult,
+    ScheduledHybridEvent,
+)
+from ._ias15 import IAS15Plan, IAS15Result
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -1240,6 +1252,7 @@ from .maxwell import (
 
 __all__ = [
     "advanced",
+    "coupling",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
     "BalanceLawAdvanceResult",
@@ -1871,6 +1884,10 @@ __all__ = [
     "solve_bsde_least_squares",
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
+    "FieldEquilibriumFormulation",
+    "PreparedFieldEquilibrium",
+    "prepare_functional_stationarity",
+    "prepare_virtual_work_equilibrium",
     "FunctionalSolver",
     "InteriorLaplaceDirichletResult",
     "LaplaceCapacitanceResult3D",
@@ -2155,4 +2172,12 @@ __all__ += [
         *_vortex_step_all,
     )
     if name not in __all__
+]
+
+__all__ += [
+    "HybridSchedulePlan",
+    "HybridScheduleResult",
+    "IAS15Plan",
+    "IAS15Result",
+    "ScheduledHybridEvent",
 ]

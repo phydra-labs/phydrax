@@ -167,7 +167,7 @@ def _adaptive_metrics():
 
 def _material_metrics():
     neo = phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
-    plane = phx.applications.solid_mechanics.IsotropicPlaneStressMPMConstitutivePlan(neo)
+    plane = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(neo)
     neo_parameters = (
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(3.0, 11.0)
     )

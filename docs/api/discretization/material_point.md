@@ -93,7 +93,7 @@
 
 ---
 
-::: phydrax.applications.solid_mechanics.IsotropicPlaneStressMPMConstitutivePlan
+::: phydrax.applications.solid_mechanics.PlaneStressMPMConstitutivePlan
 
 ---
 

@@ -294,6 +294,42 @@ def test_rational_regularizer_reduces_to_polynomial_energy_at_unit_weights():
     )
 
 
+@pytest.mark.parametrize("regularization_order", (1, 2, 3))
+def test_rational_grid_bank_preserves_every_regularization_order_through_degree(
+    regularization_order,
+):
+    grids = (
+        BSplineGrid.open_uniform(3, 4),
+        BSplineGrid(
+            jnp.asarray([-1.0, -1.0, -1.0, -1.0, -0.72, -0.08, 0.61, 1.0, 1.0, 1.0, 1.0]),
+            3,
+        ),
+    )
+    bank = BSplineGridBank.from_grids(grids)
+    polynomial = BSplineEdgeBasis(
+        grid=bank,
+        regularization_order=regularization_order,
+    )
+    rational = RationalBSplineEdgeBasis(
+        grid=bank,
+        regularization_order=regularization_order,
+        weight_magnitude_weight=0.0,
+        weight_variation_weight=0.0,
+        denominator_weight=0.0,
+    )
+    controls = jr.normal(jr.key(26), (1, 2, bank.coefficient_count))
+    parameters = RationalBSplineEdgeParameters(
+        controls,
+        jnp.zeros(controls.shape),
+    )
+
+    assert float(rational.regularization(parameters)) == pytest.approx(
+        float(polynomial.regularization(controls)),
+        rel=2e-11,
+        abs=2e-11,
+    )
+
+
 @pytest.mark.parametrize(
     "family",
     ("chebyshev", "legendre", "hermite", "hermite_e", "laguerre"),

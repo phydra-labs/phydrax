@@ -169,19 +169,39 @@ def test_observation_restart_and_result_roundtrip(tmp_path):
 
 
 def test_contact_search_and_cut_quadrature_are_deterministic():
-    contact = phx.applications.contact.ContactSearchPlan(
-        jnp.asarray([[[0.0, 0.0], [1.0, 0.0]], [[0.0, 1.0], [1.0, 1.0]]]),
+    contact = phx.applications.contact
+    slave = contact.ContactSurface(
+        "slave",
+        jnp.asarray([3, 4]),
+        jnp.asarray([[0.5, 0.1], [0.6, 0.1]]),
+        jnp.asarray([[0, 1]], dtype=jnp.int32),
+        jnp.asarray([30]),
+    )
+    master = contact.ContactSurface(
+        "master",
+        jnp.asarray([5, 6, 7, 8]),
+        jnp.asarray([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
+        jnp.asarray([[0, 1], [2, 3]], dtype=jnp.int32),
         jnp.asarray([10, 20]),
     )
-    pairs = contact.search(jnp.asarray([[0.5, 0.1]]), jnp.asarray([3]))
-    assert int(pairs.master_ids[0]) == 10
+    query = contact.ContactQueryPlan(
+        contact.ContactConfiguration(slave, master, epoch=0)
+    ).execute()
+    assert query.patches.minus_facet_ids[0] == 10
 
     mesh = _mesh()
     fracture = phx.applications.fracture
-    crack = fracture.CrackGeometry([0.0, 0.5], [1.0, 0.5])
-    enrichment = fracture.classify_crack_cells(mesh, crack)
-    quadrature = fracture.cut_cell_quadrature(mesh, crack)
-    layout = fracture.FixedMeshEnrichmentLayout(mesh, enrichment)
+    crack = fracture.CrackFrontGeometry(
+        jnp.asarray([[0.0, 0.5], [1.0, 0.5]]),
+        jnp.asarray([[0, 1]], dtype=jnp.int32),
+    )
+    topology = fracture.build_sharp_crack_topology(mesh, crack)
+    quadrature = fracture.build_sharp_crack_quadrature(mesh, topology)
 
-    assert jnp.allclose(jnp.sum(quadrature.weights), 1.0)
-    assert layout.enriched_dofs.size == enrichment.active_vertex_ids.size
+    integrated_area = (
+        jnp.sum(quadrature.plus.weights)
+        + jnp.sum(quadrature.minus.weights)
+        + jnp.sum(quadrature.tips.weights)
+    )
+    assert jnp.allclose(integrated_area, 1.0)
+    assert topology.heaviside_vertex_ids.size == mesh.vertex_global_ids.size

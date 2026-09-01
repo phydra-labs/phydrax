@@ -1,0 +1,10 @@
+{
+  "ias15_accepted_steps": 4,
+  "ias15_harmonic_error": 2.1171953079601735e-13,
+  "ias15_rejected_steps": 0,
+  "kind": "astronomy-closure-qualification",
+  "passed": true,
+  "tov_mass": 0.022926459331332447,
+  "tov_radius": 0.1723027397260274,
+  "wcs_round_trip_error": 2.3314683517128287e-15
+}

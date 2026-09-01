@@ -51,7 +51,22 @@ from ..nonlinear import (
     refresh_nonlinear,
 )
 from ..nonlinear._prepared import _solve_prepared_nonlinear_stateful
+from ._checkpoint import (
+    continuation_checkpoint,
+    ContinuationCheckpoint,
+    ContinuationReplayEvidence,
+)
 from ._geometry import ContinuationGeometry, ContinuationRepresentationPolicy
+from ._state_machine import (
+    AbstractContinuationAdapter,
+    CallableContinuationAdapter,
+    continuation_step_decision_id,
+    ContinuationAcceptedState,
+    ContinuationCandidate,
+    ContinuationStepResult,
+    ParameterRealization,
+    ParameterTransferEvidence,
+)
 
 
 ContinuationEventKind = Literal[
@@ -65,6 +80,8 @@ ContinuationEventKind = Literal[
     "tangent-retry",
     "curvature-retry",
     "tangent-fallback",
+    "application-retry",
+    "application-failure",
     "coordinate-bound",
     "stability-real-crossing",
     "stability-near-zero",
@@ -87,6 +104,7 @@ class ContinuationStatus(IntEnum):
     TARGET_NOT_REACHED = 7
     TARGET_CORRECTOR_FAILED = 8
     CURVATURE_LIMIT_REACHED = 9
+    APPLICATION_REJECTED = 10
 
 
 def _real_scalar(value: Any, /, *, name: str) -> Array:
@@ -1398,6 +1416,8 @@ class ContinuationEvent(StrictModule):
             "tangent-retry",
             "curvature-retry",
             "tangent-fallback",
+            "application-retry",
+            "application-failure",
             "coordinate-bound",
             "stability-real-crossing",
             "stability-near-zero",
@@ -2741,12 +2761,15 @@ class ContinuationProvenance(StrictModule):
 
 
 class ContinuationResult(StrictModule):
-    """One immutable continuation branch with terminal evidence and provenance."""
+    """Immutable branch output with every attempt and final committed checkpoint."""
 
     branch: ContinuationBranch
     status: Array
     diagnostics: ContinuationDiagnostics
     provenance: ContinuationProvenance
+    steps: tuple[ContinuationStepResult, ...]
+    accepted_state: ContinuationAcceptedState | None
+    checkpoint: ContinuationCheckpoint | None
 
     def __init__(
         self,
@@ -2755,6 +2778,9 @@ class ContinuationResult(StrictModule):
         status: Any,
         diagnostics: ContinuationDiagnostics,
         provenance: ContinuationProvenance,
+        steps: Sequence[ContinuationStepResult],
+        accepted_state: ContinuationAcceptedState | None,
+        checkpoint: ContinuationCheckpoint | None,
     ):
         if not isinstance(branch, ContinuationBranch):
             raise TypeError("branch must be a ContinuationBranch.")
@@ -2762,10 +2788,31 @@ class ContinuationResult(StrictModule):
             raise TypeError("diagnostics must be ContinuationDiagnostics.")
         if not isinstance(provenance, ContinuationProvenance):
             raise TypeError("provenance must be ContinuationProvenance.")
+        steps_ = tuple(steps)
+        if any(not isinstance(step, ContinuationStepResult) for step in steps_):
+            raise TypeError("steps must contain ContinuationStepResult values.")
+        if accepted_state is not None and not isinstance(
+            accepted_state, ContinuationAcceptedState
+        ):
+            raise TypeError("accepted_state must be ContinuationAcceptedState or None.")
+        if checkpoint is not None and not isinstance(checkpoint, ContinuationCheckpoint):
+            raise TypeError("checkpoint must be a ContinuationCheckpoint or None.")
+        if (accepted_state is None) != (checkpoint is None):
+            raise ValueError("A final accepted state and checkpoint must exist together.")
+        if accepted_state is not None and (
+            checkpoint.application_state_id != accepted_state.application_state_id
+            or checkpoint.candidate.candidate_id != accepted_state.candidate.candidate_id
+        ):
+            raise ValueError(
+                "Continuation checkpoint does not represent the accepted state."
+            )
         self.branch = branch
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.diagnostics = diagnostics
         self.provenance = provenance
+        self.steps = steps_
+        self.accepted_state = accepted_state
+        self.checkpoint = checkpoint
 
     @property
     def successful(self) -> Array:
@@ -2808,6 +2855,23 @@ class ContinuationResult(StrictModule):
         return self.branch.stability_events
 
 
+def _resolve_continuation_adapter(
+    value: ContinuationCurveProblem | AbstractContinuationAdapter,
+    /,
+) -> tuple[ContinuationCurveProblem, AbstractContinuationAdapter]:
+    if isinstance(value, AbstractContinuationAdapter):
+        problem = value.continuation_problem
+        if not isinstance(problem, ContinuationCurveProblem):
+            raise TypeError(
+                "Continuation adapter continuation_problem must be a "
+                "ContinuationCurveProblem."
+            )
+        return problem, value
+    if isinstance(value, ContinuationCurveProblem):
+        return value, CallableContinuationAdapter(value)
+    raise TypeError("Expected a ContinuationCurveProblem or AbstractContinuationAdapter.")
+
+
 class ContinuationPlan(StrictModule):
     """Reusable symbolic continuation and monitoring policy."""
 
@@ -2816,6 +2880,7 @@ class ContinuationPlan(StrictModule):
     monitors: tuple[AbstractBranchMonitor, ...]
     num_steps: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
+    adapter_id: str = eqx.field(static=True)
     branch_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     terminal_coordinate: float | None = eqx.field(static=True)
@@ -2828,6 +2893,7 @@ class ContinuationPlan(StrictModule):
         monitors: Sequence[AbstractBranchMonitor],
         num_steps: int,
         problem_id: str,
+        adapter_id: str,
         branch_id: str,
         plan_id: str,
         terminal_coordinate: float | None = None,
@@ -2851,9 +2917,11 @@ class ContinuationPlan(StrictModule):
         steps = int(num_steps)
         if steps < 0:
             raise ValueError("num_steps must be non-negative.")
-        identifiers = tuple(str(value) for value in (problem_id, branch_id, plan_id))
+        identifiers = tuple(
+            str(value) for value in (problem_id, adapter_id, branch_id, plan_id)
+        )
         if any(not value for value in identifiers):
-            raise ValueError("Problem, branch, and plan IDs must be non-empty.")
+            raise ValueError("Problem, adapter, branch, and plan IDs must be non-empty.")
         target = None if terminal_coordinate is None else float(terminal_coordinate)
         if target is not None and not isfinite(target):
             raise ValueError("terminal_coordinate must be finite or None.")
@@ -2862,25 +2930,30 @@ class ContinuationPlan(StrictModule):
         self.monitors = monitors_
         self.num_steps = steps
         self.terminal_coordinate = target
-        self.problem_id, self.branch_id, self.plan_id = identifiers
+        self.problem_id, self.adapter_id, self.branch_id, self.plan_id = identifiers
 
 
 class PreparedContinuation(StrictModule):
     """Numerical continuation seed bound to one reusable symbolic plan."""
 
     problem: ContinuationCurveProblem
+    adapter: AbstractContinuationAdapter
     plan: ContinuationPlan
     geometry: ContinuationGeometry
     initial_state: PyTree[Array]
     initial_coordinate: Array
     initial_tangent: tuple[PyTree[Array], Array] | None
     args: Any
+    application_state: Any
+    replay_evidence: ContinuationReplayEvidence | None
     numeric_version: Array
     prepared_id: str = eqx.field(static=True)
+    decision_history: tuple[str, ...] = eqx.field(static=True)
+    attempt_history: tuple[str, ...] = eqx.field(static=True)
 
     def __init__(
         self,
-        problem: ContinuationCurveProblem,
+        problem: ContinuationCurveProblem | AbstractContinuationAdapter,
         plan: ContinuationPlan,
         initial_state: PyTree[Any],
         initial_coordinate: Any,
@@ -2888,27 +2961,32 @@ class PreparedContinuation(StrictModule):
         *,
         initial_tangent: tuple[PyTree[Any], Any] | None = None,
         args: Any = None,
+        application_state: Any = None,
+        replay_evidence: ContinuationReplayEvidence | None = None,
+        decision_history: Sequence[str] = (),
+        attempt_history: Sequence[str] = (),
         numeric_version: Any = 0,
         prepared_id: str,
     ):
-        if not isinstance(problem, ContinuationCurveProblem):
-            raise TypeError("problem must be a ContinuationCurveProblem.")
+        problem_, adapter = _resolve_continuation_adapter(problem)
         if not isinstance(plan, ContinuationPlan):
             raise TypeError("plan must be a ContinuationPlan.")
-        if plan.problem_id != problem.problem_id:
+        if plan.problem_id != problem_.problem_id:
             raise ValueError("Continuation plan and problem IDs must match.")
+        if plan.adapter_id != adapter.adapter_id:
+            raise ValueError("Continuation plan and adapter IDs must match.")
         public_state = _validate_inexact_tree(initial_state, name="initial state")
         coordinate = _real_scalar(initial_coordinate, name="initial coordinate")
-        if not bool(problem.contains_coordinate(coordinate)):
+        if not bool(problem_.contains_coordinate(coordinate)):
             raise ValueError("initial_coordinate lies outside the continuation interval.")
-        public_residual = problem.residual(public_state, coordinate, args)
-        declared_state_space, declared_residual_space = problem.declared_spaces()
+        public_residual = problem_.residual(public_state, coordinate, args)
+        declared_state_space, declared_residual_space = problem_.declared_spaces()
         geometry = ContinuationGeometry.resolve(
             public_state,
             public_residual,
             state_space=declared_state_space,
             residual_space=declared_residual_space,
-            representation=problem.representation_policy(),
+            representation=problem_.representation_policy(),
             coordinate_scale=plan.method.coordinate_scale,
         )
         state = geometry.state_to_execution(public_state)
@@ -2936,15 +3014,43 @@ class PreparedContinuation(StrictModule):
         identifier = str(prepared_id)
         if not identifier:
             raise ValueError("prepared_id must be non-empty.")
-        self.problem = problem
+        if replay_evidence is not None and not isinstance(
+            replay_evidence, ContinuationReplayEvidence
+        ):
+            raise TypeError(
+                "replay_evidence must be a ContinuationReplayEvidence or None."
+            )
+        history = tuple(str(value) for value in decision_history)
+        attempts = tuple(str(value) for value in attempt_history)
+        if any(not value for value in history + attempts):
+            raise ValueError("Continuation decision identities must be non-empty.")
+        if any(value not in attempts for value in history):
+            raise ValueError("Accepted decisions must belong to the attempt history.")
+        if isinstance(adapter, CallableContinuationAdapter):
+            if application_state is not None and not adapter.supports_opaque_state:
+                raise ValueError(
+                    "Opaque application state requires a complete continuation "
+                    "transaction callback bundle."
+                )
+        application_id = adapter.application_state_identity(application_state, args)
+        if not application_id:
+            raise ValueError("Prepared application state identity must be non-empty.")
+        if replay_evidence is not None and not bool(replay_evidence.matches):
+            raise ValueError("Continuation checkpoint replay evidence did not match.")
+        self.problem = problem_
+        self.adapter = adapter
         self.plan = plan
         self.geometry = geometry
         self.initial_state = state
         self.initial_coordinate = coordinate
         self.initial_tangent = tangent
         self.args = args
+        self.application_state = application_state
+        self.replay_evidence = replay_evidence
         self.numeric_version = version
         self.prepared_id = identifier
+        self.decision_history = history
+        self.attempt_history = attempts
 
 
 def _normalize_initial_tangent(
@@ -2977,7 +3083,7 @@ def _normalize_initial_tangent(
 
 
 def plan_continuation(
-    problem: ContinuationCurveProblem,
+    problem: ContinuationCurveProblem | AbstractContinuationAdapter,
     /,
     *,
     num_steps: int,
@@ -2989,8 +3095,7 @@ def plan_continuation(
     plan_id: str | None = None,
 ) -> ContinuationPlan:
     """Create reusable symbolic continuation and monitoring policy."""
-    if not isinstance(problem, ContinuationCurveProblem):
-        raise TypeError("problem must be a ContinuationCurveProblem.")
+    problem_, adapter = _resolve_continuation_adapter(problem)
     method_ = PseudoArclengthContinuation() if method is None else method
     if not isinstance(method_, AbstractContinuationMethod):
         raise TypeError("method must be an AbstractContinuationMethod or None.")
@@ -2998,12 +3103,12 @@ def plan_continuation(
     if target is not None:
         if not isfinite(target):
             raise ValueError("terminal_coordinate must be finite or None.")
-        if not problem.coordinate_lower <= target <= problem.coordinate_upper:
+        if not problem_.coordinate_lower <= target <= problem_.coordinate_upper:
             raise ValueError(
                 "terminal_coordinate lies outside the continuation interval."
             )
     identifier = (
-        f"{problem.problem_id}/{method_.method_id}/continuation-plan"
+        f"{problem_.problem_id}/{method_.method_id}/continuation-plan"
         if plan_id is None
         else str(plan_id)
     )
@@ -3012,7 +3117,8 @@ def plan_continuation(
         stability_analyzer=stability_analyzer,
         monitors=monitors,
         num_steps=num_steps,
-        problem_id=problem.problem_id,
+        problem_id=problem_.problem_id,
+        adapter_id=adapter.adapter_id,
         branch_id=branch_id,
         terminal_coordinate=target,
         plan_id=identifier,
@@ -3020,7 +3126,7 @@ def plan_continuation(
 
 
 def prepare_continuation(
-    problem: ContinuationCurveProblem,
+    problem: ContinuationCurveProblem | AbstractContinuationAdapter,
     initial_state: PyTree[Any],
     initial_coordinate: Any,
     plan: ContinuationPlan,
@@ -3028,6 +3134,7 @@ def prepare_continuation(
     *,
     initial_tangent: tuple[PyTree[Any], Any] | None = None,
     args: Any = None,
+    application_state: Any = None,
 ) -> PreparedContinuation:
     """Bind a numerical seed to a reusable continuation plan."""
     return PreparedContinuation(
@@ -3037,6 +3144,7 @@ def prepare_continuation(
         initial_coordinate,
         initial_tangent=initial_tangent,
         args=args,
+        application_state=application_state,
         numeric_version=0,
         prepared_id=f"{plan.plan_id}/prepared",
     )
@@ -3055,12 +3163,16 @@ def refresh_continuation(
     if not isinstance(prepared, PreparedContinuation):
         raise TypeError("prepared must be a PreparedContinuation.")
     refreshed = PreparedContinuation(
-        prepared.problem,
+        prepared.adapter,
         prepared.plan,
         initial_state,
         initial_coordinate,
         initial_tangent=initial_tangent,
         args=args,
+        application_state=prepared.application_state,
+        replay_evidence=prepared.replay_evidence,
+        decision_history=prepared.decision_history,
+        attempt_history=prepared.attempt_history,
         numeric_version=prepared.numeric_version + 1,
         prepared_id=prepared.prepared_id,
     )
@@ -3162,6 +3274,172 @@ def _observe_monitors(
     return count
 
 
+def _continuation_candidate(
+    prepared: PreparedContinuation,
+    state: PyTree[Any],
+    coordinate: Any,
+    tangent_state: PyTree[Any],
+    tangent_coordinate: Any,
+    /,
+    *,
+    residual_norm: Any,
+    step_size: Any,
+    tangent_residual_norm: Any,
+    tangent_alignment: Any,
+    corrector_iterations: Any,
+    corrector_status: Any,
+    tangent_status: Any,
+    numerical_accepted: Any,
+    point_id: str,
+    parent_point_id: str,
+    attempt_index: int,
+    retry_index: int,
+) -> ContinuationCandidate:
+    geometry = prepared.geometry
+    public_state = geometry.state_from_execution(state)
+    public_tangent = geometry.state_tangent_from_execution(state, tangent_state)
+    parameters, tangent_parameters = prepared.problem.parameters_jvp(
+        coordinate,
+        tangent_coordinate,
+        prepared.args,
+    )
+    realization = ParameterRealization(
+        parameters,
+        coordinate,
+        problem_id=prepared.problem.problem_id,
+    )
+    return ContinuationCandidate(
+        state=public_state,
+        coordinate=coordinate,
+        tangent_state=public_tangent,
+        tangent_coordinate=tangent_coordinate,
+        tangent_parameters=tangent_parameters,
+        residual_norm=residual_norm,
+        step_size=step_size,
+        tangent_residual_norm=tangent_residual_norm,
+        tangent_alignment=tangent_alignment,
+        corrector_iterations=corrector_iterations,
+        corrector_status=corrector_status,
+        tangent_status=tangent_status,
+        realization=realization,
+        numerical_accepted=numerical_accepted,
+        point_id=point_id,
+        parent_point_id=parent_point_id,
+        attempt_index=attempt_index,
+        retry_index=retry_index,
+    )
+
+
+def _decide_continuation_candidate(
+    prepared: PreparedContinuation,
+    source: ContinuationAcceptedState | None,
+    application_state: Any,
+    transaction: Any,
+    source_application_state_id: str,
+    candidate: ContinuationCandidate,
+    /,
+    *,
+    message: str,
+) -> tuple[ContinuationStepResult, ContinuationAcceptedState | None, Any]:
+    adapter = prepared.adapter
+    args = prepared.args
+    source_id = str(source_application_state_id)
+    if source is not None and (
+        source.application_state_id != source_id
+        or source.application_state is not application_state
+    ):
+        raise ValueError(
+            "Continuation application state is not the last committed accepted state."
+        )
+    transaction_id = adapter.application_state_identity(transaction, args)
+    if adapter.application_state_identity(application_state, args) != source_id:
+        raise ValueError("Frozen candidate source identity changed before evaluation.")
+    if bool(candidate.numerical_accepted):
+        transfer = adapter.evaluate_candidate(transaction, source, candidate, args)
+    else:
+        transfer = ParameterTransferEvidence.not_evaluated(
+            source,
+            candidate,
+            message=message,
+        )
+    expected_source_realization = (
+        "" if source is None else source.realization.realization_id
+    )
+    if (
+        transfer.source_realization_id != expected_source_realization
+        or transfer.target_realization_id != candidate.realization.realization_id
+        or transfer.parameter_paths != candidate.realization.parameter_paths
+    ):
+        raise ValueError(
+            "Candidate transfer evidence does not match the committed realization route."
+        )
+    if adapter.application_state_identity(application_state, args) != source_id:
+        raise ValueError("Candidate evaluation mutated the committed application state.")
+    accepted = bool(candidate.numerical_accepted) and bool(transfer.accepted)
+    if accepted:
+        restored_state = adapter.commit_candidate(
+            transaction,
+            source,
+            candidate,
+            transfer,
+            args,
+        )
+    else:
+        restored_state = adapter.rollback_candidate(
+            transaction,
+            source,
+            candidate,
+            transfer,
+            args,
+        )
+    if adapter.application_state_identity(application_state, args) != source_id:
+        raise ValueError(
+            "A continuation commit or rollback mutated the prior accepted state."
+        )
+    restored_id = adapter.application_state_identity(restored_state, args)
+    decision_id = continuation_step_decision_id(
+        candidate,
+        transfer,
+        transaction_id=transaction_id,
+        source_application_state_id=source_id,
+        restored_application_state_id=restored_id,
+        numerical_accepted=bool(candidate.numerical_accepted),
+        accepted=accepted,
+        committed=accepted,
+        rolled_back=not accepted,
+        message=message,
+    )
+    accepted_state = (
+        ContinuationAcceptedState(
+            candidate,
+            restored_state,
+            application_state_id=restored_id,
+            decision_id=decision_id,
+            accepted_index=(
+                len(prepared.decision_history)
+                if source is None
+                else source.accepted_index + 1
+            ),
+        )
+        if accepted
+        else None
+    )
+    step = ContinuationStepResult(
+        candidate,
+        transfer,
+        accepted_state=accepted_state,
+        numerical_accepted=candidate.numerical_accepted,
+        accepted=accepted,
+        committed=accepted,
+        rolled_back=not accepted,
+        transaction_id=transaction_id,
+        source_application_state_id=source_id,
+        restored_application_state_id=restored_id,
+        message=message,
+    )
+    return step, accepted_state, restored_state
+
+
 def _continuation_result(
     prepared: PreparedContinuation,
     points: Sequence[BranchPoint],
@@ -3189,6 +3467,8 @@ def _continuation_result(
     target_corrections: int,
     curvature_rejections: int,
     corrector_prepared_linear: PreparedNonlinearSolve | None,
+    steps: Sequence[ContinuationStepResult],
+    accepted_state: ContinuationAcceptedState | None,
     corrector_provenance: NonlinearProvenance,
 ) -> ContinuationResult:
     plan = prepared.plan
@@ -3206,6 +3486,38 @@ def _continuation_result(
         preconditioner_plan = corrector_prepared_linear.linear_plan.preconditioner_plan
         corrector_preconditioner_plan_id = (
             "" if preconditioner_plan is None else preconditioner_plan.plan_id
+        )
+    checkpoint: ContinuationCheckpoint | None = None
+    if accepted_state is not None:
+        application_id = prepared.adapter.application_state_identity(
+            accepted_state.application_state,
+            prepared.args,
+        )
+        if application_id != accepted_state.application_state_id:
+            raise ValueError("Final accepted application state identity changed.")
+        application_data = prepared.adapter.checkpoint_application_state(
+            accepted_state.application_state,
+            prepared.args,
+        )
+        if (
+            prepared.adapter.application_state_identity(
+                accepted_state.application_state,
+                prepared.args,
+            )
+            != application_id
+        ):
+            raise ValueError("Checkpointing mutated the accepted application state.")
+        checkpoint = continuation_checkpoint(
+            accepted_state,
+            steps,
+            application_data,
+            problem_id=prepared.problem.problem_id,
+            adapter_id=prepared.adapter.adapter_id,
+            plan_id=plan.plan_id,
+            prepared_id=prepared.prepared_id,
+            branch_id=plan.branch_id,
+            prior_accepted_decision_ids=prepared.decision_history,
+            prior_attempt_decision_ids=prepared.attempt_history,
         )
     branch = ContinuationBranch(
         points,
@@ -3270,6 +3582,9 @@ def _continuation_result(
             corrector_preconditioner_plan_id=corrector_preconditioner_plan_id,
             terminal_coordinate=plan.terminal_coordinate,
         ),
+        steps=steps,
+        accepted_state=accepted_state,
+        checkpoint=checkpoint,
     )
 
 
@@ -3287,6 +3602,9 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     events: list[ContinuationEvent] = []
     brackets: list[EventBracket] = []
     points: list[BranchPoint] = []
+    steps: list[ContinuationStepResult] = []
+    application_state = prepared.application_state
+    accepted_application_state: ContinuationAcceptedState | None = None
     attempted_steps = 0
     accepted_steps = 0
     rejected_steps = 0
@@ -3305,6 +3623,19 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
     curvature_rejections = 0
     corrector_prepared_linear: PreparedNonlinearSolve | None = None
 
+    initial_source_id = prepared.adapter.application_state_identity(
+        application_state,
+        args,
+    )
+    initial_transaction = prepared.adapter.freeze_application_state(
+        application_state,
+        args,
+    )
+    if (
+        prepared.adapter.application_state_identity(application_state, args)
+        != initial_source_id
+    ):
+        raise ValueError("Freezing the initial candidate mutated application state.")
     initial_result, initial_prepared_linear = _correct_initial_point(
         problem,
         geometry,
@@ -3423,6 +3754,49 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
         point_id=f"{plan.branch_id}/0",
         stability=initial_stability,
     )
+    initial_numerical_accepted = initial_success and tangent_usable
+    initial_candidate = _continuation_candidate(
+        prepared,
+        state,
+        coordinate,
+        state_tangent,
+        coordinate_tangent,
+        residual_norm=residual_norm,
+        step_size=0.0,
+        tangent_residual_norm=tangent_residual_norm,
+        tangent_alignment=tangent_alignment,
+        corrector_iterations=initial_result.diagnostics.iterations,
+        corrector_status=initial_result.status,
+        tangent_status=tangent_status,
+        numerical_accepted=initial_numerical_accepted,
+        point_id=initial_point.point_id,
+        parent_point_id="",
+        attempt_index=len(prepared.attempt_history),
+        retry_index=0,
+    )
+    initial_message = (
+        "initial candidate accepted"
+        if initial_numerical_accepted
+        else (
+            "initial tangent rejected"
+            if initial_success
+            else "initial corrector rejected"
+        )
+    )
+    initial_step, initial_accepted_state, application_state = (
+        _decide_continuation_candidate(
+            prepared,
+            None,
+            application_state,
+            initial_transaction,
+            initial_source_id,
+            initial_candidate,
+            message=initial_message,
+        )
+    )
+    steps.append(initial_step)
+    if initial_accepted_state is not None:
+        accepted_application_state = initial_accepted_state
     points.append(initial_point)
     _record_stability_events(events, brackets, None, initial_point)
     if tangent_attempted and not tangent_usable:
@@ -3463,6 +3837,8 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             curvature_rejections=curvature_rejections,
             corrector_provenance=last_corrector_provenance,
             corrector_prepared_linear=initial_prepared_linear,
+            steps=steps,
+            accepted_state=accepted_application_state,
         )
     if tangent_attempted and not tangent_usable:
         return _continuation_result(
@@ -3491,6 +3867,38 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
             curvature_rejections=curvature_rejections,
             corrector_provenance=last_corrector_provenance,
             corrector_prepared_linear=initial_prepared_linear,
+            steps=steps,
+            accepted_state=accepted_application_state,
+        )
+    if not bool(initial_step.accepted):
+        return _continuation_result(
+            prepared,
+            points,
+            events,
+            brackets,
+            ContinuationStatus.APPLICATION_REJECTED,
+            "initial application candidate rejected",
+            attempted_steps=attempted_steps,
+            accepted_steps=accepted_steps,
+            rejected_steps=rejected_steps,
+            corrector_iterations=corrector_iterations,
+            corrector_residual_evaluations=corrector_residual_evaluations,
+            corrector_jvp_evaluations=corrector_jvp_evaluations,
+            corrector_vjp_evaluations=corrector_vjp_evaluations,
+            corrector_jacobian_preparations=corrector_jacobian_preparations,
+            corrector_linear_solves=corrector_linear_solves,
+            corrector_linear_iterations=corrector_linear_iterations,
+            corrector_setup_refreshes=corrector_setup_refreshes,
+            corrector_numeric_refreshes=corrector_numeric_refreshes,
+            tangent_failures=tangent_failures,
+            spectral_evaluations=spectral_evaluations,
+            monitor_events=monitor_events,
+            target_corrections=target_corrections,
+            curvature_rejections=curvature_rejections,
+            corrector_provenance=last_corrector_provenance,
+            corrector_prepared_linear=initial_prepared_linear,
+            steps=steps,
+            accepted_state=accepted_application_state,
         )
     monitor_events += _observe_monitors(
         plan.monitors, problem, None, initial_point, args, events
@@ -3520,10 +3928,12 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
         target_reached_this_step = False
         tangent_failure_seen = False
         curvature_failure_seen = False
+        application_failure_seen = False
         retries = 0
         last_corrector_status = jnp.asarray(-1, dtype=jnp.int32)
         accepted_step_size = jnp.asarray(step_size, dtype=coordinate.dtype)
         while retries <= method.maximum_retries and step_size >= method.minimum_step:
+            attempt_decided = False
             direct_target_correction = False
             if isinstance(method, NaturalParameterContinuation):
                 predicted_state = state
@@ -3637,6 +4047,21 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     termination_reason = "coordinate bound reached before target"
                 bound_reached = True
                 break
+            attempt_source_id = prepared.adapter.application_state_identity(
+                application_state,
+                args,
+            )
+            attempt_transaction = prepared.adapter.freeze_application_state(
+                application_state,
+                args,
+            )
+            if (
+                prepared.adapter.application_state_identity(application_state, args)
+                != attempt_source_id
+            ):
+                raise ValueError(
+                    "Freezing an attempt mutated accepted application state."
+                )
             attempted_steps += 1
             if (
                 isinstance(method, NaturalParameterContinuation)
@@ -3803,6 +4228,10 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     last_corrector_status = target_result.status
                     target_reached_this_step = True
                 else:
+                    candidate_state = target_result.state
+                    candidate_coordinate = target_coordinate
+                    candidate_residual_norm = target_residual_norm
+                    corrector_result = target_result
                     accepted = False
                     target_failure_seen = True
                     last_corrector_status = target_result.status
@@ -3869,6 +4298,38 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                         & jnp.isfinite(candidate_tangent_alignment)
                     )
                 if not candidate_tangent_usable:
+                    rejected_candidate = _continuation_candidate(
+                        prepared,
+                        candidate_state,
+                        candidate_coordinate,
+                        candidate_state_tangent,
+                        candidate_coordinate_tangent,
+                        residual_norm=candidate_residual_norm,
+                        step_size=step_size,
+                        tangent_residual_norm=candidate_tangent_residual_norm,
+                        tangent_alignment=candidate_tangent_alignment,
+                        corrector_iterations=corrector_result.diagnostics.iterations,
+                        corrector_status=corrector_result.status,
+                        tangent_status=candidate_tangent_status,
+                        numerical_accepted=False,
+                        point_id=f"{plan.branch_id}/{point_index}",
+                        parent_point_id=points[-1].point_id,
+                        attempt_index=len(prepared.attempt_history) + len(steps),
+                        retry_index=retries,
+                    )
+                    rejected_decision, _, application_state = (
+                        _decide_continuation_candidate(
+                            prepared,
+                            accepted_application_state,
+                            application_state,
+                            attempt_transaction,
+                            attempt_source_id,
+                            rejected_candidate,
+                            message="candidate tangent rejected",
+                        )
+                    )
+                    steps.append(rejected_decision)
+                    attempt_decided = True
                     tangent_failure_seen = True
                     tangent_failures += 1
                     rejected_steps += 1
@@ -3895,7 +4356,38 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     and float(candidate_tangent_alignment)
                     < method.minimum_tangent_alignment
                 ):
-                    curvature_failure_seen = True
+                    rejected_candidate = _continuation_candidate(
+                        prepared,
+                        candidate_state,
+                        candidate_coordinate,
+                        candidate_state_tangent,
+                        candidate_coordinate_tangent,
+                        residual_norm=candidate_residual_norm,
+                        step_size=step_size,
+                        tangent_residual_norm=candidate_tangent_residual_norm,
+                        tangent_alignment=candidate_tangent_alignment,
+                        corrector_iterations=corrector_result.diagnostics.iterations,
+                        corrector_status=corrector_result.status,
+                        tangent_status=candidate_tangent_status,
+                        numerical_accepted=False,
+                        point_id=f"{plan.branch_id}/{point_index}",
+                        parent_point_id=points[-1].point_id,
+                        attempt_index=len(prepared.attempt_history) + len(steps),
+                        retry_index=retries,
+                    )
+                    rejected_decision, _, application_state = (
+                        _decide_continuation_candidate(
+                            prepared,
+                            accepted_application_state,
+                            application_state,
+                            attempt_transaction,
+                            attempt_source_id,
+                            rejected_candidate,
+                            message="candidate curvature rejected",
+                        )
+                    )
+                    steps.append(rejected_decision)
+                    attempt_decided = True
                     curvature_rejections += 1
                     rejected_steps += 1
                     retries += 1
@@ -3925,32 +4417,114 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                     candidate_coordinate,
                     geometry,
                 )
-                break
+                accepted_candidate = _continuation_candidate(
+                    prepared,
+                    candidate_state,
+                    candidate_coordinate,
+                    candidate_state_tangent,
+                    candidate_coordinate_tangent,
+                    residual_norm=candidate_residual_norm,
+                    step_size=accepted_step_size,
+                    tangent_residual_norm=candidate_tangent_residual_norm,
+                    tangent_alignment=candidate_tangent_alignment,
+                    corrector_iterations=corrector_result.diagnostics.iterations,
+                    corrector_status=corrector_result.status,
+                    tangent_status=candidate_tangent_status,
+                    numerical_accepted=True,
+                    point_id=f"{plan.branch_id}/{point_index}",
+                    parent_point_id=points[-1].point_id,
+                    attempt_index=len(prepared.attempt_history) + len(steps),
+                    retry_index=retries,
+                )
+                accepted_decision, committed_state, application_state = (
+                    _decide_continuation_candidate(
+                        prepared,
+                        accepted_application_state,
+                        application_state,
+                        attempt_transaction,
+                        attempt_source_id,
+                        accepted_candidate,
+                        message="application candidate evaluated",
+                    )
+                )
+                steps.append(accepted_decision)
+                attempt_decided = True
+                if committed_state is not None:
+                    accepted_application_state = committed_state
+                    accepted = True
+                    break
+                application_failure_seen = True
+                accepted = False
+            if not attempt_decided:
+                rejected_candidate = _continuation_candidate(
+                    prepared,
+                    candidate_state,
+                    candidate_coordinate,
+                    state_tangent,
+                    coordinate_tangent,
+                    residual_norm=candidate_residual_norm,
+                    step_size=step_size,
+                    tangent_residual_norm=tangent_residual_norm,
+                    tangent_alignment=tangent_alignment,
+                    corrector_iterations=corrector_result.diagnostics.iterations,
+                    corrector_status=corrector_result.status,
+                    tangent_status=tangent_status,
+                    numerical_accepted=False,
+                    point_id=f"{plan.branch_id}/{point_index}",
+                    parent_point_id=points[-1].point_id,
+                    attempt_index=len(prepared.attempt_history) + len(steps),
+                    retry_index=retries,
+                )
+                rejected_decision, _, application_state = _decide_continuation_candidate(
+                    prepared,
+                    accepted_application_state,
+                    application_state,
+                    attempt_transaction,
+                    attempt_source_id,
+                    rejected_candidate,
+                    message=(
+                        "target corrector rejected"
+                        if target_failure_seen
+                        else "corrector rejected"
+                    ),
+                )
+                steps.append(rejected_decision)
             rejected_steps += 1
             retries += 1
             step_size = max(method.minimum_step, step_size * method.contraction)
             events.append(
                 ContinuationEvent(
                     (
-                        "target-corrector-retry"
-                        if target_failure_seen
-                        else "corrector-retry"
+                        "application-retry"
+                        if application_failure_seen
+                        else (
+                            "target-corrector-retry"
+                            if target_failure_seen
+                            else "corrector-retry"
+                        )
                     ),
                     coordinate,
                     indicator=step_size,
                     source_status=last_corrector_status,
                     point_id=points[-1].point_id,
                     message=(
-                        "Target corrector rejected; continuation step reduced."
-                        if target_failure_seen
-                        else "Corrector rejected; continuation step reduced."
+                        "Application candidate rejected; continuation step reduced."
+                        if application_failure_seen
+                        else (
+                            "Target corrector rejected; continuation step reduced."
+                            if target_failure_seen
+                            else "Corrector rejected; continuation step reduced."
+                        )
                     ),
                 )
             )
         if bound_reached:
             break
         if not accepted:
-            if curvature_failure_seen:
+            if application_failure_seen:
+                status = ContinuationStatus.APPLICATION_REJECTED
+                termination_reason = "application candidate recovery exhausted"
+            elif curvature_failure_seen:
                 status = ContinuationStatus.CURVATURE_LIMIT_REACHED
                 termination_reason = "curvature recovery exhausted"
             elif tangent_failure_seen:
@@ -3964,12 +4538,20 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
                 termination_reason = "corrector recovery exhausted"
             events.append(
                 ContinuationEvent(
-                    "corrector-failure",
+                    (
+                        "application-failure"
+                        if application_failure_seen
+                        else "corrector-failure"
+                    ),
                     coordinate,
                     indicator=step_size,
                     source_status=last_corrector_status,
                     point_id=points[-1].point_id,
-                    message="Minimum step or retry budget reached.",
+                    message=(
+                        "Application acceptance retry budget reached."
+                        if application_failure_seen
+                        else "Minimum step or retry budget reached."
+                    ),
                 )
             )
             break
@@ -4103,6 +4685,8 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
         accepted_steps=accepted_steps,
         rejected_steps=rejected_steps,
         corrector_iterations=corrector_iterations,
+        steps=steps,
+        accepted_state=accepted_application_state,
         corrector_residual_evaluations=corrector_residual_evaluations,
         corrector_jvp_evaluations=corrector_jvp_evaluations,
         corrector_vjp_evaluations=corrector_vjp_evaluations,
@@ -4126,7 +4710,7 @@ def run_continuation(prepared: PreparedContinuation, /) -> ContinuationResult:
 
 
 def continue_branch(
-    problem: ContinuationCurveProblem,
+    problem: ContinuationCurveProblem | AbstractContinuationAdapter,
     initial_state: PyTree[Any],
     initial_coordinate: Any,
     /,
@@ -4136,6 +4720,7 @@ def continue_branch(
     initial_tangent: tuple[PyTree[Any], Any] | None = None,
     branch_id: str = "branch-0",
     args: Any = None,
+    application_state: Any = None,
     stability_analyzer: AbstractStabilityAnalyzer | None = None,
     monitors: Sequence[AbstractBranchMonitor] = (),
     terminal_coordinate: float | None = None,
@@ -4159,6 +4744,7 @@ def continue_branch(
         plan,
         initial_tangent=initial_tangent,
         args=args,
+        application_state=application_state,
     )
     return run_continuation(prepared)
 

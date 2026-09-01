@@ -100,7 +100,7 @@ supplies radial/transverse comoving distance, angular/luminosity distance, volum
 finite-epoch time integrals. Native first/second Lagrangian growth remains an explicitly
 flat, smooth-dark-energy, matter-era Newtonian approximation.
 
-Cosmology products now separate canonical physical state, dependency projections,
+Cosmology products separate canonical physical state, dependency projections,
 content identity, producer lineage, and independent derivative capabilities. Immutable
 artifacts carry build, license, resource, parent, completion, and failure evidence.
 `CoordinateLayout`, `LinearObservationPlan`, `PrecisionCovarianceAction`, and
@@ -110,25 +110,28 @@ for survey and CMB products.
 Precision transfer products use concrete `ClassLinearTheoryBackend` and
 `CambLinearTheoryBackend` wrappers around user-installed, manifest-pinned isolated
 executables. Their atomic cache keys include the physical request, binary digest, and
-resource policy; cached and fresh products share content identity. Full native
-Einstein--Boltzmann/CMB parity remains intentionally out of scope.
+resource policy; cached and fresh products share content identity. The bounded native
+fixed-hierarchy Einstein--Boltzmann/CMB solver returns canonical reference products,
+but precision CLASS/CAMB parity remains intentionally unclaimed.
 
 Bounded native closures include fixed-quadrature one-loop EdS SPT, a locked
 Tinker08/Tinker10/Duffy08 200m halo triplet, a matter halo model, immutable halo
 catalogs, Zheng07 expectation HOD, a release-locked DESI DR1 LRG full-shape Gaussian
-likelihood, and a six-species primordial H/He chemistry/cooling source solve. Each
-retains model/domain/artifact evidence rather than acting as an automatic fallback.
+likelihood, a six-species primordial H/He chemistry/cooling source solve, relic/BBN/
+recombination histories, halo/nonlinear composition, lensing planes, light cones, and
+baryonic-feedback reference products. Each retains model/domain/artifact evidence
+rather than acting as an automatic fallback.
 
 `LocalCurvatureValidityPlan` quantifies local-flat geometry indicators without relaxing
 the explicit flat-torus guards. `PeriodicEwaldForcePlan` supplies a converged small-N
 periodic reference, while `MeshMatchedNearFieldGate` only approves a future correction
-when error and pair-capacity budgets pass. Snapshot and distributed-PM classes are
-interop/feasibility contracts, not production TreePM.
+when error and pair-capacity budgets pass. Snapshot and distributed-PM classes remain
+interop/feasibility contracts, not production distributed TreePM.
 
 CMB instrument closure uses supplied immutable harmonic synthesis factors, explicit
 HEALPix/IAU products, beam/pointing/white-noise TOD, per-pixel matrix-free normal
-equations, rank evidence, and bandpower handoff. It does not hide an SHT, experiment
-pipeline, foreground, lensing, or complete CMB theory implementation.
+equations, rank evidence, and bandpower handoff. It does not hide an experiment
+pipeline, foreground model, calibrated survey product, or precision theory provider.
 
 Particles use comoving position `x` and canonical momentum `p = m a^2 dx/dt`.
 `ParticleMeshGravityPlan.acceleration` solves the rescaled potential `psi = a Phi` from
