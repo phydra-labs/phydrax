@@ -2,6 +2,52 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._adapters import (
+    DeformableMPMContactAdapter,
+    DeformableMPMContactEvaluation,
+    DeformableMPMContactGeometry,
+    DeformableMPMContactPlan,
+    DeformableMPMContactTranspose,
+    PreparedDeformableMPMContact,
+    FiniteElementContactAssembly,
+    FiniteElementContactBoundary,
+    FixedEpochNeuralContactAdapter,
+    FixedEpochNeuralContactEvaluation,
+)
+from ._geometry import (
+    ContactConfiguration,
+    ContactPatch,
+    ContactPatchSet,
+    ContactQueryPlan,
+    ContactQueryResult,
+    ContactSurface,
+)
+from ._laws import (
+    AbstractNormalContactLaw,
+    AugmentedLagrangianContactLaw,
+    CoulombContactLaw,
+    CoulombContactResponse,
+    FrictionlessPDASContactLaw,
+    NormalContactResponse,
+    PenaltyContactLaw,
+    PenaltyConvergenceEvidence,
+)
+from ._mechanics import FixedEpochContactOperator
+from ._state import (
+    AcceptedContactState,
+    CONTACT_OPEN,
+    CONTACT_SLIP,
+    CONTACT_STICK,
+    ContactEpochTransaction,
+    ContactEvaluation,
+    ContactStateTransaction,
+)
+from ._weak_forms import (
+    ContactMortarEvidence,
+    ContactMortarSpace,
+    NitscheContactEvidence,
+    NitscheContactPolicy,
+)
 from ._barrier import (
     clamped_log_barrier,
     clamped_log_barrier_first_derivative,
@@ -50,6 +96,42 @@ from ._solver import (
 
 
 __all__ = [
+    "AbstractNormalContactLaw",
+    "AcceptedContactState",
+    "AugmentedLagrangianContactLaw",
+    "CONTACT_OPEN",
+    "CONTACT_SLIP",
+    "CONTACT_STICK",
+    "ContactConfiguration",
+    "ContactEpochTransaction",
+    "ContactEvaluation",
+    "ContactMortarEvidence",
+    "ContactMortarSpace",
+    "ContactPatch",
+    "ContactPatchSet",
+    "ContactQueryPlan",
+    "ContactQueryResult",
+    "ContactStateTransaction",
+    "ContactSurface",
+    "CoulombContactLaw",
+    "CoulombContactResponse",
+    "DeformableMPMContactAdapter",
+    "DeformableMPMContactEvaluation",
+    "DeformableMPMContactGeometry",
+    "DeformableMPMContactPlan",
+    "DeformableMPMContactTranspose",
+    "PreparedDeformableMPMContact",
+    "FiniteElementContactAssembly",
+    "FiniteElementContactBoundary",
+    "FixedEpochContactOperator",
+    "FixedEpochNeuralContactAdapter",
+    "FixedEpochNeuralContactEvaluation",
+    "FrictionlessPDASContactLaw",
+    "NitscheContactEvidence",
+    "NitscheContactPolicy",
+    "NormalContactResponse",
+    "PenaltyContactLaw",
+    "PenaltyConvergenceEvidence",
     "ContactDynamicsSensitivityArguments",
     "ContactDynamicsState",
     "ContactEnergyLedger",

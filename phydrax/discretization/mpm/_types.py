@@ -83,6 +83,7 @@ class MPMRuntimeState(StrictModule):
     body_ids: Array
     velocity_field_slots: Array
     storage_state: object
+    lifecycle_state: object
 
     def __init__(
         self,
@@ -96,6 +97,7 @@ class MPMRuntimeState(StrictModule):
         body_ids: ArrayLike | None = None,
         velocity_field_slots: ArrayLike | None = None,
         storage_state: object = None,
+        lifecycle_state: object = None,
         /,
     ):
         self.particles = particles
@@ -130,6 +132,7 @@ class MPMRuntimeState(StrictModule):
         ):
             raise ValueError("MPM particle ownership slots must have capacity shape.")
         self.storage_state = storage_state
+        self.lifecycle_state = lifecycle_state
 
 
 class MPMGridState(StrictModule):

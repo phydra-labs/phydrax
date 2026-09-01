@@ -27,6 +27,20 @@ The first reports stage acceptance, minimum depth, mass defect, and wet-cell cou
 The second exercises identified f/beta-plane forcing and reports mass and momentum
 norm diagnostics. See [Shallow water](../guides_shallow_water.md).
 
+## Ocean process scripts
+
+The Cartesian rigid-lid Boussinesq product has directly runnable examples:
+
+```text
+python examples/ocean_inertial_oscillation.py
+python examples/ocean_stratified_adjustment.py
+python examples/ocean_surface_flux_column.py
+```
+
+They exercise weighted-skew f-plane rotation, state-dependent stratification bounds,
+directional T/S diffusion, and conservative surface heat flux. See
+[Cartesian ocean process modeling](../guides_ocean.md).
+
 ## Particle physics scripts
 
 The repository includes directly runnable scripts for the fixed-capacity particle stack:
@@ -39,6 +53,9 @@ python examples/material_point_materials.py
 python examples/material_point_domains_sparse.py
 python examples/material_point_contact_fracture.py
 python examples/material_point_implicit.py
+python examples/material_point_commercial_runtime.py
+python examples/material_point_commercial_mechanics.py
+python examples/material_point_commercial_scale.py
 python examples/electrostatic_pic.py
 python examples/electromagnetic_pic.py
 python examples/flip_dam_break.py

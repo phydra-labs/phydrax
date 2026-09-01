@@ -1,0 +1,10 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "distributed",
+  "metrics": {
+    "migration_successful": true,
+    "transaction_successful": true,
+    "generation": 4
+  },
+  "passed": true
+}

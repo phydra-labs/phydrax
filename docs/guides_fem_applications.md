@@ -38,51 +38,50 @@ discrete derivative boundaries.
 
 ## Fracture and XFEM
 
-`phydrax.applications.fracture` provides a coupled displacement/damage form,
-volumetric-positive tensile energy, irreversible history promotion, damage
-bounds as accepted-state invariants, fixed-segment crack classification, and
-Heaviside enrichment evaluation. Crack classification and enrichment activation
-are discrete topology events; derivatives apply only for a fixed crack and
-active enrichment layout.
+`phydrax.applications.fracture` keeps sharp and diffuse fracture separate.
+`PhaseFieldFractureModel` and `PhaseFieldAcceptedState` own diffuse degradation,
+history, bounds, and accepted-step irreversibility. `CrackFrontGeometry`,
+`SharpCrackTopology`, crack-side/tip quadrature, shifted enrichment, and
+interaction-integral evidence own sharp cracks. Growth and crack-face contact are
+accepted topology transactions; derivatives apply only inside one frozen
+history/search/topology epoch.
 
 ## Static hyperelasticity
 
 `phydrax.applications.solid_mechanics.neo_hookean_form` constructs a
-`CellEnergyAction` for the logarithmic compressible Neo-Hookean reference energy.
-The finite-element executor differentiates that scalar energy into the internal
-residual, so the residual and stored-energy definitions cannot drift.
+`CellEnergyAction` from the canonical pointwise hyperelastic law. Plane strain,
+three-dimensional, and block-diagonal plane-stress adapters therefore share the
+same energy, first-Piola stress, tangent, admissibility, and Nanson conventions.
 
-A two-component field on a two-dimensional mesh is embedded as plane strain with
-unit out-of-plane stretch. A three-component field is fully three-dimensional.
-Compose conservative dead loads separately with `BoundaryLoadAction`, apply strong
-Dirichlet constraints through the finite-element constraint map, and solve the
-compiled nonlinear residual. Plane stress and exact incompressibility are not
-implicit modes.
+Exact or finite-bulk incompressibility uses `MixedHyperelasticModel`,
+`mixed_hyperelastic_form`, a certified displacement/pressure space, and a
+nonlinear root. It is not routed through `FunctionalSolver` minimization.
+Conservative dead or certified pressure loads may contribute potential energy;
+general follower loads use `MechanicalLoadAction`, preserve their nonsymmetric
+tangent, and route through virtual work.
 
 ## Fixed-mesh topology optimization
 
-`phydrax.applications.solid_mechanics` provides a fixed-topology compliance
-workflow over one cell density per finite-element cell. `DensityFilterPlan`
-constructs a sparse, physical-radius, constant-preserving filter from cell
-centers and measures. `SIMPInterpolation` maps the filtered density to material
-modulus. `ComplianceTopologyProblem` then composes a caller-supplied physical
-state residual, fixed load, volume inequality, converged state solver, and
-`ReducedMMA`.
+`TopologyMechanicsProblem` composes one physical `DensityTransform`,
+`MaterialInterpolation`, one or more `LoadCase`s, an explicit aggregation, and
+an authoritative mechanics state solver. Generic conic filtering and tanh
+projection remain in `phydrax.optim`; application density/material/load semantics
+live in solid mechanics.
 
-The application retains raw density, filtered physical density, modulus, volume
-ratio, state-design KKT evidence, and every state/adjoint solve count. It does
-not own a second finite-element assembler: a compiled FE residual binds through
-the `state_residual(state, modulus, args)` callback.
+Every candidate carries independently recomputed state and adjoint defect
+evidence. `NeuralVariationalStateSolver` may propose an initial state, but native
+FE residual and transpose equations remain authoritative. Multi-load aggregation,
+periodic homogenization with Hill–Mandel evidence, nonlinear branch gates, and
+fixed-epoch contact/fracture admission are explicit contracts.
 
-`reanalyse_topology_design` is the independent honesty check. A caller supplies
-a density transfer to a reference discretization and a reference compliance
-solve. The report separates the ordinary coarse/fine discretization ratio from
-excess stiffness over-report by the optimized discretization. A finite optimizer
-result without this reanalysis does not establish mesh-independent compliance.
+`TopologyReanalysisPlan` transfers the accepted design and performs mandatory
+independent FE state/adjoint reanalysis. A finite optimizer result without this
+evidence does not establish mesh-independent or physically admissible
+performance.
 
-Current scope is steady linear compliance, fixed topology, scalar cell density,
-one volume constraint, and a prescribed load. Stress, buckling, eigenfrequency,
-manufacturing, and moving-mesh constraints remain outside this contract.
+Contact-search changes, crack initiation/growth, and undeclared branch changes
+invalidate an ordinary reduced gradient. Learned operators remain proposal-only
+at every design.
 
 ## Accepted-step boundary
 

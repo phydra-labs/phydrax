@@ -13,7 +13,7 @@ def run():
     neo_parameters = (
         phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(3.0, 11.0)
     )
-    plane = phx.applications.solid_mechanics.IsotropicPlaneStressMPMConstitutivePlan(
+    plane = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )
     plane_history = plane.initialize_state((1,), jnp.float64)

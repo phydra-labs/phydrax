@@ -196,11 +196,15 @@ add WCS/calibrated imaging, surveys, scalar/polarized transfer, waveform/QNM net
 oblate occultation, and finite-source microlensing without introducing a second
 observation or inference runtime. External provider calls and file access never enter
 traced execution.
-Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
-transactional adaptive realization and replay, plane-strain/plane-stress/3-D
-hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
-rigid and two-field Coulomb contact, matrix-free implicit roots, diffuse and
-sharp fracture alternatives, active-block masks, and compact block storage.
+Material point dynamics compose that transfer with PIC/FLIP/APIC families,
+USF/USL-minus/classical/affine/post-advection MUSL, adaptive realization and replay,
+isotropic or general plane stress, J2 and pressure-dependent geomechanics, porothermal
+field operators, simultaneous K-way and rigid contact, moving-domain and compact
+implicit actions, diffuse or sharp fracture, active/compact block storage, distributed
+ownership, particle lifecycle and ratio-two AMR. Commercial claim tuples, intended use,
+durable checkpoints/output, host supervision, event/topology journals, derivative
+taxonomy, standards traceability, and G0--G7 release evidence close each exact supported
+configuration without implying universal validation or certification.
 DEM adds stable compositional
 normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,
@@ -244,6 +248,16 @@ PINNs participate through trial/residual records rather than a fabricated mesh. 
 [Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
+
+Native partitioned multiphysics coupling compiles exact participant ports and
+forward/paired-adjoint `FieldTransfer` exchanges into deterministic graph stages.
+Explicit Jacobi/Gauss–Seidel sweeps remain distinct from physically certified
+implicit interface roots. Candidate/accepted rollback, fixed-window replay,
+fixed-grid waveform exchange, subcycling, resource evidence, and implicit root
+sensitivities reuse the existing solver, discretization, and nonlinear substrates.
+No communication, mesh, or fallback-solver stack is introduced. See
+[Guide → Partitioned multiphysics coupling](guides_partitioned_coupling.md) and
+[API → Solver → Partitioned coupling](api/solver/coupling.md).
 
 ### Atomistic learning and conservative dynamics
 

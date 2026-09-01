@@ -17,6 +17,7 @@ from ..linalg import (
     DifferentiationPolicy,
     FunctionLinearOperator,
     LinearSolvePolicy,
+    LinearSolveStatus,
     LinearSystem,
     MINRES,
     OperatorProperties,
@@ -42,7 +43,6 @@ from ._iterative._types import (
 from ._pde_constrained import (
     _default_adjoint_policy,
     _state_design_line_search,
-    _usable_linear_status,
     AbstractStateDesignMethod,
     StateDesignProblem,
     StateDesignResult,
@@ -210,6 +210,7 @@ def _reduced_model(
     state_template,
     adjoint_template,
     numeric_version: Any,
+    state_acceptance,
     /,
 ):
     residual, state_jacobian = _state_jacobian(problem, state, design, args)
@@ -236,6 +237,14 @@ def _reduced_model(
     )(state)
     adjoint_result = solve_linear(prepared_adjoint, state_objective_gradient)
     adjoint = adjoint_result.value
+    adjoint_acceptance = problem.acceptance_policy.adjoint_evidence(
+        adjoint,
+        state_jacobian.transpose_mv(adjoint),
+        state_objective_gradient,
+        adjoint_result.status,
+        admissible=state_acceptance.admissible & state_acceptance.finite,
+        realization_matches=state_acceptance.realization_matches,
+    )
     design_objective_gradient = jax.grad(
         lambda current_design: problem.value(state, current_design, args)[0]
     )(design)
@@ -337,6 +346,7 @@ def _reduced_model(
         reduced_gradient,
         adjoint,
         adjoint_result,
+        adjoint_acceptance,
         reduced_hessian_action,
     )
 
@@ -369,7 +379,7 @@ def _solve_reduced_newton_krylov(
         state_result.residual,
     )
     initial_status = jnp.where(
-        state_result.successful,
+        state_result.acceptance.accepted,
         int(OptimizationStatus.ITERATING),
         int(OptimizationStatus.BACKEND_FAILED),
     ).astype(jnp.int32)
@@ -455,6 +465,7 @@ def _solve_reduced_newton_krylov(
             reduced_gradient,
             adjoint,
             adjoint_result,
+            adjoint_acceptance,
             reduced_hessian_action,
         ) = _reduced_model(
             method,
@@ -465,6 +476,7 @@ def _solve_reduced_newton_krylov(
             state_template,
             adjoint_template,
             numeric_refreshes,
+            current_state_result.acceptance,
         )
         projected_gradient = (
             reduced_gradient
@@ -554,7 +566,7 @@ def _solve_reduced_newton_krylov(
                 newton_direction,
             )
             usable_direction = (
-                _usable_linear_status(direction_result.status)
+                (direction_result.status == int(LinearSolveStatus.SUCCESS))
                 & _tree_allfinite(newton_direction)
                 & jnp.isfinite(newton_directional)
                 & (newton_directional < 0.0)
@@ -763,7 +775,7 @@ def _solve_reduced_newton_krylov(
         return jax.lax.cond(
             finite_model,
             lambda _: jax.lax.cond(
-                _usable_linear_status(adjoint_result.status),
+                adjoint_acceptance.accepted,
                 evaluate_finite_model,
                 lambda _: fail_model(OptimizationStatus.LINEAR_SOLVE_FAILED),
                 None,
@@ -818,6 +830,7 @@ def _solve_reduced_newton_krylov(
         final_gradient,
         adjoint,
         adjoint_result,
+        adjoint_acceptance,
         _,
     ) = _reduced_model(
         method,
@@ -828,6 +841,7 @@ def _solve_reduced_newton_krylov(
         state_template,
         adjoint_template,
         numeric_refreshes,
+        state_result.acceptance,
     )
     gradient_evaluations = gradient_evaluations + 1
     residual_evaluations = residual_evaluations + 3
@@ -850,6 +864,8 @@ def _solve_reduced_newton_krylov(
     )
     status = jnp.where(
         status_allows_final_success
+        & state_result.acceptance.accepted
+        & adjoint_acceptance.accepted
         & (final_optimality <= termination.optimality_threshold(initial_optimality)),
         int(OptimizationStatus.SUCCESS),
         status,
@@ -904,6 +920,8 @@ def _solve_reduced_newton_krylov(
         status,
         diagnostics,
         provenance,
+        state_acceptance=state_result.acceptance,
+        adjoint_acceptance=adjoint_acceptance,
     )
 
 

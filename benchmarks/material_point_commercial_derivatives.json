@@ -1,0 +1,10 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "derivatives",
+  "metrics": {
+    "branch_valid": true,
+    "event_localized": true,
+    "event_time": 0.25
+  },
+  "passed": true
+}

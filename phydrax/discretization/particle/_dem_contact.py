@@ -113,6 +113,10 @@ class DEMContactResponse(StrictModule):
     bridge_volume_source: Array
     bridge_volume_release: Array
     bridge_volume_residual: Array
+    bridge_surface_area: Array
+    bridge_evaporation_loss: Array
+    cohesion_model_validity_margin: Array
+    cohesion_fit_extrapolation_margin: Array
     rolling_yielded: Array
     torsional_yielded: Array
     elastic_energy: Array
@@ -876,10 +880,59 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
             if isinstance(self.normal, SmoothPenaltyNormalPlan)
             else 0.0
         )
+        if self.cohesion is None:
+            return normal_range
+        if self.cohesion.maximum_interaction_range is None:
+            raise ValueError(
+                "Radius-dependent cohesion requires interaction_range_for_radii()."
+            )
+        return max(normal_range, self.cohesion.maximum_interaction_range)
+
+    def interaction_range_for_radii(
+        self,
+        radii: ArrayLike,
+        material_ids: ArrayLike,
+        material_count: int,
+        /,
+    ) -> float:
+        from ._dem_smooth import SmoothPenaltyNormalPlan
+
+        normal_range = (
+            self.normal.maximum_range
+            if isinstance(self.normal, SmoothPenaltyNormalPlan)
+            else 0.0
+        )
         cohesion_range = (
-            0.0 if self.cohesion is None else self.cohesion.maximum_interaction_range
+            0.0
+            if self.cohesion is None
+            else self.cohesion.interaction_range_for_radii(
+                radii, material_ids, material_count
+            )
         )
         return max(normal_range, cohesion_range)
+
+    def interaction_extents_for_radii(
+        self,
+        radii: ArrayLike,
+        material_ids: ArrayLike,
+        material_count: int,
+        /,
+    ) -> np.ndarray:
+        from ._dem_smooth import SmoothPenaltyNormalPlan
+
+        radius = np.asarray(radii, dtype=float)
+        normal_range = (
+            self.normal.maximum_range
+            if isinstance(self.normal, SmoothPenaltyNormalPlan)
+            else 0.0
+        )
+        normal_extents = radius + 0.5 * normal_range
+        if self.cohesion is None:
+            return normal_extents
+        cohesion_extents = self.cohesion.interaction_extents_for_radii(
+            radius, material_ids, material_count
+        )
+        return np.maximum(normal_extents, cohesion_extents)
 
     def prepare(
         self, materials: Any, ambient_dimension: int, /
@@ -1001,6 +1054,14 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
                 bridge_volume_source=scalar,
                 bridge_volume_release=scalar,
                 bridge_volume_residual=scalar,
+                bridge_surface_area=scalar,
+                bridge_evaporation_loss=scalar,
+                cohesion_model_validity_margin=jnp.asarray(
+                    jnp.inf, dtype=batch.normal.dtype
+                ),
+                cohesion_fit_extrapolation_margin=jnp.asarray(
+                    jnp.inf, dtype=batch.normal.dtype
+                ),
                 rolling_yielded=mask,
                 torsional_yielded=mask,
                 elastic_energy=scalar,
@@ -1166,6 +1227,10 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
             bridge_volume_source=cohesion.bridge_volume_source,
             bridge_volume_release=cohesion.bridge_volume_release,
             bridge_volume_residual=cohesion.bridge_volume_residual,
+            bridge_surface_area=cohesion.bridge_surface_area,
+            bridge_evaporation_loss=jnp.zeros_like(cohesion.bridge_surface_area),
+            cohesion_model_validity_margin=jnp.min(cohesion.model_validity_margin),
+            cohesion_fit_extrapolation_margin=jnp.min(cohesion.fit_extrapolation_margin),
             rolling_yielded=rotational.rolling_yielded,
             torsional_yielded=rotational.torsional_yielded,
             elastic_energy=(

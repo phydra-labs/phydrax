@@ -26,6 +26,8 @@ class APICGatherResult(StrictModule):
 
 
 def _cross(left: Array, right: Array, dimension: int, /) -> Array:
+    if dimension == 1:
+        return jnp.zeros(left.shape[:-1], dtype=left.dtype)
     if dimension == 2:
         return left[..., 0] * right[..., 1] - left[..., 1] * right[..., 0]
     return jnp.cross(left, right)

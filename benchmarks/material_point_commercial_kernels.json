@@ -1,0 +1,9 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "kernels",
+  "metrics": {
+    "execution_id": "a00752e8cbdd997c928690923d13aa5436edb7caf7c4e845669217e1a3261483",
+    "sum": 3.0
+  },
+  "passed": true
+}
