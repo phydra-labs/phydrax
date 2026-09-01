@@ -552,7 +552,9 @@ def test_cosmology_inference_and_closure_contracts():
     observation = FieldObservationPlan(
         lambda value, args: value,
         jnp.asarray([1.0]),
-        jnp.eye(1),
+        phx.observation.CholeskyCovarianceAction(
+            jnp.eye(1), phx.observation.CoordinateLayout(("field:0",))
+        ),
         observation_id="identity-observation",
     )
     inference = WhitenedFieldInferencePlan(

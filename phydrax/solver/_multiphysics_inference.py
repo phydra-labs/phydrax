@@ -10,13 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..observation import CovarianceAction
 
 
 class SimulationSensitivityReport(StrictModule):
@@ -61,44 +60,49 @@ class SimulationSensitivityReport(StrictModule):
 class FieldObservationPlan(StrictModule, NonTrainableState):
     operator: Callable = eqx.field(static=True)
     observed: Array
-    inverse_covariance: Array
-    normalization: Array
+    covariance: CovarianceAction
     observation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         operator: Callable,
         observed: ArrayLike,
-        covariance: ArrayLike,
+        covariance: CovarianceAction,
         /,
         *,
         observation_id: str,
     ):
         if not callable(operator) or not observation_id:
             raise ValueError("Field observation metadata is invalid.")
-        observed_host = np.asarray(observed)
-        covariance_host = np.asarray(covariance, dtype=observed_host.dtype)
-        if covariance_host.shape != (observed_host.size, observed_host.size):
-            raise ValueError("Observation covariance shape is invalid.")
-        sign, logdet = np.linalg.slogdet(covariance_host)
-        if sign <= 0.0:
-            raise ValueError("Observation covariance must be positive definite.")
-        inverse = np.linalg.inv(covariance_host)
-        self.operator = operator
-        self.observed = jnp.asarray(observed_host).reshape((-1,))
-        self.inverse_covariance = jnp.asarray(inverse)
-        self.normalization = jnp.asarray(
-            0.5 * (observed_host.size * np.log(2.0 * np.pi) + logdet)
+        observed_ = jnp.asarray(observed).reshape((-1,))
+        if observed_.shape != (covariance.layout.size,):
+            raise ValueError("Observation and covariance layouts disagree.")
+        observed_ = eqx.error_if(
+            observed_,
+            jnp.any(~jnp.isfinite(observed_)),
+            "Observed field values must be finite.",
         )
+        self.operator = operator
+        self.observed = observed_
+        self.covariance = covariance
         self.observation_id = canonical_fingerprint(
-            {"kind": "field-observation", "declared_id": observation_id}
+            {
+                "kind": "field-observation",
+                "declared_id": observation_id,
+                "covariance": covariance.action_id,
+            }
         )
 
     def log_likelihood(self, state: Any, args: Any = None, /) -> Array:
         predicted = jnp.asarray(self.operator(state, args)).reshape((-1,))
+        if predicted.shape != self.observed.shape:
+            raise ValueError("Predicted field observation shape is invalid.")
         residual = predicted - self.observed
-        quadratic = oe.contract("i,ij,j->", residual, self.inverse_covariance, residual)
-        return -0.5 * quadratic - self.normalization
+        normalization = 0.5 * (
+            residual.size * jnp.log(jnp.asarray(2.0 * jnp.pi, dtype=residual.dtype))
+            + self.covariance.logdet_covariance
+        )
+        return -0.5 * self.covariance.quadratic(residual) - normalization
 
 
 class WhitenedFieldInferencePlan(StrictModule, NonTrainableState):

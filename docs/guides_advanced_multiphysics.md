@@ -138,6 +138,20 @@ Particles use comoving position `x` and canonical momentum `p = m a^2 dx/dt`.
 comoving density, `nabla_x^2 psi = 4 pi G (rho_com - mean(rho_com))`. Periodic LPT,
 KDK, collisionless PM, and gas-particle gravity reject nonzero spatial curvature.
 
+`PeriodicFourierShellPlan` supplies one prepared periodic rFFT geometry for isotropic
+auto-power, cross-power, and phase-sensitive field discrepancy. It records rectangular
+box lengths, continuum FFT normalization, Hermitian multiplicities, weighted mode
+counts, DC/Nyquist/final-edge policy, empty-shell validity, and optional explicit
+mode-transfer corrections. `MatterPowerEstimate` is the one-epoch measured product;
+compatible estimates stack into the existing multi-epoch `MatterPowerTable`.
+
+`SpectralFieldDiscrepancyPlan` reports shell-resolved `|delta_k-left -
+delta_k-right|^2/V`, total discrepancy, and Parseval evidence; it is not a difference
+of power spectra. `ParticleFieldRealizationPlan` composes the existing prepared
+particle-grid splat, field observation covariance, periodic position parameterization,
+and native optimization/sensitivity APIs. It owns no assignment, PM, or optimizer
+implementation and declares piecewise geometry derivatives at route and periodic seams.
+
 Maximal native profiles are isolated behind explicit names rather than enabling broad
 flags on these foundations. `RestrictedScalarTransferPlan` evolves a fixed scalar
 hierarchy from an immutable operator/source table; native thermodynamics, approximation
