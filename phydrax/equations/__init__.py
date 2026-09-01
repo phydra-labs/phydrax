@@ -244,6 +244,8 @@ from ._lattice_boltzmann_thermal import __all__ as _lattice_boltzmann_thermal_al
 from ._local_constitutive_root import (
     LocalConstitutiveRootDiagnostics,
     LocalConstitutiveRootPlan,
+    VectorLocalConstitutiveRootDiagnostics,
+    VectorLocalConstitutiveRootPlan,
 )
 from ._mac_incompressible import (
     compile_mac_incompressible_flow,
@@ -304,6 +306,11 @@ from ._materials import (
     TwoMaterialEOSClosure,
     TwoMaterialEOSReport,
     TwoMaterialPrimitiveState,
+)
+from ._mechanical_load_action import (
+    MechanicalLoadAction,
+    MechanicalLoadActionEvaluation,
+    NeuralCoordinateTrace,
 )
 from ._multiphase import (
     TwoMaterialVOFDiagnostics,
@@ -606,6 +613,8 @@ __all__ = [
     "ConstitutiveModel",
     "LocalConstitutiveRootDiagnostics",
     "LocalConstitutiveRootPlan",
+    "VectorLocalConstitutiveRootDiagnostics",
+    "VectorLocalConstitutiveRootPlan",
     "AbstractMPMConstitutivePlan",
     "AbstractImplicitMPMConstitutivePlan",
     "MPMConstitutiveResponse",
@@ -627,6 +636,9 @@ __all__ = [
     "CellBilinearAction",
     "CellEnergyAction",
     "CellResidualAction",
+    "MechanicalLoadAction",
+    "MechanicalLoadActionEvaluation",
+    "NeuralCoordinateTrace",
     "coefficient",
     "compile_finite_element_problem",
     "CompiledFiniteElementProblem",

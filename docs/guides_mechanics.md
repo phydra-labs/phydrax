@@ -207,19 +207,28 @@ freedom.
 
 ## Neural variational continuum mechanics
 
-`DomainFunction`, differential operators, `IntegralFunctional`, and
-`FunctionalSolver` also express static conservative continuum mechanics by
-minimizing total potential. Essential conditions define the trial field; body and
-traction work are negative terms over volume and boundary measures. This is a
-Deep Ritz or neural variational solve, not a strong-residual PINN and not the
-Discrete Element Method.
+`DomainFunction`, pointwise finite-strain mechanics, fixed integration
+realizations, and `PreparedFieldEquilibrium` provide two distinct routes:
 
-The current finite-strain field operators cover logarithmic compressible
-Neo-Hookean plane strain and three-dimensional kinematics. They do not imply
-plane stress, exact incompressibility, contact, follower loads, branch selection,
-or stability. Low sampled potential is not a certificate: use independent
-quadrature, minimum-J checks, strong equilibrium, reactions, and a converged
-discretization reference.
+1. `FunctionalSolver` minimizes a certified scalar potential.
+2. `prepare_functional_stationarity` or
+   `prepare_virtual_work_equilibrium` builds a nonlinear root for signed saddle
+   actions or nonconservative virtual work.
+
+Plane strain, three-dimensional, block-diagonal plane stress, exact/finite-bulk
+mixed incompressibility, dead/current/follower loads, fixed-epoch contact,
+sharp/diffuse fracture, topology state proposals, continuation, physical
+bifurcation certification, and parameter-conditioned operator losses all reuse
+these contracts. No route infers a potential from configuration dependence.
+
+History, contact search, crack topology, continuation and topology design commit
+only at accepted boundaries. Neural parameter Hessians are not physical
+stability operators: buckling and dynamic spectra require an independently
+declared physical certification space and operator.
+
+Low sampled objective or residual values are not certificates. Use independent
+state/adjoint defects, minimum-J checks, reactions, physical stability,
+refinement, held-out parameter cases, and authoritative FE reanalysis.
 
 ## Discrete continuum mechanics
 

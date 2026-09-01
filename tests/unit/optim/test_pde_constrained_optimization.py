@@ -11,10 +11,20 @@ import pytest
 import phydrax as phx
 
 
+def _acceptance_policy():
+    return phx.optim.StateAcceptancePolicy(
+        state_relative_tolerance=0.0,
+        state_absolute_tolerance=1.0e-6,
+        adjoint_relative_tolerance=0.0,
+        adjoint_absolute_tolerance=1.0e-6,
+    )
+
+
 def _state_design_problem(*, bounds=None):
     return phx.optim.StateDesignProblem(
         lambda state, design, _: state - design,
         lambda state, design, _: jnp.sum((state - 2.0) ** 2) + 0.1 * jnp.sum(design**2),
+        acceptance_policy=_acceptance_policy(),
         design_bounds=bounds,
         problem_id="linear-state-design",
     )
@@ -100,6 +110,7 @@ def _nested_state_design_problem():
     return phx.optim.StateDesignProblem(
         residual,
         objective,
+        acceptance_policy=_acceptance_policy(),
         problem_id="nested-linear-state-design",
     )
 
@@ -248,3 +259,35 @@ def test_reduced_adjoint_evaluation_budget_gates_whole_outer_iterations():
     assert int(result.diagnostics.iterations) == 0
     assert int(result.diagnostics.constraint_evaluations) == 1
     assert int(result.diagnostics.objective_evaluations) > 1
+
+
+def test_state_and_adjoint_acceptance_use_measured_defects_not_solver_status_alone():
+    policy = phx.optim.StateAcceptancePolicy(
+        state_relative_tolerance=0.0,
+        state_absolute_tolerance=1e-6,
+        adjoint_relative_tolerance=0.0,
+        adjoint_absolute_tolerance=1e-6,
+    )
+    state_evidence = policy.state_evidence(
+        jnp.asarray((1.0,)),
+        jnp.asarray((1e-3,)),
+        phx.optim.OptimizationStatus.SUCCESS,
+        reference_norm=1.0,
+        admissible=True,
+        realization_matches=True,
+    )
+    adjoint_evidence = policy.adjoint_evidence(
+        jnp.asarray((1.0,)),
+        jnp.asarray((1.0,)),
+        jnp.asarray((1.0 + 1e-3,)),
+        phx.linalg.LinearSolveStatus.SUCCESS,
+        admissible=True,
+        realization_matches=True,
+    )
+
+    assert state_evidence.status_accepted
+    assert state_evidence.residual_norm > state_evidence.threshold
+    assert not state_evidence.accepted
+    assert adjoint_evidence.status_accepted
+    assert adjoint_evidence.transpose_defect_norm > adjoint_evidence.threshold
+    assert not adjoint_evidence.accepted

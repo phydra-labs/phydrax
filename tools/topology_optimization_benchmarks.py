@@ -7,72 +7,96 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from collections.abc import Callable
 from pathlib import Path
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 import phydrax as phx
 
 
-class _DiagonalStateSolver(phx.optim.AbstractStateSolver):
-    load: jax.Array
-    modulus: Callable = eqx.field(static=True)
-
-    def __init__(self, load, modulus):
-        self.load = jnp.asarray(load)
-        self.modulus = modulus
-
-    @property
-    def method_id(self) -> str:
-        return "benchmark-diagonal-state"
-
-    def solve(self, problem, design, initial_state, /, *, args):
-        del initial_state
-        state = self.load / self.modulus(design)
-        return phx.optim.StateEquationResult(
+def _state_solver():
+    def solve(problem, design, initial_state, args):
+        del args
+        zero = jax.tree.map(jnp.zeros_like, initial_state)
+        one = jax.tree.map(jnp.ones_like, initial_state)
+        offset = problem.residual(zero, design)
+        slope = jax.tree.map(
+            lambda at_one, at_zero: at_one - at_zero,
+            problem.residual(one, design),
+            offset,
+        )
+        state = jax.tree.map(
+            lambda at_zero, diagonal: -at_zero / diagonal,
+            offset,
+            slope,
+        )
+        return phx.applications.solid_mechanics.MechanicsStateCandidate(
             state,
-            problem.residual(state, design, args),
-            phx.optim.OptimizationStatus.SUCCESS,
-            phx.optim.OptimizationDiagnostics(residual_evaluations=1),
+            diagnostics=phx.optim.OptimizationDiagnostics(residual_evaluations=2),
         )
 
+    return phx.applications.solid_mechanics.FiniteElementStateSolver(
+        solve,
+        solver_id="benchmark-diagonal-fe",
+    )
 
-def run_case(cells: int, /) -> dict[str, object]:
+
+def _problem(cells: int):
     centers = jnp.stack((jnp.arange(cells, dtype=float), jnp.zeros((cells,))), axis=-1)
     measures = jnp.ones((cells,))
-    density_filter = phx.applications.solid_mechanics.DensityFilterPlan(
-        centers,
-        measures,
-        1.1,
+    prepared = phx.optim.DensityTransformPlan(
+        phx.optim.ConicDensityFilterPlan(
+            centers,
+            1.1,
+            jnp.ones((cells,), dtype=bool),
+            None,
+            measures,
+        ),
+        phx.optim.TanhDensityProjectionPlan(jnp.asarray(0.5)),
     ).prepare()
-    interpolation = phx.applications.solid_mechanics.SIMPInterpolation(
+    transform = phx.applications.solid_mechanics.DensityTransform(prepared, beta=1.0)
+    interpolation = phx.applications.solid_mechanics.MaterialInterpolation(
         1.0,
-        minimum_modulus=0.05,
+        minimum=0.05,
         penalty=1.0,
     )
     load = jnp.linspace(2.0, 0.25, cells)
-    problem = phx.applications.solid_mechanics.ComplianceTopologyProblem(
-        lambda state, modulus, _: modulus * state - load,
-        load,
-        density_filter,
+    problem = phx.applications.solid_mechanics.TopologyMechanicsProblem(
+        lambda state, modulus, case, args: modulus * state - case.load,
+        (
+            phx.applications.solid_mechanics.LoadCase(
+                load,
+                case_id="diagonal-compliance",
+            ),
+        ),
+        transform,
         interpolation,
         0.5,
-        _DiagonalStateSolver(
-            load,
-            lambda density: interpolation(density_filter.apply(density)),
+        _state_solver(),
+        acceptance_policy=phx.optim.StateAcceptancePolicy(
+            state_relative_tolerance=1.0e-9,
+            state_absolute_tolerance=1.0e-10,
+            adjoint_relative_tolerance=1.0e-7,
+            adjoint_absolute_tolerance=1.0e-10,
         ),
         problem_id=f"diagonal-compliance-{cells}",
     )
+    return problem, load
+
+
+def run_case(cells: int, /) -> dict[str, object]:
+    problem, load = _problem(cells)
     initial_density = jnp.full((cells,), 0.5)
-    initial_state = load / interpolation(density_filter.apply(initial_density))
+    initial_material = problem.material_interpolation(
+        problem.density_transform.apply(initial_density)
+    )
+    initial_state = load / initial_material
     initial_compliance = jnp.vdot(load, initial_state)
     started = time.perf_counter()
     result = phx.applications.solid_mechanics.solve_topology_optimization(
         problem,
-        initial_state,
+        (jnp.zeros((cells,)),),
         initial_density,
         termination=phx.optim.OptimizationTermination(
             absolute_optimality=5.0e-5,
@@ -85,15 +109,23 @@ def run_case(cells: int, /) -> dict[str, object]:
     return {
         "cells": cells,
         "status": int(result.state_design.status),
+        "successful": bool(result.successful),
         "initial_compliance": float(initial_compliance),
         "final_compliance": float(result.state_design.objective),
         "volume_ratio": float(result.volume_ratio),
         "minimum_density": float(jnp.min(result.physical_density)),
         "maximum_density": float(jnp.max(result.physical_density)),
-        "filter_constant_residual": float(density_filter.constant_residual),
         "iterations": int(result.state_design.diagnostics.iterations),
         "state_and_adjoint_solves": int(result.state_design.diagnostics.linear_solves),
         "optimality": float(result.state_design.diagnostics.final_optimality_norm),
+        "state_accepted": bool(result.state_design.state_acceptance.accepted),
+        "adjoint_accepted": bool(result.state_design.adjoint_acceptance.accepted),
+        "state_residual": float(result.state_design.state_acceptance.residual_norm),
+        "state_threshold": float(result.state_design.state_acceptance.threshold),
+        "adjoint_defect": float(
+            result.state_design.adjoint_acceptance.transpose_defect_norm
+        ),
+        "adjoint_threshold": float(result.state_design.adjoint_acceptance.threshold),
         "wall_seconds": wall_seconds,
     }
 

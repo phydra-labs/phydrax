@@ -376,6 +376,12 @@ from ._fermionic_gaussian import (
     open_kitaev_chain,
     solve_fermionic_gaussian,
 )
+from ._field_equilibrium import (
+    FieldEquilibriumFormulation,
+    prepare_functional_stationarity,
+    prepare_virtual_work_equilibrium,
+    PreparedFieldEquilibrium,
+)
 from ._finite_element_adaptivity import (
     FiniteElementHPTopologyResult,
     FiniteElementTopologyResult,
@@ -609,6 +615,7 @@ from ._jump_delay import (
     JumpDelayProblem,
     solve_jump_delay,
 )
+from ._kdk import KDKCoefficients, KDKCompletion, KDKProposal, KDKTransactionPlan
 from ._laplace_capacitance import (
     LaplaceCapacitanceResult3D,
     solve_laplace_capacitance_3d,
@@ -755,6 +762,26 @@ from ._material_point_adaptive import (
     MPMAdaptivePolicy,
     MPMAdaptiveStatus,
 )
+from ._material_point_checkpoint import (
+    MPMCheckpointManifest,
+    MPMCheckpointMigration,
+    MPMCheckpointPlan,
+)
+from ._material_point_commercial_implicit import (
+    linearize_kway_contact,
+    MPMBlockJacobiPreconditioner,
+    MPMCompactImplicitOperator,
+    MPMCompactOperatorResult,
+    MPMImplicitContactLinearization,
+    MPMImplicitTopologyPlan,
+    MPMImplicitUnknownLayout,
+    MPMMovingDomainDerivative,
+    MPMRouteSupersetPlan,
+    MPMRouteSupersetState,
+    MPMSparseContactOperator,
+    MPMSparsePhaseFieldOperator,
+    MPMTwoLevelMultigrid,
+)
 from ._material_point_fracture import (
     MPMPhaseFieldEvidence,
     MPMPhaseFieldFracturePlan,
@@ -768,6 +795,11 @@ from ._material_point_implicit import (
     ImplicitMPMStepResult,
     PreparedImplicitMPMDynamics,
 )
+from ._material_point_output import (
+    MPMBoundedOutputBuffer,
+    MPMOutputManifest,
+    MPMOutputPlan,
+)
 from ._material_point_rollout import (
     MPMGradientKind,
     MPMGradientReport,
@@ -779,6 +811,7 @@ from ._material_point_rollout import (
     MPMRolloutResult,
     ScheduledMPMRolloutPlan,
 )
+from ._material_point_supervisor import MPMOperationalResult, MPMRunSupervisor
 from ._maxwell_reduced import (
     CompatibleMaxwell1DPlan,
     CompatibleMaxwell1DState,
@@ -897,6 +930,29 @@ from ._particle_epoch import (
     ParticleEpochTrajectory,
     pullback_particle_epoch_transition,
     segmented_particle_epoch_vjp,
+)
+from ._particle_gravity import (
+    BarnesHutGravityPlan,
+    CartesianExpansionSpace,
+    CartesianFMMOperators,
+    DirectParticleGravityPlan,
+    DistributedParticleLayout,
+    MeshComplementCalibrationEvidence,
+    MeshComplementCalibrationPlan,
+    NewtonianPairKernel,
+    ParticleGravityEvidence,
+    ParticleOctreePlan3D,
+    PeriodicBarnesHutPlan,
+    PeriodicEwaldEvidence,
+    PeriodicEwaldForcePlan,
+    PeriodicEwaldResult,
+    PreparedParticleOctree3D,
+    TreeGravityEvidence,
+    TreeGravityResult,
+    TreePMPlan,
+    TreePMResult,
+    TreePMSplitPolicy,
+    UniformFMMPlan,
 )
 from ._particle_mesh_gravity import (
     ParticleMeshGravityDiagnostics,
@@ -1940,6 +1996,10 @@ __all__ = [
     "solve_bsde_least_squares",
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
+    "FieldEquilibriumFormulation",
+    "PreparedFieldEquilibrium",
+    "prepare_functional_stationarity",
+    "prepare_virtual_work_equilibrium",
     "FunctionalSolver",
     "InteriorLaplaceDirichletResult",
     "LaplaceCapacitanceResult3D",
@@ -2182,6 +2242,27 @@ __all__ = [
     "MPMRetainedTrajectory",
     "MPMRolloutResult",
     "ScheduledMPMRolloutPlan",
+    "MPMBoundedOutputBuffer",
+    "MPMBlockJacobiPreconditioner",
+    "MPMCheckpointManifest",
+    "MPMCheckpointMigration",
+    "MPMCheckpointPlan",
+    "MPMCompactImplicitOperator",
+    "MPMCompactOperatorResult",
+    "MPMImplicitContactLinearization",
+    "MPMImplicitTopologyPlan",
+    "MPMImplicitUnknownLayout",
+    "MPMMovingDomainDerivative",
+    "MPMOperationalResult",
+    "MPMOutputManifest",
+    "MPMOutputPlan",
+    "MPMRouteSupersetPlan",
+    "MPMRouteSupersetState",
+    "MPMSparseContactOperator",
+    "MPMSparsePhaseFieldOperator",
+    "MPMRunSupervisor",
+    "MPMTwoLevelMultigrid",
+    "linearize_kway_contact",
     "ConductorCircuitSolveResult",
     "ElectrostaticConductorCoupling",
     "ElectrostaticConductorState",
@@ -2232,4 +2313,35 @@ __all__ += [
     "IAS15Plan",
     "IAS15Result",
     "ScheduledHybridEvent",
+]
+
+__all__ += [
+    "BarnesHutGravityPlan",
+    "CartesianExpansionSpace",
+    "CartesianFMMOperators",
+    "DirectParticleGravityPlan",
+    "DistributedParticleLayout",
+    "MeshComplementCalibrationEvidence",
+    "MeshComplementCalibrationPlan",
+    "NewtonianPairKernel",
+    "ParticleGravityEvidence",
+    "ParticleOctreePlan3D",
+    "PeriodicBarnesHutPlan",
+    "PeriodicEwaldEvidence",
+    "PeriodicEwaldForcePlan",
+    "PeriodicEwaldResult",
+    "PreparedParticleOctree3D",
+    "TreeGravityEvidence",
+    "TreeGravityResult",
+    "TreePMPlan",
+    "TreePMResult",
+    "TreePMSplitPolicy",
+    "UniformFMMPlan",
+]
+
+__all__ += [
+    "KDKCoefficients",
+    "KDKCompletion",
+    "KDKProposal",
+    "KDKTransactionPlan",
 ]

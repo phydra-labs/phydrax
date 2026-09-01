@@ -49,6 +49,8 @@ from . import (
     velocimetry,
     weighting,
 )
+from . import artifacts, events, observation
+from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
 
@@ -59,6 +61,7 @@ from . import applications
 # Explicit re-exports for star import
 __all__ = [
     "atomistic",
+    "artifacts",
     "applications",
     "backends",
     "combinatorial",
@@ -70,6 +73,7 @@ __all__ = [
     "terms",
     "data_utils",
     "discretization",
+    "events",
     "topology",
     "domain",
     "dynamics",
@@ -86,6 +90,7 @@ __all__ = [
     "ml",
     "nn",
     "nonlinear",
+    "observation",
     "operators",
     "optim",
     "pgm",
@@ -98,4 +103,6 @@ __all__ = [
     "uq",
     "tensor_network",
     "weighting",
+    "DimensionalScaleContract",
+    "LengthCoordinateKind",
 ]

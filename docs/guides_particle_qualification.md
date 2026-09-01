@@ -43,11 +43,23 @@ balance, negative dissipation, friction-cone defect, maximum relative overlap,
 wall action/reaction, and contact-history continuity.
 
 `DEMDifferentiabilityMargins` separately records distance to contact activation,
-distance to the friction stick/slip switch, and route-capacity success. These
-margins qualify only the executed branch; they do not claim a smooth derivative
-through a changed collision sequence.
+distance to the friction stick/slip switch, and route-capacity success.
+`DEMDiagnostics` additionally carries capillary constitutive-domain and
+near-rupture extrapolation margins, conserved-liquid balance, cumulative
+evaporation, and deforming-cell work/acceptance through the accepted state.
+These margins qualify only the executed branch; they do not claim a smooth
+derivative through a changed collision sequence.
 
-Soft-contact DEM remains experimental. Dense/cell parity, restitution refinement, oblique frictional collision, restart equivalence, and fixed-capacity failure evidence remain required. New compositional contact channels additionally expose bridge-volume, lubrication-dissipation, rolling/torsion-cap, and frame-transport residuals. Superquadric contact carries witness and convergence residuals. Multicontact correction, wall traction, and Finnie wear retain independent acceptance checks. Distributed claims remain absent.
+Soft-contact DEM remains experimental. Dense/cell parity, restitution
+refinement, oblique frictional collision, restart equivalence, and
+fixed-capacity failure evidence remain required. New evidence covers fitted
+capillary force--potential consistency, bridge birth/rupture and inventory
+conservation, segment-virial balance and Galilean invariance, sparse
+multilevel/dense pair parity with stable history keys, and periodic cell
+conditioning/work rollback. These checks do not promote unrelated
+configurations. Superquadric contact, multicontact correction, wall traction,
+Finnie wear, and distributed execution retain independent status; distributed
+claims remain absent.
 
 ## Particle-conversion qualification
 

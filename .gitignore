@@ -61,6 +61,7 @@ benchmarks/*
 !benchmarks/unbounded_spectral.json
 !benchmarks/structured_flow.json
 !benchmarks/shallow_water.json
+!benchmarks/ocean.json
 !benchmarks/spectral_element.json
 !benchmarks/particle_splat.json
 !benchmarks/mac_immersed_boundary.json
@@ -83,6 +84,8 @@ benchmarks/*
 !benchmarks/material_point_advanced.json
 !benchmarks/velocimetry.json
 !benchmarks/velocimetry_qualification.json
+!benchmarks/material_point_commercial_*.json
+!benchmarks/material_point_commercial.json
 !benchmarks/iree_export.json
 !benchmarks/mma.json
 !benchmarks/topology.json

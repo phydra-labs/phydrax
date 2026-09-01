@@ -163,18 +163,28 @@ formulations, and fixed-tree/workflow evidence. See
 [Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle, grid, solver, operator, artifact, and
 likelihood identities rather than introducing a separate framework. Canonical physical
-states project only declared dependencies into content-addressed products; concrete
-pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
-release-window Gaussian likelihoods, primordial H/He microphysics, local-curvature
-validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification,
+states project only declared dependencies into content-addressed products; pinned
+precision processes, one-loop SPT, calibrated 200m halo ingredients, release-window
+likelihoods, primordial microphysics, CMB sky/TOD/mapmaking, periodic Ewald evidence,
 snapshots, and distributed-PM feasibility extend the curved/CPL background, named
-transfer/power, flat LPT/PM, and adiabatic gas--DM foundations. Native relic, BBN,
-recombination, fixed-hierarchy Einstein--Boltzmann/CMB, halo/nonlinear, lensing,
-light-cone, survey-selection, and baryonic-feedback reference products preserve those
-same realization and product conventions. Precision parity, global curved N-body,
-production tree gravity, AMR, calibrated fits, collaboration data, and distributed
-execution remain explicit external or qualification boundaries rather than hidden
-fallbacks.
+transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombination,
+nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
+share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
+global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
+merger products, stochastic star populations, two-level AMR, a shared Morton octree,
+isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM. Every profile
+states unsupported species, topology, approximation, capacity, distribution, and
+communication branches; precision parity beyond qualified profiles, multilevel
+distributed AMR, adaptive/distributed trees, production feedback, and full release
+coverage remain separate qualification claims rather than hidden flags.
+Cross-domain reconciliation keeps those domain states distinct while moving shared
+mechanics to core owners: dimensional scales, artifacts and derivative capabilities,
+labelled observation/covariance/likelihood algebra, direct and hierarchical particle
+gravity, coefficient-driven KDK, and ratio-two AMR transfer/reflux. Cosmology supplies
+comoving/canonical/scale-factor adapters; astrodynamics supplies physical velocity,
+epoch, frame, encounter, and mission adapters; astrophysics supplies concrete
+instrument/sky response. Application-local nominal FMM/TreePM and duplicate response
+or covariance implementations are removed rather than maintained beside the core.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,
@@ -186,11 +196,15 @@ add WCS/calibrated imaging, surveys, scalar/polarized transfer, waveform/QNM net
 oblate occultation, and finite-source microlensing without introducing a second
 observation or inference runtime. External provider calls and file access never enter
 traced execution.
-Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
-transactional adaptive realization and replay, plane-strain/plane-stress/3-D
-hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
-rigid and two-field Coulomb contact, matrix-free implicit roots, diffuse and
-sharp fracture alternatives, active-block masks, and compact block storage.
+Material point dynamics compose that transfer with PIC/FLIP/APIC families,
+USF/USL-minus/classical/affine/post-advection MUSL, adaptive realization and replay,
+isotropic or general plane stress, J2 and pressure-dependent geomechanics, porothermal
+field operators, simultaneous K-way and rigid contact, moving-domain and compact
+implicit actions, diffuse or sharp fracture, active/compact block storage, distributed
+ownership, particle lifecycle and ratio-two AMR. Commercial claim tuples, intended use,
+durable checkpoints/output, host supervision, event/topology journals, derivative
+taxonomy, standards traceability, and G0--G7 release evidence close each exact supported
+configuration without implying universal validation or certification.
 DEM adds stable compositional
 normal/cohesion/tangential/rotational history, accepted-step
 work/energy ledgers, cached and fused neighborhoods, DMT/capillary/lubrication,

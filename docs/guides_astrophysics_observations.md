@@ -57,3 +57,10 @@ frequency-domain detector response, fixed-ray emission/absorption transfer, and 
 complex-field operator sequences. These are concrete array boundaries for external
 X-ray, imaging, waveform, ray-transfer, and optics packages; they are not a provider
 registry or a second operator framework.
+
+`BinnedResponsePlan` now adapts the shared `LinearObservationPlan`; CMB bandpower and
+survey windows use the same labelled response algebra. Core Cholesky/precision
+covariance actions and Gaussian likelihoods are shared with orbit determination and
+cosmology, while PSF, bandpass, ray, occultation, antenna, and measurement geometry
+remain domain-specific. Observation provenance uses the shared dependency-aware
+differentiation contract rather than a second three-valued vocabulary.

@@ -1,0 +1,11 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "geomechanics",
+  "metrics": {
+    "successful": true,
+    "yield_residual": 3.608224830031759e-16,
+    "plastic_multiplier": 0.10633296977257133,
+    "dissipation": 0.006412347121589523
+  },
+  "passed": true
+}

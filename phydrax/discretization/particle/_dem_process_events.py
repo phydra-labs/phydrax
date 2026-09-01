@@ -443,6 +443,8 @@ def insert_reactive_particles(
         dem_state.neighborhood_cache,
         dem_state.loads,
         dem_state.energy,
+        dem_state.periodic_cell,
+        dem_state.liquid,
     )
     body_update = dynamics.apply_body_properties(
         time,
@@ -802,6 +804,8 @@ def fragment_particle_with_growth(
         current_epoch.state.neighborhood_cache,
         current_epoch.state.loads,
         current_epoch.state.energy,
+        current_epoch.state.periodic_cell,
+        current_epoch.state.liquid,
     )
     body_update = current_epoch.dynamics.apply_body_properties(
         time,
@@ -1035,6 +1039,8 @@ def remove_particles_in_region(
         dem_state.neighborhood_cache,
         dem_state.loads,
         dem_state.energy,
+        dem_state.periodic_cell,
+        dem_state.liquid,
     )
     body_update = dynamics.apply_body_properties(
         time,

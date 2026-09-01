@@ -145,6 +145,8 @@ from ._mac_boundary import (
     MACPressureClosureKind,
     PreparedMACBoundaryPlan,
 )
+from ._mac_capillarity import MACCapillaryResult, MACGhostFluidCapillaryPlan
+from ._mac_cut_cell import MACCutCellGeometryPlan, MACCutCellGeometryState
 from ._mac_distributed import (
     MACDistributedDiagnostics,
     MACDistributedPlanStatus,
@@ -155,8 +157,6 @@ from ._mac_distributed import (
     MACLocalStencilPlan,
     PreparedMACDistributedTopology,
 )
-from ._mac_capillarity import MACCapillaryResult, MACGhostFluidCapillaryPlan
-from ._mac_cut_cell import MACCutCellGeometryPlan, MACCutCellGeometryState
 from ._mac_interface_state import MACFreeSurfaceGeometryState
 from ._mac_marker_transfer import (
     MACMarkerRelation,
@@ -170,6 +170,7 @@ from ._mac_momentum import (
     MACMomentumReport,
     PreparedMACMomentumOperators,
 )
+from ._mac_ocean import MACOceanForcingEvidence, PreparedMACOceanForcing
 from ._mac_scalar import (
     MACScalarAdvection,
     MACScalarBoundaryCondition,
@@ -185,10 +186,6 @@ from ._mac_scalar import (
     MACScalarTransport,
     PreparedMACScalarTransport,
 )
-from ._mac_viscous_measures import (
-    MACFreeSurfaceViscousMeasurePlan,
-    MACFreeSurfaceViscousMeasures,
-)
 from ._mac_variable_density import (
     FaceMomentumFlux,
     MACDensityUpdateResult,
@@ -196,6 +193,10 @@ from ._mac_variable_density import (
     MACVariableDensityReport,
     MACVariableDensityTransportResult,
     PreparedMACVariableDensityOperators,
+)
+from ._mac_viscous_measures import (
+    MACFreeSurfaceViscousMeasurePlan,
+    MACFreeSurfaceViscousMeasures,
 )
 from ._mapped import (
     evaluate_mapped_finite_volume_geometry,
@@ -573,6 +574,7 @@ __all__ = [
     "MACScalarBoundaryKind",
     "MACScalarBoundarySet",
     "MACScalarDiagnostics",
+    "MACOceanForcingEvidence",
     "MACScalarFieldDiagnostics",
     "MACScalarFluxResult",
     "MACScalarLayout",
@@ -588,6 +590,7 @@ __all__ = [
     "PreparedMACDistributedTopology",
     "PreparedMACMarkerTransfer",
     "PreparedMACMomentumOperators",
+    "PreparedMACOceanForcing",
     "PreparedMappedMACGeometry",
     "PreparedMACOperators",
     "PreparedMACScalarTransport",

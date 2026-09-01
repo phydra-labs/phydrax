@@ -8,6 +8,11 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.continuation._bifurcation import (
+    certify_transcritical,
+    TranscriticalAssumptions,
+)
+from phydrax.continuation._normal_forms import transcritical_normal_form
 
 
 ct = phx.continuation
@@ -287,6 +292,67 @@ def test_pitchfork_certificate_drives_two_automatic_switches():
     assert bool(pitchfork.certified)
     np.testing.assert_allclose(float(seeds[0][0]), 0.05, rtol=1e-6)
     np.testing.assert_allclose(float(seeds[1][0]), -0.05, rtol=1e-6)
+
+
+def test_transcritical_certificate_requires_two_nondegenerate_reduced_terms():
+    dtype = jnp.float32
+    state_space = phx.linalg.ArraySpace((), dtype=dtype)
+    problem = ct.ParameterContinuationProblem(
+        lambda state, parameter, args: state**2 - parameter * state,
+        problem_id="transcritical-normal-form",
+    )
+    state = jnp.asarray(0.0, dtype=dtype)
+    parameter = jnp.asarray(0.0, dtype=dtype)
+    mode = jnp.asarray(1.0, dtype=dtype)
+    geometry = _geometry(problem, state, parameter, state_space)
+    branch = ct.certify_branch_point(
+        problem,
+        state,
+        parameter,
+        geometry,
+        _nullspace_analyzer(mode, mode, [0.0]),
+        ct.BranchPointAssumptions(
+            smoothness_order=2,
+            scalar_parameter_verified=True,
+            reference_branch_verified=True,
+            local_fredholm_index_zero_verified=True,
+        ),
+    )
+    normal_form = transcritical_normal_form(
+        problem,
+        state,
+        parameter,
+        geometry,
+        branch.evidence.nullspace,
+        _successful_linear_solve(
+            lambda action, right_hand_side, system_id: jnp.zeros_like(right_hand_side)
+        ),
+    )
+    certificate = certify_transcritical(
+        branch,
+        TranscriticalAssumptions(
+            smoothness_order=2,
+            reference_branch_verified=True,
+            intersecting_branch_verified=True,
+            distinct_tangents_verified=True,
+        ),
+        quadratic_coefficient=normal_form.quadratic_coefficient,
+        mixed_coefficient=normal_form.mixed_coefficient,
+        reference_tangent_residual=jnp.max(normal_form.diagnostics.linear_residuals),
+        reference_tangent_condition=jnp.max(
+            normal_form.diagnostics.linear_condition_estimates
+        ),
+        reference_tangent_success=normal_form.successful,
+        family_separation=normal_form.tangent_separation,
+    )
+
+    assert bool(branch.certified)
+    assert bool(normal_form.successful)
+    np.testing.assert_allclose(float(normal_form.quadratic_coefficient), 1.0)
+    np.testing.assert_allclose(float(normal_form.mixed_coefficient), -1.0)
+    np.testing.assert_allclose(float(normal_form.tangent_separation), 1.0)
+    assert certificate.kind == "transcritical"
+    assert bool(certificate.certified)
 
 
 def test_incomplete_or_ill_conditioned_evidence_never_certifies():

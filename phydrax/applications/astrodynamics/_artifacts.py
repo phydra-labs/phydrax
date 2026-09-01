@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import equinox as eqx
@@ -13,88 +12,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-
-
-class ArtifactManifest(StrictModule, NonTrainableState):
-    artifact_id: str = eqx.field(static=True)
-    producer: str = eqx.field(static=True)
-    version: str = eqx.field(static=True)
-    sha256: str = eqx.field(static=True)
-    byte_size: int = eqx.field(static=True)
-    source_uri: str = eqx.field(static=True)
-    license_id: str = eqx.field(static=True)
-    model: str = eqx.field(static=True)
-    coverage: str = eqx.field(static=True)
-    manifest_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        artifact_id: str,
-        producer: str,
-        version: str,
-        sha256: str,
-        byte_size: int,
-        source_uri: str,
-        license_id: str,
-        model: str,
-        coverage: str,
-    ):
-        values = tuple(
-            str(value).strip()
-            for value in (
-                artifact_id,
-                producer,
-                version,
-                sha256,
-                source_uri,
-                license_id,
-                model,
-                coverage,
-            )
-        )
-        if any(not value for value in values):
-            raise ValueError("Artifact manifest fields must be non-empty.")
-        if len(values[3]) != 64 or any(
-            character not in "0123456789abcdef" for character in values[3].lower()
-        ):
-            raise ValueError("Artifact checksum must be lowercase SHA-256 hex.")
-        if int(byte_size) < 0:
-            raise ValueError("Artifact byte size must be non-negative.")
-        (
-            self.artifact_id,
-            self.producer,
-            self.version,
-            self.sha256,
-            self.source_uri,
-            self.license_id,
-            self.model,
-            self.coverage,
-        ) = values
-        self.byte_size = int(byte_size)
-        self.manifest_id = canonical_fingerprint(
-            {
-                "kind": "artifact-manifest",
-                "values": list(values),
-                "byte_size": int(byte_size),
-            }
-        )
-
-    def as_json(self) -> str:
-        return json.dumps(
-            {
-                "artifact_id": self.artifact_id,
-                "producer": self.producer,
-                "version": self.version,
-                "sha256": self.sha256,
-                "byte_size": self.byte_size,
-                "source_uri": self.source_uri,
-                "license_id": self.license_id,
-                "model": self.model,
-                "coverage": self.coverage,
-            },
-            sort_keys=True,
-        )
+from ...artifacts import ArtifactManifest
 
 
 class PinnedArtifact(StrictModule, NonTrainableState):

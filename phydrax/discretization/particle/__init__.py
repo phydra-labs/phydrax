@@ -103,6 +103,8 @@ from ._dem_boundary import (
 )
 from ._dem_cohesion import (
     AbstractDEMCohesionPlan,
+    bagheri_capillary_bridge_surface_area,
+    BagheriCapillaryBridgePlan,
     CompositeDEMCohesionPlan,
     DEMCohesionComponentHistory,
     DEMCohesionResponse,
@@ -143,10 +145,23 @@ from ._dem_inverse import (
     evaluate_dem_inverse,
     evaluate_dem_parameter_ensemble,
 )
+from ._dem_liquid import (
+    ConservedLiquidBridgeProcessPlan,
+    DEMLiquidAllocation,
+    DEMLiquidEvaluation,
+    DEMLiquidState,
+)
 from ._dem_multicontact import (
     AbstractDEMContactGraphCorrectionPlan,
     DEMMulticontactCorrection,
     ElasticHalfSpaceMulticontactPlan,
+)
+from ._dem_periodic import (
+    dem_bulk_stress,
+    DEMBulkStress,
+    DEMPeriodicCellControlPlan,
+    DEMPeriodicCellState,
+    DEMPeriodicCellUpdate,
 )
 from ._dem_process_events import (
     fragment_particle_with_growth,
@@ -907,6 +922,15 @@ __all__ = [
     "DEMStepEvaluation",
     "DEMStepEnergyLedger",
     "DEMStepRestriction",
+    "ConservedLiquidBridgeProcessPlan",
+    "DEMLiquidAllocation",
+    "DEMLiquidEvaluation",
+    "DEMLiquidState",
+    "dem_bulk_stress",
+    "DEMBulkStress",
+    "DEMPeriodicCellControlPlan",
+    "DEMPeriodicCellState",
+    "DEMPeriodicCellUpdate",
     "HertzNormalContactPlan",
     "ImplicitDEMBarrier",
     "LinearSpringDashpotNormalPlan",
@@ -987,6 +1011,8 @@ __all__ = [
     "DEMRotationalResponse",
     "DEMTangentialHistory",
     "DMTContactCohesionPlan",
+    "bagheri_capillary_bridge_surface_area",
+    "BagheriCapillaryBridgePlan",
     "LinearCapillaryBridgePlan",
     "NearContactLubricationPlan",
     "DEMSupportMatrix",

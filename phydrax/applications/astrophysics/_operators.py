@@ -11,11 +11,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...observation import CoordinateLayout, LinearObservationPlan, TheoryVector
 from ._observation_status import AstrophysicsObservationStatus
 from ._photometry import ObservationDataProvenance
 
@@ -61,7 +61,7 @@ class BinnedResponseResult(StrictModule):
 
 
 class BinnedResponsePlan(StrictModule, NonTrainableState):
-    matrix: Array
+    response: LinearObservationPlan
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, matrix: ArrayLike, /, *, response_id: str):
@@ -71,20 +71,37 @@ class BinnedResponsePlan(StrictModule, NonTrainableState):
         identifier = str(response_id)
         if not identifier:
             raise ValueError("response_id must be non-empty.")
-        self.matrix = jnp.asarray(host)
+        source = CoordinateLayout(
+            tuple(f"{identifier}:source:{index}" for index in range(host.shape[1]))
+        )
+        target = CoordinateLayout(
+            tuple(f"{identifier}:target:{index}" for index in range(host.shape[0]))
+        )
+        self.response = LinearObservationPlan(host, source, target)
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "binned-response",
+                "kind": "astrophysics-binned-response-adapter",
                 "response_id": identifier,
-                "shape": list(host.shape),
+                "core": self.response.plan_id,
             }
         )
+
+    @property
+    def matrix(self) -> Array:
+        return self.response.matrix
 
     def evaluate(self, integrated_source: ArrayLike, /) -> BinnedResponseResult:
         source = jnp.asarray(integrated_source)
         if source.shape[-1:] != (self.matrix.shape[1],):
             raise ValueError("Integrated source axis does not match response input.")
-        predicted = contract("oi,...i->...o", self.matrix, source)
+        flat = source.reshape((-1, source.shape[-1]))
+        predicted = jax.vmap(
+            lambda values: (
+                self.response.apply(
+                    TheoryVector(values, self.response.source, self.plan_id)
+                ).values
+            )
+        )(flat).reshape(source.shape[:-1] + (self.matrix.shape[0],))
         valid = jnp.all(jnp.isfinite(source), axis=-1) & jnp.all(source >= 0.0, axis=-1)
         status = jnp.where(
             valid,

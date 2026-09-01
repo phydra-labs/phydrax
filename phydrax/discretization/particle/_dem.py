@@ -31,6 +31,7 @@ from ._dem_boundary import (
     evaluate_dem_barrier,
     ImplicitDEMBarrier,
 )
+from ._dem_cohesion import BagheriCapillaryBridgePlan, CompositeDEMCohesionPlan
 from ._dem_contact import (
     DEMContactBatch,
     DEMContactHistory,
@@ -41,13 +42,26 @@ from ._dem_contact import (
     PreparedDEMContactModel,
 )
 from ._dem_contact_state import (
+    DEMCohesionHistory,
     DEMContactEvaluationContext,
     remap_dem_contact_history,
 )
 from ._dem_kernels import reduce_dem_contact
+from ._dem_liquid import (
+    conserved_bagheri_component,
+    ConservedLiquidBridgeProcessPlan,
+    DEMLiquidEvaluation,
+    DEMLiquidState,
+)
 from ._dem_multicontact import (
     AbstractDEMContactGraphCorrectionPlan,
     DEMMulticontactCorrection,
+)
+from ._dem_periodic import (
+    dem_bulk_stress,
+    DEMBulkStress,
+    DEMPeriodicCellControlPlan,
+    DEMPeriodicCellState,
 )
 from ._neighborhood import (
     AbstractPreparedParticleNeighborhood,
@@ -56,6 +70,7 @@ from ._neighborhood import (
 from ._pair_state import match_particle_pair_keys, ParticlePairKeySpace
 from ._pairwise import particle_pair_geometry
 from ._particle_morphology import ParticleDynamicBodyProperties
+from ._periodic_cell import ParticleCell
 from ._population import ParticlePopulationPlan
 from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._rigid_sphere import (
@@ -84,6 +99,8 @@ class DEMRejectionReason(IntFlag):
     OVERLAP = 1 << 7
     ENERGY = 1 << 8
     FRAME = 1 << 9
+    CELL_CONTROL = 1 << 11
+    LIQUID = 1 << 12
 
 
 class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
@@ -91,6 +108,8 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
 
     contact: DEMContactModelPlan
     multicontact: AbstractDEMContactGraphCorrectionPlan | None
+    periodic_cell_control: DEMPeriodicCellControlPlan | None
+    liquid_process: ConservedLiquidBridgeProcessPlan | None
     maximum_overlap_fraction: float = eqx.field(static=True)
     distance_tolerance: float = eqx.field(static=True)
     frame_tolerance: float = eqx.field(static=True)
@@ -104,6 +123,8 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         multicontact: AbstractDEMContactGraphCorrectionPlan | None = None,
+        periodic_cell_control: DEMPeriodicCellControlPlan | None = None,
+        liquid_process: ConservedLiquidBridgeProcessPlan | None = None,
         maximum_overlap_fraction: float = 0.1,
         distance_tolerance: float = 1.0e-12,
         frame_tolerance: float = 1.0e-10,
@@ -118,6 +139,18 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "multicontact must be an AbstractDEMContactGraphCorrectionPlan or None."
             )
+        if periodic_cell_control is not None and not isinstance(
+            periodic_cell_control, DEMPeriodicCellControlPlan
+        ):
+            raise TypeError(
+                "periodic_cell_control must be a DEMPeriodicCellControlPlan or None."
+            )
+        if liquid_process is not None:
+            if not isinstance(liquid_process, ConservedLiquidBridgeProcessPlan):
+                raise TypeError(
+                    "liquid_process must be a ConservedLiquidBridgeProcessPlan or None."
+                )
+            conserved_bagheri_component(contact.cohesion)
         overlap = float(maximum_overlap_fraction)
         distance = float(distance_tolerance)
         frame = float(frame_tolerance)
@@ -142,6 +175,14 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
                 "kind": "soft-sphere-dem-method-plan",
                 "contact": contact.contact_model_id,
                 "multicontact": (None if multicontact is None else multicontact.plan_id),
+                "periodic_cell_control": (
+                    None
+                    if periodic_cell_control is None
+                    else periodic_cell_control.plan_id
+                ),
+                "liquid_process": (
+                    None if liquid_process is None else liquid_process.plan_id
+                ),
                 "maximum_overlap_fraction": overlap,
                 "distance_tolerance": distance,
                 "frame_tolerance": frame,
@@ -154,6 +195,8 @@ class SoftSphereDEMMethodPlan(StrictModule, NonTrainableState):
             raise ValueError("method_id must be nonempty.")
         self.contact = contact
         self.multicontact = multicontact
+        self.periodic_cell_control = periodic_cell_control
+        self.liquid_process = liquid_process
         self.maximum_overlap_fraction = overlap
         self.distance_tolerance = distance
         self.frame_tolerance = frame
@@ -192,6 +235,7 @@ class DEMEnergyLedgerState(StrictModule):
     cumulative_prescribed_wall_work: Array
     cumulative_gravity_work: Array
     cumulative_external_work: Array
+    cumulative_cell_work: Array
     cumulative_contact_balance_loss: Array
     cumulative_energy_residual: Array
     last_relative_energy_residual: Array
@@ -217,6 +261,7 @@ class DEMStepEnergyLedger(StrictModule):
     boundary_wall_power_after: Array
     gravity_work: Array
     external_work: Array
+    cell_work: Array
     contact_balance_loss: Array
     energy_residual: Array
     relative_energy_residual: Array
@@ -235,6 +280,8 @@ class DEMRuntimeState(StrictModule):
     neighborhood_cache: ParticleVerletState | None
     loads: DEMResolvedLoad
     energy: DEMEnergyLedgerState
+    periodic_cell: DEMPeriodicCellState | None = None
+    liquid: DEMLiquidState | None = None
 
 
 class DEMDiagnostics(StrictModule):
@@ -251,6 +298,10 @@ class DEMDiagnostics(StrictModule):
     minimum_frame_transport_margin: Array
     minimum_cohesion_birth_margin: Array
     minimum_cohesion_rupture_margin: Array
+    minimum_cohesion_model_validity_margin: Array
+    minimum_cohesion_fit_extrapolation_margin: Array
+    liquid_balance_residual: Array
+    evaporated_liquid_volume: Array
     minimum_rolling_yield_margin: Array
     minimum_torsional_yield_margin: Array
     acceptance_margin: Array
@@ -289,6 +340,8 @@ class DEMEvaluation(StrictModule):
     boundaries: tuple[DEMBoundaryResponse, ...]
     loads: DEMResolvedLoad
     diagnostics: DEMDiagnostics
+    bulk_stress: DEMBulkStress | None
+    liquid: DEMLiquidEvaluation | None
     contact_energy: Array
     contact_births: Array
     contact_deaths: Array
@@ -388,6 +441,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
     external_load_id: str | None = eqx.field(static=True)
     execution: ParticleExecutionPolicy
     precision: ParticlePrecisionPolicy
+    periodic_cell: ParticleCell | None
+    maximum_interaction_radius: float = eqx.field(static=True)
+    liquid_component_index: int = eqx.field(static=True)
     key: DiscretizationKey
     preparation: PreparationReport
     prepared_id: str = eqx.field(static=True)
@@ -482,6 +538,69 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             neighborhood, PreparedVerletParticleNeighborhood
         ):
             raise ValueError("verlet_fused requires a prepared Verlet neighborhood.")
+        active_mask = np.asarray(bodies.particles.active_mask, dtype=bool)
+        interaction_extents = method.contact.interaction_extents_for_radii(
+            np.asarray(bodies.radii)[active_mask],
+            np.asarray(bodies.material_ids)[active_mask],
+            materials.material_count,
+        )
+        maximum_interaction_radius = 2.0 * float(np.max(interaction_extents))
+        cohesion = method.contact.cohesion
+        bagheri_present = isinstance(cohesion, BagheriCapillaryBridgePlan) or (
+            isinstance(cohesion, CompositeDEMCohesionPlan)
+            and any(
+                isinstance(component, BagheriCapillaryBridgePlan)
+                for component in cohesion.components
+            )
+        )
+        if bagheri_present and barriers_:
+            raise ValueError(
+                "Bagheri capillary bridges currently support sphere pairs only."
+            )
+        periodic_cell = None
+        if method.periodic_cell_control is not None:
+            if not isinstance(neighborhood.box, ParticleCell):
+                raise ValueError(
+                    "Periodic DEM cell control requires a ParticleCell neighborhood."
+                )
+            if neighborhood.backend != "dense_pairs":
+                raise ValueError(
+                    "Periodic DEM cell control currently requires dense pair authority."
+                )
+            if barriers_:
+                raise ValueError(
+                    "Periodic DEM cell control does not support implicit barriers."
+                )
+            if not neighborhood.box.fully_periodic:
+                raise ValueError("Controlled DEM cells must be fully periodic.")
+            if np.any(np.asarray(bodies.fixed_mask, dtype=bool) & active_mask):
+                raise ValueError(
+                    "Controlled periodic DEM cells do not support fixed particles."
+                )
+            if np.any(np.asarray(gravity_) != 0.0):
+                raise ValueError(
+                    "Controlled periodic DEM cells require zero body gravity."
+                )
+            if method.periodic_cell_control.ambient_dimension != bodies.ambient_dimension:
+                raise ValueError("DEM cell-control dimension does not match bodies.")
+            if (
+                method.periodic_cell_control.maximum_condition_number
+                > neighborhood.box.certified_condition_number
+            ):
+                raise ValueError(
+                    "ParticleCell condition certificate does not cover cell control."
+                )
+            neighborhood.box.require_unique_image(maximum_interaction_radius)
+            periodic_cell = neighborhood.box
+        liquid_component_index = -1
+        if method.liquid_process is not None:
+            if barriers_:
+                raise ValueError(
+                    "Conserved liquid bridges currently support particle pairs only."
+                )
+            _, liquid_component_index = conserved_bagheri_component(
+                method.contact.cohesion
+            )
         preparation = PreparationReport(
             capabilities=(
                 DiscretizationCapability.DIFFERENTIABLE_GEOMETRY,
@@ -491,8 +610,18 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             diagnostics=(
                 "soft-sphere penalty contact",
                 "stable pair-key history remapping",
+                (
+                    "conserved particle-film and bridge-volume transaction"
+                    if liquid_component_index >= 0
+                    else "prescribed contact liquid sources"
+                ),
                 "kick-drift-contact-kick integration",
                 "branchwise differentiation through fixed realized routes",
+                (
+                    "deforming fully periodic cell with mixed tensor control"
+                    if periodic_cell is not None
+                    else "fixed particle domain"
+                ),
             ),
             resource_counts={
                 "particle_capacity": bodies.capacity,
@@ -514,7 +643,10 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             None if external_load_id is None else str(external_load_id)
         )
         self.execution = execution_
+        self.liquid_component_index = liquid_component_index
         self.precision = precision_
+        self.periodic_cell = periodic_cell
+        self.maximum_interaction_radius = maximum_interaction_radius
         self.key = method.key
         self.preparation = preparation
         self.prepared_id = canonical_fingerprint(
@@ -630,6 +762,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             ledger.cumulative_prescribed_wall_work,
             ledger.cumulative_gravity_work,
             ledger.cumulative_external_work,
+            ledger.cumulative_cell_work,
             ledger.cumulative_contact_balance_loss,
             ledger.cumulative_energy_residual,
             ledger.last_relative_energy_residual,
@@ -669,6 +802,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         next_kinematics: RigidSphereKinematics,
         evaluation: DEMEvaluation,
         step_size: Array,
+        cell_work: Array,
         /,
     ) -> DEMStepEnergyLedger:
         kinetic_before = self._kinetic_energy(state.kinematics, state.body_properties)
@@ -737,6 +871,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             + balance_loss
             - gravity_work
             - external_work
+            - cell_work
             - jnp.sum(prescribed_wall_work)
         )
         scale = jnp.maximum(
@@ -749,6 +884,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                         jnp.abs(contact_after),
                         jnp.abs(gravity_work),
                         jnp.abs(external_work),
+                        jnp.abs(cell_work),
                         jnp.max(
                             jnp.abs(prescribed_wall_work),
                             initial=jnp.asarray(0.0, dtype=kinetic_after.dtype),
@@ -771,6 +907,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             evaluation.boundary_wall_power,
             gravity_work,
             external_work,
+            cell_work,
             balance_loss,
             residual,
             jnp.abs(residual) / scale,
@@ -800,6 +937,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             previous.cumulative_prescribed_wall_work + step.prescribed_wall_work,
             previous.cumulative_gravity_work + step.gravity_work,
             previous.cumulative_external_work + step.external_work,
+            previous.cumulative_cell_work + step.cell_work,
             previous.cumulative_contact_balance_loss + step.contact_balance_loss,
             previous.cumulative_energy_residual + step.energy_residual,
             step.relative_energy_residual,
@@ -820,8 +958,30 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         *,
         args: Any = None,
     ) -> DEMRuntimeState:
-        kinematics = self.bodies.kinematics(position, velocity, angular_velocity)
+        raw_position = jnp.asarray(position)
+        periodic_state = (
+            None
+            if self.periodic_cell is None
+            else self.method.periodic_cell_control.initialize(
+                self.periodic_cell, raw_position.dtype
+            )
+        )
+        initial_position = raw_position
+        if periodic_state is not None:
+            initial_position, _ = self.periodic_cell.wrap_with_vectors(
+                raw_position, periodic_state.vectors
+            )
+        kinematics = self.bodies.kinematics(initial_position, velocity, angular_velocity)
         body_properties = self.initial_body_properties()
+        liquid_state = (
+            None
+            if self.method.liquid_process is None
+            else self.method.liquid_process.initialize(
+                self.bodies.capacity,
+                kinematics.position.dtype,
+                body_properties.active,
+            )
+        )
         zero = self._zero_load()
         resolved_zero = DEMResolvedLoad(
             zero,
@@ -850,6 +1010,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             scalar_zero,
             scalar_zero,
             scalar_zero,
+            scalar_zero,
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.int32),
@@ -871,6 +1032,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             neighborhood_cache,
             resolved_zero,
             energy_seed,
+            periodic_state,
+            liquid_state,
         )
         evaluation = self.evaluate(
             jnp.asarray(time, dtype=kinematics.position.dtype),
@@ -894,11 +1057,15 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             scalar_zero,
             scalar_zero,
             scalar_zero,
+            scalar_zero,
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.int32),
+        )
+        initialized_liquid = (
+            liquid_state if evaluation.liquid is None else evaluation.liquid.next_state
         )
         initialized = DEMRuntimeState(
             kinematics,
@@ -908,6 +1075,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             evaluation.neighborhood_cache,
             evaluation.loads,
             initialized_energy,
+            periodic_state,
+            initialized_liquid,
         )
         checked_position = eqx.error_if(
             initialized.kinematics.position,
@@ -926,6 +1095,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             initialized.neighborhood_cache,
             initialized.loads,
             initialized.energy,
+            initialized.periodic_cell,
+            initialized.liquid,
         )
 
     def apply_body_properties(
@@ -966,6 +1137,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             cache,
             state.loads,
             state.energy,
+            state.periodic_cell,
+            state.liquid,
         )
         evaluation = self.evaluate(
             jnp.asarray(time),
@@ -988,6 +1161,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             evaluation.neighborhood_cache,
             evaluation.loads,
             energy,
+            state.periodic_cell,
+            state.liquid if evaluation.liquid is None else evaluation.liquid.next_state,
         )
         successful = evaluation.successful & tree_allfinite(candidate)
         accepted = tree_where(successful, candidate, state)
@@ -1081,7 +1256,12 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             rebuilt, align_rebuilt, align_reused, operand=None
         )
         center_geometry = particle_pair_geometry(
-            kinematics.position, pairs, box=neighborhood.box
+            kinematics.position,
+            pairs,
+            box=neighborhood.box,
+            cell_vectors=(
+                None if state.periodic_cell is None else state.periodic_cell.vectors
+            ),
         )
         sphere_geometry = sphere_pair_contact_geometry(
             self.bodies,
@@ -1115,6 +1295,53 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         )
         left = pairs.left_indices
         right = pairs.right_indices
+        liquid_allocation = None
+        minimum_bridge_volume = jnp.zeros_like(batch.gap)
+        if self.method.liquid_process is not None:
+            if state.liquid is None:
+                raise RuntimeError("Prepared liquid DEM state lacks liquid inventory.")
+            bridge_plan, component_index = conserved_bagheri_component(
+                self.method.contact.cohesion
+            )
+            component = remapped_history.cohesion.components[component_index]
+            requested_volume = bridge_plan.pair_bridge_volume(
+                self.bodies.material_ids[left],
+                self.bodies.material_ids[right],
+                self.materials.material_count,
+            ).astype(batch.gap.dtype)
+            characteristic_radius = 2.0 * batch.effective_radius
+            minimum_bridge_volume = 1.0e-6 * characteristic_radius**3
+            birth_candidates = (
+                batch.valid
+                & (batch.gap <= 0.0)
+                & ~component.active
+                & (requested_volume > 0.0)
+            )
+            liquid_allocation = self.method.liquid_process.allocate(
+                state.liquid,
+                left,
+                right,
+                requested_volume,
+                minimum_bridge_volume,
+                birth_candidates,
+                self.bodies.capacity,
+            )
+            seeded_component = eqx.tree_at(
+                lambda value: value.bridge_volume,
+                component,
+                jnp.where(
+                    birth_candidates,
+                    liquid_allocation.bridge_volume,
+                    component.bridge_volume,
+                ),
+            )
+            components = list(remapped_history.cohesion.components)
+            components[component_index] = seeded_component
+            remapped_history = eqx.tree_at(
+                lambda value: value.cohesion,
+                remapped_history,
+                DEMCohesionHistory(tuple(components)),
+            )
         contact_context = DEMContactEvaluationContext(
             keys.keys,
             keys.valid,
@@ -1206,6 +1433,52 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 lambda value: value.successful,
                 particle_contact,
                 particle_contact.successful & correction_successful,
+            )
+        liquid_evaluation = None
+        if self.method.liquid_process is not None:
+            if state.liquid is None or liquid_allocation is None:
+                raise RuntimeError("Liquid bridge transaction was not initialized.")
+            component = particle_contact.next_history.cohesion.components[
+                self.liquid_component_index
+            ]
+            next_component, liquid_evaluation = self.method.liquid_process.advance(
+                state.liquid,
+                liquid_allocation,
+                component,
+                left,
+                right,
+                particle_contact.bridge_volume_release,
+                particle_contact.bridge_surface_area,
+                minimum_bridge_volume,
+                step_size,
+                self.bodies.capacity,
+            )
+            components = list(particle_contact.next_history.cohesion.components)
+            components[self.liquid_component_index] = next_component
+            next_cohesion = DEMCohesionHistory(tuple(components))
+            next_active = particle_contact.next_history.active & (
+                ~liquid_evaluation.evaporated_ruptures | (batch.gap <= 0.0)
+            )
+            next_history = eqx.tree_at(
+                lambda value: (value.active, value.cohesion),
+                particle_contact.next_history,
+                (next_active, next_cohesion),
+            )
+            particle_contact = eqx.tree_at(
+                lambda value: (
+                    value.next_history,
+                    value.cohesion_ruptures,
+                    value.bridge_evaporation_loss,
+                    value.successful,
+                ),
+                particle_contact,
+                (
+                    next_history,
+                    particle_contact.cohesion_ruptures
+                    | liquid_evaluation.evaporated_ruptures,
+                    liquid_evaluation.evaporated_bridge_volume,
+                    particle_contact.successful & liquid_evaluation.successful,
+                ),
             )
         pair_load = reduce_dem_contact(
             pairs,
@@ -1378,6 +1651,15 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             0,
         ).astype(jnp.int32)
         reasons = reasons | jnp.where(
+            (
+                jnp.asarray(False)
+                if liquid_evaluation is None
+                else ~liquid_evaluation.successful
+            ),
+            int(DEMRejectionReason.LIQUID),
+            0,
+        ).astype(jnp.int32)
+        reasons = reasons | jnp.where(
             ~(tree_allfinite(resolved_loads) & jnp.isfinite(contact_energy)),
             int(DEMRejectionReason.NONFINITE),
             0,
@@ -1396,6 +1678,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             particle_contact,
             multicontact,
             boundary_responses,
+            liquid_evaluation,
             state.body_properties,
             pair_force,
             pair_torque,
@@ -1407,13 +1690,15 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             neighborhood.candidate_pair_count
             + self.bodies.particles.active_count * len(self.barriers)
         )
-        return DEMEvaluation(
+        result = DEMEvaluation(
             neighborhood=neighborhood,
             neighborhood_cache=neighborhood_cache,
             particle_contact=particle_contact,
             boundaries=boundary_responses,
             loads=resolved_loads,
             diagnostics=diagnostics,
+            bulk_stress=None,
+            liquid=liquid_evaluation,
             contact_energy=contact_energy,
             contact_births=births,
             contact_deaths=deaths,
@@ -1429,6 +1714,14 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             successful=successful,
             rejection_reasons=reasons,
         )
+        if state.periodic_cell is not None:
+            result = eqx.tree_at(
+                lambda value: value.bulk_stress,
+                result,
+                dem_bulk_stress(self, state, result),
+                is_leaf=lambda value: value is None,
+            )
+        return result
 
     def step_detailed(
         self,
@@ -1452,6 +1745,10 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         half_angular = jnp.where(mobile, half_angular, 0.0)
         next_position = state.kinematics.position + step_size * half_velocity
         next_position = jnp.where(mobile, next_position, state.kinematics.position)
+        if state.periodic_cell is not None:
+            next_position, _ = self.periodic_cell.wrap_with_vectors(
+                next_position, state.periodic_cell.vectors
+            )
         staged = DEMRuntimeState(
             RigidSphereKinematics(next_position, half_velocity, half_angular),
             state.body_properties,
@@ -1460,8 +1757,42 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             state.neighborhood_cache,
             state.loads,
             state.energy,
+            state.periodic_cell,
+            state.liquid,
         )
         evaluation = self.evaluate(time + step_size, staged, step_size, args)
+        cell_work = jnp.zeros((), dtype=next_position.dtype)
+        cell_successful = jnp.asarray(True)
+        periodic_state = state.periodic_cell
+        if self.method.periodic_cell_control is not None:
+            if evaluation.bulk_stress is None or periodic_state is None:
+                raise RuntimeError("Prepared periodic DEM state lacks bulk stress.")
+            cell_update = self.method.periodic_cell_control.update(
+                self.periodic_cell,
+                periodic_state,
+                next_position,
+                half_velocity,
+                evaluation.bulk_stress.total_stress,
+                step_size,
+                self.maximum_interaction_radius,
+            )
+            next_position = cell_update.position
+            half_velocity = jnp.where(mobile, cell_update.velocity, 0.0)
+            periodic_state = cell_update.state
+            cell_work = cell_update.work
+            cell_successful = cell_update.successful
+            staged = DEMRuntimeState(
+                RigidSphereKinematics(next_position, half_velocity, half_angular),
+                state.body_properties,
+                state.particle_history,
+                state.boundary_histories,
+                state.neighborhood_cache,
+                state.loads,
+                state.energy,
+                periodic_state,
+                state.liquid,
+            )
+            evaluation = self.evaluate(time + step_size, staged, step_size, args)
         next_velocity = half_velocity + half * (
             state.body_properties.inverse_masses[:, None] * evaluation.loads.total.force
         )
@@ -1474,7 +1805,9 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         next_kinematics = RigidSphereKinematics(
             next_position, next_velocity, next_angular
         )
-        energy = self._step_energy(state, next_kinematics, evaluation, step_size)
+        energy = self._step_energy(
+            state, next_kinematics, evaluation, step_size, cell_work
+        )
         candidate_energy = self._accumulated_energy(state.energy, energy)
         candidate = DEMRuntimeState(
             next_kinematics,
@@ -1484,6 +1817,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             evaluation.neighborhood_cache,
             evaluation.loads,
             candidate_energy,
+            periodic_state,
+            state.liquid if evaluation.liquid is None else evaluation.liquid.next_state,
         )
         overlap_residual = evaluation.diagnostics.maximum_overlap_fraction
         residual = jnp.maximum(overlap_residual, energy.relative_energy_residual)
@@ -1491,6 +1826,11 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         reasons = reasons | jnp.where(
             overlap_residual > self.method.maximum_overlap_fraction,
             int(DEMRejectionReason.OVERLAP),
+            0,
+        ).astype(jnp.int32)
+        reasons = reasons | jnp.where(
+            ~cell_successful,
+            int(DEMRejectionReason.CELL_CONTROL),
             0,
         ).astype(jnp.int32)
         reasons = reasons | jnp.where(
@@ -1571,6 +1911,7 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         particle_contact,
         multicontact,
         boundaries,
+        liquid_evaluation,
         body_properties,
         pair_force,
         pair_torque,
@@ -1632,6 +1973,16 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 )
             )
         )
+        liquid_balance_residual = (
+            jnp.zeros((), dtype=energy.kinetic_energy.dtype)
+            if liquid_evaluation is None
+            else liquid_evaluation.next_state.balance_residual
+        )
+        evaporated_liquid_volume = (
+            jnp.zeros((), dtype=energy.kinetic_energy.dtype)
+            if liquid_evaluation is None
+            else liquid_evaluation.next_state.cumulative_evaporated_volume
+        )
         maximum_overlap = particle_contact.maximum_overlap_fraction
         elastic_energy = jnp.sum(particle_contact.elastic_energy)
         friction_margin = jnp.min(
@@ -1647,6 +1998,8 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
         frame_margin = particle_contact.frame_transport_margin
         cohesion_birth_margin = particle_contact.cohesion_birth_margin
         cohesion_rupture_margin = particle_contact.cohesion_rupture_margin
+        cohesion_model_margin = particle_contact.cohesion_model_validity_margin
+        cohesion_extrapolation_margin = particle_contact.cohesion_fit_extrapolation_margin
         rolling_yield_margin = particle_contact.rolling_yield_margin
         torsional_yield_margin = particle_contact.torsional_yield_margin
         for response in boundaries:
@@ -1712,6 +2065,14 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
             torsional_yield_margin = jnp.minimum(
                 torsional_yield_margin, response.contact.torsional_yield_margin
             )
+            cohesion_model_margin = jnp.minimum(
+                cohesion_model_margin,
+                response.contact.cohesion_model_validity_margin,
+            )
+            cohesion_extrapolation_margin = jnp.minimum(
+                cohesion_extrapolation_margin,
+                response.contact.cohesion_fit_extrapolation_margin,
+            )
         masses = body_properties.masses
         linear_momentum = jnp.sum(masses[:, None] * kinematics.velocity, axis=0)
         angular_momentum = jnp.sum(
@@ -1767,9 +2128,13 @@ class PreparedSoftSphereDEMDynamics(StrictModule, NonTrainableState):
                 1.0,
                 0.0,
             ),
+            minimum_cohesion_model_validity_margin=cohesion_model_margin,
+            minimum_cohesion_fit_extrapolation_margin=(cohesion_extrapolation_margin),
             multicontact_residual=multicontact_residual,
             minimum_multicontact_regularity_margin=multicontact_margin,
             maximum_bridge_volume_residual=bridge_residual,
+            liquid_balance_residual=liquid_balance_residual,
+            evaporated_liquid_volume=evaporated_liquid_volume,
             successful=successful,
             rejection_reasons=rejection_reasons,
         )
@@ -1790,12 +2155,12 @@ __all__ = [
     "DEMEnergyLedgerState",
     "DEMEvaluation",
     "DEMExternalLoad",
-    "DEMResolvedLoad",
     "DEMRejectionReason",
+    "DEMResolvedLoad",
     "DEMRuntimeState",
     "DEMStateGeometry",
-    "DEMStepEvaluation",
     "DEMStepEnergyLedger",
+    "DEMStepEvaluation",
     "DEMStepRestriction",
     "PreparedSoftSphereDEMDynamics",
     "SoftSphereDEMMethodPlan",
