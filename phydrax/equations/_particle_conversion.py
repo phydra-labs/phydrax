@@ -26,7 +26,7 @@ from ._particle_reaction import (
     EvaporationPhaseChangePlan,
     ParticlePhaseChangeEvaluation,
     ParticleReactionEvaluation,
-    ParticleReactionNetworkPlan,
+    ParticleReactionProcessPlan,
 )
 from ._particle_thermochemistry import (
     evaluate_particle_transport,
@@ -49,7 +49,7 @@ class ParticleConversionRejectionReason(IntFlag):
 class ParticleConversionProblemIR(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
     materials: tuple[ParticleThermochemicalMaterialBundle, ...]
-    reactions: tuple[ParticleReactionNetworkPlan | None, ...]
+    reactions: tuple[ParticleReactionProcessPlan | None, ...]
     phase_changes: tuple[EvaporationPhaseChangePlan | None, ...]
     problem_id: str = eqx.field(static=True)
 
@@ -91,7 +91,7 @@ class ParticleConversionProblemIR(StrictModule, NonTrainableState):
         ):
             schema_id = material.thermodynamics.schema.schema_id
             if reaction is not None and (
-                not isinstance(reaction, ParticleReactionNetworkPlan)
+                not isinstance(reaction, ParticleReactionProcessPlan)
                 or reaction.schema.schema_id != schema_id
             ):
                 raise ValueError("Reaction network does not match material schema.")

@@ -62,6 +62,11 @@ from ._cochain import (
     CochainSampling,
     CochainSide,
 )
+from ._cochain_electrochemical import (
+    CochainElectrochemicalFluxEvaluation,
+    PreparedCochainElectrochemicalFlux,
+    stable_bernoulli,
+)
 from ._core import (
     DiscretizationCapability,
     DiscretizationKey,
@@ -2197,6 +2202,9 @@ __all__ = [
     "periodic_finite_difference",
     "SpectralDecomposition",
     "StructuredAxis",
+    "CochainElectrochemicalFluxEvaluation",
+    "PreparedCochainElectrochemicalFlux",
+    "stable_bernoulli",
     "StructuredCochainBridge",
     "StructuredCoarsening",
     "StructuredMGCompatibility",

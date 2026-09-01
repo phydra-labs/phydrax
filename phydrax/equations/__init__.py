@@ -39,6 +39,49 @@ from ._channel_flow import (
     compile_channel_flow,
     CompiledChannelFlowDynamics,
 )
+from ._chemical_calibration import (
+    ChemicalCalibrationParameter,
+    ChemicalCalibrationPlan,
+    ChemicalParameterCoordinate,
+)
+from ._chemical_mechanism import (
+    ChemicalMechanismEvidence,
+    ChemicalMechanismIR,
+    ChemicalRateEvaluation,
+    ChemicalReactionSpec,
+    PreparedChemicalMechanism,
+)
+from ._chemical_mechanism_yaml import (
+    ChemicalMechanismImportReport,
+    load_chemical_mechanism_yaml,
+)
+from ._chemical_rates import (
+    AbstractChemicalRatePlan,
+    ArrheniusRatePlan,
+    ButlerVolmerRatePlan,
+    ChebyshevRatePlan,
+    ChemicalRateKind,
+    ChemicalRateRuntime,
+    LindemannRatePlan,
+    PhotolysisRatePlan,
+    PLogRatePlan,
+    StickingRatePlan,
+    SurfaceCoverageRatePlan,
+    ThirdBodyRatePlan,
+    TroeRatePlan,
+)
+from ._chemical_species import (
+    ChemicalPhaseKind,
+    ChemicalPhaseSpec,
+    ChemicalSpeciesSchema,
+)
+from ._chemical_thermodynamics import (
+    AbstractSpeciesThermodynamicsPlan,
+    NASAPolynomialKind,
+    NASASpeciesThermodynamicsPlan,
+    PolynomialSpeciesThermodynamicsPlan,
+    SpeciesThermodynamicEvaluation,
+)
 from ._compile import (
     compile_pde_expression,
     compile_pde_problem,
@@ -63,6 +106,18 @@ from ._discrete_element import (
 )
 from ._discrete_velocity import *  # noqa: F403
 from ._discrete_velocity import __all__ as _discrete_velocity_all
+from ._electrochemistry import (
+    AbstractElectrochemicalClosure,
+    ElectrochemicalLocalFields,
+    ElectrolyteTransportParameters,
+    FARADAY_CONSTANT,
+    IdealDiluteElectrochemicalClosure,
+)
+from ._electrolytic_nematic import (
+    ElectrolyticNematicClosure,
+    ElectrolyticNematicFields,
+    ElectrolyticNematicParameters,
+)
 from ._entropy_pair import (
     ConvexEntropyPair,
     ConvexEntropyValidationReport,
@@ -262,6 +317,25 @@ from ._multiphase import (
     TwoMaterialVOFStateLayout,
     TwoMaterialVOFSystem,
 )
+from ._multiphase_electrolyte import (
+    MultiphaseElectrolyteClosure,
+    MultiphaseElectrolyteFields,
+    MultiphaseElectrolyteParameters,
+)
+from ._nematic import (
+    beris_edwards_constitutive_fields,
+    BerisEdwardsConstitutiveFields,
+    BerisEdwardsParameters,
+    LandauDeGennesClosure,
+    LandauDeGennesParameters,
+    NematicTensorBasis,
+    NematicThermodynamicFields,
+)
+from ._nematic_anchoring import (
+    NematicAnchoringFields,
+    NematicAnchoringKind,
+    NematicAnchoringPlan,
+)
 from ._particle_conversion import (
     compile_particle_conversion_problem,
     CompiledParticleConversionProblem,
@@ -277,15 +351,13 @@ from ._particle_reaction import (
     ParticlePhaseChangeEvaluation,
     ParticleReactionEvaluation,
     ParticleReactionLocation,
-    ParticleReactionNetworkPlan,
+    ParticleReactionProcessPlan,
     ShrinkingCoreConversionPlan,
     ShrinkingCoreEvaluation,
     ShrinkingCoreState,
 )
 from ._particle_thermochemistry import (
     evaluate_particle_transport,
-    ParticlePhase,
-    ParticleSpeciesSchema,
     ParticleThermochemicalMaterialBundle,
     ParticleThermodynamicMaterialPlan,
     ParticleThermodynamicState,
@@ -827,13 +899,63 @@ __all__ = [
     "ParticlePhaseChangeEvaluation",
     "ParticleReactionEvaluation",
     "ParticleReactionLocation",
-    "ParticleReactionNetworkPlan",
+    "ParticleReactionProcessPlan",
     "ShrinkingCoreConversionPlan",
     "ShrinkingCoreEvaluation",
     "ShrinkingCoreState",
     "evaluate_particle_transport",
-    "ParticlePhase",
-    "ParticleSpeciesSchema",
+    "AbstractElectrochemicalClosure",
+    "BerisEdwardsConstitutiveFields",
+    "BerisEdwardsParameters",
+    "ButlerVolmerRatePlan",
+    "StickingRatePlan",
+    "SurfaceCoverageRatePlan",
+    "ChemicalCalibrationParameter",
+    "ChemicalCalibrationPlan",
+    "ChemicalMechanismImportReport",
+    "ChemicalParameterCoordinate",
+    "ElectrochemicalLocalFields",
+    "ElectrolyteTransportParameters",
+    "ElectrolyticNematicClosure",
+    "ElectrolyticNematicFields",
+    "ElectrolyticNematicParameters",
+    "FARADAY_CONSTANT",
+    "IdealDiluteElectrochemicalClosure",
+    "LandauDeGennesClosure",
+    "LandauDeGennesParameters",
+    "MultiphaseElectrolyteClosure",
+    "MultiphaseElectrolyteFields",
+    "MultiphaseElectrolyteParameters",
+    "NematicAnchoringFields",
+    "NematicAnchoringKind",
+    "NematicAnchoringPlan",
+    "NematicTensorBasis",
+    "NematicThermodynamicFields",
+    "beris_edwards_constitutive_fields",
+    "load_chemical_mechanism_yaml",
+    "AbstractChemicalRatePlan",
+    "ArrheniusRatePlan",
+    "ChemicalMechanismEvidence",
+    "ChemicalMechanismIR",
+    "ChemicalRateEvaluation",
+    "ChemicalRateKind",
+    "ChemicalRateRuntime",
+    "ChemicalReactionSpec",
+    "ChebyshevRatePlan",
+    "LindemannRatePlan",
+    "PhotolysisRatePlan",
+    "PLogRatePlan",
+    "PreparedChemicalMechanism",
+    "ThirdBodyRatePlan",
+    "TroeRatePlan",
+    "AbstractSpeciesThermodynamicsPlan",
+    "NASAPolynomialKind",
+    "NASASpeciesThermodynamicsPlan",
+    "PolynomialSpeciesThermodynamicsPlan",
+    "SpeciesThermodynamicEvaluation",
+    "ChemicalPhaseKind",
+    "ChemicalPhaseSpec",
+    "ChemicalSpeciesSchema",
     "ParticleThermochemicalMaterialBundle",
     "ParticleThermodynamicMaterialPlan",
     "ParticleThermodynamicState",

@@ -3,6 +3,7 @@
 #
 
 """Global stochastic realizations and coupling semantics."""
+
 from .._event_layout import (
     AbstractEventLayout,
     ArrayEventLayout,
@@ -31,6 +32,7 @@ from ._categorical_diffusion import (
     CategoricalReverseDiffusion,
     CategoricalTerminalRelationship,
 )
+from ._chemical_jump import ChemicalJumpProcess, ChemicalJumpRuntime
 from ._complex_diffusion import (
     ComplexNormalLaw,
     ComplexScoreConvention,
@@ -128,7 +130,6 @@ from ._jump import (
     JumpSide,
     JumpStatus,
     MarkSampler,
-    MassActionJumpProcess,
     PoissonClockRealization,
 )
 from ._jump_bsde import (
@@ -235,6 +236,13 @@ from ._realization import (
     realization_independence_labels,
     realization_path_labels,
     StochasticRealization,
+)
+from ._relaxed_chemical_jump import (
+    relaxed_exact_moment_discrepancy,
+    RelaxedChemicalJumpEvidence,
+    RelaxedChemicalJumpParameters,
+    RelaxedChemicalJumpPlan,
+    RelaxedChemicalJumpResult,
 )
 from ._rough import (
     AbstractRoughControl,
@@ -553,7 +561,13 @@ __all__ = [
     "PathEventResult",
     "path_event_scores",
     "MarkSampler",
-    "MassActionJumpProcess",
+    "ChemicalJumpProcess",
+    "ChemicalJumpRuntime",
+    "relaxed_exact_moment_discrepancy",
+    "RelaxedChemicalJumpEvidence",
+    "RelaxedChemicalJumpParameters",
+    "RelaxedChemicalJumpPlan",
+    "RelaxedChemicalJumpResult",
     "SampledInputInterpolation",
     "SampledStateSpaceInput",
     "ProcessNoiseComponent",

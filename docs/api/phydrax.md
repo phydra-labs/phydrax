@@ -200,8 +200,8 @@ mark, and optional left/right state. Algorithms must use the mask and status;
 padding values are never event evidence.
 
 `JumpProcess` accepts callable intensities, jump maps, and optional mark
-sampling. `MassActionJumpProcess` provides combinatorial propensities and
-stoichiometric updates without requiring SciPy reaction objects.
+sampling. `ChemicalJumpProcess` supplies mechanism-derived combinatorial propensities
+and stoichiometric updates without a separate reaction schema.
 `CompositeStochasticRealization` combines named Wiener and Poisson
 realizations with one sample layout and support. Its path labels, realization
 ID, and coupling ID include every named component.
@@ -230,7 +230,7 @@ ID, and coupling ID include every named component.
 
 ---
 
-::: phydrax.stochastic.MassActionJumpProcess
+::: phydrax.stochastic.ChemicalJumpProcess
     options:
         members:
             - __init__

@@ -36,7 +36,7 @@ from ..discretization.lattice_boltzmann._species import (
     SpeciesLatticeBoltzmannState,
     SpeciesLedger,
 )
-from ._particle_thermochemistry import ParticleSpeciesSchema
+from ._chemical_species import ChemicalSpeciesSchema
 
 
 SpeciesPopulationStream = Callable[[Array], Array]
@@ -44,7 +44,7 @@ SpeciesPopulationStream = Callable[[Array], Array]
 
 class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
     name: str = eqx.field(static=True)
-    schema: ParticleSpeciesSchema
+    schema: ChemicalSpeciesSchema
     transport: SpeciesLatticeBoltzmannPlan
     boundaries: tuple[SpeciesBoundaryCondition, ...]
     volumetric_source: Array
@@ -53,7 +53,7 @@ class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
     def __init__(
         self,
         name: str,
-        schema: ParticleSpeciesSchema,
+        schema: ChemicalSpeciesSchema,
         transport: SpeciesLatticeBoltzmannPlan,
         /,
         *,
@@ -65,8 +65,8 @@ class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         boundary_values = tuple(boundaries)
         if not name_:
             raise ValueError("Species LBM problem name must be nonempty.")
-        if not isinstance(schema, ParticleSpeciesSchema):
-            raise TypeError("schema must be a ParticleSpeciesSchema.")
+        if not isinstance(schema, ChemicalSpeciesSchema):
+            raise TypeError("schema must be a ChemicalSpeciesSchema.")
         if not isinstance(transport, SpeciesLatticeBoltzmannPlan):
             raise TypeError("transport must be a SpeciesLatticeBoltzmannPlan.")
         if transport.species_count != schema.species_count:
