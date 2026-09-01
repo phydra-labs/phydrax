@@ -253,9 +253,73 @@ class SpectralInterval(StrictModule):
         )
 
 
+class StabilityLowerBound(StrictModule):
+    """Auditable positive lower bound for an operator's stability constant."""
+
+    lower_bound: Array
+    valid: Array
+    operator_id: str = eqx.field(static=True)
+    evidence: CertificateEvidence = eqx.field(static=True)
+    scope: CertificateScope = eqx.field(static=True)
+    numeric_fingerprint: str = eqx.field(static=True)
+    certificate_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        operator: AbstractLinearOperator,
+        lower_bound: ArrayLike,
+        /,
+        *,
+        evidence: CertificateEvidence = "asserted",
+        scope: CertificateScope = "numerical",
+    ):
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("operator must be an AbstractLinearOperator.")
+        coordinate_dtype = _coordinate_dtype(operator.source)
+        real_dtype = jnp.empty((), dtype=coordinate_dtype).real.dtype
+        bound = jnp.asarray(lower_bound, dtype=real_dtype)
+        if bound.shape != ():
+            raise ValueError("Stability lower bound must be scalar.")
+        bound = eqx.error_if(
+            bound,
+            ~jnp.isfinite(bound) | (bound < 0.0),
+            "Stability lower bound must be finite and non-negative.",
+        )
+        evidence_ = _validate_evidence(evidence)
+        scope_ = _validate_scope(scope)
+        numeric_fingerprint = _operator_numeric_fingerprint(operator)
+        certificate_id = canonical_fingerprint(
+            {
+                "kind": "stability-lower-bound",
+                "operator": operator.operator_id,
+                "numeric": numeric_fingerprint,
+                "lower_bound": array_tree_fingerprint(bound),
+                "evidence": evidence_,
+                "scope": scope_,
+            }
+        )
+        self.lower_bound = bound
+        self.valid = jnp.isfinite(bound) & (bound > 0.0)
+        self.operator_id = operator.operator_id
+        self.evidence = evidence_
+        self.scope = scope_
+        self.numeric_fingerprint = numeric_fingerprint
+        self.certificate_id = certificate_id
+
+    def matches(self, operator: AbstractLinearOperator, /) -> bool:
+        if not isinstance(operator, AbstractLinearOperator):
+            return False
+        if operator.operator_id != self.operator_id:
+            return False
+        return self.scope == "structural" or (
+            _operator_numeric_fingerprint(operator) == self.numeric_fingerprint
+        )
+
+
 __all__ = [
     "CertificateEvidence",
     "CertificateScope",
     "KernelCertificate",
     "SpectralInterval",
+    "StabilityLowerBound",
 ]

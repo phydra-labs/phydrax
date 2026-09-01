@@ -56,7 +56,6 @@ from phydrax.solver._multiphysics_inference import (
 )
 from phydrax.solver._nonideal_mhd import AnisotropicThermalTransportPlan, NonIdealMHDPlan
 from phydrax.solver._radiation import GrayRadiationDiffusionPlan
-from phydrax.solver._thermochemistry import StoichiometricReactionNetwork
 from phydrax.solver._unstructured_mhd import UnstructuredConstrainedTransportPlan
 
 
@@ -131,17 +130,45 @@ def test_mhd_reconstruction_and_hll_uct_constant_state():
         np.testing.assert_allclose(rate.magnetic_rate, 0.0, atol=1e-10)
 
 
-def test_stoichiometric_thermochemistry_conserves_species_invariant():
-    network = StoichiometricReactionNetwork(
-        jnp.asarray([[-1.0, 1.0]]),
-        jnp.asarray([[1.0, 0.0]]),
-        jnp.asarray([0.5]),
-        invariant_matrix=jnp.asarray([[1.0, 1.0]]),
+def test_prepared_thermochemistry_conserves_species_invariant():
+    schema = phx.equations.ChemicalSpeciesSchema(
+        ("A", "B"),
+        (
+            phx.equations.ChemicalPhaseKind.GAS,
+            phx.equations.ChemicalPhaseKind.GAS,
+        ),
+        jnp.asarray((1.0, 1.0)),
+        ("X",),
+        jnp.asarray(((1, 1),), dtype=jnp.int32),
+        jnp.asarray((0, 0), dtype=jnp.int32),
     )
-    species = jnp.asarray([[1.0, 0.0]])
-    rates = network.reaction_rates(species)
-    change = rates @ network.stoichiometry
-    np.testing.assert_allclose(change @ network.invariant_matrix.T, 0.0, atol=1e-12)
+    thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
+        schema,
+        jnp.asarray((10.0, 10.0)),
+        jnp.asarray((0.0, 0.0)),
+        reference_temperature=300.0,
+        minimum_temperature=200.0,
+        maximum_temperature=2000.0,
+    )
+    mechanism = phx.equations.ChemicalMechanismIR(
+        "conversion",
+        schema,
+        thermodynamics,
+        (
+            phx.equations.ChemicalReactionSpec(
+                "A->B",
+                {"A": 1.0},
+                {"B": 1.0},
+                phx.equations.ArrheniusRatePlan(0.5),
+            ),
+        ),
+    ).prepare()
+    fields = mechanism.evaluate(
+        jnp.asarray((1.0, 0.0)),
+        jnp.asarray(500.0),
+        jnp.asarray(101325.0),
+    )
+    np.testing.assert_allclose(fields.element_residual, 0.0, atol=1e-12)
 
 
 def test_mhd_boundaries_advanced_integrators_and_nonideal_update():
@@ -507,7 +534,7 @@ def test_cosmology_inference_and_closure_contracts():
         physics_policy_id="linear-cold-baryon-power",
         scale_id=background.scale.scale_id,
         source_kind="external",
-        differentiability="constant",
+        differentiation="constant",
     )
     power = MatterPowerTable(
         [0.1, 1.0],

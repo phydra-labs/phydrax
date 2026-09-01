@@ -13,6 +13,12 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...observation import (
+    CholeskyCovarianceAction,
+    CoordinateLayout,
+    LinearObservationPlan,
+    TheoryVector,
+)
 from ._products import CosmologyProductProvenance, CosmologyRealizationSignature
 
 
@@ -158,7 +164,7 @@ class CmbSpectrumTable(StrictModule):
             | jnp.any(jnp.abs(values - jnp.swapaxes(values, -1, -2)) > 1.0e-10),
             "CMB spectra must be finite and symmetric.",
         )
-        if provenance.differentiability != "native-parameter":
+        if not provenance.differentiation.stored_values:
             ell = jax.lax.stop_gradient(ell)
             values = jax.lax.stop_gradient(values)
         self.multipoles = ell
@@ -242,7 +248,126 @@ class CmbSpectrumTransformPlan(StrictModule, NonTrainableState):
         return jnp.stack(rows)
 
 
+class CmbBandpowerResponseResult(StrictModule):
+    predicted_bandpowers: Array
+    residual: Array
+    whitened_residual: Array
+    log_likelihood: Array
+    valid: Array
+    plan_id: str = eqx.field(static=True)
+    provenance_id: str = eqx.field(static=True)
+
+
+class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
+    """CMB-specific packing over the core response and covariance actions."""
+
+    transform: CmbSpectrumTransformPlan
+    response: LinearObservationPlan
+    covariance: CholeskyCovarianceAction
+    window_shape: tuple[int, int, int] = eqx.field(static=True)
+    observed_bandpowers: Array
+    expected_temperature_unit: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        transform: CmbSpectrumTransformPlan,
+        windows: ArrayLike,
+        observed_bandpowers: ArrayLike,
+        covariance_cholesky: ArrayLike,
+        /,
+        *,
+        expected_temperature_unit: str,
+        response_id: str,
+    ):
+        if not isinstance(transform, CmbSpectrumTransformPlan):
+            raise TypeError("transform must be a CmbSpectrumTransformPlan.")
+        windows_host = np.asarray(windows, dtype=float)
+        observed_host = np.asarray(observed_bandpowers, dtype=float)
+        cholesky_host = np.asarray(covariance_cholesky, dtype=float)
+        bands = windows_host.shape[0] if windows_host.ndim == 3 else 0
+        if (
+            windows_host.ndim != 3
+            or observed_host.shape != (bands,)
+            or cholesky_host.shape != (bands, bands)
+            or np.any(~np.isfinite(windows_host))
+            or np.any(~np.isfinite(observed_host))
+            or np.any(~np.isfinite(cholesky_host))
+            or np.any(np.diag(cholesky_host) <= 0.0)
+        ):
+            raise ValueError("CMB response arrays are invalid.")
+        unit = str(expected_temperature_unit).strip()
+        identifier = str(response_id).strip()
+        if not unit or not identifier:
+            raise ValueError("CMB response unit and ID must be non-empty.")
+        source = CoordinateLayout(
+            tuple(
+                f"{identifier}:theory:{index}"
+                for index in range(windows_host.shape[1] * windows_host.shape[2])
+            )
+        )
+        target = CoordinateLayout(
+            tuple(f"{identifier}:band:{index}" for index in range(bands))
+        )
+        self.transform = transform
+        self.response = LinearObservationPlan(
+            windows_host.reshape((bands, -1)), source, target
+        )
+        self.covariance = CholeskyCovarianceAction(cholesky_host, target)
+        self.window_shape = tuple(int(value) for value in windows_host.shape)
+        self.observed_bandpowers = jnp.asarray(observed_host)
+        self.expected_temperature_unit = unit
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "cmb-bandpower-response-adapter",
+                "response_id": identifier,
+                "transform": transform.plan_id,
+                "response": self.response.plan_id,
+                "covariance": self.covariance.action_id,
+                "temperature_unit": unit,
+            }
+        )
+
+    @property
+    def windows(self) -> Array:
+        return self.response.matrix.reshape(self.window_shape)
+
+    @property
+    def covariance_cholesky(self) -> Array:
+        return self.covariance.lower_cholesky
+
+    def evaluate(self, table: CmbSpectrumTable, /) -> CmbBandpowerResponseResult:
+        if not isinstance(table, CmbSpectrumTable):
+            raise TypeError("table must be a CmbSpectrumTable.")
+        if table.temperature_unit != self.expected_temperature_unit:
+            raise ValueError("CMB table temperature unit does not match response.")
+        packed = self.transform.pack(table)
+        if packed.size != self.response.source.size:
+            raise ValueError("CMB packed theory grid does not match response windows.")
+        predicted = self.response.apply(
+            TheoryVector(
+                packed.reshape((-1,)),
+                self.response.source,
+                table.provenance.provenance_id,
+            )
+        ).values
+        residual = self.observed_bandpowers - predicted
+        whitened = self.covariance.whiten(residual)
+        valid = jnp.all(jnp.isfinite(predicted)) & jnp.all(jnp.isfinite(whitened))
+        return CmbBandpowerResponseResult(
+            predicted,
+            residual,
+            whitened,
+            jnp.where(valid, -0.5 * jnp.sum(whitened * whitened), -jnp.inf),
+            valid,
+            self.plan_id,
+            table.provenance.provenance_id,
+        )
+
+
 __all__ = [
+    "CmbBandpowerResponsePlan",
+    "CmbBandpowerResponseResult",
     "CMB_FIELDS",
     "CMB_MODES",
     "CmbSpectrumTable",

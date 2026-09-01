@@ -40,11 +40,22 @@ Most workflows are composing a few primitives:
   differences, modal transforms/spectra, cochains, finite elements, finite
   volumes, lattice-Boltzmann flow, material-particle supports, conservative SPH,
   measure-aware particle-grid splatting, compatible electrostatic and
-  electromagnetic particle-in-cell dynamics, fixed-population free-surface FLIP,
-  WENO fluxes, fixed-capacity AMR, field spaces, measures, transfers,
-  fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
-  source processes, compatible constrained MHD, temporal/stochastic composition,
-  and auditable plan/preparation identities.
+  electromagnetic particle-in-cell dynamics, runtime charge/collision/ionization
+  microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
+  response, fixed-population and dynamically reseeded free-surface/multiphase
+  FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
+  fluxes, fixed-capacity AMR, collision surfaces, deterministic contact candidate
+  epochs, conservative continuous-collision and simplex-inversion bounds,
+  convergent barrier contact, lagged friction, field spaces, measures, transfers,
+  fixed-temporal differentiable replay, typed transactional partitioned coupling,
+  fixed-grid waveform exchange, transactional gravity/cooling/stochastic source
+  processes, compatible constrained MHD, temporal/stochastic composition, and
+  auditable plan/preparation identities.
+- **Isogeometric analysis**: a deliberately bounded S1 path prepares regular,
+  untrimmed, full-dimensional two-dimensional single-patch NURBS maps and
+  exactly isoparametric scalar H1 fields with frozen clamped isotropic knot
+  grids, positive gauge-fixed weights, explicit Gauss rules, homogeneous trace
+  constraints, and matrix-free sum-factorized finite-element forms.
 - **Virtual elements**: enhanced conforming degree-one-through-three polygonal
   functional spaces expose certified H1/L2 projectors, explicit stabilization,
   matrix-free/sparse realization, trace constraints, heat/eigen reuse, and
@@ -69,11 +80,12 @@ Most workflows are composing a few primitives:
   exact construction-order search, standards clauses, reliability, calibration,
   evidence acquisition, and immutable digital-twin ancestry extend member-network
   mechanics without erasing model fidelity or applicability.
-- **Atomistic learning and dynamics**: scale-identified atomic structures,
-  position-independent systems, stable-ID molecular topology, classical and learned
-  scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
-  SHAKE/RATTLE, triclinic cells, Ewald/PME, bounded replayable trajectories, and
-  exact checkpoints retain explicit resources, precision, diagnostics, and provenance.
+- **Atomistic learning, force fields, and sampling**: scale-identified structures,
+  interaction-site coordinate maps, stable-ID topology, classical/learned/many-body
+  energy programs, polarization, dense/cell/Verlet and distributed execution,
+  constrained NVE/NVT/NPT and quantum-nuclear methods, resumable trajectories,
+  external-tool interoperability, enhanced sampling, free energy, committee
+  uncertainty, replay, checkpoints, diagnostics, and provenance share explicit plans.
 - **Experimental velocimetry**: mask-aware multipass PIV, calibrated
   multi-camera particle reconstruction and tracking, residual-image Lagrangian
   refinement, deterministic synthetic qualification, and optional learned dense
@@ -128,6 +140,19 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Astrodynamics**: exact astronomical time routes, IERS Earth orientation,
+  compiled frame graphs, pinned ephemerides and interchange, universal/analytical/
+  DSST/IAS15 propagation, harmonic/environment/relativistic forces, bounded events
+  and maneuvers, direct and hierarchical N-body gravity, coupled variable-mass
+  spacecraft, tracking, variational dynamics, orbit determination, access,
+  targeting, and conjunction products reuse the existing solver, geometry,
+  particle, linear-algebra, nonlinear, control, state-space, and UQ owners.
+- **Astrophysics and cosmology**: calibrated TAN/SIP imaging, surveys, scalar and
+  polarized radiative transfer, waveform/QNM detectors, oblate occultation,
+  microlensing, native relic/BBN/recombination/Einstein--Boltzmann evolution,
+  nonlinear halo/lensing/light-cone products, and compact-object EOS/TOV models
+  compose existing observation, integration, spherical, likelihood, posterior,
+  and BlackJAX contracts.
 - **Learned field evolution**: fixed physical measures project PDE rates onto
   selected model tangents, Diffrax evolves the resulting parameter ODE, and
   backward Diffrax characteristics feed optional time-slice field projection.
@@ -191,10 +216,12 @@ thin labeled-domain adapter used by sampling, integration, and constraints. See 
 
 Numerical supports and finite field spaces live in `phx.discretization`, including
 bounded, periodic, half-line, and real-line global tensor bases; rational Chebyshev
-transforms and spectral resolution evidence; material-particle supports and
-conservative SPH; and exact-sampling round-sphere spaces with S2FFT transforms,
-Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
+transforms and spectral resolution evidence; the bounded two-dimensional
+single-patch isogeometric path; material-particle supports and conservative SPH;
+and exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami
+actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
+[isogeometric-analysis guide](docs/guides_isogeometric_analysis.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the
@@ -204,6 +231,13 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [MPM domain guide](docs/guides_mpm_particle_domains.md), the
 [MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
 [MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
+[commercial MPM architecture guide](docs/guides_mpm_commercial_architecture.md), the
+[commercial MPM transfer guide](docs/guides_mpm_commercial_transfers.md), the
+[commercial MPM contact/implicit guide](docs/guides_mpm_commercial_contact_implicit.md), the
+[commercial MPM geomechanics guide](docs/guides_mpm_commercial_geomechanics.md), the
+[commercial MPM scale/operations guide](docs/guides_mpm_commercial_scale_operations.md), the
+[commercial MPM derivatives/VVUQ guide](docs/guides_mpm_commercial_derivatives_vvuq.md), the
+[deformable-contact guide](docs/guides_deformable_contact.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -212,20 +246,25 @@ Laplace--Beltrami actions, area measures, and SFNO interoperability. See the
 [Fourier-modal Maxwell guide](docs/guides_fourier_modal_maxwell.md), the
 [virtual-element guide](docs/guides_virtual_elements.md), the
 [lattice-Boltzmann guide](docs/guides_lattice_boltzmann.md), the
-[solver-substrate guide](docs/guides_solver_substrates.md), and the
+[solver-substrate guide](docs/guides_solver_substrates.md), the
+[partitioned coupling guide](docs/guides_partitioned_coupling.md), and the
 [API](docs/api/discretization/index.md).
 
 Finite molecular learning and conservative atomistic dynamics live in
 `phx.atomistic`, with equivariant learned energy models in `phx.nn.atomistic`.
 The learning surface retains typed structures, batches, explicit dense graph
 execution, PaiNN/NequIP conservative forces, fitting, and offline rMD17 data.
-The dynamics surface adds complete unit systems, position-independent prepared
-systems, molecular topology, classical and learned potential programs,
-orthorhombic/triclinic neighborhoods, NVE/NVT, constraints, stress, Ewald/PME,
-NPT moves, replay, checkpoints, hybrid composition, ring polymers, and
-semi-grand transitions. See the [atomistic learning guide](docs/guides_atomistic.md),
-the [atomistic dynamics guide](docs/guides_atomistic_dynamics.md), the
-[dynamics cookbook](docs/cookbook/atomistic_dynamics.md), and the
+The dynamics surface adds complete unit systems, interaction-site coordinate maps,
+molecular topology, native force-field bundles, orthorhombic/triclinic neighborhoods,
+constrained ensembles, polarization and solvent models, quantum nuclei, many-body methods,
+distributed execution, resumable H5MD/XYZ reporting and rerun, OpenMM/OpenFF/ParmEd,
+MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases, replica
+exchange, free-energy estimators, and committee acquisition. See the
+[atomistic learning guide](docs/guides_atomistic.md), the
+[atomistic dynamics guide](docs/guides_atomistic_dynamics.md), the
+[force-field guide](docs/guides_atomistic_force_fields.md), the
+[interoperability guide](docs/guides_atomistic_interop.md), the
+[sampling guide](docs/guides_atomistic_sampling.md), and the
 [atomistic API](docs/api/atomistic.md).
 
 ## Example

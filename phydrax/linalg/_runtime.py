@@ -22,6 +22,8 @@ from ._policies import (
     FGMRES,
     GeneralizedLSMR,
     GMRES,
+    LinearDerivativeSolvePolicy,
+    LinearSolveCheckPolicy,
     LinearSolveControl,
     LinearSolvePolicy,
     LSMR,
@@ -37,6 +39,8 @@ from ._problems import (
 )
 from ._results import (
     LinearPrecisionEvidence,
+    LinearSolveCheckEvidence,
+    LinearSolveCheckKind,
     LinearSolveDiagnostics,
     LinearSolveProvenance,
     LinearSolveResult,
@@ -844,6 +848,264 @@ def solve_adjoint(
     )
 
 
+def solve_checked(
+    problem_or_prepared: LinearSystem | PreparedLinearSolve,
+    rhs: PyTree[Any],
+    /,
+    *,
+    policy: LinearSolvePolicy | LinearSolvePlan | None = None,
+    check_policy: LinearSolveCheckPolicy | None = None,
+    rhs_layout: RHSLayout | None = None,
+    initial_guess: PyTree[Any] | None = None,
+    control: LinearSolveControl | None = None,
+) -> tuple[LinearSolveResult, LinearSolveCheckEvidence]:
+    """Solve and independently assess the declared primal system."""
+    problem = _checked_linear_system(problem_or_prepared)
+    checks = LinearSolveCheckPolicy() if check_policy is None else check_policy
+    if not isinstance(checks, LinearSolveCheckPolicy):
+        raise TypeError("check_policy must be a LinearSolveCheckPolicy or None.")
+    result = solve(
+        problem_or_prepared,
+        rhs,
+        policy=policy,
+        rhs_layout=rhs_layout,
+        initial_guess=initial_guess,
+        control=control,
+    )
+    evidence = _assess_linear_system_result(
+        problem,
+        rhs,
+        result,
+        checks,
+        kind="primal",
+        stability_operator=problem.operator,
+        primal_valid=True,
+    )
+    return result, evidence
+
+
+def solve_adjoint_checked(
+    problem_or_prepared: LinearSystem | PreparedLinearSolve,
+    rhs: PyTree[Any],
+    /,
+    *,
+    primal_evidence: LinearSolveCheckEvidence,
+    policy: LinearSolvePolicy | None = None,
+    check_policy: LinearDerivativeSolvePolicy | None = None,
+    rhs_layout: RHSLayout | None = None,
+) -> tuple[LinearSolveResult, LinearSolveCheckEvidence]:
+    """Solve the declared adjoint and assess it under derivative requirements."""
+    problem = _checked_linear_system(problem_or_prepared)
+    if not isinstance(primal_evidence, LinearSolveCheckEvidence):
+        raise TypeError("primal_evidence must be LinearSolveCheckEvidence.")
+    if (
+        primal_evidence.kind != "primal"
+        or primal_evidence.operator_id != problem.operator.operator_id
+    ):
+        raise ValueError(
+            "primal_evidence must assess this system's declared primal operator."
+        )
+    checks = LinearDerivativeSolvePolicy() if check_policy is None else check_policy
+    if not isinstance(checks, LinearDerivativeSolvePolicy):
+        raise TypeError("check_policy must be a LinearDerivativeSolvePolicy or None.")
+    result = solve_adjoint(
+        problem_or_prepared,
+        rhs,
+        policy=policy,
+        rhs_layout=rhs_layout,
+    )
+    transformed = _transformed_linear_system(problem, adjoint_mode=True)
+    evidence = _assess_linear_system_result(
+        transformed,
+        rhs,
+        result,
+        checks,
+        kind="adjoint",
+        stability_operator=problem.operator,
+        primal_valid=jnp.all(primal_evidence.valid),
+    )
+    return result, evidence
+
+
+def _checked_linear_system(
+    value: LinearSystem | PreparedLinearSolve,
+    /,
+) -> LinearSystem:
+    problem = value.problem if isinstance(value, PreparedLinearSolve) else value
+    if not isinstance(problem, LinearSystem):
+        raise TypeError("Checked solves require a LinearSystem.")
+    return problem
+
+
+def _assess_linear_system_result(
+    problem: LinearSystem,
+    rhs: PyTree[Any],
+    result: LinearSolveResult,
+    check_policy: LinearSolveCheckPolicy | LinearDerivativeSolvePolicy,
+    /,
+    *,
+    kind: LinearSolveCheckKind,
+    stability_operator: AbstractLinearOperator,
+    primal_valid: Any,
+) -> LinearSolveCheckEvidence:
+    operator = problem.operator
+    canonical_rhs, layout = _pack_rhs(
+        operator.target,
+        operator.batch_shape,
+        rhs,
+    )
+    declared_layout = None if not layout.rhs_shape else RHSLayout(layout.rhs_shape)
+    canonical_value, _ = _pack_rhs(
+        operator.source,
+        operator.batch_shape,
+        result.value,
+        declared_layout,
+    )
+    residual = operator.mv_block(canonical_value) - canonical_rhs
+    residual_norm = _coordinate_norm(operator.target, residual)
+    rhs_norm = _coordinate_norm(operator.target, canonical_rhs)
+    threshold = (
+        check_policy.absolute_tolerance + check_policy.relative_tolerance * rhs_norm
+    )
+    finite = (
+        jnp.all(jnp.isfinite(canonical_rhs), axis=-2)
+        & jnp.all(jnp.isfinite(canonical_value), axis=-2)
+        & jnp.all(jnp.isfinite(residual), axis=-2)
+        & jnp.isfinite(residual_norm)
+        & _operator_arrays_finite(operator)
+    )
+    finite_out = _restore_rhs_axes(finite, layout) & jnp.asarray(
+        result.diagnostics.finite, dtype=bool
+    )
+    converged = jnp.asarray(result.diagnostics.converged, dtype=bool) & jnp.asarray(
+        result.successful, dtype=bool
+    )
+    (
+        stability_checked,
+        stability_bound,
+        stability_ok,
+        stability_certificate_id,
+    ) = _check_stability_certificate(
+        check_policy,
+        stability_operator,
+        operator,
+    )
+    (
+        compatibility_residual,
+        gauge_residual,
+        nullspace_ok,
+        nullspace_certificate_id,
+    ) = _check_nullspace_evidence(
+        problem,
+        canonical_rhs,
+        canonical_value,
+        check_policy,
+        layout,
+        result,
+    )
+    return LinearSolveCheckEvidence(
+        kind=kind,
+        operator_id=operator.operator_id,
+        status=result.status,
+        true_residual_norm=_restore_rhs_axes(residual_norm, layout),
+        rhs_norm=_restore_rhs_axes(rhs_norm, layout),
+        residual_threshold=_restore_rhs_axes(threshold, layout),
+        finite=finite_out,
+        converged=converged,
+        stability_lower_bound=stability_bound,
+        stability_checked=stability_checked,
+        stability_ok=stability_ok,
+        stability_certificate_id=stability_certificate_id,
+        compatibility_residual=compatibility_residual,
+        gauge_residual=gauge_residual,
+        nullspace_checked=check_policy.require_nullspace,
+        nullspace_ok=nullspace_ok,
+        nullspace_certificate_id=nullspace_certificate_id,
+        primal_valid=primal_valid,
+    )
+
+
+def _operator_arrays_finite(operator: AbstractLinearOperator, /) -> Array:
+    finite = jnp.asarray(True)
+    for leaf in jax.tree.leaves(operator):
+        if eqx.is_array(leaf):
+            finite = finite & jnp.all(jnp.isfinite(leaf))
+    return finite
+
+
+def _check_stability_certificate(
+    policy: LinearSolveCheckPolicy | LinearDerivativeSolvePolicy,
+    original_operator: AbstractLinearOperator,
+    checked_operator: AbstractLinearOperator,
+    /,
+) -> tuple[bool, Array, Array, str | None]:
+    certificate = policy.stability_lower_bound
+    if certificate is None:
+        return False, jnp.asarray(jnp.nan), jnp.asarray(True), None
+    matches = certificate.matches(original_operator) or certificate.matches(
+        checked_operator
+    )
+    valid = (
+        jnp.asarray(matches)
+        & jnp.asarray(certificate.valid)
+        & jnp.isfinite(certificate.lower_bound)
+        & (certificate.lower_bound > 0.0)
+    )
+    return (
+        True,
+        certificate.lower_bound,
+        valid,
+        certificate.certificate_id,
+    )
+
+
+def _check_nullspace_evidence(
+    problem: LinearSystem,
+    rhs: Array,
+    value: Array,
+    policy: LinearSolveCheckPolicy | LinearDerivativeSolvePolicy,
+    layout: _PackedRHSLayout,
+    result: LinearSolveResult,
+    /,
+) -> tuple[Array, Array, Array, str | None]:
+    if not policy.require_nullspace:
+        return (
+            jnp.asarray(result.diagnostics.compatibility_residual),
+            jnp.asarray(result.diagnostics.gauge_residual),
+            jnp.asarray(True),
+            None,
+        )
+    declared = problem.nullspace_policy
+    if (
+        declared is None
+        or declared.certificate is None
+        or declared.right is None
+        or declared.left is None
+    ):
+        missing = jnp.full(jnp.asarray(result.status).shape, jnp.nan)
+        return missing, missing, jnp.asarray(False), None
+    certificate = declared.certificate
+    projected_rhs = _project_coordinate_columns(declared.left, rhs)
+    projected_value = _project_coordinate_columns(declared.right, value)
+    compatibility = _coordinate_norm(declared.left.space, projected_rhs)
+    gauge = _coordinate_norm(declared.right.space, projected_value)
+    certificate_ok = certificate.complete and certificate.matches(problem.operator)
+    nullspace_ok = (
+        jnp.asarray(certificate_ok)
+        & jnp.asarray(certificate.valid)
+        & jnp.isfinite(compatibility)
+        & jnp.isfinite(gauge)
+        & (compatibility <= policy.nullspace_tolerance)
+        & (gauge <= policy.nullspace_tolerance)
+    )
+    return (
+        _restore_rhs_axes(compatibility, layout),
+        _restore_rhs_axes(gauge, layout),
+        _restore_rhs_axes(nullspace_ok, layout),
+        certificate.certificate_id,
+    )
+
+
 def _solve_prepared_transformed(
     prepared: PreparedLinearSolve,
     rhs: PyTree[Any],
@@ -904,11 +1166,7 @@ def _solve_prepared_transformed(
     if prepared.plan.policy.differentiation.mode == "none":
         canonical_value = jax.lax.stop_gradient(canonical_value)
 
-    def one_column(coordinates):
-        vector = transformed_operator.source.unflatten(coordinates)
-        return transformed_operator.target.flatten(transformed_operator.mv(vector))
-
-    image = jax.vmap(one_column, in_axes=1, out_axes=1)(canonical_value)
+    image = transformed_operator.mv_block(canonical_value)
     residual = image - canonical_rhs
     residual_norm = _coordinate_norm(transformed_operator.target, residual)
     rhs_norm = _coordinate_norm(transformed_operator.target, canonical_rhs)
@@ -1254,13 +1512,7 @@ def _canonical_action(
         return jnp.matmul(state.matrix, value)
     if isinstance(state, (DenseQRState, DenseSVDState)):
         return jnp.matmul(state.original_matrix, value)
-    operator = problem.operator
-
-    def one_column(coordinates):
-        vector = operator.source.unflatten(coordinates)
-        return operator.target.flatten(operator.mv(vector))
-
-    return jax.vmap(one_column, in_axes=1, out_axes=1)(value)
+    return problem.operator.mv_block(value)
 
 
 def _normal_residual(
@@ -1558,20 +1810,7 @@ def _solve_independent_columns(
 
 
 def _operator_action(operator, value: Array, /) -> Array:
-    if operator.batch_shape:
-        vector = value.reshape(
-            operator.batch_shape + operator.source.shape + value.shape[-1:]
-        )
-        image = operator.mv(vector)
-        return jnp.asarray(image).reshape(
-            operator.batch_shape + (operator.target.size, value.shape[-1])
-        )
-
-    def one_column(coordinates):
-        vector = operator.source.unflatten(coordinates)
-        return operator.target.flatten(operator.mv(vector))
-
-    return jax.vmap(one_column, in_axes=1, out_axes=1)(value)
+    return operator.mv_block(value)
 
 
 def _least_squares_stationarity(

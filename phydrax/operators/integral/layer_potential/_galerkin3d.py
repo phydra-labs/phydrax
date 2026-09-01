@@ -29,7 +29,14 @@ from ....linalg import (
     OperatorProperties,
 )
 from ....linalg._operators import _AbstractCostedLinearOperator
-from ._galerkin_quadrature3d import _prepare_surface_pairs_3d, _SurfacePairData3D
+from ._galerkin_quadrature3d import (
+    _class_workspace_byte_estimates,
+    _PAIR_CLASS_NAMES,
+    _preparation_workspace_byte_estimate,
+    _prepare_surface_pairs_3d,
+    _resident_byte_estimate,
+    _SurfacePairData3D,
+)
 from ._laplace3d import LaplaceLayerPotential3D
 from ._surface3d import SurfacePanelization3D
 from ._surface_fem3d import _SurfaceFEMBinding3D
@@ -147,10 +154,15 @@ class LaplaceSingleLayerDP0AssemblyReport3D(StrictModule, NonTrainableState):
     numeric_version: str = eqx.field(static=True)
     face_count: int = eqx.field(static=True)
     component_count: int = eqx.field(static=True)
+    pair_class_names: tuple[str, str, str, str, str] = eqx.field(static=True)
     pair_counts: tuple[int, int, int, int, int] = eqx.field(static=True)
     exception_count: int = eqx.field(static=True)
     maximum_errors: Array
+    pair_class_tolerances: Array
+    pair_class_supported: Array
     evaluations: Array
+    pair_class_workspace_bytes: tuple[int, int, int, int, int] = eqx.field(static=True)
+    pair_class_resident_bytes: tuple[int, int, int, int, int] = eqx.field(static=True)
     preparation_workspace_bytes: int = eqx.field(static=True)
     resident_bytes: int = eqx.field(static=True)
     action_workspace_bytes_per_rhs: int = eqx.field(static=True)
@@ -400,6 +412,51 @@ def prepare_laplace_single_layer_dp0_3d(
     selected = LaplaceSingleLayerDP0GalerkinPolicy3D() if policy is None else policy
     if not isinstance(selected, LaplaceSingleLayerDP0GalerkinPolicy3D):
         raise TypeError("policy must be LaplaceSingleLayerDP0GalerkinPolicy3D or None.")
+    if not isinstance(region, MeshRegion):
+        raise TypeError("[geometry] 3D Galerkin preparation requires a MeshRegion.")
+    triangle_mesh = region.triangle_mesh
+    face_count = int(triangle_mesh.faces.shape[0])
+    dense_bytes = 0
+    if selected.dense_oracle is not None:
+        entries = face_count * face_count
+        dense_bytes = entries * np.dtype(jnp.float64).itemsize
+        if entries > selected.dense_oracle.max_entries:
+            raise LinearCapabilityError(
+                "[dense-oracle-entries] Requested Galerkin dense oracle exceeds "
+                "max_entries."
+            )
+        if dense_bytes > selected.dense_oracle.max_bytes:
+            raise LinearCapabilityError(
+                "[dense-oracle-bytes] Requested Galerkin dense oracle exceeds max_bytes."
+            )
+    if face_count > selected.max_exception_pairs:
+        raise ValueError(
+            "[exception-capacity] Surface pair exceptions exceed max_exception_pairs."
+        )
+    class_workspace_bytes, regular_point_count = _class_workspace_byte_estimates(
+        selected.regular_order,
+        selected.singular_order,
+        selected.near_order,
+    )
+    minimum_workspace = _preparation_workspace_byte_estimate(
+        face_count,
+        face_count,
+        class_workspace_bytes,
+    )
+    if minimum_workspace > selected.max_preparation_workspace_bytes:
+        raise ValueError(
+            "[preparation-bytes] Surface pair preparation exceeds its "
+            "workspace-byte budget."
+        )
+    minimum_resident = _resident_byte_estimate(
+        face_count,
+        face_count,
+        regular_point_count,
+    )
+    if minimum_resident > selected.max_resident_bytes:
+        raise ValueError(
+            "[resident-bytes] Surface pair state exceeds its resident-byte budget."
+        )
     panel_order = max(
         selected.regular_order,
         selected.singular_order,
@@ -410,7 +467,6 @@ def prepare_laplace_single_layer_dp0_3d(
         quadrature_order=panel_order,
         numeric_version=numeric_version,
     )
-    triangle_mesh = region.triangle_mesh
     pair_data = _prepare_surface_pairs_3d(
         triangle_mesh.vertices,
         triangle_mesh.faces,
@@ -431,6 +487,7 @@ def prepare_laplace_single_layer_dp0_3d(
             data.regular_points,
             data.regular_weights,
             data.maximum_errors,
+            data.maximum_tolerances,
         ),
         pair_data,
         (
@@ -438,7 +495,22 @@ def prepare_laplace_single_layer_dp0_3d(
             selected.precision.evaluation(pair_data.regular_points),
             selected.precision.accumulation(pair_data.regular_weights),
             selected.precision.decision(pair_data.maximum_errors),
+            selected.precision.decision(pair_data.maximum_tolerances),
         ),
+    )
+    class_counts = jnp.asarray(pair_data.counts)
+    stored_supported = (
+        jnp.isfinite(pair_data.maximum_errors)
+        & jnp.isfinite(pair_data.maximum_tolerances)
+        & (
+            (class_counts == 0)
+            | (pair_data.maximum_errors <= pair_data.maximum_tolerances)
+        )
+    )
+    pair_data = eqx.tree_at(
+        lambda data: data.supported,
+        pair_data,
+        stored_supported,
     )
     space = binding.discretization.field_spaces[0].vector_space
     weak_id = canonical_fingerprint(
@@ -476,19 +548,7 @@ def prepare_laplace_single_layer_dp0_3d(
     )
 
     dense_oracle = None
-    dense_bytes = 0
     if selected.dense_oracle is not None:
-        face_count = binding.face_count
-        entries = face_count * face_count
-        dense_bytes = entries * np.dtype(jnp.float64).itemsize
-        if entries > selected.dense_oracle.max_entries:
-            raise LinearCapabilityError(
-                "Requested Galerkin dense oracle exceeds max_entries."
-            )
-        if dense_bytes > selected.dense_oracle.max_bytes:
-            raise LinearCapabilityError(
-                "Requested Galerkin dense oracle exceeds max_bytes."
-            )
         basis = jnp.eye(face_count, dtype=jnp.float64)
         weak_matrix = jax.vmap(weak.mv, in_axes=1, out_axes=1)(basis)
         dense_oracle = DenseLinearOperator(
@@ -510,9 +570,14 @@ def prepare_laplace_single_layer_dp0_3d(
         face_count=binding.face_count,
         component_count=binding.component_count,
         pair_counts=pair_data.counts,
+        pair_class_names=_PAIR_CLASS_NAMES,
         exception_count=int(pair_data.targets.shape[0]),
         maximum_errors=pair_data.maximum_errors,
+        pair_class_tolerances=pair_data.maximum_tolerances,
+        pair_class_supported=pair_data.supported,
         evaluations=pair_data.evaluations,
+        pair_class_workspace_bytes=pair_data.class_workspace_bytes,
+        pair_class_resident_bytes=pair_data.class_resident_bytes,
         preparation_workspace_bytes=pair_data.preparation_workspace_bytes,
         resident_bytes=pair_data.resident_bytes,
         action_workspace_bytes_per_rhs=strong._action_workspace_cost()[0],
@@ -521,7 +586,7 @@ def prepare_laplace_single_layer_dp0_3d(
         materializable=False,
         continuum_discretization_error_estimated=False,
         finite=finite,
-        accuracy_supported=finite,
+        accuracy_supported=finite & jnp.all(pair_data.supported),
         report_id=canonical_fingerprint(
             {
                 "kind": "laplace-single-layer-dp0-assembly-report-3d-v1",
@@ -529,6 +594,10 @@ def prepare_laplace_single_layer_dp0_3d(
                 "policy": selected.policy_id,
                 "pair_counts": pair_data.counts,
                 "errors": array_tree_fingerprint(pair_data.maximum_errors),
+                "tolerances": array_tree_fingerprint(pair_data.maximum_tolerances),
+                "supported": array_tree_fingerprint(pair_data.supported),
+                "class_workspace_bytes": pair_data.class_workspace_bytes,
+                "class_resident_bytes": pair_data.class_resident_bytes,
             }
         ),
     )

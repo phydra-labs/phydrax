@@ -15,7 +15,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import AbstractAttribute, StrictModule
@@ -538,120 +537,6 @@ class JumpProcess(AbstractJumpProcess):
         return values
 
 
-class MassActionJumpProcess(AbstractJumpProcess):
-    """Well-mixed stochastic mass-action reaction system."""
-
-    reactant_stoichiometry: Array
-    product_stoichiometry: Array
-    net_stoichiometry: Array
-    rate_constants: Array
-    state_shape: tuple[int, ...] = eqx.field(static=True)
-    num_channels: int = eqx.field(static=True)
-    mark_shape: tuple[int, ...] = eqx.field(static=True)
-    process_id: str = eqx.field(static=True)
-
-    def __init__(
-        self,
-        reactant_stoichiometry: ArrayLike,
-        product_stoichiometry: ArrayLike,
-        rate_constants: ArrayLike,
-        /,
-        *,
-        process_id: str | None = None,
-    ):
-        reactants_host = np.asarray(reactant_stoichiometry)
-        products_host = np.asarray(product_stoichiometry)
-        rates_host = np.asarray(rate_constants, dtype=float)
-        if reactants_host.ndim != 2 or products_host.shape != reactants_host.shape:
-            raise ValueError("Reactant and product stoichiometry must be equal matrices.")
-        if reactants_host.shape[0] <= 0 or reactants_host.shape[1] <= 0:
-            raise ValueError("Stoichiometry matrices must be non-empty.")
-        if not np.all(np.isfinite(reactants_host)) or not np.all(
-            np.isfinite(products_host)
-        ):
-            raise ValueError("Stoichiometry must be finite.")
-        if np.any(reactants_host < 0) or np.any(products_host < 0):
-            raise ValueError("Stoichiometry must be nonnegative.")
-        if not np.all(reactants_host == np.floor(reactants_host)) or not np.all(
-            products_host == np.floor(products_host)
-        ):
-            raise ValueError("Stoichiometry must contain integers.")
-        if rates_host.shape != (reactants_host.shape[0],):
-            raise ValueError("rate_constants must have one value per reaction channel.")
-        if np.any(~np.isfinite(rates_host)) or np.any(rates_host < 0.0):
-            raise ValueError("rate_constants must be finite and nonnegative.")
-        reactants = jnp.asarray(reactants_host, dtype=jnp.int32)
-        products = jnp.asarray(products_host, dtype=jnp.int32)
-        rates = jnp.asarray(rates_host, dtype=float)
-        resolved_id = process_id or _hash_parts(
-            b"phydrax-mass-action\0",
-            reactants,
-            products,
-            rates,
-        )
-        if not isinstance(resolved_id, str) or not resolved_id:
-            raise ValueError("process_id must be a non-empty string or None.")
-        self.reactant_stoichiometry = reactants
-        self.product_stoichiometry = products
-        self.net_stoichiometry = products - reactants
-        self.rate_constants = rates
-        self.state_shape = (int(reactants.shape[1]),)
-        self.num_channels = int(reactants.shape[0])
-        self.mark_shape = ()
-        self.process_id = resolved_id
-
-    def intensities(self, t: ArrayLike, state: ArrayLike, args: Any = None, /) -> Array:
-        del t, args
-        values = jnp.asarray(state, dtype=float)
-        reactants = self.reactant_stoichiometry.astype(values.dtype)
-        feasible = jnp.all(values[..., None, :] >= reactants, axis=-1)
-        log_combinations = jnp.sum(
-            jsp_special_gammaln(values[..., None, :] + 1.0)
-            - jsp_special_gammaln(reactants + 1.0)
-            - jsp_special_gammaln(values[..., None, :] - reactants + 1.0),
-            axis=-1,
-        )
-        return jnp.where(
-            feasible,
-            self.rate_constants * jnp.exp(log_combinations),
-            0.0,
-        )
-
-    def jump(
-        self,
-        state: ArrayLike,
-        channel: ArrayLike,
-        mark: ArrayLike,
-        args: Any = None,
-        /,
-    ) -> Array:
-        del mark, args
-        return jnp.asarray(state) + self.net_stoichiometry[jnp.asarray(channel)]
-
-    def sample_mark(
-        self,
-        key: Key[Array, ""],
-        t: ArrayLike,
-        state: ArrayLike,
-        channel: ArrayLike,
-        args: Any = None,
-        /,
-    ) -> Array:
-        del key, t, channel, args
-        return jnp.asarray(0, dtype=jnp.asarray(state).dtype)
-
-    def conservation_residual(self, weights: ArrayLike, /) -> Array:
-        values = jnp.asarray(weights, dtype=float)
-        if values.shape[-1:] != self.state_shape:
-            raise ValueError("weights must have a trailing species axis.")
-        return oe.contract("...s,ks->...k", values, self.net_stoichiometry)
-
-
-def jsp_special_gammaln(value: ArrayLike, /) -> Array:
-    """Local indirection keeps mass-action tracing independent of SciPy objects."""
-    return jax.scipy.special.gammaln(jnp.asarray(value))
-
-
 __all__ = [
     "AbstractJumpProcess",
     "IntensityFunction",
@@ -666,6 +551,5 @@ __all__ = [
     "JumpStatus",
     "jump_status_name",
     "MarkSampler",
-    "MassActionJumpProcess",
     "PoissonClockRealization",
 ]

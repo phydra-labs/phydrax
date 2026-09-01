@@ -316,9 +316,9 @@ def finite_strain_j2_plane_stress_plan(
     *,
     yield_tolerance: float = 1.0e-10,
 ):
-    from ._mpm_plane_stress import IsotropicPlaneStressMPMConstitutivePlan
+    from ._mpm_plane_stress import PlaneStressMPMConstitutivePlan
 
-    return IsotropicPlaneStressMPMConstitutivePlan(
+    return PlaneStressMPMConstitutivePlan(
         FiniteStrainJ2MPMConstitutivePlan(yield_tolerance=yield_tolerance)
     )
 

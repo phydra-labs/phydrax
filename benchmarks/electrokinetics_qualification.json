@@ -1,0 +1,61 @@
+{
+  "cases": {
+    "boltzmann_equilibrium": {
+      "maximum_rate": 0.0,
+      "passed": true
+    },
+    "conservative_relaxation": {
+      "energy_change": -7.86072268965654e-06,
+      "mass_error": 7.105427357601002e-15,
+      "passed": true
+    },
+    "differentiation": {
+      "energy_gradient": 24.991325352558267,
+      "passed": true
+    }
+  },
+  "environment": {
+    "default_float_dtype": "float64",
+    "fingerprint": "0d1cafd70d36b994d3a454270cbc2f73aa6b31b08ea506c5088f88d3fe904d12",
+    "jax": {
+      "backend": "cpu",
+      "devices": [
+        {
+          "kind": "cpu",
+          "platform": "cpu"
+        }
+      ],
+      "version": "0.9.1",
+      "x64_enabled": true
+    },
+    "jaxlib_version": "0.9.1",
+    "logical_cpus": 10,
+    "machine": "arm64",
+    "numpy_version": "2.3.5",
+    "package_fingerprint": "ad203c8b8a750a2fb63109cf76b19bbe56a607e3c9e290dbcf799c031fa94ca5",
+    "performance_environment": {
+      "JAX_COMPILATION_CACHE_DIR": null,
+      "JAX_PLATFORMS": null,
+      "JAX_PLATFORM_NAME": null,
+      "MKL_NUM_THREADS": null,
+      "OMP_NUM_THREADS": null,
+      "OPENBLAS_NUM_THREADS": null,
+      "VECLIB_MAXIMUM_THREADS": null,
+      "XLA_FLAGS": null,
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": null,
+      "XLA_PYTHON_CLIENT_PREALLOCATE": null
+    },
+    "phydrax_version": "0.2.2",
+    "platform": "macOS-15.7.2-arm64-arm-64bit",
+    "processor": "arm",
+    "python_version": "3.12.8"
+  },
+  "evidence_levels": {
+    "deployment_qualified": false,
+    "differentiation_qualified": true,
+    "execution_qualified": true,
+    "invariant_complete": true,
+    "physics_qualified": true
+  },
+  "passed": true
+}

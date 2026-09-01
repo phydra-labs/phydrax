@@ -2,8 +2,37 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Lagrangian and Hamiltonian mechanics operators."""
+"""Pointwise continuum, Lagrangian, and Hamiltonian mechanics operators."""
 
+from ._finite_strain import (
+    cauchy_to_first_piola,
+    finite_strain_kinematics,
+    FiniteStrainKinematics,
+    first_piola_to_cauchy,
+    HyperelasticLaw,
+    HyperelasticResponse,
+    inverse_nanson_transform,
+    logarithmic_volumetric_constraint,
+    nanson_response,
+    nanson_transform,
+    NansonResponse,
+    neo_hookean_cauchy,
+    neo_hookean_cauchy_from_moduli,
+    neo_hookean_first_piola,
+    neo_hookean_first_piola_from_moduli,
+    neo_hookean_reference_energy,
+    neo_hookean_reference_energy_from_moduli,
+    neo_hookean_response,
+    neo_hookean_response_from_moduli,
+    neo_hookean_tangent,
+    neo_hookean_tangent_from_moduli,
+    NeoHookeanLaw,
+    NeoHookeanParameters,
+    plane_strain_embedding,
+    volumetric_constraint,
+    VolumetricConstraint,
+    VolumetricConstraintKind,
+)
 from ._hamiltonian import (
     canonical_hamiltonian_residual,
     canonical_hamiltonian_vector_field,
@@ -16,12 +45,39 @@ from ._lagrangian import canonical_momentum, euler_lagrange
 
 
 __all__ = [
+    "FiniteStrainKinematics",
+    "HyperelasticLaw",
+    "HyperelasticResponse",
+    "NansonResponse",
+    "NeoHookeanLaw",
+    "NeoHookeanParameters",
+    "VolumetricConstraint",
+    "VolumetricConstraintKind",
     "canonical_hamiltonian_residual",
     "canonical_hamiltonian_vector_field",
     "canonical_momentum",
     "canonical_poisson_bracket",
+    "cauchy_to_first_piola",
     "euler_lagrange",
+    "finite_strain_kinematics",
+    "first_piola_to_cauchy",
     "hamiltonian_vector_field",
     "hamilton_jacobi_residual",
+    "inverse_nanson_transform",
+    "logarithmic_volumetric_constraint",
+    "nanson_response",
+    "nanson_transform",
+    "neo_hookean_cauchy",
+    "neo_hookean_cauchy_from_moduli",
+    "neo_hookean_first_piola",
+    "neo_hookean_first_piola_from_moduli",
+    "neo_hookean_reference_energy",
+    "neo_hookean_reference_energy_from_moduli",
+    "neo_hookean_response",
+    "neo_hookean_response_from_moduli",
+    "neo_hookean_tangent",
+    "neo_hookean_tangent_from_moduli",
+    "plane_strain_embedding",
     "poisson_bracket",
+    "volumetric_constraint",
 ]

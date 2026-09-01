@@ -45,7 +45,7 @@ term evaluation.
 """
 
 from .._hybrid_sensitivity import HybridSensitivityMode
-from . import advanced, maxwell
+from . import advanced, coupling, maxwell
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -123,7 +123,15 @@ from ._characteristic_projection import (
     solve_characteristic_projection,
     trace_characteristics,
 )
+from ._chemical_reactor import (
+    ChemicalReactorKind,
+    ChemicalReactorPlan,
+    ChemicalReactorSolution,
+    ChemicalReactorThermodynamicState,
+    PreparedChemicalReactorDynamics,
+)
 from ._cochain_electrostatic import (
+    CochainElectrostaticBoundaryPlan,
     CochainElectrostaticPlan,
     CochainElectrostaticResult,
     ElectrostaticBoundaryKind,
@@ -181,6 +189,8 @@ from ._convergence import (
     weak_observable_estimate,
     WeakObservableEstimate,
 )
+from ._convolution_quadrature import *  # noqa: F403
+from ._convolution_quadrature import __all__ as _convolution_quadrature_all
 from ._coupled import (
     CoupledCost,
     CoupledHierarchyResult,
@@ -189,6 +199,12 @@ from ._coupled import (
     CoupledObservable,
     CoupledValidity,
     solve_coupled_hierarchy,
+)
+from ._coupled_field_checkpoint import (
+    CoupledFieldCheckpoint,
+    CoupledFieldCheckpointPlan,
+    read_coupled_field_checkpoint,
+    write_coupled_field_checkpoint,
 )
 from ._dae_initialization import (
     DAEInitializationMode,
@@ -308,12 +324,29 @@ from ._driving_path import (
     PiecewiseLinearDrivingPath,
 )
 from ._dynamics_evolution import DiffraxEvolution
+from ._elasticity_boundary import *  # noqa: F403
+from ._elasticity_boundary import __all__ as _elasticity_boundary_all
+from ._electrode_reaction import (
+    ReactiveElectrodeEvaluation,
+    ReactiveElectrodePlan,
+    ReactiveElectrodeState,
+    ReactiveElectrodeStepResult,
+)
+from ._electrohydrodynamic import (
+    CochainMACTransferPlan,
+    ElectrohydrodynamicCouplingEvaluation,
+)
 from ._electromagnetic_pic import (
     ElectromagneticPICDiagnostics,
     ElectromagneticPICFixedStepMethod,
     ElectromagneticPICPlan,
     ElectromagneticPICState,
     ElectromagneticPICStepResult,
+)
+from ._electrostatic_conductors import (
+    ConductorCircuitSolveResult,
+    ElectrostaticConductorCoupling,
+    ElectrostaticConductorState,
 )
 from ._electrostatic_pic import (
     ElectrostaticPICDiagnostics,
@@ -334,6 +367,10 @@ from ._fbsde import (
     CoupledFBSDEResult,
     solve_coupled_fbsde_explicit,
 )
+from ._fem_bem_scalar import *  # noqa: F403
+from ._fem_bem_scalar import __all__ as _fem_bem_scalar_all
+from ._fem_bem_vector import *  # noqa: F403
+from ._fem_bem_vector import __all__ as _fem_bem_vector_all
 from ._fem_multirate import (
     conservative_multirate_flux,
     DGInterfaceFluxResult,
@@ -346,6 +383,12 @@ from ._fermionic_gaussian import (
     FermionicGaussianSolution,
     open_kitaev_chain,
     solve_fermionic_gaussian,
+)
+from ._field_equilibrium import (
+    FieldEquilibriumFormulation,
+    prepare_functional_stationarity,
+    prepare_virtual_work_equilibrium,
+    PreparedFieldEquilibrium,
 )
 from ._finite_element_adaptivity import (
     FiniteElementHPTopologyResult,
@@ -551,6 +594,14 @@ from ._hybrid_event import (
     HybridEventSensitivityResult,
     localize_hybrid_event,
 )
+from ._hybrid_schedule import (
+    HybridSchedulePlan,
+    HybridScheduleResult,
+    ScheduledHybridEvent,
+)
+from ._hydrodynamic_response import *  # noqa: F403
+from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
+from ._ias15 import IAS15Plan, IAS15Result
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -574,6 +625,7 @@ from ._jump_delay import (
     JumpDelayProblem,
     solve_jump_delay,
 )
+from ._kdk import KDKCoefficients, KDKCompletion, KDKProposal, KDKTransactionPlan
 from ._laplace_capacitance import (
     LaplaceCapacitanceResult3D,
     solve_laplace_capacitance_3d,
@@ -616,6 +668,23 @@ from ._mac_ale import (
     MACRemeshEpochPlan,
     MACRemeshEpochResult,
 )
+from ._mac_composite_projection import (
+    CompositeGaugeProjector,
+    CompositeMACProjectionPlan,
+    CompositeMACProjectionResult,
+)
+from ._mac_deformable_contact import (
+    DeformableContactAssembly,
+    DeformableContactKinematics,
+    DeformableContactResidualEvaluation,
+    DeformableContactResidualPlan,
+)
+from ._mac_dfib import (
+    MACDFIBProjectionPlan,
+    MACDFIBProjectionResult,
+    MACDivergenceFreeMarkerTransfer,
+    MACDivergenceFreeTransferDiagnostics,
+)
 from ._mac_distributed_projection import (
     MACCollectiveAdapter,
     MACDistributedProjectionPlan,
@@ -625,23 +694,46 @@ from ._mac_free_surface import (
     MACFreeSurfaceProjectionPlan,
     MACFreeSurfaceProjectionResult,
 )
+from ._mac_ghost_fluid import (
+    MACGhostFluidProjectionPlan,
+    MACGhostFluidProjectionResult,
+)
 from ._mac_immersed_boundary import (
     MACImmersedBoundaryProjectionPlan,
     MACImmersedBoundaryProjectionResult,
     MACImmersedBoundaryProjectionStatus,
     MACImmersedBoundarySolveMethod,
 )
+from ._mac_immersed_contact import (
+    MACRigidImmersedContactMethod,
+    MACRigidImmersedContactResult,
+    MACRigidImmersedJointMethod,
+    MACRigidImmersedJointResult,
+    RigidContactGeometryProvider,
+    RigidImmersedAcceptedMethod,
+)
 from ._mac_immersed_deformable import (
     MACDeformableImmersedBackwardEulerMethod,
     MACDeformableImmersedEnergyLedger,
     MACDeformableImmersedState,
+    MACDeformableImmersedStatus,
     MACDeformableImmersedStepResult,
+    StructuralContactResidual,
     StructuralEnergy,
 )
+from ._mac_immersed_newmark import (
+    MACDeformableImmersedNewmarkMethod,
+    MACDeformableImmersedNewmarkResult,
+    MACDeformableImmersedNewmarkState,
+)
 from ._mac_immersed_rigid import (
+    MACRigidImmersedBackwardEulerMethod,
+    MACRigidImmersedEnergyLedger,
     MACRigidImmersedEulerMethod,
+    MACRigidImmersedMidpointMethod,
     MACRigidImmersedProjectionPlan,
     MACRigidImmersedProjectionResult,
+    MACRigidImmersedStatus,
     MACRigidImmersedStepResult,
 )
 from ._mac_immersed_step import (
@@ -652,6 +744,10 @@ from ._mac_immersed_step import (
     MACImmersedBoundarySBDF2State,
     MACImmersedBoundaryStepStatus,
     MarkerMotionProvider,
+)
+from ._mac_multiphase_projection import (
+    MACMultiphaseProjectionPlan,
+    MACMultiphaseProjectionResult,
 )
 from ._mac_penalty_ib_cfd_dem import (
     advance_mac_penalty_ib_cfd_dem_window,
@@ -671,10 +767,53 @@ from ._mac_sensitivity import (
     MACTerminalJVPResult,
     MACTerminalVJPResult,
 )
+from ._mac_sharp_interface import (
+    MACImmersedInterfaceProjectionPlan,
+    MACInterfaceEnforcement,
+    MACInterfaceJumpSource,
+    MACInterfaceMethodSelector,
+    MACMovingSharpInterfaceEpochPlan,
+    MACMovingSharpInterfaceEpochResult,
+    MACSharpGeometryProvider,
+    MACSharpInterfaceForce,
+    MACSharpInterfaceGeometry,
+    MACSharpInterfaceGeometryData,
+    MACSharpInterfaceProjectionPlan,
+    MACSharpInterfaceProjectionResult,
+    MACSharpInterfaceStatus,
+)
+from ._mac_stage_inverse_general import (
+    MACOperatorStageInverseMomentum,
+    MACVariableDensityStageInverseMomentum,
+    MACVariableViscosityStagePlan,
+)
+from ._mac_stage_inverse_momentum import (
+    MACDiagonalStageInverseMomentum,
+    MACHelmholtzStageInverseMomentum,
+    MACStageInverseMomentum,
+    MACStageInverseMomentumDiagnostics,
+)
+from ._mac_stochastic_immersed import (
+    FIBOverdampedPlan,
+    FIBOverdampedStepResult,
+    FluctuationDissipationReport,
+    MACDiscreteStochasticStressPlan,
+    MACFluctuatingHydrodynamicsPlan,
+    MACFluctuatingHydrodynamicsResult,
+    MACInertialStochasticStepPlan,
+    MACInertialStochasticStepResult,
+    MobilityProvider,
+    StochasticDifferentiationPolicy,
+    StochasticReplayKey,
+)
 from ._mac_variable_density import (
     MACVariableDensityProjectionPlan,
     MACVariableDensityProjectionResult,
     MACVariableDensityRateProjectionResult,
+)
+from ._mac_variational_viscosity import (
+    MACVariationalViscosityPlan,
+    MACVariationalViscosityResult,
 )
 from ._mac_viscous import (
     MAC_VISCOUS_BOUNDARY_FAILURE,
@@ -692,6 +831,38 @@ from ._mac_viscous import (
     MACSBDF2State,
     MACSBDF2StepResult,
 )
+from ._marker_flow_checkpoint import (
+    MarkerFlowCheckpointPayload,
+    MarkerFlowCheckpointPlan,
+    MarkerFlowReplayDerivativeReport,
+    MarkerFlowReplayPlan,
+    MarkerFlowReplayRecord,
+    MarkerFlowReplayResult,
+    read_marker_flow_checkpoint,
+    write_marker_flow_checkpoint,
+)
+from ._marker_flow_output import MarkerFlowOutputPlan
+from ._marker_flow_qualification import (
+    MarkerFlowQualificationEvidence,
+    MarkerFlowQualificationPlan,
+    MarkerFlowQualificationProfile,
+    MarkerFlowQualificationResult,
+    observed_convergence_order,
+)
+from ._marker_flow_runtime import (
+    HydrodynamicLoadPlan,
+    HydrodynamicLoadRecord,
+    marker_flow_artifact_reference,
+    MarkerFlowAdaptiveStepPlan,
+    MarkerFlowArtifactKind,
+    MarkerFlowArtifactReference,
+    MarkerFlowCompiledExportPlan,
+    MarkerFlowCompiledExportReport,
+    MarkerFlowStepLimiter,
+    MarkerFlowStepRestriction,
+    MarkerFlowTrajectoryAdapter,
+    MarkerFlowTrajectoryResult,
+)
 from ._markov_cubature import (
     MarkovCubatureDiagnostics,
     MarkovCubatureMethod,
@@ -708,6 +879,26 @@ from ._material_point_adaptive import (
     MPMAdaptivePolicy,
     MPMAdaptiveStatus,
 )
+from ._material_point_checkpoint import (
+    MPMCheckpointManifest,
+    MPMCheckpointMigration,
+    MPMCheckpointPlan,
+)
+from ._material_point_commercial_implicit import (
+    linearize_kway_contact,
+    MPMBlockJacobiPreconditioner,
+    MPMCompactImplicitOperator,
+    MPMCompactOperatorResult,
+    MPMImplicitContactLinearization,
+    MPMImplicitTopologyPlan,
+    MPMImplicitUnknownLayout,
+    MPMMovingDomainDerivative,
+    MPMRouteSupersetPlan,
+    MPMRouteSupersetState,
+    MPMSparseContactOperator,
+    MPMSparsePhaseFieldOperator,
+    MPMTwoLevelMultigrid,
+)
 from ._material_point_fracture import (
     MPMPhaseFieldEvidence,
     MPMPhaseFieldFracturePlan,
@@ -721,6 +912,11 @@ from ._material_point_implicit import (
     ImplicitMPMStepResult,
     PreparedImplicitMPMDynamics,
 )
+from ._material_point_output import (
+    MPMBoundedOutputBuffer,
+    MPMOutputManifest,
+    MPMOutputPlan,
+)
 from ._material_point_rollout import (
     MPMGradientKind,
     MPMGradientReport,
@@ -731,6 +927,16 @@ from ._material_point_rollout import (
     MPMRetentionMode,
     MPMRolloutResult,
     ScheduledMPMRolloutPlan,
+)
+from ._material_point_supervisor import MPMOperationalResult, MPMRunSupervisor
+from ._maxwell_boundary import *  # noqa: F403
+from ._maxwell_boundary import __all__ as _maxwell_boundary_all
+from ._maxwell_reduced import (
+    CompatibleMaxwell1DPlan,
+    CompatibleMaxwell1DState,
+    CompatibleMaxwell2DPlan,
+    CompatibleMaxwell2DState,
+    ReducedMaxwellDiagnostics,
 )
 from ._memory import (
     ConvolutionKernel,
@@ -755,6 +961,11 @@ from ._memory_kernel import (
     solve_time_local_open_system,
     TimeLocalOpenSystemProblem,
 )
+from ._moving_window_pic import (
+    PICMovingWindowPlan,
+    PICMovingWindowResult,
+    PICMovingWindowState,
+)
 from ._mps_quantum_jump import (
     LocalMPSJump,
     MPSQuantumJumpProblem,
@@ -766,6 +977,14 @@ from ._multirate import (
     MultiratePartitionedRK,
     PartitionedDifferentialProblem,
     solve_multirate,
+)
+from ._nematic import (
+    MACNematicCouplingEvaluation,
+    MACNematicCouplingPlan,
+    NematicEvaluation,
+    NematicStepResult,
+    PreparedNematicDynamics,
+    PreparedNematicSemiImplicitStepPlan,
 )
 from ._neural_cde import (
     neural_cde_loss,
@@ -831,6 +1050,29 @@ from ._particle_epoch import (
     pullback_particle_epoch_transition,
     segmented_particle_epoch_vjp,
 )
+from ._particle_gravity import (
+    BarnesHutGravityPlan,
+    CartesianExpansionSpace,
+    CartesianFMMOperators,
+    DirectParticleGravityPlan,
+    DistributedParticleLayout,
+    MeshComplementCalibrationEvidence,
+    MeshComplementCalibrationPlan,
+    NewtonianPairKernel,
+    ParticleGravityEvidence,
+    ParticleOctreePlan3D,
+    PeriodicBarnesHutPlan,
+    PeriodicEwaldEvidence,
+    PeriodicEwaldForcePlan,
+    PeriodicEwaldResult,
+    PreparedParticleOctree3D,
+    TreeGravityEvidence,
+    TreeGravityResult,
+    TreePMPlan,
+    TreePMResult,
+    TreePMSplitPolicy,
+    UniformFMMPlan,
+)
 from ._particle_mesh_gravity import (
     ParticleMeshGravityDiagnostics,
     ParticleMeshGravityForceResult,
@@ -852,6 +1094,19 @@ from ._particles import (
     ParticleVectorField,
     solve_interacting_particles,
 )
+from ._periodic_vector_boundary import *  # noqa: F403
+from ._periodic_vector_boundary import __all__ as _periodic_vector_boundary_all
+from ._pic_current_source import (
+    PICMaxwellCurrentSourcePlan,
+    PreparedPICMaxwellCurrentSource,
+)
+from ._poisson_nernst_planck import (
+    PoissonNernstPlanckEvaluation,
+    PoissonNernstPlanckPlan,
+    PoissonNernstPlanckStepResult,
+)
+from ._potential_flow_hydrodynamics import *  # noqa: F403
+from ._potential_flow_hydrodynamics import __all__ as _hydrodynamics_all
 from ._probabilistic_ode import (
     PROBABILISTIC_ODE_NONFINITE,
     probabilistic_ode_status_name,
@@ -983,6 +1238,11 @@ from ._reactive_replay import (
     ReactiveReplayRecord,
     ReactiveReplayResult,
 )
+from ._reduced_pic import (
+    ReducedElectromagneticPICPlan,
+    ReducedElectromagneticPICResult,
+    ReducedElectromagneticPICState,
+)
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
     predict_reflected_path_dependent_value,
@@ -1027,11 +1287,23 @@ from ._rough_delay import (
 )
 from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 from ._rough_logode import LinearLogODE, LogODE
+from ._scalar_boundary3d import *  # noqa: F403
+from ._scalar_boundary3d import __all__ as _scalar_boundary_all
+from ._scalar_interfaces3d import *  # noqa: F403
+from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
 from ._schedule import ScheduleStepResult, SolveSchedule, SolveStage, TimeLaw
 from ._self_gravity import (
     NewtonianGravityDiagnostics,
     NewtonianSelfGravityPlan,
     PreparedNewtonianSelfGravity,
+)
+from ._semi_implicit_pic import (
+    PICGaussCorrectionPlan,
+    PICGaussCorrectionResult,
+    SemiImplicitPICDiagnostics,
+    SemiImplicitPICPlan,
+    SemiImplicitPICResult,
+    SemiImplicitPICState,
 )
 from ._semilinear import (
     exact_modal_stochastic_convolution,
@@ -1093,6 +1365,8 @@ from ._stinespring_tomography import (
     StinespringTomographyProblem,
     StinespringTomographyResult,
 )
+from ._stokes_boundary import *  # noqa: F403
+from ._stokes_boundary import __all__ as _stokes_boundary_all
 from ._structured_incompressible import (
     MACPressureProjectionPlan,
     MACPressureProjectionResult,
@@ -1119,12 +1393,19 @@ from ._unstructured_amr_runtime import (
     UnstructuredAMRRefluxReport,
     UnstructuredAMRRuntimeState,
 )
+from ._unstructured_em_pic import (
+    UnstructuredElectromagneticPICPlan,
+    UnstructuredElectromagneticPICResult,
+    UnstructuredElectromagneticPICState,
+)
 from ._unstructured_incompressible import (
     UnstructuredPressureCorrectionPlan,
     UnstructuredPressureCorrectionResult,
     UnstructuredPressureProjectionPlan,
     UnstructuredPressureProjectionResult,
 )
+from ._uvlm import *  # noqa: F403
+from ._uvlm import __all__ as _uvlm_all
 from ._variational_monte_carlo import (
     evaluate_variational_monte_carlo,
     read_variational_monte_carlo_checkpoint,
@@ -1165,6 +1446,12 @@ from ._variational_tdvp import (
     VariationalTDVPPolicy,
     VariationalTDVPResult,
 )
+from ._vortex_lattice import *  # noqa: F403
+from ._vortex_lattice import __all__ as _vortex_lattice_all
+from ._vortex_panels import *  # noqa: F403
+from ._vortex_panels import __all__ as _vortex_panels_all
+from ._vortex_step import *  # noqa: F403
+from ._vortex_step import __all__ as _vortex_step_all
 from ._wiener_operator import WienerNoiseBlock, WienerNoiseLayout
 from ._xxz_open import (
     boundary_driven_xxz_problem,
@@ -1207,6 +1494,7 @@ from ._viscous_vortex_wall import __all__ as _viscous_vortex_wall_all
 
 __all__ = [
     "advanced",
+    "coupling",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
     "BalanceLawAdvanceResult",
@@ -1374,6 +1662,31 @@ __all__ = [
     "CochainMultirateDiagnostics",
     "CochainMultiratePlan",
     "CochainRatePartition",
+    "ChemicalReactorKind",
+    "ChemicalReactorPlan",
+    "ChemicalReactorSolution",
+    "ChemicalReactorThermodynamicState",
+    "PreparedChemicalReactorDynamics",
+    "CochainMACTransferPlan",
+    "ElectrohydrodynamicCouplingEvaluation",
+    "MACNematicCouplingEvaluation",
+    "MACNematicCouplingPlan",
+    "NematicEvaluation",
+    "NematicStepResult",
+    "PoissonNernstPlanckEvaluation",
+    "PoissonNernstPlanckPlan",
+    "PoissonNernstPlanckStepResult",
+    "PreparedNematicDynamics",
+    "PreparedNematicSemiImplicitStepPlan",
+    "ReactiveElectrodeEvaluation",
+    "ReactiveElectrodePlan",
+    "ReactiveElectrodeState",
+    "ReactiveElectrodeStepResult",
+    "CoupledFieldCheckpoint",
+    "CoupledFieldCheckpointPlan",
+    "read_coupled_field_checkpoint",
+    "write_coupled_field_checkpoint",
+    "CochainElectrostaticBoundaryPlan",
     "CochainElectrostaticPlan",
     "CochainElectrostaticResult",
     "ElectrostaticBoundaryKind",
@@ -1582,6 +1895,32 @@ __all__ = [
     "MAC_VISCOUS_HISTORY_INVALID",
     "MAC_VISCOUS_PROJECTION_FAILURE",
     "MAC_VISCOUS_SUCCESS",
+    "MarkerFlowCheckpointPayload",
+    "MarkerFlowCheckpointPlan",
+    "MarkerFlowReplayDerivativeReport",
+    "MarkerFlowReplayPlan",
+    "MarkerFlowReplayRecord",
+    "MarkerFlowReplayResult",
+    "read_marker_flow_checkpoint",
+    "write_marker_flow_checkpoint",
+    "MarkerFlowOutputPlan",
+    "MarkerFlowQualificationEvidence",
+    "MarkerFlowQualificationPlan",
+    "MarkerFlowQualificationProfile",
+    "MarkerFlowQualificationResult",
+    "observed_convergence_order",
+    "HydrodynamicLoadPlan",
+    "HydrodynamicLoadRecord",
+    "marker_flow_artifact_reference",
+    "MarkerFlowAdaptiveStepPlan",
+    "MarkerFlowArtifactKind",
+    "MarkerFlowArtifactReference",
+    "MarkerFlowCompiledExportPlan",
+    "MarkerFlowCompiledExportReport",
+    "MarkerFlowStepLimiter",
+    "MarkerFlowStepRestriction",
+    "MarkerFlowTrajectoryAdapter",
+    "MarkerFlowTrajectoryResult",
     "MACALEGeometryPlan",
     "MACALEResult",
     "MACALEStageGeometry",
@@ -1597,10 +1936,21 @@ __all__ = [
     "MACCompositeStepController",
     "MACCompositeStepRestriction",
     "MACDerivativeMode",
+    "MACDFIBProjectionPlan",
+    "MACDFIBProjectionResult",
+    "MACDivergenceFreeMarkerTransfer",
+    "MACDivergenceFreeTransferDiagnostics",
+    "DeformableContactAssembly",
+    "DeformableContactKinematics",
+    "DeformableContactResidualEvaluation",
+    "DeformableContactResidualPlan",
     "MACDistributedProjectionPlan",
     "MACDistributedProjectionResult",
     "MACFixedGridSensitivityPlan",
     "MACFrozenGridReplayPlan",
+    "CompositeGaugeProjector",
+    "CompositeMACProjectionPlan",
+    "CompositeMACProjectionResult",
     "MACFrozenGridReplayResult",
     "MACNamedRateLimit",
     "MACNeutralMode",
@@ -1614,7 +1964,18 @@ __all__ = [
     "MACDeformableImmersedBackwardEulerMethod",
     "MACDeformableImmersedEnergyLedger",
     "MACDeformableImmersedState",
+    "MACDeformableImmersedStatus",
     "MACDeformableImmersedStepResult",
+    "MACDeformableImmersedNewmarkMethod",
+    "MACDeformableImmersedNewmarkResult",
+    "MACDeformableImmersedNewmarkState",
+    "MACRigidImmersedContactMethod",
+    "MACRigidImmersedContactResult",
+    "MACRigidImmersedJointMethod",
+    "MACRigidImmersedJointResult",
+    "RigidContactGeometryProvider",
+    "RigidImmersedAcceptedMethod",
+    "StructuralContactResidual",
     "MACImmersedBoundaryIMEXEulerMethod",
     "MACImmersedBoundaryIMEXEulerResult",
     "MACImmersedBoundaryProjectionPlan",
@@ -1625,10 +1986,45 @@ __all__ = [
     "MACImmersedBoundarySBDF2State",
     "MACImmersedBoundarySolveMethod",
     "MACImmersedBoundaryStepStatus",
+    "MACDiagonalStageInverseMomentum",
+    "MACHelmholtzStageInverseMomentum",
+    "MACStageInverseMomentum",
+    "MACStageInverseMomentumDiagnostics",
+    "MACOperatorStageInverseMomentum",
+    "MACRigidImmersedBackwardEulerMethod",
     "MACRigidImmersedEulerMethod",
+    "MACImmersedInterfaceProjectionPlan",
+    "MACInterfaceEnforcement",
+    "MACInterfaceJumpSource",
+    "MACInterfaceMethodSelector",
+    "MACMovingSharpInterfaceEpochPlan",
+    "MACMovingSharpInterfaceEpochResult",
+    "MACSharpGeometryProvider",
+    "MACSharpInterfaceForce",
+    "MACSharpInterfaceGeometry",
+    "MACSharpInterfaceGeometryData",
+    "MACSharpInterfaceProjectionPlan",
+    "MACSharpInterfaceProjectionResult",
+    "MACSharpInterfaceStatus",
+    "MACRigidImmersedEnergyLedger",
+    "MACRigidImmersedMidpointMethod",
     "MACRigidImmersedProjectionPlan",
+    "FIBOverdampedPlan",
+    "FIBOverdampedStepResult",
+    "FluctuationDissipationReport",
+    "MACDiscreteStochasticStressPlan",
+    "MACFluctuatingHydrodynamicsPlan",
+    "MACFluctuatingHydrodynamicsResult",
+    "MACInertialStochasticStepPlan",
+    "MACInertialStochasticStepResult",
+    "MobilityProvider",
+    "StochasticDifferentiationPolicy",
+    "StochasticReplayKey",
+    "MACVariableViscosityStagePlan",
     "MACRigidImmersedProjectionResult",
+    "MACRigidImmersedStatus",
     "MACRigidImmersedStepResult",
+    "MACVariableDensityStageInverseMomentum",
     "MarkerMotionProvider",
     "StructuralEnergy",
     "MACPenaltyIBCouplingSchedulePlan",
@@ -1838,6 +2234,10 @@ __all__ = [
     "solve_bsde_least_squares",
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
+    "FieldEquilibriumFormulation",
+    "PreparedFieldEquilibrium",
+    "prepare_functional_stationarity",
+    "prepare_virtual_work_equilibrium",
     "FunctionalSolver",
     "InteriorLaplaceDirichletResult",
     "LaplaceCapacitanceResult3D",
@@ -2080,6 +2480,58 @@ __all__ = [
     "MPMRetainedTrajectory",
     "MPMRolloutResult",
     "ScheduledMPMRolloutPlan",
+    "MPMBoundedOutputBuffer",
+    "MPMBlockJacobiPreconditioner",
+    "MPMCheckpointManifest",
+    "MPMCheckpointMigration",
+    "MPMCheckpointPlan",
+    "MPMCompactImplicitOperator",
+    "MPMCompactOperatorResult",
+    "MPMImplicitContactLinearization",
+    "MPMImplicitTopologyPlan",
+    "MPMImplicitUnknownLayout",
+    "MPMMovingDomainDerivative",
+    "MPMOperationalResult",
+    "MPMOutputManifest",
+    "MPMOutputPlan",
+    "MPMRouteSupersetPlan",
+    "MPMRouteSupersetState",
+    "MPMSparseContactOperator",
+    "MPMSparsePhaseFieldOperator",
+    "MPMRunSupervisor",
+    "MPMTwoLevelMultigrid",
+    "linearize_kway_contact",
+    "ConductorCircuitSolveResult",
+    "ElectrostaticConductorCoupling",
+    "ElectrostaticConductorState",
+    "MACGhostFluidProjectionPlan",
+    "MACGhostFluidProjectionResult",
+    "MACMultiphaseProjectionPlan",
+    "MACMultiphaseProjectionResult",
+    "MACVariationalViscosityPlan",
+    "MACVariationalViscosityResult",
+    "CompatibleMaxwell1DPlan",
+    "CompatibleMaxwell1DState",
+    "CompatibleMaxwell2DPlan",
+    "CompatibleMaxwell2DState",
+    "ReducedMaxwellDiagnostics",
+    "PICMovingWindowPlan",
+    "PICMovingWindowResult",
+    "PICMovingWindowState",
+    "PICMaxwellCurrentSourcePlan",
+    "PreparedPICMaxwellCurrentSource",
+    "ReducedElectromagneticPICPlan",
+    "ReducedElectromagneticPICResult",
+    "ReducedElectromagneticPICState",
+    "PICGaussCorrectionPlan",
+    "PICGaussCorrectionResult",
+    "SemiImplicitPICDiagnostics",
+    "SemiImplicitPICPlan",
+    "SemiImplicitPICResult",
+    "SemiImplicitPICState",
+    "UnstructuredElectromagneticPICPlan",
+    "UnstructuredElectromagneticPICResult",
+    "UnstructuredElectromagneticPICState",
 ]
 
 __all__ += [
@@ -2100,4 +2552,66 @@ __all__ += [
         *_viscous_vortex_wall_all,
     )
     if name not in __all__
+]
+__all__ += [
+    name
+    for name in (
+        *_convolution_quadrature_all,
+        *_elasticity_boundary_all,
+        *_fem_bem_scalar_all,
+        *_hydrodynamics_all,
+        *_maxwell_boundary_all,
+        *_scalar_boundary_all,
+        *_stokes_boundary_all,
+    )
+    if name not in __all__
+]
+__all__ += [
+    name
+    for name in (
+        *_fem_bem_vector_all,
+        *_hydrodynamic_response_all,
+        *_periodic_vector_boundary_all,
+        *_scalar_interfaces_all,
+    )
+    if name not in __all__
+]
+
+__all__ += [
+    "HybridSchedulePlan",
+    "HybridScheduleResult",
+    "IAS15Plan",
+    "IAS15Result",
+    "ScheduledHybridEvent",
+]
+
+__all__ += [
+    "BarnesHutGravityPlan",
+    "CartesianExpansionSpace",
+    "CartesianFMMOperators",
+    "DirectParticleGravityPlan",
+    "DistributedParticleLayout",
+    "MeshComplementCalibrationEvidence",
+    "MeshComplementCalibrationPlan",
+    "NewtonianPairKernel",
+    "ParticleGravityEvidence",
+    "ParticleOctreePlan3D",
+    "PeriodicBarnesHutPlan",
+    "PeriodicEwaldEvidence",
+    "PeriodicEwaldForcePlan",
+    "PeriodicEwaldResult",
+    "PreparedParticleOctree3D",
+    "TreeGravityEvidence",
+    "TreeGravityResult",
+    "TreePMPlan",
+    "TreePMResult",
+    "TreePMSplitPolicy",
+    "UniformFMMPlan",
+]
+
+__all__ += [
+    "KDKCoefficients",
+    "KDKCompletion",
+    "KDKProposal",
+    "KDKTransactionPlan",
 ]

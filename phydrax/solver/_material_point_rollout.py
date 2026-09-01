@@ -336,6 +336,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                     runtime_state.body_ids,
                     runtime_state.velocity_field_slots,
                     runtime_state.storage_state,
+                    runtime_state.lifecycle_state,
                 )
                 return (skipped, active), output
 
@@ -460,6 +461,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                 initial_state.body_ids,
                 initial_state.velocity_field_slots,
                 initial_state.storage_state,
+                initial_state.lifecycle_state,
             )
             final = self.rollout(runtime, argument_values).final_state
             return jnp.asarray(loss(final, argument_values))
@@ -494,6 +496,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                 initial_state.body_ids,
                 initial_state.velocity_field_slots,
                 initial_state.storage_state,
+                initial_state.lifecycle_state,
             )
             minus_runtime = MPMRuntimeState(
                 minus_state,
@@ -506,6 +509,7 @@ class ScheduledMPMRolloutPlan(StrictModule, NonTrainableState):
                 initial_state.body_ids,
                 initial_state.velocity_field_slots,
                 initial_state.storage_state,
+                initial_state.lifecycle_state,
             )
             plus = self.rollout(plus_runtime, plus_args)
             minus = self.rollout(minus_runtime, minus_args)

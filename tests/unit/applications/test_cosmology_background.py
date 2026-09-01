@@ -49,7 +49,10 @@ def test_curvature_and_cpl_expansion_match_closed_form():
     expected = 0.3 / scale**3 + 0.05 / scale**2 + 0.65 * dark_scaling
     np.testing.assert_allclose(background.expansion_squared(scale), expected, rtol=1e-12)
     assert background.equation_of_state(scale) == pytest.approx(-0.82)
-    assert background.realization.model_form_id == background.model_form_id
+    assert (
+        background.realization.physical_state_form_id
+        == background.physical_state.state_form_id
+    )
     assert background.realization.parameter_names[-2:] == (
         "dark_energy_w0",
         "dark_energy_wa",

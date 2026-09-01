@@ -37,6 +37,7 @@ class ParticleCell(StrictModule, NonTrainableState):
     volume: float = eqx.field(static=True)
     unique_image_radius: float = eqx.field(static=True)
     condition_number: float = eqx.field(static=True)
+    certified_condition_number: float = eqx.field(static=True)
     image_extent: int = eqx.field(static=True)
     cell_id: str = eqx.field(static=True)
 
@@ -47,6 +48,7 @@ class ParticleCell(StrictModule, NonTrainableState):
         *,
         origin: ArrayLike | None = None,
         periodic_axes: tuple[bool, ...] | None = None,
+        maximum_condition_number: float | None = None,
         maximum_image_count: int = 4096,
     ):
         matrix = np.asarray(vectors)
@@ -77,7 +79,16 @@ class ParticleCell(StrictModule, NonTrainableState):
             raise ValueError("periodic_axes must align with ParticleCell vectors.")
         singular_values = np.linalg.svd(matrix, compute_uv=False)
         condition = float(singular_values[0] / singular_values[-1])
-        extent = max(1, ceil(0.5 + condition * sqrt(matrix.shape[0])))
+        certified_condition = (
+            condition
+            if maximum_condition_number is None
+            else float(maximum_condition_number)
+        )
+        if not np.isfinite(certified_condition) or certified_condition < condition:
+            raise ValueError(
+                "maximum_condition_number must cover the initial cell condition."
+            )
+        extent = max(1, ceil(0.5 + certified_condition * sqrt(matrix.shape[0])))
         choices = [range(-extent, extent + 1) if axis else (0,) for axis in axes]
         shifts = np.asarray(tuple(product(*choices)), dtype=np.int32)
         limit = int(maximum_image_count)
@@ -108,6 +119,7 @@ class ParticleCell(StrictModule, NonTrainableState):
         self.unique_image_radius = unique_radius
         self.condition_number = condition
         self.image_extent = extent
+        self.certified_condition_number = certified_condition
         self.cell_id = canonical_fingerprint(
             {
                 "kind": "particle-cell",
@@ -120,6 +132,7 @@ class ParticleCell(StrictModule, NonTrainableState):
                 ),
                 "image_extent": extent,
                 "maximum_image_count": limit,
+                "certified_condition_number": certified_condition,
             }
         )
 

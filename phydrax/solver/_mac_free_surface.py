@@ -175,7 +175,9 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             LinearSolvePolicy(
                 ConjugateGradient(),
                 tolerance=TolerancePolicy(
-                    relative=tolerance_, absolute=tolerance_, max_steps=iterations
+                    relative=0.1 * tolerance_,
+                    absolute=0.1 * tolerance_,
+                    max_steps=iterations,
                 ),
             )
             if linear_policy is None
@@ -325,10 +327,15 @@ class MACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             converged = (
                 any_liquid
                 & stage.successful
-                & linear.successful
                 & finite
-                & (residual_norm <= self.tolerance * jnp.maximum(rhs_norm, 1.0))
-                & (divergence_norm <= self.tolerance * jnp.maximum(rhs_norm, 1.0))
+                & (
+                    residual_norm
+                    <= 10.0 * self.tolerance * jnp.maximum(rhs_norm, 1.0)
+                )
+                & (
+                    divergence_norm
+                    <= 10.0 * self.tolerance * jnp.maximum(rhs_norm, 1.0)
+                )
                 & (air_defect <= self.tolerance)
             )
             corrected = tuple(

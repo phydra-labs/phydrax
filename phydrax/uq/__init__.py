@@ -3,6 +3,7 @@
 #
 
 """Native uncertainty-quantification tools for Phydrax."""
+
 from .._exponential_family import (
     AbstractExponentialFamily,
     BernoulliFamily,
@@ -229,6 +230,14 @@ from ._flow_variational import (
     FlowVariationalConfig,
     FlowVariationalFamily,
     FlowVariationalResult,
+)
+from ._free_energy import (
+    bennett_acceptance_ratio,
+    free_energy_perturbation,
+    FreeEnergyResult,
+    multistate_bennett_acceptance_ratio,
+    ReducedPotentialSamples,
+    thermodynamic_integration,
 )
 from ._gaussian_factor import (
     add_independent_gaussian_factors,
@@ -1490,4 +1499,10 @@ __all__ = [
     "SING_NONFINITE",
     "SING_SUCCESS",
     "SING_TRANSITION_COVARIANCE_FAILURE",
+    "FreeEnergyResult",
+    "ReducedPotentialSamples",
+    "bennett_acceptance_ratio",
+    "free_energy_perturbation",
+    "multistate_bennett_acceptance_ratio",
+    "thermodynamic_integration",
 ]

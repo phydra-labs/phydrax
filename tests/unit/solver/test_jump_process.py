@@ -65,29 +65,59 @@ def test_jump_event_batch_has_explicit_status_and_left_right_state_semantics():
     assert phx.stochastic.jump_status_name(phx.stochastic.JUMP_MAX_EVENTS) == "max_events"
 
 
-def test_mass_action_propensities_and_conservation_are_combinatorial():
-    process = phx.stochastic.MassActionJumpProcess(
-        jnp.asarray([[2, 0], [0, 1]]),
-        jnp.asarray([[1, 1], [1, 0]]),
-        jnp.asarray([0.5, 2.0]),
-        process_id="mass-action",
+def test_chemical_jump_propensities_and_conservation_are_combinatorial():
+    schema = phx.equations.ChemicalSpeciesSchema(
+        ("A", "B"),
+        (
+            phx.equations.ChemicalPhaseKind.GAS,
+            phx.equations.ChemicalPhaseKind.GAS,
+        ),
+        jnp.asarray((1.0, 1.0)),
+        ("X",),
+        jnp.asarray(((1, 1),), dtype=jnp.int32),
+        jnp.asarray((0, 0), dtype=jnp.int32),
     )
-    reversible = phx.stochastic.MassActionJumpProcess(
-        jnp.asarray([[1, 0], [0, 1]]),
-        jnp.asarray([[0, 1], [1, 0]]),
-        jnp.asarray([1.0, 3.0]),
+    thermodynamics = phx.equations.PolynomialSpeciesThermodynamicsPlan(
+        schema,
+        jnp.asarray((10.0, 10.0)),
+        jnp.asarray((0.0, 0.0)),
+        reference_temperature=300.0,
+        minimum_temperature=200.0,
+        maximum_temperature=1000.0,
     )
+    mechanism = phx.equations.ChemicalMechanismIR(
+        "jump-conversion",
+        schema,
+        thermodynamics,
+        (
+            phx.equations.ChemicalReactionSpec(
+                "2A->A+B",
+                {"A": 2.0},
+                {"A": 1.0, "B": 1.0},
+                phx.equations.ArrheniusRatePlan(0.5),
+            ),
+            phx.equations.ChemicalReactionSpec(
+                "B->A",
+                {"B": 1.0},
+                {"A": 1.0},
+                phx.equations.ArrheniusRatePlan(2.0),
+            ),
+        ),
+    ).prepare()
+    process = phx.stochastic.ChemicalJumpProcess(mechanism, jnp.asarray(1.0))
+    runtime = phx.stochastic.ChemicalJumpRuntime(500.0, 101325.0)
 
     assert jnp.allclose(
-        process.intensities(0.0, jnp.asarray([3.0, 4.0])),
+        process.intensities(0.0, jnp.asarray([3.0, 4.0]), runtime),
         jnp.asarray([1.5, 8.0]),
     )
     assert jnp.array_equal(
-        process.jump(jnp.asarray([3, 4]), 0, jnp.asarray(0)),
+        process.jump(jnp.asarray([3, 4]), 0, jnp.asarray(0), runtime),
         jnp.asarray([2, 5]),
     )
+    reference = jnp.asarray((7.0, 0.0))
     assert jnp.array_equal(
-        reversible.conservation_residual(jnp.asarray([1.0, 1.0])),
+        process.conservation_residual(jnp.asarray([3.0, 4.0]), reference),
         jnp.zeros((2,)),
     )
 

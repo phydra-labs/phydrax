@@ -12,16 +12,16 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 from opt_einsum import contract
 
-from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle._particle_internal_mesh import (
     PreparedParticleInternalBatch,
 )
 from ..discretization.particle._particle_internal_state import ParticleInternalBatchState
+from ._chemical_mechanism import PreparedChemicalMechanism
+from ._chemical_species import ChemicalPhaseKind, ChemicalSpeciesSchema
 from ._particle_thermochemistry import (
-    ParticlePhase,
-    ParticleSpeciesSchema,
     ParticleThermodynamicMaterialPlan,
     ParticleThermodynamicState,
 )
@@ -41,115 +41,60 @@ class ParticleReactionEvaluation(StrictModule):
     species_amount_rate: Array
     internal_energy_rate: Array
     element_residual: Array
+    charge_residual: Array
     reactant_margin: Array
     explicit_step_restriction: Array
     successful: Array
     network_id: str = eqx.field(static=True)
 
 
-class ParticleReactionNetworkPlan(StrictModule, NonTrainableState):
-    schema: ParticleSpeciesSchema
-    reactant_stoichiometry: Array
-    product_stoichiometry: Array
-    net_stoichiometry: Array
-    pre_exponential: Array
-    temperature_exponent: Array
-    activation_energy: Array
+class ParticleReactionProcessPlan(StrictModule, NonTrainableState):
+    mechanism: PreparedChemicalMechanism
     location_ids: Array
     reaction_count: int = eqx.field(static=True)
     network_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        schema: ParticleSpeciesSchema,
-        reactant_stoichiometry: ArrayLike,
-        product_stoichiometry: ArrayLike,
-        pre_exponential: ArrayLike,
-        activation_energy: ArrayLike,
+        mechanism: PreparedChemicalMechanism,
         /,
         *,
-        temperature_exponent: ArrayLike | None = None,
         locations=None,
         network_id: str | None = None,
     ):
-        if not isinstance(schema, ParticleSpeciesSchema):
-            raise TypeError("schema must be a ParticleSpeciesSchema.")
-        reactant = np.asarray(reactant_stoichiometry)
-        product = np.asarray(product_stoichiometry)
-        pre = np.asarray(pre_exponential, dtype=float)
-        activation = np.asarray(activation_energy, dtype=float)
-        if (
-            reactant.ndim != 2
-            or reactant.shape != product.shape
-            or reactant.shape[1] != schema.species_count
-            or reactant.shape[0] == 0
-            or not np.issubdtype(reactant.dtype, np.integer)
-            or not np.issubdtype(product.dtype, np.integer)
-            or np.any(reactant < 0)
-            or np.any(product < 0)
-        ):
-            raise ValueError(
-                "Reaction stoichiometry must be nonnegative integer matrices."
-            )
-        count = reactant.shape[0]
-        exponent = (
-            np.zeros((count,), dtype=float)
-            if temperature_exponent is None
-            else np.asarray(temperature_exponent, dtype=float)
-        )
+        if not isinstance(mechanism, PreparedChemicalMechanism):
+            raise TypeError("mechanism must be PreparedChemicalMechanism.")
+        count = mechanism.reaction_count
         location_values = (
             (ParticleReactionLocation.BULK,) * count
             if locations is None
             else tuple(locations)
         )
-        if (
-            pre.shape != (count,)
-            or activation.shape != (count,)
-            or exponent.shape != (count,)
-            or np.any(~np.isfinite(pre))
-            or np.any(pre < 0.0)
-            or np.any(~np.isfinite(activation))
-            or np.any(activation < 0.0)
-            or np.any(~np.isfinite(exponent))
-            or len(location_values) != count
-            or any(
-                not isinstance(value, ParticleReactionLocation)
-                for value in location_values
-            )
+        if len(location_values) != count or any(
+            not isinstance(value, ParticleReactionLocation) for value in location_values
         ):
-            raise ValueError("Reaction kinetic parameters are invalid.")
-        net = product.astype(np.int64) - reactant.astype(np.int64)
-        element_residual = np.asarray(schema.element_composition) @ net.T
-        if np.any(element_residual != 0):
-            raise ValueError("Reaction network must conserve every declared element.")
+            raise ValueError("Reaction locations must match the mechanism.")
         location_ids = np.asarray(
             [list(ParticleReactionLocation).index(value) for value in location_values],
             dtype=np.int32,
         )
         generated = canonical_fingerprint(
             {
-                "kind": "particle-reaction-network",
-                "schema": schema.schema_id,
-                "reactant": array_tree_fingerprint(reactant),
-                "product": array_tree_fingerprint(product),
-                "pre_exponential": array_tree_fingerprint(pre),
-                "temperature_exponent": array_tree_fingerprint(exponent),
-                "activation_energy": array_tree_fingerprint(activation),
+                "kind": "particle-reaction-process",
+                "mechanism": mechanism.mechanism_id,
                 "locations": [value.value for value in location_values],
             }
         )
-        self.schema = schema
-        self.reactant_stoichiometry = jnp.asarray(reactant, dtype=jnp.int32)
-        self.product_stoichiometry = jnp.asarray(product, dtype=jnp.int32)
-        self.net_stoichiometry = jnp.asarray(net, dtype=jnp.int32)
-        self.pre_exponential = jnp.asarray(pre)
-        self.temperature_exponent = jnp.asarray(exponent)
-        self.activation_energy = jnp.asarray(activation)
+        self.mechanism = mechanism
         self.location_ids = jnp.asarray(location_ids)
         self.reaction_count = count
         self.network_id = generated if network_id is None else str(network_id)
         if not self.network_id:
             raise ValueError("network_id must be nonempty.")
+
+    @property
+    def schema(self) -> ChemicalSpeciesSchema:
+        return self.mechanism.schema
 
     def evaluate(
         self,
@@ -170,17 +115,11 @@ class ParticleReactionNetworkPlan(StrictModule, NonTrainableState):
             state.porosity,
         )
         concentration = state.species_amount / metrics.cell_measures[:, :, None]
-        reactant = self.reactant_stoichiometry.astype(concentration.dtype)
-        log_concentration = jnp.log(jnp.maximum(concentration, 1.0e-300))
-        log_mass_action = contract("...s,rs->...r", log_concentration, reactant)
-        temperature = thermo.temperature[..., None]
-        log_rate = (
-            jnp.log(jnp.maximum(self.pre_exponential, 1.0e-300))
-            + self.temperature_exponent * jnp.log(temperature)
-            - self.activation_energy / (_UNIVERSAL_GAS_CONSTANT * temperature)
-            + log_mass_action
+        fields = self.mechanism.evaluate(
+            concentration,
+            thermo.temperature,
+            thermo.gas_pressure,
         )
-        local_rate = jnp.exp(jnp.clip(log_rate, -700.0, 700.0))
         bulk_id = list(ParticleReactionLocation).index(ParticleReactionLocation.BULK)
         internal_id = list(ParticleReactionLocation).index(
             ParticleReactionLocation.INTERNAL_SURFACE
@@ -194,7 +133,7 @@ class ParticleReactionNetworkPlan(StrictModule, NonTrainableState):
             jnp.where(
                 self.location_ids[None, None, :] == internal_id,
                 state.internal_surface_area[:, :, None],
-                jnp.zeros_like(local_rate),
+                jnp.zeros_like(fields.net_progress_rates),
             ),
         )
         measure = measure.at[:, -1, :].add(
@@ -204,41 +143,46 @@ class ParticleReactionNetworkPlan(StrictModule, NonTrainableState):
                 0.0,
             )
         )
-        feasible = jnp.all(
-            (state.species_amount[..., None, :] > 0.0)
-            | (self.reactant_stoichiometry[None, None, :, :] == 0),
-            axis=-1,
+        extent_rate = fields.net_progress_rates * measure
+        species_rate = contract(
+            "...r,rs->...s", extent_rate, self.mechanism.net_stoichiometry
         )
-        extent_rate = jnp.where(feasible, local_rate * measure, 0.0)
-        species_rate = contract("...r,rs->...s", extent_rate, self.net_stoichiometry)
         molar_energy = thermodynamics.molar_internal_energy(thermo.temperature)
         reaction_energy = -jnp.sum(species_rate * molar_energy, axis=-1)
         element_residual = contract(
             "es,...s->...e", self.schema.element_composition, species_rate
         )
+        charge_residual = contract("s,...s->...", self.schema.charges, species_rate)
         consumption = jnp.maximum(-species_rate, 0.0)
         restriction = jnp.min(
             jnp.where(
                 consumption > 0.0,
-                state.species_amount / consumption,
+                state.species_amount
+                / jnp.maximum(consumption, jnp.finfo(state.species_amount.dtype).tiny),
                 jnp.inf,
             )
         )
         margin = jnp.min(
             jnp.where(
-                self.reactant_stoichiometry[None, None, :, :] > 0,
+                self.mechanism.reactant_stoichiometry[None, None, :, :] > 0,
                 state.species_amount[..., None, :],
                 jnp.inf,
             )
         )
-        tolerance = 128.0 * jnp.finfo(state.internal_energy.dtype).eps
+        tolerance = (
+            256.0
+            * jnp.finfo(state.internal_energy.dtype).eps
+            * jnp.maximum(jnp.max(jnp.abs(species_rate)), 1.0)
+        )
         successful = (
             metrics.successful
             & thermo.successful
-            & jnp.all(jnp.isfinite(extent_rate) & (extent_rate >= 0.0))
+            & fields.successful
+            & jnp.all(jnp.isfinite(extent_rate))
             & jnp.all(jnp.isfinite(species_rate))
             & jnp.all(jnp.isfinite(reaction_energy))
             & jnp.all(jnp.abs(element_residual) <= tolerance)
+            & jnp.all(jnp.abs(charge_residual) <= tolerance)
             & ~jnp.isnan(restriction)
         )
         return ParticleReactionEvaluation(
@@ -246,6 +190,7 @@ class ParticleReactionNetworkPlan(StrictModule, NonTrainableState):
             species_rate,
             reaction_energy,
             element_residual,
+            charge_residual,
             margin,
             restriction,
             successful,
@@ -300,7 +245,7 @@ class ParticlePhaseChangeEvaluation(StrictModule):
 
 
 class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
-    schema: ParticleSpeciesSchema
+    schema: ChemicalSpeciesSchema
     liquid_species: int = eqx.field(static=True)
     vapor_species: int = eqx.field(static=True)
     mass_transfer_coefficient: float = eqx.field(static=True)
@@ -321,8 +266,8 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
         *,
         allow_condensation=False,
     ):
-        if not isinstance(schema, ParticleSpeciesSchema):
-            raise TypeError("schema must be a ParticleSpeciesSchema.")
+        if not isinstance(schema, ChemicalSpeciesSchema):
+            raise TypeError("schema must be a ChemicalSpeciesSchema.")
         liquid = int(liquid_species)
         vapor = int(vapor_species)
         coefficient = float(mass_transfer_coefficient)
@@ -337,8 +282,8 @@ class EvaporationPhaseChangePlan(StrictModule, NonTrainableState):
             or vapor < 0
             or liquid >= schema.species_count
             or vapor >= schema.species_count
-            or not bool(schema.phase_mask(ParticlePhase.LIQUID)[liquid])
-            or not bool(schema.phase_mask(ParticlePhase.GAS)[vapor])
+            or not bool(schema.phase_mask(ChemicalPhaseKind.LIQUID)[liquid])
+            or not bool(schema.phase_mask(ChemicalPhaseKind.GAS)[vapor])
             or not np.isclose(
                 float(schema.molar_masses[liquid]), float(schema.molar_masses[vapor])
             )
@@ -547,7 +492,7 @@ __all__ = [
     "ParticlePhaseChangeEvaluation",
     "ParticleReactionEvaluation",
     "ParticleReactionLocation",
-    "ParticleReactionNetworkPlan",
+    "ParticleReactionProcessPlan",
     "ShrinkingCoreConversionPlan",
     "ShrinkingCoreEvaluation",
     "ShrinkingCoreState",

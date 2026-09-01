@@ -21,9 +21,9 @@ for offset, charge, name in ((0, -1.0, "electrons"), (100, 1.0, "ions")):
     ).prepare()
     particles.append(support)
     charged.append(
-        phx.discretization.ChargedParticlePlan(
-            charge * jnp.ones((4,)), name
-        ).prepare(support)
+        phx.discretization.ChargedParticlePlan(charge * jnp.ones((4,)), name).prepare(
+            support
+        )
     )
 
 transfer_plan = phx.discretization.pic.PICParticleCochainTransferPlan(bridge)
@@ -31,14 +31,14 @@ transfers = tuple(transfer_plan.prepare(value) for value in charged)
 currents = tuple(
     phx.discretization.pic.ChargeConservingCurrentPlan(value) for value in transfers
 )
-current_source = phx.discretization.pic.PICMaxwellCurrentSource()
+current_source = phx.solver.PICMaxwellCurrentSourcePlan()
 maxwell = phx.solver.CompatibleMaxwellPlan(
-    bridge, current_source=current_source, plan_id="periodic-pic-maxwell"
+    bridge, sources=(current_source,), plan_id="periodic-pic-maxwell"
 ).prepare()
-electrostatic = phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic")
-pic = phx.solver.ElectromagneticPICPlan(
-    maxwell, electrostatic, transfers, currents
+electrostatic = phx.solver.CochainElectrostaticPlan(
+    bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
 )
+pic = phx.solver.ElectromagneticPICPlan(maxwell, electrostatic, transfers, currents)
 
 position = jnp.asarray(
     [[0.20, 0.20, 0.20], [0.35, 0.45, 0.55], [0.60, 0.30, 0.70], [0.80, 0.75, 0.40]]

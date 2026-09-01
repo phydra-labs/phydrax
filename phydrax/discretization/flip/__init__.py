@@ -4,7 +4,15 @@
 
 """Fixed-population free-surface FLIP over prepared MAC grids."""
 
+from ._interface_geometry import MACFreeSurfaceGeometryState, ParticleLevelSetPlan
 from ._method import FLIPMethodPlan, FLIPResourcePolicy
+from ._multiphase import (
+    MultiphaseFLIPPlan,
+    MultiphaseFLIPState,
+    MultiphaseFLIPTransferResult,
+)
+from ._reseed import FLIPReseedingPlan, FLIPReseedingResult
+from ._solid_boundary import FLIPSolidBoundaryPlan, FLIPSolidBoundaryResult
 from ._transfer import FLIPParticleTransferPlan, PreparedFLIPParticleTransfer
 from ._types import (
     FLIPDiagnostics,
@@ -20,6 +28,15 @@ from ._types import (
 
 
 __all__ = [
+    "FLIPReseedingPlan",
+    "FLIPReseedingResult",
+    "FLIPSolidBoundaryPlan",
+    "FLIPSolidBoundaryResult",
+    "MACFreeSurfaceGeometryState",
+    "MultiphaseFLIPPlan",
+    "MultiphaseFLIPState",
+    "MultiphaseFLIPTransferResult",
+    "ParticleLevelSetPlan",
     "FLIPDiagnostics",
     "FLIPGridToParticleResult",
     "FLIPMethodPlan",

@@ -107,6 +107,11 @@ from ._pod import (
     OperatorPODDiagnostics,
     OperatorPODFit,
 )
+from ._risk import (
+    MechanicsCaseReduction,
+    MechanicsCaseReductionKind,
+    MechanicsCaseReductionResult,
+)
 from ._rollout import (
     autoregressive_operator_rollout,
     OperatorRollout,
@@ -176,6 +181,9 @@ __all__ = [
     "BoundedResidualAdaptationPolicy",
     "TestTimeAdaptationResult",
     "adapt_operator_context",
+    "MechanicsCaseReduction",
+    "MechanicsCaseReductionKind",
+    "MechanicsCaseReductionResult",
     "AffineNormalizer",
     "AbstractOperatorLossTerm",
     "CochainResidualInput",

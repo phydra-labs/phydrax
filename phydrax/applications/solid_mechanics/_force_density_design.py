@@ -124,6 +124,7 @@ class ForceDensityStateSolver(AbstractStateSolver):
         initial = jnp.asarray(initial_state)
         if initial.shape != (structure.free_dof_count,):
             raise ValueError("initial_state has the wrong reduced force-density shape.")
+        reference_residual = problem.residual(initial, design, args)
         initial_positions = (
             structure.expand(initial, inputs.prescribed_values)
             if self.plan.problem.load_model.depends_on_positions
@@ -139,7 +140,7 @@ class ForceDensityStateSolver(AbstractStateSolver):
         residual = problem.residual(reduced, design, args)
         linear_solves = jnp.asarray(0, dtype=jnp.int32)
         linear_iterations = jnp.asarray(0, dtype=jnp.int32)
-        residual_evaluations = jnp.asarray(1, dtype=jnp.int32)
+        residual_evaluations = jnp.asarray(2, dtype=jnp.int32)
         jvp_evaluations = jnp.asarray(0, dtype=jnp.int32)
         vjp_evaluations = jnp.asarray(0, dtype=jnp.int32)
         setup_refreshes = jnp.asarray(0, dtype=jnp.int32)
@@ -151,7 +152,7 @@ class ForceDensityStateSolver(AbstractStateSolver):
             evidence = result.nonlinear_result.diagnostics
             linear_solves = evidence.linear_solves
             linear_iterations = evidence.linear_iterations
-            residual_evaluations = evidence.residual_evaluations
+            residual_evaluations = evidence.residual_evaluations + 1
             jvp_evaluations = evidence.jvp_evaluations
             vjp_evaluations = evidence.vjp_evaluations
             setup_refreshes = evidence.setup_refreshes
@@ -193,7 +194,21 @@ class ForceDensityStateSolver(AbstractStateSolver):
                 jnp.nan, dtype=result.diagnostics.free_residual_norm.dtype
             ),
         )
-        return StateEquationResult(reduced, residual, status, diagnostics)
+        acceptance = problem.state_evidence(
+            reduced,
+            design,
+            residual,
+            status,
+            reference_norm=jnp.linalg.norm(reference_residual),
+            args=args,
+        )
+        return StateEquationResult(
+            reduced,
+            residual,
+            status,
+            diagnostics,
+            acceptance,
+        )
 
 
 class ForceDensityDesignProblem(StrictModule, NonTrainableState):

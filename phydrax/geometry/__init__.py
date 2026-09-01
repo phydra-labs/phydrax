@@ -5,7 +5,15 @@
 """Representation-aware geometry sources, kernels, and realizations."""
 
 from . import analytic, brep, complex, design, reconstruction, simplicial
-from ._atlas import BoundaryAtlas, BoundaryFrame, BoundaryMap, TrimDomain
+from ._atlas import (
+    BoundaryAtlas,
+    BoundaryFrame,
+    BoundaryMap,
+    box_boundary_atlas,
+    circle_boundary_atlas,
+    sphere_boundary_atlas,
+    TrimDomain,
+)
 from ._bvh_overlap import (
     AabbOverlapCandidate,
     AabbOverlapQueryResult,
@@ -50,6 +58,11 @@ from ._cubature import (
     CubatureAtlas,
     CubatureAtlasProvider,
     CubatureComponent,
+)
+from ._immersed_markers import (
+    ImmersedMarkerMaterialization,
+    ImmersedMarkerQuadraturePlan,
+    MarkerVelocityProvider,
 )
 from ._interface import (
     interface_distance_metrics,
@@ -200,6 +213,8 @@ from .simplicial import (
     TriangleSurface,
     TriangleTopology,
 )
+from .surface import *  # noqa: F403
+from .surface import __all__ as _surface_all
 
 
 __all__ = [
@@ -220,6 +235,9 @@ __all__ = [
     "OverlapTolerance",
     "build_host_aabb_overlap_bvh",
     "query_host_aabb_overlaps",
+    "ImmersedMarkerMaterialization",
+    "ImmersedMarkerQuadraturePlan",
+    "MarkerVelocityProvider",
     "IntersectionResult",
     "IntersectionStatus",
     "PredicateEvidence",
@@ -238,7 +256,10 @@ __all__ = [
     "intersect_tetrahedra",
     "stable_tetra_pair_id",
     "AbstractCubatureMap",
+    "box_boundary_atlas",
     "BoundaryAtlas",
+    "circle_boundary_atlas",
+    "sphere_boundary_atlas",
     "BoundaryAtlasPartition",
     "AtlasSamplingPlan",
     "BoundaryAtlasProvider",
@@ -378,3 +399,5 @@ __all__ = [
     "bounded_rejection_sample",
     "sample_boundary_atlas",
 ]
+
+__all__ += [name for name in _surface_all if name not in __all__]

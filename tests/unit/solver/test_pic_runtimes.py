@@ -10,7 +10,9 @@ import phydrax as phx
 
 def _species(bridge, offset, sign, name, count=4):
     particles = phx.discretization.ParticleSetPlan(
-        jnp.arange(offset, offset + count), jnp.ones((count,)), ambient_dimension=bridge.dimension
+        jnp.arange(offset, offset + count),
+        jnp.ones((count,)),
+        ambient_dimension=bridge.dimension,
     ).prepare()
     charged = phx.discretization.ChargedParticlePlan(
         sign * jnp.ones((count,)), name
@@ -29,7 +31,9 @@ def test_electrostatic_pic_step_is_atomic_and_constraint_aware():
     bridge = phx.discretization.StructuredCochainBridge(grid)
     _, negative = _species(bridge, 0, -1.0, "negative")
     _, positive = _species(bridge, 100, 1.0, "positive")
-    field = phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic")
+    field = phx.solver.CochainElectrostaticPlan(
+        bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
+    )
     pic = phx.solver.ElectrostaticPICPlan(field, (negative, positive))
     position = jnp.asarray([[0.15], [0.35], [0.60], [0.85]])
     state = pic.initialize(
@@ -62,13 +66,13 @@ def test_electromagnetic_pic_preserves_zero_current_constraints():
     )
     maxwell = phx.solver.CompatibleMaxwellPlan(
         bridge,
-        current_source=phx.discretization.pic.PICMaxwellCurrentSource(),
+        sources=(phx.solver.PICMaxwellCurrentSourcePlan(),),
         plan_id="test-pic-maxwell",
     ).prepare()
-    electrostatic = phx.solver.CochainElectrostaticPlan(bridge, boundary="periodic")
-    pic = phx.solver.ElectromagneticPICPlan(
-        maxwell, electrostatic, transfers, currents
+    electrostatic = phx.solver.CochainElectrostaticPlan(
+        bridge, phx.solver.CochainElectrostaticBoundaryPlan.periodic(bridge)
     )
+    pic = phx.solver.ElectromagneticPICPlan(maxwell, electrostatic, transfers, currents)
     position = jnp.asarray([[0.25, 0.25, 0.25], [0.7, 0.6, 0.5]])
     velocity = jnp.zeros((2, 3))
     dt = 0.01 * maxwell.stable_dt

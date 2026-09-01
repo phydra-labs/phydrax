@@ -9,16 +9,17 @@ import phydrax as phx
 
 def _schema(phases=(None, None)):
     selected = (
-        (phx.equations.ParticlePhase.SOLID, phx.equations.ParticlePhase.SOLID)
+        (phx.equations.ChemicalPhaseKind.SOLID, phx.equations.ChemicalPhaseKind.SOLID)
         if phases == (None, None)
         else phases
     )
-    return phx.equations.ParticleSpeciesSchema(
+    return phx.equations.ChemicalSpeciesSchema(
         ("A", "B"),
         selected,
         jnp.asarray([0.01, 0.01]),
         ("X",),
         jnp.asarray([[1, 1]]),
+        jnp.zeros_like(jnp.asarray([0.01, 0.01]), dtype=jnp.int32),
     )
 
 
@@ -39,9 +40,11 @@ def _batch(species_count=2, shells=3):
 def test_thermodynamic_inversion_and_radial_transport_are_conservative():
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
-        schema,
-        jnp.asarray([[10.0, 1.0e-3], [12.0, 5.0e-4]]),
-        jnp.asarray([0.0, -100.0]),
+        phx.equations.PolynomialSpeciesThermodynamicsPlan(
+            schema,
+            jnp.asarray([[10.0, 1.0e-3], [12.0, 5.0e-4]]),
+            jnp.asarray([0.0, -100.0]),
+        ),
     )
     transport = phx.equations.ParticleTransportMaterialPlan(
         schema,
@@ -93,7 +96,9 @@ def test_thermodynamic_inversion_and_radial_transport_are_conservative():
 def test_reaction_network_conserves_elements_and_reaction_energy():
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
-        schema, jnp.asarray([10.0, 10.0]), jnp.asarray([0.0, -100.0])
+        phx.equations.PolynomialSpeciesThermodynamicsPlan(
+            schema, jnp.asarray([10.0, 10.0]), jnp.asarray([0.0, -100.0])
+        )
     )
     particles, plan, batch = _batch(shells=2)
     del particles, plan
@@ -107,13 +112,20 @@ def test_reaction_network_conserves_elements_and_reaction_energy():
         jnp.ones((1, 2)),
         jnp.asarray([1.0]),
     )
-    reaction = phx.equations.ParticleReactionNetworkPlan(
+    mechanism = phx.equations.ChemicalMechanismIR(
+        "particle-conversion",
         schema,
-        jnp.asarray([[1, 0]]),
-        jnp.asarray([[0, 1]]),
-        jnp.asarray([2.0]),
-        jnp.asarray([0.0]),
-    )
+        thermodynamics.species_thermodynamics,
+        (
+            phx.equations.ChemicalReactionSpec(
+                "A->B",
+                {"A": 1.0},
+                {"B": 1.0},
+                phx.equations.ArrheniusRatePlan(2.0),
+            ),
+        ),
+    ).prepare()
+    reaction = phx.equations.ParticleReactionProcessPlan(mechanism)
     evaluation = reaction.evaluate(batch, state, thermodynamics)
     assert evaluation.successful
     assert jnp.max(jnp.abs(evaluation.element_residual)) < 1.0e-12
@@ -123,10 +135,12 @@ def test_reaction_network_conserves_elements_and_reaction_energy():
 
 def test_evaporation_and_shrinking_core_report_exhaustion_restrictions():
     schema = _schema(
-        (phx.equations.ParticlePhase.LIQUID, phx.equations.ParticlePhase.GAS)
+        (phx.equations.ChemicalPhaseKind.LIQUID, phx.equations.ChemicalPhaseKind.GAS)
     )
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
-        schema, jnp.asarray([75.0, 35.0]), jnp.asarray([0.0, 0.0])
+        phx.equations.PolynomialSpeciesThermodynamicsPlan(
+            schema, jnp.asarray([75.0, 35.0]), jnp.asarray([0.0, 0.0])
+        )
     )
     _, _, batch = _batch(shells=1)
     species = jnp.asarray([[[1.0, 0.0]]])
@@ -175,7 +189,9 @@ def test_evaporation_and_shrinking_core_report_exhaustion_restrictions():
 def test_continuum_exchange_deposits_exact_opposite_heat_and_species():
     schema = _schema()
     thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
-        schema, jnp.asarray([10.0, 10.0]), jnp.asarray([0.0, 0.0])
+        phx.equations.PolynomialSpeciesThermodynamicsPlan(
+            schema, jnp.asarray([10.0, 10.0]), jnp.asarray([0.0, 0.0])
+        )
     )
     particles, plan, batch = _batch(shells=1)
     species = jnp.asarray([[[1.0, 0.0]]])

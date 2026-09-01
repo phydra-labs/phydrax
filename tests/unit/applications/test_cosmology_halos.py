@@ -17,7 +17,7 @@ def _power(background):
         physics_policy_id="linear-total-matter",
         scale_id=background.scale.scale_id,
         source_kind="native",
-        differentiability="native-parameter",
+        differentiation="native-parameter",
     )
     k = jnp.geomspace(1.0e-2, 20.0, 256)
     values = jnp.stack((k**-1.0, 2.0 * k**-1.0))

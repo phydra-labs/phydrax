@@ -55,6 +55,7 @@ from ._certificates import (
     CertificateScope,
     KernelCertificate,
     SpectralInterval,
+    StabilityLowerBound,
 )
 from ._constraints import ConstraintMap
 from ._costs import (
@@ -251,6 +252,8 @@ from ._policies import (
     FGMRES,
     GeneralizedLSMR,
     GMRES,
+    LinearDerivativeSolvePolicy,
+    LinearSolveCheckPolicy,
     LinearSolveControl,
     LinearSolvePolicy,
     LSMR,
@@ -372,6 +375,7 @@ from ._resilience import (
 from ._results import (
     linear_status_message,
     LinearPrecisionEvidence,
+    LinearSolveCheckEvidence,
     LinearSolveDiagnostics,
     LinearSolveProvenance,
     LinearSolveResult,
@@ -388,6 +392,8 @@ from ._runtime import (
     release,
     solve,
     solve_adjoint,
+    solve_adjoint_checked,
+    solve_checked,
     solve_many,
     solve_recycled,
     solve_transpose,
@@ -1001,4 +1007,10 @@ __all__ = [
     "SmallLinearSolvePlan",
     "SmallLinearSolveResult",
     "solve_small_linear",
+    "LinearDerivativeSolvePolicy",
+    "LinearSolveCheckEvidence",
+    "LinearSolveCheckPolicy",
+    "StabilityLowerBound",
+    "solve_adjoint_checked",
+    "solve_checked",
 ]
