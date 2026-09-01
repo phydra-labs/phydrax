@@ -32,15 +32,18 @@ dem = phx.equations.compile_discrete_element_problem(
     neighborhood=phx.discretization.DenseParticleNeighborhoodPlan(0),
 )
 dem_state = dem.initialize_state(0.0, jnp.asarray([[0.0, 0.0]]), jnp.zeros((1, 2)))
-schema = phx.equations.ParticleSpeciesSchema(
+schema = phx.equations.ChemicalSpeciesSchema(
     ("solid",),
-    (phx.equations.ParticlePhase.SOLID,),
+    (phx.equations.ChemicalPhaseKind.SOLID,),
     jnp.asarray([0.01]),
     ("X",),
     jnp.asarray([[1]]),
+    jnp.zeros_like(jnp.asarray([0.01]), dtype=jnp.int32),
 )
 thermodynamics = phx.equations.ParticleThermodynamicMaterialPlan(
-    schema, jnp.asarray([10.0]), jnp.asarray([0.0])
+    phx.equations.PolynomialSpeciesThermodynamicsPlan(
+        schema, jnp.asarray([10.0]), jnp.asarray([0.0])
+    )
 )
 material = phx.equations.ParticleThermochemicalMaterialBundle(
     thermodynamics,

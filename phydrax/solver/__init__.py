@@ -123,7 +123,15 @@ from ._characteristic_projection import (
     solve_characteristic_projection,
     trace_characteristics,
 )
+from ._chemical_reactor import (
+    ChemicalReactorKind,
+    ChemicalReactorPlan,
+    ChemicalReactorSolution,
+    ChemicalReactorThermodynamicState,
+    PreparedChemicalReactorDynamics,
+)
 from ._cochain_electrostatic import (
+    CochainElectrostaticBoundaryPlan,
     CochainElectrostaticPlan,
     CochainElectrostaticResult,
     ElectrostaticBoundaryKind,
@@ -189,6 +197,12 @@ from ._coupled import (
     CoupledObservable,
     CoupledValidity,
     solve_coupled_hierarchy,
+)
+from ._coupled_field_checkpoint import (
+    CoupledFieldCheckpoint,
+    CoupledFieldCheckpointPlan,
+    read_coupled_field_checkpoint,
+    write_coupled_field_checkpoint,
 )
 from ._dae_initialization import (
     DAEInitializationMode,
@@ -308,6 +322,16 @@ from ._driving_path import (
     PiecewiseLinearDrivingPath,
 )
 from ._dynamics_evolution import DiffraxEvolution
+from ._electrode_reaction import (
+    ReactiveElectrodeEvaluation,
+    ReactiveElectrodePlan,
+    ReactiveElectrodeState,
+    ReactiveElectrodeStepResult,
+)
+from ._electrohydrodynamic import (
+    CochainMACTransferPlan,
+    ElectrohydrodynamicCouplingEvaluation,
+)
 from ._electromagnetic_pic import (
     ElectromagneticPICDiagnostics,
     ElectromagneticPICFixedStepMethod,
@@ -802,6 +826,14 @@ from ._multirate import (
     PartitionedDifferentialProblem,
     solve_multirate,
 )
+from ._nematic import (
+    MACNematicCouplingEvaluation,
+    MACNematicCouplingPlan,
+    NematicEvaluation,
+    NematicStepResult,
+    PreparedNematicDynamics,
+    PreparedNematicSemiImplicitStepPlan,
+)
 from ._neural_cde import (
     neural_cde_loss,
     NeuralCDETrainingData,
@@ -890,6 +922,11 @@ from ._particles import (
 from ._pic_current_source import (
     PICMaxwellCurrentSourcePlan,
     PreparedPICMaxwellCurrentSource,
+)
+from ._poisson_nernst_planck import (
+    PoissonNernstPlanckEvaluation,
+    PoissonNernstPlanckPlan,
+    PoissonNernstPlanckStepResult,
 )
 from ._probabilistic_ode import (
     PROBABILISTIC_ODE_NONFINITE,
@@ -1414,6 +1451,31 @@ __all__ = [
     "CochainMultirateDiagnostics",
     "CochainMultiratePlan",
     "CochainRatePartition",
+    "ChemicalReactorKind",
+    "ChemicalReactorPlan",
+    "ChemicalReactorSolution",
+    "ChemicalReactorThermodynamicState",
+    "PreparedChemicalReactorDynamics",
+    "CochainMACTransferPlan",
+    "ElectrohydrodynamicCouplingEvaluation",
+    "MACNematicCouplingEvaluation",
+    "MACNematicCouplingPlan",
+    "NematicEvaluation",
+    "NematicStepResult",
+    "PoissonNernstPlanckEvaluation",
+    "PoissonNernstPlanckPlan",
+    "PoissonNernstPlanckStepResult",
+    "PreparedNematicDynamics",
+    "PreparedNematicSemiImplicitStepPlan",
+    "ReactiveElectrodeEvaluation",
+    "ReactiveElectrodePlan",
+    "ReactiveElectrodeState",
+    "ReactiveElectrodeStepResult",
+    "CoupledFieldCheckpoint",
+    "CoupledFieldCheckpointPlan",
+    "read_coupled_field_checkpoint",
+    "write_coupled_field_checkpoint",
+    "CochainElectrostaticBoundaryPlan",
     "CochainElectrostaticPlan",
     "CochainElectrostaticResult",
     "ElectrostaticBoundaryKind",

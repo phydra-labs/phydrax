@@ -101,7 +101,6 @@ from ._self_gravity import (
 )
 from ._thermochemistry import (
     PreparedThermochemistryProcess,
-    StoichiometricReactionNetwork,
     ThermochemistryDiagnostics,
     ThermochemistryProcessPlan,
 )
@@ -175,7 +174,6 @@ __all__ = [
     "RadiationDiffusionDiagnostics",
     "RadiationMatterState",
     "SimulationSensitivityReport",
-    "StoichiometricReactionNetwork",
     "StructurePreservingFaceClosurePlan",
     "ThermochemistryDiagnostics",
     "ThermochemistryProcessPlan",

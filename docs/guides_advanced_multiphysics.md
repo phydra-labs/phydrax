@@ -70,9 +70,9 @@ coordinate; constant heating remains on the implicit signed-source route.
 `OrnsteinUhlenbeckRealization`. `BalanceLawCompositionPlan` declares process subcycles
 and explicit, exact, implicit, or exact-stochastic integration identities.
 
-`StoichiometricReactionNetwork` and `ThermochemistryProcessPlan` advect and react species
-through `MultispeciesEulerSystem`, validate invariant nullspaces, and account for reaction
-energy. `GrayRadiationDiffusionPlan` provides gray diffusion plus exact local
+`PreparedChemicalMechanism` and `ThermochemistryProcessPlan` advect and react
+species through `MultispeciesEulerSystem`, certify element and charge invariants,
+and derive reaction energy from shared species thermodynamics. `GrayRadiationDiffusionPlan` provides gray diffusion plus exact local
 radiation-matter exchange. `MultigroupM1RadiationSystem` supplies realizability-preserving
 hyperbolic moment transport.
 

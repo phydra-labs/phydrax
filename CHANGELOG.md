@@ -27,6 +27,13 @@
   distributed-PM feasibility. Native full Boltzmann/CMB parity, global curved N-body,
   generic surveys, stochastic feedback, and production tree gravity remain explicit
   non-goals rather than fallbacks.
+- Added a common chemical species and phase schema, NASA and polynomial species
+  thermodynamics, prepared deterministic and stochastic mechanisms, native stiff
+  reactors, extended rate laws, YAML interchange, and calibration coordinates;
+  added compatible Poisson--Nernst--Planck transport, reactive electrodes,
+  electrohydrodynamic and multiphase electrolyte coupling; and added compact
+  Q-tensor Landau--de Gennes, Beris--Edwards, anchoring, active, chiral,
+  electrostatic, and electrolytic liquid-crystal dynamics.
 - Added one fixed-capacity runtime particle-population authority with activity,
   mass, incarnation-safe slot reuse, deterministic allocation/deactivation, DEM
   lifecycle migration, and runtime particle-splat masks.
