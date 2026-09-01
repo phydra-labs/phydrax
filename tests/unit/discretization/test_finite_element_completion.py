@@ -292,8 +292,12 @@ def test_solver_material_checkpoint_and_distributed_contracts(tmp_path):
     second_order = compiled.as_second_order_system()
     eigenproblem = compiled.as_generalized_eigenproblem()
 
-    state = phx.equations.FiniteElementMaterialState("history", jnp.zeros((2, 3)))
-    transaction = phx.equations.FiniteElementMaterialTransaction((state,))
+    state = phx.equations.MaterialState(
+        phx.equations.MaterialSiteId("history"),
+        "history",
+        jnp.zeros((2, 3)),
+    )
+    transaction = phx.equations.MaterialTransaction((state,))
     committed = transaction.with_trials({"history": jnp.ones((2, 3))}).commit()
     checkpoint = phx.solver.FiniteElementCheckpoint(
         discretization.prepared_id,
@@ -301,7 +305,7 @@ def test_solver_material_checkpoint_and_distributed_contracts(tmp_path):
         0.0,
         1,
         (jnp.ones((5,)),),
-        material_states=committed.states,
+        materials=committed,
     )
     path = tmp_path / "finite-element.npz"
     phx.solver.write_finite_element_checkpoint(path, checkpoint)
@@ -332,7 +336,8 @@ def test_solver_material_checkpoint_and_distributed_contracts(tmp_path):
     )
     assert eigenproblem.problem_id
     assert restored.checkpoint_id == checkpoint.checkpoint_id
-    assert restored.material_states[0].state_version == 1
+    assert restored.materials is not None
+    assert restored.materials.states[0].state_version == 1
     assert jnp.allclose(halo.sum_contributions(values), jnp.asarray([4.0, 6.0, 4.0, 6.0]))
     assert jnp.allclose(halo.average_replicas(values), jnp.asarray([2.0, 3.0, 2.0, 3.0]))
 

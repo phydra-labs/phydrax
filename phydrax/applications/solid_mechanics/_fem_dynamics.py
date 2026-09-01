@@ -21,8 +21,7 @@ from ...dynamics import SecondOrderDifferentialSystem
 from ...equations import (
     CompiledFiniteElementProblem,
     FiniteElementExecutionContext,
-    FiniteElementMaterialState,
-    FiniteElementMaterialTransaction,
+    MaterialTransaction,
 )
 from ...equations.fem import FiniteElementMassPolicy
 from ...linalg import ArraySpace
@@ -135,7 +134,7 @@ class FiniteElementDynamicsState(StrictModule, NonTrainableState):
     displacement: Array
     velocity: Array
     acceleration: Array
-    materials: FiniteElementMaterialTransaction | None
+    materials: MaterialTransaction | None
     time: Array
     step: Array
     state_version: Array
@@ -151,7 +150,7 @@ class FiniteElementDynamicsState(StrictModule, NonTrainableState):
         time: ArrayLike = 0.0,
         step: ArrayLike = 0,
         state_version: ArrayLike = 0,
-        materials: FiniteElementMaterialTransaction | None = None,
+        materials: MaterialTransaction | None = None,
     ):
         displacement_ = jnp.asarray(displacement)
         velocity_ = jnp.asarray(velocity)
@@ -176,18 +175,9 @@ class FiniteElementDynamicsState(StrictModule, NonTrainableState):
             raise TypeError("FEM dynamic state arrays must have one common dtype.")
         if time_.shape != () or step_.shape != () or version.shape != ():
             raise ValueError("FEM dynamic time, step, and version must be scalars.")
-        if materials is not None and not isinstance(
-            materials, FiniteElementMaterialTransaction
-        ):
-            raise TypeError("materials must be FiniteElementMaterialTransaction or None.")
-        material_layout = (
-            None
-            if materials is None
-            else tuple(
-                (state.material_id, tuple(state.committed.shape))
-                for state in materials.states
-            )
-        )
+        if materials is not None and not isinstance(materials, MaterialTransaction):
+            raise TypeError("materials must be MaterialTransaction or None.")
+        material_layout = None if materials is None else materials.layout_id
         self.displacement = displacement_
         self.velocity = velocity_
         self.acceleration = acceleration_
@@ -273,7 +263,7 @@ class FiniteElementDynamicsResult(StrictModule):
 class FiniteElementDynamicsExecutionContext(StrictModule):
     """Accepted material history and user data visible to transient FE kernels."""
 
-    materials: FiniteElementMaterialTransaction | None
+    materials: MaterialTransaction | None
     start_time: Array
     end_time: Array
     step_size: Array
@@ -683,7 +673,7 @@ def _material_transaction(
     velocity: Array,
     acceleration: Array,
     /,
-) -> tuple[FiniteElementMaterialTransaction | None, Array, Array]:
+) -> tuple[MaterialTransaction | None, Array, Array]:
     previous = arguments.accepted.materials
     if plan.material_update is None:
         return (
@@ -700,19 +690,15 @@ def _material_transaction(
         previous,
         arguments.user_args,
     )
-    if not isinstance(candidate, FiniteElementMaterialTransaction):
-        raise TypeError("material_update must return FiniteElementMaterialTransaction.")
-    if previous is None or len(previous.states) != len(candidate.states):
+    if not isinstance(candidate, MaterialTransaction):
+        raise TypeError("material_update must return MaterialTransaction.")
+    if previous is None or previous.layout_id != candidate.layout_id:
         raise ValueError("Material update changed the transaction layout.")
     residual = jnp.asarray(0.0, dtype=displacement.real.dtype)
     for old, new in zip(previous.states, candidate.states, strict=True):
-        if (
-            old.material_id != new.material_id
-            or old.committed.shape != new.committed.shape
-            or old.state_version != new.state_version
-        ):
+        if old.layout_id != new.layout_id or old.state_version != new.state_version:
             raise ValueError(
-                "Material update changed a material identity, state shape, or version."
+                "Material update changed a site identity, state layout, or version."
             )
         residual = jnp.maximum(
             residual,
@@ -723,27 +709,20 @@ def _material_transaction(
 
 
 def _selected_materials(
-    previous: FiniteElementMaterialTransaction | None,
-    candidate: FiniteElementMaterialTransaction | None,
+    previous: MaterialTransaction | None,
+    candidate: MaterialTransaction | None,
     accepted: Array,
     /,
-) -> FiniteElementMaterialTransaction | None:
+) -> MaterialTransaction | None:
     if previous is None:
         return None
     if candidate is None:
         return previous
-    states = []
-    for old, new in zip(previous.states, candidate.states, strict=True):
-        committed = jnp.where(accepted, new.trial, old.committed)
-        states.append(
-            FiniteElementMaterialState(
-                old.material_id,
-                committed,
-                trial=committed,
-                state_version=old.state_version,
-            )
-        )
-    return FiniteElementMaterialTransaction(tuple(states))
+    trials = {
+        old.site_id.key: jnp.where(accepted, new.trial, old.committed)
+        for old, new in zip(previous.states, candidate.states, strict=True)
+    }
+    return previous.with_trials(trials)
 
 
 def _admissibility(
@@ -752,7 +731,7 @@ def _admissibility(
     displacement: Array,
     velocity: Array,
     acceleration: Array,
-    materials: FiniteElementMaterialTransaction | None,
+    materials: MaterialTransaction | None,
     transaction_residual: Array,
     material_finite: Array,
     /,

@@ -81,6 +81,7 @@ from ._variational import (
     IntegrationRule as ReferenceRule,
     MassAction,
     SourceAction,
+    VariationalActionDescriptor,
     VariationalCoefficient,
 )
 
@@ -272,6 +273,21 @@ class CellResidualAction(StrictModule, NonTrainableState):
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "residual",
+            "cell",
+            (self.field_name,),
+            self.input_fields,
+            tuple(
+                item
+                for field in self.input_fields
+                for item in ((field, "value"), (field, "grad"))
+            ),
+            evaluator=self.kernel,
+        )
+
 
 class PairwiseVolumeFluxAction(StrictModule, NonTrainableState):
     """Collocated tensor-cell flux differencing from a symmetric two-point flux."""
@@ -308,6 +324,17 @@ class PairwiseVolumeFluxAction(StrictModule, NonTrainableState):
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "pairwise-volume-flux",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"),),
+            evaluator=self.kernel,
+        )
+
 
 class InteriorFacetAction(StrictModule, NonTrainableState):
     """Two-sided numerical flux density over interior facets."""
@@ -342,6 +369,17 @@ class InteriorFacetAction(StrictModule, NonTrainableState):
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "residual",
+            "interior_facet",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "jump"), (self.field_name, "average")),
+            evaluator=self.kernel,
+        )
+
 
 class ExteriorFacetAction(StrictModule, NonTrainableState):
     """One-sided state-dependent numerical flux over exterior facets."""
@@ -375,6 +413,17 @@ class ExteriorFacetAction(StrictModule, NonTrainableState):
         self.domain = domain
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
+
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "residual",
+            "exterior_facet",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"),),
+            evaluator=self.kernel,
+        )
 
 
 SIPGBoundaryKind: TypeAlias = Literal["dirichlet", "neumann", "robin"]
@@ -548,6 +597,27 @@ class SIPGFacetAction(StrictModule, NonTrainableState):
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        coefficients = [self.diffusivity]
+        if self.boundary is not None:
+            coefficients.append(self.boundary.value)
+            if self.boundary.robin_coefficient is not None:
+                coefficients.append(self.boundary.robin_coefficient)
+        return VariationalActionDescriptor(
+            "residual",
+            self.domain.kind,
+            (self.field_name,),
+            (self.field_name,),
+            (
+                (self.field_name, "jump"),
+                (self.field_name, "average"),
+                (self.field_name, "grad"),
+                (self.field_name, "normal-trace"),
+            ),
+            coefficient_values=coefficients,
+        )
+
 
 class CellEnergyAction(StrictModule, NonTrainableState):
     """Cell-local scalar energy differentiated into one field residual."""
@@ -581,6 +651,18 @@ class CellEnergyAction(StrictModule, NonTrainableState):
         self.domain = domain
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
+
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "energy",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"), (self.field_name, "grad")),
+            evaluator=self.density,
+            provider_offers=("prepared-local",),
+        )
 
 
 class LocalFunctionalAction(StrictModule, NonTrainableState):
@@ -661,6 +743,35 @@ class LocalFunctionalAction(StrictModule, NonTrainableState):
     def semantic_to_field(self) -> dict[str, str]:
         return dict(self.field_bindings)
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        bindings = dict(self.field_bindings)
+        operators = tuple(
+            item
+            for specification in self.term.fields
+            for item in (
+                ((bindings[specification.field_name], "value"),)
+                if specification.value and not specification.gradient
+                else (
+                    ((bindings[specification.field_name], "grad"),)
+                    if specification.gradient and not specification.value
+                    else (
+                        (bindings[specification.field_name], "value"),
+                        (bindings[specification.field_name], "grad"),
+                    )
+                )
+            )
+        )
+        return VariationalActionDescriptor(
+            "functional",
+            "cell",
+            self.output_fields,
+            self.input_fields,
+            operators,
+            evaluator=self.term.density,
+            provider_offers=("prepared-local",),
+        )
+
 
 class CellBilinearAction(StrictModule, NonTrainableState):
     """User-provided cell-local matrix over one field."""
@@ -695,6 +806,17 @@ class CellBilinearAction(StrictModule, NonTrainableState):
         self.rules = _normalize_rules(rules)
         self.action_id = identifier
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "bilinear",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"), (self.field_name, "grad")),
+            evaluator=self.kernel,
+        )
+
 
 class PreparedOperatorAction(StrictModule, NonTrainableState):
     """One prepared global linear action scheduled by a finite-element form."""
@@ -727,6 +849,16 @@ class PreparedOperatorAction(StrictModule, NonTrainableState):
         self.domain = domain
         self.rules = ()
         self.action_id = identifier
+
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "bilinear",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"),),
+        )
 
 
 FiniteElementAction = (

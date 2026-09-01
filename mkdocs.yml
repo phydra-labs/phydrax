@@ -229,6 +229,7 @@ nav:
         - Multiphase and incompressible SPH: "guides_multiphase_incompressible_sph.md"
         - Finite elements: "guides_finite_elements.md"
         - Isogeometric analysis: "guides_isogeometric_analysis.md"
+        - IGA support and qualification: "guides_isogeometric_analysis_support.md"
         - Virtual elements: "guides_virtual_elements.md"
         - Spectral elements: "guides_spectral_elements.md"
         - Complete spectral hp: "guides_complete_spectral_hp.md"

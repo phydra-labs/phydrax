@@ -122,6 +122,16 @@ from ._force_density_stability import (
     ForceDensityTangentStabilityResult,
 )
 from ._force_density_topology import ForceDensityStructure
+from ._iga_dynamics import IGADynamicsPlan, IGAFormulation, IGATimeMethod
+from ._iga_rods import IGARodPlan
+from ._iga_shells import IGAKirchhoffLovePlan, IGAReissnerMindlinPlan
+from ._iga_solids import (
+    iga_hyperelastic_solid,
+    iga_hyperelastic_u_p_solid,
+    iga_linear_solid,
+    IGASolidDimensionalMode,
+    IGASolidFormulation,
+)
 from ._loads import (
     AbstractMechanicalLoad,
     ClosedSurfacePressure,
@@ -330,6 +340,14 @@ __all__ = [
     "ForceDensityStructure",
     "ForceDensityTangentStabilityResult",
     "ForceDensityTolerances",
+    "IGADynamicsPlan",
+    "IGAFormulation",
+    "IGAKirchhoffLovePlan",
+    "IGAReissnerMindlinPlan",
+    "IGARodPlan",
+    "IGASolidDimensionalMode",
+    "IGASolidFormulation",
+    "IGATimeMethod",
     "ImplicitNewmarkMethod",
     "J2PlasticityParameters",
     "BiotPoromechanicsParameters",
@@ -525,6 +543,9 @@ __all__ = [
     "certify_state_adjoint",
     "hill_mandel_evidence",
     "isochoric_deformation_gradient",
+    "iga_hyperelastic_u_p_solid",
+    "iga_hyperelastic_solid",
+    "iga_linear_solid",
     "mixed_hyperelastic_form",
     "mixed_pressure_first_piola",
     "plane_stress_hyperelastic_form",

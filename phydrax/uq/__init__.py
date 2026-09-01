@@ -231,6 +231,14 @@ from ._flow_variational import (
     FlowVariationalFamily,
     FlowVariationalResult,
 )
+from ._foundation import (
+    Experiment,
+    PosteriorRecord,
+    UncertainVariable,
+    UncertainVariableRole,
+    UQPlan,
+    UQProduct,
+)
 from ._free_energy import (
     bennett_acceptance_ratio,
     free_energy_perturbation,
@@ -819,6 +827,12 @@ from ._whitening import GaussianPriorWhitening
 
 
 __all__ = [
+    "Experiment",
+    "PosteriorRecord",
+    "UQPlan",
+    "UQProduct",
+    "UncertainVariable",
+    "UncertainVariableRole",
     "TopologyEnsembleSummary",
     "AutoregressiveLaw",
     "QuantumPOVM",

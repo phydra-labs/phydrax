@@ -55,6 +55,70 @@ def _normalize_rules(
     return normalized
 
 
+class VariationalActionDescriptor(StrictModule, NonTrainableState):
+    """Static lowering contract carried by every variational action."""
+
+    action_kind: str = eqx.field(static=True)
+    default_domain_kind: str = eqx.field(static=True)
+    output_fields: tuple[str, ...] = eqx.field(static=True)
+    input_fields: tuple[str, ...] = eqx.field(static=True)
+    operators: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    coefficient_values: tuple["VariationalCoefficient", ...]
+    provider_offers: tuple[str, ...] = eqx.field(static=True)
+    evaluator: Callable | None
+
+    def __init__(
+        self,
+        action_kind: str,
+        default_domain_kind: str,
+        output_fields: Sequence[str],
+        input_fields: Sequence[str],
+        operators: Sequence[tuple[str, str]],
+        /,
+        *,
+        coefficient_values: Sequence["VariationalCoefficient"] = (),
+        provider_offers: Sequence[str] = ("native",),
+        evaluator: Callable | None = None,
+    ):
+        kind = str(action_kind)
+        domain = str(default_domain_kind)
+        outputs = tuple(str(value) for value in output_fields)
+        inputs = tuple(str(value) for value in input_fields)
+        operations = tuple((str(field), str(operator)) for field, operator in operators)
+        coefficients = tuple(coefficient_values)
+        offers = tuple(sorted(set(str(value) for value in provider_offers)))
+        if (
+            kind
+            not in (
+                "residual",
+                "energy",
+                "functional",
+                "bilinear",
+                "linear",
+                "pairwise-volume-flux",
+            )
+            or domain not in ("cell", "exterior_facet", "interior_facet")
+            or not outputs
+            or not inputs
+            or any(not value for value in (*outputs, *inputs))
+            or not all(
+                isinstance(value, VariationalCoefficient) for value in coefficients
+            )
+            or not offers
+            or any(not value for value in offers)
+            or (evaluator is not None and not callable(evaluator))
+        ):
+            raise ValueError("Variational action descriptor is invalid.")
+        self.action_kind = kind
+        self.default_domain_kind = domain
+        self.output_fields = outputs
+        self.input_fields = inputs
+        self.operators = operations
+        self.coefficient_values = coefficients
+        self.provider_offers = offers
+        self.evaluator = evaluator
+
+
 class VariationalCoefficient(StrictModule, NonTrainableState):
     """Coefficient data bound to an explicit variational evaluation layout."""
 
@@ -328,6 +392,18 @@ class DiffusionAction(StrictModule, NonTrainableState):
         self.domain = domain
         self.rules = _normalize_rules(rules)
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "residual",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "grad"),),
+            coefficient_values=(self.diffusivity,),
+            provider_offers=("prepared-local",),
+        )
+
 
 class MassAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
@@ -355,6 +431,18 @@ class MassAction(StrictModule, NonTrainableState):
         self.domain = domain
         self.rules = _normalize_rules(rules)
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "residual",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"),),
+            coefficient_values=(self.coefficient,),
+            provider_offers=("prepared-local",),
+        )
+
 
 class SourceAction(StrictModule, NonTrainableState):
     field_name: str = eqx.field(static=True)
@@ -381,6 +469,18 @@ class SourceAction(StrictModule, NonTrainableState):
         self.action_id = identifier
         self.domain = domain
         self.rules = _normalize_rules(rules)
+
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "linear",
+            "cell",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"),),
+            coefficient_values=(self.source,),
+            provider_offers=("prepared-local",),
+        )
 
 
 class BoundaryLoadAction(StrictModule, NonTrainableState):
@@ -416,6 +516,18 @@ class BoundaryLoadAction(StrictModule, NonTrainableState):
         self.domain = domain
         self.rules = _normalize_rules(rules)
 
+    @property
+    def descriptor(self) -> VariationalActionDescriptor:
+        return VariationalActionDescriptor(
+            "linear",
+            "exterior_facet",
+            (self.field_name,),
+            (self.field_name,),
+            ((self.field_name, "value"),),
+            coefficient_values=(self.load,),
+            provider_offers=("prepared-local",),
+        )
+
 
 __all__ = [
     "BoundaryLoadAction",
@@ -423,6 +535,7 @@ __all__ = [
     "IntegrationRule",
     "MassAction",
     "SourceAction",
+    "VariationalActionDescriptor",
     "VariationalCoefficient",
     "coefficient",
 ]

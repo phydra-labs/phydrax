@@ -351,5 +351,5 @@ def test_pairwise_volume_flux_lowers_to_collocated_authoritative_action():
 
     assert ir.actions[0].action_kind == "pairwise-volume-flux"
     assert program.worksets[0].signature.local_kernel == "collocated"
-    assert table.bindings[0].kernel_kind == "PairwiseVolumeFluxAction"
+    assert table.bindings[0].kernel_kind == "pairwise-volume-flux"
     assert table.bindings[0].local_kernel == "collocated"

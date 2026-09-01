@@ -123,15 +123,18 @@
   roots, atomic rollback, fixed-window replay, fixed-grid waveform/subcycling
   contracts, resource and work evidence, and explicit algorithmic or implicit
   differentiation semantics.
-- Added an S1 isogeometric-analysis path for regular untrimmed
-  full-dimensional two-dimensional single-patch NURBS maps with clamped
-  isotropic frozen B-spline grids, positive mean-one-gauge weights, exactly
-  isoparametric scalar H1 fields, explicit Gauss quadrature, homogeneous strong
-  traces or natural Neumann boundaries, and sum-factorized matrix-free
-  finite-element forms. Added affine and exact rational quarter-annulus
-  qualification producers, an end-to-end Poisson example, and record-only
-  degree/span timing producers; sampled map evidence is not a global
-  injectivity certificate or BRep/CAD support.
+- Added the fail-closed `iga.tensor` R1 isogeometric foundation for regular
+  untrimmed full-dimensional 1D/2D/3D polynomial and NURBS maps; anisotropic and
+  independent geometry/field grids; direct-tensor and extracted-Bernstein
+  realizations; explicit common integration overlays; self-periodic traces;
+  h-, p-, and k-refinement transfer; scalar, vector, and mixed H1 fields; linear
+  elasticity, thermoelasticity, and generalized eigenspaces; fixed-topology
+  differentiable numeric refresh; and immutable native restart lineage. Added
+  exact allow-listed support tuples, deterministic per-case qualification
+  manifests, an unreleased capability-profile producer, public examples,
+  S1 migration fixtures, and record-only performance producers. Sampled map
+  evidence remains neither a global injectivity certificate nor BRep/CAD
+  support, and no capability is released without separately signed gate evidence.
 - Added the representation-independent `phydrax.variational` functional substrate,
   DomainFunction bindings, and prepared-local value/first-variation/Hessian
   execution for coupled finite-element and isogeometric potentials.

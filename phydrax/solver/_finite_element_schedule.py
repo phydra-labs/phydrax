@@ -17,8 +17,9 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations import (
-    FiniteElementMaterialState,
-    FiniteElementMaterialTransaction,
+    MaterialSiteId,
+    MaterialState,
+    MaterialTransaction,
 )
 from ._finite_element_checkpoint import FiniteElementCheckpoint
 from ._schedule import TimeLaw
@@ -28,7 +29,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
     """Immutable fields and committed material data at one accepted step."""
 
     fields: tuple[Array, ...]
-    materials: FiniteElementMaterialTransaction | None
+    materials: MaterialTransaction | None
     time: Array
     step: int = eqx.field(static=True)
     schedule_cursor: int = eqx.field(static=True)
@@ -48,7 +49,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
         compilation_id: str,
         /,
         *,
-        materials: FiniteElementMaterialTransaction | None = None,
+        materials: MaterialTransaction | None = None,
         schedule_cursor: int = 0,
         state_version: int = 0,
     ):
@@ -70,9 +71,7 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
             raise ValueError("Accepted FE step, cursor, and version must be nonnegative.")
         if not topology or not prepared or not compilation:
             raise ValueError("Accepted FE identities must be non-empty.")
-        if materials is not None and not isinstance(
-            materials, FiniteElementMaterialTransaction
-        ):
+        if materials is not None and not isinstance(materials, MaterialTransaction):
             raise TypeError("materials must be FiniteElementMaterialTransaction or None.")
         self.fields = fields_
         self.materials = materials
@@ -113,7 +112,7 @@ class FiniteElementAttemptResult(StrictModule):
     """Candidate state and explicit accept/retry evidence for one attempt."""
 
     fields: tuple[Array, ...]
-    materials: FiniteElementMaterialTransaction | None
+    materials: MaterialTransaction | None
     accepted: Array
     retry_requested: Array
     suggested_step: Array
@@ -125,7 +124,7 @@ class FiniteElementAttemptResult(StrictModule):
         accepted: ArrayLike,
         /,
         *,
-        materials: FiniteElementMaterialTransaction | None = None,
+        materials: MaterialTransaction | None = None,
         retry_requested: ArrayLike = False,
         suggested_step: ArrayLike = 0.0,
         diagnostics: object = None,
@@ -138,9 +137,7 @@ class FiniteElementAttemptResult(StrictModule):
             raise ValueError("Finite-element attempts require candidate fields.")
         if accepted_.shape != () or retry.shape != () or suggested.shape != ():
             raise ValueError("Attempt decision and suggested step must be scalars.")
-        if materials is not None and not isinstance(
-            materials, FiniteElementMaterialTransaction
-        ):
+        if materials is not None and not isinstance(materials, MaterialTransaction):
             raise TypeError("materials must be FiniteElementMaterialTransaction or None.")
         self.fields = fields_
         self.materials = materials
@@ -378,7 +375,8 @@ def write_finite_element_restart(
         "state_version": manifest.state.state_version,
         "field_count": len(manifest.state.fields),
         "materials": [
-            [value.material_id, value.state_version] for value in material_states
+            [value.site_id.key, value.model_id, value.state_version]
+            for value in material_states
         ],
         "auxiliary_names": [name for name, _ in manifest.auxiliary_state],
         "integrator_names": [name for name, _ in manifest.integrator_state],
@@ -416,17 +414,25 @@ def read_finite_element_restart(
     fields = tuple(
         archive[f"field_{index}"] for index in range(int(metadata["field_count"]))
     )
-    material_states = tuple(
-        FiniteElementMaterialState(
-            material_id,
-            archive[f"material_{index}"],
-            state_version=int(version),
+    material_states_: list[MaterialState] = []
+    for index, entry in enumerate(metadata["materials"]):
+        if len(entry) == 2:
+            material_id, version = entry
+            model_id = material_id
+        elif len(entry) == 3:
+            material_id, model_id, version = entry
+        else:
+            raise ValueError("Finite-element material restart metadata is invalid.")
+        material_states_.append(
+            MaterialState(
+                MaterialSiteId(material_id),
+                model_id,
+                archive[f"material_{index}"],
+                state_version=int(version),
+            )
         )
-        for index, (material_id, version) in enumerate(metadata["materials"])
-    )
-    materials = (
-        None if not material_states else FiniteElementMaterialTransaction(material_states)
-    )
+    material_states = tuple(material_states_)
+    materials = None if not material_states else MaterialTransaction(material_states)
     state = FiniteElementAcceptedState(
         fields,
         archive["time"],

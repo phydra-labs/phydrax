@@ -54,6 +54,43 @@ def _component_shape(value: Sequence[int], /) -> tuple[int, ...]:
     return shape
 
 
+class GlobalCoefficientId(StrictModule, NonTrainableState):
+    """Stable identity for one coefficient in a discrete field space."""
+
+    field_space_id: str = eqx.field(static=True)
+    ordinal: int = eqx.field(static=True)
+    component: tuple[int, ...] = eqx.field(static=True)
+    coefficient_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        field_space_id: str,
+        ordinal: int,
+        component: Sequence[int] = (),
+        /,
+        *,
+        coefficient_id: str | None = None,
+    ):
+        space = nonempty_identifier("field_space_id", field_space_id)
+        ordinal_ = int(ordinal)
+        component_ = tuple(int(index) for index in component)
+        if ordinal_ < 0 or any(index < 0 for index in component_):
+            raise ValueError("Global coefficient indices must be nonnegative.")
+        self.field_space_id = space
+        self.ordinal = ordinal_
+        self.component = component_
+        self.coefficient_id = resolved_identifier(
+            "coefficient_id",
+            coefficient_id,
+            {
+                "kind": "global-coefficient",
+                "field_space": space,
+                "ordinal": ordinal_,
+                "component": list(component_),
+            },
+        )
+
+
 class AbstractDofLayout(StrictModule, NonTrainableState):
     """Abstract finite-coordinate layout for one field."""
 
@@ -428,6 +465,7 @@ __all__ = [
     "EntityDofLayout",
     "FieldConformity",
     "FieldRepresentation",
+    "GlobalCoefficientId",
     "ModalDofLayout",
     "TensorDofLayout",
 ]

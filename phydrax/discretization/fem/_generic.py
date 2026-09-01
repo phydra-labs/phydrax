@@ -40,6 +40,7 @@ from .._lifecycle import (
 from .._local_variational import (
     AbstractPreparedLocalDiscretization,
     LocalFieldBinding,
+    LocalVariationalCapabilities,
     PreparedLocalRegion,
 )
 from .._measure import DiscreteMeasure
@@ -1393,6 +1394,11 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             numeric_version=numeric_version,
             geometry_layout_id=self.default_runtime.geometry_layout_id,
         )
+
+    def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:
+        from ._local_provider import FiniteElementLocalProvider
+
+        return FiniteElementLocalProvider(self).local_variational_capabilities()
 
     def local_field_binding(self, name: str, /) -> LocalFieldBinding:
         from ._local_provider import FiniteElementLocalProvider

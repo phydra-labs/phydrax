@@ -29,11 +29,13 @@ from .._lifecycle import AbstractDiscretizationPlan, validate_prepared_metadata
 from .._local_variational import (
     AbstractPreparedLocalDiscretization,
     LocalFieldBinding,
+    LocalVariationalCapabilities,
+    LocalVariationalOffer,
     PreparedLocalRegion,
 )
 from .._spaces import DiscreteFieldSpace, TensorDofLayout
 from .._support import DiscreteSupport
-from .._topology import EntitySelection, TensorTopology
+from .._topology import EntitySelection
 from ..fem._precision import FiniteElementPrecisionPolicy
 from ._actions import IsogeometricGeometryActions, IsogeometricReferenceActions
 from ._basis import (
@@ -47,6 +49,7 @@ from ._geometry import (
     IsogeometricRuntimeData,
     NURBSGeometryState,
 )
+from ._topology import SplineSpanTopology
 
 
 def _cell_gathers(basis: TensorSplineBasisSpec, /) -> np.ndarray:
@@ -55,10 +58,10 @@ def _cell_gathers(basis: TensorSplineBasisSpec, /) -> np.ndarray:
     for span_row in np.ndindex(basis.span_shape):
         active = tuple(int(spans[a][row]) for a, row in enumerate(span_row))
         local = []
-        for offset in np.ndindex((basis.degree + 1,) * basis.parametric_dimension):
+        for offset in np.ndindex(tuple(degree + 1 for degree in basis.degrees)):
             control = tuple(
-                span - basis.degree + shift
-                for span, shift in zip(active, offset, strict=True)
+                span - degree + shift
+                for span, degree, shift in zip(active, basis.degrees, offset, strict=True)
             )
             local.append(np.ravel_multi_index(control, basis.control_shape))
         routes.append(local)
@@ -95,47 +98,58 @@ def _query_configuration(
     quadrature: IsogeometricQuadraturePolicy,
     /,
     *,
+    overlay_breaks: tuple[tuple[float, ...], ...] | None = None,
     facet_axis: int = -1,
     facet_side: int = 0,
 ) -> tuple[
     TensorBSplineJetPlan, tuple[int, ...], tuple[int, ...], tuple[int, ...], Array
 ]:
-    stencils = []
-    axis_weights = []
-    entity_axes = []
-    point_axes = []
-    entity_shape = []
-    point_shape = []
-    cursor = 0
-    zero = (0,) * basis.parametric_dimension
-    multi_indices = [zero]
-    for derivative_axis in range(basis.parametric_dimension):
-        derivative = list(zero)
-        derivative[derivative_axis] = 1
-        multi_indices.append(tuple(derivative))
+    stencils, axis_weights, entity_axes, point_axes = [], [], [], []
+    entity_shape, point_shape, cursor = [], [], 0
+    dimension = basis.parametric_dimension
+    zero = (0,) * dimension
+    multi_indices = [
+        derivative for derivative in np.ndindex((3,) * dimension) if sum(derivative) <= 2
+    ]
     for axis_index, axis in enumerate(basis.axes):
         if axis_index == facet_axis:
             endpoint = axis.parameter_interval[0 if facet_side < 0 else 1]
             queries = jnp.asarray([endpoint], dtype=axis.knots.dtype)
-            span = np.asarray(axis.span_indices)
-            spans = jnp.asarray([span[0 if facet_side < 0 else -1]], dtype=jnp.int32)
+            spans = jnp.asarray(
+                [np.asarray(axis.span_indices)[0 if facet_side < 0 else -1]],
+                dtype=jnp.int32,
+            )
             weights = jnp.ones((1,), dtype=axis.knots.dtype)
             point_axes.append(cursor)
             point_shape.append(1)
         else:
-            queries, weights = quadrature.axis_rule(axis)
-            spans = jnp.broadcast_to(axis.span_indices[:, None], queries.shape)
+            count = quadrature.count_for_axis(axis_index, dimension)
+            nodes, rule_weights = np.polynomial.legendre.leggauss(count)
+            bounds = (
+                np.asarray(axis.span_bounds)
+                if overlay_breaks is None
+                else np.stack(
+                    (overlay_breaks[axis_index][:-1], overlay_breaks[axis_index][1:]),
+                    axis=-1,
+                )
+            )
+            half = 0.5 * (bounds[:, 1] - bounds[:, 0])
+            queries = jnp.asarray(
+                0.5 * (bounds[:, 0] + bounds[:, 1])[:, None] + half[:, None] * nodes
+            )
+            weights = jnp.asarray(half[:, None] * rule_weights)
+            spans = jnp.asarray(
+                np.searchsorted(np.asarray(axis.knots), np.asarray(queries), side="right")
+                - 1,
+                dtype=jnp.int32,
+            )
             entity_axes.append(cursor)
             point_axes.append(cursor + 1)
-            entity_shape.append(axis.span_count)
-            point_shape.append(quadrature.points_per_axis)
+            entity_shape.append(bounds.shape[0])
+            point_shape.append(count)
         stencils.append(
             bspline_jet_stencil(
-                axis.knots,
-                queries,
-                degree=axis.degree,
-                maximum_order=1,
-                spans=spans,
+                axis.knots, queries, degree=axis.degree, maximum_order=2, spans=spans
             )
         )
         axis_weights.append(weights)
@@ -145,20 +159,78 @@ def _query_configuration(
     cursor = 0
     for weight in axis_weights:
         width = weight.ndim
-        shape = (
+        raw_weights = raw_weights * weight.reshape(
             (1,) * cursor
-            + tuple(int(size) for size in weight.shape)
+            + tuple(weight.shape)
             + (1,) * (len(tensor.query_shape) - cursor - width)
         )
-        raw_weights = raw_weights * weight.reshape(shape)
         cursor += width
     permutation = tuple(entity_axes + point_axes)
-    entity_shape_ = tuple(entity_shape) or (1,)
-    point_shape_ = tuple(point_shape) or (1,)
-    reference_weights = jnp.transpose(raw_weights, permutation).reshape(
-        (prod(entity_shape_), prod(point_shape_))
+    entity_shape_, point_shape_ = tuple(entity_shape) or (1,), tuple(point_shape) or (1,)
+    return (
+        tensor,
+        permutation,
+        entity_shape_,
+        point_shape_,
+        jnp.transpose(raw_weights, permutation).reshape(
+            (prod(entity_shape_), prod(point_shape_))
+        ),
     )
-    return tensor, permutation, entity_shape_, point_shape_, reference_weights
+
+
+def _common_overlay_breaks(
+    geometry_basis: TensorSplineBasisSpec,
+    fields: Sequence[IsogeometricFieldSpec],
+    /,
+) -> tuple[tuple[float, ...], ...]:
+    """Union positive-span boundaries for a common field/geometry integration mesh."""
+    result = []
+    for axis_index, geometry_axis in enumerate(geometry_basis.axes):
+        lower, upper = geometry_axis.parameter_interval
+        values = [np.asarray(geometry_axis.span_bounds).reshape((-1,))]
+        for field in fields:
+            axis = field.basis.axes[axis_index]
+            if axis.parameter_interval != (lower, upper):
+                raise ValueError(
+                    "Geometry and field bases must share each parameter interval."
+                )
+            values.append(np.asarray(axis.span_bounds).reshape((-1,)))
+        breaks = np.unique(np.concatenate(values))
+        breaks = breaks[(breaks >= lower) & (breaks <= upper)]
+        if breaks.size < 2 or np.any(np.diff(breaks) <= 0.0):
+            raise ValueError("IGA common integration overlay has invalid span breaks.")
+        result.append(tuple(float(value) for value in breaks))
+    return tuple(result)
+
+
+def _overlay_gathers(
+    basis: TensorSplineBasisSpec, overlay_breaks: tuple[tuple[float, ...], ...], /
+) -> np.ndarray:
+    routes = []
+    for overlay_cell in np.ndindex(tuple(len(values) - 1 for values in overlay_breaks)):
+        controls = []
+        for axis, row in zip(basis.axes, overlay_cell, strict=True):
+            midpoint = 0.5 * (
+                overlay_breaks[len(controls)][row]
+                + overlay_breaks[len(controls)][row + 1]
+            )
+            span = int(
+                np.searchsorted(np.asarray(axis.knots), midpoint, side="right") - 1
+            )
+            controls.append((span, axis.degree))
+        routes.append(
+            [
+                np.ravel_multi_index(
+                    tuple(
+                        span - degree + shift
+                        for (span, degree), shift in zip(controls, offset, strict=True)
+                    ),
+                    basis.control_shape,
+                )
+                for offset in np.ndindex(tuple(degree + 1 for _, degree in controls))
+            ]
+        )
+    return np.asarray(routes, dtype=np.int32)
 
 
 def _subset_domain(base: IntegrationDomain, rows: np.ndarray, /) -> IntegrationDomain:
@@ -179,6 +251,7 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
     """Structural S1 plan for one fixed-topology NURBS patch."""
 
     basis: TensorSplineBasisSpec
+    topology: SplineSpanTopology
     geometry: NURBSGeometryState
     fields: tuple[IsogeometricFieldSpec, ...]
     quadrature_policy: IsogeometricQuadraturePolicy
@@ -214,8 +287,14 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
             raise TypeError("fields must contain IsogeometricFieldSpec values.")
         if len({field.name for field in field_values}) != len(field_values):
             raise ValueError("IGA field names must be unique.")
-        if any(field.basis.basis_id != basis.basis_id for field in field_values):
-            raise ValueError("S1 IGA fields must be exactly isoparametric with geometry.")
+        if any(
+            field.basis.parametric_dimension != basis.parametric_dimension
+            or field.basis.axis_names != basis.axis_names
+            for field in field_values
+        ):
+            raise ValueError(
+                "IGA field bases must have the geometry parameter dimension and axis names."
+            )
         if not isinstance(quadrature_policy, IsogeometricQuadraturePolicy):
             raise TypeError("quadrature_policy must be explicit for S1 IGA.")
         precision = (
@@ -235,6 +314,7 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         if not isinstance(qualification, IsogeometricH1QualificationPolicy):
             raise TypeError("qualification_policy must be an IGA H1 policy or None.")
         self.basis = basis
+        self.topology = SplineSpanTopology(basis)
         self.geometry = geometry
         self.fields = field_values
         self.quadrature_policy = quadrature_policy
@@ -263,6 +343,7 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
             {
                 "kind": "isogeometric-plan",
                 "basis": basis.basis_id,
+                "topology": self.topology.topology_id,
                 "fields": [field.field_spec_id for field in field_values],
                 "quadrature": quadrature_policy.policy_id,
                 "precision": precision.policy_id,
@@ -284,13 +365,13 @@ class IsogeometricPlan(AbstractDiscretizationPlan):
         quadrature_policy: IsogeometricQuadraturePolicy,
         precision_policy: FiniteElementPrecisionPolicy | None = None,
         qualification_policy: IsogeometricH1QualificationPolicy | None = None,
-    ) -> IsogeometricPlan:
+    ):
         grid_values = (grids,) if isinstance(grids, BSplineGrid) else tuple(grids)
         basis = TensorSplineBasisSpec(grid_values, axis_names=axis_names)
         return cls(
             basis,
             geometry,
-            IsogeometricFieldSpec(field_name, basis),
+            IsogeometricFieldSpec(field_name, basis, weights=geometry.weights),
             quadrature_policy=quadrature_policy,
             precision_policy=precision_policy,
             qualification_policy=qualification_policy,
@@ -310,10 +391,11 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
     qualification_policy: IsogeometricH1QualificationPolicy
     default_runtime: IsogeometricRuntimeData
     default_geometry_evidence: IsogeometricGeometryEvidence
-    cell_gathers: Array
+    field_cell_gathers: tuple[Array, ...]
     facet_owners: Array
     facet_local_entities: Array
     facet_groups: tuple[tuple[int, int, int, int], ...] = eqx.field(static=True)
+    overlay_breaks: tuple[tuple[float, ...], ...] = eqx.field(static=True)
     cell_domain: IntegrationDomain
     exterior_facet_domain: IntegrationDomain
     bindings: tuple[LocalFieldBinding, ...]
@@ -335,7 +417,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         if not version:
             raise ValueError("numeric_version must be non-empty.")
         basis = plan.basis
-        topology = TensorTopology(basis.axis_names, basis.control_shape)
+        topology = plan.topology
         runtime = IsogeometricRuntimeData(
             basis,
             plan.geometry,
@@ -343,18 +425,22 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             numeric_version=version,
         )
         support = DiscreteSupport(
-            topology, plan.geometry.ambient_dimension, runtime.geometry_layout_id
-        )
-        layout = TensorDofLayout(
-            basis.axis_names, basis.control_shape, layout_id=basis.layout_id
+            topology.tensor_topology,
+            plan.geometry.ambient_dimension,
+            runtime.geometry_layout_id,
         )
         field_spaces = tuple(
             DiscreteFieldSpace(
                 field.name,
                 support.support_id,
-                layout,
+                TensorDofLayout(
+                    field.basis.axis_names,
+                    field.basis.control_shape,
+                    layout_id=field.basis.layout_id,
+                ),
                 ArraySpace(
-                    basis.control_shape, dtype=plan.precision_policy.evaluation_dtype
+                    field.basis.control_shape + field.component_shape,
+                    dtype=plan.precision_policy.evaluation_dtype,
                 ),
                 representation="basis_coefficient",
                 conformity="H1",
@@ -371,24 +457,34 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             LocalFieldBinding(
                 field.name,
                 space,
-                component_shape=(),
-                public_shape=basis.control_shape,
-                execution_shape=(basis.coefficient_count,),
-                local_width=basis.local_coefficient_count,
-                layout_id=basis.layout_id,
+                component_shape=field.component_shape,
+                public_shape=field.basis.control_shape + field.component_shape,
+                execution_shape=(field.basis.coefficient_count,) + field.component_shape,
+                local_width=field.basis.local_coefficient_count,
+                layout_id=field.basis.layout_id,
             )
             for field, space in zip(plan.fields, field_spaces, strict=True)
         )
-        cell_gathers = _cell_gathers(basis)
+        overlay_breaks = _common_overlay_breaks(basis, plan.fields)
+        cell_gathers = tuple(
+            jnp.asarray(_overlay_gathers(field.basis, overlay_breaks))
+            for field in plan.fields
+        )
         facet_owners, facet_local, facet_groups = _facet_routes(basis)
         cell_domain = IntegrationDomain(
             "cell",
-            np.arange(basis.cell_count, dtype=np.int32),
+            np.arange(prod(len(values) - 1 for values in overlay_breaks), dtype=np.int32),
             support.support_id,
             canonical_fingerprint(
-                {"kind": "isogeometric-cells", "basis": basis.basis_id}
+                {
+                    "kind": "isogeometric-common-integration-overlay",
+                    "geometry": basis.basis_id,
+                    "breaks": [list(values) for values in overlay_breaks],
+                }
             ),
-            owner_cells=np.arange(basis.cell_count, dtype=np.int32),
+            owner_cells=np.arange(
+                prod(len(values) - 1 for values in overlay_breaks), dtype=np.int32
+            ),
         )
         exterior_domain = IntegrationDomain(
             "exterior_facet",
@@ -404,14 +500,14 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         preparation = PreparationReport(
             capabilities=plan.capabilities,
             diagnostics=(
-                "spline axes are fixed, clamped, nonperiodic, and isotropic",
-                "field and geometry are exactly isoparametric scalar H1",
-                "cell and exterior spans have aligned tensor gathers",
+                "spline axes are fixed, clamped, and nonperiodic",
+                "field bases may differ from geometry and use a common span overlay",
+                "fields are scalar or vector H1 with polynomial or owned rational weights",
                 "NURBS denominator, rank, and orientation are checked",
             ),
             resource_counts={
-                "control_coefficients": basis.coefficient_count,
-                "cells": basis.cell_count,
+                "geometry_control_coefficients": basis.coefficient_count,
+                "integration_cells": int(cell_domain.entity_indices.size),
                 "exterior_facets": int(facet_owners.size),
                 "fields": len(plan.fields),
             },
@@ -427,10 +523,11 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         self.basis = basis
         self.fields = plan.fields
         self.quadrature_policy = plan.quadrature_policy
+        self.field_cell_gathers = cell_gathers
+        self.overlay_breaks = overlay_breaks
         self.precision_policy = plan.precision_policy
         self.qualification_policy = plan.qualification_policy
         self.default_runtime = runtime
-        self.cell_gathers = jnp.asarray(cell_gathers)
         self.facet_owners = jnp.asarray(facet_owners)
         self.facet_local_entities = jnp.asarray(facet_local)
         self.facet_groups = facet_groups
@@ -472,6 +569,11 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         self.default_geometry_evidence.minimum_rank_ratio.block_until_ready()
 
     @property
+    def cell_gathers(self) -> Array:
+        """Primary-field gathers retained for the single-field public workflow."""
+        return self.field_cell_gathers[0]
+
+    @property
     def precision_evidence(self):
         return self.precision_policy.evidence()
 
@@ -487,6 +589,48 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             if field.name == name:
                 return index
         raise KeyError(f"Unknown isogeometric field {name!r}.")
+
+    def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:
+        semantics = (
+            "exact_interpolation_transpose",
+            "exact_gradient_transpose",
+            "exact_hessian_transpose",
+            "exact_trace_transpose",
+            "runtime_rational_weights",
+        )
+        return LocalVariationalCapabilities(
+            "isogeometric-local-provider",
+            (
+                LocalVariationalOffer(
+                    "prepared-local",
+                    ("cell",),
+                    ("diffusion", "mass", "source", "functional"),
+                    ("value", "grad", "hessian"),
+                    ("value", "gradient", "hessian"),
+                    ("sum_factorized",),
+                    ("matrix_free",),
+                    ("isogeometric-direct-tensor",),
+                    automatic_kernel_mode="sum_factorized",
+                    automatic_operator_realization="matrix_free",
+                    automatic_reference_realization_id="isogeometric-direct-tensor",
+                    action_semantics=semantics,
+                ),
+                LocalVariationalOffer(
+                    "prepared-local",
+                    ("exterior_facet",),
+                    ("boundary-load", "functional"),
+                    ("value", "normal-trace"),
+                    ("value", "trace"),
+                    ("sum_factorized",),
+                    ("matrix_free",),
+                    ("isogeometric-direct-tensor",),
+                    automatic_kernel_mode="sum_factorized",
+                    automatic_operator_realization="matrix_free",
+                    automatic_reference_realization_id="isogeometric-direct-tensor",
+                    action_semantics=semantics,
+                ),
+            ),
+        )
 
     def local_field_binding(self, name: str, /) -> LocalFieldBinding:
         return self.bindings[self._field_index(name)]
@@ -560,8 +704,8 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         if str(kernel_mode) != "sum_factorized":
             raise ValueError("S1 IGA supports only sum_factorized local kernels.")
         order = int(maximum_derivative_order)
-        if order < 0 or order > 1:
-            raise ValueError("S1 IGA supports local derivative order zero or one.")
+        if order < 0 or order > 2:
+            raise ValueError("IGA supports local derivative orders zero through two.")
         names = tuple(str(name) for name in field_names)
         if not names or len(set(names)) != len(names):
             raise ValueError("IGA local regions require unique non-empty field names.")
@@ -577,12 +721,21 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             if domain.entity_set_id != self.cell_domain.entity_set_id:
                 raise ValueError("IGA cell domain has an incompatible entity set.")
             rows = np.asarray(domain.entity_indices, dtype=np.int32)
-            tensor, permutation, entity_shape, point_shape, reference_weights = (
-                _query_configuration(self.basis, self.quadrature_policy)
+            geometry_tensor, permutation, entity_shape, point_shape, reference_weights = (
+                _query_configuration(
+                    self.basis,
+                    self.quadrature_policy,
+                    overlay_breaks=self.overlay_breaks,
+                )
             )
             references = tuple(
                 IsogeometricReferenceActions(
-                    tensor,
+                    _query_configuration(
+                        self.fields[self._field_index(name)].basis,
+                        self.quadrature_policy,
+                        overlay_breaks=self.overlay_breaks,
+                    )[0],
+                    self.fields[self._field_index(name)].weights,
                     rows,
                     permutation,
                     entity_shape,
@@ -593,10 +746,10 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                     structural_id=domain.domain_id,
                     is_trace=False,
                 )
-                for _ in names
+                for name in names
             )
             geometry = IsogeometricGeometryActions(
-                tensor,
+                geometry_tensor,
                 rows,
                 reference_weights[rows],
                 permutation,
@@ -613,7 +766,10 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 PreparedLocalRegion(
                     domain,
                     names,
-                    tuple(self.cell_gathers[rows] for _ in names),
+                    tuple(
+                        self.field_cell_gathers[self._field_index(name)][rows]
+                        for name in names
+                    ),
                     references,
                     geometry,
                     block_name="patch",
@@ -654,6 +810,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             references = tuple(
                 IsogeometricReferenceActions(
                     tensor,
+                    self.fields[self._field_index(name)].weights,
                     local_rows,
                     permutation,
                     entity_shape,
@@ -664,7 +821,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                     structural_id=group_domain.domain_id,
                     is_trace=True,
                 )
-                for _ in names
+                for name in names
             )
             geometry = IsogeometricGeometryActions(
                 tensor,
@@ -688,7 +845,10 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 PreparedLocalRegion(
                     group_domain,
                     names,
-                    tuple(self.cell_gathers[owners] for _ in names),
+                    tuple(
+                        self.field_cell_gathers[self._field_index(name)][owners]
+                        for name in names
+                    ),
                     references,
                     geometry,
                     block_name=f"patch-boundary-{self.basis.axes[axis].name}-{side_name}",
@@ -707,22 +867,28 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         runtime: IsogeometricRuntimeData | None = None,
     ) -> Array:
         field_index = self._field_index(field_name)
+        field = self.fields[field_index]
         values = self.field_spaces[field_index].vector_space.validate(coefficients)
         queries = tuple(jnp.asarray(points) for points in axis_points)
-        if len(queries) != self.basis.parametric_dimension or any(
+        if len(queries) != field.basis.parametric_dimension or any(
             points.ndim != 1 or points.size == 0 for points in queries
         ):
             raise ValueError("IGA reconstruction requires one nonempty rank-1 axis grid.")
         stencils = tuple(
             bspline_jet_stencil(axis.knots, points, degree=axis.degree, maximum_order=0)
-            for axis, points in zip(self.basis.axes, queries, strict=True)
+            for axis, points in zip(field.basis.axes, queries, strict=True)
         )
         tensor = TensorBSplineJetPlan(
-            stencils, multi_indices=((0,) * self.basis.parametric_dimension,)
+            stencils, multi_indices=((0,) * field.basis.parametric_dimension,)
         )
         realized = self.default_runtime if runtime is None else runtime
         self.validate_local_runtime(realized)
-        return RationalSplineJet(tensor, realized.weights).apply(values)
+        weights = (
+            jnp.ones(field.basis.control_shape)
+            if field.weights is None
+            else field.weights
+        )
+        return RationalSplineJet(tensor, weights).apply(values)
 
     def geometry_evidence(
         self, runtime: IsogeometricRuntimeData | None = None, /
@@ -742,24 +908,35 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
 
     def homogeneous_trace_constraint(self, field_name: str, /) -> ConstraintMap:
         field_index = self._field_index(field_name)
+        field = self.fields[field_index]
         full_space = self.field_spaces[field_index].vector_space
-        boundary = np.zeros(self.basis.control_shape, dtype=bool)
-        for axis in range(self.basis.parametric_dimension):
-            lower: list[slice | int] = [slice(None)] * self.basis.parametric_dimension
-            upper: list[slice | int] = [slice(None)] * self.basis.parametric_dimension
-            lower[axis] = 0
-            upper[axis] = -1
+        boundary = np.zeros(field.basis.control_shape, dtype=bool)
+        for axis in range(field.basis.parametric_dimension):
+            lower: list[slice | int] = [slice(None)] * field.basis.parametric_dimension
+            upper: list[slice | int] = [slice(None)] * field.basis.parametric_dimension
+            lower[axis], upper[axis] = 0, -1
             boundary[tuple(lower)] = True
             boundary[tuple(upper)] = True
-        free = np.flatnonzero(~boundary.reshape((-1,))).astype(np.int32)
+        component_count = prod(field.component_shape) or 1
+        free_sites = np.flatnonzero(~boundary.reshape((-1,))).astype(np.int32)
+        free = (
+            free_sites[:, None] * component_count
+            + np.arange(component_count, dtype=np.int32)[None, :]
+        ).reshape((-1,))
         reduced_space = ArraySpace(
             (free.size,), dtype=self.precision_policy.evaluation_dtype
         )
         free_indices = jnp.asarray(free)
 
         def prolong(values):
-            flat = jnp.zeros((self.basis.coefficient_count,), dtype=values.dtype)
-            return flat.at[free_indices].set(values).reshape(self.basis.control_shape)
+            flat = jnp.zeros(
+                (field.basis.coefficient_count * component_count,), dtype=values.dtype
+            )
+            return (
+                flat.at[free_indices]
+                .set(values)
+                .reshape(field.basis.control_shape + field.component_shape)
+            )
 
         def transpose(values):
             return jnp.asarray(values).reshape((-1,))[free_indices]

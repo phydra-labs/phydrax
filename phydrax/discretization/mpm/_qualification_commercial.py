@@ -12,6 +12,7 @@ import equinox as eqx
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...qualification import CapabilityProfile
 from ._commercial import (
     MPMClaimTuple,
     MPMIntendedUse,
@@ -141,12 +142,12 @@ class MPMStandardsTraceabilityMatrix(StrictModule, NonTrainableState):
 
 
 class MPMCommercialProfile(StrictModule, NonTrainableState):
-    name: str = eqx.field(static=True)
+    """MPM compatibility profile backed by the generic capability declaration."""
+
     kind: MPMCommercialProfileKind = eqx.field(static=True)
-    required_gates: tuple[MPMReleaseGate, ...] = eqx.field(static=True)
     support_matrix: MPMSupportMatrix
     standards: MPMStandardsTraceabilityMatrix
-    profile_id: str = eqx.field(static=True)
+    capability_profile: CapabilityProfile
 
     def __init__(
         self,
@@ -175,21 +176,40 @@ class MPMCommercialProfile(StrictModule, NonTrainableState):
             )
         else:
             required = tuple(MPMReleaseGate)
-        self.name = name_
+        supported = tuple(
+            decision.claim.support_tuple
+            for decision in support_matrix.decisions
+            if decision.outcome.name == "SUPPORTED"
+        )
+        if not supported:
+            raise ValueError(
+                "Commercial MPM profile must contain exact supported tuples."
+            )
         self.kind = kind_
-        self.required_gates = required
         self.support_matrix = support_matrix
         self.standards = standards
-        self.profile_id = canonical_fingerprint(
-            {
-                "kind": "mpm-commercial-profile",
-                "name": name_,
-                "profile_kind": int(kind_),
-                "required_gates": [int(value) for value in required],
-                "support_matrix": support_matrix.matrix_id,
-                "standards": standards.matrix_id,
-            }
+        self.capability_profile = CapabilityProfile(
+            name_,
+            "phydrax",
+            kind_.name.lower().replace("_", "-"),
+            supported,
+            required_gates=tuple(gate.name for gate in required),
+            released=False,
         )
+
+    @property
+    def name(self) -> str:
+        return self.capability_profile.name
+
+    @property
+    def required_gates(self) -> tuple[MPMReleaseGate, ...]:
+        return tuple(
+            MPMReleaseGate[name] for name in self.capability_profile.required_gates
+        )
+
+    @property
+    def profile_id(self) -> str:
+        return self.capability_profile.profile_id
 
 
 class MPMReleaseAssessment(StrictModule, NonTrainableState):
@@ -199,6 +219,7 @@ class MPMReleaseAssessment(StrictModule, NonTrainableState):
     gate_ids: tuple[str, ...] = eqx.field(static=True)
     review_record_id: str = eqx.field(static=True)
     standards_matrix_id: str = eqx.field(static=True)
+    capability_profile: CapabilityProfile
     releasable: bool = eqx.field(static=True)
     reasons: tuple[str, ...] = eqx.field(static=True)
     assessment_id: str = eqx.field(static=True)
@@ -251,6 +272,19 @@ def assess_release(
         evidence,
         independent_approver_id=review.release_approver_id,
     )
+    released = releasable & bundle.releasable
+    release_profile = CapabilityProfile(
+        f"{profile.name}.{claim.claim_id}",
+        profile.capability_profile.provider,
+        profile.capability_profile.version,
+        (claim.support_tuple,),
+        dependencies=profile.capability_profile.dependencies,
+        required_gates=profile.capability_profile.required_gates,
+        release_evidence=tuple(
+            gate_evidence[gate].release_evidence for gate in profile.required_gates
+        ),
+        released=released,
+    )
     return MPMReleaseAssessment(
         profile.profile_id,
         claim.claim_id,
@@ -258,12 +292,13 @@ def assess_release(
         tuple(value.gate_id for value in evidence),
         review.review_record_id,
         profile.standards.matrix_id,
-        releasable & bundle.releasable,
+        release_profile,
+        released,
         tuple(reasons),
         canonical_fingerprint(
             {
                 "kind": "mpm-release-assessment",
-                "profile": profile.profile_id,
+                "profile": release_profile.profile_id,
                 "bundle": bundle.bundle_id,
                 "review": review.review_record_id,
                 "standards": profile.standards.matrix_id,

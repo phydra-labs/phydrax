@@ -1,0 +1,38 @@
+{
+  "kind": "candidate-capability-profile",
+  "profile": {
+    "dependencies": [],
+    "kind": "capability-profile",
+    "name": "iga.tensor",
+    "profile_id": "a82fefb87ecdd1d48e851c68e7293db5d92b187d3f06d11f7c04847cf98f6d4a",
+    "provider": "phydrax",
+    "release_evidence": [],
+    "released": false,
+    "required_gates": [
+      "code-verification",
+      "operational",
+      "solution-verification"
+    ],
+    "support_tuples": [
+      {
+        "attributes": {
+          "backend": "cpu",
+          "basis": "direct_tensor",
+          "derivative": "Q2",
+          "distributed": "single",
+          "formulation": "diffusion_reaction",
+          "geometry": "full_dim_2d_nurbs",
+          "interface": "none",
+          "precision": "float64",
+          "restart": "none",
+          "space": "scalar_H1"
+        },
+        "capability": "iga.tensor",
+        "kind": "capability-support-tuple",
+        "support_tuple_id": "f34d11fa2798f19d11b3cea77be9a628eef49d78e097dd9c512cb0c086f7fc31"
+      }
+    ],
+    "version": "canonical"
+  },
+  "release_ready": false
+}

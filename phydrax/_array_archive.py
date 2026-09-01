@@ -27,6 +27,54 @@ class ArrayArchiveCorruptionError(ArrayArchiveError):
     """Raised when an array archive is incomplete, corrupt, or noncanonical."""
 
 
+def array_payload_digest(value: Any, /) -> str:
+    """Return the checksum used by the canonical archive for one array."""
+
+    return hashlib.sha256(_array_payload(value)).hexdigest()
+
+
+def array_payload_byte_count(value: Any, /) -> int:
+    """Return the encoded byte count used by the canonical archive."""
+
+    return len(_array_payload(value))
+
+
+def array_collection_digest(arrays: Mapping[str, Any], /) -> str:
+    """Content-address an ordered logical collection of canonical array payloads."""
+
+    digest = hashlib.sha256()
+    for name in sorted(arrays):
+        if not isinstance(name, str) or not name:
+            raise TypeError("Archive array names must be non-empty strings.")
+        payload = _array_payload(arrays[name])
+        for part in (name.encode("utf-8"), payload):
+            digest.update(len(part).to_bytes(8, "big"))
+            digest.update(part)
+    return digest.hexdigest()
+
+
+def _array_payload(value: Any, /) -> bytes:
+    array = np.asarray(value)
+    if array.dtype.hasobject:
+        raise TypeError("Archive arrays cannot have object dtype.")
+    buffer = io.BytesIO()
+    np.save(buffer, array, allow_pickle=False)
+    return buffer.getvalue()
+
+
+def _write_stored_member(
+    archive: zipfile.ZipFile,
+    name: str,
+    payload: bytes,
+    /,
+) -> None:
+    information = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    information.compress_type = zipfile.ZIP_STORED
+    information.create_system = 3
+    information.external_attr = 0o600 << 16
+    archive.writestr(information, payload)
+
+
 def pack_array_tree(
     prefix: str,
     tree: Any,
@@ -104,9 +152,7 @@ def write_array_archive(
         array = np.asarray(arrays[name])
         if array.dtype.hasobject:
             raise TypeError(f"Archive array {name!r} cannot have object dtype.")
-        buffer = io.BytesIO()
-        np.save(buffer, array, allow_pickle=False)
-        payload = buffer.getvalue()
+        payload = _array_payload(array)
         member = f"arrays/{index:06d}.npy"
         payloads[member] = payload
         inventory[name] = {
@@ -143,9 +189,9 @@ def write_array_archive(
             compression=zipfile.ZIP_STORED,
             strict_timestamps=False,
         ) as archive:
-            archive.writestr("manifest.json", manifest_payload)
+            _write_stored_member(archive, "manifest.json", manifest_payload)
             for member in sorted(payloads):
-                archive.writestr(member, payloads[member])
+                _write_stored_member(archive, member, payloads[member])
         with temporary.open("rb") as stream:
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
@@ -239,6 +285,9 @@ def read_array_archive(
 
 
 __all__ = [
+    "array_collection_digest",
+    "array_payload_byte_count",
+    "array_payload_digest",
     "ArrayArchiveCorruptionError",
     "ArrayArchiveError",
     "read_array_archive",
