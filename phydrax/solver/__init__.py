@@ -45,7 +45,7 @@ term evaluation.
 """
 
 from .._hybrid_sensitivity import HybridSensitivityMode
-from . import advanced, maxwell
+from . import advanced, coupling, maxwell
 from ._balance_law import (
     AbstractBalanceLawProcessPlan,
     AbstractPreparedBalanceLawProcess,
@@ -556,6 +556,12 @@ from ._hybrid_event import (
     HybridEventSensitivityResult,
     localize_hybrid_event,
 )
+from ._hybrid_schedule import (
+    HybridSchedulePlan,
+    HybridScheduleResult,
+    ScheduledHybridEvent,
+)
+from ._ias15 import IAS15Plan, IAS15Result
 from ._implicit_runge_kutta import (
     GaussLegendreInterpolation,
     GaussLegendreIRK,
@@ -1240,6 +1246,7 @@ from .maxwell import (
 
 __all__ = [
     "advanced",
+    "coupling",
     "AbstractBalanceLawProcessPlan",
     "AbstractPreparedBalanceLawProcess",
     "BalanceLawAdvanceResult",
@@ -2155,4 +2162,12 @@ __all__ += [
         *_vortex_step_all,
     )
     if name not in __all__
+]
+
+__all__ += [
+    "HybridSchedulePlan",
+    "HybridScheduleResult",
+    "IAS15Plan",
+    "IAS15Result",
+    "ScheduledHybridEvent",
 ]

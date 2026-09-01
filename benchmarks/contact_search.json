@@ -1,0 +1,12 @@
+{
+  "benchmark": "contact-search",
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "vertices": 257,
+  "edges": 256,
+  "candidate_count": 510,
+  "dense_seconds": 0.1528004443340857,
+  "sweep_seconds": 0.010024820850230754,
+  "sets_equal": true,
+  "successful": true
+}

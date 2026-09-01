@@ -22,9 +22,9 @@ from ...backends import (
     BackendAvailability,
     BackendCapabilities,
 )
+from ._closure import CosmologyPhysicalState, PhysicalDependencyProjection
 from ._products import (
     CosmologyProductProvenance,
-    CosmologyRealizationSignature,
     LinearTransferDescriptor,
     LinearTransferTable,
     MatterPowerDescriptor,
@@ -89,7 +89,7 @@ class MassiveNeutrinoSpecies(StrictModule, NonTrainableState):
         }
 
 
-class LinearTheoryRequest(StrictModule, NonTrainableState):
+class CosmologyModelRequest(StrictModule, NonTrainableState):
     """Canonical host-only request for a narrowly declared precision calculation."""
 
     scale: CosmologyScaleContract
@@ -207,12 +207,10 @@ class LinearTheoryRequest(StrictModule, NonTrainableState):
         mapping = self.to_mapping(include_identity=False)
         self.model_form_id = canonical_fingerprint(
             {
-                "kind": "external-linear-theory-request-form",
+                "kind": "external-linear-theory-physical-model",
                 "scale": scale.scale_id,
-                "transfer_fields": list(fields),
-                "gauge": gauge_,
-                "power_field": power_field_,
                 "neutrino_species_count": len(species),
+                "neutrino_distributions": [item.distribution_id for item in species],
             }
         )
         self.request_id = canonical_fingerprint(
@@ -220,8 +218,25 @@ class LinearTheoryRequest(StrictModule, NonTrainableState):
         )
 
     @property
-    def realization(self) -> CosmologyRealizationSignature:
-        neutrino_masses = tuple(species.mass_ev for species in self.neutrinos)
+    def physical_state(self) -> CosmologyPhysicalState:
+        neutrino_values = tuple(
+            value
+            for species in self.neutrinos
+            for value in (
+                species.mass_ev,
+                species.temperature_ratio,
+                species.degeneracy,
+            )
+        )
+        neutrino_names = tuple(
+            name
+            for index in range(len(self.neutrinos))
+            for name in (
+                f"massive_neutrino_mass_{index}",
+                f"massive_neutrino_temperature_ratio_{index}",
+                f"massive_neutrino_degeneracy_{index}",
+            )
+        )
         values = jnp.asarray(
             (
                 self.hubble_constant,
@@ -230,7 +245,13 @@ class LinearTheoryRequest(StrictModule, NonTrainableState):
                 self.curvature_density,
                 self.dark_energy_w0,
                 self.dark_energy_wa,
-                *neutrino_masses,
+                self.photon_temperature,
+                self.effective_neutrino_number,
+                self.primordial_amplitude,
+                self.primordial_tilt,
+                self.primordial_pivot,
+                self.reionization_optical_depth,
+                *neutrino_values,
             )
         )
         names = (
@@ -240,10 +261,25 @@ class LinearTheoryRequest(StrictModule, NonTrainableState):
             "curvature_density",
             "dark_energy_w0",
             "dark_energy_wa",
-            *(f"massive_neutrino_mass_{index}" for index in range(len(neutrino_masses))),
+            "photon_temperature",
+            "effective_neutrino_number",
+            "primordial_amplitude",
+            "primordial_tilt",
+            "primordial_pivot",
+            "reionization_optical_depth",
+            *neutrino_names,
         )
-        return CosmologyRealizationSignature(
-            values, names, self.model_form_id, self.scale.scale_id
+        return CosmologyPhysicalState(
+            values,
+            names,
+            self.scale.scale_id,
+            categorical_ids=tuple(species.distribution_id for species in self.neutrinos),
+        )
+
+    @property
+    def realization(self):
+        return PhysicalDependencyProjection(self.physical_state.names).project(
+            self.physical_state
         )
 
     def to_mapping(self, *, include_identity: bool = True) -> dict[str, object]:
@@ -272,7 +308,7 @@ class LinearTheoryRequest(StrictModule, NonTrainableState):
         return mapping
 
 
-class LinearTheoryOracleResult(StrictModule):
+class CosmologyModelResult(StrictModule):
     transfer: LinearTransferTable
     power: MatterPowerTable
     thermodynamics: ThermodynamicsHistory | None
@@ -281,7 +317,7 @@ class LinearTheoryOracleResult(StrictModule):
     return_code: int = eqx.field(static=True)
 
 
-class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
+class SubprocessCosmologyModelBackend(AbstractExternalBackend, NonTrainableState):
     """Isolated JSON-request/NPZ-result precision-backend protocol."""
 
     application: str = eqx.field(static=True)
@@ -355,9 +391,9 @@ class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
             versions=((self.backend_name, self.backend_version),),
         )
 
-    def run(self, request: LinearTheoryRequest, /) -> LinearTheoryOracleResult:
-        if not isinstance(request, LinearTheoryRequest):
-            raise TypeError("request must be LinearTheoryRequest.")
+    def run(self, request: CosmologyModelRequest, /) -> CosmologyModelResult:
+        if not isinstance(request, CosmologyModelRequest):
+            raise TypeError("request must be CosmologyModelRequest.")
         availability = self.availability()
         if not availability.available:
             raise RuntimeError(
@@ -438,7 +474,7 @@ class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
             physics_policy_id="external-linear-theory",
             scale_id=request.scale.scale_id,
             source_kind="external",
-            differentiability="constant",
+            differentiation="constant",
         )
         transfer = LinearTransferTable(
             scales,
@@ -478,7 +514,7 @@ class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
             if thermodynamics_arrays is not None
             else None
         )
-        return LinearTheoryOracleResult(
+        return CosmologyModelResult(
             transfer=transfer,
             power=power,
             thermodynamics=thermodynamics,
@@ -489,8 +525,8 @@ class SubprocessLinearTheoryBackend(AbstractExternalBackend, NonTrainableState):
 
 
 __all__ = [
-    "LinearTheoryOracleResult",
-    "LinearTheoryRequest",
+    "CosmologyModelRequest",
+    "CosmologyModelResult",
     "MassiveNeutrinoSpecies",
-    "SubprocessLinearTheoryBackend",
+    "SubprocessCosmologyModelBackend",
 ]

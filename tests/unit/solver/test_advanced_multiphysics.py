@@ -507,7 +507,7 @@ def test_cosmology_inference_and_closure_contracts():
         physics_policy_id="linear-cold-baryon-power",
         scale_id=background.scale.scale_id,
         source_kind="external",
-        differentiability="constant",
+        differentiation="constant",
     )
     power = MatterPowerTable(
         [0.1, 1.0],

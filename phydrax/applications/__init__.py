@@ -7,6 +7,7 @@
 from . import (
     astrodynamics,
     astrophysics,
+    compact_objects,
     contact,
     cosmology,
     crystal_plasticity,
@@ -23,6 +24,7 @@ from . import (
 __all__ = [
     "astrodynamics",
     "astrophysics",
+    "compact_objects",
     "contact",
     "cosmology",
     "crystal_plasticity",

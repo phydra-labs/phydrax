@@ -313,9 +313,6 @@
 
 ---
 
-::: phydrax.discretization.fem.NURBSPatch
-
----
 
 ::: phydrax.discretization.fem.PersistentSemanticCache
 

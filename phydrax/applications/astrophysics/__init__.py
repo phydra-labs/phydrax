@@ -1,5 +1,16 @@
 """Coupled compressible astrophysical application workflows."""
 
+from ._advanced_exoplanets import (
+    FiniteSourceMicrolensingPlan,
+    MicrolensingResult,
+    OblateOccultationPlan,
+    OblateOccultationResult,
+)
+from ._calibrated_imaging import (
+    CalibratedImageResult,
+    CalibratedImagingPlan,
+    ImagingCalibration,
+)
 from ._observation_status import (
     astrophysics_observation_status_message,
     AstrophysicsObservationStatus,
@@ -33,6 +44,20 @@ from ._photometry import (
     TransitPhotometryResult,
 )
 from ._projection import ObserverProjectionPlan, ObserverProjectionResult
+from ._radiative_transfer import (
+    OpacityTable,
+    PolarizedRadiativeTransferPlan,
+    RadiativeTransferResult,
+    ScalarRadiativeTransferPlan,
+)
+from ._survey import SurveyCatalogPlan, SurveyCatalogResult, SurveyVisitPlan
+from ._waveform_catalogs import (
+    DetectorNetworkPlan,
+    DetectorNetworkResult,
+    QnmModeTable,
+    RingdownPlan,
+)
+from ._wcs import TangentSipWcsPlan, WcsResult
 from ._workflow import (
     AstrophysicalApplicationResult,
     AstrophysicalMultiphysicsApplicationPlan,
@@ -68,4 +93,24 @@ __all__ = [
     "transit_poisson_log_prob",
     "AstrophysicalApplicationResult",
     "AstrophysicalMultiphysicsApplicationPlan",
+    "CalibratedImageResult",
+    "CalibratedImagingPlan",
+    "DetectorNetworkPlan",
+    "DetectorNetworkResult",
+    "FiniteSourceMicrolensingPlan",
+    "ImagingCalibration",
+    "MicrolensingResult",
+    "OblateOccultationPlan",
+    "OblateOccultationResult",
+    "OpacityTable",
+    "PolarizedRadiativeTransferPlan",
+    "QnmModeTable",
+    "RadiativeTransferResult",
+    "RingdownPlan",
+    "ScalarRadiativeTransferPlan",
+    "SurveyCatalogPlan",
+    "SurveyCatalogResult",
+    "SurveyVisitPlan",
+    "TangentSipWcsPlan",
+    "WcsResult",
 ]

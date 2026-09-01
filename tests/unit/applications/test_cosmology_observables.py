@@ -20,7 +20,7 @@ def _context():
         physics_policy_id="linear-total-matter",
         scale_id=scale.scale_id,
         source_kind="native",
-        differentiability="native-parameter",
+        differentiation="native-parameter",
     )
     k = jnp.geomspace(0.05, 2000.0, 512)
     power = cosmology.MatterPowerTable(

@@ -10,8 +10,8 @@ def _context():
     astro = phx.applications.astrodynamics
     return astro.AstrodynamicsContext(
         astro.AstrodynamicsScaleContract.si(),
-        astro.ReferenceEpoch(2451545.0, 0.0, "TT"),
-        astro.AstrodynamicsFrame("star", "observer-inertial", pseudo_inertial=True),
+        astro.ReferenceEpoch(astro.TimeInstant(astro.JulianDate(2451545.0, 0.0), "TT")),
+        astro.FrameDefinition("star", "observer-inertial", pseudo_inertial=True),
     )
 
 
