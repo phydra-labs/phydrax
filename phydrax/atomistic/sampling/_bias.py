@@ -13,12 +13,16 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._array_archive import read_array_archive, write_array_archive
+from ..._array_archive import (
+    pack_array_tree,
+    read_array_archive,
+    unpack_array_tree,
+    write_array_archive,
+)
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ..._tree_math import tree_where
-from .._checkpoint import _pack_array_tree, _unpack_array_tree
 from .._dynamics import (
     AtomisticDynamicsState,
     AtomisticEnergyLedgerState,
@@ -565,7 +569,7 @@ def write_biased_dynamics_checkpoint(
     if state.prepared_id != plan.dynamics.prepared_id:
         raise ValueError("Biased checkpoint state belongs to another runtime.")
     arrays: dict[str, object] = {}
-    specification = _pack_array_tree("runtime", state, arrays)
+    specification = pack_array_tree("runtime", state, arrays)
     payload_id = canonical_fingerprint(
         {
             "kind": "biased-dynamics-checkpoint-payload",
@@ -633,7 +637,7 @@ def read_biased_dynamics_checkpoint(
     }
     if any(manifest[name] != value for name, value in identities.items()):
         raise ValueError("Biased checkpoint identity does not match the runtime.")
-    state = _unpack_array_tree(manifest["state"], arrays, template)
+    state = unpack_array_tree(manifest["state"], arrays, template)
     if not isinstance(state, BiasedDynamicsState):
         raise TypeError("Checkpoint did not reconstruct BiasedDynamicsState.")
     payload_id = canonical_fingerprint(
