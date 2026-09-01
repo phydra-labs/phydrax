@@ -151,16 +151,17 @@ formulations, and fixed-tree/workflow evidence. See
 [Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
 [Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle, grid, solver, operator, artifact, and
-likelihood identities rather than introducing a separate framework. Canonical physical
-states project only their declared dependencies into content-addressed products;
-concrete pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
-release-window Gaussian likelihoods, primordial H/He microphysics, local-curvature
-validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification, snapshots,
-and distributed-PM feasibility extend the curved/CPL background, named transfer/power,
-flat LPT/PM, and adiabatic gas--DM foundations. Complete native Boltzmann/CMB parity,
-global curved N-body, generic surveys, stochastic feedback, production tree gravity,
-AMR, and distributed execution remain explicit external, conditional, or rejected
-boundaries rather than hidden fallbacks.
+likelihood identities rather than introducing a separate framework. In addition to the
+curved/CPL background, named transfer/power, LPT/PM, gas--DM, product, halo, survey, CMB
+instrument, microphysics, Ewald, and boundary-closure layers, bounded maximal profiles
+add native fixed-layout scalar transfer/LOS algebra, global S3 geometry and particle
+dynamics, typed multi-release survey composition, deterministic FoF/unbinding/merger
+products, dynamic stochastic star populations, two-level AMR, one shared Morton octree,
+isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM. Every profile
+states its unsupported species, topology, approximation, capacity, distribution, or
+communication branches; later massive-relic/vector/tensor/curved/lensed theory,
+multilevel distributed AMR, production feedback, adaptive/distributed trees, and full
+survey-release coverage remain separate qualification claims rather than hidden flags.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,

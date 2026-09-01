@@ -44,6 +44,17 @@ from ._corrections import (
     MatterPowerCorrectionResult,
     MultiplicativeMatterPowerCorrectionPlan,
 )
+from ._cosmological_amr import (
+    AMREpochResult,
+    AMRParticleLevelAssignment,
+    CoarseFineFluxRegister,
+    TwoLevelAMREpochPlan,
+    TwoLevelAMRPlan,
+    TwoLevelAMRState,
+    TwoLevelCompositeGravityPlan,
+    TwoLevelGravityResult,
+    TwoLevelParticleRoutingPlan,
+)
 from ._coupled import (
     ComovingEulerDiagnostics,
     ComovingEulerPlan,
@@ -59,6 +70,19 @@ from ._curvature_validity import (
     LocalCurvatureValidityResult,
 )
 from ._distances import FLRWDistancePlan, FLRWDistanceResult
+from ._feedback import (
+    CosmologicalPopulationPlan,
+    CosmologicalPopulationState,
+    FeedbackEventLedger,
+    POPULATION_BLACK_HOLE,
+    POPULATION_DARK_MATTER,
+    POPULATION_INACTIVE,
+    POPULATION_STAR,
+    StarFormationResult,
+    StochasticStarFormationPlan,
+    StochasticThermalFeedbackPlan,
+    ThermalFeedbackResult,
+)
 from ._force_resolution import PeriodicForceQualificationResult, PeriodicImageForcePlan
 from ._force_scalability import (
     CosmologySnapshotProduct,
@@ -69,6 +93,18 @@ from ._force_scalability import (
     PeriodicEwaldResult,
 )
 from ._growth import FLRWGrowthPlan
+from ._halo_finder import (
+    DensityPeakSubstructurePlan,
+    DirectHaloUnbindingPlan,
+    FoFFinderResult,
+    HaloPropertyPlan,
+    HaloPropertyResult,
+    HaloUnbindingResult,
+    MergerMatchResult,
+    ParticleCoreOverlapTreePlan,
+    PeriodicFoFFinderPlan,
+    SubstructureCandidateResult,
+)
 from ._halo_models import (
     HaloCatalog,
     HaloTripletResult,
@@ -105,6 +141,19 @@ from ._microphysics import (
     PrimordialRateTable,
     PrimordialSpeciesState,
 )
+from ._native_boltzmann import (
+    ApproximationTransitionPolicy,
+    FlatRadialKernelPlan,
+    LineOfSightSpectraPlan,
+    LineOfSightSpectraResult,
+    NativeThermodynamicsPlan,
+    NativeThermodynamicsResult,
+    RestrictedScalarTransferPlan,
+    ScalarEvolutionOperatorTable,
+    ScalarHierarchyLayout,
+    ScalarTransferResult,
+    ThermodynamicsRateTable,
+)
 from ._observables import (
     LensingConvergenceTracer,
     LimberAngularPowerPlan,
@@ -115,6 +164,7 @@ from ._observables import (
     RedshiftDistribution,
     RSDMultipoleResult,
 )
+from ._parity import ParityEvidence, ParityProfile
 from ._particle_mesh import (
     CosmologicalParticleMeshDiagnostics,
     CosmologicalParticleMeshPlan,
@@ -154,12 +204,50 @@ from ._products import (
     ThermodynamicsHistory,
     TransferGauge,
 )
+from ._s3_dynamics import (
+    S3GeodesicKDKPlan,
+    S3HarmonicBasisPlan,
+    S3KDKResult,
+    S3ManifoldPlan,
+    S3ParticleMeshPlan,
+    S3ParticleMeshResult,
+    S3ParticleState,
+    S3PoissonPlan,
+    S3PoissonResult,
+)
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 from ._spt import OneLoopEdSSPTPlan, OneLoopSPTEvidence, OneLoopSPTResult
+from ._survey_framework import (
+    desi_full_shape_slice,
+    joint_survey_slice,
+    spin2_pseudocl_slice,
+    SurveyCoordinate,
+    SurveyFrameworkPlan,
+    SurveyTheoryProduct,
+    SurveyVerticalSliceManifest,
+)
 from ._survey_likelihood import (
     DesiFullShapeLikelihoodPlan,
     SurveyReleaseManifest,
     SurveyReleaseProduct,
+)
+from ._tree_gravity import (
+    BarnesHutGravityPlan,
+    CartesianExpansionSpace,
+    CartesianFMMOperators,
+    DistributedParticleLayout,
+    FMMEvidence,
+    MeshComplementCalibrationEvidence,
+    MeshComplementCalibrationPlan,
+    ParticleOctreePlan3D,
+    PeriodicBarnesHutPlan,
+    PreparedParticleOctree3D,
+    TreeGravityEvidence,
+    TreeGravityResult,
+    TreePMPlan,
+    TreePMResult,
+    TreePMSplitPolicy,
+    UniformFMMPlan,
 )
 
 

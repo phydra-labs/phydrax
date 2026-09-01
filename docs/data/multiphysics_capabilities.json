@@ -93,7 +93,18 @@
     "local_curvature_validity": "implemented",
     "low_resolution_cmb_tod_mapmaking": "implemented",
     "periodic_ewald_force_reference": "implemented",
-    "snapshot_and_distributed_pm_contracts": "implemented"
+    "snapshot_and_distributed_pm_contracts": "implemented",
+    "bounded_physics_parity_profiles": "implemented",
+    "restricted_native_scalar_transfer_los": "implemented",
+    "global_s3_geometry_particle_poisson": "implemented",
+    "typed_multi_release_survey_framework": "implemented",
+    "native_fof_unbinding_merger_matching": "implemented",
+    "dynamic_stochastic_stellar_feedback": "implemented",
+    "two_level_cosmological_amr": "implemented",
+    "shared_particle_octree": "implemented",
+    "isolated_barnes_hut_gravity": "implemented",
+    "uniform_cartesian_fmm": "implemented",
+    "single_device_treepm_composition": "implemented"
   },
   "inference": {
     "whitened_field_log_density": "implemented",

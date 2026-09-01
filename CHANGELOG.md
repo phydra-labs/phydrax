@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Added bounded maximal native cosmology profiles: fixed-layout thermodynamics/scalar
+  transfer/line-of-sight algebra, global S3 manifold/KDK/harmonic Poisson/particle
+  transfer, typed multi-release survey composition, deterministic FoF/unbinding/M200m/
+  substructure/merger products, dynamic replayable stochastic stellar feedback,
+  two-level ratio-two AMR, a shared Morton particle octree, isolated Barnes--Hut,
+  uniform Cartesian FMM, and BH-short-range single-device TreePM. Each profile records
+  explicit unsupported physics, topology, approximation, capacity, distribution, and
+  communication boundaries.
 - Closed remaining advanced-cosmology boundaries with projected canonical physical
   state, content-addressed products/artifacts, dependency-aware derivatives, shared
   observation/covariance likelihood algebra, concrete pinned precision-process
