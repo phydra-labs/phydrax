@@ -44,13 +44,14 @@ Most workflows are composing a few primitives:
   microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
   response, fixed-population and dynamically reseeded free-surface/multiphase
   FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
-  fluxes, fixed-capacity AMR, collision surfaces, deterministic contact candidate
-  epochs, conservative continuous-collision and simplex-inversion bounds,
-  convergent barrier contact, lagged friction, field spaces, measures, transfers,
-  fixed-temporal differentiable replay, typed transactional partitioned coupling,
-  fixed-grid waveform exchange, transactional gravity/cooling/stochastic source
-  processes, compatible constrained MHD, temporal/stochastic composition, and
-  auditable plan/preparation identities.
+  fluxes, fixed-capacity AMR, collision surfaces, deterministic/cached contact
+  epochs, conservative and roundoff-certified trajectory bounds, smooth
+  barrier/adhesive/friction closure, hard cone impact, mortar/Nitsche and
+  hydroelastic/rough contact, multiphysics interface transport, field spaces,
+  measures, transfers, fixed-temporal differentiable replay, typed transactional
+  partitioned coupling, fixed-grid waveform exchange, transactional
+  gravity/cooling/stochastic source processes, compatible constrained MHD,
+  temporal/stochastic composition, and auditable plan/preparation identities.
 - **Isogeometric analysis**: a deliberately bounded S1 path prepares regular,
   untrimmed, full-dimensional two-dimensional single-patch NURBS maps and
   exactly isoparametric scalar H1 fields with frozen clamped isotropic knot
@@ -238,6 +239,9 @@ actions, area measures, and SFNO interoperability. See the
 [commercial MPM scale/operations guide](docs/guides_mpm_commercial_scale_operations.md), the
 [commercial MPM derivatives/VVUQ guide](docs/guides_mpm_commercial_derivatives_vvuq.md), the
 [deformable-contact guide](docs/guides_deformable_contact.md), the
+[contact-formulation guide](docs/guides_contact_formulations.md), the
+[multiphysics-contact guide](docs/guides_contact_multiphysics.md), the
+[contact-differentiation guide](docs/guides_contact_differentiation.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the

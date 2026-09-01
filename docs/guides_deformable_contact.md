@@ -22,15 +22,20 @@ The initial qualified surface contract covers:
 - lagged isotropic Coulomb friction;
 - fixed-route implicit JVPs and VJPs.
 
-Quadrilateral/hexahedral or curved-element inversion safety, remeshing inside a
-solve, distributed contact, adhesion, and monolithic compiled contact solves are
-not inferred from this contract.
+The original finite-element barrier workflow retains its T3/T4 and host-solve
+support boundary. The shared substrate now also exposes nonlinear participant
+kinematics, per-vertex separation, certified swept-AABB CCD, cone impact,
+mortar/Nitsche interfaces, hydroelastic/rough closure, multiphysics transport,
+distributed ownership, and remeshing/state-transfer contracts. See
+[Contact formulations](guides_contact_formulations.md),
+[Multiphysics contact](guides_contact_multiphysics.md), and
+[Contact differentiation](guides_contact_differentiation.md).
 
 ## Collision surfaces
 
 `CollisionSurfacePlan` owns immutable vertex/edge/face topology, stable feature
-IDs, body and patch labels, static/codimensional masks, exclusions, and one
-uniform minimum separation. `PreparedCollisionSurface` binds numeric rest
+IDs, body/material/patch labels, static/codimensional masks, exclusions, and
+per-vertex minimum separation. `PreparedCollisionSurface` binds numeric rest
 positions and an `AbstractLinearOperator` from mechanics state to collision
 vertex displacement.
 

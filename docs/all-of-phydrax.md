@@ -1287,11 +1287,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   through exact interpolation/transpose attachment KKT blocks and mixed pressure
   gauges; evolve objective two-/three-dimensional Cosserat rods and triangular
   membrane/bending shells; construct exact-map collision surfaces, deterministic
-  candidate epochs, conservative continuous-collision/simplex-inversion bounds,
-  convergent barrier contact, lagged friction, and fixed-route sensitivities; and
+  candidate epochs, conservative and certified trajectory/simplex bounds,
+  smooth barrier/adhesive/friction closure, hard cone impact, mortar/Nitsche
+  and mesh tying, hydroelastic/rough patches, multiphysics transport,
+  route-state transfer, distributed ownership, and qualified derivatives; and
   retain explicit rigid–MPM coupling routes. See
-  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md)
-  and [Guide → Deformable contact](guides_deformable_contact.md).
+  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md),
+  [Guide → Deformable contact](guides_deformable_contact.md), and
+  [Guide → Contact formulations](guides_contact_formulations.md).
 - **Force-density structural form-finding**: build sparse or affine-restraint
   tension, compression, or mixed-sign networks; compose self-weight, traction,
   pressure, or pneumatic loads; optimize forces, supports, loads, gridshell

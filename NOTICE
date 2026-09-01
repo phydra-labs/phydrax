@@ -145,6 +145,18 @@ time-interval enclosure with explicit tolerance and work-limit evidence; it
 does not redistribute the upstream runtime.
 See LICENSES/TIGHT-INCLUSION-MIT.txt.
 
+Contact closure design references
+
+The participant/kinematics split, route-state transactions, smooth and cone
+formulations, mortar/Nitsche interfaces, hydroelastic patches, rough contact,
+and multiphysics transport design were informed by the public architectures and
+papers associated with libuipc (Apache-2.0), STARK (Apache-2.0), PolyFEM (MIT),
+Tribol (MIT), Drake (BSD-3-Clause), Siconos (Apache-2.0), FEBio (MIT),
+ContactMechanics (MIT), and JAX-MPM (MIT). Phydrax independently implements
+JAX-native array kernels, vector/dual-space maps, fixed-capacity execution,
+accepted/candidate state, guarantee evidence, differentiation, and solver
+contracts; no runtime or source file from those projects is redistributed.
+
 Research and design acknowledgments
 
 The differentiable force-density design study considered arpastrana/jax_fdm at

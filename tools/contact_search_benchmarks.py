@@ -7,6 +7,7 @@
 import json
 import time
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -66,6 +67,17 @@ def main():
         positions,
         20,
     )
+    compiled_plan = phx.discretization.CompiledContactSearchPlan(scene, **capacities)
+    compiled = eqx.filter_jit(compiled_plan.evaluate)
+    started = time.perf_counter()
+    compiled_result = compiled(positions)
+    jax.block_until_ready(compiled_result)
+    compiled_compile_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    for _ in range(50):
+        compiled_result = compiled(positions)
+    jax.block_until_ready(compiled_result)
+    compiled_seconds = (time.perf_counter() - started) / 50
     print(
         json.dumps(
             {
@@ -77,6 +89,9 @@ def main():
                 "candidate_count": int(sweep.candidate_count),
                 "dense_seconds": dense_seconds,
                 "sweep_seconds": sweep_seconds,
+                "compiled_compile_seconds": compiled_compile_seconds,
+                "compiled_seconds": compiled_seconds,
+                "compiled_candidate_count": int(compiled_result.evidence.candidate_count),
                 "sets_equal": sorted(
                     np.asarray(
                         dense.edge_vertex.route_keys[dense.edge_vertex.valid]
@@ -87,7 +102,11 @@ def main():
                         sweep.edge_vertex.route_keys[sweep.edge_vertex.valid]
                     ).tolist()
                 ),
-                "successful": bool(dense.successful & sweep.successful),
+                "successful": bool(
+                    dense.successful
+                    & sweep.successful
+                    & compiled_result.evidence.complete
+                ),
             },
             indent=2,
         )
