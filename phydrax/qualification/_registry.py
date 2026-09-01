@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
@@ -19,12 +20,22 @@ from .._trainable import NonTrainableState
 SupportValue = str | int | bool
 _MAX_TIMESTAMP = 2**63 - 1
 _HEX_DIGITS = frozenset("0123456789abcdef")
+_CAPABILITY_NAME = re.compile(r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$")
 
 
 def _identifier(value: str, name: str, /) -> str:
     normalized = str(value)
     if not normalized or normalized != normalized.strip():
         raise ValueError(f"{name} must be a non-empty canonical identifier.")
+    return normalized
+
+
+def _capability_name(value: str, name: str, /) -> str:
+    normalized = _identifier(value, name)
+    if _CAPABILITY_NAME.fullmatch(normalized) is None:
+        raise ValueError(
+            f"{name} must use lowercase dotted namespaces and hyphenated compounds."
+        )
     return normalized
 
 
@@ -56,7 +67,7 @@ class SupportTuple(StrictModule, NonTrainableState):
         attributes: Mapping[str, SupportValue],
         /,
     ):
-        capability_ = _identifier(capability, "capability")
+        capability_ = _capability_name(capability, "capability")
         if not isinstance(attributes, Mapping) or not attributes:
             raise TypeError("attributes must be a non-empty mapping.")
         normalized = tuple(
@@ -224,7 +235,7 @@ class CapabilityProfile(StrictModule, NonTrainableState):
         release_evidence: Sequence[ReleaseGateEvidence] = (),
         released: bool = False,
     ):
-        name_ = _identifier(name, "profile name")
+        name_ = _capability_name(name, "profile name")
         provider_ = _identifier(provider, "provider")
         version_ = _identifier(version, "profile version")
         tuples_ = tuple(support_tuples)

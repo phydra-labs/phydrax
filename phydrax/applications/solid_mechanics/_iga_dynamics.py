@@ -53,10 +53,10 @@ class IGADynamicsPlan(StrictModule, NonTrainableState):
             raise TypeError("formulation must be a certified IGA mechanics formulation.")
         if isinstance(method, ImplicitNewmarkMethod):
             temporal = "Newmark"
-            profile = "IGA.Structures.Dynamics.Newmark"
+            profile = "iga.structures.dynamics.newmark"
         elif isinstance(method, GeneralizedAlphaMethod):
             temporal = "generalized_alpha"
-            profile = "IGA.Structures.Dynamics.GeneralizedAlpha"
+            profile = "iga.structures.dynamics.generalized-alpha"
         else:
             raise TypeError(
                 "method must be ImplicitNewmarkMethod or GeneralizedAlphaMethod."

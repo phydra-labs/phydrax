@@ -16,7 +16,7 @@ def run() -> dict[str, object]:
     h1 = run_h1()
     closure = run_closure()
     cases = {
-        "core.rational.quarter_annulus": {
+        "tensor.rational.quarter-annulus": {
             "support": {
                 "geometry": "full_dim_2d_nurbs",
                 "space": "scalar_H1",
@@ -31,38 +31,6 @@ def run() -> dict[str, object]:
             },
             "passed": bool(h1["passed"]),
             "evidence_kind": h1["kind"],
-        },
-        "core.compatible.2d": {
-            "support": {
-                "geometry": "full_dim_2d_nurbs",
-                "space": "spline_de_rham",
-                "basis": "direct_tensor",
-                "formulation": "complex_algebra",
-                "interface": "none",
-                "backend": "cpu",
-                "precision": "float64",
-                "distributed": "single",
-                "derivative": "Q0",
-                "restart": "none",
-            },
-            "passed": bool(closure["cases"]["compatible_complex"]["passed"]),
-            "evidence_kind": closure["kind"],
-        },
-        "core.thb.algebra": {
-            "support": {
-                "geometry": "fixed_tensor_geometry",
-                "space": "thb_H1",
-                "basis": "hierarchical",
-                "formulation": "basis_algebra",
-                "interface": "none",
-                "backend": "cpu",
-                "precision": "float64",
-                "distributed": "single",
-                "derivative": "Q6",
-                "restart": "none",
-            },
-            "passed": bool(closure["cases"]["thb_basis"]["passed"]),
-            "evidence_kind": closure["kind"],
         },
     }
     return {

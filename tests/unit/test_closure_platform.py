@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -153,9 +154,17 @@ def test_thb_certificate_and_goal_marking_are_deterministic():
     ).passed
 
 
+def test_capability_names_reject_pascal_case_namespaces():
+    with pytest.raises(ValueError, match="lowercase dotted"):
+        phx.qualification.SupportTuple(
+            "IGA.Core.Tensor",
+            {"backend": "cpu"},
+        )
+
+
 def test_capability_registry_signs_and_requires_profile():
     support = phx.qualification.SupportTuple(
-        "IGA.Core.Tensor",
+        "iga.tensor",
         {"dimension": 2, "backend": "cpu", "precision": "float64"},
     )
     evidence = phx.qualification.ReleaseGateEvidence(
@@ -167,7 +176,7 @@ def test_capability_registry_signs_and_requires_profile():
         expires_at=100,
     )
     profile = phx.qualification.CapabilityProfile(
-        "IGA.Core.Tensor",
+        "iga.tensor",
         "phydrax",
         "canonical",
         (support,),
@@ -244,14 +253,14 @@ def test_in_process_service_executes_authorized_provider():
         },
     )
     service.register_provider(
-        "IGA.Core.Tensor",
+        "iga.tensor",
         lambda submission, context: phx.service.ProviderResult(("result",)),
     )
     submission = phx.service.JobSubmission(
         analysis,
         execution,
         "numeric-revision",
-        "IGA.Core.Tensor",
+        "iga.tensor",
         {},
         phx.service.ResourceRequest(cpu_cores=1, memory_bytes=1024),
     )

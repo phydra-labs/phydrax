@@ -22,7 +22,7 @@ class IGARodPlan(StrictModule, NonTrainableState):
     rotation_field: str | None = eqx.field(static=True)
     reference_certificate_id: str = eqx.field(static=True)
     profile_id: str = eqx.field(
-        static=True, default="IGA.Structures.Rod.SinglePatch.Untrimmed"
+        static=True, default="iga.structures.rod.single-patch.untrimmed"
     )
     plan_id: str = eqx.field(static=True)
 
@@ -52,7 +52,7 @@ class IGARodPlan(StrictModule, NonTrainableState):
         if self.rotation_field == self.displacement_field:
             raise ValueError("rod displacement and rotation fields must differ.")
         self.reference_certificate_id = certificate.certificate_id
-        self.profile_id = "IGA.Structures.Rod.SinglePatch.Untrimmed"
+        self.profile_id = "iga.structures.rod.single-patch.untrimmed"
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "iga-rod-plan",

@@ -123,7 +123,7 @@
   roots, atomic rollback, fixed-window replay, fixed-grid waveform/subcycling
   contracts, resource and work evidence, and explicit algorithmic or implicit
   differentiation semantics.
-- Added the fail-closed `IGA.Core.Tensor` R1 isogeometric foundation for regular
+- Added the fail-closed `iga.tensor` R1 isogeometric foundation for regular
   untrimmed full-dimensional 1D/2D/3D polynomial and NURBS maps; anisotropic and
   independent geometry/field grids; direct-tensor and extracted-Bernstein
   realizations; explicit common integration overlays; self-periodic traces;

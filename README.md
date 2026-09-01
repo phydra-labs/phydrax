@@ -52,7 +52,7 @@ Most workflows are composing a few primitives:
   partitioned coupling, fixed-grid waveform exchange, transactional
   gravity/cooling/stochastic source processes, compatible constrained MHD,
   temporal/stochastic composition, and auditable plan/preparation identities.
-- **Isogeometric analysis**: the allow-listed `IGA.Core.Tensor` R1 foundation
+- **Isogeometric analysis**: the allow-listed `iga.tensor` R1 foundation
   covers regular untrimmed full-dimensional 1D/2D/3D tensor-product maps,
   anisotropic and independent geometry/field grids, direct-tensor and extracted
   Bernstein realizations, common integration overlays, self-periodic traces,
@@ -237,7 +237,7 @@ and exact-sampling round-sphere spaces with S2FFT transforms, Laplace--Beltrami
 actions, area measures, and SFNO interoperability. See the
 [discretization guide](docs/guides_discretization.md), the
 [isogeometric-analysis guide](docs/guides_isogeometric_analysis.md), the
-[`IGA.Core.Tensor` support matrix](docs/guides_isogeometric_analysis_support.md), the
+[`iga.tensor` support matrix](docs/guides_isogeometric_analysis_support.md), the
 [particle-method guide](docs/guides_particle_methods.md), the
 [particle-grid splatting guide](docs/guides_particle_splatting.md), the
 [material-point-method guide](docs/guides_material_point_method.md), the

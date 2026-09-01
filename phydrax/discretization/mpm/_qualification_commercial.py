@@ -274,7 +274,7 @@ def assess_release(
     )
     released = releasable & bundle.releasable
     release_profile = CapabilityProfile(
-        f"{profile.name}/{claim.claim_id}",
+        f"{profile.name}.{claim.claim_id}",
         profile.capability_profile.provider,
         profile.capability_profile.version,
         (claim.support_tuple,),

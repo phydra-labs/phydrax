@@ -1,22 +1,6 @@
 {
   "cases": {
-    "core.compatible.2d": {
-      "evidence_kind": "iga-closure-substrate-qualification",
-      "passed": true,
-      "support": {
-        "backend": "cpu",
-        "basis": "direct_tensor",
-        "derivative": "Q0",
-        "distributed": "single",
-        "formulation": "complex_algebra",
-        "geometry": "full_dim_2d_nurbs",
-        "interface": "none",
-        "precision": "float64",
-        "restart": "none",
-        "space": "spline_de_rham"
-      }
-    },
-    "core.rational.quarter_annulus": {
+    "tensor.rational.quarter-annulus": {
       "evidence_kind": "iga-h1-qualification",
       "passed": true,
       "support": {
@@ -30,22 +14,6 @@
         "precision": "float64",
         "restart": "none",
         "space": "scalar_H1"
-      }
-    },
-    "core.thb.algebra": {
-      "evidence_kind": "iga-closure-substrate-qualification",
-      "passed": true,
-      "support": {
-        "backend": "cpu",
-        "basis": "hierarchical",
-        "derivative": "Q6",
-        "distributed": "single",
-        "formulation": "basis_algebra",
-        "geometry": "fixed_tensor_geometry",
-        "interface": "none",
-        "precision": "float64",
-        "restart": "none",
-        "space": "thb_H1"
       }
     }
   },

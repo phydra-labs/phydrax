@@ -25,9 +25,9 @@ def assemble(report: dict[str, object]) -> phx.qualification.CapabilityProfile:
         attributes = case.get("support")
         if not isinstance(attributes, dict):
             raise ValueError(f"Qualification case {case_id!r} has no support tuple.")
-        supports.append(phx.qualification.SupportTuple("IGA.Core.Tensor", attributes))
+        supports.append(phx.qualification.SupportTuple("iga.tensor", attributes))
     return phx.qualification.CapabilityProfile(
-        "IGA.Core.Tensor",
+        "iga.tensor",
         "phydrax",
         "canonical",
         tuple(supports),

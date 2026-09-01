@@ -1,6 +1,6 @@
 # Isogeometric support and qualification
 
-The `IGA.Core.Tensor` capability profile is an allow-list, not a claim that every
+The `iga.tensor` capability profile is an allow-list, not a claim that every
 Cartesian product of the rows below is supported. A run is inside the R1 profile
 only when its exact `SupportTuple` appears in a passing qualification manifest.
 An axis value appearing in this table does not make unlisted combinations valid.
@@ -91,7 +91,7 @@ a second implementation stack or deprecated public aliases.
 `tools/iga_r1_qualification.py` is the numeric evidence producer and
 `tools/iga_r1_benchmarks.py` is the record-only timing producer. The
 qualification producer writes deterministic JSON with nonfinite values rejected.
-It never signs evidence and never marks `IGA.Core.Tensor` released.
+It never signs evidence and never marks `iga.tensor` released.
 `tools/iga_r1_profile.py` assembles only an unreleased candidate profile from
 complete, passing manifests. Release status belongs to the qualification
 registry and requires separately produced `ReleaseGateEvidence`; editing JSON or

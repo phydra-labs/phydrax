@@ -28,7 +28,7 @@ class IGAKirchhoffLovePlan(StrictModule, NonTrainableState):
     surface_certificate_id: str = eqx.field(static=True)
     material_plan_id: str = eqx.field(static=True)
     profile_id: str = eqx.field(
-        static=True, default="IGA.Structures.Shell.KL.SinglePatch.Untrimmed"
+        static=True, default="iga.structures.shell.kl.single-patch.untrimmed"
     )
     plan_id: str = eqx.field(static=True)
 
@@ -48,7 +48,7 @@ class IGAKirchhoffLovePlan(StrictModule, NonTrainableState):
         self.displacement_field = _identifier(displacement_field, "displacement_field")
         self.surface_certificate_id = certificate.certificate_id
         self.material_plan_id = _identifier(material_plan_id, "material_plan_id")
-        self.profile_id = "IGA.Structures.Shell.KL.SinglePatch.Untrimmed"
+        self.profile_id = "iga.structures.shell.kl.single-patch.untrimmed"
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "iga-kirchhoff-love-plan",
@@ -74,7 +74,7 @@ class IGAReissnerMindlinPlan(StrictModule, NonTrainableState):
     material_plan_id: str = eqx.field(static=True)
     profile_id: str = eqx.field(
         static=True,
-        default="IGA.Structures.Shell.RM.TangentialRotation.SinglePatch.Untrimmed",
+        default="iga.structures.shell.rm.tangential-rotation.single-patch.untrimmed",
     )
     plan_id: str = eqx.field(static=True)
 
@@ -105,7 +105,7 @@ class IGAReissnerMindlinPlan(StrictModule, NonTrainableState):
         self.surface_certificate_id = certificate.certificate_id
         self.material_plan_id = _identifier(material_plan_id, "material_plan_id")
         self.profile_id = (
-            "IGA.Structures.Shell.RM.TangentialRotation.SinglePatch.Untrimmed"
+            "iga.structures.shell.rm.tangential-rotation.single-patch.untrimmed"
         )
         self.plan_id = canonical_fingerprint(
             {

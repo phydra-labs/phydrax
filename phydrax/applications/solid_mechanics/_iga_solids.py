@@ -143,7 +143,7 @@ def iga_linear_solid(
     *,
     displacement_field: str = "u",
     dimensional_mode: IGASolidDimensionalMode = "3d",
-    profile_id: str = "IGA.Structures.Solid.Linear.SinglePatch.Untrimmed",
+    profile_id: str = "iga.structures.solid.linear.single-patch.untrimmed",
     material_plan_id: str,
 ) -> IGASolidFormulation:
     return IGASolidFormulation(
@@ -166,7 +166,7 @@ def iga_hyperelastic_solid(
     displacement_field: str = "u",
     pressure_field: str | None = None,
     dimensional_mode: IGASolidDimensionalMode = "3d",
-    profile_id: str = "IGA.Structures.Solid.Hyperelastic.SinglePatch.Untrimmed",
+    profile_id: str = "iga.structures.solid.hyperelastic.single-patch.untrimmed",
     material_plan_id: str,
     deformed_certificate: DeformedJacobianCertificate
     | GlobalInjectivityCertificate
@@ -216,7 +216,7 @@ def iga_hyperelastic_u_p_solid(
         displacement_field=displacement_field,
         pressure_field=pressure_field,
         dimensional_mode=dimensional_mode,
-        profile_id="IGA.Structures.Solid.Hyperelastic.UP.SinglePatch.Untrimmed",
+        profile_id="iga.structures.solid.hyperelastic.u-p.single-patch.untrimmed",
         material_plan_id=material_plan_id,
         deformed_certificate=deformed_certificate,
     )
