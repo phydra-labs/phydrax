@@ -358,11 +358,11 @@
 
 ---
 
-::: phydrax.equations.FiniteElementMaterialState
+::: phydrax.equations.MaterialState
 
 ---
 
-::: phydrax.equations.FiniteElementMaterialTransaction
+::: phydrax.equations.MaterialTransaction
 
 ---
 

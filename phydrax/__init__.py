@@ -58,7 +58,6 @@ from . import artifacts, events, observation
 from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
-from . import bioinformatics
 
 # Applications depend on public equation/solver substrates and load last.
 from . import applications
@@ -69,7 +68,6 @@ __all__ = [
     "atomistic",
     "artifacts",
     "applications",
-    "bioinformatics",
     "backends",
     "combinatorial",
     "circuit",
