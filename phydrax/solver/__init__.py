@@ -599,6 +599,10 @@ from ._hybrid_schedule import (
     HybridScheduleResult,
     ScheduledHybridEvent,
 )
+from ._hydrostatic_free_surface import (
+    HydrostaticFreeSurfaceResult,
+    LinearImplicitFreeSurfacePlan,
+)
 from ._hydrodynamic_response import *  # noqa: F403
 from ._hydrodynamic_response import __all__ as _hydrodynamic_response_all
 from ._ias15 import IAS15Plan, IAS15Result
@@ -1881,6 +1885,7 @@ __all__ = [
     "ETDRKMethod",
     "HermitianCoordinateEvolution",
     "HERMITIAN_COORDINATE_INVALID",
+    "HydrostaticFreeSurfaceResult",
     "MACHelmholtzResourceEstimate",
     "MACHelmholtzResult",
     "MACHelmholtzSolveMethod",
@@ -1960,6 +1965,7 @@ __all__ = [
     "MACPressureSolveMethod",
     "MACFreeSurfaceProjectionPlan",
     "MACFreeSurfaceProjectionResult",
+    "LinearImplicitFreeSurfacePlan",
     "MACReplayCertification",
     "MACDeformableImmersedBackwardEulerMethod",
     "MACDeformableImmersedEnergyLedger",

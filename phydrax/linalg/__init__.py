@@ -542,6 +542,10 @@ from ._transform_solve import (
     TransformDiagonalSolvePlan,
     TransformDiagonalSolveResult,
 )
+from ._tridiagonal_lines import (
+    solve_tridiagonal_lines,
+    TridiagonalLineSolveResult,
+)
 from .krylov import (
     KrylovProjectionCostEstimate,
     KrylovProjectionMethod,
@@ -888,6 +892,8 @@ __all__ = [
     "TwoSidedScaledLinearOperator",
     "TransformDiagonalLinearOperator",
     "TridiagonalLinearOperator",
+    "TridiagonalLineSolveResult",
+    "solve_tridiagonal_lines",
     "adjoint",
     "assemble_diagonal",
     "assemble_sparse",

@@ -129,6 +129,12 @@ from ._high_resolution_extended import (
     FilterADPolicy,
     TENOQualification,
 )
+from ._hydrostatic_grid import (
+    HydrostaticMetricEpoch,
+    LatitudeLongitudeHydrostaticGridPlan,
+    PreparedHydrostaticGrid,
+    TensorZHydrostaticGridPlan,
+)
 from ._incompressible import (
     FaceVelocity,
     MACOperatorPlan,
@@ -604,6 +610,8 @@ __all__ = [
     "MACFreeSurfaceGeometryState",
     "MACFreeSurfaceViscousMeasures",
     "MACGhostFluidCapillaryPlan",
+    "HydrostaticMetricEpoch",
+    "LatitudeLongitudeHydrostaticGridPlan",
     "MACMomentumDiagnostics",
     "MACMomentumPlan",
     "MACMomentumReport",
@@ -641,6 +649,7 @@ __all__ = [
     "PreparedMACOceanForcing",
     "PreparedMappedMACGeometry",
     "PreparedMACOperators",
+    "PreparedHydrostaticGrid",
     "PreparedMACScalarTransport",
     "PreparedMACVariableDensityOperators",
     "FiniteVolumeEntropyDiagnostics",
@@ -697,4 +706,5 @@ __all__ = [
     "WaveDecomposition",
     "WaveFamilyLimiterPlan",
     "WaveLimiterKind",
+    "TensorZHydrostaticGridPlan",
 ]

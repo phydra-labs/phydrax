@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Added hydrostatic primitive-equation ocean modeling with prognostic free surface,
+  extensive layer transports and tracer inventories, implicit and split-explicit
+  external modes, z-star and partial-cell geometry, freshwater volume sources,
+  Flather/radiation boundaries, conservative wetting/drying, beta-plane and bounded
+  latitude-longitude metrics, checked vertical implicit mixing, nonlinear seawater
+  thermodynamics, Ri/KPP-like/TKE/Redi-GM closures, accepted ledgers, restart/output,
+  qualification scenarios, examples, and benchmarks.
 - Extended marker-flow coupling from the fixed uniform baseline to a shared
   stage-inverse KKT contract with explicit route state, physical-boundary correction,
   rank/condition gates, multiple regularized kernels, deterministic/compensated

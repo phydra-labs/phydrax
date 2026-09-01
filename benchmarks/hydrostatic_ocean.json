@@ -1,0 +1,56 @@
+{
+  "benchmarks": [
+    {
+      "cell_updates_per_second": 155830.10139676864,
+      "cells": 108,
+      "closure": "prescribed",
+      "compile_seconds": 2.1895344160002423,
+      "execution_seconds": 0.000693062502250541,
+      "external_mode": "implicit",
+      "nonlinear_eos": false,
+      "partial_cells": false,
+      "repeats": 2,
+      "shape": [6, 6, 3],
+      "successful": true
+    },
+    {
+      "cell_updates_per_second": 161505.47059865796,
+      "cells": 108,
+      "closure": "kpp",
+      "compile_seconds": 2.0550011250015814,
+      "execution_seconds": 0.0006687079985567834,
+      "external_mode": "implicit",
+      "nonlinear_eos": true,
+      "partial_cells": true,
+      "repeats": 2,
+      "shape": [6, 6, 3],
+      "successful": true
+    },
+    {
+      "cell_updates_per_second": 132664.5243014224,
+      "cells": 108,
+      "closure": "prescribed",
+      "compile_seconds": 1.7699537919979775,
+      "execution_seconds": 0.0008140834979712963,
+      "external_mode": "split-explicit",
+      "nonlinear_eos": false,
+      "partial_cells": false,
+      "repeats": 2,
+      "shape": [6, 6, 3],
+      "successful": true
+    },
+    {
+      "cell_updates_per_second": 138030.19430679697,
+      "cells": 108,
+      "closure": "redi-gm",
+      "compile_seconds": 2.0161758339963853,
+      "execution_seconds": 0.0007824374988558702,
+      "external_mode": "implicit",
+      "nonlinear_eos": true,
+      "partial_cells": false,
+      "repeats": 2,
+      "shape": [6, 6, 3],
+      "successful": true
+    }
+  ]
+}
