@@ -69,7 +69,10 @@ Topology changes inside a compiled epoch are limited to predeclared slots. Capac
 
 `PreparedFiniteElementPointInterpolation` owns fixed host-cell interpolation and its exact transpose scatter. `RigidDeformableAttachmentPlan` builds translational rigid--FE attachment residuals, KKT operators, rank evidence, and action/reaction/moment certificates.
 
-`MixedVolumetricConstraintPlan` supplies a displacement--pressure saddle payload with explicit pressure gauge and rank evidence. It does not reuse fluid pressure projection or hide bulk penalties as hard incompressibility.
+`MixedFiniteElementConstraintPlan` prepares exact or finite-bulk
+displacement–pressure saddle systems with explicit gauge, space, stabilization
+refusal, rank, adjoint-block, and inf-sup evidence. It does not reuse fluid
+pressure projection or hide a bulk penalty as exact incompressibility.
 
 ## Cosserat rods
 

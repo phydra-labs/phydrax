@@ -18,7 +18,17 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...integration._deformed_measure import DeformedMeasureState
 from ._force_density_topology import ForceDensityStructure
+from ._loads import (
+    AbstractMechanicalLoad,
+    ClosedSurfacePressure,
+    CurrentSurfaceTraction,
+    GeneralFollowerLoad,
+    MechanicalLoadState,
+    PneumaticPressure,
+    ReferenceDeadTraction,
+)
 
 
 def _positions(structure: ForceDensityStructure, value: ArrayLike, /) -> Array:
@@ -114,41 +124,114 @@ def _surface_regularity(
     return valid, jnp.min(margin)
 
 
-def _pressure_forces(points: Array, cell_kinds: Array, pressure: Array, /) -> Array:
-    triangle_area = _triangle_area_vectors(points)
-    triangle_force = pressure[:, None] * triangle_area / 3.0
-    triangle = jnp.concatenate(
-        (
-            jnp.repeat(triangle_force[:, None, :], 3, axis=1),
-            jnp.zeros_like(triangle_force[:, None, :]),
-        ),
-        axis=1,
-    )
-    basis, tangent_xi, tangent_eta = _quadrature_data(points)
-    quadrature_area = jnp.cross(tangent_xi, tangent_eta)
-    quadrilateral = pressure[:, None, None] * oe.contract(
-        "qi,cqd->cid", basis, quadrature_area
-    )
-    return jnp.where((cell_kinds == 3)[:, None, None], triangle, quadrilateral)
+def _adapter_field(coordinates: Array, time: Array, args: Any, /) -> Array:
+    del coordinates, time
+    return jnp.asarray(args)
 
 
-def _traction_forces(points: Array, cell_kinds: Array, traction: Array, /) -> Array:
+def _adapter_pressure_law(
+    reference: Array,
+    current: Array,
+    measure: DeformedMeasureState,
+    state: MechanicalLoadState,
+    args: Any,
+    /,
+) -> Array:
+    del reference, current, state
+    assert measure.current_normal is not None
+    pressure = jnp.asarray(args, dtype=measure.current_normal.dtype)
+    return pressure[..., None] * measure.current_normal
+
+
+def _surface_adapter_quadrature(
+    points: Array,
+    cell_kinds: Array,
+    plan_id: str,
+    /,
+) -> tuple[Array, Array, DeformedMeasureState]:
+    quadrilateral_basis, tangent_xi, tangent_eta = _quadrature_data(points)
+    quadrilateral_points = oe.contract("qi,cid->cqd", quadrilateral_basis, points)
+    triangle_basis = jnp.zeros_like(quadrilateral_basis)
+    triangle_basis = triangle_basis.at[0, :3].set(1.0 / 3.0)
+    basis = jnp.where(
+        (cell_kinds == 3)[:, None, None],
+        triangle_basis[None, :, :],
+        quadrilateral_basis[None, :, :],
+    )
+    triangle_point = jnp.mean(points[:, :3], axis=1)
+    triangle_points = jnp.broadcast_to(
+        triangle_point[:, None, :], quadrilateral_points.shape
+    )
+    quadrature_points = jnp.where(
+        (cell_kinds == 3)[:, None, None],
+        triangle_points,
+        quadrilateral_points,
+    )
+
     triangle_area = _triangle_area_vectors(points)
     triangle_magnitude = jnp.sqrt(jnp.sum(triangle_area * triangle_area, axis=-1))
-    triangle_force = traction * triangle_magnitude[:, None] / 3.0
-    triangle = jnp.concatenate(
-        (
-            jnp.repeat(triangle_force[:, None, :], 3, axis=1),
-            jnp.zeros_like(triangle_force[:, None, :]),
-        ),
-        axis=1,
+    quadrilateral_area = jnp.cross(tangent_xi, tangent_eta)
+    quadrilateral_magnitude = jnp.sqrt(
+        jnp.sum(quadrilateral_area * quadrilateral_area, axis=-1)
     )
-    basis, tangent_xi, tangent_eta = _quadrature_data(points)
-    quadrature_area = jnp.cross(tangent_xi, tangent_eta)
-    magnitudes = jnp.sqrt(jnp.sum(quadrature_area * quadrature_area, axis=-1))
-    weights = oe.contract("qi,cq->ci", basis, magnitudes)
-    quadrilateral = weights[:, :, None] * traction[:, None, :]
-    return jnp.where((cell_kinds == 3)[:, None, None], triangle, quadrilateral)
+    triangle_measure = jnp.zeros_like(quadrilateral_magnitude)
+    triangle_measure = triangle_measure.at[:, 0].set(triangle_magnitude)
+    current_measure = jnp.where(
+        (cell_kinds == 3)[:, None],
+        triangle_measure,
+        quadrilateral_magnitude,
+    )
+    triangle_normal = triangle_area / jnp.maximum(
+        triangle_magnitude[:, None], jnp.finfo(points.dtype).tiny
+    )
+    triangle_normals = jnp.broadcast_to(
+        triangle_normal[:, None, :], quadrilateral_area.shape
+    )
+    quadrilateral_normal = quadrilateral_area / jnp.maximum(
+        quadrilateral_magnitude[..., None], jnp.finfo(points.dtype).tiny
+    )
+    normal = jnp.where(
+        (cell_kinds == 3)[:, None, None],
+        triangle_normals,
+        quadrilateral_normal,
+    )
+    finite = (
+        jnp.all(jnp.isfinite(quadrature_points), axis=-1)
+        & jnp.all(jnp.isfinite(normal), axis=-1)
+        & jnp.isfinite(current_measure)
+    )
+    measure = DeformedMeasureState(
+        reference_measure=current_measure,
+        current_measure=current_measure,
+        measure_ratio=jnp.ones_like(current_measure),
+        jacobian=jnp.ones_like(current_measure),
+        reference_normal=normal,
+        current_normal=normal,
+        admissible=finite,
+        valid=jnp.all(finite),
+        plan_id=plan_id,
+        kind="surface",
+    )
+    return basis, quadrature_points, measure
+
+
+def _integrate_surface_evaluation(
+    structure: ForceDensityStructure,
+    indices: Array,
+    valid_slots: Array,
+    basis: Array,
+    measure: DeformedMeasureState,
+    evaluation,
+    /,
+) -> Array:
+    weights = measure.measure(evaluation.semantics.measure_frame)
+    cell_forces = oe.contract(
+        "cqi,cq,cqd->cid",
+        basis,
+        weights,
+        evaluation.total_force_density,
+    )
+    return _scatter_surface_forces(structure, indices, valid_slots, cell_forces)
 
 
 def _scatter_surface_forces(
@@ -462,8 +545,17 @@ class ReferenceMemberSelfWeightModel(AbstractForceDensityLoadModel, NonTrainable
 class SurfacePressureLoadModel(AbstractForceDensityLoadModel):
     """Follower pressure integrated on regular oriented T3 and Q4 cells."""
 
+    _mechanical_load: GeneralFollowerLoad
+    _state: MechanicalLoadState
+
     def __init__(self):
-        pass
+        self._mechanical_load = GeneralFollowerLoad(
+            _adapter_pressure_law,
+            support="boundary",
+            measure_frame="current",
+            load_id="force-density-current-surface-pressure-adapter",
+        )
+        self._state = MechanicalLoadState(state_id="force-density-surface-pressure-state")
 
     @property
     def load_model_id(self) -> str:
@@ -495,9 +587,25 @@ class SurfacePressureLoadModel(AbstractForceDensityLoadModel):
             jnp.any(~jnp.isfinite(pressure)),
             "Surface pressures must be finite.",
         )
-        forces = _pressure_forces(points, connectivity.cell_kinds, pressure)
-        return _scatter_surface_forces(
-            structure, indices, connectivity.cell_vertex_valid, forces
+        basis, quadrature_points, measure = _surface_adapter_quadrature(
+            points,
+            connectivity.cell_kinds,
+            structure.structure_id,
+        )
+        evaluation = self._mechanical_load.evaluate(
+            quadrature_points,
+            quadrature_points,
+            measure,
+            self._state,
+            pressure[:, None],
+        )
+        return _integrate_surface_evaluation(
+            structure,
+            indices,
+            connectivity.cell_vertex_valid,
+            basis,
+            measure,
+            evaluation,
         )
 
     def valid(
@@ -527,6 +635,8 @@ class SurfaceTractionLoadModel(AbstractForceDensityLoadModel, NonTrainableState)
     measure: Literal["current", "reference"] = eqx.field(static=True)
     reference_positions: Array | None
     _load_model_id: str = eqx.field(static=True)
+    _mechanical_load: AbstractMechanicalLoad
+    _state: MechanicalLoadState
 
     def __init__(
         self,
@@ -551,8 +661,21 @@ class SurfaceTractionLoadModel(AbstractForceDensityLoadModel, NonTrainableState)
             or jnp.iscomplexobj(reference)
         ):
             raise TypeError("reference_positions must be one real rank-2 array.")
+        mechanical_load: AbstractMechanicalLoad
+        if measure == "reference":
+            mechanical_load = ReferenceDeadTraction(
+                _adapter_field,
+                load_id="force-density-reference-surface-traction-adapter",
+            )
+        else:
+            mechanical_load = CurrentSurfaceTraction(
+                _adapter_field,
+                load_id="force-density-current-surface-traction-adapter",
+            )
         self.measure = measure
         self.reference_positions = reference
+        self._mechanical_load = mechanical_load
+        self._state = MechanicalLoadState(state_id="force-density-surface-traction-state")
         self._load_model_id = canonical_fingerprint(
             {
                 "kind": "surface-traction-t3-q4",
@@ -596,9 +719,32 @@ class SurfaceTractionLoadModel(AbstractForceDensityLoadModel, NonTrainableState)
             jnp.any(~jnp.isfinite(traction)),
             "Surface tractions must be finite.",
         )
-        forces = _traction_forces(points, connectivity.cell_kinds, traction)
-        return _scatter_surface_forces(
-            structure, indices, connectivity.cell_vertex_valid, forces
+        basis, quadrature_points, measure = _surface_adapter_quadrature(
+            points,
+            connectivity.cell_kinds,
+            structure.structure_id,
+        )
+        if self.measure == "reference":
+            _, _, current_points = _surface_points(structure, positions)
+            current_quadrature = oe.contract("cqi,cid->cqd", basis, current_points)
+            reference_quadrature = quadrature_points
+        else:
+            reference_quadrature = quadrature_points
+            current_quadrature = quadrature_points
+        evaluation = self._mechanical_load.evaluate(
+            reference_quadrature,
+            current_quadrature,
+            measure,
+            self._state,
+            traction[:, None, :],
+        )
+        return _integrate_surface_evaluation(
+            structure,
+            indices,
+            connectivity.cell_vertex_valid,
+            basis,
+            measure,
+            evaluation,
         )
 
     def valid(
@@ -625,6 +771,7 @@ class PneumaticPressureLoadModel(AbstractForceDensityLoadModel, NonTrainableStat
     reference_volume: float = eqx.field(static=True)
     exponent: float = eqx.field(static=True)
     _load_model_id: str = eqx.field(static=True)
+    _mechanical_load: ClosedSurfacePressure | PneumaticPressure
 
     def __init__(
         self,
@@ -638,13 +785,32 @@ class PneumaticPressureLoadModel(AbstractForceDensityLoadModel, NonTrainableStat
             raise ValueError("law must be 'fixed' or 'ideal-gas'.")
         volume = float(reference_volume)
         exponent_ = float(exponent)
-        if not isfinite(volume) or volume == 0.0:
-            raise ValueError("reference_volume must be finite and nonzero.")
+        if not isfinite(volume) or volume <= 0.0:
+            raise ValueError("reference_volume must be finite and positive.")
         if not isfinite(exponent_) or exponent_ <= 0.0:
             raise ValueError("exponent must be finite and positive.")
         self.law = law
         self.reference_volume = volume
         self.exponent = exponent_
+        if law == "fixed":
+            mechanical_load: ClosedSurfacePressure | PneumaticPressure = (
+                ClosedSurfacePressure(
+                    1.0,
+                    closure_id="force-density-runtime-closed-surface",
+                    orientation_id="force-density-connectivity-orientation",
+                    load_id="force-density-fixed-pressure-adapter",
+                )
+            )
+        else:
+            mechanical_load = PneumaticPressure(
+                1.0,
+                volume,
+                exponent=exponent_,
+                closure_id="force-density-runtime-closed-surface",
+                orientation_id="force-density-connectivity-orientation",
+                load_id="force-density-pneumatic-pressure-adapter",
+            )
+        self._mechanical_load = mechanical_load
         self._load_model_id = canonical_fingerprint(
             {
                 "kind": "pneumatic-pressure-t3-q4",
@@ -670,11 +836,16 @@ class PneumaticPressureLoadModel(AbstractForceDensityLoadModel, NonTrainableStat
         /,
     ) -> Array:
         reference_pressure = _real_array("pneumatic pressure parameter", parameter, ())
-        if self.law == "fixed":
-            return reference_pressure
+        state = MechanicalLoadState(
+            reference_pressure,
+            state_id="force-density-pneumatic-pressure-state",
+        )
+        if isinstance(self._mechanical_load, ClosedSurfacePressure):
+            return self._mechanical_load.pressure_at_state(
+                state, reference_pressure.dtype
+            )
         volume = enclosed_surface_volume(structure, positions)
-        ratio = jnp.asarray(self.reference_volume, dtype=volume.dtype) / volume
-        return reference_pressure * ratio**self.exponent
+        return self._mechanical_load.pressure_at_volume(volume, state)
 
     def nodal_loads(
         self,
@@ -684,19 +855,34 @@ class PneumaticPressureLoadModel(AbstractForceDensityLoadModel, NonTrainableStat
         /,
     ) -> Array:
         connectivity, indices, points = _surface_points(structure, positions)
-        pressure = self.pressure(structure, positions, parameters)
-        pressure = eqx.error_if(
-            pressure,
+        pressure_parameter = _real_array("pneumatic pressure parameter", parameters, ())
+        pressure_parameter = eqx.error_if(
+            pressure_parameter,
             jnp.any(connectivity.boundary_edges),
             "Pneumatic pressure requires a closed polygonal surface.",
         )
-        forces = _pressure_forces(
+        basis, quadrature_points, measure = _surface_adapter_quadrature(
             points,
             connectivity.cell_kinds,
-            jnp.full((connectivity.cell_count,), pressure, dtype=points.dtype),
+            structure.structure_id,
         )
-        return _scatter_surface_forces(
-            structure, indices, connectivity.cell_vertex_valid, forces
+        state = MechanicalLoadState(
+            pressure_parameter,
+            state_id="force-density-pneumatic-pressure-state",
+        )
+        evaluation = self._mechanical_load.evaluate(
+            quadrature_points,
+            quadrature_points,
+            measure,
+            state,
+        )
+        return _integrate_surface_evaluation(
+            structure,
+            indices,
+            connectivity.cell_vertex_valid,
+            basis,
+            measure,
+            evaluation,
         )
 
     def valid(

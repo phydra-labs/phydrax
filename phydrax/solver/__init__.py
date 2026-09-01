@@ -352,6 +352,12 @@ from ._fermionic_gaussian import (
     open_kitaev_chain,
     solve_fermionic_gaussian,
 )
+from ._field_equilibrium import (
+    FieldEquilibriumFormulation,
+    prepare_functional_stationarity,
+    prepare_virtual_work_equilibrium,
+    PreparedFieldEquilibrium,
+)
 from ._finite_element_adaptivity import (
     FiniteElementHPTopologyResult,
     FiniteElementTopologyResult,
@@ -1878,6 +1884,10 @@ __all__ = [
     "solve_bsde_least_squares",
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
+    "FieldEquilibriumFormulation",
+    "PreparedFieldEquilibrium",
+    "prepare_functional_stationarity",
+    "prepare_virtual_work_equilibrium",
     "FunctionalSolver",
     "InteriorLaplaceDirichletResult",
     "LaplaceCapacitanceResult3D",

@@ -45,6 +45,7 @@ def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(dimen
 
     actual_energy = total_energy(executor_gradient)
     actual_derivative = jax.grad(total_energy)(executor_gradient)[0, 0]
+    actual_tangent = jax.hessian(total_energy)(executor_gradient)[0, 0, :, :, 0, 0, :, :]
     deformation = jnp.eye(dimension) + displacement_gradient
     deformation_3d = _embedded(deformation)
     expected_energy = phx.applications.solid_mechanics.neo_hookean_reference_energy(
@@ -53,11 +54,15 @@ def test_neo_hookean_form_density_and_ad_residual_match_constitutive_model(dimen
     expected_piola = phx.applications.solid_mechanics.neo_hookean_first_piola(
         deformation_3d, parameters
     )[:dimension, :dimension]
+    expected_tangent = phx.operators.mechanics.neo_hookean_tangent(
+        deformation, parameters
+    )[:dimension, :dimension, :dimension, :dimension].transpose(1, 0, 3, 2)
 
     np.testing.assert_allclose(actual_energy, expected_energy, rtol=2e-12, atol=2e-12)
     np.testing.assert_allclose(
         actual_derivative, expected_piola.T, rtol=2e-11, atol=2e-11
     )
+    np.testing.assert_allclose(actual_tangent, expected_tangent, rtol=3e-11, atol=3e-11)
 
 
 def test_neo_hookean_form_compiles_vector_plane_strain_identity_residual():

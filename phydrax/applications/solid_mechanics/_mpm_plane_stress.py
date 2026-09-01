@@ -4,27 +4,94 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ...equations import (
     AbstractImplicitMPMConstitutivePlan,
-    LocalConstitutiveRootPlan,
     MPMConstitutiveCapabilities,
     MPMConstitutiveResponse,
     MPMLinearizedConstitutiveResponse,
 )
+from ...operators.mechanics import (
+    finite_strain_kinematics,
+    first_piola_to_cauchy,
+    HyperelasticLaw,
+    HyperelasticResponse,
+)
+from ._plane_stress import (
+    BlockDiagonalPlaneStressReductionPlan,
+    PlaneStressFailure,
+)
 
 
-class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
-    """Scalar out-of-plane closure for block-diagonal isotropic 3-D materials."""
+class _MPMPointHyperelasticLaw(HyperelasticLaw):
+    base: AbstractImplicitMPMConstitutivePlan
+    history: Array
+    reference_density: Array
+    parameters: Any
+    time: Array
+    step_size: Array
+
+    def __init__(
+        self,
+        base: AbstractImplicitMPMConstitutivePlan,
+        history: Array,
+        reference_density: Array,
+        parameters: Any,
+        time: Array,
+        step_size: Array,
+        /,
+    ):
+        self.base = base
+        self.history = history
+        self.reference_density = reference_density
+        self.parameters = parameters
+        self.time = time
+        self.step_size = step_size
+
+    def evaluate(self, deformation_gradient: ArrayLike, /) -> HyperelasticResponse:
+        deformation = jnp.asarray(deformation_gradient)
+        linearized = self.base.evaluate_linearized(
+            deformation[None, ...],
+            self.history[None, ...],
+            self.reference_density[None],
+            self.parameters,
+            self.time,
+            self.step_size,
+        )
+        response = linearized.response
+        kinematics = finite_strain_kinematics(deformation)
+        first_piola = response.first_piola[0]
+        material_admissible = (
+            response.successful[0]
+            & response.admissible[0]
+            & linearized.tangent_successful[0]
+        )
+        admissible = kinematics.admissible & material_admissible
+        return HyperelasticResponse(
+            kinematics,
+            response.reference_energy_density[0],
+            first_piola,
+            first_piola_to_cauchy(kinematics, first_piola),
+            linearized.algorithmic_tangent[0],
+            kinematics.admissible,
+            material_admissible,
+            admissible,
+        )
+
+
+class PlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePlan):
+    """Block-diagonal plane-stress closure for an implicit-capable 3-D MPM law."""
 
     base: AbstractImplicitMPMConstitutivePlan
-    root: LocalConstitutiveRootPlan
+    reduction: BlockDiagonalPlaneStressReductionPlan
     dimension: int = eqx.field(static=True)
     kinematics: str = eqx.field(static=True)
     base_state_width: int = eqx.field(static=True)
@@ -37,22 +104,22 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
         base: AbstractImplicitMPMConstitutivePlan,
         /,
         *,
-        root: LocalConstitutiveRootPlan | None = None,
+        reduction: BlockDiagonalPlaneStressReductionPlan | None = None,
     ):
         if not isinstance(base, AbstractImplicitMPMConstitutivePlan):
             raise TypeError("base must be AbstractImplicitMPMConstitutivePlan.")
         if base.dimension != 3 or base.kinematics != "three_dimensional":
             raise ValueError("Plane-stress closure requires one 3-D base material.")
-        root_ = (
-            LocalConstitutiveRootPlan(plan_id="plane-stress-thickness")
-            if root is None
-            else root
+        reduction_ = (
+            BlockDiagonalPlaneStressReductionPlan() if reduction is None else reduction
         )
-        if not isinstance(root_, LocalConstitutiveRootPlan):
-            raise TypeError("root must be LocalConstitutiveRootPlan or None.")
+        if not isinstance(reduction_, BlockDiagonalPlaneStressReductionPlan):
+            raise TypeError(
+                "reduction must be BlockDiagonalPlaneStressReductionPlan or None."
+            )
         width = int(np.prod(base.state_shape))
         self.base = base
-        self.root = root_
+        self.reduction = reduction_
         self.dimension = 2
         self.kinematics = "plane_stress"
         self.base_state_width = width
@@ -67,9 +134,9 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
         )
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "isotropic-plane-stress-mpm",
+                "kind": "block-diagonal-plane-stress-mpm",
                 "base": base.plan_id,
-                "root": root_.plan_id,
+                "reduction": reduction_.plan_id,
                 "unknown": "log-out-of-plane-stretch",
                 "residual": "first-piola-33",
             }
@@ -87,6 +154,23 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
         embedded = jnp.zeros((3, 3), dtype=deformation.dtype)
         embedded = embedded.at[:2, :2].set(deformation)
         return embedded.at[2, 2].set(jnp.exp(eta))
+
+    def _point_law(
+        self,
+        history,
+        density,
+        parameters,
+        time,
+        step_size,
+    ) -> _MPMPointHyperelasticLaw:
+        return _MPMPointHyperelasticLaw(
+            self.base,
+            history,
+            density,
+            parameters,
+            jnp.asarray(time),
+            jnp.asarray(step_size),
+        )
 
     def evaluate(
         self,
@@ -114,21 +198,15 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
 
         def point(value, history, density_value):
             base_history = history[: self.base_state_width].reshape(self.base.state_shape)
-            eta0 = history[-1]
-
-            def residual(eta):
-                embedded = self._embed(value, eta)
-                response = self.base.evaluate(
-                    embedded[None, ...],
-                    base_history[None, ...],
-                    density_value[None],
-                    parameters,
-                    time,
-                    step_size,
-                )
-                return response.first_piola[0, 2, 2]
-
-            eta, root_diagnostics = self.root.solve_with_diagnostics(residual, eta0)
+            law = self._point_law(
+                base_history,
+                density_value,
+                parameters,
+                time,
+                step_size,
+            )
+            reduced = self.reduction.evaluate(value, law)
+            eta = reduced.kinematics.log_thickness_stretch
             embedded = self._embed(value, eta)
             response = self.base.evaluate(
                 embedded[None, ...],
@@ -141,24 +219,30 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
             trial = jnp.concatenate(
                 (response.trial_state.reshape((-1,)), eta[None]), axis=0
             )
-            valid = (
-                root_diagnostics.converged
-                & response.successful[0]
-                & response.admissible[0]
-                & jnp.isfinite(eta)
-            )
+            valid = reduced.successful & response.successful[0] & response.admissible[0]
+            failure = jnp.where(
+                valid,
+                int(PlaneStressFailure.OK),
+                jnp.where(
+                    reduced.successful,
+                    int(PlaneStressFailure.BASE_LAW_REJECTED),
+                    reduced.failure,
+                ),
+            ).astype(jnp.int32)
             return (
-                response.first_piola[0, :2, :2],
+                reduced.first_piola,
                 trial,
-                response.reference_energy_density[0],
+                reduced.reference_energy_density,
                 response.maximum_wave_speed[0],
                 response.dissipation_increment[0],
                 response.branch_code[0],
                 response.suggested_step[0],
                 valid,
                 eta,
-                root_diagnostics.residual,
-                root_diagnostics.derivative,
+                reduced.residual,
+                reduced.log_stretch_sensitivity,
+                reduced.condensed_tangent,
+                failure,
             )
 
         outputs = jax.vmap(point)(flat_f, flat_state, flat_density)
@@ -173,7 +257,9 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
             valid,
             eta,
             residual,
-            derivative,
+            sensitivity,
+            tangent,
+            failure,
         ) = outputs
         return MPMConstitutiveResponse(
             stress.reshape(batch_shape + (2, 2)),
@@ -189,7 +275,13 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
                 "out_of_plane_log_stretch": eta.reshape(batch_shape),
                 "out_of_plane_stretch": jnp.exp(eta).reshape(batch_shape),
                 "plane_stress_residual": residual.reshape(batch_shape),
-                "plane_stress_derivative": derivative.reshape(batch_shape),
+                "plane_stress_log_stretch_sensitivity": sensitivity.reshape(
+                    batch_shape + (2, 2)
+                ),
+                "plane_stress_condensed_tangent": tangent.reshape(
+                    batch_shape + (2, 2, 2, 2)
+                ),
+                "plane_stress_failure": failure.reshape(batch_shape),
             },
         )
 
@@ -211,50 +303,11 @@ class IsotropicPlaneStressMPMConstitutivePlan(AbstractImplicitMPMConstitutivePla
             time,
             step_size,
         )
-        deformation = jnp.asarray(deformation_gradient)
-        batch_shape = deformation.shape[:-2]
-        state = jnp.asarray(committed_state, dtype=deformation.dtype)
-        density = jnp.asarray(reference_density, dtype=deformation.dtype)
-        eta = response.trial_state[..., -1]
-        flat_f = deformation.reshape((-1, 2, 2))
-        flat_state = state.reshape((-1, self.state_shape[0]))
-        flat_density = density.reshape((-1,))
-        flat_eta = eta.reshape((-1,))
-
-        def point(value, history, density_value, eta_value):
-            embedded = self._embed(value, eta_value)
-            base_history = history[: self.base_state_width].reshape(self.base.state_shape)
-            linearized = self.base.evaluate_linearized(
-                embedded[None, ...],
-                base_history[None, ...],
-                density_value[None],
-                parameters,
-                time,
-                step_size,
-            )
-            tangent = linearized.algorithmic_tangent[0]
-            denominator = tangent[2, 2, 2, 2]
-            safe = jnp.where(jnp.abs(denominator) > 1.0e-12, denominator, 1.0)
-            in_plane = tangent[:2, :2, :2, :2] - (
-                tangent[:2, :2, 2, 2][..., None, None]
-                * tangent[2, 2, :2, :2][None, None, ...]
-                / safe
-            )
-            successful = (
-                linearized.tangent_successful[0]
-                & jnp.isfinite(denominator)
-                & (jnp.abs(denominator) > 1.0e-12)
-                & jnp.all(jnp.isfinite(in_plane))
-            )
-            return in_plane, successful
-
-        tangent, successful = jax.vmap(point)(flat_f, flat_state, flat_density, flat_eta)
-        tangent = tangent.reshape(batch_shape + (2, 2, 2, 2))
-        return MPMLinearizedConstitutiveResponse(
-            response,
-            tangent,
-            successful.reshape(batch_shape),
+        tangent = response.diagnostics["plane_stress_condensed_tangent"]
+        successful = response.successful & jnp.all(
+            jnp.isfinite(tangent), axis=(-4, -3, -2, -1)
         )
+        return MPMLinearizedConstitutiveResponse(response, tangent, successful)
 
 
-__all__ = ["IsotropicPlaneStressMPMConstitutivePlan"]
+__all__ = ["PlaneStressMPMConstitutivePlan"]

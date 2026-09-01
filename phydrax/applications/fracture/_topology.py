@@ -16,7 +16,7 @@ from ...topology import (
 )
 
 
-def fracture_topology_plan(
+def diffuse_fracture_topology_plan(
     complex: CellSubcomplex,
     support: CellVertexSupport,
     thresholds: ArrayLike,
@@ -37,4 +37,4 @@ def fracture_topology_plan(
     )
 
 
-__all__ = ["fracture_topology_plan"]
+__all__ = ["diffuse_fracture_topology_plan"]
