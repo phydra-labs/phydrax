@@ -13,9 +13,9 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._closure import DifferentiationContract
 from ._products import (
-    combine_differentiability,
-    CosmologyDifferentiability,
+    combine_differentiation,
     CosmologyProductProvenance,
     MatterPowerDescriptor,
     MatterPowerTable,
@@ -140,7 +140,7 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
     wavenumbers: Array
     factor_values: Array
     card: CorrectionModelCard
-    differentiability: CosmologyDifferentiability = eqx.field(static=True)
+    differentiation: DifferentiationContract
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -151,16 +151,24 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
         card: CorrectionModelCard,
         /,
         *,
-        differentiability: CosmologyDifferentiability = "constant",
+        differentiation: DifferentiationContract | str = "constant",
     ):
         if not isinstance(card, CorrectionModelCard):
             raise TypeError("card must be CorrectionModelCard.")
-        if differentiability not in (
-            "native-parameter",
-            "coordinate-only",
-            "constant",
-        ):
-            raise ValueError("Unknown correction differentiability contract.")
+        if isinstance(differentiation, str):
+            if differentiation == "native-parameter":
+                differentiation_ = DifferentiationContract(
+                    upstream_physical_parameters=False,
+                    stored_values=True,
+                    query_coordinates=True,
+                    local_parameters=True,
+                )
+            else:
+                differentiation_ = DifferentiationContract.from_label(differentiation)
+        else:
+            differentiation_ = differentiation
+        if not isinstance(differentiation_, DifferentiationContract):
+            raise TypeError("differentiation must be DifferentiationContract.")
         scales = np.asarray(scale_factors, dtype=float).reshape((-1,))
         wavenumbers_ = np.asarray(wavenumbers, dtype=float).reshape((-1,))
         factors = jnp.asarray(factor_values)
@@ -179,20 +187,20 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             jnp.any(~jnp.isfinite(factors)) | jnp.any(factors < 0.0),
             "Correction factors must be finite and non-negative.",
         )
-        if differentiability != "native-parameter":
+        if not differentiation_.stored_values:
             factors = jax.lax.stop_gradient(factors)
         self.scale_factors = jnp.asarray(scales)
         self.wavenumbers = jnp.asarray(wavenumbers_)
         self.factor_values = factors
         self.card = card
-        self.differentiability = differentiability
+        self.differentiation = differentiation_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "multiplicative-matter-power-correction",
                 "scale_factors": scales.tolist(),
                 "wavenumbers": wavenumbers_.tolist(),
                 "card": card.card_id,
-                "differentiability": differentiability,
+                "differentiation": differentiation_.contract_id,
             }
         )
 
@@ -250,9 +258,9 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             ~successful,
             "Matter-power correction failed grid, domain, or finite-output checks.",
         )
-        policy = combine_differentiability(
-            power.provenance.differentiability,
-            self.differentiability,
+        differentiation = combine_differentiation(
+            power.provenance.differentiation,
+            self.differentiation,
         )
         provenance = CosmologyProductProvenance(
             producer="phydrax.applications.cosmology.MultiplicativeMatterPowerCorrectionPlan",
@@ -262,8 +270,8 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             numerical_policy_id=self.plan_id,
             physics_policy_id=self.card.card_id,
             scale_id=power.scale.scale_id,
-            source_kind="native" if policy == "native-parameter" else "external",
-            differentiability=policy,
+            source_kind="native",
+            differentiation=differentiation,
             parent_product_ids=(power.provenance.provenance_id,),
         )
         descriptor = MatterPowerDescriptor(

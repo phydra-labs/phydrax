@@ -160,7 +160,7 @@ class CmbSpectrumTable(StrictModule):
             | jnp.any(jnp.abs(values - jnp.swapaxes(values, -1, -2)) > 1.0e-10),
             "CMB spectra must be finite and symmetric.",
         )
-        if provenance.differentiability != "native-parameter":
+        if not provenance.differentiation.stored_values:
             ell = jax.lax.stop_gradient(ell)
             values = jax.lax.stop_gradient(values)
         self.multipoles = ell

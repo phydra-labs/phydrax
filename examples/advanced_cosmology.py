@@ -28,17 +28,14 @@ def main() -> None:
     distance_plan = cosmo.FLRWDistancePlan(light_speed=1.0, order=64)
     curved_distance = distance_plan.evaluate(curved, jnp.asarray([0.5, 1.0]))
     growth = cosmo.FLRWGrowthPlan(jnp.geomspace(1.0e-2, 1.0, 48)).solve(background)
-    provenance = cosmo.CosmologyProductProvenance(
-        producer="advanced-example",
-        producer_version="native",
-        model_form_id=background.model_form_id,
-        request_id="advanced-example-power",
-        numerical_policy_id="advanced-example-grid",
-        physics_policy_id="linear-total-matter",
-        scale_id=scale.scale_id,
-        source_kind="native",
-        differentiability="native-parameter",
-    )
+    provenance = cosmo.CosmologyProductProvenance(producer="advanced-example",
+    producer_version="native",
+    model_form_id=background.model_form_id,
+    request_id="advanced-example-power",
+    numerical_policy_id="advanced-example-grid",
+    physics_policy_id="linear-total-matter",
+    scale_id=scale.scale_id,
+    source_kind="native", differentiation="native-parameter")
     k = jnp.geomspace(0.05, 2000.0, 512)
     linear = cosmo.MatterPowerTable(
         [0.5, 1.0],
@@ -63,13 +60,10 @@ def main() -> None:
     )
     boost = 1.0 + 0.1 * (k[None, :] / (1.0 + k[None, :]))
     boost = jnp.broadcast_to(boost, linear.power_values.shape)
-    nonlinear = cosmo.MultiplicativeMatterPowerCorrectionPlan(
-        linear.scale_factors,
-        linear.wavenumbers,
-        boost,
-        card,
-        differentiability="native-parameter",
-    ).apply(linear)
+    nonlinear = cosmo.MultiplicativeMatterPowerCorrectionPlan(linear.scale_factors,
+    linear.wavenumbers,
+    boost,
+    card, differentiation="native-parameter").apply(linear)
     variance = cosmo.LinearVariancePlan(1.0).sigma(
         background, linear, jnp.asarray([0.01, 0.1, 1.0]), 1.0
     )

@@ -16,6 +16,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import ParticleDiscretization, ParticlePairKeySpace, ParticleSetPlan
 from ..discretization.particle._periodic_cell import ParticleCell
+from ._sites import AtomisticCoordinateMapPlan, PreparedAtomisticCoordinateMap
 from ._topology import MolecularTopologyPlan, PreparedMolecularTopology
 from ._types import AtomicStructure
 from ._units import AtomisticUnitSystem
@@ -36,6 +37,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
     units: AtomisticUnitSystem
     topology: MolecularTopologyPlan
     cell: ParticleCell | None
+    coordinate_map: AtomisticCoordinateMapPlan
     name: str = eqx.field(static=True)
     coordinate_dtype: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
@@ -56,6 +58,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         region_ids: ArrayLike | None = None,
         topology: MolecularTopologyPlan | None = None,
         cell: ParticleCell | None = None,
+        coordinate_map: AtomisticCoordinateMapPlan | None = None,
         name: str = "atomistic-system",
         coordinate_dtype: Any = "float64",
         system_id: str | None = None,
@@ -150,6 +153,21 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
                 raise TypeError("cell must be a ParticleCell or None.")
             if cell.ambient_dimension != 3:
                 raise ValueError("Atomistic dynamics requires a three-dimensional cell.")
+        coordinate_map_ = (
+            AtomisticCoordinateMapPlan.identity(
+                ids,
+                numbers,
+                atom_types,
+                charge,
+                active_mask=active,
+            )
+            if coordinate_map is None
+            else coordinate_map
+        )
+        if not isinstance(coordinate_map_, AtomisticCoordinateMapPlan):
+            raise TypeError("coordinate_map must be AtomisticCoordinateMapPlan or None.")
+        if not np.array_equal(np.asarray(coordinate_map_.dof_particle_ids), ids):
+            raise ValueError("Coordinate-map DOF identity differs from particle_ids.")
         identifier_name = str(name).strip()
         if not identifier_name:
             raise ValueError("name must be non-empty.")
@@ -171,6 +189,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
                 "units": units.unit_system_id,
                 "topology": topology_.plan_id,
                 "cell": None if cell is None else cell.cell_id,
+                "coordinate_map": coordinate_map_.plan_id,
                 "arrays": array_tree_fingerprint(arrays),
                 "coordinate_dtype": dtype.name,
             }
@@ -183,6 +202,7 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         self.units = units
         self.topology = topology_
         self.cell = cell
+        self.coordinate_map = coordinate_map_
         self.name = identifier_name
         self.coordinate_dtype = dtype.name
         self.system_id = resolved
@@ -230,6 +250,7 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
     particles: ParticleDiscretization
     topology: PreparedMolecularTopology
     pair_key_space: ParticlePairKeySpace
+    coordinate_map: PreparedAtomisticCoordinateMap
     inverse_masses: Array
     active_mask: Array
     mobile_mask: Array
@@ -252,6 +273,7 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
         ).prepare(numeric_version=numeric_version)
         topology = plan.topology.prepare(particles)
         pair_key_space = ParticlePairKeySpace(particles)
+        coordinate_map = plan.coordinate_map.prepare(particles)
         inverse = jnp.where(plan.active_mask, 1.0 / plan.masses, 0.0)
         mobile_count = int(np.count_nonzero(np.asarray(plan.mobile_mask)))
         molecule_labels = tuple(
@@ -272,6 +294,7 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
         self.particles = particles
         self.topology = topology
         self.pair_key_space = pair_key_space
+        self.coordinate_map = coordinate_map
         self.inverse_masses = inverse
         self.active_mask = plan.active_mask
         self.mobile_mask = plan.mobile_mask
@@ -285,6 +308,7 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
                 "particles": particles.prepared_id,
                 "topology": topology.topology_id,
                 "units": plan.units.unit_system_id,
+                "coordinate_map": coordinate_map.prepared_id,
                 "molecule_labels": list(molecule_labels),
                 "numeric_version": version,
             }

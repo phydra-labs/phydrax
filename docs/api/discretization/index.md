@@ -11,7 +11,9 @@ for polygonal projection spaces, [Guide → Particle methods](../../guides_parti
 for material entity and interaction contracts,
 [Guide → Particle-grid splatting](../../guides_particle_splatting.md) for
 measure-aware particle/grid transfer, [Guide → SPH](../../guides_sph.md)
-for conservative particle flow, and
+for conservative particle flow,
+[Guide → Deformable contact](../../guides_deformable_contact.md) for exact-map
+collision surfaces and fixed-capacity candidate/safety contracts, and
 [Guide → Kinetic methods](../../guides_lattice_boltzmann.md) for local
 lattice-Boltzmann and discrete-velocity methods.
 

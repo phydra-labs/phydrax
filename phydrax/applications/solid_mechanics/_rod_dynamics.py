@@ -17,7 +17,14 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import SmallLinearSolvePlan, solve_small_linear
+from ...discretization.contact import (
+    CollisionSurfacePlan,
+    ContactPairPolicy,
+    ContactPrecisionPolicy,
+    PreparedCollisionSurface,
+    selection_collision_operator,
+)
+from ...linalg import ArraySpace, SmallLinearSolvePlan, solve_small_linear
 
 
 RodDimension: TypeAlias = Literal[2, 3]
@@ -505,6 +512,54 @@ class PreparedRod(StrictModule, NonTrainableState):
                 ),
                 dtype=self.plan.rest_positions.dtype,
             ),
+        )
+
+    def collision_surface(
+        self,
+        /,
+        *,
+        vertex_ids: ArrayLike | None = None,
+        body_id: int = 0,
+        patch_id: int = 0,
+        minimum_separation: float = 0.0,
+    ) -> PreparedCollisionSurface:
+        """Expose the rod centerline through the shared collision interface."""
+        identifiers = (
+            np.arange(self.plan.node_count, dtype=np.int64)
+            if vertex_ids is None
+            else np.asarray(vertex_ids)
+        )
+        if identifiers.shape != (self.plan.node_count,) or not np.issubdtype(
+            identifiers.dtype, np.integer
+        ):
+            raise TypeError("vertex_ids must be one integer ID per rod node.")
+        pair_policy = ContactPairPolicy(
+            self.plan.node_count,
+            body_ids=np.full((self.plan.node_count,), int(body_id), dtype=np.int64),
+            patch_ids=np.full((self.plan.node_count,), int(patch_id), dtype=np.int64),
+        )
+        topology = CollisionSurfacePlan(
+            identifiers,
+            ambient_dimension=self.plan.dimension,
+            edges=self.plan.segment_node_ids,
+            pair_policy=pair_policy,
+            minimum_separation=minimum_separation,
+        )
+        dtype = np.dtype(self.plan.rest_positions.dtype)
+        source = ArraySpace((self.plan.node_count, self.plan.dimension), dtype=dtype)
+        precision = ContactPrecisionPolicy(
+            geometry_dtype=dtype,
+            accumulation_dtype=np.float64,
+            certification_dtype=np.float64,
+            output_dtype=dtype,
+        )
+        return PreparedCollisionSurface(
+            topology,
+            self.plan.rest_positions,
+            selection_collision_operator(
+                source, np.arange(self.plan.node_count, dtype=np.int32)
+            ),
+            precision=precision,
         )
 
     def evaluate(self, state: RodState, /) -> RodEvaluation:

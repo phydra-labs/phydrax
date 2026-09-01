@@ -44,7 +44,9 @@ Most workflows are composing a few primitives:
   microphysics, reduced and unstructured Maxwell coupling, semi-implicit particle
   response, fixed-population and dynamically reseeded free-surface/multiphase
   FLIP, ghost-fluid capillarity, moving solids, variational viscosity, WENO
-  fluxes, fixed-capacity AMR, field spaces, measures, transfers,
+  fluxes, fixed-capacity AMR, collision surfaces, deterministic contact candidate
+  epochs, conservative continuous-collision and simplex-inversion bounds,
+  convergent barrier contact, lagged friction, field spaces, measures, transfers,
   fixed-temporal differentiable replay, transactional gravity/cooling/stochastic
   source processes, compatible constrained MHD, temporal/stochastic composition,
   and auditable plan/preparation identities.
@@ -77,11 +79,12 @@ Most workflows are composing a few primitives:
   exact construction-order search, standards clauses, reliability, calibration,
   evidence acquisition, and immutable digital-twin ancestry extend member-network
   mechanics without erasing model fidelity or applicability.
-- **Atomistic learning and dynamics**: scale-identified atomic structures,
-  position-independent systems, stable-ID molecular topology, classical and learned
-  scalar-energy programs, dense/cell/Verlet execution, NVE/NVT integration,
-  SHAKE/RATTLE, triclinic cells, Ewald/PME, bounded replayable trajectories, and
-  exact checkpoints retain explicit resources, precision, diagnostics, and provenance.
+- **Atomistic learning, force fields, and sampling**: scale-identified structures,
+  interaction-site coordinate maps, stable-ID topology, classical/learned/many-body
+  energy programs, polarization, dense/cell/Verlet and distributed execution,
+  constrained NVE/NVT/NPT and quantum-nuclear methods, resumable trajectories,
+  external-tool interoperability, enhanced sampling, free energy, committee
+  uncertainty, replay, checkpoints, diagnostics, and provenance share explicit plans.
 - **Experimental velocimetry**: mask-aware multipass PIV, calibrated
   multi-camera particle reconstruction and tracking, residual-image Lagrangian
   refinement, deterministic synthetic qualification, and optional learned dense
@@ -224,6 +227,7 @@ actions, area measures, and SFNO interoperability. See the
 [MPM domain guide](docs/guides_mpm_particle_domains.md), the
 [MPM implicit guide](docs/guides_mpm_adaptive_implicit.md), the
 [MPM fracture/sparse guide](docs/guides_mpm_fracture_sparse.md), the
+[deformable-contact guide](docs/guides_deformable_contact.md), the
 [SPH guide](docs/guides_sph.md), the
 [WCSPH guide](docs/guides_wcsph.md), the
 [advanced SPH guide](docs/guides_multiphase_incompressible_sph.md), the
@@ -239,13 +243,17 @@ Finite molecular learning and conservative atomistic dynamics live in
 `phx.atomistic`, with equivariant learned energy models in `phx.nn.atomistic`.
 The learning surface retains typed structures, batches, explicit dense graph
 execution, PaiNN/NequIP conservative forces, fitting, and offline rMD17 data.
-The dynamics surface adds complete unit systems, position-independent prepared
-systems, molecular topology, classical and learned potential programs,
-orthorhombic/triclinic neighborhoods, NVE/NVT, constraints, stress, Ewald/PME,
-NPT moves, replay, checkpoints, hybrid composition, ring polymers, and
-semi-grand transitions. See the [atomistic learning guide](docs/guides_atomistic.md),
-the [atomistic dynamics guide](docs/guides_atomistic_dynamics.md), the
-[dynamics cookbook](docs/cookbook/atomistic_dynamics.md), and the
+The dynamics surface adds complete unit systems, interaction-site coordinate maps,
+molecular topology, native force-field bundles, orthorhombic/triclinic neighborhoods,
+constrained ensembles, polarization and solvent models, quantum nuclei, many-body methods,
+distributed execution, resumable H5MD/XYZ reporting and rerun, OpenMM/OpenFF/ParmEd,
+MDAnalysis, i-PI and PACKMOL boundaries, collective variables, adaptive biases, replica
+exchange, free-energy estimators, and committee acquisition. See the
+[atomistic learning guide](docs/guides_atomistic.md), the
+[atomistic dynamics guide](docs/guides_atomistic_dynamics.md), the
+[force-field guide](docs/guides_atomistic_force_fields.md), the
+[interoperability guide](docs/guides_atomistic_interop.md), the
+[sampling guide](docs/guides_atomistic_sampling.md), and the
 [atomistic API](docs/api/atomistic.md).
 
 ## Example

@@ -65,13 +65,6 @@ from ._convex_contact import (
     PreparedConvexShape,
 )
 from ._core import ParticleDiscretization, ParticleSetPlan
-from ._deformable_contact import (
-    DeformableContactEvaluation,
-    DeformableContactPlan,
-    DeformableContactRouteKind,
-    DeformableContactTransposeResult,
-    PreparedDeformableContact,
-)
 from ._dem import (
     DEMBodyPropertyUpdateResult,
     DEMDiagnostics,
@@ -346,7 +339,7 @@ from ._particle_morphology import (
     deactivate_particle_internal_state,
     DensityPorosityMorphologyPlan,
     fragment_particle_internal_batch,
-    ParticleDeactivationResult,
+    ParticleDeactivationResult as ParticleInternalDeactivationResult,
     ParticleDynamicBodyProperties,
     ParticleMorphologyEvaluation,
     ThermochemicalFragmentationEvaluation,
@@ -367,7 +360,6 @@ from ._particle_surface_exchange import (
     ParticleContactExchangePlan,
 )
 from ._periodic_cell import ParticleCell
-from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._population import (
     ParticleAllocationRequest,
     ParticleAllocationResult,
@@ -378,6 +370,7 @@ from ._population import (
     ParticleSlotReusePolicy,
     update_particle_population,
 )
+from ._precision import ParticleExecutionPolicy, ParticlePrecisionPolicy
 from ._production_boundaries import (
     BoundaryFeatureKind,
     BoundaryFeatureState,
@@ -1126,7 +1119,7 @@ __all__ = [
     "DensityPorosityMorphologyPlan",
     "ParticleDynamicBodyProperties",
     "ParticleMorphologyEvaluation",
-    "ParticleDeactivationResult",
+    "ParticleInternalDeactivationResult",
     "ThermochemicalFragmentationEvaluation",
     "ThermochemicalFragmentationPlan",
     "deactivate_particle_internal_state",
@@ -1154,11 +1147,6 @@ __all__ = [
     "ParticleCapacityStatus",
     "ParticleEpochInsertionResult",
     "ParticleEpochTransition",
-    "DeformableContactEvaluation",
-    "DeformableContactPlan",
-    "DeformableContactRouteKind",
-    "DeformableContactTransposeResult",
-    "PreparedDeformableContact",
     "accept_hard_contact_candidate",
     "CoulombConeProjection",
     "FrictionBallProjection",
