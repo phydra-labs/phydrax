@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeAlias
-
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
@@ -17,12 +15,9 @@ from ..._fingerprint import canonical_fingerprint
 from ..._likelihoods import ScalarNaturalExponentialFamilyLikelihood
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...artifacts import DifferentiationContract
 from ._observation_status import AstrophysicsObservationStatus
 
-
-ObservationDifferentiability: TypeAlias = Literal[
-    "native-parameter", "coordinate-only", "constant"
-]
 
 _PLANCK_CONSTANT = 6.62607015e-34
 _SPEED_OF_LIGHT = 299792458.0
@@ -34,7 +29,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
     source_id: str = eqx.field(static=True)
     checksum: str = eqx.field(static=True)
     license_id: str = eqx.field(static=True)
-    differentiability: ObservationDifferentiability = eqx.field(static=True)
+    differentiation: DifferentiationContract
     provenance_id: str = eqx.field(static=True)
 
     def __init__(
@@ -45,7 +40,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
         source_id: str,
         checksum: str,
         license_id: str,
-        differentiability: ObservationDifferentiability,
+        differentiation: DifferentiationContract | str,
     ):
         values = tuple(
             str(value).strip()
@@ -53,8 +48,13 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
         )
         if any(not value for value in values):
             raise ValueError("Observation provenance fields must be non-empty.")
-        if differentiability not in ("native-parameter", "coordinate-only", "constant"):
-            raise ValueError("Unknown observation differentiability contract.")
+        differentiation_ = (
+            DifferentiationContract.from_label(differentiation)
+            if isinstance(differentiation, str)
+            else differentiation
+        )
+        if not isinstance(differentiation_, DifferentiationContract):
+            raise TypeError("Unknown observation differentiation contract.")
         (
             self.producer,
             self.producer_version,
@@ -62,7 +62,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
             self.checksum,
             self.license_id,
         ) = values
-        self.differentiability = differentiability
+        self.differentiation = differentiation_
         self.provenance_id = canonical_fingerprint(
             {
                 "kind": "observation-data-provenance",
@@ -71,7 +71,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
                 "source_id": values[2],
                 "checksum": values[3],
                 "license_id": values[4],
-                "differentiability": differentiability,
+                "differentiation": differentiation_.contract_id,
             }
         )
 
@@ -83,7 +83,7 @@ class ObservationDataProvenance(StrictModule, NonTrainableState):
             source_id=source_id,
             checksum="content-fingerprinted",
             license_id="Phydrax-native",
-            differentiability="native-parameter",
+            differentiation=DifferentiationContract.native(),
         )
 
 
@@ -331,7 +331,6 @@ def transit_poisson_log_prob(
 
 __all__ = [
     "ObservationDataProvenance",
-    "ObservationDifferentiability",
     "PhotonCountingBandpass",
     "TransitPhotometryPlan",
     "TransitPhotometryResult",

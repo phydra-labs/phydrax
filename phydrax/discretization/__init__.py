@@ -188,6 +188,7 @@ from .amr import (
     BlockLevelPlan,
     BlockLevelState,
     BlockMetadata,
+    CoarseFineFluxRegister,
     ConservativeAMRSubcyclingPlan,
     ConservativeBlockTransfer,
     FDAMRHaloPlan,
@@ -199,6 +200,8 @@ from .amr import (
     FluxRegister,
     PreparedFDAMRHierarchy,
     RefinementDecision,
+    TwoLevelAMRPlan,
+    TwoLevelAMRState,
 )
 from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
 from .contact import (
@@ -1688,6 +1691,9 @@ __all__ = [
     "BlockLevelPlan",
     "BlockLevelState",
     "BlockMetadata",
+    "CoarseFineFluxRegister",
+    "TwoLevelAMRPlan",
+    "TwoLevelAMRState",
     "ClosureStencilKernel",
     "BlockInterface",
     "BlockSide",

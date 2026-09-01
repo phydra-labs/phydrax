@@ -30,6 +30,7 @@ from ._fd_transfer import (
 from ._refinement import FixedCapacityRefinementPlan, RefinementDecision
 from ._reflux import FluxRegister
 from ._transfer import ConservativeBlockTransfer
+from ._two_level import CoarseFineFluxRegister, TwoLevelAMRPlan, TwoLevelAMRState
 
 
 __all__ = [
@@ -55,4 +56,7 @@ __all__ = [
     "FluxRegister",
     "RefinementDecision",
     "PreparedFDAMRHierarchy",
+    "CoarseFineFluxRegister",
+    "TwoLevelAMRPlan",
+    "TwoLevelAMRState",
 ]

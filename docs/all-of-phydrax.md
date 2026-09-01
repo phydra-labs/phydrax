@@ -163,18 +163,28 @@ formulations, and fixed-tree/workflow evidence. See
 [Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle, grid, solver, operator, artifact, and
 likelihood identities rather than introducing a separate framework. Canonical physical
-states project only declared dependencies into content-addressed products; concrete
-pinned precision processes, one-loop SPT, calibrated 200m halo ingredients,
-release-window Gaussian likelihoods, primordial H/He microphysics, local-curvature
-validity, low-resolution CMB sky/TOD/mapmaking, periodic Ewald qualification,
+states project only declared dependencies into content-addressed products; pinned
+precision processes, one-loop SPT, calibrated 200m halo ingredients, release-window
+likelihoods, primordial microphysics, CMB sky/TOD/mapmaking, periodic Ewald evidence,
 snapshots, and distributed-PM feasibility extend the curved/CPL background, named
-transfer/power, flat LPT/PM, and adiabatic gas--DM foundations. Native relic, BBN,
-recombination, fixed-hierarchy Einstein--Boltzmann/CMB, halo/nonlinear, lensing,
-light-cone, survey-selection, and baryonic-feedback reference products preserve those
-same realization and product conventions. Precision parity, global curved N-body,
-production tree gravity, AMR, calibrated fits, collaboration data, and distributed
-execution remain explicit external or qualification boundaries rather than hidden
-fallbacks.
+transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombination,
+nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
+share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
+global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
+merger products, stochastic star populations, two-level AMR, a shared Morton octree,
+isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM. Every profile
+states unsupported species, topology, approximation, capacity, distribution, and
+communication branches; precision parity beyond qualified profiles, multilevel
+distributed AMR, adaptive/distributed trees, production feedback, and full release
+coverage remain separate qualification claims rather than hidden flags.
+Cross-domain reconciliation keeps those domain states distinct while moving shared
+mechanics to core owners: dimensional scales, artifacts and derivative capabilities,
+labelled observation/covariance/likelihood algebra, direct and hierarchical particle
+gravity, coefficient-driven KDK, and ratio-two AMR transfer/reflux. Cosmology supplies
+comoving/canonical/scale-factor adapters; astrodynamics supplies physical velocity,
+epoch, frame, encounter, and mission adapters; astrophysics supplies concrete
+instrument/sky response. Application-local nominal FMM/TreePM and duplicate response
+or covariance implementations are removed rather than maintained beside the core.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
 Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,
