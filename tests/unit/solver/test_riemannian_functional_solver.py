@@ -20,10 +20,11 @@ def _geometric_solver():
     offset = domain.Parameter(2.0, transform=lambda value: (value - 0.5) ** 2)
 
     objective = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(6)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(6)),
+        ),
         integrand=lambda functions: functions["direction"] + functions["offset"],
-        materialization_policy="fixed",
     )
     return phx.solver.FunctionalSolver(
         functions={"direction": direction, "offset": offset},

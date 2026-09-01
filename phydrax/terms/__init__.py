@@ -185,9 +185,11 @@ from ._variational_eigenspace import (
     VariationalEigenspaceEvaluation,
     VariationalEigenspaceResult,
 )
+from ._variational_functional import bind_functional
 
 
 __all__ = [
+    "bind_functional",
     "AbstractEvaluatedScalarTerm",
     "AbstractFlowMatchingMetric",
     "AbstractSamplingTerm",

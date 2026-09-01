@@ -289,6 +289,23 @@ class PitchforkNormalFormResult(StrictModule):
         return self.status == int(NormalFormStatus.SUCCESS)
 
 
+class TranscriticalNormalFormResult(StrictModule):
+    """Reduced transcritical coefficients and reference-branch tangent evidence."""
+
+    quadratic_coefficient: Array
+    mixed_coefficient: Array
+    tangent_separation: Array
+    reference_tangent: PyTree[Array]
+    reference_solve: NormalFormLinearSolveResult
+    diagnostics: NormalFormDiagnostics
+    status: Array
+    provenance: NormalFormProvenance
+
+    @property
+    def successful(self) -> Array:
+        return self.status == int(NormalFormStatus.SUCCESS)
+
+
 class HopfNormalFormResult(StrictModule):
     """First Lyapunov coefficient and harmonic correction evidence."""
 
@@ -818,6 +835,180 @@ def pitchfork_normal_form(
     )
 
 
+def transcritical_normal_form(
+    problem: ContinuationCurveProblem,
+    state: PyTree[Any],
+    parameter: Any,
+    geometry: ContinuationGeometry,
+    nullspace: NullspaceEvidence,
+    linear_solver: AbstractNormalFormLinearSolver,
+    /,
+    *,
+    policy: NormalFormPolicy | None = None,
+    args: Any = None,
+) -> TranscriticalNormalFormResult:
+    """Compute the two reduced coefficients of a transcritical intersection."""
+    if not isinstance(problem, ContinuationCurveProblem):
+        raise TypeError("problem must be a ContinuationCurveProblem.")
+    if not isinstance(geometry, ContinuationGeometry):
+        raise TypeError("geometry must be a ContinuationGeometry.")
+    if not isinstance(nullspace, NullspaceEvidence):
+        raise TypeError("nullspace must be NullspaceEvidence.")
+    if not isinstance(linear_solver, AbstractNormalFormLinearSolver):
+        raise TypeError("linear_solver must be an AbstractNormalFormLinearSolver.")
+    policy_ = NormalFormPolicy() if policy is None else policy
+    if not isinstance(policy_, NormalFormPolicy):
+        raise TypeError("policy must be NormalFormPolicy or None.")
+    state_ = geometry.state_to_execution(state)
+    parameter_ = jnp.asarray(parameter)
+    right = geometry.state_tangent_to_execution(
+        state,
+        nullspace.right_nullvector,
+    )
+    left = geometry.residual_to_execution(nullspace.left_nullvector)
+    pairing = jnp.vdot(
+        geometry.execution_residual_space.flatten(left),
+        geometry.execution_state_space.flatten(right),
+    )
+    normalized_left = _tree_scale(1.0 / jnp.conj(pairing), left)
+    execution_problem = _ExecutionCurve(problem, geometry, args)
+    action = lambda direction: _tree_real(
+        _linear_action(execution_problem, state_, parameter_, direction, None)
+    )
+    parameter_derivative = jax.jvp(
+        lambda value: execution_problem.residual(state_, value, None),
+        (parameter_,),
+        (jnp.ones_like(parameter_),),
+    )[1]
+    reference_result = linear_solver.solve(
+        action,
+        _tree_scale(-1.0, parameter_derivative),
+        system_id=f"{problem.problem_id}/transcritical-reference-tangent",
+    )
+    actual_residual = geometry.residual_norm(
+        _tree_add(action(reference_result.solution), parameter_derivative)
+    )
+    solve_residual = jnp.maximum(reference_result.residual_norm, actual_residual)
+    quadratic_vector = _bilinear_real(
+        execution_problem,
+        state_,
+        parameter_,
+        right,
+        right,
+        None,
+    )
+    quadratic = 0.5 * geometry.execution_residual_space.inner(
+        normalized_left,
+        quadratic_vector,
+    )
+
+    def critical_action(parameter_value):
+        return _tree_real(
+            _linear_action(
+                execution_problem,
+                state_,
+                parameter_value,
+                right,
+                None,
+            )
+        )
+
+    direct_mixed = jax.jvp(
+        critical_action,
+        (parameter_,),
+        (jnp.ones_like(parameter_),),
+    )[1]
+    branch_interaction = _bilinear_real(
+        execution_problem,
+        state_,
+        parameter_,
+        right,
+        reference_result.solution,
+        None,
+    )
+    mixed_vector = _tree_add(direct_mixed, branch_interaction)
+    mixed = geometry.execution_residual_space.inner(
+        normalized_left,
+        mixed_vector,
+    )
+    separation = jnp.abs(mixed / quadratic)
+    finite = (
+        jnp.isfinite(quadratic)
+        & jnp.isfinite(mixed)
+        & jnp.isfinite(separation)
+        & jnp.isfinite(solve_residual)
+        & jnp.isfinite(reference_result.condition_estimate)
+    )
+    status = jnp.where(
+        finite,
+        int(NormalFormStatus.SUCCESS),
+        int(NormalFormStatus.NONFINITE),
+    )
+    status = jnp.where(
+        ~nullspace.source_success,
+        int(NormalFormStatus.SPECTRAL_EVIDENCE_INVALID),
+        status,
+    )
+    status = jnp.where(
+        (nullspace.right_residual_norm > policy_.spectral_residual_tolerance)
+        | (nullspace.left_residual_norm > policy_.spectral_residual_tolerance),
+        int(NormalFormStatus.SPECTRAL_EVIDENCE_INVALID),
+        status,
+    )
+    status = jnp.where(
+        ~reference_result.successful,
+        int(NormalFormStatus.LINEAR_SOLVE_FAILED),
+        status,
+    )
+    status = jnp.where(
+        (status == int(NormalFormStatus.SUCCESS))
+        & (solve_residual > policy_.linear_residual_tolerance),
+        int(NormalFormStatus.LINEAR_SOLVE_RESIDUAL_TOO_LARGE),
+        status,
+    )
+    maximum_condition = jnp.maximum(
+        nullspace.eigenvalue_condition,
+        reference_result.condition_estimate,
+    )
+    status = jnp.where(
+        (status == int(NormalFormStatus.SUCCESS))
+        & (
+            (jnp.abs(pairing) <= policy_.overlap_tolerance)
+            | (maximum_condition > policy_.maximum_condition)
+        ),
+        int(NormalFormStatus.ILL_CONDITIONED),
+        status,
+    )
+    diagnostics = NormalFormDiagnostics(
+        mode_overlap=jnp.abs(pairing),
+        spectral_residuals=jnp.asarray(
+            [nullspace.right_residual_norm, nullspace.left_residual_norm]
+        ),
+        eigenvalue_condition=nullspace.eigenvalue_condition,
+        linear_residuals=jnp.asarray([solve_residual]),
+        linear_condition_estimates=jnp.asarray([reference_result.condition_estimate]),
+        derivative_evaluations=6,
+        finite=finite,
+    )
+    return TranscriticalNormalFormResult(
+        quadratic_coefficient=quadratic,
+        mixed_coefficient=mixed,
+        tangent_separation=separation,
+        reference_tangent=geometry.state_tangent_from_execution(
+            state_,
+            reference_result.solution,
+        ),
+        reference_solve=reference_result,
+        diagnostics=diagnostics,
+        status=status,
+        provenance=NormalFormProvenance(
+            problem_id=problem.problem_id,
+            formula_id="transcritical-lyapunov-schmidt",
+            linear_solver_id=linear_solver.solver_id,
+        ),
+    )
+
+
 def hopf_first_lyapunov(
     problem: ContinuationCurveProblem,
     candidate: HopfState,
@@ -1107,7 +1298,9 @@ __all__ = [
     "NormalFormPolicy",
     "NormalFormStatus",
     "PitchforkNormalFormResult",
+    "TranscriticalNormalFormResult",
     "fold_normal_form",
     "hopf_first_lyapunov",
     "pitchfork_normal_form",
+    "transcritical_normal_form",
 ]

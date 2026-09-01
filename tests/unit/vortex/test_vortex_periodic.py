@@ -38,22 +38,32 @@ def test_periodic_vic_conserves_deposition_and_returns_divergence_free_velocity(
         ambient_dimension=2,
     ).prepare()
     grid, spectral = _periodic_spaces(2, 16)
+    request = phx.discretization.VortexFieldRequest(
+        velocity=True,
+        velocity_gradient=True,
+        vorticity=True,
+    )
     prepared = phx.operators.PeriodicVortexInCellPlan(
         particles,
         grid,
         spectral,
         phx.discretization.TensorBSplineSplatAssignment(2),
-    ).prepare(source_capacity=2, target_capacity=2)
-    evaluation = prepared.evaluate(
-        jnp.asarray(((0.25, 0.5), (0.75, 0.5))),
-        jnp.asarray((1.0, -1.0)),
-        jnp.full((2,), 0.1),
-        request=phx.discretization.VortexFieldRequest(
-            velocity=True,
-            velocity_gradient=True,
-            vorticity=True,
-        ),
+    ).prepare(
+        source_capacity=2,
+        target_capacity=2,
+        request=request,
     )
+    position = jnp.asarray(((0.25, 0.5), (0.75, 0.5)))
+    source = phx.discretization.VortexSourceState(
+        position,
+        jnp.asarray((1.0, -1.0)),
+        core_radius=jnp.full((2,), 0.1),
+    )
+    target = phx.discretization.VortexTargetState(
+        position,
+        source_indices=jnp.arange(2),
+    )
+    evaluation = prepared.evaluate(source, target, request=request)
     diagnostics = evaluation.diagnostics.backend_diagnostics
 
     np.testing.assert_allclose(diagnostics.deposited_strength, 0.0, atol=1e-14)
@@ -78,12 +88,18 @@ def test_periodic_vic_rejects_nonzero_total_vorticity():
         phx.discretization.TensorBSplineSplatAssignment(1),
     ).prepare(source_capacity=2, target_capacity=2)
 
+    position = jnp.asarray(((0.25, 0.5), (0.75, 0.5)))
+    source = phx.discretization.VortexSourceState(
+        position,
+        jnp.asarray((1.0, 0.5)),
+        core_radius=jnp.full((2,), 0.1),
+    )
+    target = phx.discretization.VortexTargetState(
+        position,
+        source_indices=jnp.arange(2),
+    )
     with pytest.raises(Exception, match="zero total integrated vorticity"):
-        prepared.evaluate(
-            jnp.asarray(((0.25, 0.5), (0.75, 0.5))),
-            jnp.asarray((1.0, 0.5)),
-            jnp.full((2,), 0.1),
-        )
+        prepared.evaluate(source, target)
 
 
 def test_periodic_three_dimensional_vic_returns_velocity_gradient():
@@ -93,22 +109,31 @@ def test_periodic_three_dimensional_vic_returns_velocity_gradient():
         ambient_dimension=3,
     ).prepare()
     grid, spectral = _periodic_spaces(3, 6)
+    request = phx.discretization.VortexFieldRequest(
+        velocity=True,
+        velocity_gradient=True,
+    )
     prepared = phx.operators.PeriodicVortexInCellPlan(
         particles,
         grid,
         spectral,
         phx.discretization.TensorBSplineSplatAssignment(1),
-    ).prepare(source_capacity=2, target_capacity=2)
-    strength = jnp.asarray(((0.0, 1.0, 0.0), (0.0, -1.0, 0.0)))
-    evaluation = prepared.evaluate(
-        jnp.asarray(((0.25, 0.5, 0.5), (0.75, 0.5, 0.5))),
-        strength,
-        jnp.full((2,), 0.15),
-        request=phx.discretization.VortexFieldRequest(
-            velocity=True,
-            velocity_gradient=True,
-        ),
+    ).prepare(
+        source_capacity=2,
+        target_capacity=2,
+        request=request,
     )
+    position = jnp.asarray(((0.25, 0.5, 0.5), (0.75, 0.5, 0.5)))
+    source = phx.discretization.VortexSourceState(
+        position,
+        jnp.asarray(((0.0, 1.0, 0.0), (0.0, -1.0, 0.0))),
+        core_radius=jnp.full((2,), 0.15),
+    )
+    target = phx.discretization.VortexTargetState(
+        position,
+        source_indices=jnp.arange(2),
+    )
+    evaluation = prepared.evaluate(source, target, request=request)
     diagnostics = evaluation.diagnostics.backend_diagnostics
 
     assert evaluation.velocity.shape == (2, 3)

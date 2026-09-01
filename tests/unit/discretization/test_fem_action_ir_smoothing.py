@@ -219,6 +219,10 @@ def test_application_model_primitives_are_executable():
     )
     response = material.update(jnp.eye(3), material.initial_state(), 0.1)
     fracture = phx.applications.fracture.PhaseFieldFractureParameters(1.0, 1.0, 1.0, 0.1)
+    contact_law = phx.applications.contact.PenaltyContactLaw(100.0)
+    contact_response = contact_law.evaluate(
+        jnp.asarray(-0.01), jnp.asarray([1.0, 0.0])
+    )
     squared_distance = jnp.asarray(0.05**2)
     barrier = phx.applications.contact.physical_clamped_log_barrier(
         squared_distance, 0.1, 0.0
@@ -231,6 +235,9 @@ def test_application_model_primitives_are_executable():
 
     assert response.state.plastic_deformation.shape == (3, 3)
     assert fracture.degradation(jnp.asarray(0.0)) > 0.0
+    assert jnp.allclose(contact_response.traction, jnp.asarray([1.0, 0.0]))
+    assert contact_response.tangent > 0.0
+    assert contact_response.active
     assert barrier > 0.0
     assert force_magnitude > 0.0
 

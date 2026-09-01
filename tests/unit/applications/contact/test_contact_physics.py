@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -22,16 +23,30 @@ def _finite_element_contact_case(*, friction=False):
             component_shape=(2,),
         ),
     ).prepare()
-    energy = phx.equations.CellEnergyAction(
-        "u",
-        lambda values, gradients, points, context: (
-            0.5 * 20.0 * jnp.sum(gradients * gradients, axis=(-1, -2))
+
+    def density(fields, geometry, context):
+        del geometry, context
+        gradient = fields["u"].gradient
+        return 0.5 * 20.0 * jnp.sum(gradient * gradient, axis=(-1, -2))
+
+    functional = phx.variational.Functional(
+        "contact-test",
+        (
+            phx.variational.LocalIntegralTerm(
+                "elasticity",
+                region="body",
+                fields=(phx.variational.FieldJetSpec("u", gradient=True),),
+                density=density,
+                density_id="contact-test-elasticity",
+            ),
         ),
-        action_id="contact-test-elasticity",
+        variable_fields=("u",),
     )
-    compiled = phx.equations.compile_finite_element_problem(
-        phx.equations.FiniteElementForm("contact-test", "u", (energy,)),
+    compiled = phx.equations.compile_finite_element_functional(
+        functional,
         discretization,
+        fields={"u": "u"},
+        regions={"body": None},
     )
     moving = phx.discretization.prepare_cell_mesh_collision_surface(
         mesh, compiled.state_space, body_id=0
@@ -97,11 +112,14 @@ def _finite_element_contact_case(*, friction=False):
 def test_declared_finite_element_potential_generates_existing_residual():
     _, _, compiled, _, _, _, accepted, _ = _finite_element_contact_case()
     displacement = accepted.mechanics.displacement.at[2, 0].set(0.1)
-    gradient = compiled.potential_gradient(displacement)
+    gradient = compiled.residual(displacement)
 
     assert compiled.potential_compatible
     np.testing.assert_allclose(
-        gradient, compiled.residual(displacement), rtol=1.0e-11, atol=1.0e-12
+        gradient,
+        jax.grad(compiled.potential)(displacement),
+        rtol=1.0e-11,
+        atol=1.0e-12,
     )
 
 

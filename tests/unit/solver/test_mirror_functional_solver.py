@@ -44,19 +44,18 @@ def _solver_and_optimizer():
     target = jnp.asarray([0.8, 0.5, 1.7])
     positive = domain.Parameter(
         jnp.asarray([0.3, 1.4, 2.2]),
-        transform=lambda value: jnp.sum(
-            value * jnp.log(value / target) - value + target
-        ),
+        transform=lambda value: jnp.sum(value * jnp.log(value / target) - value + target),
     )
     offset = domain.Parameter(
         jnp.asarray(2.0),
         transform=lambda value: 0.5 * (value - 0.5) ** 2,
     )
     objective = phx.terms.IntegralFunctional(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+        ),
         integrand=lambda functions: functions["positive"] + functions["offset"],
-        materialization_policy="fixed",
     )
     solver = phx.solver.FunctionalSolver(
         functions={"positive": positive, "offset": offset},

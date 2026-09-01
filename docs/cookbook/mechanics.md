@@ -31,23 +31,37 @@ amplitude = geom.Parameter(0.0)
 u = amplitude * x_coordinate * (1.0 - x_coordinate)
 
 
-def energy_density(functions):
-    field = functions["u"]
-    du = phx.operators.grad(field, var="x")
-    du_sq = phx.operators.einsum("...i,...i->...", du, du)
-    return 0.5 * du_sq - field
+def energy_density(fields, geometry, context):
+    del geometry, context
+    field = fields["u"]
+    return 0.5 * jnp.sum(field.gradient**2, axis=-1) - field.value
 
 
-energy = phx.terms.IntegralFunctional(
-    target=phx.integration.over(geom.component()),
-    plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16)),
-    integrand=energy_density,
-    materialization_policy="fixed",
-    label="poisson_energy",
+functional = phx.variational.Functional(
+    "poisson-energy",
+    (
+        phx.variational.LocalIntegralTerm(
+            "body",
+            region="body",
+            fields=(phx.variational.FieldJetSpec("u", value=True, gradient=True),),
+            density=energy_density,
+            density_id="poisson-energy-density",
+        ),
+    ),
+    variable_fields=("u",),
+)
+target = phx.integration.over(geom.component())
+plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16))
+source = phx.integration.fixed(phx.integration.materialize(target, plan))
+energy = phx.terms.bind_functional(
+    functional,
+    {"u": u},
+    {"body": source},
+    geometry_variables={"body": "x"},
 )
 solver = phx.solver.FunctionalSolver(
     functions={"u": u},
-    terms=[energy],
+    terms=energy,
 )
 
 trained = solver.solve(
@@ -90,13 +104,7 @@ mu = 1.0
 lambda_ = 4.0 - 2.0 * mu / 3.0
 
 
-@geom.Function("x")
-def traction(x):
-    return jnp.where(
-        x[0] > 1.0 - 1e-10,
-        jnp.asarray((0.1, 0.0)),
-        jnp.zeros(2),
-    )
+traction = jnp.asarray((0.1, 0.0))
 
 
 raw = geom.Model("x")(
@@ -111,32 +119,66 @@ raw = geom.Model("x")(
 x0 = geom.Function("x")(lambda x: x[0])
 u = x0 * raw  # Exact zero displacement on x[0] == 0.
 
-internal = phx.terms.IntegralFunctional(
-    target=phx.integration.over(geom.component()),
-    plan=phx.integration.MonteCarloPlan(4096),
-    integrand=lambda functions: phx.operators.neo_hookean_reference_energy(
-        functions["u"],
-        mu=mu,
-        lambda_=lambda_,
-    ),
-    materialization_policy="fixed",
-    fixed_key=jr.key(1),
-    nonfinite_integrand="propagate",
+stored = phx.applications.solid_mechanics.neo_hookean_functional(
+    "u",
+    phx.applications.solid_mechanics.NeoHookeanParameters(mu, lambda_),
+    region="body",
 )
-external = phx.terms.IntegralFunctional(
-    target=phx.integration.over(full_boundary),
-    plan=phx.integration.MonteCarloPlan(1024),
-    integrand=lambda functions: phx.operators.einsum(
-        "...i,...i->...", traction, functions["u"]
+
+
+def traction_work(fields, geometry, context):
+    del context
+    load = jnp.where(
+        (geometry.points[..., 0] > 1.0 - 1e-10)[..., None],
+        traction,
+        jnp.zeros_like(traction),
+    )
+    return jnp.sum(load * fields["u"].value, axis=-1)
+
+
+functional = phx.variational.Functional(
+    "total-potential",
+    stored.terms
+    + (
+        phx.variational.LocalIntegralTerm(
+            "traction-work",
+            region="traction",
+            fields=(phx.variational.FieldJetSpec("u", value=True),),
+            density=traction_work,
+            density_id="right-traction-work",
+            weight=-1.0,
+        ),
     ),
-    weight=-1.0,
-    materialization_policy="fixed",
-    fixed_key=jr.key(2),
+    variable_fields=("u",),
+)
+body_target = phx.integration.over(geom.component())
+boundary_target = phx.integration.over(full_boundary)
+sources = {
+    "body": phx.integration.fixed(
+        phx.integration.materialize(
+            body_target,
+            phx.integration.MonteCarloPlan(4096),
+            key=jr.key(1),
+        )
+    ),
+    "traction": phx.integration.fixed(
+        phx.integration.materialize(
+            boundary_target,
+            phx.integration.MonteCarloPlan(1024),
+            key=jr.key(2),
+        )
+    ),
+}
+terms = phx.terms.bind_functional(
+    functional,
+    {"u": u},
+    sources,
+    geometry_variables={"body": "x", "traction": "x"},
     nonfinite_integrand="propagate",
 )
 trained = phx.solver.FunctionalSolver(
     functions={"u": u},
-    terms=(internal, external),
+    terms=terms,
 ).solve(
     num_iter=60,
     optim=optax.lbfgs(learning_rate=1.0),

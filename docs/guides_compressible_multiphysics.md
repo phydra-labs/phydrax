@@ -100,14 +100,19 @@ atomically accepts or rolls back the complete epoch.
 `PrimordialMicrophysicsPlan` closes the first deterministic source layer with named
 HI/HII/HeI/HeII/HeIII/electron state, immutable temperature/scale rate tables,
 photoionization/heating, collisional ionization, recombination, cooling, a fixed Newton
-solve, nuclei/charge/energy ledgers, and atomic gas-energy commit. H2, metals, stochastic
-stars/feedback, MHD radiation coupling, and AMR remain separate gated programs.
+solve, nuclei/charge/energy ledgers, and atomic gas-energy commit.
+`CosmologicalPopulationPlan` extends this path with fixed-capacity dynamic gravitating
+star/BH slots, generation-safe IDs, replayable event ledgers, conservative gas→star
+transfer, and stochastic thermal reservoir coupling. H2, metals, winds, black-hole
+accretion, radiation, and calibrated production models remain profile-specific.
 
-`PeriodicImageForcePlan` remains a cheap image-shell diagnostic.
-`PeriodicEwaldForcePlan` is the small-N neutral periodic reference used by
-`MeshMatchedNearFieldGate`; passing the gate does not install a short-range correction.
-`CosmologySnapshotProduct` and `DistributedPMFeasibilityEvidence` define conversion and
-resource contracts without claiming Barnes--Hut, FMM, TreePM, or distributed execution.
+`PeriodicImageForcePlan` remains a cheap diagnostic and `PeriodicEwaldForcePlan` remains
+the periodic reference. `ParticleOctreePlan3D` prepares one Morton hierarchy consumed by
+isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM; none introduces
+a second particle state or PM path. `TwoLevelAMRPlan` supplies ratio-two prolong/restrict,
+reflux, average-down, fine-authoritative composite gravity, particle level routing, and
+atomic epoch commit. Multi-level partial patches, CT/radiation synchronization, and
+distributed communication remain later parity profiles rather than silent modes.
 
 ## Constrained transport MHD
 

@@ -90,10 +90,10 @@ claim a universal turbulent boundary-layer closure.
 
 ## Compact diffusion near a wall
 
-PSE remains a separate compact-support operator. The current wall transition
-creates finite near-wall carriers but does not add a mirrored or one-sided PSE
-closure. A future wall correction must preserve the operator's stated circulation
-balance or expose the wall flux that changes it.
+`WallCorrectedPSEPlan` provides explicit mirror and one-sided support policies.
+Its evidence separates conservative bulk exchange from induced or prescribed
+wall flux. `BoundaryIntegralVorticityFluxPlan2D` solves normal and tangential
+residuals before atomic sheet-to-particle transfer.
 
 ## Conservative remeshing
 
@@ -130,18 +130,18 @@ No solver automatically creates separation points, changes wake connectivity, or
 vorticity across a body. Such a topology or modeling decision must be supplied by a
 prepared policy with acceptance evidence.
 
-## Current limits
+## Completed boundary capability and irreducible limits
 
-The boundary surface supports analytic constant source/vortex-sheet velocity,
-an explicit vortex-sheet no-penetration/circulation solve, rigid
-reference-to-world realization, inviscid pressure loads, conservative wall
-transfer, and fixed-grid conservative remeshing.
+Native `BoundaryPanelization2D` and `SurfacePanelization3D` adapters provide
+source, vortex, doublet, combined, near-corrected, moving/deforming, pressure,
+impulse, Blasius, and added-mass contracts. Boundary-integral no-slip flux and
+the MAC immersed hybrid are separate qualified wall routes. Complete remeshing
+supports 2-D/3-D, degree one through three, obstacle clearance, and epochal
+capacity transitions.
 
-It does not claim a viscous Navier--Stokes boundary solve, automatic separation,
-arbitrary deforming-panel topology, topology-changing derivatives, three-dimensional
-body panels, a universal near-wall turbulence law, or exact force recovery from an
-under-resolved sheet. General Laplace/Helmholtz layer-potential accuracy certificates
-remain separate from these flow-panel diagnostics.
+Phydrax still does not claim a universal near-wall turbulence law or exact force
+recovery from an under-resolved sheet. Reduced separation criteria are named,
+parameterized models; resolved viscous separation comes from the wall solve.
 
 ## Primary method references
 

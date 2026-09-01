@@ -51,7 +51,7 @@ compiled = phx.equations.compile_vortex_particle_flow(
     method,
 )
 state = compiled.initialize_state(position, circulation)
-evaluation = compiled.dynamics.evaluate(0.0, state)[4]
+evaluation = compiled.dynamics.evaluate(0.0, state)[5]
 backend = evaluation.diagnostics.backend_diagnostics
 
 print("velocity", evaluation.velocity)

@@ -22,6 +22,7 @@ from . import (
     domain,
     dynamics,
     enforcement,
+    variational,
     equations,
     export,
     geometry,
@@ -49,6 +50,8 @@ from . import (
     velocimetry,
     weighting,
 )
+from . import artifacts, events, observation
+from ._physical import DimensionalScaleContract, LengthCoordinateKind
 
 from . import atomistic
 from . import bioinformatics
@@ -60,6 +63,7 @@ from . import applications
 # Explicit re-exports for star import
 __all__ = [
     "atomistic",
+    "artifacts",
     "applications",
     "bioinformatics",
     "backends",
@@ -72,6 +76,7 @@ __all__ = [
     "terms",
     "data_utils",
     "discretization",
+    "events",
     "topology",
     "domain",
     "dynamics",
@@ -88,6 +93,7 @@ __all__ = [
     "ml",
     "nn",
     "nonlinear",
+    "observation",
     "operators",
     "optim",
     "pgm",
@@ -98,6 +104,9 @@ __all__ = [
     "solver",
     "stochastic",
     "uq",
+    "variational",
     "tensor_network",
     "weighting",
+    "DimensionalScaleContract",
+    "LengthCoordinateKind",
 ]

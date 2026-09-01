@@ -56,9 +56,13 @@ four-layer model and integration-source choices, see
       keys, and the iteration value are reused by every candidate evaluation and
       by term diagnostics for that update.
     - A constitutive energy that is defined only for admissible states can use
-      `IntegralFunctional(nonfinite_integrand="propagate")` with a tested Optax
-      line search such as `optax.lbfgs`. The default remains strict. Propagation
-      does not convert adaptive-budget or measure failures into optimizer trials.
+      `IntegralFunctional(source=..., nonfinite_integrand="propagate")` with a
+      tested Optax line search such as `optax.lbfgs`. The default remains strict.
+      Propagation does not convert adaptive-budget or measure failures into
+      optimizer trials.
+    - Integration refresh is represented by typed `per_step`, `fixed`, or
+      `caller` sources. A fixed randomized objective requires an explicitly
+      materialized realization.
     - Fixed sampled signed energies should normally use `keep_best=False`.
       Selection against the same quadrature realization rewards quadrature
       overfitting; evaluate the returned field on a larger independent fixed
@@ -107,10 +111,10 @@ not add normalization or pairwise orthogonality penalties. Residual-only
 training can converge to any invariant mode or cluster; it is not a low-mode
 selection rule.
 
-When both terms are active in one solver, pass the same `fixed_realization` if
-their matrix entries must use identical quadrature. Staged selection and
-refinement avoids duplicate strong-operator work and is the recommended
-default.
+When both terms are active in one solver, construct one
+`fixed(realization)` source and pass that source to both terms if their matrix
+entries must use identical quadrature. Staged selection and refinement avoids
+duplicate strong-operator work and is the recommended default.
 
 
 ## Typical usage

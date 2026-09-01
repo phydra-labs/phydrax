@@ -38,7 +38,7 @@ See [Vortex methods](../../guides_vortex_methods.md) for state, unit, and differ
 
 ---
 
-::: phydrax.discretization.WallVorticityTransferPlan2D
+::: phydrax.discretization.BoundarySheetParticleTransferPlan2D
 
 ---
 
@@ -51,3 +51,47 @@ See [Vortex methods](../../guides_vortex_methods.md) for state, unit, and differ
 ---
 
 ::: phydrax.discretization.PedrizzettiRelaxationPlan3D
+
+---
+
+::: phydrax.discretization.VortexSourceState
+
+---
+
+::: phydrax.discretization.VortexVelocityCapabilities
+
+---
+
+::: phydrax.discretization.VortexPopulationPlan
+
+---
+
+::: phydrax.discretization.CompleteVortexRemeshPlan
+
+---
+
+::: phydrax.discretization.VortexCapacityGrowthPlan
+
+---
+
+::: phydrax.discretization.VortexRingSheetTopology
+
+---
+
+::: phydrax.discretization.MultiLiftingSurfacePlan
+
+---
+
+::: phydrax.discretization.GaussianCoreSpreadingPlan
+
+---
+
+::: phydrax.discretization.WallCorrectedPSEPlan
+
+---
+
+::: phydrax.discretization.VortexCheckpointPlan
+
+---
+
+::: phydrax.discretization.VortexReplayPlan

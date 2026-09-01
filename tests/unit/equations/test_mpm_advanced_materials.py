@@ -11,8 +11,8 @@ import numpy as np
 import phydrax as phx
 
 
-def test_isotropic_plane_stress_closes_p33_and_condenses_tangent():
-    material = phx.applications.solid_mechanics.IsotropicPlaneStressMPMConstitutivePlan(
+def test_plane_stress_closes_p33_and_condenses_tangent():
+    material = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )
     parameters = phx.applications.solid_mechanics.NeoHookeanParameters.from_shear_bulk(
@@ -58,7 +58,7 @@ def test_plane_stress_material_initializes_and_advances_explicit_mpm():
     splat = phx.discretization.ParticleGridSplatPlan(
         grid, assignment=phx.discretization.TensorBSplineSplatAssignment(2)
     ).prepare(particles)
-    material = phx.applications.solid_mechanics.IsotropicPlaneStressMPMConstitutivePlan(
+    material = phx.applications.solid_mechanics.PlaneStressMPMConstitutivePlan(
         phx.applications.solid_mechanics.NeoHookeanMPMConstitutivePlan(3)
     )
     compiled = phx.equations.compile_material_point_problem(

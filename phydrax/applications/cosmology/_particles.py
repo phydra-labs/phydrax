@@ -12,6 +12,11 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle import ParticleDiscretization
+from ...solver._kdk import (
+    KDKCoefficients,
+    KDKProposal,
+    KDKTransactionPlan,
+)
 from ._background import FLRWBackground
 from ._scales import CODE_COSMOLOGY_SCALE, CosmologyScaleContract
 
@@ -142,16 +147,19 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
         drift = background.drift_factor(state.scale_factor, safe_end)
         masses = self.particles.safe_masses.astype(state.positions.dtype)
         active = self.particles.active_mask[:, None]
-        half = state.canonical_momenta + kick_0 * masses[:, None] * acceleration
-        positions = state.positions + drift * half / masses[:, None]
-        positions = jnp.mod(positions, jnp.asarray(self.box_size, dtype=positions.dtype))
-        positions = jnp.where(active, positions, 0.0)
-        half = jnp.where(active, half, 0.0)
+        core = KDKTransactionPlan(self.box_size).propose(
+            state.positions,
+            state.canonical_momenta,
+            masses,
+            acceleration,
+            KDKCoefficients(kick_0, drift, kick_1),
+        )
+        positions = jnp.where(active, core.positions, 0.0)
+        half = jnp.where(active, core.half_momenta, 0.0)
         successful = (
             interval_valid
+            & core.successful
             & jnp.all(jnp.isfinite(acceleration) | ~active)
-            & jnp.all(jnp.isfinite(positions))
-            & jnp.all(jnp.isfinite(half))
         )
         return _CosmologicalKDKProposal(
             positions,
@@ -175,16 +183,23 @@ class CosmologicalKDKPlan(StrictModule, NonTrainableState):
             raise ValueError("Cosmological acceleration must align with particles.")
         masses = self.particles.safe_masses.astype(state.positions.dtype)
         active = self.particles.active_mask[:, None]
-        momenta = (
-            proposal.half_momenta
-            + proposal.second_kick_factor * masses[:, None] * acceleration
+        core = KDKTransactionPlan(self.box_size).complete(
+            KDKProposal(
+                proposal.positions,
+                proposal.half_momenta,
+                KDKCoefficients(
+                    proposal.first_kick_factor,
+                    proposal.drift_factor,
+                    proposal.second_kick_factor,
+                ),
+                proposal.successful,
+                proposal.successful,
+            ),
+            masses,
+            acceleration,
         )
-        momenta = jnp.where(active, momenta, 0.0)
-        successful = (
-            proposal.successful
-            & jnp.all(jnp.isfinite(acceleration) | ~active)
-            & jnp.all(jnp.isfinite(momenta))
-        )
+        momenta = jnp.where(active, core.momenta, 0.0)
+        successful = core.successful & jnp.all(jnp.isfinite(acceleration) | ~active)
         accepted = CosmologicalParticleState(
             jnp.where(successful, proposal.positions, state.positions),
             jnp.where(successful, momenta, state.canonical_momenta),

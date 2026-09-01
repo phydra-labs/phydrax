@@ -1,0 +1,10 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "implicit_core",
+  "metrics": {
+    "successful": true,
+    "residual_norm": 2.3684443477927757e-23,
+    "tangent_successful": true
+  },
+  "passed": true
+}

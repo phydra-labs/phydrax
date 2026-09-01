@@ -231,3 +231,131 @@
 ---
 
 ::: phydrax.solver.MACRemeshEpochPlan
+
+## Marker-flow stage, mechanics, and topology closure
+
+::: phydrax.solver.MACHelmholtzStageInverseMomentum
+
+---
+
+::: phydrax.solver.MACVariableDensityStageInverseMomentum
+
+---
+
+::: phydrax.solver.MACVariableViscosityStagePlan
+
+---
+
+::: phydrax.solver.MACRigidImmersedBackwardEulerMethod
+
+---
+
+::: phydrax.solver.MACRigidImmersedMidpointMethod
+
+---
+
+::: phydrax.solver.MACRigidImmersedContactMethod
+
+---
+
+::: phydrax.solver.MACRigidImmersedJointMethod
+
+---
+
+::: phydrax.solver.MACDeformableImmersedNewmarkMethod
+
+---
+
+::: phydrax.solver.DeformableContactResidualPlan
+
+---
+
+::: phydrax.discretization.ResolvedLubricationCorrectionPlan
+
+---
+
+::: phydrax.discretization.CompositeMACMarkerTransferPlan
+
+---
+
+::: phydrax.solver.CompositeMACProjectionPlan
+
+---
+
+::: phydrax.discretization.DistributedMACMarkerTransfer
+
+---
+
+::: phydrax.discretization.MarkerEpochTransferPlan
+
+## Divergence-free, sharp, and stochastic families
+
+::: phydrax.solver.MACDivergenceFreeMarkerTransfer
+
+---
+
+::: phydrax.solver.MACDFIBProjectionPlan
+
+---
+
+::: phydrax.solver.MACSharpInterfaceProjectionPlan
+
+---
+
+::: phydrax.solver.MACMovingSharpInterfaceEpochPlan
+
+---
+
+::: phydrax.solver.MACImmersedInterfaceProjectionPlan
+
+---
+
+::: phydrax.solver.MACInterfaceMethodSelector
+
+---
+
+::: phydrax.solver.MACDiscreteStochasticStressPlan
+
+---
+
+::: phydrax.solver.MACFluctuatingHydrodynamicsPlan
+
+---
+
+::: phydrax.solver.MACInertialStochasticStepPlan
+
+---
+
+::: phydrax.solver.FIBOverdampedPlan
+
+## Marker-flow runtime and evidence
+
+::: phydrax.solver.MarkerFlowCheckpointPlan
+
+---
+
+::: phydrax.solver.MarkerFlowReplayPlan
+
+---
+
+::: phydrax.solver.MarkerFlowOutputPlan
+
+---
+
+::: phydrax.solver.HydrodynamicLoadPlan
+
+---
+
+::: phydrax.solver.MarkerFlowAdaptiveStepPlan
+
+---
+
+::: phydrax.solver.MarkerFlowTrajectoryAdapter
+
+---
+
+::: phydrax.solver.MarkerFlowCompiledExportPlan
+
+---
+
+::: phydrax.solver.MarkerFlowQualificationPlan

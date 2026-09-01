@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._array_archive import *  # noqa: F403
+from ._array_archive import __all__ as _array_archive_all
 from ._complex_parameters import (
     complex_coefficients_to_frame,
     ComplexImportPolicy,
@@ -69,3 +71,4 @@ __all__ = [
     "save_onnx",
     "save_iree",
 ]
+__all__ += [name for name in _array_archive_all if name not in __all__]

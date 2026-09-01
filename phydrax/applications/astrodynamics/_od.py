@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...observation import CholeskyCovarianceAction, CoordinateLayout
 from ._status import AstrodynamicsStatus
 
 
@@ -32,7 +33,7 @@ class OrbitDeterminationResult(StrictModule):
 class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
     observation_model: Callable
     observed: Array
-    covariance_cholesky: Array
+    covariance: CholeskyCovarianceAction
     maximum_iterations: int = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -54,9 +55,12 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
         root = jnp.asarray(covariance_cholesky)
         if root.shape != (observed_.size, observed_.size):
             raise ValueError("Observation covariance root has incompatible shape.")
+        layout = CoordinateLayout(
+            tuple(f"{model_id}:observation:{index}" for index in range(observed_.size))
+        )
         self.observation_model = observation_model
         self.observed = observed_
-        self.covariance_cholesky = root
+        self.covariance = CholeskyCovarianceAction(root, layout)
         self.maximum_iterations = int(maximum_iterations)
         self.tolerance = float(tolerance)
         self.plan_id = canonical_fingerprint(
@@ -66,6 +70,10 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
                 "observations": int(observed_.size),
             }
         )
+
+    @property
+    def covariance_cholesky(self) -> Array:
+        return self.covariance.lower_cholesky
 
     def solve(
         self, initial_parameters: ArrayLike, args: Any = None, /
@@ -79,11 +87,9 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
             jacobian = jax.jacfwd(
                 lambda value: self.observation_model(value, args).reshape(-1)
             )(estimate)
-            whitened_residual = jsp.linalg.solve_triangular(
-                self.covariance_cholesky, residual, lower=True
-            )
-            whitened_jacobian = jsp.linalg.solve_triangular(
-                self.covariance_cholesky, jacobian, lower=True
+            whitened_residual = self.covariance.whiten(residual)
+            whitened_jacobian = jax.vmap(self.covariance.whiten, in_axes=1, out_axes=1)(
+                jacobian
             )
             information = whitened_jacobian.T @ whitened_jacobian
             rhs = whitened_jacobian.T @ whitened_residual
@@ -110,9 +116,7 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
         jacobian = jax.jacfwd(
             lambda value: self.observation_model(value, args).reshape(-1)
         )(estimate)
-        whitened = jsp.linalg.solve_triangular(
-            self.covariance_cholesky, jacobian, lower=True
-        )
+        whitened = jax.vmap(self.covariance.whiten, in_axes=1, out_axes=1)(jacobian)
         information = whitened.T @ whitened
         covariance = jsp.linalg.inv(information)
         valid = converged & jnp.all(jnp.isfinite(covariance))

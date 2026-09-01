@@ -32,7 +32,7 @@ from ..domain.graph._observation import (
     GraphTargetInterpolation,
     GraphTrajectoryClassificationSignal,
 )
-from ..integration import mean_over, over
+from ..integration import mean_over, over, per_step
 from ..ml._classification import ClassificationObjective, ClassificationObjectiveKind
 from ..ml._schema import TargetSchema
 from ._integral_functional import IntegralFunctional
@@ -407,8 +407,7 @@ def GraphClassificationTerm(
         target_encoding=objective.target_encoding,
     )
     return IntegralFunctional(
-        target=_integration_target(component, reduction),
-        plan=sampling,
+        source=per_step(_integration_target(component, reduction), sampling),
         integrand=_GraphClassificationIntegrand(
             field=str(field),
             domain=domain,
@@ -485,8 +484,7 @@ def GraphTrajectoryClassificationTerm(
         target_encoding=objective.target_encoding,
     )
     return IntegralFunctional(
-        target=_integration_target(component, reduction),
-        plan=sampling,
+        source=per_step(_integration_target(component, reduction), sampling),
         integrand=_GraphClassificationIntegrand(
             field=str(field),
             domain=domain,

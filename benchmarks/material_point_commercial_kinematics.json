@@ -1,0 +1,10 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "kinematics",
+  "metrics": {
+    "successful": true,
+    "traction_residual": 8.362227577052295e-12,
+    "tangent_successful": true
+  },
+  "passed": true
+}

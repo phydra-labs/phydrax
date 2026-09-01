@@ -38,6 +38,11 @@ from ._calabi_yau import (
 )
 from ._calibration import calibrate, MeasureCalibrationDiagnostics
 from ._compression import compress, MeasureCompressionDiagnostics
+from ._deformed_measure import (
+    DeformedMeasureKind,
+    DeformedMeasurePlan,
+    DeformedMeasureState,
+)
 from ._discrete_support import spatial_measure
 from ._estimates import (
     AdaptivePartition,
@@ -67,6 +72,7 @@ from ._execution import (
     IntegrationSource,
     per_step,
     PerStepIntegration,
+    resolve_integration,
 )
 from ._factorized import (
     factorized_bilinear_form,
@@ -262,6 +268,9 @@ __all__ = [
     "MeasureTransformationRecord",
     "IntegrationProvenance",
     "IntegrationStatus",
+    "DeformedMeasureKind",
+    "DeformedMeasurePlan",
+    "DeformedMeasureState",
     "IntegrationRealization",
     "IntegrationSource",
     "IntegrationTarget",
@@ -339,6 +348,7 @@ __all__ = [
     "materialize",
     "mean_over",
     "per_step",
+    "resolve_integration",
     "normalized_density",
     "over",
     "reduce",

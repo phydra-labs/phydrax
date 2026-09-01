@@ -145,6 +145,18 @@ time-interval enclosure with explicit tolerance and work-limit evidence; it
 does not redistribute the upstream runtime.
 See LICENSES/TIGHT-INCLUSION-MIT.txt.
 
+Contact closure design references
+
+The participant/kinematics split, route-state transactions, smooth and cone
+formulations, mortar/Nitsche interfaces, hydroelastic patches, rough contact,
+and multiphysics transport design were informed by the public architectures and
+papers associated with libuipc (Apache-2.0), STARK (Apache-2.0), PolyFEM (MIT),
+Tribol (MIT), Drake (BSD-3-Clause), Siconos (Apache-2.0), FEBio (MIT),
+ContactMechanics (MIT), and JAX-MPM (MIT). Phydrax independently implements
+JAX-native array kernels, vector/dual-space maps, fixed-capacity execution,
+accepted/candidate state, guarantee evidence, differentiation, and solver
+contracts; no runtime or source file from those projects is redistributed.
+
 Research and design acknowledgments
 
 The differentiable force-density design study considered arpastrana/jax_fdm at
@@ -348,6 +360,18 @@ differentiation, and evidence contracts independently. No upstream source,
 tests, fixtures, generated kernels, runtime types, numerical tables, or
 executables are copied, translated, bundled, linked, imported, or redistributed.
 
+Granular micro--macro and wet-contact design study
+The granular design study considered MercuryDPM, Ogarko and Luding, “A fast
+multilevel algorithm for contact detection of arbitrarily polydisperse
+particles” (CPC 2012), Weinhart, Luding, and Thornton, “From discrete particles
+to continuum fields in mixtures” (AIP 2013), and Bagheri et al., “Approximate
+Expressions for the Capillary Force and the Surface Area of a Liquid Bridge
+between Identical Spheres” (2024) and its SoftwareX implementation paper.
+PhydraX independently implements immutable multilevel routes, balance-audited
+particle and segment transfer, analytic capillary energy, fit certification,
+transactional liquid inventory, periodic-cell control, tests, and benchmarks.
+No upstream source, tests, fixtures, generated data, runtime types, or
+executables are copied, translated, linked, imported, or redistributed.
 The astronomy-closure implementations follow public IAU 2000/2006, IERS 2010,
 CCSDS navigation-message, Vallado SGP4, Gauss--Radau collocation, Einstein--
 Boltzmann, Tolman--Oppenheimer--Volkoff, radiative-transfer, and gravitational

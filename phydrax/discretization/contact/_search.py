@@ -17,12 +17,16 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ._participant import ContactParticipantScene
 from ._stencils import (
     canonical_contact_route_keys,
     ContactStencilBatch,
     ContactStencilKind,
 )
 from ._surface import PreparedCollisionScene
+
+
+ContactSearchScene = PreparedCollisionScene | ContactParticipantScene
 
 
 class ContactSearchStatus(IntEnum):
@@ -161,7 +165,7 @@ class _AbstractContactSearchPlan(StrictModule, NonTrainableState):
 
     def build(
         self,
-        scene: PreparedCollisionScene,
+        scene: ContactSearchScene,
         positions: ArrayLike,
         /,
         *,
@@ -338,13 +342,17 @@ def _same_set_pairs(
     return result
 
 
-def _scene_exclusions(scene: PreparedCollisionScene, /) -> set[tuple[int, int]]:
+def _scene_exclusions(scene: ContactSearchScene, /) -> set[tuple[int, int]]:
     pairs: set[tuple[int, int]] = set()
-    for surface_index, surface in enumerate(scene.surfaces):
+    if isinstance(scene, PreparedCollisionScene):
+        plans = tuple(surface.plan for surface in scene.surfaces)
+    elif isinstance(scene, ContactParticipantScene):
+        plans = tuple(participant.surface_plan for participant in scene.participants)
+    else:
+        raise TypeError("scene must be a prepared collision or participant scene.")
+    for surface_index, plan in enumerate(plans):
         offset = scene.vertex_offsets[surface_index]
-        for left, right in np.asarray(
-            surface.plan.pair_policy.excluded_vertex_pairs
-        ).tolist():
+        for left, right in np.asarray(plan.pair_policy.excluded_vertex_pairs).tolist():
             pairs.add(
                 (
                     min(offset + int(left), offset + int(right)),
@@ -443,15 +451,19 @@ def _limit_status(
 
 def _build_epoch(
     plan: _AbstractContactSearchPlan,
-    scene: PreparedCollisionScene,
+    scene: ContactSearchScene,
     positions: ArrayLike,
     end_positions: ArrayLike | None,
     /,
 ) -> ContactCandidateEpoch:
-    if not isinstance(scene, PreparedCollisionScene):
-        raise TypeError("scene must be PreparedCollisionScene.")
+    if not isinstance(scene, (PreparedCollisionScene, ContactParticipantScene)):
+        raise TypeError(
+            "scene must be PreparedCollisionScene or ContactParticipantScene."
+        )
     start_time = time.perf_counter()
-    start = np.asarray(positions, dtype=scene.surfaces[0].precision.geometry_dtype)
+    start = np.asarray(positions)
+    if not np.issubdtype(start.dtype, np.floating):
+        start = start.astype(np.float64)
     end = start if end_positions is None else np.asarray(end_positions, dtype=start.dtype)
     expected = (scene.vertex_count, scene.ambient_dimension)
     if (

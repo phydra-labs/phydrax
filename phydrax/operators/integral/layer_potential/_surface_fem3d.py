@@ -48,15 +48,17 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
         numeric_version: str,
     ):
         if not isinstance(region, MeshRegion):
-            raise TypeError("3D Galerkin preparation requires a MeshRegion.")
+            raise TypeError("[geometry] 3D Galerkin preparation requires a MeshRegion.")
         version = str(numeric_version)
         if not version:
-            raise ValueError("numeric_version must be non-empty.")
+            raise ValueError("[numeric-version] numeric_version must be non-empty.")
 
         triangle_mesh = region.triangle_mesh
         topology = triangle_mesh.topology
         if not topology.watertight:
-            raise ValueError("Surface Galerkin preparation requires a watertight mesh.")
+            raise ValueError(
+                "[geometry] Surface Galerkin preparation requires a watertight mesh."
+            )
         vertices = np.asarray(triangle_mesh.vertices, dtype=float)
         faces = np.asarray(triangle_mesh.faces, dtype=np.int32)
         component_ids = np.asarray(topology.face_component_ids, dtype=np.int32)
@@ -71,9 +73,9 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
         scale = max(float(np.max(np.ptp(vertices, axis=0))), 1.0)
         area_tolerance = 64.0 * np.finfo(float).eps * scale * scale
         if np.any(~np.isfinite(vertices)) or np.any(~np.isfinite(doubled_area)):
-            raise ValueError("Surface Galerkin geometry must be finite.")
+            raise ValueError("[geometry] Surface Galerkin geometry must be finite.")
         if np.any(doubled_area <= area_tolerance):
-            raise ValueError("Surface Galerkin faces must be nondegenerate.")
+            raise ValueError("[geometry] Surface Galerkin faces must be nondegenerate.")
 
         component_bounds: list[tuple[np.ndarray, np.ndarray]] = []
         volume_tolerance = 64.0 * np.finfo(float).eps * scale**3
@@ -95,7 +97,8 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
             )
             if not np.isfinite(signed_volume) or signed_volume <= volume_tolerance:
                 raise ValueError(
-                    "Every conductor component must have positive outward signed volume."
+                    "[geometry] Every conductor component must have positive "
+                    "outward signed volume."
                 )
             component_vertices = vertices[np.unique(component_faces)]
             component_bounds.append(
@@ -111,8 +114,8 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
                 )
                 if float(np.linalg.norm(gap)) <= 64.0 * np.finfo(float).eps * scale:
                     raise ValueError(
-                        "Initial capacitance geometry requires strictly separated "
-                        "component bounding boxes."
+                        "[geometry] Initial capacitance geometry requires strictly "
+                        "separated component bounding boxes."
                     )
 
         mesh = CellMesh.from_triangles(
@@ -138,7 +141,9 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
                 np.arange(faces.shape[0], dtype=np.int32),
             )
         ):
-            raise ValueError("Prepared surface DP0 routes do not match face order.")
+            raise ValueError(
+                "[geometry] Prepared surface DP0 routes do not match face order."
+            )
 
         geometry = region.compile()
         panelization = SurfacePanelization3D(
@@ -155,7 +160,9 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
             or not np.array_equal(np.asarray(panelization.chart_indices), expected_charts)
             or not np.array_equal(np.asarray(panelization.panel_ids), expected_charts)
         ):
-            raise ValueError("Surface panel order does not match face/DP0 order.")
+            raise ValueError(
+                "[geometry] Surface panel order does not match face/DP0 order."
+            )
 
         surface_entities = mesh.topology.entity_sets[mesh.topological_dimension]
         face_areas = jnp.asarray(doubled_area * 0.5)

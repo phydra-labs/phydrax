@@ -26,14 +26,15 @@ the exact derivative of the smoothed model only.
 All `MPMGridState` arrays carry a leading field axis, including the exact single-field
 `K = 1` migration.
 
-For `K = 2`, MPM independently transfers per-field mass, momentum, force, mass
-gradient, and APIC state. `project_two_field_contact` constructs a collinear
-mass-gradient normal and applies equal/opposite normal and friction impulses. A
-particle gathers only its owning field.
+MPM independently transfers each field's mass, momentum, force, mass gradient, and
+velocity state. `KWayMPMContactPlan` constructs every deterministic occupied-field
+pair and solves their normal complementarity simultaneously with optional essential
+velocity rows and sharp or smooth Coulomb friction. A particle gathers only its
+owning field.
 
-The initial contact kernel rejects unreliable normals and supports at most two
-simultaneously contacting fields at a node. General multiway complementarity is not
-claimed.
+The commercial kernel supports a fixed prepared cardinality and currently admits up
+to three simultaneously occupied fields per node. Larger local cardinality is an
+explicit unsupported claim tuple rather than silently falling back to pairwise order.
 
 Material identity, body identity, velocity-field identity, and topology generation
 are separate state. `MPMMaterialBank` stores disjoint material selections and tuple

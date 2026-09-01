@@ -318,8 +318,8 @@ used to claim cocycle consistency.
 
 `AbstractJumpProcess` separates a process law from a stochastic realization.
 `JumpProcess` accepts callable channel intensities, state updates, and optional
-mark sampling. `MassActionJumpProcess` provides combinatorial propensities,
-stoichiometric updates, and conservation residuals for reaction systems.
+mark sampling. `ChemicalJumpProcess` lowers a prepared mechanism to combinatorial
+propensities, stoichiometric updates, and element/charge residuals.
 
 `PoissonClockRealization` stores prefix-stable unit-rate thresholds and mark
 keys for each channel and path. Increasing `max_events_per_channel` with

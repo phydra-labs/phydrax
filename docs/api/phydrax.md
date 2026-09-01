@@ -15,6 +15,8 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.conditions`: residual, moment, observation, and physical condition declarations
 - `phydrax.terms`: penalty terms and specialized numerical/data terms
 - `phydrax.integration`: integration targets, sources, reductions, and realizations
+- `phydrax.variational`: representation-independent scalar functionals, local
+  field jets, semantic regions, and ordered functional evaluation evidence
 - `phydrax.weighting`: exact and quadratically reconciled relative-entropy
   moment calibration with operator-native geometry, audited status, and implicit
   derivatives
@@ -200,8 +202,8 @@ mark, and optional left/right state. Algorithms must use the mask and status;
 padding values are never event evidence.
 
 `JumpProcess` accepts callable intensities, jump maps, and optional mark
-sampling. `MassActionJumpProcess` provides combinatorial propensities and
-stoichiometric updates without requiring SciPy reaction objects.
+sampling. `ChemicalJumpProcess` supplies mechanism-derived combinatorial propensities
+and stoichiometric updates without a separate reaction schema.
 `CompositeStochasticRealization` combines named Wiener and Poisson
 realizations with one sample layout and support. Its path labels, realization
 ID, and coupling ID include every named component.
@@ -230,7 +232,7 @@ ID, and coupling ID include every named component.
 
 ---
 
-::: phydrax.stochastic.MassActionJumpProcess
+::: phydrax.stochastic.ChemicalJumpProcess
     options:
         members:
             - __init__

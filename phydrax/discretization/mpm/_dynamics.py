@@ -31,10 +31,15 @@ from ._boundary import PrescribedGridVelocityPlan, PrescribedGridVelocityResult
 from ._contact import MPMGridConstraintResult, RigidMPMContactPlan
 from ._domain import MPMParticleDomainPlan
 from ._fields import MPMNodalFieldPlan
+from ._lifecycle_amr import MPMLifecycleState
 from ._method import ExplicitMPMMethodPlan, MPMResourcePolicy
 from ._multifield_dynamics import multifield_step_detailed
 from ._phases import advance_grid_velocity, normalize_grid_momentum, update_deformation
-from ._schedule import MUSLMPMSchedule, USFMPMSchedule
+from ._schedule import (
+    AffineMUSLMPMSchedule,
+    PostAdvectionMUSLMPMSchedule,
+    USFMPMSchedule,
+)
 from ._storage import MPMActiveBlockPlan
 from ._transfer import (
     apic_particle_angular_momentum,
@@ -58,6 +63,7 @@ from ._types import (
     MPMStepResult,
     MPMTransferEvidence,
 )
+from ._velocity_transfer import apply_velocity_transfer
 
 
 ExternalMPMAcceleration = Callable[[Array, Array, Array, Any], ArrayLike]
@@ -146,8 +152,6 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             raise TypeError("nodal_fields must be MPMNodalFieldPlan or None.")
         if fields.initial_particle_field_slots.shape != (particles.capacity,):
             raise ValueError("Nodal field slots must match particle capacity.")
-        if fields.field_count > 1 and method.schedule.common_name != "usl-minus":
-            raise ValueError("Initial multifield MPM supports USL-minus only.")
         if active_blocks is not None and not isinstance(
             active_blocks, MPMActiveBlockPlan
         ):
@@ -157,8 +161,8 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         if splat.particles.prepared_id != particles.prepared_id:
             raise ValueError("MPM splat was prepared for a different particle support.")
         dimension = particles.ambient_dimension
-        if dimension not in (2, 3) or particle_domain.dimension != dimension:
-            raise ValueError("MPM dimensions must agree and be two or three.")
+        if dimension not in (1, 2, 3) or particle_domain.dimension != dimension:
+            raise ValueError("MPM dimensions must agree and be one, two, or three.")
         if tuple(splat.layout.axis_entities) != ("point",) * dimension:
             raise ValueError("Explicit MPM requires a nodal tensor-grid target.")
         assignment_capabilities = splat.plan.assignment.capabilities
@@ -177,7 +181,13 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         if material.dimension != dimension:
             raise ValueError("MPM material dimension does not match particle support.")
         expected_kinematics = (
-            ("plane_strain", "plane_stress") if dimension == 2 else ("three_dimensional",)
+            ("one_dimensional",)
+            if dimension == 1
+            else (
+                ("plane_strain", "plane_stress")
+                if dimension == 2
+                else ("three_dimensional",)
+            )
         )
         if material.kinematics not in expected_kinematics:
             raise ValueError(
@@ -362,6 +372,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         material_slots: ArrayLike | None = None,
         body_ids: ArrayLike | None = None,
         velocity_field_slots: ArrayLike | None = None,
+        lifecycle_state: MPMLifecycleState | None = None,
         time: ArrayLike = 0.0,
     ) -> MPMRuntimeState:
         position_ = self._vector("position", position)
@@ -387,6 +398,8 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         )
         if deformation.shape != identity.shape or affine.shape != identity.shape:
             raise ValueError("Initial F and C must have particle tensor shape.")
+        if not self.method.transfer.requires_affine_state:
+            affine = jnp.zeros_like(affine)
         history_shape = (count,) + tuple(self.material.state_shape)
         if material_state is None:
             history = self.material.initialize_state((count,), dtype)
@@ -394,10 +407,22 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             history = jnp.asarray(material_state, dtype=dtype)
         if history.shape != history_shape:
             raise ValueError(f"material_state must have shape {history_shape}.")
-        active = self.particles.active_mask
-        density = self.particles.safe_masses.astype(dtype) / jnp.where(
-            active, volume, 1.0
+        if lifecycle_state is not None:
+            if not isinstance(lifecycle_state, MPMLifecycleState):
+                raise TypeError("lifecycle_state must be MPMLifecycleState or None.")
+            if lifecycle_state.active.shape != (count,):
+                raise ValueError("Lifecycle state must match particle capacity.")
+        active = (
+            self.particles.active_mask
+            if lifecycle_state is None
+            else lifecycle_state.active
         )
+        runtime_masses = (
+            self.particles.safe_masses.astype(dtype)
+            if lifecycle_state is None
+            else lifecycle_state.masses.astype(dtype)
+        )
+        density = runtime_masses / jnp.where(active, volume, 1.0)
         response = self.material.evaluate(
             deformation,
             history,
@@ -437,12 +462,12 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             ~valid | ~tree_allfinite(particles),
             "Initial MPM state is inadmissible.",
         )
+        particles = eqx.tree_at(lambda value: value.position, particles, checked)
         resolved_field_slots = (
             self.nodal_fields.initial_particle_field_slots
             if velocity_field_slots is None
             else velocity_field_slots
         )
-        particles = eqx.tree_at(lambda value: value.position, particles, checked)
         return MPMRuntimeState(
             particles,
             jnp.asarray(time, dtype=dtype).reshape(()),
@@ -454,6 +479,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             body_ids,
             resolved_field_slots,
             storage_state,
+            lifecycle_state,
         )
 
     def _external(
@@ -546,7 +572,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         schedule = MPMScheduleEvidence(
             jnp.asarray(self.method.schedule.schedule_code, dtype=jnp.int32),
             jnp.asarray(isinstance(self.method.schedule, USFMPMSchedule)),
-            jnp.asarray(isinstance(self.method.schedule, MUSLMPMSchedule)),
+            jnp.asarray(self.method.schedule.second_momentum_extrapolation),
             jnp.asarray(jnp.nan, dtype=dtype),
             jnp.asarray(jnp.nan, dtype=dtype),
             jnp.zeros((), dtype=dtype),
@@ -588,6 +614,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             state.body_ids,
             state.velocity_field_slots,
             state.storage_state,
+            state.lifecycle_state,
         )
         restriction_ = (
             MPMStepRestriction(
@@ -622,6 +649,11 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         if not isinstance(state, MPMRuntimeState):
             raise TypeError("state must be MPMRuntimeState.")
         dt = jnp.asarray(step_size, dtype=state.particles.position.dtype).reshape(())
+        active = (
+            self.particles.active_mask
+            if state.lifecycle_state is None
+            else state.lifecycle_state.active
+        )
         routes = self.splat.build(
             state.particles.position,
             assignment_input=state.assignment_input,
@@ -631,7 +663,6 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             if self.active_blocks is None
             else self.active_blocks.build(routes, state.storage_state)
         )
-        active = self.particles.active_mask
         domain_ok = jnp.all(
             (~active) | self.particle_domain.contains(state.particles.position)
         )
@@ -673,16 +704,25 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             if self.nodal_fields.field_count > 1:
                 return multifield_step_detailed(self, state, dt, arguments, routes)
             particle = state.particles
-            mass = self.particles.safe_masses.astype(particle.position.dtype)
+            mass = (
+                self.particles.safe_masses.astype(particle.position.dtype)
+                if state.lifecycle_state is None
+                else state.lifecycle_state.masses.astype(particle.position.dtype)
+            )
             acceleration_external, external_ok = self._external(
                 state.time, particle, arguments
             )
             mass_result = self.splat.deposit_content(routes, mass)
+            p2g_affine = (
+                particle.affine_velocity
+                if self.method.transfer.requires_affine_state
+                else jnp.zeros_like(particle.affine_velocity)
+            )
             route_payload = build_apic_route_payload(
                 routes,
                 mass,
                 particle.velocity,
-                particle.affine_velocity,
+                p2g_affine,
                 particle.reference_volume,
                 particle.first_piola,
                 particle.deformation_gradient,
@@ -740,7 +780,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     routes,
                     mass,
                     particle.velocity,
-                    particle.affine_velocity,
+                    p2g_affine,
                     particle.reference_volume,
                     scheduled_material.first_piola,
                     scheduled_deformation,
@@ -884,13 +924,16 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         contact_result.velocity, grid_mass, dt
                     )
                 grid_after = boundary_result.velocity
-                gathered = gather_apic(
+                gathered = apply_velocity_transfer(
+                    self.method.transfer,
+                    self.method.advection,
                     routes,
-                    grid_after.reshape((self.splat.target_size, dimension)),
+                    velocity_before,
+                    grid_after,
+                    particle.velocity,
                     active,
-                    self.method.transfer.maximum_condition,
                 )
-                candidate_position = particle.position + dt * gathered.velocity
+                candidate_position = particle.position + dt * gathered.advection_velocity
                 second_mass_defect = jnp.asarray(0.0, dtype=grid_mass.dtype)
                 second_momentum_defect = jnp.asarray(0.0, dtype=grid_mass.dtype)
                 second_constraint_work = jnp.asarray(0.0, dtype=grid_mass.dtype)
@@ -899,15 +942,58 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 second_contact_limit = jnp.asarray(jnp.inf, dtype=grid_mass.dtype)
                 second_successful = jnp.asarray(True)
                 kinematic_gradient = gathered.velocity_gradient
-                if isinstance(self.method.schedule, MUSLMPMSchedule):
-                    second_mass = self.splat.deposit_content(routes, mass)
-                    second_particle_momentum = mass[:, None] * gathered.velocity
-                    second_momentum = self.splat.deposit_content(
-                        routes, second_particle_momentum
-                    )
+                if self.method.schedule.second_momentum_extrapolation:
+                    second_routes = routes
+                    if isinstance(self.method.schedule, PostAdvectionMUSLMPMSchedule):
+                        second_input = self.splat.plan.assignment.update_input(
+                            candidate_position,
+                            particle.deformation_gradient,
+                            state.assignment_input,
+                        )
+                        second_routes = self.splat.build(
+                            candidate_position,
+                            assignment_input=second_input,
+                        )
+                    second_mass = self.splat.deposit_content(second_routes, mass)
+                    if (
+                        isinstance(
+                            self.method.schedule,
+                            (AffineMUSLMPMSchedule, PostAdvectionMUSLMPMSchedule),
+                        )
+                        and self.method.schedule.second_transfer_mode
+                        == "apic-affine-momentum"
+                    ):
+                        zero_tensor = jnp.zeros_like(particle.first_piola)
+                        zero_acceleration = jnp.zeros_like(particle.velocity)
+                        second_payload = build_apic_route_payload(
+                            second_routes,
+                            mass,
+                            gathered.velocity,
+                            gathered.affine_velocity,
+                            particle.reference_volume,
+                            zero_tensor,
+                            particle.deformation_gradient,
+                            zero_acceleration,
+                            active,
+                        )
+                        second_momentum_result = self.splat.scatter_route_payload(
+                            second_routes, second_payload
+                        )
+                        second_particle_momentum = mass[:, None] * gathered.velocity
+                        second_momentum_content = second_momentum_result.values[
+                            ..., :dimension
+                        ]
+                        second_momentum_successful = second_momentum_result.successful
+                    else:
+                        second_particle_momentum = mass[:, None] * gathered.velocity
+                        second_momentum_result = self.splat.deposit_content(
+                            second_routes, second_particle_momentum
+                        )
+                        second_momentum_content = second_momentum_result.content
+                        second_momentum_successful = second_momentum_result.successful
                     second_grid = normalize_grid_momentum(
                         second_mass.content,
-                        second_momentum.content,
+                        second_momentum_content,
                         mass_tolerance_factor=self.method.mass_tolerance_factor,
                     )
                     second_contact = self._apply_contact(
@@ -932,12 +1018,16 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     second_contact_dissipation = second_contact.dissipation
                     second_contact_limit = second_contact.contact_step_limit
                     second_gather = gather_apic(
-                        routes,
+                        second_routes,
                         second_boundary.velocity.reshape(
                             (self.splat.target_size, dimension)
                         ),
                         active,
-                        self.method.transfer.maximum_condition,
+                        (
+                            self.method.transfer.maximum_condition
+                            if np.isfinite(self.method.transfer.maximum_condition)
+                            else 1.0e30
+                        ),
                     )
                     kinematic_gradient = second_gather.velocity_gradient
                     second_mass_defect = (
@@ -952,15 +1042,16 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                         axis=0,
                     )
                     second_target_momentum = compensated_sum(
-                        second_momentum.content.reshape((-1, dimension)), axis=0
+                        second_momentum_content.reshape((-1, dimension)), axis=0
                     )
                     second_momentum_defect = _relative_defect(
                         second_source_momentum, second_target_momentum
                     )
                     second_constraint_work = second_boundary.work
                     second_successful = (
-                        second_mass.successful
-                        & second_momentum.successful
+                        second_routes.successful
+                        & second_mass.successful
+                        & second_momentum_successful
                         & second_contact.successful
                         & second_boundary.successful
                         & second_gather.successful
@@ -1129,6 +1220,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     state.body_ids,
                     state.velocity_field_slots,
                     accepted_storage,
+                    state.lifecycle_state,
                 )
                 candidate_state = MPMRuntimeState(
                     candidate_particle,
@@ -1141,6 +1233,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     state.body_ids,
                     state.velocity_field_slots,
                     storage_state,
+                    state.lifecycle_state,
                 )
                 particle_mass = compensated_sum(jnp.where(active, mass, 0.0))
                 target_mass = compensated_sum(grid_mass.reshape((-1,)))
@@ -1164,7 +1257,9 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                     grid_momentum.reshape((-1, dimension)),
                     grid_active.reshape((-1,)),
                 )
-                angular_valid = jnp.asarray(not any(self.particle_domain.periodic))
+                angular_valid = jnp.asarray(
+                    self.dimension > 1 and not any(self.particle_domain.periodic)
+                )
                 angular_defect = jnp.where(
                     angular_valid,
                     _relative_defect(particle_angular, target_angular),
@@ -1286,7 +1381,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 schedule = MPMScheduleEvidence(
                     jnp.asarray(self.method.schedule.schedule_code, dtype=jnp.int32),
                     jnp.asarray(isinstance(self.method.schedule, USFMPMSchedule)),
-                    jnp.asarray(isinstance(self.method.schedule, MUSLMPMSchedule)),
+                    jnp.asarray(self.method.schedule.second_momentum_extrapolation),
                     second_mass_defect,
                     second_momentum_defect,
                     second_constraint_work,

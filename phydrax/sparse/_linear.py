@@ -122,6 +122,10 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     def output_size(self) -> int:
         return prod(self.output_shape) if self.output_shape else 1
 
+    @property
+    def supports_fused_block_action(self) -> bool:
+        return True
+
     def mv(self, vector: Any, /) -> Any:
         """Apply the sparse map while preserving trailing payload dimensions."""
         return linear_apply(self.relation, self.coefficients, vector)

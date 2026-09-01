@@ -19,12 +19,14 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization._lagrangian_marker import LagrangianMarkerKinematics
 from ..discretization.finite_volume._incompressible import FaceVelocity
+from ..discretization.finite_volume._mac_marker_transfer import MACMarkerRouteState
 from ..equations._mac_incompressible import CompiledMACIncompressibleDynamics
 from ..linalg import LinearSolvePolicy
 from ._mac_immersed_boundary import (
     MACImmersedBoundaryProjectionPlan,
     MACImmersedBoundaryProjectionResult,
 )
+from ._mac_stage_inverse_momentum import MACHelmholtzStageInverseMomentum
 from ._mac_viscous import (
     MACHelmholtzResult,
     MACHelmholtzSolveMethod,
@@ -56,6 +58,7 @@ class MACImmersedBoundaryIMEXEulerResult(StrictModule):
     pressure: Array
     marker_force_density: Array
     marker_kinematics: LagrangianMarkerKinematics
+    route_state: MACMarkerRouteState
     explicit_rate: FaceVelocity
     helmholtz: MACHelmholtzResult
     projection: MACImmersedBoundaryProjectionResult
@@ -78,6 +81,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
     motion_id: str = eqx.field(static=True)
     helmholtz: MACHelmholtzSolvePlan
     fixed_step_size: float | None = eqx.field(static=True)
+    allow_route_refresh: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -94,6 +98,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
+        allow_route_refresh: bool = False,
         maximum_resource_bytes: int = 512 * 1024**2,
     ):
         if not isinstance(dynamics, CompiledMACIncompressibleDynamics):
@@ -130,6 +135,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         self.motion_id = identifier
         self.helmholtz = helmholtz
         self.fixed_step_size = fixed
+        self.allow_route_refresh = bool(allow_route_refresh)
         self.method_id = canonical_fingerprint(
             {
                 "kind": "mac-immersed-boundary-imex-euler",
@@ -138,6 +144,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
                 "motion": identifier,
                 "helmholtz": helmholtz.plan_id,
                 "fixed_step_size": fixed,
+                "allow_route_refresh": bool(allow_route_refresh),
             }
         )
 
@@ -162,9 +169,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
             "Immersed IMEX Euler step must be positive and finite.",
         )
 
-    def _explicit_rate(
-        self, time: Array, state: Array, args: Any, /
-    ) -> FaceVelocity:
+    def _explicit_rate(self, time: Array, state: Array, args: Any, /) -> FaceVelocity:
         _, convection, _, forcing = self.dynamics.rate_components(time, state, args)
         return tuple(
             -advective + source
@@ -180,6 +185,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         step_size: ArrayLike | None = None,
         pressure: ArrayLike | None = None,
         marker_force_density: ArrayLike | None = None,
+        expected_routes: MACMarkerRouteState | None = None,
         args: Any = None,
     ) -> MACImmersedBoundaryIMEXEulerResult:
         step = self._step_size(step_size)
@@ -206,13 +212,27 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
         marker_kinematics = self.marker_motion(attempted_time, args)
         if not isinstance(marker_kinematics, LagrangianMarkerKinematics):
             raise TypeError("marker_motion must return LagrangianMarkerKinematics.")
+        stage_inverse = MACHelmholtzStageInverseMomentum(
+            self.helmholtz,
+            boundary_stage,
+            mass_coefficient=(
+                None if self.fixed_step_size is not None else jnp.asarray(1.0)
+            ),
+            diffusion_coefficient=(
+                None if self.fixed_step_size is not None else step * viscosity
+            ),
+            rhs_scale=step,
+            stage_id=f"{self.method_id}/stage",
+        )
         immersed = self.projection.project(
             helmholtz.value,
-            step,
+            stage_inverse,
             marker_kinematics,
             pressure=pressure,
             marker_force_density=marker_force_density,
             boundary_stage=boundary_stage,
+            expected_routes=expected_routes,
+            allow_route_refresh=self.allow_route_refresh,
         )
         candidate_velocity = self.dynamics.momentum.boundaries.enforce(
             immersed.velocity, boundary_stage
@@ -227,10 +247,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(candidate_state))
         )
         accepted = (
-            boundary_stage.successful
-            & helmholtz.converged
-            & immersed.converged
-            & finite
+            boundary_stage.successful & helmholtz.converged & immersed.converged & finite
         )
         status = jnp.where(
             ~boundary_stage.successful,
@@ -277,6 +294,7 @@ class MACImmersedBoundaryIMEXEulerMethod(StrictModule, NonTrainableState):
                 else jnp.asarray(marker_force_density),
             ),
             marker_kinematics=marker_kinematics,
+            route_state=immersed.route_state,
             explicit_rate=explicit,
             helmholtz=helmholtz,
             projection=immersed,
@@ -295,6 +313,7 @@ class MACImmersedBoundarySBDF2State(StrictModule):
     explicit_rate: FaceVelocity
     pressure: Array
     marker_force_density: Array
+    route_state: MACMarkerRouteState
     accepted_steps: Array
     valid: Array
     status: Array
@@ -310,6 +329,7 @@ class MACImmersedBoundarySBDF2Result(StrictModule):
     pressure: Array
     marker_force_density: Array
     marker_kinematics: LagrangianMarkerKinematics
+    route_state: MACMarkerRouteState
     helmholtz: MACHelmholtzResult
     projection: MACImmersedBoundaryProjectionResult
     finite: Array
@@ -349,6 +369,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-9,
         maximum_iterations: int = 500,
         linear_policy: LinearSolvePolicy | None = None,
+        allow_route_refresh: bool = False,
         maximum_resource_bytes: int = 512 * 1024**2,
     ):
         step = float(step_size)
@@ -365,6 +386,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
             tolerance=tolerance,
             maximum_iterations=maximum_iterations,
             linear_policy=linear_policy,
+            allow_route_refresh=allow_route_refresh,
             maximum_resource_bytes=maximum_resource_bytes,
         )
         viscosity = float(np.asarray(dynamics.problem.viscosity))
@@ -393,13 +415,12 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
                 "projection": projection.plan_id,
                 "motion": str(motion_id),
                 "step_size": step,
+                "allow_route_refresh": bool(allow_route_refresh),
                 "helmholtz": helmholtz.plan_id,
             }
         )
 
-    def _explicit_rate(
-        self, time: Array, state: Array, args: Any, /
-    ) -> FaceVelocity:
+    def _explicit_rate(self, time: Array, state: Array, args: Any, /) -> FaceVelocity:
         _, convection, _, forcing = self.dynamics.rate_components(time, state, args)
         return tuple(
             -advective + source
@@ -441,6 +462,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
             explicit_rate=following_explicit,
             pressure=startup.pressure,
             marker_force_density=startup.marker_force_density,
+            route_state=startup.route_state,
             accepted_steps=startup.accepted.astype(jnp.int32),
             valid=startup.accepted,
             status=startup.status,
@@ -455,6 +477,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
             pressure=startup.pressure,
             marker_force_density=startup.marker_force_density,
             marker_kinematics=startup.marker_kinematics,
+            route_state=startup.route_state,
             helmholtz=startup.helmholtz,
             projection=startup.projection,
             finite=startup.finite,
@@ -498,13 +521,21 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
         marker_kinematics = self.marker_motion(attempted_time, args)
         if not isinstance(marker_kinematics, LagrangianMarkerKinematics):
             raise TypeError("marker_motion must return LagrangianMarkerKinematics.")
+        stage_inverse = MACHelmholtzStageInverseMomentum(
+            self.helmholtz,
+            boundary_stage,
+            rhs_scale=step,
+            stage_id=f"{self.method_id}/stage",
+        )
         immersed = self.projection.project(
             helmholtz.value,
-            coefficient,
+            stage_inverse,
             marker_kinematics,
             pressure=history.pressure,
             marker_force_density=history.marker_force_density,
             boundary_stage=boundary_stage,
+            expected_routes=history.route_state,
+            allow_route_refresh=self.startup_method.allow_route_refresh,
         )
         candidate_velocity = self.dynamics.momentum.boundaries.enforce(
             immersed.velocity, boundary_stage
@@ -571,6 +602,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
                 immersed.marker_force_density,
                 history.marker_force_density,
             ),
+            route_state=immersed.route_state,
             accepted_steps=history.accepted_steps + accepted.astype(jnp.int32),
             valid=accepted,
             status=status,
@@ -588,6 +620,7 @@ class MACImmersedBoundarySBDF2Method(StrictModule, NonTrainableState):
                 )
             ),
             pressure=next_history.pressure,
+            route_state=next_history.route_state,
             marker_force_density=next_history.marker_force_density,
             marker_kinematics=marker_kinematics,
             helmholtz=helmholtz,

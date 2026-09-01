@@ -269,6 +269,8 @@ def pullback_particle_epoch_transition(
         None,
         loads,
         cotangent.energy,
+        cotangent.periodic_cell,
+        cotangent.liquid,
     )
 
 

@@ -1,0 +1,10 @@
+{
+  "maturity": "commercial-qualification-candidate",
+  "capability": "moving_domain",
+  "metrics": {
+    "successful": true,
+    "topology_stable": true,
+    "jvp_norm": 0.01960799836801299
+  },
+  "passed": true
+}

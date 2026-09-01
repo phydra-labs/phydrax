@@ -47,8 +47,10 @@ def test_functional_precision_is_scoped_to_standard_optax():
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     parameter = domain.Parameter(2.0)
     objective = phx.terms.IntegralFunctional.from_operator(
-        target=phx.integration.over(domain.component()),
-        plan=phx.integration.AdaptiveQuadraturePlan(),
+        source=phx.integration.per_step(
+            phx.integration.over(domain.component()),
+            phx.integration.AdaptiveQuadraturePlan(),
+        ),
         operator=lambda value: (value - 1.0) ** 2,
         objective_vars="u",
     )

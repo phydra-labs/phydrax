@@ -1,0 +1,20 @@
+{
+  "benchmark": "contact-closure",
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "route_capacity": 512,
+  "active_routes": 256,
+  "closure_compile_seconds": 0.04725766699993983,
+  "closure_seconds": 3.387916682792517e-05,
+  "closure_potential": 10862.960157373032,
+  "cone_compile_seconds": 0.11793683299765689,
+  "cone_seconds": 0.015404939600193757,
+  "cone_impulse_norm": 2.6740101957393008,
+  "sap_compile_seconds": 0.11142829099844676,
+  "sap_seconds": 0.009797387499565957,
+  "sap_impulse_norm": 2.6740101957393008,
+  "rough_grid": [64, 64],
+  "rough_compile_seconds": 0.10434504200384254,
+  "rough_seconds": 0.007950022950171842,
+  "rough_load": 40.9599999590401
+}

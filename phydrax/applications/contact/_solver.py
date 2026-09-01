@@ -18,6 +18,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.contact import (
+    CertifiedAABBCCDPlan,
     collision_free_step_limit,
     ContactCandidateEpoch,
     ContactSafetyEvidence,
@@ -46,6 +47,9 @@ from ._friction import (
     PreparedLaggedCoulombFriction,
 )
 from ._potential import ContactPotentialEvaluation, PreparedConvergentContactPotential
+
+
+ContactCCDPlan = InclusionCCDPlan | CertifiedAABBCCDPlan
 
 
 class ContactRejectionReason(IntFlag):
@@ -214,7 +218,7 @@ class FiniteElementContactDynamicsPlan(StrictModule, NonTrainableState):
     contact: PreparedConvergentContactPotential
     search: SweepAndPruneContactSearchPlan
     friction: PreparedLaggedCoulombFriction | None
-    ccd: InclusionCCDPlan
+    ccd: ContactCCDPlan
     inversion: SimplexInversionStepPlan | None
     method: ImplicitNewmarkMethod
     mass_policy: FiniteElementMassPolicy
@@ -257,7 +261,7 @@ class FiniteElementContactEquilibriumPlan(StrictModule, NonTrainableState):
     scene: PreparedCollisionScene
     contact: PreparedConvergentContactPotential
     search: SweepAndPruneContactSearchPlan
-    ccd: InclusionCCDPlan
+    ccd: ContactCCDPlan
     inversion: SimplexInversionStepPlan | None
     solve_policy: ContactSolvePolicy
     subproblem: SteihaugToint
@@ -282,7 +286,7 @@ def _validate_common(
     scene: PreparedCollisionScene,
     contact: PreparedConvergentContactPotential,
     search: SweepAndPruneContactSearchPlan,
-    ccd: InclusionCCDPlan,
+    ccd: ContactCCDPlan,
     inversion: SimplexInversionStepPlan | None,
     /,
 ) -> ArraySpace:
@@ -290,7 +294,8 @@ def _validate_common(
         raise TypeError("problem must be CompiledFiniteElementProblem.")
     if not problem.potential_compatible or len(problem.form.field_names) != 1:
         raise ValueError(
-            "Finite-element contact requires one field and exclusively CellEnergyAction terms."
+            "Finite-element contact requires one field and a form compiled from "
+            "variational.Functional."
         )
     if not isinstance(problem.state_space, ArraySpace):
         raise TypeError("Finite-element contact currently requires an ArraySpace state.")
@@ -307,8 +312,8 @@ def _validate_common(
         raise TypeError("search must be SweepAndPruneContactSearchPlan.")
     if search.activation_distance != contact.plan.activation_distance:
         raise ValueError("Search and contact activation distances must agree exactly.")
-    if not isinstance(ccd, InclusionCCDPlan):
-        raise TypeError("ccd must be InclusionCCDPlan.")
+    if not isinstance(ccd, (InclusionCCDPlan, CertifiedAABBCCDPlan)):
+        raise TypeError("ccd must be a concrete contact CCD plan.")
     if inversion is not None and not isinstance(inversion, SimplexInversionStepPlan):
         raise TypeError("inversion must be SimplexInversionStepPlan or None.")
     return problem.state_space
@@ -320,7 +325,7 @@ def prepare_finite_element_contact_dynamics(
     scene: PreparedCollisionScene,
     contact: PreparedConvergentContactPotential,
     search: SweepAndPruneContactSearchPlan,
-    ccd: InclusionCCDPlan,
+    ccd: ContactCCDPlan,
     /,
     *,
     inversion: SimplexInversionStepPlan | None = None,
@@ -431,7 +436,7 @@ def prepare_finite_element_contact_equilibrium(
     scene: PreparedCollisionScene,
     contact: PreparedConvergentContactPotential,
     search: SweepAndPruneContactSearchPlan,
-    ccd: InclusionCCDPlan,
+    ccd: ContactCCDPlan,
     /,
     *,
     inversion: SimplexInversionStepPlan | None = None,
@@ -492,7 +497,7 @@ def _solve_contact_minimization(
     scene: PreparedCollisionScene,
     contact: PreparedConvergentContactPotential,
     search: SweepAndPruneContactSearchPlan,
-    ccd: InclusionCCDPlan,
+    ccd: ContactCCDPlan,
     inversion: SimplexInversionStepPlan | None,
     policy: ContactSolvePolicy,
     subproblem: SteihaugToint,

@@ -11,13 +11,18 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from opt_einsum import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._core import DiscretizationKey, DiscretizationRole, PreparationReport
 from ..particle import ParticleDiscretization, ParticlePrecisionPolicy
+from ._capabilities import VortexDiffusionCapabilities
+from ._compatibility import vortex_property_requirements
+from ._formulations_complete import (
+    AbstractVortexFormulation,
+    ClassicVPMFormulation,
+)
 from ._interfaces import (
     AbstractPreparedVortexDiffusion,
     AbstractPreparedVortexVelocity,
@@ -28,6 +33,7 @@ from ._interfaces import (
     VortexFieldRequest,
 )
 from ._particle import VortexParticleProperties, VortexParticleStateLayout
+from ._source import VortexSourceState, VortexTargetState
 
 
 BackgroundVortexVelocity = Callable[[Array, Array, Any], ArrayLike]
@@ -38,12 +44,14 @@ class InviscidVortexDiffusionPlan(AbstractVortexDiffusionPlan):
 
     dimension: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    capabilities: VortexDiffusionCapabilities
 
     def __init__(self, dimension: int, /):
         dimension_ = int(dimension)
         if dimension_ not in (2, 3):
             raise ValueError("Inviscid vortex diffusion requires dimension 2 or 3.")
         self.dimension = dimension_
+        self.capabilities = VortexDiffusionCapabilities(dimension_)
         self.plan_id = canonical_fingerprint(
             {"kind": "inviscid-vortex-diffusion", "dimension": dimension_}
         )
@@ -66,6 +74,7 @@ class PreparedInviscidVortexDiffusion(AbstractPreparedVortexDiffusion):
     capacity: int = eqx.field(static=True)
     backend_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
+    capabilities: VortexDiffusionCapabilities
 
     def __init__(self, plan: InviscidVortexDiffusionPlan, capacity: int, /):
         capacity_ = int(capacity)
@@ -75,6 +84,7 @@ class PreparedInviscidVortexDiffusion(AbstractPreparedVortexDiffusion):
         self.dimension = plan.dimension
         self.capacity = capacity_
         self.backend_id = plan.plan_id
+        self.capabilities = plan.capabilities
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-inviscid-vortex-diffusion",
@@ -85,22 +95,17 @@ class PreparedInviscidVortexDiffusion(AbstractPreparedVortexDiffusion):
 
     def evaluate(
         self,
-        position: ArrayLike,
-        strength: ArrayLike,
-        volume: ArrayLike,
+        source: VortexSourceState,
         viscosity: ArrayLike,
         /,
     ) -> VortexDiffusionEvaluation:
-        positions = jnp.asarray(position)
-        strengths = jnp.asarray(strength)
-        volumes = jnp.asarray(volume)
+        if not isinstance(source, VortexSourceState):
+            raise TypeError("source must be VortexSourceState.")
+        if source.capacity != self.capacity or source.dimension != self.dimension:
+            raise ValueError("Inviscid vortex source does not match prepared capacity.")
+        positions = source.safe_positions()
+        strengths = source.safe_strength()
         viscosity_ = jnp.asarray(viscosity, dtype=positions.dtype)
-        expected_position = (self.capacity, self.dimension)
-        expected_strength = (self.capacity,) if self.dimension == 2 else expected_position
-        if positions.shape != expected_position or strengths.shape != expected_strength:
-            raise ValueError("Inviscid vortex arrays do not match prepared capacity.")
-        if volumes.shape != (self.capacity,):
-            raise ValueError("Vortex volumes must have particle-capacity shape.")
         if viscosity_.shape != ():
             raise ValueError("Vortex viscosity must be scalar.")
         rate = jnp.zeros_like(strengths)
@@ -108,7 +113,6 @@ class PreparedInviscidVortexDiffusion(AbstractPreparedVortexDiffusion):
         finite = (
             jnp.all(jnp.isfinite(positions))
             & jnp.all(jnp.isfinite(strengths))
-            & jnp.all(jnp.isfinite(volumes))
             & jnp.isfinite(viscosity_)
             & (viscosity_ == 0.0)
         )
@@ -139,6 +143,7 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
 
     velocity: AbstractVortexVelocityPlan
     diffusion: AbstractVortexDiffusionPlan
+    formulation: AbstractVortexFormulation
     advective_cfl: float = eqx.field(static=True)
     diffusive_cfl: float = eqx.field(static=True)
     key: DiscretizationKey
@@ -150,6 +155,7 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         diffusion: AbstractVortexDiffusionPlan | None = None,
+        formulation: AbstractVortexFormulation | None = None,
         advective_cfl: float = 0.25,
         diffusive_cfl: float = 0.125,
         name: str = "vortex-particle-method",
@@ -165,6 +171,16 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
             raise TypeError("diffusion must be an AbstractVortexDiffusionPlan or None.")
         if diffusion_.dimension != velocity.dimension:
             raise ValueError("Velocity and diffusion dimensions differ.")
+        formulation_ = (
+            ClassicVPMFormulation(velocity.dimension)
+            if formulation is None
+            else formulation
+        )
+        if (
+            not isinstance(formulation_, AbstractVortexFormulation)
+            or formulation_.dimension != velocity.dimension
+        ):
+            raise ValueError("Vortex formulation must match the velocity dimension.")
         advective = float(advective_cfl)
         diffusive = float(diffusive_cfl)
         if advective <= 0.0 or diffusive <= 0.0:
@@ -176,6 +192,7 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
         )
         self.velocity = velocity
         self.diffusion = diffusion_
+        self.formulation = formulation_
         self.advective_cfl = advective
         self.diffusive_cfl = diffusive
         self.key = key
@@ -185,6 +202,7 @@ class VortexParticleMethodPlan(StrictModule, NonTrainableState):
                 "dimension": velocity.dimension,
                 "velocity": velocity.plan_id,
                 "diffusion": diffusion_.plan_id,
+                "formulation": formulation_.formulation_id,
                 "advective_cfl": advective,
                 "diffusive_cfl": diffusive,
                 "key": key.key_id,
@@ -268,8 +286,15 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
             raise ValueError(
                 "Prepared diffusion must bind the complete particle support."
             )
+        requirements = vortex_property_requirements(
+            method.velocity.capabilities,
+            method.diffusion.capabilities,
+        )
+        dynamic_core = method.formulation.requires_dynamic_core
         properties.validate(
-            particles.capacity, require_core_radius=True, require_volume=True
+            particles.capacity,
+            require_core_radius=(requirements.core_radius or dynamic_core),
+            require_volume=requirements.volume,
         )
         viscosity_ = jnp.asarray(viscosity, dtype=particles.safe_masses.dtype)
         if viscosity_.shape != ():
@@ -288,7 +313,11 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         precision_ = ParticlePrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, ParticlePrecisionPolicy):
             raise TypeError("precision must be ParticlePrecisionPolicy or None.")
-        layout = VortexParticleStateLayout(particles.capacity, dimension)
+        layout = VortexParticleStateLayout(
+            particles.capacity,
+            dimension,
+            dynamic_core=dynamic_core,
+        )
         preparation = PreparationReport(
             capabilities=particles.capabilities,
             diagnostics=(
@@ -329,7 +358,14 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
         )
 
     def initialize_state(self, position: ArrayLike, strength: ArrayLike, /) -> Array:
-        state = self.state_layout.pack(position, strength)
+        core = (
+            self.properties.safe_core_radius(
+                self.particles.active_mask,
+            )
+            if self.state_layout.dynamic_core
+            else None
+        )
+        state = self.state_layout.pack(position, strength, core)
         unpacked = self.state_layout.unpack(state)
         active = self.particles.active_mask
         position_ = jnp.where(active[:, None], unpacked.position, 0.0)
@@ -345,7 +381,12 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
             jnp.any(jnp.where(strength_mask, ~jnp.isfinite(strength_), False)),
             "Active vortex strengths must be finite.",
         )
-        return self.state_layout.pack(position_, strength_)
+        core_ = (
+            jnp.where(active, unpacked.core_radius, 1.0)
+            if unpacked.core_radius is not None
+            else None
+        )
+        return self.state_layout.pack(position_, strength_, core_)
 
     def _background(self, time: Array, position: Array, args: Any, /) -> Array:
         if self.background_velocity is None:
@@ -366,54 +407,96 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
     def evaluate(self, time: ArrayLike, state: ArrayLike, args: Any = None, /):
         unpacked = self.state_layout.unpack(state)
         active = self.particles.active_mask
-        position = jnp.where(active[:, None], unpacked.position, 0.0)
+        source = VortexSourceState(
+            unpacked.position,
+            unpacked.strength,
+            core_radius=(
+                unpacked.core_radius
+                if self.state_layout.dynamic_core
+                else self.properties.core_radius
+            ),
+            volume=self.properties.volume,
+            active_mask=active,
+            dimension=self.state_layout.dimension,
+            source_kind="particle",
+            source_id=f"{self.prepared_id}:source",
+        )
+        position = source.safe_positions()
+        strength = source.safe_strength()
         strength_mask = active if self.state_layout.dimension == 2 else active[:, None]
-        strength = jnp.where(strength_mask, unpacked.strength, 0.0)
-        core = self.properties.safe_core_radius(active, dtype=position.dtype)
-        volume = self.properties.safe_volume(active, dtype=position.dtype)
         request = VortexFieldRequest(
             velocity=True,
             velocity_gradient=self.state_layout.dimension == 3,
         )
-        velocity_evaluation = self.velocity.evaluate(
+        target = VortexTargetState(
             position,
-            strength,
-            core,
+            source_indices=jnp.arange(
+                source.capacity,
+                dtype=jnp.int32,
+            ),
+            target_id=f"{self.prepared_id}:same-support-target",
+        )
+        velocity_evaluation = self.velocity.evaluate(
+            source,
+            target,
             request=request,
         )
         diffusion_evaluation = self.diffusion.evaluate(
-            position,
-            strength,
-            volume,
+            source,
             self.viscosity,
         )
         if velocity_evaluation.velocity is None:
             raise ValueError("Vortex velocity backend returned no velocity.")
         induced = jnp.where(active[:, None], velocity_evaluation.velocity, 0.0)
         total_velocity = induced + self._background(jnp.asarray(time), position, args)
-        strength_rate = diffusion_evaluation.rate
-        if self.state_layout.dimension == 3:
-            gradient = velocity_evaluation.velocity_gradient
-            if gradient is None:
-                raise ValueError(
-                    "Three-dimensional vortex dynamics require velocity gradients."
-                )
-            strength_rate = strength_rate + contract(
-                "...ij,...j->...i", gradient, strength
+        gradient = velocity_evaluation.velocity_gradient
+        if self.state_layout.dimension == 3 and gradient is None:
+            raise ValueError(
+                "Three-dimensional vortex dynamics require velocity gradients."
             )
-        strength_rate = jnp.where(strength_mask, strength_rate, 0.0)
+        if gradient is None:
+            gradient = jnp.zeros(
+                (
+                    source.capacity,
+                    self.state_layout.dimension,
+                    self.state_layout.dimension,
+                ),
+                dtype=position.dtype,
+            )
+        formulation_rate = self.method.formulation.rate(
+            source,
+            gradient,
+            diffusion_evaluation.rate,
+        )
+        strength_rate = jnp.where(
+            strength_mask,
+            formulation_rate.strength_rate,
+            0.0,
+        )
+        core_rate = formulation_rate.core_radius_rate
+        if core_rate is not None:
+            core_rate = jnp.where(active, core_rate, 0.0)
         return (
             position,
             strength,
             total_velocity,
             strength_rate,
+            core_rate,
             velocity_evaluation,
             diffusion_evaluation,
         )
 
     def __call__(self, time: ArrayLike, state: ArrayLike, args: Any = None, /) -> Array:
-        _, _, velocity, strength_rate, _, _ = self.evaluate(time, state, args)
-        return self.state_layout.pack(velocity, strength_rate)
+        _, _, velocity, strength_rate, core_rate, _, _ = self.evaluate(
+            time,
+            state,
+            args,
+        )
+        return self.state_layout.pack(
+            velocity,
+            strength_rate,
+            core_rate if self.state_layout.dynamic_core else None,
+        )
 
     def diagnostics(
         self, time: ArrayLike, state: ArrayLike, args: Any = None, /
@@ -423,6 +506,7 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
             strength,
             velocity,
             strength_rate,
+            _,
             velocity_evaluation,
             diffusion_evaluation,
         ) = self.evaluate(time, state, args)
@@ -457,7 +541,17 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
                 axis=0,
             )
         speed = jnp.sqrt(jnp.sum(velocity * velocity, axis=-1))
-        core = self.properties.safe_core_radius(active, dtype=position.dtype)
+        unpacked = self.state_layout.unpack(state)
+        if unpacked.core_radius is not None:
+            core = jnp.where(active, unpacked.core_radius, 1.0)
+        elif self.properties.core_radius is not None:
+            core = self.properties.safe_core_radius(active, dtype=position.dtype)
+        elif self.properties.volume is not None:
+            core = self.properties.safe_volume(active, dtype=position.dtype) ** (
+                1.0 / self.state_layout.dimension
+            )
+        else:
+            core = jnp.ones((self.particles.capacity,), dtype=position.dtype)
         finite = (
             jnp.all(jnp.isfinite(position))
             & jnp.all(jnp.isfinite(strength))
@@ -480,11 +574,21 @@ class PreparedVortexParticleDynamics(StrictModule, NonTrainableState):
     def stable_step(
         self, time: ArrayLike, state: ArrayLike, args: Any = None, /
     ) -> VortexParticleStepRestriction:
-        position, _, velocity, _, _, _ = self.evaluate(time, state, args)
+        position, _, velocity, _, _, _, _ = self.evaluate(time, state, args)
         active = self.particles.active_mask
         speed = jnp.sqrt(jnp.sum(velocity * velocity, axis=-1))
         maximum_speed = jnp.max(jnp.where(active, speed, 0.0))
-        core = self.properties.safe_core_radius(active, dtype=position.dtype)
+        unpacked = self.state_layout.unpack(state)
+        if unpacked.core_radius is not None:
+            core = jnp.where(active, unpacked.core_radius, 1.0)
+        elif self.properties.core_radius is not None:
+            core = self.properties.safe_core_radius(active, dtype=position.dtype)
+        elif self.properties.volume is not None:
+            core = self.properties.safe_volume(active, dtype=position.dtype) ** (
+                1.0 / self.state_layout.dimension
+            )
+        else:
+            core = jnp.ones((self.particles.capacity,), dtype=position.dtype)
         minimum_scale = jnp.min(jnp.where(active, core, jnp.inf))
         tiny = jnp.finfo(position.dtype).tiny
         advective = jnp.where(

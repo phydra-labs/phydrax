@@ -605,3 +605,100 @@ def test_curvature_controller_rejects_and_recovers_sharp_branch_steps():
     assert int(result.diagnostics.curvature_rejections) > 0
     assert any(event.kind == "curvature-retry" for event in result.events)
     assert all(float(point.tangent_alignment) >= 0.999 for point in result.points[1:])
+
+
+def test_application_transactions_commit_once_and_checkpoint_only_accepted_state():
+    counts = {"freeze": 0, "evaluate": 0, "commit": 0, "rollback": 0}
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, args: state - coordinate,
+        problem_id="transactional-linear-curve",
+    )
+
+    def freeze(application_state, args):
+        del args
+        counts["freeze"] += 1
+        return dict(application_state)
+
+    def evaluate(transaction, source, candidate, args):
+        del transaction, args
+        counts["evaluate"] += 1
+        return phx.continuation.ParameterTransferEvidence.for_candidate(
+            source,
+            candidate,
+            application_accepted=source is None,
+            message="accept only the initial corrected point",
+        )
+
+    def commit(transaction, source, candidate, evidence, args):
+        del source, candidate, evidence, args
+        counts["commit"] += 1
+        return {"version": transaction["version"] + 1}
+
+    def rollback(transaction, source, candidate, evidence, args):
+        del transaction, candidate, evidence, args
+        counts["rollback"] += 1
+        return source.application_state
+
+    def identity(application_state, args):
+        del args
+        return f"application-state-{application_state['version']}"
+
+    adapter = phx.continuation.CallableContinuationAdapter(
+        problem,
+        adapter_id="transactional-linear-adapter",
+        freeze=freeze,
+        evaluate=evaluate,
+        commit=commit,
+        rollback=rollback,
+        state_identity=identity,
+        checkpoint=lambda state, args: dict(state),
+        restore=lambda data, args: dict(data),
+    )
+    result = phx.continuation.continue_branch(
+        adapter,
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        num_steps=1,
+        method=phx.continuation.NaturalParameterContinuation(
+            initial_step=0.1,
+            maximum_retries=1,
+        ),
+        application_state={"version": 0},
+    )
+
+    assert int(result.status) == int(
+        phx.continuation.ContinuationStatus.APPLICATION_REJECTED
+    )
+    assert counts == {"freeze": 3, "evaluate": 3, "commit": 1, "rollback": 2}
+    assert len(result.steps) == 3
+    assert sum(bool(step.committed) for step in result.steps) == 1
+    assert all(
+        step.source_application_state_id == "application-state-1"
+        for step in result.steps[1:]
+    )
+    assert result.accepted_state.application_state == {"version": 1}
+    assert result.checkpoint.application_data == {"version": 1}
+    assert result.checkpoint.accepted_decision_ids == (result.steps[0].decision_id,)
+    assert result.checkpoint.attempt_decision_ids == tuple(
+        step.decision_id for step in result.steps
+    )
+
+    restored, evidence = phx.continuation.restore_continuation_checkpoint(
+        result.checkpoint,
+        adapter,
+        plan_id=result.provenance.plan_id,
+        prepared_id=result.provenance.prepared_id,
+        branch_id=result.provenance.branch_id,
+    )
+    assert bool(evidence.matches)
+    assert restored.application_state == {"version": 1}
+    assert restored.decision_id == result.accepted_state.decision_id
+    with pytest.raises(ValueError, match="did not match"):
+        phx.continuation.restore_continuation_checkpoint(
+            result.checkpoint,
+            adapter,
+            plan_id=result.provenance.plan_id,
+            prepared_id=result.provenance.prepared_id,
+            branch_id=result.provenance.branch_id,
+            observed_decision_ids=("corrupted-decision",),
+        )

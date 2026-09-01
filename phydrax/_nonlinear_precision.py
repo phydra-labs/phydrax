@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import Any
 
 import equinox as eqx
@@ -288,7 +289,7 @@ class NonlinearPrecisionPolicy(StrictModule, NonTrainableState):
 
     def validate_tolerance(self, tolerance: Any, /) -> None:
         value = float(tolerance)
-        if not jnp.isfinite(value) or value < 0.0:
+        if not isfinite(value) or value < 0.0:
             raise ValueError("tolerance must be finite and non-negative.")
         if self.certificate_dtype is None:
             return

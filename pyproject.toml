@@ -49,6 +49,7 @@ dependencies = [
     "orthax>=0.2.9,<0.3",
     "polars>=1.40.1",
     "pyvista>=0.46.4",
+    "pyyaml>=6.0.2,<7",
     "scipy>=1.14",
     "sympy>=1.14,<1.15",
     "s2fft>=1.4,<1.5",
