@@ -98,6 +98,7 @@ benchmarks/*
 !benchmarks/contact_search.json
 !benchmarks/contact_dynamics.json
 !benchmarks/contact_qualification.json
+!benchmarks/contact_closure.json
 !benchmarks/advanced_solvers/
 !benchmarks/advanced_solvers/**
 benchmarks/advanced_solvers/**/__pycache__/

@@ -5,8 +5,11 @@
   "vertices": 257,
   "edges": 256,
   "candidate_count": 510,
-  "dense_seconds": 0.1528004443340857,
-  "sweep_seconds": 0.010024820850230754,
+  "dense_seconds": 0.3594296526668283,
+  "sweep_seconds": 0.022035660449910212,
+  "compiled_compile_seconds": 0.40076766700076405,
+  "compiled_seconds": 0.0014612683400628157,
+  "compiled_candidate_count": 510,
   "sets_equal": true,
   "successful": true
 }

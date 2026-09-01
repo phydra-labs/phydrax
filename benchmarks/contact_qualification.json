@@ -5,6 +5,9 @@
   "barrier_derivative_defect": 3.1172078251984203e-09,
   "candidate_complete": true,
   "ccd_successful": true,
+  "ccd_guarantee_level": 5,
+  "interface_balance_defect": 0.0,
+  "hertz_contact_radius": 0.1957433820584432,
   "ccd_step_size": 0.39999999403953557,
   "ccd_interval_count": 108,
   "qualified": true

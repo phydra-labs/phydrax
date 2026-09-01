@@ -66,12 +66,26 @@ def main():
     )
     epoch = search.build(scene, start, end_positions=end)
     safety = phx.discretization.collision_free_step_limit(
-        phx.discretization.InclusionCCDPlan(time_tolerance=1.0e-8),
+        phx.discretization.CertifiedAABBCCDPlan(time_tolerance=1.0e-8),
         scene,
         epoch,
         start,
         end,
     )
+    interface = phx.discretization.ContactInterfacePlan(
+        jnp.asarray(((0, 1),)),
+        jnp.asarray(((0.5, 0.5),)),
+        jnp.asarray(((0, 1),)),
+        jnp.asarray(((0.5, 0.5),)),
+        jnp.asarray(((0.0, 1.0),)),
+        jnp.asarray((1.0,)),
+        plus_node_count=2,
+        minus_node_count=2,
+    )
+    interface_residual = phx.discretization.assemble_contact_interface_traction(
+        interface, jnp.asarray(((0.0, 3.0),))
+    )
+    hertz = phx.applications.contact.hertz_sphere_half_space(1.0, 1000.0, 10.0)
     derivative_defect = float(jnp.abs(analytic - finite_difference))
     print(
         json.dumps(
@@ -82,12 +96,21 @@ def main():
                 "barrier_derivative_defect": derivative_defect,
                 "candidate_complete": bool(epoch.successful),
                 "ccd_successful": bool(safety.successful),
+                "ccd_guarantee_level": int(safety.guarantee.level),
+                "interface_balance_defect": float(
+                    jnp.max(jnp.abs(interface_residual.action_reaction_residual))
+                ),
+                "hertz_contact_radius": float(hertz.contact_radius),
                 "ccd_step_size": float(safety.step_size),
                 "ccd_interval_count": int(safety.interval_count),
                 "qualified": bool(
                     derivative_defect < 1.0e-6
                     and epoch.successful
                     and safety.successful
+                    and safety.guarantee.level
+                    == int(phx.discretization.ContactGuaranteeLevel.ROUNDING_CERTIFIED)
+                    and interface_residual.successful
+                    and hertz.contact_radius > 0.0
                     and 0.0 < safety.step_size < 0.5
                 ),
             },

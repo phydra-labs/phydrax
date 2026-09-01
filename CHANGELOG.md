@@ -265,6 +265,22 @@
   friction, fixed-route sensitivities, and direct rod/shell collision-surface
   adapters. Explicit rigid--MPM weld/penalty/impulse coupling retains separate
   branch, rank, energy, route, and rollback certificates.
+- Extended the contact substrate with an ordered guarantee lattice,
+  roundoff-directed certified swept-AABB CCD, cached and fully compiled
+  fixed-shape candidate filters, per-vertex separation, nonlinear/independent
+  participant kinematics, rigid/articulated/point/MPM adapters, high-order
+  proxy error inflation, implicit geometry, cubic and rigid sweep trajectories,
+  closed-surface geometric-contact filters, deterministic triangle-overlap
+  mortar quadrature, equal-pressure tetrahedral patch extraction, distributed
+  route ownership/halo exchange, and remeshing state transfer. Added composable
+  material-pair closure with barrier/geometric/compliant/adhesive normal laws,
+  static/dynamic, anisotropic, and rate-state friction, irreversible
+  wear/cohesive evolution, smooth force assembly, hard Coulomb-cone impact,
+  projected, SAP, semismooth, and primal-dual cone solvers, rolling/spinning
+  resistance, mortar, one-sided/unbiased Nitsche, mesh tying,
+  cross-discretization coupling, hydroelastic patches, periodic/homogenized
+  rough contact, thermal/electrical/mass flux, lubrication, contact-graph
+  preconditioning, and fixed-branch closure/cone/mortar derivatives.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional
