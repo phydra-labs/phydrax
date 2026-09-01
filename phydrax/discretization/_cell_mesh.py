@@ -18,6 +18,9 @@ from ._cell_complex import (
     polygonal_cell_complex,
     polygonal_connectivity,
     PolygonalConnectivity,
+    polyhedral_cell_complex,
+    polyhedral_connectivity,
+    PolyhedralConnectivity,
     tetrahedral_cell_complex,
     tetrahedral_connectivity,
     TetrahedralConnectivity,
@@ -36,12 +39,16 @@ _CELL_ARITIES = {
     "quadrilateral": 4,
     "tetrahedron": 4,
     "hexahedron": 8,
+    "prism": 6,
+    "pyramid": 5,
 }
 _CELL_DIMENSIONS = {
     "triangle": 2,
     "quadrilateral": 2,
     "tetrahedron": 3,
     "hexahedron": 3,
+    "prism": 3,
+    "pyramid": 3,
     "polygon": 2,
 }
 
@@ -71,7 +78,7 @@ class CellBlock(StrictModule, NonTrainableState):
         if kind not in (*_CELL_ARITIES, "polygon"):
             raise ValueError(
                 "cell_kind must be triangle, quadrilateral, polygon, "
-                "tetrahedron, or hexahedron."
+                "tetrahedron, hexahedron, prism, or pyramid."
             )
         cells = np.asarray(vertices, dtype=np.int32)
         arity = (
@@ -139,7 +146,12 @@ class CellMesh(StrictModule, NonTrainableState):
     coordinates: Array
     blocks: tuple[CellBlock, ...]
     vertex_global_ids: Array
-    connectivity: PolygonalConnectivity | TetrahedralConnectivity | HexahedralConnectivity
+    connectivity: (
+        PolygonalConnectivity
+        | TetrahedralConnectivity
+        | HexahedralConnectivity
+        | PolyhedralConnectivity
+    )
     topology: CellComplexTopology
     support: DiscreteSupport
     topological_dimension: int = eqx.field(static=True)
@@ -255,12 +267,11 @@ class CellMesh(StrictModule, NonTrainableState):
                 cell_global_ids=cell_global_ids,
             )
         else:
-            if len(normalized_blocks) != 1:
-                raise ValueError(
-                    "Three-dimensional CellMesh requires one homogeneous block."
-                )
-            block = normalized_blocks[0]
-            if block.cell_kind == "tetrahedron":
+            if (
+                len(normalized_blocks) == 1
+                and normalized_blocks[0].cell_kind == "tetrahedron"
+            ):
+                block = normalized_blocks[0]
                 tetrahedra = np.asarray(block.vertices, dtype=np.int32)
                 connectivity = tetrahedral_connectivity(tetrahedra, points.shape[0])
                 topology = tetrahedral_cell_complex(
@@ -269,7 +280,11 @@ class CellMesh(StrictModule, NonTrainableState):
                     vertex_global_ids=global_ids,
                     cell_global_ids=cell_global_ids,
                 )
-            elif block.cell_kind == "hexahedron":
+            elif (
+                len(normalized_blocks) == 1
+                and normalized_blocks[0].cell_kind == "hexahedron"
+            ):
+                block = normalized_blocks[0]
                 hexahedra = np.asarray(block.vertices, dtype=np.int32)
                 connectivity = hexahedral_connectivity(hexahedra, points.shape[0])
                 topology = hexahedral_cell_complex(
@@ -279,7 +294,17 @@ class CellMesh(StrictModule, NonTrainableState):
                     cell_global_ids=cell_global_ids,
                 )
             else:
-                raise ValueError("Unsupported three-dimensional cell block.")
+                polyhedral_blocks = tuple(
+                    (block.cell_kind, np.asarray(block.vertices, dtype=np.int32))
+                    for block in normalized_blocks
+                )
+                connectivity = polyhedral_connectivity(polyhedral_blocks, points.shape[0])
+                topology = polyhedral_cell_complex(
+                    polyhedral_blocks,
+                    points.shape[0],
+                    vertex_global_ids=global_ids,
+                    cell_global_ids=cell_global_ids,
+                )
 
         canonical_blocks = []
         for block in normalized_blocks:

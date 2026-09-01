@@ -18,8 +18,10 @@ from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_mesh import CellBlock, CellMesh
+from ._generic import FiniteElementCoordinateSpec
 from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarMetricData, FiniteElementMortarPlan
+from ._reference import lagrange_element
 
 
 class PersistentSemanticCache(StrictModule, NonTrainableState):
@@ -56,42 +58,6 @@ class PersistentSemanticCache(StrictModule, NonTrainableState):
                 if name != "metadata"
             }
         return arrays, metadata
-
-
-class HeterogeneousSignatureSchedule(StrictModule, NonTrainableState):
-    ordered_signatures: tuple[str, ...] = eqx.field(static=True)
-    bucket_routes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    schedule_id: str = eqx.field(static=True)
-
-    def __init__(self, signatures: Sequence[str], costs: ArrayLike, /):
-        signatures_ = tuple(str(value) for value in signatures)
-        costs_ = np.asarray(costs, dtype=float)
-        if (
-            costs_.shape != (len(signatures_),)
-            or any(not value for value in signatures_)
-            or np.any(costs_ < 0.0)
-        ):
-            raise ValueError("Signature identities and costs are incompatible.")
-        unique = sorted(
-            set(signatures_),
-            key=lambda value: (
-                -float(np.sum(costs_[np.asarray(signatures_) == value])),
-                value,
-            ),
-        )
-        routes = tuple(
-            tuple(np.flatnonzero(np.asarray(signatures_) == value).tolist())
-            for value in unique
-        )
-        self.ordered_signatures = tuple(unique)
-        self.bucket_routes = routes
-        self.schedule_id = canonical_fingerprint(
-            {
-                "kind": "heterogeneous-signature-schedule",
-                "signatures": list(signatures_),
-                "costs": costs_.tolist(),
-            }
-        )
 
 
 class FusedMortarAction(StrictModule, NonTrainableState):
@@ -276,40 +242,313 @@ def write_hp_forest(path: str | Path, epoch: FiniteElementHPEpoch, /) -> None:
     Path(path).write_text(json.dumps(payload, indent=2) + "\n")
 
 
-def read_gmsh_high_order(path: str | Path, /) -> CellMesh:
-    lines = Path(path).read_text().splitlines()
-    node_start = lines.index("$Nodes")
-    node_count = int(lines[node_start + 1])
-    nodes = {}
-    for line in lines[node_start + 2 : node_start + 2 + node_count]:
-        values = line.split()
-        nodes[int(values[0])] = tuple(float(value) for value in values[1:4])
-    element_start = lines.index("$Elements")
-    element_count = int(lines[element_start + 1])
-    cells = []
-    kind = None
-    for line in lines[element_start + 2 : element_start + 2 + element_count]:
-        values = [int(value) for value in line.split()]
-        element_type = values[1]
-        tag_count = values[2]
-        connectivity = values[3 + tag_count :]
-        if element_type in (3, 10):
-            kind = "quadrilateral"
-            cells.append(connectivity[:4])
-        elif element_type in (5, 12):
-            kind = "hexahedron"
-            cells.append(connectivity[:8])
-    if kind is None or not cells:
-        raise ValueError("Gmsh file contains no supported quad/hex elements.")
-    ordered_ids = sorted(nodes)
-    local = {value: index for index, value in enumerate(ordered_ids)}
-    coordinates = np.asarray([nodes[value] for value in ordered_ids])
-    if np.allclose(coordinates[:, 2], 0.0):
-        coordinates = coordinates[:, :2]
-    routes = np.asarray(
-        [[local[value] for value in cell] for cell in cells], dtype=np.int32
+class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
+    block_names: tuple[str, ...] = eqx.field(static=True)
+    cell_kinds: tuple[str, ...] = eqx.field(static=True)
+    geometry_orders: tuple[int, ...] = eqx.field(static=True)
+    boundary_names: tuple[str, ...] = eqx.field(static=True)
+    coordinate_count: int = eqx.field(static=True)
+    curved: bool = eqx.field(static=True)
+    report_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        block_names: Sequence[str],
+        cell_kinds: Sequence[str],
+        geometry_orders: Sequence[int],
+        boundary_names: Sequence[str],
+        coordinate_count: int,
+        /,
+    ):
+        names = tuple(str(value) for value in block_names)
+        kinds = tuple(str(value) for value in cell_kinds)
+        orders = tuple(int(value) for value in geometry_orders)
+        boundaries = tuple(sorted(str(value) for value in boundary_names))
+        if (
+            not names
+            or len(names) != len(kinds)
+            or len(names) != len(orders)
+            or any(value < 1 for value in orders)
+            or int(coordinate_count) <= 0
+        ):
+            raise ValueError("Finite-element mesh import report is inconsistent.")
+        self.block_names = names
+        self.cell_kinds = kinds
+        self.geometry_orders = orders
+        self.boundary_names = boundaries
+        self.coordinate_count = int(coordinate_count)
+        self.curved = any(value > 1 for value in orders)
+        self.report_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-mesh-import-report",
+                "blocks": names,
+                "cell_kinds": kinds,
+                "geometry_orders": orders,
+                "boundaries": boundaries,
+                "coordinate_count": int(coordinate_count),
+            }
+        )
+
+
+class FiniteElementMeshImport(StrictModule, NonTrainableState):
+    mesh: CellMesh
+    coordinate_spec: FiniteElementCoordinateSpec
+    boundary_groups: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(static=True)
+    report: FiniteElementMeshImportReport
+    import_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mesh: CellMesh,
+        coordinate_spec: FiniteElementCoordinateSpec,
+        boundary_groups: Mapping[str, Sequence[int]],
+        report: FiniteElementMeshImportReport,
+        /,
+    ):
+        if not isinstance(mesh, CellMesh):
+            raise TypeError("mesh must be CellMesh.")
+        if not isinstance(coordinate_spec, FiniteElementCoordinateSpec):
+            raise TypeError("coordinate_spec must be FiniteElementCoordinateSpec.")
+        groups = tuple(
+            sorted(
+                (
+                    str(name),
+                    tuple(sorted(int(value) for value in facets)),
+                )
+                for name, facets in boundary_groups.items()
+            )
+        )
+        if any(
+            not name or not facets or len(set(facets)) != len(facets)
+            for name, facets in groups
+        ):
+            raise ValueError("Imported boundary groups must be nonempty and unique.")
+        self.mesh = mesh
+        self.coordinate_spec = coordinate_spec
+        self.boundary_groups = groups
+        self.report = report
+        self.import_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-mesh-import",
+                "mesh": mesh.mesh_id,
+                "coordinate_spec": coordinate_spec.coordinate_spec_id,
+                "boundaries": groups,
+                "report": report.report_id,
+            }
+        )
+
+    def boundary_facets(self, name: str, /) -> tuple[int, ...]:
+        name_ = str(name)
+        for group_name, facets in self.boundary_groups:
+            if group_name == name_:
+                return facets
+        raise ValueError(f"Unknown imported boundary group {name_!r}.")
+
+
+_MESHIO_VOLUME_TYPES = {
+    "triangle": ("triangle", 1, 3),
+    "triangle6": ("triangle", 2, 3),
+    "quad": ("quadrilateral", 1, 4),
+    "quad9": ("quadrilateral", 2, 4),
+    "tetra": ("tetrahedron", 1, 4),
+    "tetra10": ("tetrahedron", 2, 4),
+    "hexahedron": ("hexahedron", 1, 8),
+}
+
+
+def _meshio_reference_nodes(cell_type: str, /) -> np.ndarray:
+    values = {
+        "triangle": ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
+        "triangle6": (
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (0.5, 0.0),
+            (0.5, 0.5),
+            (0.0, 0.5),
+        ),
+        "quad": ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)),
+        "quad9": (
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (0.0, 1.0),
+            (0.5, 0.0),
+            (1.0, 0.5),
+            (0.5, 1.0),
+            (0.0, 0.5),
+            (0.5, 0.5),
+        ),
+        "tetra": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+        ),
+        "tetra10": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (0.5, 0.0, 0.0),
+            (0.5, 0.5, 0.0),
+            (0.0, 0.5, 0.0),
+            (0.0, 0.0, 0.5),
+            (0.5, 0.0, 0.5),
+            (0.0, 0.5, 0.5),
+        ),
+        "hexahedron": (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0),
+            (1.0, 1.0, 1.0),
+            (0.0, 1.0, 1.0),
+        ),
+    }
+    if cell_type not in values:
+        raise ValueError(f"Unsupported high-order mesh cell type {cell_type!r}.")
+    return np.asarray(values[cell_type], dtype=float)
+
+
+def _geometry_permutation(cell_type: str, cell_kind: str, order: int, /) -> np.ndarray:
+    source = _meshio_reference_nodes(cell_type)
+    target = np.asarray(lagrange_element(cell_kind, order).reference_nodes)
+    if source.shape != target.shape:
+        raise ValueError("Imported and Phydrax geometry node counts differ.")
+    permutation = []
+    for point in target:
+        matches = np.flatnonzero(np.max(np.abs(source - point), axis=1) <= 2.0e-12)
+        if matches.size != 1:
+            raise ValueError("High-order geometry node ordering is ambiguous.")
+        permutation.append(int(matches[0]))
+    return np.asarray(permutation, dtype=np.int32)
+
+
+def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
+    import meshio
+
+    source = meshio.read(path)
+    volume_blocks = []
+    source_volume_indices = []
+    for source_index, cell_block in enumerate(source.cells):
+        if cell_block.type in _MESHIO_VOLUME_TYPES:
+            volume_blocks.append((source_index, cell_block))
+            source_volume_indices.append(source_index)
+    if not volume_blocks:
+        raise ValueError("Mesh contains no supported finite-element volume cells.")
+    topological_dimensions = {
+        2 if _MESHIO_VOLUME_TYPES[block.type][0] in ("triangle", "quadrilateral") else 3
+        for _index, block in volume_blocks
+    }
+    if len(topological_dimensions) != 1:
+        raise ValueError("Imported volume blocks must share one topological dimension.")
+    topological_dimension = topological_dimensions.pop()
+    points = np.asarray(source.points, dtype=float)
+    ambient_dimension = points.shape[1]
+    while ambient_dimension > topological_dimension and np.allclose(
+        points[:, ambient_dimension - 1], 0.0
+    ):
+        ambient_dimension -= 1
+    points = points[:, :ambient_dimension]
+
+    corner_ids = sorted(
+        {
+            int(value)
+            for _source_index, cell_block in volume_blocks
+            for value in np.asarray(cell_block.data)[
+                :, : _MESHIO_VOLUME_TYPES[cell_block.type][2]
+            ].reshape((-1,))
+        }
     )
-    return CellMesh(coordinates, (CellBlock("gmsh", kind, routes),))
+    compact = {value: index for index, value in enumerate(corner_ids)}
+    mesh_coordinates = points[corner_ids]
+    blocks = []
+    coordinate_elements = {}
+    coordinate_routes = {}
+    next_cell_id = 0
+    for block_index, (_source_index, cell_block) in enumerate(volume_blocks):
+        cell_kind, order, corner_count = _MESHIO_VOLUME_TYPES[cell_block.type]
+        name = f"{cell_kind}_{block_index}"
+        data = np.asarray(cell_block.data, dtype=np.int32)
+        corners = np.asarray(
+            [[compact[int(value)] for value in row[:corner_count]] for row in data],
+            dtype=np.int32,
+        )
+        global_ids = np.arange(next_cell_id, next_cell_id + data.shape[0], dtype=np.int64)
+        next_cell_id += data.shape[0]
+        blocks.append(
+            CellBlock(
+                name,
+                cell_kind,
+                corners,
+                global_ids=global_ids,
+            )
+        )
+        element = lagrange_element(cell_kind, order)
+        permutation = _geometry_permutation(cell_block.type, cell_kind, order)
+        coordinate_elements[name] = element
+        coordinate_routes[name] = data[:, permutation]
+    mesh = CellMesh(mesh_coordinates, tuple(blocks))
+    coordinate_spec = FiniteElementCoordinateSpec(
+        coordinate_elements,
+        coordinate_routes,
+        points,
+    )
+
+    facet_vertices = (
+        np.asarray(mesh.connectivity.edges)
+        if topological_dimension == 2
+        else np.asarray(mesh.connectivity.faces)
+    )
+    facets_by_key = {
+        tuple(sorted(int(value) for value in vertices)): index
+        for index, vertices in enumerate(facet_vertices)
+    }
+    boundary_groups: dict[str, set[int]] = {}
+    for group_name, selections in source.cell_sets.items():
+        selected_facets = boundary_groups.setdefault(str(group_name), set())
+        for source_index, selected in enumerate(selections):
+            if selected is None or len(selected) == 0:
+                continue
+            cell_block = source.cells[source_index]
+            boundary_arity = (
+                2
+                if topological_dimension == 2 and cell_block.type in ("line", "line3")
+                else 3
+                if topological_dimension == 3
+                and cell_block.type in ("triangle", "triangle6")
+                else 4
+                if topological_dimension == 3 and cell_block.type in ("quad", "quad9")
+                else 0
+            )
+            if boundary_arity == 0:
+                continue
+            for row in np.asarray(cell_block.data)[np.asarray(selected, dtype=np.int32)]:
+                compact_vertices = tuple(
+                    sorted(compact[int(value)] for value in row[:boundary_arity])
+                )
+                if compact_vertices not in facets_by_key:
+                    raise ValueError("Boundary group references a non-volume facet.")
+                selected_facets.add(facets_by_key[compact_vertices])
+    normalized_groups = {
+        name: tuple(sorted(values)) for name, values in boundary_groups.items() if values
+    }
+    report = FiniteElementMeshImportReport(
+        tuple(block.name for block in blocks),
+        tuple(block.cell_kind for block in blocks),
+        tuple(_MESHIO_VOLUME_TYPES[block.type][1] for _index, block in volume_blocks),
+        tuple(normalized_groups),
+        points.shape[0],
+    )
+    return FiniteElementMeshImport(
+        mesh,
+        coordinate_spec,
+        normalized_groups,
+        report,
+    )
 
 
 def read_exodus_high_order_arrays(
@@ -326,14 +565,15 @@ def read_exodus_high_order_arrays(
 
 
 __all__ = [
+    "FiniteElementMeshImport",
+    "FiniteElementMeshImportReport",
     "FusedMortarAction",
     "FusedTensorTransfer",
-    "HeterogeneousSignatureSchedule",
     "HPMixedPrecisionPolicy",
     "HPWorksetMemoryPlan",
     "PersistentSemanticCache",
     "read_exodus_high_order_arrays",
-    "read_gmsh_high_order",
+    "read_finite_element_mesh",
     "write_adaptive_vtk",
     "write_adaptive_xdmf",
     "write_hp_forest",

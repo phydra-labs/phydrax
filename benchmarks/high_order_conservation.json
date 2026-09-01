@@ -1,0 +1,31 @@
+{
+  "backend": "cpu",
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "repeats": 10,
+  "tensor_dgsem": {
+    "dofs": 9,
+    "components": 4,
+    "compile_seconds": 1.1398339999868767,
+    "seconds_per_rhs": 7.514589960919694e-05,
+    "dof_updates_per_second": 119767.01385977567,
+    "finite": true
+  },
+  "tensor_ldg": {
+    "dofs": 9,
+    "components": 4,
+    "compile_seconds": 1.2272639170114417,
+    "seconds_per_rhs": 0.00024527920031687246,
+    "dof_updates_per_second": 36692.87892480503,
+    "finite": true
+  },
+  "triangle_nodal_dg": {
+    "dofs": 12,
+    "components": 4,
+    "compile_seconds": 2.758587375006755,
+    "seconds_per_rhs": 0.00011985840101260691,
+    "dof_updates_per_second": 100118.13855866322,
+    "finite": true
+  },
+  "passed": true
+}

@@ -128,6 +128,18 @@ def _hexahedron_rule():
     return ReferenceHexahedronRule()
 
 
+def _prism_rule():
+    from ..integration import ReferencePrismRule
+
+    return ReferencePrismRule()
+
+
+def _pyramid_rule():
+    from ..integration import ReferencePyramidRule
+
+    return ReferencePyramidRule()
+
+
 def _default_rule(cell_kind: str, /) -> ReferenceRule:
     if cell_kind == "triangle":
         return _triangle_rule()
@@ -137,6 +149,10 @@ def _default_rule(cell_kind: str, /) -> ReferenceRule:
         return _tetrahedron_rule()
     if cell_kind == "hexahedron":
         return _hexahedron_rule()
+    if cell_kind == "prism":
+        return _prism_rule()
+    if cell_kind == "pyramid":
+        return _pyramid_rule()
     raise ValueError(f"No finite-element rule exists for cell kind {cell_kind!r}.")
 
 
@@ -337,9 +353,10 @@ class PairwiseVolumeFluxAction(StrictModule, NonTrainableState):
 
 
 class InteriorFacetAction(StrictModule, NonTrainableState):
-    """Two-sided numerical flux density over interior facets."""
+    """Two-sided multi-field numerical flux density over interior facets."""
 
-    field_name: str = eqx.field(static=True)
+    output_field_name: str = eqx.field(static=True)
+    input_field_names: tuple[str, ...] = eqx.field(static=True)
     kernel: Callable
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
@@ -347,7 +364,8 @@ class InteriorFacetAction(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        field_name: str,
+        output_field_name: str,
+        input_field_names: Sequence[str],
         kernel: Callable,
         /,
         *,
@@ -355,15 +373,26 @@ class InteriorFacetAction(StrictModule, NonTrainableState):
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
     ):
-        field = str(field_name)
+        output = str(output_field_name)
+        inputs = tuple(str(field) for field in input_field_names)
         identifier = str(action_id)
-        if not field or not callable(kernel) or not identifier:
-            raise ValueError("Interior facet field, kernel, and term ID are required.")
+        if (
+            not output
+            or not inputs
+            or any(not field for field in inputs)
+            or len(set(inputs)) != len(inputs)
+            or not callable(kernel)
+            or not identifier
+        ):
+            raise ValueError(
+                "Interior facet output, inputs, kernel, and action ID are required."
+            )
         if domain is not None and (
             not isinstance(domain, IntegrationDomain) or domain.kind != "interior_facet"
         ):
             raise ValueError("InteriorFacetAction requires an interior-facet domain.")
-        self.field_name = field
+        self.output_field_name = output
+        self.input_field_names = inputs
         self.kernel = kernel
         self.domain = domain
         self.rules = _normalize_rules(rules)
@@ -374,17 +403,22 @@ class InteriorFacetAction(StrictModule, NonTrainableState):
         return VariationalActionDescriptor(
             "residual",
             "interior_facet",
-            (self.field_name,),
-            (self.field_name,),
-            ((self.field_name, "jump"), (self.field_name, "average")),
+            (self.output_field_name,),
+            self.input_field_names,
+            tuple(
+                item
+                for field in self.input_field_names
+                for item in ((field, "jump"), (field, "average"))
+            ),
             evaluator=self.kernel,
         )
 
 
 class ExteriorFacetAction(StrictModule, NonTrainableState):
-    """One-sided state-dependent numerical flux over exterior facets."""
+    """One-sided multi-field numerical flux over exterior facets."""
 
-    field_name: str = eqx.field(static=True)
+    output_field_name: str = eqx.field(static=True)
+    input_field_names: tuple[str, ...] = eqx.field(static=True)
     kernel: Callable
     domain: IntegrationDomain | None
     rules: tuple[tuple[str, ReferenceRule], ...]
@@ -392,7 +426,8 @@ class ExteriorFacetAction(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        field_name: str,
+        output_field_name: str,
+        input_field_names: Sequence[str],
         kernel: Callable,
         /,
         *,
@@ -400,15 +435,26 @@ class ExteriorFacetAction(StrictModule, NonTrainableState):
         rules: Mapping[str, ReferenceRule] | Sequence[tuple[str, ReferenceRule]] = (),
         action_id: str,
     ):
-        field = str(field_name)
+        output = str(output_field_name)
+        inputs = tuple(str(field) for field in input_field_names)
         identifier = str(action_id)
-        if not field or not callable(kernel) or not identifier:
-            raise ValueError("Exterior facet field, kernel, and term ID are required.")
+        if (
+            not output
+            or not inputs
+            or any(not field for field in inputs)
+            or len(set(inputs)) != len(inputs)
+            or not callable(kernel)
+            or not identifier
+        ):
+            raise ValueError(
+                "Exterior facet output, inputs, kernel, and action ID are required."
+            )
         if domain is not None and (
             not isinstance(domain, IntegrationDomain) or domain.kind != "exterior_facet"
         ):
             raise ValueError("ExteriorFacetAction requires an exterior-facet domain.")
-        self.field_name = field
+        self.output_field_name = output
+        self.input_field_names = inputs
         self.kernel = kernel
         self.domain = domain
         self.rules = _normalize_rules(rules)
@@ -419,9 +465,9 @@ class ExteriorFacetAction(StrictModule, NonTrainableState):
         return VariationalActionDescriptor(
             "residual",
             "exterior_facet",
-            (self.field_name,),
-            (self.field_name,),
-            ((self.field_name, "value"),),
+            (self.output_field_name,),
+            self.input_field_names,
+            tuple((field, "value") for field in self.input_field_names),
             evaluator=self.kernel,
         )
 
@@ -881,12 +927,16 @@ FiniteElementAction = (
 def _action_output_fields(term: FiniteElementAction, /) -> tuple[str, ...]:
     if isinstance(term, LocalFunctionalAction):
         return term.output_fields
+    if isinstance(term, (InteriorFacetAction, ExteriorFacetAction)):
+        return (term.output_field_name,)
     return (term.field_name,)
 
 
 def _action_input_fields(term: FiniteElementAction, /) -> tuple[str, ...]:
     if isinstance(term, (CellResidualAction, LocalFunctionalAction)):
         return term.input_fields
+    if isinstance(term, (InteriorFacetAction, ExteriorFacetAction)):
+        return term.input_field_names
     return (term.field_name,)
 
 
@@ -1112,7 +1162,7 @@ def _action_rule(
     /,
 ) -> ReferenceRule:
     rules = dict(term.rules)
-    rule = rules.get(block_name, _default_rule(cell_kind))
+    rule = rules[block_name] if block_name in rules else _default_rule(cell_kind)
     data = _reference_rule_data(rule)
     if data.cell != cell_kind:
         raise ValueError(

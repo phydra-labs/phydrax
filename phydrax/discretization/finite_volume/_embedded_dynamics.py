@@ -14,7 +14,7 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_complex import PolygonalConnectivity
-from ._boundary import AbstractFiniteVolumeBoundary
+from .._conservation_boundary import AbstractConservationBoundary
 from ._geometry_protocol import (
     FiniteVolumeGeometryStatus,
     FiniteVolumeStageFaceBlock,
@@ -36,12 +36,12 @@ class UnstructuredEmbeddedBoundarySet(StrictModule, NonTrainableState):
 
     def __init__(
         self,
-        boundaries: Mapping[int, AbstractFiniteVolumeBoundary],
+        boundaries: Mapping[int, AbstractConservationBoundary],
         /,
     ):
         if not isinstance(boundaries, Mapping):
             raise TypeError("boundaries must map embedded body tags to policies.")
-        normalized: dict[int, AbstractFiniteVolumeBoundary] = {}
+        normalized: dict[int, AbstractConservationBoundary] = {}
         for raw_tag, boundary in boundaries.items():
             if not isinstance(raw_tag, (int, np.integer)) or isinstance(
                 raw_tag, (bool, np.bool_)

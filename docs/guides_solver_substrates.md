@@ -93,6 +93,17 @@ numeric-refresh recompilation, or loss of complete work accounting. Wall-time
 thresholds remain in controlled benchmark campaigns rather than ordinary unit
 tests.
 
+## Runtime lifecycle
+
+`RuntimeCheckpointEnvelope` captures accepted state, temporal/controller state,
+observer accumulators, RNG state, exact-time cursor, and mesh/method/precision/
+topology/partition identities in one atomic pickle-free archive.
+`ExactTimeSchedule` clamps pure solver segments to declared targets.
+`StreamingObservablePlan` supplies associative online sums, means, extrema, and
+last values. `AcceptedStepTrigger` adds deterministic threshold, direction, and
+hysteresis semantics. `BoundedAsyncPublisher` publishes immutable host snapshots
+through one bounded writer with explicit backpressure.
+
 ## Structured support
 
 `TensorGridPlan.prepare(bounds)` returns `PreparedTensorGrid`: axes, topology,

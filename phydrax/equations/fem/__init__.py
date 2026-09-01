@@ -17,6 +17,11 @@ from ._conservation import (
     DGSEMStableStepEvidence,
     PreparedDGSEMConservationDynamics,
 )
+from ._entropy_filter import (
+    EntropyFilterEvidence,
+    EntropyFilterPlan,
+    PreparedEntropyFilter,
+)
 from ._execution import (
     CollocatedTensorProductOperator,
     FiniteElementDiagonalData,
@@ -43,10 +48,20 @@ from ._lowering import (
     kernel_table_from_form,
     lower_finite_element_form,
 )
+from ._mass_inverse import (
+    DiscontinuousMassEvidence,
+    PreparedDiscontinuousMassInverse,
+)
 from ._materials import (
     FiniteElementAuxiliaryEvaluation,
     LocalImplicitDiagnostics,
     LocalImplicitMaterial,
+)
+from ._nodal_conservation import (
+    NodalDGConservationDiagnostics,
+    NodalDGConservationMethodPlan,
+    NodalDGPreparationReport,
+    PreparedNodalDGConservationDynamics,
 )
 from ._observations import (
     CoordinateObservation,
@@ -91,23 +106,16 @@ from ._quadrature import (
     QuadratureRole,
 )
 from ._spectral_hp_physics import (
-    ALEMetricState,
-    BR1ViscousPlan,
     certify_derived_dgsem_mortar,
-    ConservativeModalLimiter,
     derived_mortar_entropy_defect,
-    DGSEMCharacteristicBoundaryPlan,
     entropy_stable_wall_evidence,
     EntropyStableWallEvidence,
-    HPOverintegrationPolicy,
-    LocalTimeSteppingPlan,
-    MovingMortarMetricPlan,
-    PositivityLimiter,
-    SplitFormPolicy,
-    SubcellFiniteVolumePlan,
-    TemporalHPBudget,
-    TroubledCellEvidence,
     WellBalancedSourceLedger,
+)
+from ._viscous_conservation import (
+    LDGViscousFluxPlan,
+    LDGViscousStabilityEvidence,
+    PreparedLDGViscousOperator,
 )
 from ._worksets import (
     batch_mortar_worksets,
@@ -132,11 +140,23 @@ __all__ = [
     "DGSEMPreparationReport",
     "DGSEMStableStepEvidence",
     "PreparedDGSEMConservationDynamics",
+    "EntropyFilterEvidence",
+    "EntropyFilterPlan",
+    "PreparedEntropyFilter",
     "CollocatedTensorProductOperator",
     "PartialAssemblyOperator",
     "CoordinateObservation",
     "ActionKind",
+    "LDGViscousFluxPlan",
+    "LDGViscousStabilityEvidence",
+    "PreparedLDGViscousOperator",
     "CellDerivativeBatch",
+    "DiscontinuousMassEvidence",
+    "PreparedDiscontinuousMassInverse",
+    "NodalDGConservationDiagnostics",
+    "NodalDGConservationMethodPlan",
+    "NodalDGPreparationReport",
+    "PreparedNodalDGConservationDynamics",
     "FiniteElementMassPolicy",
     "DGTraceBatch",
     "batch_mortar_worksets",
@@ -199,18 +219,6 @@ __all__ = [
     "entropy_stable_wall_evidence",
     "certify_derived_dgsem_mortar",
     "derived_mortar_entropy_defect",
-    "ALEMetricState",
-    "BR1ViscousPlan",
-    "ConservativeModalLimiter",
-    "DGSEMCharacteristicBoundaryPlan",
     "EntropyStableWallEvidence",
-    "HPOverintegrationPolicy",
-    "LocalTimeSteppingPlan",
-    "MovingMortarMetricPlan",
-    "PositivityLimiter",
-    "SplitFormPolicy",
-    "SubcellFiniteVolumePlan",
-    "TemporalHPBudget",
-    "TroubledCellEvidence",
     "WellBalancedSourceLedger",
 ]

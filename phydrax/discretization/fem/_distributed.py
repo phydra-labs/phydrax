@@ -15,7 +15,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import AbstractLinearOperator, ConstraintMap
 from .._cell_mesh import CellMesh
-from ._generic import FiniteElementDofMap
+from ._generic import FiniteElementDiscretization, FiniteElementDofMap
 from ._hp import FiniteElementHPLineage
 from ._hp_runtime import FiniteElementHPEpoch
 from ._mortar import FiniteElementMortarPlan
@@ -350,6 +350,144 @@ def partition_cells_contiguous(
     return FiniteElementPartition(owner, parts)
 
 
+class FiniteElementPartitionCostEvidence(StrictModule, NonTrainableState):
+    cell_costs: Array
+    part_costs: Array
+    imbalance_ratio: Array
+    edge_cut: Array
+    evidence_id: str = eqx.field(static=True)
+
+
+class CostAwareFiniteElementPartition(StrictModule, NonTrainableState):
+    partition: FiniteElementPartition
+    evidence: FiniteElementPartitionCostEvidence
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        partition: FiniteElementPartition,
+        evidence: FiniteElementPartitionCostEvidence,
+        /,
+    ):
+        if not isinstance(partition, FiniteElementPartition) or not isinstance(
+            evidence, FiniteElementPartitionCostEvidence
+        ):
+            raise TypeError("Cost-aware partition requires partition and evidence.")
+        self.partition = partition
+        self.evidence = evidence
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "cost-aware-finite-element-partition",
+                "partition": partition.partition_id,
+                "evidence": evidence.evidence_id,
+            }
+        )
+
+
+def partition_cells_cost_aware(
+    discretization: FiniteElementDiscretization,
+    part_count: int,
+    /,
+    *,
+    physics_weight: float = 1.0,
+    cut_penalty: float = 0.25,
+) -> CostAwareFiniteElementPartition:
+    """Greedily balance shape/order work while preferring adjacent ownership."""
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise TypeError("discretization must be FiniteElementDiscretization.")
+    parts = int(part_count)
+    cell_count = sum(block.cell_count for block in discretization.mesh.blocks)
+    if parts <= 0 or parts > cell_count:
+        raise ValueError("part_count must lie between one and the cell count.")
+    weight = float(physics_weight)
+    penalty = float(cut_penalty)
+    if (
+        not np.isfinite(weight)
+        or weight <= 0.0
+        or not np.isfinite(penalty)
+        or penalty < 0.0
+    ):
+        raise ValueError("Partition physics weight and cut penalty are invalid.")
+    costs = []
+    for block_index, block in enumerate(discretization.mesh.blocks):
+        local_width = max(
+            element.local_dof_count
+            for elements in discretization.elements
+            for element in (elements[block_index],)
+        )
+        degree = max(elements[block_index].degree for elements in discretization.elements)
+        shape_factor = {
+            "triangle": 1.0,
+            "quadrilateral": 0.8,
+            "tetrahedron": 1.5,
+            "hexahedron": 1.0,
+            "prism": 1.35,
+            "pyramid": 1.6,
+        }.get(block.cell_kind, 1.0)
+        cost = weight * shape_factor * local_width * max(degree + 1, 1)
+        costs.extend((cost,) * block.cell_count)
+    costs_array = np.asarray(costs, dtype=float)
+    adjacency = [set() for _ in range(cell_count)]
+    domain = discretization.interior_facet_domain
+    for left, right in zip(
+        np.asarray(domain.owner_cells, dtype=np.int32),
+        np.asarray(domain.neighbour_cells, dtype=np.int32),
+        strict=True,
+    ):
+        adjacency[int(left)].add(int(right))
+        adjacency[int(right)].add(int(left))
+    owner = np.full((cell_count,), -1, dtype=np.int32)
+    part_costs = np.zeros((parts,), dtype=float)
+    order = np.argsort(-costs_array, kind="stable")
+    for part, cell in enumerate(order[:parts]):
+        owner[cell] = part
+        part_costs[part] += costs_array[cell]
+    for cell in order[parts:]:
+        scores = np.empty((parts,), dtype=float)
+        for part in range(parts):
+            cut = sum(
+                owner[neighbour] >= 0 and owner[neighbour] != part
+                for neighbour in adjacency[cell]
+            )
+            locality = sum(owner[neighbour] == part for neighbour in adjacency[cell])
+            scores[part] = (
+                part_costs[part]
+                + costs_array[cell]
+                + penalty * costs_array[cell] * (cut - locality)
+            )
+        selected = int(np.argmin(scores))
+        owner[cell] = selected
+        part_costs[selected] += costs_array[cell]
+    partition = FiniteElementPartition(owner, parts)
+    edge_cut = sum(
+        owner[int(left)] != owner[int(right)]
+        for left, right in zip(
+            np.asarray(domain.owner_cells, dtype=np.int32),
+            np.asarray(domain.neighbour_cells, dtype=np.int32),
+            strict=True,
+        )
+    )
+    mean_cost = np.mean(part_costs)
+    imbalance = np.max(part_costs) / mean_cost if mean_cost > 0.0 else 1.0
+    evidence_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-partition-cost-evidence",
+            "cell_costs": array_tree_fingerprint(costs_array),
+            "part_costs": array_tree_fingerprint(part_costs),
+            "edge_cut": int(edge_cut),
+            "imbalance": float(imbalance),
+        }
+    )
+    evidence = FiniteElementPartitionCostEvidence(
+        jnp.asarray(costs_array),
+        jnp.asarray(part_costs),
+        jnp.asarray(imbalance),
+        jnp.asarray(edge_cut, dtype=jnp.int32),
+        evidence_id,
+    )
+    return CostAwareFiniteElementPartition(partition, evidence)
+
+
 class FiniteElementPartitionWorksetPlan(StrictModule, NonTrainableState):
     """Compiler-facing owned/halo cell worksets and dependency completions."""
 
@@ -661,6 +799,107 @@ class FiniteElementFacetOwnershipPlan(StrictModule, NonTrainableState):
         return self.route_equal_opposite(jnp.where(mask, values, 0.0))
 
 
+class FiniteElementDistributedPhasePlan(StrictModule, NonTrainableState):
+    """Owned-local, halo, and exactly-once interface execution phases."""
+
+    partition: FiniteElementPartition
+    worksets: FiniteElementPartitionWorksetPlan
+    facet_ownership: FiniteElementFacetOwnershipPlan
+    phase_names: tuple[str, ...] = eqx.field(static=True)
+    phase_ids: tuple[str, ...] = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        discretization: FiniteElementDiscretization,
+        partition: FiniteElementPartition,
+        /,
+    ):
+        if not isinstance(discretization, FiniteElementDiscretization) or not isinstance(
+            partition, FiniteElementPartition
+        ):
+            raise TypeError("Distributed phases require FE discretization and partition.")
+        domain = discretization.interior_facet_domain
+        facets = np.stack(
+            (
+                np.asarray(domain.owner_cells, dtype=np.int32),
+                np.asarray(domain.neighbour_cells, dtype=np.int32),
+            ),
+            axis=-1,
+        )
+        worksets = finite_element_partition_workset_plan(
+            partition,
+            facets,
+            cell_global_ids=np.concatenate(
+                tuple(
+                    np.asarray(block.global_ids) for block in discretization.mesh.blocks
+                )
+            ),
+        )
+        ownership = FiniteElementFacetOwnershipPlan(
+            partition,
+            facets,
+            cell_global_ids=np.concatenate(
+                tuple(
+                    np.asarray(block.global_ids) for block in discretization.mesh.blocks
+                )
+            ),
+            facet_global_ids=np.asarray(domain.entity_indices, dtype=np.int64),
+        )
+        names = (
+            "owned-local",
+            "halo-update",
+            "interface",
+            "contribution-sum",
+        )
+        phase_ids = tuple(
+            canonical_fingerprint(
+                {
+                    "kind": "finite-element-distributed-phase",
+                    "name": name,
+                    "partition": partition.partition_id,
+                    "worksets": worksets.plan_id,
+                }
+            )
+            for name in names
+        )
+        self.partition = partition
+        self.worksets = worksets
+        self.facet_ownership = ownership
+        self.phase_names = names
+        self.phase_ids = phase_ids
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "finite-element-distributed-phase-plan",
+                "partition": partition.partition_id,
+                "worksets": worksets.plan_id,
+                "facet_ownership": ownership.plan_id,
+                "phases": phase_ids,
+            }
+        )
+
+    def local_contribution(self, part: int, cell_values: ArrayLike, /) -> Array:
+        values, valid = self.worksets.gather_owned(part, cell_values)
+        mask = valid.reshape(valid.shape + (1,) * (values.ndim - 1))
+        return jnp.sum(jnp.where(mask, values, 0.0), axis=0)
+
+    def interface_mask(self, part: int, /) -> Array:
+        return self.facet_ownership.owned_by(part)
+
+
+def lower_distributed_finite_element_phases(
+    discretization: FiniteElementDiscretization,
+    partition: FiniteElementPartition | CostAwareFiniteElementPartition,
+    /,
+) -> FiniteElementDistributedPhasePlan:
+    selected = (
+        partition.partition
+        if isinstance(partition, CostAwareFiniteElementPartition)
+        else partition
+    )
+    return FiniteElementDistributedPhasePlan(discretization, selected)
+
+
 class DistributedFiniteElementMortarPlan(StrictModule, NonTrainableState):
     """Exactly-once distributed ownership layered over serial mortar patches."""
 
@@ -928,18 +1167,23 @@ def inherit_finite_element_hp_ownership(
 
 
 __all__ = [
+    "CostAwareFiniteElementPartition",
     "DistributedFiniteElementConstraint",
     "DistributedFiniteElementMortarPlan",
     "DistributedFiniteElementOperator",
+    "FiniteElementDistributedPhasePlan",
     "FiniteElementFacetOwnershipPlan",
     "FiniteElementHaloPlan",
     "FiniteElementHPPartitionPlan",
+    "FiniteElementPartitionCostEvidence",
     "FiniteElementPartition",
     "FiniteElementPartitionWorksetPlan",
     "JaxCollectiveBackend",
     "PartitionedFiniteElementDofMap",
     "distributed_finite_element_mortar_plan",
     "inherit_finite_element_hp_ownership",
+    "lower_distributed_finite_element_phases",
     "finite_element_partition_workset_plan",
     "partition_cells_contiguous",
+    "partition_cells_cost_aware",
 ]

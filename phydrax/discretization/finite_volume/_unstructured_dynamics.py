@@ -19,8 +19,8 @@ from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._boundary import (
-    AbstractFiniteVolumeBoundary,
+from .._conservation_boundary import (
+    AbstractConservationBoundary,
     ALEBoundaryContext,
     ConstantStateBoundary,
     ExtrapolationBoundary,
@@ -76,13 +76,13 @@ class UnstructuredFiniteVolumeBoundarySet(StrictModule, NonTrainableState):
     """Complete named physical-boundary ownership for an unstructured mesh."""
 
     patch_names: tuple[str, ...] = eqx.field(static=True)
-    boundaries: tuple[AbstractFiniteVolumeBoundary, ...]
+    boundaries: tuple[AbstractConservationBoundary, ...]
     boundary_set_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         patch_names: tuple[str, ...],
-        boundaries: Mapping[str, AbstractFiniteVolumeBoundary],
+        boundaries: Mapping[str, AbstractConservationBoundary],
         /,
     ):
         names = tuple(patch_names)

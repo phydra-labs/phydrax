@@ -1,8 +1,14 @@
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from phydrax.discretization._cell_mesh import CellBlock, CellMesh
+from phydrax.discretization.fem._boundary import (
+    FiniteElementBoundarySet,
+    FiniteElementPeriodicFacetPair,
+)
 from phydrax.discretization.fem._generic import (
     FiniteElementCoordinateSpec,
     FiniteElementFieldSpec,
@@ -17,6 +23,10 @@ from phydrax.discretization.fem._sbp import (
 )
 from phydrax.discretization.finite_difference import TensorSBPDiscretization
 from phydrax.discretization.finite_volume._boundary import FiniteVolumeBoundarySet
+from phydrax.discretization.finite_volume._physical_boundaries import (
+    NoSlipAdiabaticWallBoundary,
+    SlipWallBoundary,
+)
 from phydrax.discretization.finite_volume._riemann import (
     EntropyConservativeEulerFluxPlan,
     EntropyStableEulerFluxPlan,
@@ -27,12 +37,20 @@ from phydrax.equations._conservation import (
     ConservationProblemIR,
 )
 from phydrax.equations._entropy_pair import ideal_gas_euler_entropy_pair
-from phydrax.equations._hyperbolic_systems import EulerSystem, ScalarConservationSystem
+from phydrax.equations._hyperbolic_systems import (
+    CompressibleNavierStokesSystem,
+    EulerSystem,
+    ScalarConservationSystem,
+)
+from phydrax.equations._transport_closures import ConstantTransport
 from phydrax.equations.fem._conservation import (
     certify_dgsem_flux_compatibility,
     DGSEMConservationMethodPlan,
     PreparedDGSEMConservationDynamics,
 )
+from phydrax.equations.fem._entropy_filter import EntropyFilterPlan
+from phydrax.equations.fem._viscous_conservation import LDGViscousFluxPlan
+from phydrax.solver._fixed_step import SSPRK33FixedStepMethod
 
 
 def _quad_discretization(order=2, *, curved=False):
@@ -322,7 +340,7 @@ def test_periodic_quad_free_stream_is_real_fem_compiler_execution(curved):
     facet_domain = compiled.dynamics.compiled_finite_element_problem.form.actions[
         1
     ].domain
-    assert facet_domain.neighbour_trace_permutations.shape[0] == report.face_pair_count
+    assert facet_domain.neighbour_trace_permutations.shape[0] == report.facet_route_count
     assert jnp.all(facet_domain.periodic_face_mask)
     assert not isinstance(compiled.discretization, TensorSBPDiscretization)
     assert (
@@ -347,7 +365,7 @@ def test_periodic_hex_free_stream_and_opposite_face_normals(curved):
         0.0,
         atol=compiled.dynamics.metrics.report.tolerance,
     )
-    assert compiled.dynamics.report.face_pair_count == 3
+    assert compiled.dynamics.report.facet_route_count == 3
 
 
 def test_pair_fluxes_cancel_and_global_conservation_rate_is_zero():
@@ -465,7 +483,7 @@ def test_compiler_rejects_unsupported_system_cell_metric_and_entropy_scope():
     bounded_problem = ConservationProblemIR(
         "bounded", "state", system, FiniteVolumeBoundarySet(("x", "y"), (None, None))
     )
-    with pytest.raises(ValueError, match="boundaries=None"):
+    with pytest.raises(TypeError, match="FiniteElementBoundarySet"):
         compile_conservation_problem(bounded_problem, discretization, method)
 
     vertices = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
@@ -508,3 +526,225 @@ def test_prepared_dgsem_is_not_constructible_on_fd_sbp_discretization():
                 EntropyConservativeEulerFluxPlan(), RusanovFluxPlan()
             ),
         )
+
+
+def test_finite_element_boundary_set_requires_exact_exterior_ownership():
+    _system, discretization = _quad_discretization()
+    exterior = np.asarray(
+        discretization.exterior_facet_domain.entity_indices, dtype=np.int32
+    )
+    local = np.asarray(
+        discretization.exterior_facet_domain.owner_local_entities, dtype=np.int32
+    )
+    by_local = {int(local_id): int(facet) for facet, local_id in zip(exterior, local)}
+    periodic = FiniteElementPeriodicFacetPair(by_local[0], by_local[2])
+    boundaries = FiniteElementBoundarySet(
+        discretization,
+        {"walls": ((by_local[1], by_local[3]), SlipWallBoundary())},
+        periodic_pairs=(periodic,),
+    )
+    assert boundaries.patch_names == ("walls",)
+    assert boundaries.patch("walls").domain.entity_indices.shape == (2,)
+    assert boundaries.periodic_pairs == (periodic,)
+
+    with pytest.raises(ValueError, match="exhaustive"):
+        FiniteElementBoundarySet(
+            discretization,
+            {"wall": ((int(exterior[0]),), SlipWallBoundary())},
+        )
+    with pytest.raises(ValueError, match="overlap"):
+        FiniteElementBoundarySet(
+            discretization,
+            {
+                "left": ((int(exterior[0]), int(exterior[1])), SlipWallBoundary()),
+                "right": (
+                    (int(exterior[1]), int(exterior[2]), int(exterior[3])),
+                    SlipWallBoundary(),
+                ),
+            },
+        )
+
+
+def test_physical_slip_wall_is_conservative_and_disables_periodic_certificate():
+    system, discretization = _quad_discretization()
+    exterior = tuple(
+        int(value)
+        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
+    )
+    boundaries = FiniteElementBoundarySet(
+        discretization,
+        {"walls": (exterior, SlipWallBoundary())},
+    )
+    interface_flux = EntropyStableEulerFluxPlan()
+    entropy_pair, volume_flux, compatibility = _certificate(system, interface_flux)
+    method = DGSEMConservationMethodPlan(
+        volume_flux,
+        interface_flux,
+        compatibility=compatibility,
+    )
+    problem = ConservationProblemIR("wall-euler", "state", system, boundaries)
+    compiled = compile_conservation_problem(
+        problem,
+        discretization,
+        method,
+        entropy_pair=entropy_pair,
+    )
+    primitive = jnp.asarray((1.0, 0.0, 0.0, 1.0))
+    state = jnp.broadcast_to(
+        system.primitive_to_conserved(primitive),
+        discretization.field_spaces[0].vector_space.shape,
+    )
+    rate, diagnostics = compiled.residual_with_diagnostics(0.0, state)
+    faces = compiled.dynamics.face_fluxes(0.0, state)
+    np.testing.assert_allclose(rate, 0.0, atol=3.0e-6)
+    np.testing.assert_allclose(diagnostics.conservation_balance_defect, 0.0, atol=3.0e-6)
+    np.testing.assert_allclose(diagnostics.boundary_flux_rate[0], 0.0, atol=3.0e-6)
+    assert np.all(np.asarray(faces.is_boundary))
+    assert np.all(np.asarray(faces.neighbour_cells) == -1)
+    assert not diagnostics.certified_entropy_inequality
+    assert compiled.dynamics.stable_step_evidence(state).positive
+
+
+def test_entropy_filter_preserves_weighted_mean_and_repairs_pressure():
+    compiled, system, discretization = _compiled()
+    filter_ = EntropyFilterPlan(
+        density_floor=1.0e-6,
+        pressure_floor=1.0e-6,
+    ).prepare(compiled.dynamics)
+    state = _constant_state(system, discretization)
+    state = state.at[0, 0].set(1.0e-4)
+    state = state.at[0, -1].set(1.0e-5)
+    before = jnp.sum(compiled.dynamics.scalar_mass_weights[:, None] * state, axis=0)
+    filtered, evidence = eqx.filter_jit(filter_.filter)(jnp.asarray(0.0), state, None)
+    after = jnp.sum(compiled.dynamics.scalar_mass_weights[:, None] * filtered, axis=0)
+    np.testing.assert_allclose(after, before, atol=3.0e-9)
+    assert evidence.successful
+    assert evidence.applied
+    assert evidence.minimum_density >= filter_.density_floor
+    assert evidence.minimum_pressure >= filter_.pressure_floor
+    method = SSPRK33FixedStepMethod(
+        lambda time, value, args: jnp.zeros_like(value),
+        stage_transform=filter_,
+    )
+    step_result = method.step(
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        state,
+        jnp.asarray(0.01),
+        None,
+    )
+    assert step_result.successful
+    assert step_result.transform_applied
+    assert jnp.min(step_result.accepted_state[:, 0]) >= filter_.density_floor
+    assert jnp.min(system.pressure(step_result.accepted_state)) >= filter_.pressure_floor
+
+
+def test_entropy_filter_is_identity_on_smooth_state_and_rejects_invalid_mean():
+    compiled, system, discretization = _compiled()
+    filter_ = EntropyFilterPlan().prepare(compiled.dynamics)
+    state = _constant_state(system, discretization)
+    filtered, evidence = filter_.filter(0.0, state)
+    np.testing.assert_allclose(filtered, state, atol=3.0e-10)
+    assert evidence.successful
+    assert not evidence.applied
+
+    invalid = state.at[:, 0].set(-1.0)
+    method = SSPRK33FixedStepMethod(
+        lambda time, value, args: jnp.zeros_like(value),
+        stage_transform=filter_,
+    )
+    result = method.step(
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        invalid,
+        jnp.asarray(0.01),
+        None,
+    )
+    assert not result.successful
+    assert jnp.array_equal(result.accepted_state, invalid)
+
+
+def test_compressible_navier_stokes_constitutive_gradient_and_flux():
+    system = CompressibleNavierStokesSystem(ConstantTransport(0.2, 0.3), 2)
+
+    def conserved(coordinates):
+        density = jnp.asarray(1.0)
+        velocity = jnp.asarray((coordinates[0], 2.0 * coordinates[1]))
+        temperature = 1.0 + 3.0 * coordinates[0]
+        pressure = density * system.material.gas_constant * temperature
+        primitive = jnp.concatenate((density[None], velocity, pressure[None]))
+        return system.primitive_to_conserved(primitive)
+
+    coordinates = jnp.asarray((0.0, 0.0))
+    state = conserved(coordinates)
+    gradient = jax.jacfwd(conserved)(coordinates)
+    velocity_gradient, temperature_gradient = system.primitive_gradients(state, gradient)
+    np.testing.assert_allclose(
+        velocity_gradient, jnp.diag(jnp.asarray((1.0, 2.0))), atol=2.0e-12
+    )
+    np.testing.assert_allclose(
+        temperature_gradient, jnp.asarray((3.0, 0.0)), atol=2.0e-12
+    )
+    flux = system.viscous_flux(state, gradient)
+    assert flux.shape == (system.component_count, system.dimension)
+    np.testing.assert_allclose(flux[0], 0.0, atol=2.0e-12)
+
+
+def test_tensor_ldg_constant_state_is_zero_and_has_positive_stability_step():
+    _euler, discretization = _quad_discretization()
+    system = CompressibleNavierStokesSystem(ConstantTransport(0.2, 0.1), 2)
+    method = DGSEMConservationMethodPlan(
+        EntropyConservativeEulerFluxPlan(),
+        RusanovFluxPlan(),
+        viscous=LDGViscousFluxPlan(beta=0.0, penalty=1.0),
+    )
+    compiled = compile_conservation_problem(
+        ConservationProblemIR("periodic-navier-stokes", "state", system, None),
+        discretization,
+        method,
+    )
+    primitive = jnp.asarray((1.0, 0.0, 0.0, 1.0))
+    state = jnp.broadcast_to(
+        system.primitive_to_conserved(primitive),
+        discretization.field_spaces[0].vector_space.shape,
+    )
+    gradient = compiled.dynamics.viscous_operator.corrected_gradient(0.0, state)
+    rate = compiled(0.0, state)
+    np.testing.assert_allclose(gradient, 0.0, atol=3.0e-11)
+    np.testing.assert_allclose(rate, 0.0, atol=3.0e-10)
+    evidence = compiled.dynamics.stable_step_evidence(state)
+    assert evidence.positive
+    assert evidence.maximum_diffusive_rate > 0.0
+
+
+def test_tensor_ldg_stationary_no_slip_wall_preserves_rest_state():
+    _euler, discretization = _quad_discretization()
+    system = CompressibleNavierStokesSystem(ConstantTransport(0.2, 0.1), 2)
+    exterior = tuple(
+        int(value)
+        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
+    )
+    boundaries = FiniteElementBoundarySet(
+        discretization,
+        {
+            "walls": (
+                exterior,
+                NoSlipAdiabaticWallBoundary(jnp.zeros((2,))),
+            )
+        },
+    )
+    method = DGSEMConservationMethodPlan(
+        EntropyConservativeEulerFluxPlan(),
+        RusanovFluxPlan(),
+        viscous=LDGViscousFluxPlan(),
+    )
+    compiled = compile_conservation_problem(
+        ConservationProblemIR("wall-navier-stokes", "state", system, boundaries),
+        discretization,
+        method,
+    )
+    state = jnp.broadcast_to(
+        system.primitive_to_conserved(jnp.asarray((1.0, 0.0, 0.0, 1.0))),
+        discretization.field_spaces[0].vector_space.shape,
+    )
+    np.testing.assert_allclose(compiled(0.0, state), 0.0, atol=3.0e-10)

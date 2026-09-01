@@ -68,7 +68,14 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             "custom",
         ):
             raise ValueError("Unknown finite-element coefficient representation.")
-        if cell not in ("triangle", "quadrilateral", "tetrahedron", "hexahedron"):
+        if cell not in (
+            "triangle",
+            "quadrilateral",
+            "tetrahedron",
+            "hexahedron",
+            "prism",
+            "pyramid",
+        ):
             raise ValueError("Unsupported reference cell kind.")
         if order < 0:
             raise ValueError("Finite-element degree must be non-negative.")
@@ -78,6 +85,8 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             "quadrilateral": 2,
             "tetrahedron": 3,
             "hexahedron": 3,
+            "prism": 3,
+            "pyramid": 3,
         }[cell]
         if nodes.ndim != 2 or nodes.shape[1] != dimension or nodes.shape[0] == 0:
             raise ValueError(
@@ -430,6 +439,10 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
         from ._high_order import ReferenceNodalFamily
 
         return ReferenceNodalFamily(cell, order).finite_element()
+    if cell in ("prism", "pyramid") and order >= 1:
+        from ._spectral_hp_completion import HybridReferenceFamily
+
+        return HybridReferenceFamily(cell, order).finite_element()
     raise ValueError(
         "Implemented Lagrange elements require a supported simplex/tensor cell "
         "and polynomial degree."
@@ -468,6 +481,8 @@ def discontinuous_element(cell_kind: str, degree: int = 0, /) -> FiniteElementSp
         "quadrilateral": 2,
         "tetrahedron": 3,
         "hexahedron": 3,
+        "prism": 3,
+        "pyramid": 3,
     }.get(cell)
     if dimension is None:
         raise ValueError("Unsupported discontinuous reference cell.")

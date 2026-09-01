@@ -17,6 +17,11 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...discretization._conservation_boundary import PrescribedNormalFluxBoundary
+from ...discretization.fem._boundary import (
+    FiniteElementBoundarySet,
+    tensor_local_face,
+)
 from ...discretization.fem._generic import (
     FiniteElementDiscretization,
     FiniteElementRuntimeData,
@@ -42,11 +47,16 @@ from .._entropy_pair import ConvexEntropyPair
 from .._finite_element_variational import (
     CellResidualAction,
     CompiledFiniteElementProblem,
+    ExteriorFacetAction,
     FiniteElementExecutionContext,
     FiniteElementExecutionPolicy,
     FiniteElementForm,
     InteriorFacetAction,
     PairwiseVolumeFluxAction,
+)
+from ._viscous_conservation import (
+    LDGViscousFluxPlan,
+    PreparedLDGViscousOperator,
 )
 
 
@@ -536,6 +546,7 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
     volume_flux: AbstractSymmetricTwoPointFluxPlan
     interface_flux: AbstractArbitraryNormalNumericalFluxPlan
     compatibility: DGSEMFluxCompatibilityCertificate | None
+    viscous: LDGViscousFluxPlan | None
     explicit_mass: str = eqx.field(static=True)
     accumulation: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
@@ -547,6 +558,7 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
         /,
         *,
         compatibility: DGSEMFluxCompatibilityCertificate | None = None,
+        viscous: LDGViscousFluxPlan | None = None,
         explicit_mass: str = "diagonal_gll",
         accumulation: str = "deterministic",
     ):
@@ -562,6 +574,8 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
             compatibility, DGSEMFluxCompatibilityCertificate
         ):
             raise TypeError("compatibility must be a DGSEM flux certificate or None.")
+        if viscous is not None and not isinstance(viscous, LDGViscousFluxPlan):
+            raise TypeError("viscous must be LDGViscousFluxPlan or None.")
         mass = str(explicit_mass)
         if mass != "diagonal_gll":
             raise ValueError(
@@ -573,6 +587,7 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
         self.volume_flux = volume_flux
         self.interface_flux = interface_flux
         self.compatibility = compatibility
+        self.viscous = viscous
         self.explicit_mass = mass
         self.accumulation = accumulation_
         self.method_id = canonical_fingerprint(
@@ -583,6 +598,7 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
                 "compatibility": (
                     None if compatibility is None else compatibility.certificate_id
                 ),
+                "viscous": None if viscous is None else viscous.plan_id,
                 "explicit_mass": mass,
                 "accumulation": accumulation_,
                 "shock_capturing": None,
@@ -597,7 +613,7 @@ class DGSEMConservationMethodPlan(StrictModule, NonTrainableState):
 
 
 class DGSEMPreparationReport(StrictModule, NonTrainableState):
-    """Compiler, SBP, metric, mass, and periodic-pair provenance."""
+    """Compiler, SBP, metric, mass, and executable-facet provenance."""
 
     sbp_report_id: str = eqx.field(static=True)
     metric_report_id: str = eqx.field(static=True)
@@ -605,7 +621,7 @@ class DGSEMPreparationReport(StrictModule, NonTrainableState):
     action_ir_id: str = eqx.field(static=True)
     workset_program_id: str = eqx.field(static=True)
     kernel_table_id: str = eqx.field(static=True)
-    face_pair_count: int = eqx.field(static=True)
+    facet_route_count: int = eqx.field(static=True)
     minimum_mass: Array
     passed: bool = eqx.field(static=True)
     report_id: str = eqx.field(static=True)
@@ -615,7 +631,7 @@ class DGSEMPreparationReport(StrictModule, NonTrainableState):
         sbp: ElementLocalSBPData,
         metrics: MappedTensorMetrics,
         compiled: CompiledFiniteElementProblem,
-        face_pair_count: int,
+        facet_route_count: int,
         minimum_mass: ArrayLike,
         /,
     ):
@@ -623,7 +639,7 @@ class DGSEMPreparationReport(StrictModule, NonTrainableState):
         passed = bool(
             sbp.report.passed
             and metrics.report.passed
-            and int(face_pair_count) > 0
+            and int(facet_route_count) > 0
             and float(np.asarray(minimum)) > 0.0
         )
         self.sbp_report_id = sbp.report.report_id
@@ -632,7 +648,7 @@ class DGSEMPreparationReport(StrictModule, NonTrainableState):
         self.action_ir_id = compiled._action_ir.ir_id
         self.workset_program_id = compiled._workset_program.program_id
         self.kernel_table_id = compiled._kernel_table.table_id
-        self.face_pair_count = int(face_pair_count)
+        self.facet_route_count = int(facet_route_count)
         self.minimum_mass = minimum
         self.passed = passed
         self.report_id = canonical_fingerprint(
@@ -644,7 +660,7 @@ class DGSEMPreparationReport(StrictModule, NonTrainableState):
                 "action_ir": self.action_ir_id,
                 "worksets": self.workset_program_id,
                 "kernels": self.kernel_table_id,
-                "face_pairs": self.face_pair_count,
+                "facet_routes": self.facet_route_count,
                 "passed": passed,
             }
         )
@@ -657,6 +673,8 @@ class DGSEMFaceFluxes(StrictModule):
     signal_speed: Array
     surface_jacobian: Array
     integrated_flux: Array
+    is_boundary: Array
+    boundary_patch_indices: Array
     owner_cells: Array
     neighbour_cells: Array
 
@@ -664,17 +682,22 @@ class DGSEMFaceFluxes(StrictModule):
 class DGSEMStableStepEvidence(StrictModule, NonTrainableState):
     step: Array
     maximum_nodal_rate: Array
+    maximum_diffusive_rate: Array
     cfl: float = eqx.field(static=True)
     positive: Array
     method_id: str = eqx.field(static=True)
 
 
 class DGSEMConservationDiagnostics(StrictModule, NonTrainableState):
+    boundary_flux_rate: Array
+    source_integral: Array
+    conservation_balance_defect: Array
     total_integral: Array
     conservation_rate: Array
     total_entropy: Array | None
     semidiscrete_entropy_rate: Array | None
     convective_entropy_rate: Array | None
+    boundary_entropy_rate: Array | None
     source_entropy_rate: Array | None
     interface_entropy_production: Array | None
     entropy_inequality_defect: Array | None
@@ -683,19 +706,6 @@ class DGSEMConservationDiagnostics(StrictModule, NonTrainableState):
     certificate_id: str | None = eqx.field(static=True)
     certified_entropy_inequality: bool = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
-
-
-def _local_face(cell_kind: str, local_facet: int, /) -> tuple[int, int]:
-    mappings = {
-        "quadrilateral": ((1, 0), (0, 1), (1, 1), (0, 0)),
-        "hexahedron": ((2, 0), (2, 1), (1, 0), (0, 1), (1, 1), (0, 0)),
-    }
-    if cell_kind not in mappings:
-        raise ValueError("Unsupported tensor-cell kind.")
-    facet = int(local_facet)
-    if facet < 0 or facet >= len(mappings[cell_kind]):
-        raise ValueError("Unsupported tensor-cell local facet.")
-    return mappings[cell_kind][facet]
 
 
 def _coordinate_values(
@@ -725,9 +735,9 @@ def _interior_metric_pairs(
     return tuple(
         MetricFacePair(
             int(owner),
-            *_local_face(cell_kind, int(owner_local)),
+            *tensor_local_face(cell_kind, int(owner_local)),
             int(neighbour),
-            *_local_face(cell_kind, int(neighbour_local)),
+            *tensor_local_face(cell_kind, int(neighbour_local)),
         )
         for owner, owner_local, neighbour, neighbour_local in zip(
             np.asarray(domain.owner_cells),
@@ -757,10 +767,10 @@ def _periodic_metric_pairs(
     facet_pairs = []
     while available:
         first = available.pop(0)
-        owner_axis, owner_side = _local_face(cell_kind, int(local_entities[first]))
+        owner_axis, owner_side = tensor_local_face(cell_kind, int(local_entities[first]))
         best = None
         for candidate in available:
-            neighbour_axis, neighbour_side = _local_face(
+            neighbour_axis, neighbour_side = tensor_local_face(
                 cell_kind, int(local_entities[candidate])
             )
             pair = MetricFacePair(
@@ -792,6 +802,79 @@ def _periodic_metric_pairs(
     return tuple(pairs), tuple(facet_pairs)
 
 
+def _explicit_periodic_metric_pairs(
+    discretization: FiniteElementDiscretization,
+    cell_kind: str,
+    provisional: MappedTensorMetrics,
+    boundaries: FiniteElementBoundarySet,
+    tolerance: float,
+    /,
+) -> tuple[tuple[MetricFacePair, ...], tuple[tuple[int, int], ...]]:
+    exterior = discretization.exterior_facet_domain
+    facets = np.asarray(exterior.entity_indices, dtype=np.int32)
+    owners = np.asarray(exterior.owner_cells, dtype=np.int32)
+    local_entities = np.asarray(exterior.owner_local_entities, dtype=np.int32)
+    positions = {int(facet): index for index, facet in enumerate(facets)}
+    metric_pairs = []
+    facet_pairs = []
+    for boundary_pair in boundaries.periodic_pairs:
+        owner_position = positions[boundary_pair.owner_facet]
+        neighbour_position = positions[boundary_pair.neighbour_facet]
+        owner_axis, owner_side = tensor_local_face(
+            cell_kind, int(local_entities[owner_position])
+        )
+        neighbour_axis, neighbour_side = tensor_local_face(
+            cell_kind, int(local_entities[neighbour_position])
+        )
+        pair = MetricFacePair(
+            int(owners[owner_position]),
+            owner_axis,
+            owner_side,
+            int(owners[neighbour_position]),
+            neighbour_axis,
+            neighbour_side,
+            periodic_translation=True,
+        )
+        _permutation, point_defect, normal_defect = provisional.face_pair_evidence(pair)
+        if (
+            max(
+                float(np.asarray(point_defect)),
+                float(np.asarray(normal_defect)),
+            )
+            > tolerance
+        ):
+            raise ValueError(
+                "Explicit periodic facets have incompatible points or scaled normals."
+            )
+        metric_pairs.append(pair)
+        facet_pairs.append((boundary_pair.owner_facet, boundary_pair.neighbour_facet))
+    return tuple(metric_pairs), tuple(facet_pairs)
+
+
+def _exterior_local_domain(
+    domain: IntegrationDomain,
+    local_facet: int,
+    /,
+    *,
+    selection_id: str,
+) -> IntegrationDomain:
+    local_entities = np.asarray(domain.owner_local_entities, dtype=np.int32)
+    positions = np.flatnonzero(local_entities == int(local_facet))
+    if positions.size == 0:
+        raise ValueError("Physical boundary subdomain contains no selected facets.")
+    return IntegrationDomain(
+        "exterior_facet",
+        np.asarray(domain.entity_indices)[positions],
+        domain.support_id,
+        domain.entity_set_id,
+        owner_cells=np.asarray(domain.owner_cells)[positions],
+        neighbour_cells=np.asarray(domain.neighbour_cells)[positions],
+        owner_local_entities=local_entities[positions],
+        neighbour_local_entities=np.asarray(domain.neighbour_local_entities)[positions],
+        selection_id=selection_id,
+    )
+
+
 def _periodic_facet_domain(
     discretization: FiniteElementDiscretization,
     cell_kind: str,
@@ -799,6 +882,8 @@ def _periodic_facet_domain(
     periodic_facet_ids: Sequence[tuple[int, int]],
     face_permutations: Sequence[ArrayLike],
     /,
+    *,
+    selection_id: str,
 ) -> IntegrationDomain:
     interior = discretization.interior_facet_domain
     entity_indices = list(np.asarray(interior.entity_indices, dtype=np.int32))
@@ -840,7 +925,7 @@ def _periodic_facet_domain(
             tuple(np.asarray(value) for value in face_permutations), axis=0
         ),
         periodic_face_mask=periodic_mask,
-        selection_id="dgsem-periodic-all-faces",
+        selection_id=selection_id,
     )
 
 
@@ -868,12 +953,13 @@ def _rules(cell_kind: str, node_count: int, /):
 
 
 class PreparedDGSEMConservationDynamics(StrictModule):
-    """Periodic mapped quad/hex DGSEM backed by the generic FE compiler."""
+    """Mapped quad/hex DGSEM with explicit periodic and physical facets."""
 
     system: Any
     discretization: FiniteElementDiscretization
     method: DGSEMConservationMethodPlan
     entropy_pair: ConvexEntropyPair | None
+    boundaries: FiniteElementBoundarySet | None
     source: Callable | None = eqx.field(static=True)
     runtime: FiniteElementRuntimeData
     sbp: ElementLocalSBPData
@@ -895,6 +981,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         /,
         *,
         source: Callable | None = None,
+        boundaries: FiniteElementBoundarySet | None = None,
         entropy_pair: ConvexEntropyPair | None = None,
         runtime: FiniteElementRuntimeData | None = None,
     ):
@@ -906,6 +993,19 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             raise TypeError("DGSEM source must be callable or None.")
         if entropy_pair is not None and not isinstance(entropy_pair, ConvexEntropyPair):
             raise TypeError("entropy_pair must be ConvexEntropyPair or None.")
+        if boundaries is not None:
+            if not isinstance(boundaries, FiniteElementBoundarySet):
+                raise TypeError(
+                    "DGSEM boundaries must be FiniteElementBoundarySet or None."
+                )
+            if (
+                boundaries.support_id != discretization.support.support_id
+                or boundaries.entity_set_id
+                != discretization.exterior_facet_domain.entity_set_id
+            ):
+                raise ValueError(
+                    "DGSEM boundary ownership does not match the FE discretization."
+                )
         realized = discretization.default_runtime if runtime is None else runtime
         if not isinstance(realized, FiniteElementRuntimeData):
             raise TypeError("runtime must be FiniteElementRuntimeData or None.")
@@ -963,23 +1063,39 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         metric_plan = MappedTensorMetricPlan(sbp, system.dimension)
         provisional = metric_plan.prepare(coordinate_values)
         interior_pairs = _interior_metric_pairs(discretization, block.cell_kind)
-        periodic_pairs, periodic_facet_ids = _periodic_metric_pairs(
-            discretization,
-            block.cell_kind,
-            provisional,
-            metric_plan.tolerance,
-        )
+        if boundaries is None:
+            periodic_pairs, periodic_facet_ids = _periodic_metric_pairs(
+                discretization,
+                block.cell_kind,
+                provisional,
+                metric_plan.tolerance,
+            )
+            facet_selection_id = "dgsem-periodic-all-faces"
+        else:
+            periodic_pairs, periodic_facet_ids = _explicit_periodic_metric_pairs(
+                discretization,
+                block.cell_kind,
+                provisional,
+                boundaries,
+                metric_plan.tolerance,
+            )
+            facet_selection_id = boundaries.boundary_set_id
         all_pairs = interior_pairs + periodic_pairs
         metrics = metric_plan.prepare(coordinate_values, face_pairs=all_pairs)
         face_permutations = tuple(
             metrics.face_pair_evidence(pair)[0] for pair in all_pairs
         )
-        facet_domain = _periodic_facet_domain(
-            discretization,
-            block.cell_kind,
-            periodic_pairs,
-            periodic_facet_ids,
-            face_permutations,
+        facet_domain = (
+            _periodic_facet_domain(
+                discretization,
+                block.cell_kind,
+                periodic_pairs,
+                periodic_facet_ids,
+                face_permutations,
+                selection_id=facet_selection_id,
+            )
+            if all_pairs
+            else None
         )
         volume_rule, facet_rule = _rules(block.cell_kind, sbp.node_count)
 
@@ -999,8 +1115,10 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 axis=-1,
             )
 
-        def interface_kernel(plus, minus, points, weights, normal, context):
+        def interface_kernel(plus_values, minus_values, points, weights, normal, context):
             del points, weights
+            plus = plus_values[0]
+            minus = minus_values[0]
             numerical = method.interface_flux.normal_face_flux(
                 system,
                 plus,
@@ -1019,15 +1137,97 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 domain=discretization.cell_domain,
                 rules=((block.name, volume_rule),),
                 action_id="dgsem-pairwise-volume-flux",
-            ),
-            InteriorFacetAction(
-                discretization.field_spaces[0].name,
-                interface_kernel,
-                domain=facet_domain,
-                rules=((block.name, facet_rule),),
-                action_id="dgsem-periodic-interface-correction",
-            ),
+            )
         ]
+        if facet_domain is not None:
+            actions.append(
+                InteriorFacetAction(
+                    discretization.field_spaces[0].name,
+                    (discretization.field_spaces[0].name,),
+                    interface_kernel,
+                    domain=facet_domain,
+                    rules=((block.name, facet_rule),),
+                    action_id="dgsem-periodic-interface-correction",
+                )
+            )
+        if boundaries is not None:
+
+            def physical_boundary_kernel(boundary, axis):
+                def kernel(plus_values, points, weights, normal, context):
+                    del weights
+                    plus = plus_values[0]
+                    plus_physical = system.physical_normal_flux(
+                        plus, normal, context.user_args
+                    )
+                    if isinstance(boundary, PrescribedNormalFluxBoundary):
+                        numerical = boundary.normal_flux(
+                            context.time,
+                            plus,
+                            points,
+                            normal,
+                            context.user_args,
+                        )
+                    else:
+                        minus = boundary.exterior_state(
+                            system,
+                            context.time,
+                            plus,
+                            points,
+                            normal,
+                            axis,
+                            context.user_args,
+                        )
+                        numerical = method.interface_flux.normal_face_flux(
+                            system,
+                            plus,
+                            minus,
+                            normal,
+                            context.user_args,
+                        ).normal_flux
+                    return numerical - plus_physical
+
+                return kernel
+
+            for patch in boundaries.patches:
+                local_facets = tuple(
+                    sorted(
+                        {
+                            int(value)
+                            for value in np.asarray(
+                                patch.domain.owner_local_entities, dtype=np.int32
+                            )
+                        }
+                    )
+                )
+                for local_facet in local_facets:
+                    axis, _side = tensor_local_face(block.cell_kind, local_facet)
+                    domain = _exterior_local_domain(
+                        patch.domain,
+                        local_facet,
+                        selection_id=canonical_fingerprint(
+                            {
+                                "kind": "dgsem-physical-boundary-subdomain",
+                                "patch": patch.patch_id,
+                                "local_facet": local_facet,
+                            }
+                        ),
+                    )
+                    actions.append(
+                        ExteriorFacetAction(
+                            discretization.field_spaces[0].name,
+                            (discretization.field_spaces[0].name,),
+                            physical_boundary_kernel(patch.boundary, axis),
+                            domain=domain,
+                            rules=((block.name, facet_rule),),
+                            action_id=canonical_fingerprint(
+                                {
+                                    "kind": "dgsem-physical-boundary-action",
+                                    "patch": patch.patch_id,
+                                    "local_facet": local_facet,
+                                }
+                            ),
+                        )
+                    )
         if source is not None:
 
             def source_kernel(
@@ -1143,6 +1343,11 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 raise ValueError(
                     "An entropy certificate advertising absent source cannot compile a source."
                 )
+            if method.viscous is not None and certificate.viscous_evidence == "absent":
+                raise ValueError(
+                    "An entropy certificate advertising absent viscosity cannot "
+                    "compile an LDG viscous operator."
+                )
         elif entropy_pair is not None:
             raise ValueError(
                 "DGSEM entropy diagnostics require an explicit flux compatibility certificate."
@@ -1157,14 +1362,25 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 "sbp": sbp.data_id,
                 "metrics": metrics.metrics_id,
                 "source": "none" if source is None else repr(source),
+                "boundaries": (
+                    None if boundaries is None else boundaries.boundary_set_id
+                ),
+                "viscous": (None if method.viscous is None else method.viscous.plan_id),
                 "entropy_pair": None if entropy_pair is None else entropy_pair.pair_id,
             }
+        )
+        physical_facet_count = (
+            0
+            if boundaries is None
+            else sum(
+                int(patch.domain.entity_indices.shape[0]) for patch in boundaries.patches
+            )
         )
         report = DGSEMPreparationReport(
             sbp,
             metrics,
             compiled,
-            len(all_pairs),
+            len(all_pairs) + physical_facet_count,
             jnp.min(scalar_mass),
         )
         if not report.passed:
@@ -1173,6 +1389,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         self.discretization = discretization
         self.method = method
         self.entropy_pair = entropy_pair
+        self.boundaries = boundaries
         self.source = source
         self.runtime = realized
         self.sbp = sbp
@@ -1193,6 +1410,14 @@ class PreparedDGSEMConservationDynamics(StrictModule):
     @property
     def residual_space(self):
         return self.compiled_finite_element_problem.residual_space
+
+    @property
+    def viscous_operator(self) -> PreparedLDGViscousOperator | None:
+        return (
+            None
+            if self.method.viscous is None
+            else PreparedLDGViscousOperator(self.method.viscous, self)
+        )
 
     def _state(self, state: ArrayLike, /) -> Array:
         return self.state_space.validate(jnp.asarray(state))
@@ -1224,7 +1449,12 @@ class PreparedDGSEMConservationDynamics(StrictModule):
 
         value = self._state(state)
         context = self._context(jnp.asarray(time), args)
-        return self.compiled_finite_element_problem.residual(value, context)
+        residual = self.compiled_finite_element_problem.residual(value, context)
+        if self.viscous_operator is not None:
+            residual = residual + self.viscous_operator.weak_residual(
+                jnp.asarray(time), value, args
+            )
+        return residual
 
     def mass_inverted_rate(
         self, time: Array, state: ArrayLike, args: Any = None, /
@@ -1254,7 +1484,7 @@ class PreparedDGSEMConservationDynamics(StrictModule):
     def face_fluxes(
         self, time: Array, state: ArrayLike, args: Any = None, /
     ) -> DGSEMFaceFluxes:
-        del time
+        time_ = jnp.asarray(time)
         value = self._state(state)
         local = self._local_state(value)
         user_args = (
@@ -1266,6 +1496,8 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         integrated = []
         owner_cells = []
         neighbour_cells = []
+        is_boundary = []
+        boundary_patch_indices = []
         face_weight = _tensor_mass_weights(self.sbp, self.metrics.dimension - 1).reshape(
             (-1,)
         )
@@ -1312,6 +1544,81 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             )
             owner_cells.append(pair.owner_cell)
             neighbour_cells.append(pair.neighbour_cell)
+            is_boundary.append(False)
+            boundary_patch_indices.append(-1)
+        if self.boundaries is not None:
+            for patch_index, patch in enumerate(self.boundaries.patches):
+                owners = np.asarray(patch.domain.owner_cells, dtype=np.int32)
+                local_facets = np.asarray(
+                    patch.domain.owner_local_entities, dtype=np.int32
+                )
+                for owner_cell, local_facet in zip(owners, local_facets, strict=True):
+                    axis, side = tensor_local_face(
+                        self.discretization.mesh.blocks[0].cell_kind,
+                        int(local_facet),
+                    )
+                    plus = self._face_value(local, int(owner_cell), axis, side)
+                    points = self.metrics.face_coordinates[axis][
+                        int(owner_cell), side
+                    ].reshape((-1, self.metrics.dimension))
+                    scaled_normal = self.metrics.face_scaled_normals[axis][
+                        int(owner_cell), side
+                    ].reshape((-1, self.metrics.dimension))
+                    surface_jacobian = jnp.sqrt(
+                        oe.contract(
+                            "qd,qd->q",
+                            scaled_normal,
+                            scaled_normal,
+                            backend="jax",
+                        )
+                    )
+                    normal = scaled_normal / surface_jacobian[:, None]
+                    if isinstance(patch.boundary, PrescribedNormalFluxBoundary):
+                        normal_flux = patch.boundary.normal_flux(
+                            time_,
+                            plus,
+                            points,
+                            normal,
+                            user_args,
+                        )
+                        speed = self.system.max_normal_wave_speed(
+                            plus, plus, normal, user_args
+                        )
+                    else:
+                        minus = patch.boundary.exterior_state(
+                            self.system,
+                            time_,
+                            plus,
+                            points,
+                            normal,
+                            axis,
+                            user_args,
+                        )
+                        result = self.method.interface_flux.normal_face_flux(
+                            self.system,
+                            plus,
+                            minus,
+                            normal,
+                            user_args,
+                        )
+                        normal_flux = result.normal_flux
+                        speed = result.max_speed
+                    fluxes.append(normal_flux)
+                    speeds.append(speed)
+                    measures.append(surface_jacobian)
+                    integrated.append(
+                        oe.contract(
+                            "q,q,qi->i",
+                            face_weight,
+                            surface_jacobian,
+                            normal_flux,
+                            backend="jax",
+                        )
+                    )
+                    owner_cells.append(int(owner_cell))
+                    neighbour_cells.append(-1)
+                    is_boundary.append(True)
+                    boundary_patch_indices.append(patch_index)
         return DGSEMFaceFluxes(
             normal_flux=jnp.stack(tuple(fluxes), axis=0),
             signal_speed=jnp.stack(tuple(speeds), axis=0),
@@ -1319,6 +1626,8 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             integrated_flux=jnp.stack(tuple(integrated), axis=0),
             owner_cells=jnp.asarray(owner_cells, dtype=jnp.int32),
             neighbour_cells=jnp.asarray(neighbour_cells, dtype=jnp.int32),
+            is_boundary=jnp.asarray(is_boundary, dtype=bool),
+            boundary_patch_indices=jnp.asarray(boundary_patch_indices, dtype=jnp.int32),
         )
 
     def _source_values(self, time: Array, state: Array, args: Any, /) -> Array:
@@ -1344,9 +1653,27 @@ class PreparedDGSEMConservationDynamics(StrictModule):
         scalar_mass = self.scalar_mass_weights
         total_integral = oe.contract("n,ni->i", scalar_mass, value, backend="jax")
         conservation_rate = oe.contract("n,ni->i", scalar_mass, rate, backend="jax")
+        user_args = (
+            args.user_args if isinstance(args, FiniteElementExecutionContext) else args
+        )
+        source_values = self._source_values(jnp.asarray(time), value, user_args)
+        source_integral = oe.contract(
+            "n,ni->i", scalar_mass, source_values, backend="jax"
+        )
+        faces = self.face_fluxes(time, value, args)
+        boundary_flux_rate = jnp.sum(
+            jnp.where(
+                faces.is_boundary[:, None],
+                faces.integrated_flux,
+                jnp.zeros_like(faces.integrated_flux),
+            ),
+            axis=0,
+        )
+        balance_defect = conservation_rate + boundary_flux_rate - source_integral
         total_entropy = None
         entropy_rate = None
         convective_rate = None
+        boundary_entropy_rate = None
         source_rate = None
         interface_production = None
         inequality_defect = None
@@ -1359,12 +1686,6 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 scalar_mass
                 * oe.contract("ni,ni->n", entropy_variables, rate, backend="jax")
             )
-            user_args = (
-                args.user_args
-                if isinstance(args, FiniteElementExecutionContext)
-                else args
-            )
-            source_values = self._source_values(jnp.asarray(time), value, user_args)
             source_rate = jnp.sum(
                 scalar_mass
                 * oe.contract(
@@ -1375,7 +1696,6 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                 )
             )
             convective_rate = entropy_rate - source_rate
-            faces = self.face_fluxes(time, value, args)
             local = self._local_state(value)
             face_weight = _tensor_mass_weights(
                 self.sbp, self.metrics.dimension - 1
@@ -1418,15 +1738,63 @@ class PreparedDGSEMConservationDynamics(StrictModule):
                     backend="jax",
                 ) - (potential_minus - potential_plus)
                 productions.append(jnp.sum(face_weight * surface_jacobian * density))
-            interface_production = jnp.sum(jnp.stack(tuple(productions)))
-            inequality_defect = jnp.maximum(convective_rate, 0.0)
+            interface_production = sum(
+                productions, jnp.asarray(0.0, dtype=entropy_rate.dtype)
+            )
+            boundary_terms = []
+            if self.boundaries is not None:
+                face_index = len(self.face_pairs)
+                for patch in self.boundaries.patches:
+                    owners = np.asarray(patch.domain.owner_cells, dtype=np.int32)
+                    local_facets = np.asarray(
+                        patch.domain.owner_local_entities, dtype=np.int32
+                    )
+                    for owner_cell, local_facet in zip(owners, local_facets, strict=True):
+                        axis, side = tensor_local_face(
+                            self.discretization.mesh.blocks[0].cell_kind,
+                            int(local_facet),
+                        )
+                        plus = self._face_value(local, int(owner_cell), axis, side)
+                        scaled_normal = self.metrics.face_scaled_normals[axis][
+                            int(owner_cell), side
+                        ].reshape((-1, self.metrics.dimension))
+                        surface_jacobian = faces.surface_jacobian[face_index]
+                        normal = scaled_normal / surface_jacobian[:, None]
+                        potential = sum(
+                            normal[:, direction]
+                            * self.entropy_pair.entropy_potential(
+                                plus, direction, user_args
+                            )
+                            for direction in range(self.metrics.dimension)
+                        )
+                        entropy_flux = (
+                            oe.contract(
+                                "qi,qi->q",
+                                self.entropy_pair.entropy_variables(plus),
+                                faces.normal_flux[face_index],
+                                backend="jax",
+                            )
+                            - potential
+                        )
+                        boundary_terms.append(
+                            jnp.sum(face_weight * surface_jacobian * entropy_flux)
+                        )
+                        face_index += 1
+            boundary_entropy_rate = sum(
+                boundary_terms, jnp.asarray(0.0, dtype=entropy_rate.dtype)
+            )
+            inequality_defect = jnp.maximum(convective_rate + boundary_entropy_rate, 0.0)
             admissible = jnp.all(self.entropy_pair.admissible(value))
         diagnostics = DGSEMConservationDiagnostics(
             total_integral=total_integral,
             conservation_rate=conservation_rate,
+            boundary_flux_rate=boundary_flux_rate,
+            source_integral=source_integral,
+            conservation_balance_defect=balance_defect,
             total_entropy=total_entropy,
             semidiscrete_entropy_rate=entropy_rate,
             convective_entropy_rate=convective_rate,
+            boundary_entropy_rate=boundary_entropy_rate,
             source_entropy_rate=source_rate,
             interface_entropy_production=interface_production,
             entropy_inequality_defect=inequality_defect,
@@ -1434,7 +1802,9 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             free_stream_residual=self.metrics.report.free_stream_residual,
             certificate_id=(None if certificate is None else certificate.certificate_id),
             certified_entropy_inequality=bool(
-                certificate is not None and certificate.complete_entropy_stability
+                certificate is not None
+                and certificate.complete_entropy_stability
+                and (self.boundaries is None or not self.boundaries.patches)
             ),
             method_id=self.method.method_id,
         )
@@ -1465,15 +1835,47 @@ class PreparedDGSEMConservationDynamics(StrictModule):
             nodal_rate = nodal_rate + row_bound * scale * speed
         nodal_rate = nodal_rate / self.metrics.determinant
         maximum = jnp.max(nodal_rate)
+        if self.boundaries is not None and self.boundaries.patches:
+            faces = self.face_fluxes(jnp.asarray(0.0, dtype=value.dtype), value, args)
+            face_index = len(self.face_pairs)
+            for patch in self.boundaries.patches:
+                owners = np.asarray(patch.domain.owner_cells, dtype=np.int32)
+                local_facets = np.asarray(
+                    patch.domain.owner_local_entities, dtype=np.int32
+                )
+                for owner_cell, local_facet in zip(owners, local_facets, strict=True):
+                    axis, side = tensor_local_face(
+                        self.discretization.mesh.blocks[0].cell_kind,
+                        int(local_facet),
+                    )
+                    determinant = jnp.take(
+                        self.metrics.determinant[int(owner_cell)],
+                        0 if side == 0 else -1,
+                        axis=axis,
+                    ).reshape((-1,))
+                    boundary_rate = (
+                        row_bound
+                        * faces.surface_jacobian[face_index]
+                        * faces.signal_speed[face_index]
+                        / determinant
+                    )
+                    maximum = jnp.maximum(maximum, jnp.max(boundary_rate))
+                    face_index += 1
         cfl_ = float(cfl)
         if not np.isfinite(cfl_) or cfl_ <= 0.0:
             raise ValueError("DGSEM CFL number must be positive and finite.")
         step = jnp.asarray(cfl_, dtype=maximum.dtype) / jnp.where(
             maximum > 0.0, maximum, jnp.inf
         )
+        diffusive_rate = jnp.zeros((), dtype=maximum.dtype)
+        if self.viscous_operator is not None:
+            viscous = self.viscous_operator.stability_evidence(value, args, cfl=cfl_)
+            diffusive_rate = viscous.maximum_diffusive_rate
+            step = jnp.minimum(step, viscous.step)
         return DGSEMStableStepEvidence(
             step=step,
             maximum_nodal_rate=maximum,
+            maximum_diffusive_rate=diffusive_rate,
             cfl=cfl_,
             positive=jnp.isfinite(step) & (step > 0.0),
             method_id=self.method.method_id,

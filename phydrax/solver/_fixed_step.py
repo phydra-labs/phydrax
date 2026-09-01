@@ -16,7 +16,13 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._numerics._checkpointed_scan import checkpointed_scan
-from .._numerics._ssp_runge_kutta import ssprk33_step, ssprk54_step
+from .._numerics._ssp_runge_kutta import (
+    AbstractSSPRKStageTransform,
+    ssprk33_step_with_evidence,
+    ssprk54_step_with_evidence,
+    SSPRKStepResult,
+    StageTransformResult,
+)
 from .._strict import AbstractAttribute, StrictModule
 from .._trainable import NonTrainableState
 from .._tree_math import tree_where
@@ -168,6 +174,55 @@ class CompositeAcceptedStepTransform(AbstractAcceptedStepTransform):
         return AcceptedStepTransformResult(state, applied, successful, correction)
 
 
+class IdentitySSPRKStageTransform(AbstractSSPRKStageTransform):
+    transform_id: str = "ssprk-stage-transform:identity"
+
+    def apply(
+        self,
+        stage_index: int,
+        time: Array,
+        candidate_state: Array,
+        args: Any,
+        /,
+    ) -> StageTransformResult:
+        del stage_index, time, args
+        return StageTransformResult(
+            candidate_state,
+            jnp.asarray(False),
+            jnp.asarray(True),
+            jnp.zeros((), dtype=candidate_state.real.dtype),
+        )
+
+
+class CallableSSPRKStageTransform(AbstractSSPRKStageTransform):
+    transform: Callable[[int, Array, Array, Any], StageTransformResult] = eqx.field(
+        static=True
+    )
+    transform_id: str = eqx.field(static=True)
+
+    def __init__(self, transform, transform_id: str, /):
+        if not callable(transform):
+            raise TypeError("transform must be callable.")
+        identifier = str(transform_id)
+        if not identifier:
+            raise ValueError("transform_id must be non-empty.")
+        self.transform = transform
+        self.transform_id = identifier
+
+    def apply(
+        self,
+        stage_index: int,
+        time: Array,
+        candidate_state: Array,
+        args: Any,
+        /,
+    ) -> StageTransformResult:
+        result = self.transform(stage_index, time, candidate_state, args)
+        if not isinstance(result, StageTransformResult):
+            raise TypeError("Callable stage transforms must return StageTransformResult.")
+        return result
+
+
 class FixedStepResult(StrictModule):
     candidate_state: PyTree[Array]
     accepted_state: PyTree[Array]
@@ -233,6 +288,7 @@ class CallableFixedStepMethod(AbstractFixedStepMethod):
 class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
     vector_field: Callable[[Array, Array, Any], Array]
     transform: AbstractAcceptedStepTransform
+    stage_transform: AbstractSSPRKStageTransform
     order: int = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
@@ -243,6 +299,7 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
         *,
         order: int,
         transform: AbstractAcceptedStepTransform | None = None,
+        stage_transform: AbstractSSPRKStageTransform | None = None,
     ):
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
@@ -251,14 +308,23 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
         transform_ = IdentityAcceptedStepTransform() if transform is None else transform
         if not isinstance(transform_, AbstractAcceptedStepTransform):
             raise TypeError("transform must be an AbstractAcceptedStepTransform or None.")
+        stage_transform_ = (
+            IdentitySSPRKStageTransform() if stage_transform is None else stage_transform
+        )
+        if not isinstance(stage_transform_, AbstractSSPRKStageTransform):
+            raise TypeError(
+                "stage_transform must be AbstractSSPRKStageTransform or None."
+            )
         self.vector_field = vector_field
         self.transform = transform_
+        self.stage_transform = stage_transform_
         self.order = int(order)
         self.method_id = canonical_fingerprint(
             {
                 "kind": "fixed-step-ssprk",
                 "order": order,
                 "transform": transform_.transform_id,
+                "stage_transform": stage_transform_.transform_id,
             }
         )
 
@@ -270,7 +336,7 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
         step_size: Array,
         args: Any,
         /,
-    ) -> Array:
+    ) -> SSPRKStepResult:
         raise NotImplementedError
 
     def step(
@@ -282,12 +348,15 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
         args: Any,
         /,
     ) -> FixedStepResult:
-        candidate = self._advance(time, state, step_size, args)
+        advanced = self._advance(time, state, step_size, args)
+        candidate = advanced.state
         transformed = self.transform.apply(
             step_index, time + step_size, state, candidate, args
         )
-        successful = transformed.successful & jnp.all(
-            jnp.isfinite(transformed.transformed_state)
+        successful = (
+            advanced.successful
+            & transformed.successful
+            & jnp.all(jnp.isfinite(transformed.transformed_state))
         )
         accepted = jnp.where(successful, transformed.transformed_state, state)
         return FixedStepResult(
@@ -297,8 +366,8 @@ class AbstractSSPRKFixedStepMethod(AbstractFixedStepMethod):
             jnp.zeros((), dtype=state.dtype),
             jnp.asarray(1, dtype=jnp.int32),
             jnp.asarray(self.order, dtype=jnp.int32),
-            transformed.applied,
-            transformed.correction_norm,
+            advanced.applied | transformed.applied,
+            jnp.maximum(advanced.correction_norm, transformed.correction_norm),
         )
 
 
@@ -309,11 +378,24 @@ class SSPRK33FixedStepMethod(AbstractSSPRKFixedStepMethod):
         /,
         *,
         transform: AbstractAcceptedStepTransform | None = None,
+        stage_transform: AbstractSSPRKStageTransform | None = None,
     ):
-        super().__init__(vector_field, order=3, transform=transform)
+        super().__init__(
+            vector_field,
+            order=3,
+            transform=transform,
+            stage_transform=stage_transform,
+        )
 
     def _advance(self, time, state, step_size, args, /):
-        return ssprk33_step(self.vector_field, time, state, step_size, args)
+        return ssprk33_step_with_evidence(
+            self.vector_field,
+            time,
+            state,
+            step_size,
+            args,
+            stage_transform=self.stage_transform,
+        )
 
 
 class SSPRK54FixedStepMethod(AbstractSSPRKFixedStepMethod):
@@ -323,11 +405,24 @@ class SSPRK54FixedStepMethod(AbstractSSPRKFixedStepMethod):
         /,
         *,
         transform: AbstractAcceptedStepTransform | None = None,
+        stage_transform: AbstractSSPRKStageTransform | None = None,
     ):
-        super().__init__(vector_field, order=4, transform=transform)
+        super().__init__(
+            vector_field,
+            order=4,
+            transform=transform,
+            stage_transform=stage_transform,
+        )
 
     def _advance(self, time, state, step_size, args, /):
-        return ssprk54_step(self.vector_field, time, state, step_size, args)
+        return ssprk54_step_with_evidence(
+            self.vector_field,
+            time,
+            state,
+            step_size,
+            args,
+            stage_transform=self.stage_transform,
+        )
 
 
 class FixedStepProblem(StrictModule, NonTrainableState):
@@ -829,7 +924,9 @@ def solve_fixed_step(
 
 __all__ = [
     "AbstractAcceptedStepTransform",
+    "AbstractSSPRKStageTransform",
     "CallableFixedStepMethod",
+    "CallableSSPRKStageTransform",
     "AbstractFixedStepMethod",
     "AcceptedStepTransformResult",
     "CompositeAcceptedStepTransform",
@@ -843,7 +940,9 @@ __all__ = [
     "FixedStepResult",
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",
+    "IdentitySSPRKStageTransform",
     "SSPRK33FixedStepMethod",
     "SSPRK54FixedStepMethod",
+    "StageTransformResult",
     "solve_fixed_step",
 ]

@@ -200,18 +200,17 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
                 transport.thermal_conductivity[owner],
                 conductivity_face,
             )
-        divergence = jnp.trace(face_velocity_gradient, axis1=-2, axis2=-1)
-        identity = jnp.eye(system.dimension, dtype=value.dtype)
-        stress = (
-            viscosity_face[:, None, None]
-            * (face_velocity_gradient + jnp.swapaxes(face_velocity_gradient, -1, -2))
-            + (bulk_face - 2.0 * viscosity_face / 3.0)[:, None, None]
-            * divergence[:, None, None]
-            * identity
+        viscous_flux = system.viscous_flux_from_primitive_gradients(
+            velocity_face,
+            face_velocity_gradient,
+            face_temperature_gradient,
+            viscosity_face,
+            bulk_face,
+            conductivity_face,
         )
-        traction = oe.contract("fij,fj->fi", stress, normal)
-        heat = conductivity_face * jnp.sum(face_temperature_gradient * normal, axis=-1)
-        energy = jnp.sum(velocity_face * traction, axis=-1) + heat
+        normal_flux = oe.contract("fij,fj->fi", viscous_flux, normal, backend="jax")
+        traction = normal_flux[:, 1 : 1 + system.dimension]
+        energy = normal_flux[:, -1]
         for patch_id, policy in enumerate(boundaries.boundaries):
             if not isinstance(policy, PrescribedHeatFluxWallBoundary):
                 continue

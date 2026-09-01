@@ -1,0 +1,12 @@
+{
+  "tensor_wall_free_stream_error": 0.0,
+  "entropy_filter_successful": true,
+  "entropy_filter_mean_defect": 0.0,
+  "viscous_rest_error": 2.8421709430404003e-16,
+  "triangle_free_stream_error": 5.001858302544629e-14,
+  "prism_free_stream_error": 9.788068792981898e-15,
+  "pyramid_free_stream_error": 7.87279467808131e-15,
+  "distributed_interfaces_exactly_once": true,
+  "partition_imbalance": 1.0,
+  "passed": true
+}

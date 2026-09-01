@@ -14,12 +14,12 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ._boundary import (
+from .._conservation_boundary import (
     _boundary_value,
     _require_axis_aligned_ale_normal,
     _static_ale_exterior_state,
     _validate_ale_boundary_context,
-    AbstractFiniteVolumeBoundary,
+    AbstractConservationBoundary,
     ALEBoundaryContext,
 )
 
@@ -89,7 +89,7 @@ def _reject_unsupported_ale_wall(
     )
 
 
-class SlipWallBoundary(AbstractFiniteVolumeBoundary):
+class SlipWallBoundary(AbstractConservationBoundary):
     """Impermeable inviscid wall for Cartesian or mapped normals."""
 
     def __init__(self):
@@ -128,7 +128,7 @@ class SlipWallBoundary(AbstractFiniteVolumeBoundary):
         return _static_ale_exterior_state(self, system, interior, context, axis)
 
 
-class MovingSlipWallBoundary(AbstractFiniteVolumeBoundary):
+class MovingSlipWallBoundary(AbstractConservationBoundary):
     """Inviscid moving wall with explicit wall/grid kinematic certification."""
 
     wall_velocity_provider: WallVelocityProvider = eqx.field(static=True)
@@ -300,7 +300,7 @@ class MovingSlipWallBoundary(AbstractFiniteVolumeBoundary):
         return system.primitive_to_conserved(exterior_primitive)
 
 
-class NoSlipAdiabaticWallBoundary(AbstractFiniteVolumeBoundary):
+class NoSlipAdiabaticWallBoundary(AbstractConservationBoundary):
     """No-slip wall with zero normal temperature gradient."""
 
     wall_velocity: Array
@@ -351,7 +351,7 @@ class NoSlipAdiabaticWallBoundary(AbstractFiniteVolumeBoundary):
         return _reject_unsupported_ale_wall(system, interior, context, axis)
 
 
-class NoSlipIsothermalWallBoundary(AbstractFiniteVolumeBoundary):
+class NoSlipIsothermalWallBoundary(AbstractConservationBoundary):
     """No-slip wall with a prescribed face temperature."""
 
     wall_velocity: Array
@@ -422,7 +422,7 @@ class NoSlipIsothermalWallBoundary(AbstractFiniteVolumeBoundary):
         return _reject_unsupported_ale_wall(system, interior, context, axis)
 
 
-class PrescribedHeatFluxWallBoundary(AbstractFiniteVolumeBoundary):
+class PrescribedHeatFluxWallBoundary(AbstractConservationBoundary):
     """No-slip wall with prescribed outward thermal heat flux."""
 
     wall_velocity: Array
@@ -495,7 +495,7 @@ class PrescribedHeatFluxWallBoundary(AbstractFiniteVolumeBoundary):
         return _reject_unsupported_ale_wall(system, interior, context, axis)
 
 
-class SupersonicInflowBoundary(AbstractFiniteVolumeBoundary):
+class SupersonicInflowBoundary(AbstractConservationBoundary):
     """Prescribed full primitive inflow state."""
 
     target: PrimitiveBoundaryTarget = eqx.field(static=True)
@@ -538,7 +538,7 @@ class SupersonicInflowBoundary(AbstractFiniteVolumeBoundary):
         return _static_ale_exterior_state(self, system, interior, context, axis)
 
 
-class SupersonicOutflowBoundary(AbstractFiniteVolumeBoundary):
+class SupersonicOutflowBoundary(AbstractConservationBoundary):
     """Pure extrapolation when every characteristic leaves the domain."""
 
     def __init__(self):
@@ -569,7 +569,7 @@ class SupersonicOutflowBoundary(AbstractFiniteVolumeBoundary):
         return _static_ale_exterior_state(self, system, interior, context, axis)
 
 
-class CharacteristicInflowBoundary(AbstractFiniteVolumeBoundary):
+class CharacteristicInflowBoundary(AbstractConservationBoundary):
     """Linearized characteristic projection of a target primitive state."""
 
     target: PrimitiveBoundaryTarget = eqx.field(static=True)
@@ -624,7 +624,7 @@ class CharacteristicInflowBoundary(AbstractFiniteVolumeBoundary):
         return _static_ale_exterior_state(self, system, aligned_interior, context, axis)
 
 
-class CharacteristicOutflowBoundary(AbstractFiniteVolumeBoundary):
+class CharacteristicOutflowBoundary(AbstractConservationBoundary):
     """Pressure-controlled linearized characteristic outflow."""
 
     pressure_target: ScalarBoundaryTarget = eqx.field(static=True)
@@ -685,7 +685,7 @@ class CharacteristicOutflowBoundary(AbstractFiniteVolumeBoundary):
         return _static_ale_exterior_state(self, system, aligned_interior, context, axis)
 
 
-class FarFieldBoundary(AbstractFiniteVolumeBoundary):
+class FarFieldBoundary(AbstractConservationBoundary):
     """Characteristic far-field state with incoming-wave replacement."""
 
     projector: CharacteristicInflowBoundary

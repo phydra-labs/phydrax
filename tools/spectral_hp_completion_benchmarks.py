@@ -10,7 +10,6 @@ from pathlib import Path
 from time import perf_counter
 
 import jax.numpy as jnp
-import numpy as np
 
 import phydrax as phx
 
@@ -19,13 +18,6 @@ def run() -> dict[str, object]:
     start = perf_counter()
     de_rham = phx.discretization.fem.TensorDeRhamComplex(5, 3)
     de_rham_seconds = perf_counter() - start
-    nodes = np.linspace(-1.0, 1.0, 6)[:, None]
-    subcells = np.linspace(-1.0, 1.0, 11)[:, None]
-    subcell = phx.equations.fem.SubcellFiniteVolumePlan(nodes, subcells)
-    values = jnp.ones((4, 6, 5))
-    projected = subcell.project(values)
-    reconstructed = subcell.reconstruct(projected)
-    transfer_error = float(jnp.max(jnp.abs(reconstructed - values)))
     marker = phx.solver.RelaxedHPMarking(3, 0.1)
     weights = marker.weights(
         jnp.asarray((1.0, 4.0, 2.0, 3.0)), jnp.ones((4,), dtype=bool)
@@ -38,11 +30,6 @@ def run() -> dict[str, object]:
             "divergence_curl_defect": float(de_rham.curl_div_defect),
             "construction_seconds": de_rham_seconds,
         },
-        "subcell": {
-            "dg_nodes": 6,
-            "subcells": 11,
-            "roundtrip_error": transfer_error,
-        },
         "relaxed_marking": {
             "budget": 3,
             "weight_sum": float(jnp.sum(weights)),
@@ -51,7 +38,6 @@ def run() -> dict[str, object]:
     result["passed"] = bool(
         result["de_rham"]["curl_gradient_defect"] <= 1.0e-12
         and result["de_rham"]["divergence_curl_defect"] <= 1.0e-12
-        and transfer_error <= 2.0e-12
         and float(jnp.sum(weights)) <= 3.0 + 1.0e-12
     )
     return result

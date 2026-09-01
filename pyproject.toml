@@ -60,6 +60,7 @@ dependencies = [
     "optimistix>=0.1.0",
     "qpax>=0.1.4",
     "h5py>=3.16.0",
+    "modepy>=2026.1,<2027",
 ]
 
 [project.optional-dependencies]

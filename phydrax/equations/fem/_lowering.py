@@ -129,6 +129,8 @@ def _coefficient_fields(
 
 
 def _tensor_family(element) -> ReferenceNodalFamily | None:
+    if element.cell_kind not in ("quadrilateral", "hexahedron"):
+        return None
     if (
         element.family
         not in (
@@ -154,7 +156,15 @@ def _tensor_family(element) -> ReferenceNodalFamily | None:
 
 
 def _prepared_reference(action, block, element, precision, domain_kind: str):
-    if block.cell_kind not in ("quadrilateral", "hexahedron"):
+    if (
+        block.cell_kind not in ("triangle", "quadrilateral", "tetrahedron", "hexahedron")
+        or element.representation != "point_value"
+        or element.value_shape
+        or (
+            block.cell_kind in ("triangle", "tetrahedron")
+            and _input_fields(action) != _output_fields(action)
+        )
+    ):
         identifier = canonical_fingerprint(
             {
                 "kind": "dense-finite-element-reference-binding",
@@ -170,40 +180,58 @@ def _prepared_reference(action, block, element, precision, domain_kind: str):
         _default_rule,
         _interval_rule,
         _quadrilateral_rule,
+        _triangle_rule,
     )
 
     explicit = dict(action.rules)
     if domain_kind == "cell":
         volume_rule = _action_rule(action, block.name, block.cell_kind)
-        facet_rule = (
-            _interval_rule()
-            if block.cell_kind == "quadrilateral"
-            else _quadrilateral_rule()
-        )
+        facet_rule = {
+            "triangle": _interval_rule(),
+            "quadrilateral": _interval_rule(),
+            "tetrahedron": _triangle_rule(),
+            "hexahedron": _quadrilateral_rule(),
+        }[block.cell_kind]
     else:
         from ...integration import (
             ReferenceHexahedronRule,
             ReferenceIntervalRule,
             ReferenceQuadrilateralRule,
+            ReferenceTetrahedronRule,
+            ReferenceTriangleRule,
         )
 
-        default_facet = (
-            _interval_rule()
-            if block.cell_kind == "quadrilateral"
-            else _quadrilateral_rule()
-        )
+        default_facet = {
+            "triangle": _interval_rule(),
+            "quadrilateral": _interval_rule(),
+            "tetrahedron": _triangle_rule(),
+            "hexahedron": _quadrilateral_rule(),
+        }[block.cell_kind]
         facet_rule = explicit.get(block.name, default_facet)
-        if block.cell_kind == "quadrilateral" and isinstance(
+        if block.cell_kind == "triangle" and isinstance(
+            facet_rule, ReferenceIntervalRule
+        ):
+            volume_rule = ReferenceTriangleRule(facet_rule.rule)
+        elif block.cell_kind == "quadrilateral" and isinstance(
             facet_rule, ReferenceIntervalRule
         ):
             volume_rule = ReferenceQuadrilateralRule(facet_rule.rule)
+        elif block.cell_kind == "tetrahedron" and isinstance(
+            facet_rule, ReferenceTriangleRule
+        ):
+            volume_rule = ReferenceTetrahedronRule(facet_rule.rule)
         elif block.cell_kind == "hexahedron" and isinstance(
             facet_rule, ReferenceQuadrilateralRule
         ):
             volume_rule = ReferenceHexahedronRule(facet_rule.rule)
         else:
             volume_rule = _default_rule(block.cell_kind)
-    facet_count = 4 if block.cell_kind == "quadrilateral" else 6
+    facet_count = {
+        "triangle": 3,
+        "quadrilateral": 4,
+        "tetrahedron": 4,
+        "hexahedron": 6,
+    }[block.cell_kind]
     actions = {operation for _, operation in _operators(action)}
     prepared_actions = {"interpolate", "interpolate_transpose"}
     if "grad" in actions or "normal-trace" in actions:

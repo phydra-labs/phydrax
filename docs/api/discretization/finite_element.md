@@ -329,6 +329,38 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ::: phydrax.discretization.fem.DistributedFiniteElementMortarPlan
 
+## High-order conservation
+
+::: phydrax.discretization.fem.FiniteElementBoundarySet
+
+---
+
+::: phydrax.equations.fem.DGSEMConservationMethodPlan
+
+---
+
+::: phydrax.equations.fem.NodalDGConservationMethodPlan
+
+---
+
+::: phydrax.equations.fem.EntropyFilterPlan
+
+---
+
+::: phydrax.equations.fem.LDGViscousFluxPlan
+
+---
+
+::: phydrax.discretization.fem.FiniteElementMeshImport
+
+---
+
+::: phydrax.discretization.fem.CostAwareFiniteElementPartition
+
+---
+
+::: phydrax.discretization.fem.FiniteElementDistributedPhasePlan
+
 ## Complete spectral hp
 
 ::: phydrax.discretization.fem.AnisotropicHPattern
@@ -339,9 +371,6 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ---
 
-::: phydrax.discretization.fem.SimplexModalFamily
-
----
 
 ::: phydrax.discretization.fem.HybridReferenceFamily
 
@@ -352,17 +381,8 @@ rejected proposals expose the base runtime and remain explicitly rejected.
 
 ---
 
-::: phydrax.equations.fem.BR1ViscousPlan
 
----
 
-::: phydrax.equations.fem.SubcellFiniteVolumePlan
-
----
-
-::: phydrax.equations.fem.ALEMetricState
-
----
 
 ::: phydrax.solver.HPNewtonKrylovBuilder
 

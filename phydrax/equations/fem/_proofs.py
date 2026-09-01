@@ -27,7 +27,6 @@ from ...linalg import (
     OperatorProperties,
     solve,
 )
-from .._variational import VariationalCoefficient
 from .._finite_element_variational import (
     _interval_rule,
     _reference_rule_data,
@@ -43,6 +42,7 @@ from .._finite_element_variational import (
     SIPGPenaltyPolicy,
     SourceAction,
 )
+from .._variational import VariationalCoefficient
 from ._operators import curl, symmetric_gradient
 
 
@@ -131,18 +131,23 @@ def upwind_advection_form(
             value,
         )
 
-    def flux(plus, minus, points, weights, normal, context):
+    def flux(plus_values, minus_values, points, weights, normal, context):
+        plus = plus_values[0]
+        minus = minus_values[0]
         speed = jnp.sum(velocity_ * normal, axis=-1)
-        selected = jnp.where(speed[:, None] >= 0.0, plus, minus)
-        numerical = speed[:, None] * selected
+        factor = speed.reshape(speed.shape + (1,) * (plus.ndim - speed.ndim))
+        selected = jnp.where(factor >= 0.0, plus, minus)
+        numerical = factor * selected
         return numerical, -numerical
 
-    def boundary_flux(plus, points, weights, normal, context):
+    def boundary_flux(plus_values, points, weights, normal, context):
+        plus = plus_values[0]
         speed = jnp.sum(velocity_ * normal, axis=-1)
+        factor = speed.reshape(speed.shape + (1,) * (plus.ndim - speed.ndim))
         incoming = inflow_.evaluate(points, context)
         incoming = jnp.broadcast_to(incoming, plus.shape)
-        trace = jnp.where(speed[:, None] >= 0.0, plus, incoming)
-        return speed[:, None] * trace
+        trace = jnp.where(factor >= 0.0, plus, incoming)
+        return factor * trace
 
     terms = [
         CellResidualAction(
@@ -153,6 +158,7 @@ def upwind_advection_form(
         ),
         InteriorFacetAction(
             field_name,
+            (field_name,),
             flux,
             domain=interior_domain,
             action_id="upwind-interior-flux",
@@ -162,6 +168,7 @@ def upwind_advection_form(
         terms.append(
             ExteriorFacetAction(
                 field_name,
+                (field_name,),
                 boundary_flux,
                 domain=boundary_domain,
                 action_id="upwind-boundary-flux",

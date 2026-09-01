@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from itertools import product
 from math import comb
 from numbers import Integral
 from typing import Literal
@@ -12,6 +11,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import modepy as mp
 import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
@@ -490,12 +490,14 @@ def local_diagonal(
 
 
 class SimplexNodalFamily(StrictModule, NonTrainableState):
+    """Warp-and-blend simplex nodes with an orthonormal modal tabulation."""
+
     cell_kind: str = eqx.field(static=True)
     order: int = eqx.field(static=True)
     nodes: Array
     multiindices: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    monomial_powers: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     coefficients: Array
+    condition_number: float = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
     def __init__(self, cell_kind: str, order: int, /):
@@ -506,52 +508,68 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             raise ValueError(
                 "Simplex nodal families require triangle/tetrahedron and p>=1."
             )
-        barycentric = tuple(
-            index
-            for index in product(range(p + 1), repeat=dimension + 1)
-            if sum(index) == p
+        space = mp.PN(dimension, p)
+        node_tuples = tuple(tuple(index) for index in mp.node_tuples_for_space(space))
+        unit_nodes = np.asarray(
+            mp.warp_and_blend_nodes(dimension, p, node_tuples), dtype=float
         )
-        nodes = np.asarray([index[1:] for index in barycentric], dtype=float) / p
-        powers = tuple(
-            index for index in product(range(p + 1), repeat=dimension) if sum(index) <= p
+        nodes = 0.5 * (unit_nodes.T + 1.0)
+        basis = mp.orthonormal_basis_for_space(space, mp.Simplex(dimension))
+        modal = np.stack(
+            tuple(np.asarray(function(unit_nodes)) for function in basis.functions),
+            axis=-1,
         )
-        vandermonde = np.stack(
-            [np.prod(nodes ** np.asarray(power), axis=1) for power in powers],
-            axis=1,
-        )
+        coefficients = np.linalg.solve(modal, np.eye(space.space_dim))
+        condition = float(np.linalg.cond(modal))
+        barycentric = tuple((p - sum(index),) + tuple(index) for index in node_tuples)
         self.cell_kind = cell
         self.order = p
         self.nodes = jnp.asarray(nodes)
         self.multiindices = barycentric
-        self.monomial_powers = powers
-        self.coefficients = jnp.asarray(np.linalg.inv(vandermonde))
+        self.coefficients = jnp.asarray(coefficients)
+        self.condition_number = condition
         self.family_id = canonical_fingerprint(
-            {"kind": "simplex-nodal-family", "cell": cell, "order": p}
+            {
+                "kind": "simplex-warp-blend-nodal-family",
+                "cell": cell,
+                "order": p,
+                "node_source": f"modepy:{mp.__version__}",
+                "nodes": array_tree_fingerprint(nodes),
+                "condition_number": condition,
+            }
         )
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
-        points_ = jnp.asarray(points)
-        dimension = points_.shape[-1]
-        monomials = jnp.stack(
+        points_ = np.asarray(points, dtype=float)
+        dimension = {"triangle": 2, "tetrahedron": 3}[self.cell_kind]
+        if points_.ndim != 2 or points_.shape[-1] != dimension:
+            raise ValueError("Simplex tabulation points have incompatible shape.")
+        unit_points = (2.0 * points_ - 1.0).T
+        space = mp.PN(dimension, self.order)
+        basis = mp.orthonormal_basis_for_space(space, mp.Simplex(dimension))
+        modal = np.stack(
+            tuple(np.asarray(function(unit_points)) for function in basis.functions),
+            axis=-1,
+        )
+        modal_gradients = np.stack(
             tuple(
-                jnp.prod(points_ ** jnp.asarray(power), axis=-1)
-                for power in self.monomial_powers
+                np.stack(
+                    tuple(np.asarray(value) for value in gradient(unit_points)), axis=-1
+                )
+                for gradient in basis.gradients
+            ),
+            axis=1,
+        )
+        coefficients = np.asarray(self.coefficients)
+        values = modal @ coefficients
+        gradients = np.stack(
+            tuple(
+                (2.0 * modal_gradients[..., axis]) @ coefficients
+                for axis in range(dimension)
             ),
             axis=-1,
         )
-        values = monomials @ self.coefficients
-        derivatives = []
-        for axis in range(dimension):
-            terms = []
-            for power in self.monomial_powers:
-                exponent = power[axis]
-                reduced = list(power)
-                reduced[axis] = max(exponent - 1, 0)
-                terms.append(
-                    exponent * jnp.prod(points_ ** jnp.asarray(reduced), axis=-1)
-                )
-            derivatives.append(jnp.stack(tuple(terms), axis=-1) @ self.coefficients)
-        return values, jnp.stack(tuple(derivatives), axis=-1)
+        return jnp.asarray(values), jnp.asarray(gradients)
 
     def finite_element(self) -> FiniteElementSpec:
         from ._reference_topology import reference_cell_topology
