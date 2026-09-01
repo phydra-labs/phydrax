@@ -53,6 +53,23 @@ python examples/prescribed_immersed_cylinder.py
 Each script prints its acceptance flag and balance, geometry, constitutive,
 contact, nonlinear, or topology evidence for the exercised route.
 
+## Atomistic ecosystem scripts
+
+The atomistic examples exercise the native force-field, trajectory-interchange,
+enhanced-sampling, and committee-uncertainty paths:
+
+```text
+python examples/atomistic_force_field.py
+python examples/atomistic_virtual_sites.py
+python examples/atomistic_interop.py
+python examples/atomistic_ipi.py
+python examples/atomistic_sampling.py
+python examples/atomistic_uncertainty.py
+```
+
+Each script is self-contained, uses stable prepared plans, and fails if the exercised
+runtime contract is unsuccessful.
+
 ## Velocimetry scripts
 
 The native image-measurement stack includes deterministic, directly runnable

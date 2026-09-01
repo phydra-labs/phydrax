@@ -65,6 +65,7 @@ class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
 
     cutoff: float | None = eqx.field(static=True)
     pair_geometry: bool = eqx.field(static=True)
+    interaction_site_geometry: bool = eqx.field(static=True)
     directed_graph: bool = eqx.field(static=True)
     bonded_geometry: bool = eqx.field(static=True)
     reciprocal_grid: bool = eqx.field(static=True)
@@ -75,6 +76,7 @@ class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
         *,
         cutoff: float | None = None,
         pair_geometry: bool = False,
+        interaction_site_geometry: bool = False,
         directed_graph: bool = False,
         bonded_geometry: bool = False,
         reciprocal_grid: bool = False,
@@ -84,6 +86,7 @@ class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
             raise ValueError("Potential cutoff must be positive or None.")
         self.cutoff = cutoff_
         self.pair_geometry = bool(pair_geometry)
+        self.interaction_site_geometry = bool(interaction_site_geometry)
         self.directed_graph = bool(directed_graph)
         self.bonded_geometry = bool(bonded_geometry)
         self.reciprocal_grid = bool(reciprocal_grid)
@@ -92,6 +95,7 @@ class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
                 "kind": "atomistic-potential-requirements",
                 "cutoff": cutoff_,
                 "pair_geometry": self.pair_geometry,
+                "interaction_site_geometry": self.interaction_site_geometry,
                 "directed_graph": self.directed_graph,
                 "bonded_geometry": self.bonded_geometry,
                 "reciprocal_grid": self.reciprocal_grid,

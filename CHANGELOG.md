@@ -163,6 +163,14 @@
   RESPA composition, Born–Oppenheimer provider boundaries, ring polymers with
   PILE, and variance-constrained semi-grand transitions. Dense graph resources
   are now explicit execution-plan identity rather than learned architecture identity.
+- Extended the atomistic runtime with interaction-site coordinate maps and virtual-site
+  force pullback; native force-field bundles, terms, policies, SETTLE, and OpenMM/OpenFF/
+  ParmEd adapters; typed frames, H5MD/XYZ reporting, rerun, MDAnalysis, i-PI, and PACKMOL
+  boundaries; collective variables, static/adaptive biases, replica exchange, FEP/TI/BAR/
+  MBAR; committee uncertainty and deterministic acquisition; advanced thermostats,
+  anisotropic pressure control, rigid and Brownian dynamics; polarization, multipoles,
+  implicit solvent, advanced quantum-nuclear estimators; walls, manifold constraints,
+  active/DPD and EAM/SW/Tersoff models; and distributed atomistic execution.
 - Added fixed-capacity explicit Material Point Method dynamics for plane-strain and
   three-dimensional Neo-Hookean solids: nodal quadratic B-splines, matched APIC
   transfer, first-Piola reference-volume forces, transactional USL updates,
