@@ -2,12 +2,16 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from . import layer_potential, vortex
+from . import layer_potential, vortex as vortex
 from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
+from ._convolution_quadrature import *  # noqa: F403
+from ._convolution_quadrature import __all__ as _convolution_quadrature_all
 from ._local_ops import local_integral, local_integral_ball
 from ._spatial_ops import nonlocal_integral, spatial_integral
 from ._time_convolution import time_convolution
+from .layer_potential import *  # noqa: F403
 from .layer_potential import (
+    __all__ as _layer_potential_all,
     AbstractLayerBackend,
     AbstractLayerKernel,
     AdaptiveLayerEvaluation2D,
@@ -122,6 +126,11 @@ __all__ = [
     "nonlocal_integral",
     "spatial_integral",
     "time_convolution",
+]
+__all__ += [
+    name
+    for name in (*_convolution_quadrature_all, *_layer_potential_all)
+    if name not in __all__
 ]
 
 __all__ += [name for name in _vortex_all if name not in __all__]

@@ -15,6 +15,7 @@ from ....integration import GaussLegendreRule, reference_rule_data, ReferenceTri
 
 
 _PAIR_NAMES = ("coincident", "shared-edge", "shared-vertex", "near")
+_PAIR_CLASS_NAMES = (*_PAIR_NAMES, "regular")
 
 
 class _SurfacePairData3D(StrictModule, NonTrainableState):
@@ -29,7 +30,11 @@ class _SurfacePairData3D(StrictModule, NonTrainableState):
     regular_weights: Array
     counts: tuple[int, int, int, int, int] = eqx.field(static=True)
     maximum_errors: Array
+    maximum_tolerances: Array
+    supported: Array
     evaluations: Array
+    class_workspace_bytes: tuple[int, int, int, int, int] = eqx.field(static=True)
+    class_resident_bytes: tuple[int, int, int, int, int] = eqx.field(static=True)
     preparation_workspace_bytes: int = eqx.field(static=True)
     resident_bytes: int = eqx.field(static=True)
 
@@ -185,12 +190,16 @@ def _kernel_sum(
     test_reference: np.ndarray,
     trial_reference: np.ndarray,
     reference_weights: np.ndarray,
+    pair_class: str,
 ) -> float:
     test_points = _map_triangle(test_triangle, test_reference)
     trial_points = _map_triangle(trial_triangle, trial_reference)
     distance = np.linalg.norm(test_points - trial_points, axis=1)
     if np.any(~np.isfinite(distance)) or np.any(distance <= 0.0):
-        raise ValueError("Transformed Galerkin quadrature produced a singular point.")
+        raise ValueError(
+            f"[quadrature-{pair_class}] Transformed Galerkin quadrature "
+            "produced a singular point."
+        )
     return float(
         np.sum(reference_weights / (4.0 * np.pi * distance))
         * _surface_jacobian(test_triangle)
@@ -231,12 +240,57 @@ def _singular_pair_value(
         test_reference,
         trial_reference,
         weights,
+        adjacency,
     )
 
 
 def _regular_rule(order: int) -> tuple[np.ndarray, np.ndarray]:
     data = reference_rule_data(ReferenceTriangleRule(GaussLegendreRule(int(order))))
     return np.asarray(data.points, dtype=float), np.asarray(data.weights, dtype=float)
+
+
+def _class_workspace_byte_estimates(
+    regular_order: int,
+    singular_order: int,
+    near_order: int,
+) -> tuple[tuple[int, int, int, int, int], int]:
+    """Return per-class peak scratch estimates and stored regular point count."""
+    float_bytes = np.dtype(float).itemsize
+    regular_points = regular_order**2
+    high_regular_points = (regular_order + 2) ** 2
+    high_singular = singular_order + 2
+    high_near = near_order + 2
+    singular = tuple(
+        transform_count * high_singular**4 * 5 * float_bytes
+        for transform_count in (6, 5, 2)
+    )
+    near = high_near**4 * 4 * float_bytes
+    regular = (5 * high_regular_points**2 + 6 * high_regular_points) * float_bytes
+    return (*singular, near, regular), regular_points
+
+
+def _preparation_workspace_byte_estimate(
+    face_count: int,
+    exception_count: int,
+    class_workspace_bytes: tuple[int, int, int, int, int],
+) -> int:
+    float_bytes = np.dtype(float).itemsize
+    geometry_bytes = max(face_count, 1) * 2 * 3 * float_bytes
+    exception_record_bytes = max(exception_count, 1) * 5 * float_bytes
+    return geometry_bytes + exception_record_bytes + max(class_workspace_bytes)
+
+
+def _resident_byte_estimate(
+    face_count: int,
+    exception_count: int,
+    regular_point_count: int,
+) -> int:
+    float_bytes = np.dtype(float).itemsize
+    int32_bytes = np.dtype(np.int32).itemsize
+    int64_bytes = np.dtype(np.int64).itemsize
+    exception_bytes = exception_count * (int64_bytes + 3 * int32_bytes + float_bytes)
+    regular_bytes = face_count * regular_point_count * 4 * float_bytes
+    return exception_bytes + regular_bytes
 
 
 def _regular_pair_value(
@@ -250,7 +304,10 @@ def _regular_pair_value(
     difference = test_points[:, None, :] - trial_points[None, :, :]
     distance = np.linalg.norm(difference, axis=-1)
     if np.any(~np.isfinite(distance)) or np.any(distance <= 0.0):
-        raise ValueError("Regular Galerkin quadrature encountered a singular point.")
+        raise ValueError(
+            "[quadrature-regular] Regular Galerkin quadrature encountered "
+            "a singular point."
+        )
     return float(
         np.sum(weights[:, None] * weights[None, :] / (4.0 * np.pi * distance))
         * _surface_jacobian(test_triangle)
@@ -278,6 +335,33 @@ def _diameter(triangle: np.ndarray) -> float:
     )
 
 
+def _surface_pair_class(
+    target: int,
+    source: int,
+    faces: np.ndarray,
+    bounds_min: np.ndarray,
+    bounds_max: np.ndarray,
+    diameters: np.ndarray,
+    near_ratio: float,
+) -> int:
+    if target == source:
+        return 0
+    shared_count = len(set(map(int, faces[target])) & set(map(int, faces[source])))
+    if shared_count == 2:
+        return 1
+    if shared_count == 1:
+        return 2
+    gap = np.maximum(
+        np.maximum(
+            bounds_min[target] - bounds_max[source],
+            bounds_min[source] - bounds_max[target],
+        ),
+        0.0,
+    )
+    scale = max(diameters[target], diameters[source])
+    return 3 if float(np.linalg.norm(gap)) / scale < near_ratio else -1
+
+
 def _near_pair_value(
     test_triangle: np.ndarray,
     trial_triangle: np.ndarray,
@@ -288,16 +372,18 @@ def _near_pair_value(
     absolute_tolerance: float,
     relative_tolerance: float,
     depth: int = 0,
-) -> tuple[float, float, int]:
+) -> tuple[float, float, int, float]:
     low = _regular_pair_value(test_triangle, trial_triangle, low_order)
     high = _regular_pair_value(test_triangle, trial_triangle, high_order)
     error = abs(high - low)
     evaluations = low_order**4 + high_order**4
     threshold = absolute_tolerance + relative_tolerance * abs(high)
     if error <= threshold:
-        return high, error, evaluations
+        return high, error, evaluations, threshold
     if depth >= max_depth:
-        raise ValueError("Near-pair quadrature exhausted its subdivision capacity.")
+        raise ValueError(
+            "[quadrature-near] Near-pair quadrature exhausted its subdivision capacity."
+        )
     if _diameter(test_triangle) >= _diameter(trial_triangle):
         children = tuple(
             (child, trial_triangle) for child in _subdivide_triangle(test_triangle)
@@ -323,6 +409,7 @@ def _near_pair_value(
         sum(value[0] for value in values),
         sum(value[1] for value in values),
         evaluations + sum(value[2] for value in values),
+        sum(value[3] for value in values),
     )
 
 
@@ -355,40 +442,102 @@ def _prepare_surface_pairs_3d(
 ) -> _SurfacePairData3D:
     vertices_host = np.asarray(vertices, dtype=float)
     faces_host = np.asarray(faces, dtype=np.int32)
-    triangles = vertices_host[faces_host]
     face_count = faces_host.shape[0]
+    class_workspace_bytes, regular_point_count = _class_workspace_byte_estimates(
+        regular_order,
+        singular_order,
+        near_order,
+    )
+    minimum_exception_count = face_count
+    if minimum_exception_count > int(max_exception_pairs):
+        raise ValueError(
+            "[exception-capacity] Surface pair exceptions exceed max_exception_pairs."
+        )
+    minimum_workspace = _preparation_workspace_byte_estimate(
+        face_count,
+        minimum_exception_count,
+        class_workspace_bytes,
+    )
+    if minimum_workspace > int(max_preparation_workspace_bytes):
+        raise ValueError(
+            "[preparation-bytes] Surface pair preparation exceeds its "
+            "workspace-byte budget."
+        )
+    minimum_resident = _resident_byte_estimate(
+        face_count,
+        minimum_exception_count,
+        regular_point_count,
+    )
+    if minimum_resident > int(max_resident_bytes):
+        raise ValueError(
+            "[resident-bytes] Surface pair state exceeds its resident-byte budget."
+        )
+
+    triangles = vertices_host[faces_host]
     bounds_min = np.min(triangles, axis=1)
     bounds_max = np.max(triangles, axis=1)
     diameters = np.asarray([_diameter(triangle) for triangle in triangles])
 
-    records: list[tuple[int, int, int]] = []
+    exception_count = 0
     regular_count = 0
     regular_error = 0.0
+    regular_tolerance = 0.0
     regular_evaluations = 0
     high_regular = regular_order + 2
     for target in range(face_count):
-        target_vertices = set(map(int, faces_host[target]))
         for source in range(face_count):
-            if target == source:
-                pair_class = 0
-            else:
-                shared_count = len(target_vertices & set(map(int, faces_host[source])))
-                if shared_count == 2:
-                    pair_class = 1
-                elif shared_count == 1:
-                    pair_class = 2
-                else:
-                    gap = np.maximum(
-                        np.maximum(
-                            bounds_min[target] - bounds_max[source],
-                            bounds_min[source] - bounds_max[target],
-                        ),
-                        0.0,
-                    )
-                    scale = max(diameters[target], diameters[source])
-                    pair_class = (
-                        3 if float(np.linalg.norm(gap)) / scale < near_ratio else -1
-                    )
+            pair_class = _surface_pair_class(
+                target,
+                source,
+                faces_host,
+                bounds_min,
+                bounds_max,
+                diameters,
+                near_ratio,
+            )
+            if pair_class < 0:
+                regular_count += 1
+                continue
+            if exception_count >= int(max_exception_pairs):
+                raise ValueError(
+                    "[exception-capacity] Surface pair exceptions exceed "
+                    "max_exception_pairs."
+                )
+            exception_count += 1
+
+    estimated_workspace = _preparation_workspace_byte_estimate(
+        face_count,
+        exception_count,
+        class_workspace_bytes,
+    )
+    if estimated_workspace > int(max_preparation_workspace_bytes):
+        raise ValueError(
+            "[preparation-bytes] Surface pair preparation exceeds its "
+            "workspace-byte budget."
+        )
+    resident_bytes = _resident_byte_estimate(
+        face_count,
+        exception_count,
+        regular_point_count,
+    )
+    if resident_bytes > int(max_resident_bytes):
+        raise ValueError(
+            "[resident-bytes] Surface pair state exceeds its resident-byte budget."
+        )
+
+    records = np.empty((exception_count, 3), dtype=np.int32)
+    record_index = 0
+    for target in range(face_count):
+        for source in range(face_count):
+            pair_class = _surface_pair_class(
+                target,
+                source,
+                faces_host,
+                bounds_min,
+                bounds_max,
+                diameters,
+                near_ratio,
+            )
             if pair_class < 0:
                 low = _regular_pair_value(
                     triangles[target], triangles[source], regular_order
@@ -399,31 +548,26 @@ def _prepare_surface_pairs_3d(
                 error = abs(high - low)
                 threshold = absolute_tolerance + relative_tolerance * abs(high)
                 if error > threshold:
-                    raise ValueError("Regular-pair quadrature exceeds its tolerance.")
+                    raise ValueError(
+                        "[quadrature-regular] Regular-pair quadrature exceeds "
+                        "its tolerance."
+                    )
                 regular_error = max(regular_error, error)
+                regular_tolerance = max(regular_tolerance, threshold)
                 regular_evaluations += regular_order**4 + high_regular**4
-                regular_count += 1
                 continue
-            if len(records) >= int(max_exception_pairs):
-                raise ValueError("Surface pair exceptions exceed max_exception_pairs.")
-            records.append((target, source, pair_class))
-
-    estimated_workspace = max(face_count, 1) * 2 * 3 * np.dtype(float).itemsize
-    estimated_workspace += max(len(records), 1) * 5 * np.dtype(float).itemsize
-    singular_rule_workspace = 6 * (singular_order + 2) ** 4 * 5 * np.dtype(float).itemsize
-    near_rule_workspace = (near_order + 2) ** 4 * 4 * np.dtype(float).itemsize
-    estimated_workspace += max(singular_rule_workspace, near_rule_workspace)
-    if estimated_workspace > int(max_preparation_workspace_bytes):
-        raise ValueError("Surface pair preparation exceeds its workspace budget.")
-
-    values = np.empty((len(records),), dtype=float)
-    classes = np.empty((len(records),), dtype=np.int32)
+            records[record_index] = (target, source, pair_class)
+            record_index += 1
+    values = np.empty((exception_count,), dtype=float)
+    classes = np.empty((exception_count,), dtype=np.int32)
     errors = np.zeros((5,), dtype=float)
+    tolerances = np.zeros((5,), dtype=float)
     evaluations = np.zeros((5,), dtype=np.int64)
     counts = np.zeros((4,), dtype=np.int64)
     high_singular = singular_order + 2
     high_near = near_order + 2
     errors[4] = regular_error
+    tolerances[4] = regular_tolerance
     evaluations[4] = regular_evaluations
     for index, (target, source, pair_class) in enumerate(records):
         if pair_class == 0:
@@ -446,11 +590,12 @@ def _prepare_surface_pairs_3d(
             threshold = absolute_tolerance + relative_tolerance * abs(high)
             if error > threshold:
                 raise ValueError(
+                    f"[quadrature-{_PAIR_NAMES[pair_class]}] "
                     f"{_PAIR_NAMES[pair_class]} quadrature exceeds its tolerance."
                 )
             value = high
         else:
-            value, error, count = _near_pair_value(
+            value, error, count, threshold = _near_pair_value(
                 triangles[target],
                 triangles[source],
                 low_order=near_order,
@@ -462,12 +607,13 @@ def _prepare_surface_pairs_3d(
         values[index] = value
         classes[index] = pair_class
         errors[pair_class] = max(errors[pair_class], error)
+        tolerances[pair_class] = max(tolerances[pair_class], threshold)
         evaluations[pair_class] += count
         counts[pair_class] += 1
 
-    if records:
-        targets = np.asarray([record[0] for record in records], dtype=np.int32)
-        sources = np.asarray([record[1] for record in records], dtype=np.int32)
+    if exception_count:
+        targets = records[:, 0]
+        sources = records[:, 1]
         keys = targets.astype(np.int64) * face_count + sources.astype(np.int64)
         order = np.argsort(keys, kind="stable")
         keys, targets, sources = keys[order], targets[order], sources[order]
@@ -478,20 +624,14 @@ def _prepare_surface_pairs_3d(
         sources = np.zeros((0,), dtype=np.int32)
 
     regular_points, regular_weights = _regular_face_quadrature(triangles, regular_order)
-    resident_bytes = sum(
-        array.nbytes
-        for array in (
-            keys,
-            targets,
-            sources,
-            classes,
-            values,
-            np.asarray(regular_points),
-            np.asarray(regular_weights),
-        )
+    class_counts = np.concatenate((counts, np.asarray([regular_count], dtype=np.int64)))
+    supported = np.isfinite(errors) & np.isfinite(tolerances)
+    supported &= (class_counts == 0) | (errors <= tolerances)
+    exception_entry_bytes = _resident_byte_estimate(0, 1, 0)
+    class_resident_bytes = (
+        *(int(count) * exception_entry_bytes for count in counts),
+        _resident_byte_estimate(face_count, 0, regular_point_count),
     )
-    if resident_bytes > int(max_resident_bytes):
-        raise ValueError("Surface pair state exceeds its resident-byte budget.")
     return _SurfacePairData3D(
         exception_keys=jnp.asarray(keys, dtype=jnp.int64),
         targets=jnp.asarray(targets, dtype=jnp.int32),
@@ -508,7 +648,11 @@ def _prepare_surface_pairs_3d(
             int(regular_count),
         ),
         maximum_errors=jnp.asarray(errors),
+        maximum_tolerances=jnp.asarray(tolerances),
+        supported=jnp.asarray(supported),
         evaluations=jnp.asarray(evaluations, dtype=jnp.int64),
+        class_workspace_bytes=class_workspace_bytes,
+        class_resident_bytes=class_resident_bytes,
         preparation_workspace_bytes=int(estimated_workspace),
         resident_bytes=int(resident_bytes),
     )

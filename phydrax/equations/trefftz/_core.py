@@ -27,6 +27,7 @@ TrialEquationFamily = Literal[
     "polyharmonic",
     "helmholtz",
     "linear-elasticity",
+    "stokes",
     "dirac",
 ]
 TrialExactness = Literal["algebraic"]
@@ -221,6 +222,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
             "polyharmonic",
             "helmholtz",
             "linear-elasticity",
+            "stokes",
             "dirac",
         ):
             raise ValueError("Unknown Trefftz equation family.")

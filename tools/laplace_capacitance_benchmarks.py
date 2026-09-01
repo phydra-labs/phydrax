@@ -19,6 +19,34 @@ _TETRA_VERTICES = np.asarray(
     [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 )
 
+_SPHERE_FACE_LADDER = (20, 80, 320, 1280)
+_SPHERE_SUBDIVISIONS = {
+    face_count: subdivision for subdivision, face_count in enumerate(_SPHERE_FACE_LADDER)
+}
+_SPHERE_ERROR_LIMITS = {
+    20: 0.20,
+    80: 0.10,
+    320: 0.05,
+    1280: 0.025,
+}
+
+
+def _sphere_face_count(case: str) -> int | None:
+    if case == "icosphere":
+        return 20
+    prefix = "icosphere-"
+    if not case.startswith(prefix):
+        return None
+    suffix = case.removeprefix(prefix)
+    if not suffix.isdecimal():
+        raise ValueError(f"[geometry] Unsupported sphere refinement {case!r}.")
+    face_count = int(suffix)
+    if face_count not in _SPHERE_SUBDIVISIONS:
+        raise ValueError(
+            f"[geometry] Unsupported sphere refinement face count {face_count}."
+        )
+    return face_count
+
 
 def _region(case: str):
     if case == "tetrahedron":
@@ -29,12 +57,21 @@ def _region(case: str):
         )
         faces = np.concatenate((_TETRA_FACES, _TETRA_FACES + 4))
         return phx.geometry.MeshRegion(vertices, faces)
-    if case == "icosphere":
+    sphere_faces = _sphere_face_count(case)
+    if sphere_faces is not None:
         import trimesh
 
-        mesh = trimesh.creation.icosphere(subdivisions=0, radius=1.0)
+        mesh = trimesh.creation.icosphere(
+            subdivisions=_SPHERE_SUBDIVISIONS[sphere_faces],
+            radius=1.0,
+        )
+        if int(mesh.faces.shape[0]) != sphere_faces:
+            raise ValueError(
+                "[geometry] Deterministic icosphere refinement produced an "
+                "unexpected face count."
+            )
         return phx.geometry.MeshRegion(np.asarray(mesh.vertices), np.asarray(mesh.faces))
-    raise ValueError(f"Unknown benchmark case {case!r}.")
+    raise ValueError(f"[geometry] Unknown benchmark case {case!r}.")
 
 
 def _selections(prepared, case: str):
@@ -94,23 +131,50 @@ def _case(case: str):
     residuals = [
         float(linear.diagnostics.relative_residual) for linear in result.linear_results
     ]
+    sphere_faces = _sphere_face_count(case)
     sphere_relative_error = (
         abs(float(result.capacitance[0, 0]) - 4.0 * np.pi) / (4.0 * np.pi)
-        if case == "icosphere"
+        if sphere_faces is not None
         else None
     )
-    passed = bool(
-        result.valid
-        & (dense_error <= 1.0e-10)
-        & jnp.all(jnp.isfinite(result.capacitance))
-        & (True if sphere_relative_error is None else sphere_relative_error <= 0.2)
-    )
+    failure_codes = []
+    if not bool(result.valid):
+        failure_codes.append("linear-solve")
+    if dense_error > 1.0e-10:
+        failure_codes.append("dense-action")
+    if not bool(jnp.all(jnp.isfinite(result.capacitance))):
+        failure_codes.append("nonfinite-capacitance")
+    if (
+        sphere_relative_error is not None
+        and sphere_relative_error > _SPHERE_ERROR_LIMITS[sphere_faces]
+    ):
+        failure_codes.append("sphere-capacitance")
+    passed = not failure_codes
     return {
         "case": case,
         "faces": face_count,
         "components": prepared.component_count,
         "conductors": len(result.conductor_names),
         "pair_counts": list(prepared.assembly_report.pair_counts),
+        "pair_class_names": list(prepared.assembly_report.pair_class_names),
+        "pair_class_maximum_errors": np.asarray(
+            prepared.assembly_report.maximum_errors
+        ).tolist(),
+        "pair_class_tolerances": np.asarray(
+            prepared.assembly_report.pair_class_tolerances
+        ).tolist(),
+        "pair_class_supported": np.asarray(
+            prepared.assembly_report.pair_class_supported
+        ).tolist(),
+        "pair_class_evaluations": np.asarray(
+            prepared.assembly_report.evaluations
+        ).tolist(),
+        "pair_class_workspace_bytes": list(
+            prepared.assembly_report.pair_class_workspace_bytes
+        ),
+        "pair_class_resident_bytes": list(
+            prepared.assembly_report.pair_class_resident_bytes
+        ),
         "exception_count": prepared.assembly_report.exception_count,
         "resident_bytes": prepared.assembly_report.resident_bytes,
         "preparation_workspace_bytes": (
@@ -126,10 +190,47 @@ def _case(case: str):
         "capacitance": np.asarray(result.capacitance).tolist(),
         "reciprocity_defect": float(result.capacitance_reciprocity_defect),
         "sphere_relative_capacitance_error": sphere_relative_error,
+        "sphere_error_limit": (
+            None if sphere_faces is None else _SPHERE_ERROR_LIMITS[sphere_faces]
+        ),
+        "failure_codes": failure_codes,
         "preparation_seconds": preparation_seconds,
         "action_seconds": action_seconds,
         "solve_seconds": solve_seconds,
         "passed": passed,
+    }
+
+
+def _sphere_refinement_evidence(records):
+    sphere_records = [
+        record for record in records if _sphere_face_count(record["case"]) is not None
+    ]
+    recorded_faces = [int(record["faces"]) for record in sphere_records]
+    errors = [
+        float(record["sphere_relative_capacitance_error"]) for record in sphere_records
+    ]
+    complete = tuple(recorded_faces) == _SPHERE_FACE_LADDER
+    decreasing = complete and all(
+        finer < coarser for coarser, finer in zip(errors, errors[1:])
+    )
+    failure_codes = []
+    if not complete:
+        failure_codes.append("sphere-ladder-incomplete")
+    if complete and not decreasing:
+        failure_codes.append("sphere-convergence")
+    if any(
+        error > _SPHERE_ERROR_LIMITS[faces]
+        for faces, error in zip(recorded_faces, errors, strict=True)
+    ):
+        failure_codes.append("sphere-capacitance")
+    return {
+        "face_ladder": list(_SPHERE_FACE_LADDER),
+        "recorded_faces": recorded_faces,
+        "relative_capacitance_errors": errors,
+        "strictly_decreasing": decreasing if complete else None,
+        "complete": complete,
+        "failure_codes": failure_codes,
+        "passed": complete and not failure_codes,
     }
 
 
@@ -150,14 +251,19 @@ def main():
     arguments = _parser().parse_args()
     cases = ["tetrahedron", "two-tetrahedra"]
     if not arguments.smoke:
-        cases.append("icosphere")
+        cases.extend(
+            "icosphere" if faces == 20 else f"icosphere-{faces}"
+            for faces in _SPHERE_FACE_LADDER
+        )
     records = [_case(case) for case in cases]
+    sphere_refinement = _sphere_refinement_evidence(records)
     payload = {
         "benchmark": "laplace-capacitance-3d",
         "backend": jax.default_backend(),
-        "jax_version": jax.__version__,
         "records": records,
-        "passed": all(record["passed"] for record in records),
+        "sphere_refinement": sphere_refinement,
+        "passed": all(record["passed"] for record in records)
+        and (arguments.smoke or sphere_refinement["passed"]),
     }
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
