@@ -316,22 +316,13 @@ def test_neural_pdas_includes_multiplier_complementarity_in_the_vjp_root():
 
 
 def test_deformable_mpm_adapter_is_distinct_and_conserves_route_action():
-    nodes = phx.discretization.ParticleSetPlan(
+    plan = contact.DeformableMPMContactPlan(
         jnp.asarray([0]),
-        jnp.ones((1,)),
-        ambient_dimension=2,
-    ).prepare()
-    plan = phx.discretization.DeformableContactPlan(
-        jnp.asarray([0]),
-        jnp.asarray([[-1, -1, -1]]),
-        jnp.asarray([int(phx.discretization.DeformableContactRouteKind.PLANE)]),
-        ambient_dimension=2,
-        contact_capacity=1,
-        plane_points=jnp.asarray([[0.0, 0.0]]),
-        plane_normals=jnp.asarray([[0.0, 1.0]]),
+        jnp.asarray([[0.0, 0.0]]),
+        jnp.asarray([[0.0, 1.0]]),
         activation_distance=0.5,
     )
-    prepared = plan.prepare(nodes)
+    prepared = plan.prepare(1)
     adapter = contact.DeformableMPMContactAdapter(
         prepared, contact.PenaltyContactLaw(100.0)
     )

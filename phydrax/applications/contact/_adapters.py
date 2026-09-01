@@ -10,16 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...discretization import (
-    DeformableContactEvaluation,
-    DeformableContactTransposeResult,
-    PreparedDeformableContact,
-)
 from ...nn.parameters import ParameterSubspace
 from ...solver import prepare_virtual_work_equilibrium, PreparedFieldEquilibrium
 from ._laws import (
@@ -34,6 +30,166 @@ from ._state import (
     ContactEvaluation,
     ContactStateTransaction,
 )
+
+
+class DeformableMPMContactGeometry(StrictModule):
+    """Fixed-capacity deformable-MPM plane-contact kinematics."""
+
+    gap: Array
+    normal: Array
+    relative_velocity: Array
+    valid: Array
+    finite: Array
+    successful: Array
+
+
+class DeformableMPMContactTranspose(StrictModule):
+    """Exact query/reaction scatter with action-reaction evidence."""
+
+    query_force: Array
+    surface_force: Array
+    balance_residual: Array
+    finite: Array
+    successful: Array
+
+
+class DeformableMPMContactPlan(StrictModule, NonTrainableState):
+    """Prepared fixed-capacity particle-to-plane deformable contact routes."""
+
+    query_indices: Array
+    plane_points: Array
+    plane_normals: Array
+    activation_distance: Array
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        query_indices: ArrayLike,
+        plane_points: ArrayLike,
+        plane_normals: ArrayLike,
+        /,
+        *,
+        activation_distance: float,
+        plan_id: str = "deformable-mpm-contact",
+    ):
+        indices = jnp.asarray(query_indices, dtype=jnp.int32)
+        points = jnp.asarray(plane_points)
+        normals = jnp.asarray(plane_normals)
+        if indices.ndim != 1 or indices.size == 0:
+            raise ValueError("query_indices must be one non-empty vector.")
+        if points.ndim != 2 or points.shape != normals.shape:
+            raise ValueError("Plane points and normals must share shape (route, dim).")
+        if points.shape[0] != indices.size or points.shape[1] not in (2, 3):
+            raise ValueError("Every query route requires one 2-D or 3-D plane.")
+        normal_norm = jnp.linalg.norm(normals, axis=-1)
+        if bool(jnp.any(~jnp.isfinite(points))) or bool(
+            jnp.any(~jnp.isfinite(normals))
+        ):
+            raise ValueError("Plane contact geometry must be finite.")
+        if bool(jnp.any(normal_norm <= 0.0)):
+            raise ValueError("Plane normals must be nonzero.")
+        distance = float(activation_distance)
+        if not np.isfinite(distance) or distance <= 0.0:
+            raise ValueError("activation_distance must be finite and positive.")
+        identifier = str(plan_id)
+        if not identifier:
+            raise ValueError("plan_id must be non-empty.")
+        self.query_indices = indices
+        self.plane_points = points
+        self.plane_normals = normals / normal_norm[:, None]
+        self.activation_distance = jnp.asarray(distance, dtype=points.dtype)
+        self.plan_id = identifier
+
+    def prepare(self, particle_count: int, /) -> "PreparedDeformableMPMContact":
+        count = int(particle_count)
+        if count <= 0 or bool(jnp.any(self.query_indices >= count)):
+            raise ValueError("query_indices must lie inside the particle layout.")
+        return PreparedDeformableMPMContact(self, count)
+
+
+class PreparedDeformableMPMContact(StrictModule, NonTrainableState):
+    """One immutable particle layout with exact contact evaluation and transpose."""
+
+    plan: DeformableMPMContactPlan
+    particle_count: int = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+
+    def __init__(self, plan: DeformableMPMContactPlan, particle_count: int, /):
+        self.plan = plan
+        self.particle_count = int(particle_count)
+        self.prepared_id = canonical_fingerprint(
+            {
+                "kind": "prepared-deformable-mpm-contact",
+                "plan": plan.plan_id,
+                "particles": self.particle_count,
+            }
+        )
+
+    def evaluate(
+        self,
+        query_position: ArrayLike,
+        query_velocity: ArrayLike,
+        surface_position: ArrayLike,
+        surface_velocity: ArrayLike,
+        /,
+    ) -> DeformableMPMContactGeometry:
+        position = jnp.asarray(query_position)
+        velocity = jnp.asarray(query_velocity)
+        surface_position_ = jnp.asarray(surface_position)
+        surface_velocity_ = jnp.asarray(surface_velocity)
+        expected = (self.particle_count, self.plan.plane_points.shape[-1])
+        if (
+            position.shape != expected
+            or velocity.shape != expected
+            or surface_position_.shape != expected
+            or surface_velocity_.shape != expected
+        ):
+            raise ValueError("MPM contact states must preserve particle shape.")
+        selected_position = position[self.plan.query_indices]
+        selected_velocity = velocity[self.plan.query_indices]
+        selected_surface_velocity = surface_velocity_[self.plan.query_indices]
+        offset = selected_position - self.plan.plane_points
+        gap = jnp.sum(offset * self.plan.plane_normals, axis=-1)
+        relative_velocity = selected_velocity - selected_surface_velocity
+        finite = (
+            jnp.all(jnp.isfinite(position))
+            & jnp.all(jnp.isfinite(velocity))
+            & jnp.all(jnp.isfinite(gap))
+        )
+        valid = gap <= self.plan.activation_distance
+        return DeformableMPMContactGeometry(
+            gap,
+            self.plan.plane_normals,
+            relative_velocity,
+            valid,
+            finite,
+            finite & jnp.all(valid),
+        )
+
+    def transpose(
+        self,
+        geometry: DeformableMPMContactGeometry,
+        route_force: ArrayLike,
+        /,
+    ) -> DeformableMPMContactTranspose:
+        force = jnp.asarray(route_force)
+        if force.shape != self.plan.plane_points.shape:
+            raise ValueError("route_force must preserve route and spatial axes.")
+        query_force = jnp.zeros(
+            (self.particle_count, force.shape[-1]), dtype=force.dtype
+        ).at[self.plan.query_indices].add(force)
+        surface_force = -query_force
+        balance = jnp.sum(query_force + surface_force, axis=0)
+        finite = jnp.all(jnp.isfinite(query_force)) & jnp.all(
+            jnp.isfinite(surface_force)
+        )
+        return DeformableMPMContactTranspose(
+            query_force,
+            surface_force,
+            balance,
+            finite,
+            finite & jnp.all(geometry.valid),
+        )
 
 
 class FiniteElementContactAssembly(StrictModule):
@@ -328,10 +484,10 @@ class FixedEpochNeuralContactAdapter(StrictModule, NonTrainableState):
 class DeformableMPMContactEvaluation(StrictModule):
     """Typed deformable-MPM contact result, distinct from rigid-obstacle impulse."""
 
-    geometry: DeformableContactEvaluation
+    geometry: DeformableMPMContactGeometry
     normal_pressure: Array
     route_force: Array
-    transpose: DeformableContactTransposeResult
+    transpose: DeformableMPMContactTranspose
     normal_power: Array
     finite: Array
     successful: Array
@@ -341,18 +497,18 @@ class DeformableMPMContactEvaluation(StrictModule):
 class DeformableMPMContactAdapter(StrictModule, NonTrainableState):
     """Shared normal-law adapter over deformable particle contact interpolation."""
 
-    prepared_contact: PreparedDeformableContact
+    prepared_contact: PreparedDeformableMPMContact
     normal_law: AbstractNormalContactLaw
     adapter_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        prepared_contact: PreparedDeformableContact,
+        prepared_contact: PreparedDeformableMPMContact,
         normal_law: AbstractNormalContactLaw,
         /,
     ):
-        if not isinstance(prepared_contact, PreparedDeformableContact):
-            raise TypeError("prepared_contact must be PreparedDeformableContact.")
+        if not isinstance(prepared_contact, PreparedDeformableMPMContact):
+            raise TypeError("prepared_contact must be PreparedDeformableMPMContact.")
         if not isinstance(normal_law, AbstractNormalContactLaw):
             raise TypeError("normal_law must implement AbstractNormalContactLaw.")
         self.prepared_contact = prepared_contact
@@ -413,6 +569,10 @@ class DeformableMPMContactAdapter(StrictModule, NonTrainableState):
 __all__ = [
     "DeformableMPMContactAdapter",
     "DeformableMPMContactEvaluation",
+    "DeformableMPMContactGeometry",
+    "DeformableMPMContactPlan",
+    "DeformableMPMContactTranspose",
+    "PreparedDeformableMPMContact",
     "FiniteElementContactAssembly",
     "FiniteElementContactBoundary",
     "FixedEpochNeuralContactAdapter",
