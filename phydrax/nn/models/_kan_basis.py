@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from math import comb, isfinite
+from math import isfinite
 from typing import Any, Literal
 
 import equinox as eqx
@@ -22,6 +22,7 @@ from ..._interpolation import (
     BSplineGridBank,
     TrainableBSplineGrid,
 )
+from ..._interpolation._rational_spline import _rational_quotient_jets
 from ..._polynomial._orthogonal import (
     OrthogonalFamily,
     standard_affine_coefficients,
@@ -669,6 +670,40 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
             case_shape=case_shape,
         ).values
 
+    def _rational_jets(
+        self,
+        control_values: Array,
+        weights: Array,
+        query: Array,
+        maximum_order: int,
+        /,
+    ) -> tuple[Array, Array]:
+        numerator_coefficients = control_values * weights
+        numerator_jets = jnp.stack(
+            tuple(
+                self._evaluate_coefficients(numerator_coefficients, query, order)
+                for order in range(maximum_order + 1)
+            ),
+            axis=0,
+        )
+        denominator_jets = jnp.stack(
+            tuple(
+                self._evaluate_coefficients(weights, query, order)
+                for order in range(maximum_order + 1)
+            ),
+            axis=0,
+        )
+        multi_indices = tuple((order,) for order in range(maximum_order + 1))
+        return (
+            _rational_quotient_jets(
+                numerator_jets,
+                denominator_jets,
+                multi_indices,
+                jet_axis=0,
+            ),
+            denominator_jets,
+        )
+
     def evaluate(self, coefficients: Any, inputs: ArrayLike) -> Array:
         control_values, raw_log_weights, inputs_ = self._validated_parameters(
             coefficients, inputs
@@ -676,12 +711,13 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         if inputs_ is None:
             raise RuntimeError("Rational edge inputs are missing.")
         weights, _ = self._positive_weights(raw_log_weights)
-        numerator = self._evaluate_coefficients(
-            control_values * weights,
+        rational_jets, _ = self._rational_jets(
+            control_values,
+            weights,
             inputs_,
+            0,
         )
-        denominator = self._evaluate_coefficients(weights, inputs_)
-        return numerator / denominator
+        return rational_jets[0]
 
     def regularization(self, coefficients: Any) -> Array:
         control_values, raw_log_weights, _ = self._validated_parameters(coefficients)
@@ -708,24 +744,14 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
                 ),
             )
             integration_weights = quadrature_weights
-        numerator_coefficients = control_values * weights
-        numerator_jets = tuple(
-            self._evaluate_coefficients(numerator_coefficients, query, order)
-            for order in range(self.regularization_order + 1)
-        )
-        denominator_jets = tuple(
-            self._evaluate_coefficients(weights, query, order)
-            for order in range(self.regularization_order + 1)
+        output_jets, denominator_jets = self._rational_jets(
+            control_values,
+            weights,
+            query,
+            self.regularization_order,
         )
         denominator = denominator_jets[0]
-        output_jets = [numerator_jets[0] / denominator]
-        for order in range(1, self.regularization_order + 1):
-            correction = sum(
-                comb(order, index) * denominator_jets[index] * output_jets[order - index]
-                for index in range(1, order + 1)
-            )
-            output_jets.append((numerator_jets[order] - correction) / denominator)
-        derivative = output_jets[-1]
+        derivative = output_jets[self.regularization_order]
         energy = jnp.sum(
             jnp.real(derivative * jnp.conj(derivative)) * integration_weights
         )

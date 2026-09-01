@@ -106,6 +106,17 @@ variable-density dynamics, implicit diffusion, resolved face-marker coupling,
 sharded pressure CG, mapped/ALE geometry, remesh epochs, adaptive replay, and
 certified short- or long-horizon sensitivity modes. WENO fluxes, fixed-capacity AMR,
 and distributed halo plans remain available to the wider finite-volume family.
+The S1 isogeometric path binds two clamped isotropic B-spline grids to a
+positive, mean-one-gauge NURBS control net and an exactly isoparametric scalar
+H1 field. It covers regular, untrimmed, full-dimensional two-dimensional
+single-patch volume maps, explicit Gauss quadrature, homogeneous strong traces
+or natural Neumann boundaries, and matrix-free sum-factorized finite-element
+forms. Its regularity evidence is sampled at the declared quadrature sites:
+even when a quarter-annulus control net represents its rational map exactly,
+the sampled minimum denominator, orientation determinant, and reciprocal
+condition margins are not a global injectivity proof. These volume maps are not
+the repository's BRep surface geometry and do not imply trimming, CAD topology,
+shells, multipatch coupling, or three-dimensional solids.
 Enhanced conforming virtual elements bind arbitrary-arity polygonal cell blocks,
 vertex/edge/moment functional coordinates, certified H1 and L2 polynomial
 projections, explicit projector-kernel stabilization, matrix-free or sparse
@@ -151,28 +162,32 @@ formulations, and fixed-tree/workflow evidence. See
 [Guide → Vortex lifting methods](guides_vortex_lifting_methods.md), and
 [Guide → Vortex boundaries](guides_vortex_boundaries.md).
 Cosmological applications reuse those particle, grid, solver, operator, artifact, and
-likelihood identities rather than introducing a separate framework. In addition to the
-curved/CPL background, named transfer/power, LPT/PM, gas--DM, product, halo, survey, CMB
-instrument, microphysics, Ewald, and boundary-closure layers, bounded maximal profiles
-add native fixed-layout scalar transfer/LOS algebra, global S3 geometry and particle
-dynamics, typed multi-release survey composition, deterministic FoF/unbinding/merger
-products, dynamic stochastic star populations, two-level AMR, one shared Morton octree,
+likelihood identities rather than introducing a separate framework. Canonical physical
+states project only declared dependencies into content-addressed products; pinned
+precision processes, one-loop SPT, calibrated 200m halo ingredients, release-window
+likelihoods, primordial microphysics, CMB sky/TOD/mapmaking, periodic Ewald evidence,
+snapshots, and distributed-PM feasibility extend the curved/CPL background, named
+transfer/power, flat LPT/PM, and gas--DM foundations. Native relic, BBN, recombination,
+nonlinear/halo, lensing, light-cone, survey-selection, and baryonic-feedback products
+share those identities. Bounded maximal profiles add fixed-layout scalar transfer/LOS,
+global S3 geometry and particles, typed multi-release surveys, deterministic FoF and
+merger products, stochastic star populations, two-level AMR, a shared Morton octree,
 isolated Barnes--Hut, uniform Cartesian FMM, and BH-short-range TreePM. Every profile
-states its unsupported species, topology, approximation, capacity, distribution, or
-communication branches; later massive-relic/vector/tensor/curved/lensed theory,
-multilevel distributed AMR, production feedback, adaptive/distributed trees, and full
-survey-release coverage remain separate qualification claims rather than hidden flags.
+states unsupported species, topology, approximation, capacity, distribution, and
+communication branches; precision parity beyond qualified profiles, multilevel
+distributed AMR, adaptive/distributed trees, production feedback, and full release
+coverage remain separate qualification claims rather than hidden flags.
 Astrodynamics applications reuse the existing differential, geometric, particle,
 rigid-body, hybrid-event, nonlinear, control, likelihood, and inference substrates.
-Static scale/epoch/frame contexts bind Cartesian and modified-equinoctial states,
-universal Kepler and branch-explicit Lambert kernels, force composition, tabulated
-ephemerides, direct and nearly-Keplerian N-body dynamics, CR3BP, spacecraft loads, and
-orbit measurements. External coordinate, SPICE, and SGP4 providers are host-side
-adapters with explicit provenance; provider calls and file access never enter traced
-execution. Astrophysical observation applications add observer projection, physical
-occultation contacts, photon-counting bandpasses, concrete instrument responses, ray
-transfer, and static field operators without introducing a second observation or
-inference runtime.
+Exact astronomical time routes, IERS Earth orientation, compiled frame graphs,
+pinned ephemerides/interchange, high-fidelity forces, universal/analytical/DSST/IAS15
+propagation, bounded events and maneuvers, encounter/hierarchical gravity, coupled
+vehicles, tracking, variational dynamics, OD, access, targeting, and conjunction
+products remain dense fixed-capacity plans. Astrophysical observation applications
+add WCS/calibrated imaging, surveys, scalar/polarized transfer, waveform/QNM networks,
+oblate occultation, and finite-source microlensing without introducing a second
+observation or inference runtime. External provider calls and file access never enter
+traced execution.
 Material point dynamics compose that transfer with APIC, USF/USL-minus/MUSL schedules,
 transactional adaptive realization and replay, plane-strain/plane-stress/3-D
 hyperelastic and finite-strain J2 materials, uGIMP/cpGIMP/CPDI source domains,
@@ -217,6 +232,7 @@ exchange, fixed-pool process events, and atomic reactive CFD–DEM scheduling. S
 [Guide → Multiphase and incompressible SPH](guides_multiphase_incompressible_sph.md).
 PINNs participate through trial/residual records rather than a fabricated mesh. See
 [Guide → Discretization](guides_discretization.md),
+[Guide → Isogeometric analysis](guides_isogeometric_analysis.md),
 [Guide → Virtual elements](guides_virtual_elements.md),
 [Guide → Global spectral methods](guides_spectral_methods.md), and
 [Guide → Solver substrates](guides_solver_substrates.md).
@@ -1246,9 +1262,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   volumetric FEM with material-state/admissibility ledgers; couple rigid bodies
   through exact interpolation/transpose attachment KKT blocks and mixed pressure
   gauges; evolve objective two-/three-dimensional Cosserat rods and triangular
-  membrane/bending shells; and construct fixed-capacity deformable or rigid–MPM
-  contact/coupling routes. See
-  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md).
+  membrane/bending shells; construct exact-map collision surfaces, deterministic
+  candidate epochs, conservative continuous-collision/simplex-inversion bounds,
+  convergent barrier contact, lagged friction, and fixed-route sensitivities; and
+  retain explicit rigid–MPM coupling routes. See
+  [Guide → Extended constrained and deformable mechanics](guides_extended_mechanics.md)
+  and [Guide → Deformable contact](guides_deformable_contact.md).
 - **Force-density structural form-finding**: build sparse or affine-restraint
   tension, compression, or mixed-sign networks; compose self-weight, traction,
   pressure, or pneumatic loads; optimize forces, supports, loads, gridshell

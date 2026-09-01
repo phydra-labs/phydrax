@@ -18,7 +18,7 @@ def test_massive_neutrino_species_and_request_identity():
         cosmology.MassiveNeutrinoSpecies(0.05),
         cosmology.MassiveNeutrinoSpecies(0.01, degeneracy=2.0),
     )
-    request = cosmology.LinearTheoryRequest(
+    request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
@@ -30,7 +30,7 @@ def test_massive_neutrino_species_and_request_identity():
     assert "massive_neutrino_mass_1" in request.realization.parameter_names
     assert "massive_neutrino_temperature_ratio_1" in request.realization.parameter_names
     assert "massive_neutrino_degeneracy_1" in request.realization.parameter_names
-    changed = cosmology.LinearTheoryRequest(
+    changed = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
@@ -46,7 +46,7 @@ def test_concrete_linear_theory_backend_returns_named_constant_products(tmp_path
     root = Path(__file__).parents[2]
     worker = root / "_linear_theory_worker.py"
     scale = cosmology.CosmologyScaleContract("Mpc", "solar_mass", "Gyr")
-    request = cosmology.LinearTheoryRequest(
+    request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,

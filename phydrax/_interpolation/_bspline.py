@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._strict import StrictModule
 from ._stencil import apply_gather_stencil, GatherStencil
 from ._types import BoundsMode, InterpolationResult
 
@@ -49,6 +50,7 @@ def _basis_jet(
             saved = left[column - row] * temporary
         table = table.at[column, column].set(saved)
 
+    effective_order = min(maximum_order, degree)
     derivatives = jnp.zeros(
         (maximum_order + 1, degree + 1),
         dtype=knots.dtype,
@@ -60,7 +62,7 @@ def _basis_jet(
         coefficients = coefficients.at[0, 0].set(1.0)
         previous = 0
         current = 1
-        for order in range(1, maximum_order + 1):
+        for order in range(1, effective_order + 1):
             coefficients = coefficients.at[current].set(0.0)
             value = jnp.zeros((), dtype=knots.dtype)
             shifted_index = basis_index - order
@@ -99,114 +101,180 @@ def _basis_jet(
             derivatives = derivatives.at[order, basis_index].set(value)
             previous, current = current, previous
 
-    for order in range(1, maximum_order + 1):
+    for order in range(1, effective_order + 1):
         scale = factorial(degree) // factorial(degree - order)
         derivatives = derivatives.at[order].multiply(scale)
     return derivatives
 
 
-def _bspline_weights_raw(
+def _bspline_jets_raw(
     knots: Array,
     parameters: Array,
     spans: Array,
     degree: int,
-    derivative_order: int,
+    maximum_order: int,
 ) -> Array:
     flat_parameters = parameters.reshape((-1,))
     flat_spans = spans.reshape((-1,))
-    weights = jax.vmap(
+    jets = jax.vmap(
         lambda parameter, span: _basis_jet(
             parameter,
             knots,
             span,
             degree,
-            derivative_order,
-        )[derivative_order]
+            maximum_order,
+        )
     )(flat_parameters, flat_spans)
-    return weights.reshape(parameters.shape + (degree + 1,))
+    return jets.reshape(parameters.shape + (maximum_order + 1, degree + 1))
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(3, 4))
-def _bspline_weights(
+def _bspline_jets(
     knots: Array,
     parameters: Array,
     spans: Array,
     degree: int,
-    derivative_order: int,
+    maximum_order: int,
 ) -> Array:
-    return _bspline_weights_raw(
+    return _bspline_jets_raw(
         knots,
         parameters,
         spans,
         degree,
-        derivative_order,
+        maximum_order,
     )
 
 
-@_bspline_weights.defjvp
-def _bspline_weights_jvp(
+@_bspline_jets.defjvp
+def _bspline_jets_jvp(
     degree: int,
-    derivative_order: int,
+    maximum_order: int,
     primals: tuple[Array, Array, Array],
     tangents: tuple[Array, Array, Array],
 ) -> tuple[Array, Array]:
     knots, parameters, spans = primals
     knot_tangent, parameter_tangent, _span_tangent = tangents
-    weights = _bspline_weights_raw(
+    jets = _bspline_jets_raw(
         knots,
         parameters,
         spans,
         degree,
-        derivative_order,
+        maximum_order,
     )
-    if derivative_order == degree:
-        derivative_weights = jnp.zeros_like(weights)
-    else:
-        derivative_weights = _bspline_weights(
-            knots,
-            parameters,
-            spans,
-            degree,
-            derivative_order + 1,
-        )
+    extended_jets = _bspline_jets(
+        knots,
+        parameters,
+        spans,
+        degree,
+        maximum_order + 1,
+    )
+    parameter_component = extended_jets[..., 1:, :] * parameter_tangent[..., None, None]
     _, knot_component = jax.jvp(
-        lambda knot_values: _bspline_weights_raw(
+        lambda knot_values: _bspline_jets_raw(
             knot_values,
             parameters,
             spans,
             degree,
-            derivative_order,
+            maximum_order,
         ),
         (knots,),
         (knot_tangent,),
     )
-    tangent = derivative_weights * parameter_tangent[..., None] + knot_component
-    return weights, tangent
+    return jets, parameter_component + knot_component
 
 
-def bspline_stencil(
+class BSplineJetStencil(StrictModule):
+    """Span-local B-spline basis derivatives sharing one gather route."""
+
+    indices: Array
+    jets: Array
+    support: Array
+    source_size: int = eqx.field(static=True)
+    degree: int = eqx.field(static=True)
+    maximum_order: int = eqx.field(static=True)
+    case_shape: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        indices: ArrayLike,
+        jets: ArrayLike,
+        support: ArrayLike,
+        source_size: int,
+        degree: int,
+        maximum_order: int,
+        case_shape: tuple[int, ...] = (),
+    ):
+        indices_ = jnp.asarray(indices, dtype=jnp.int32)
+        jets_ = jnp.asarray(jets)
+        support_ = jnp.asarray(support, dtype=bool)
+        if indices_.ndim == 0:
+            raise ValueError("B-spline jet indices must include a local-support axis.")
+        if jets_.shape != (
+            *indices_.shape[:-1],
+            int(maximum_order) + 1,
+            indices_.shape[-1],
+        ):
+            raise ValueError(
+                "B-spline jets must have shape query_shape + "
+                "(maximum_order + 1, local_support)."
+            )
+        if support_.shape != indices_.shape[:-1]:
+            raise ValueError("B-spline jet support must match the query shape.")
+        self.indices = indices_
+        self.jets = jets_
+        self.support = support_
+        self.source_size = int(source_size)
+        self.degree = int(degree)
+        self.maximum_order = int(maximum_order)
+        self.case_shape = tuple(int(size) for size in case_shape)
+
+    @property
+    def query_shape(self) -> tuple[int, ...]:
+        return tuple(int(size) for size in self.indices.shape[:-1])
+
+    @property
+    def local_support(self) -> int:
+        return int(self.indices.shape[-1])
+
+    def derivative(self, order: int, /) -> GatherStencil:
+        """Select one derivative order as a conventional gather stencil."""
+        if isinstance(order, bool) or not isinstance(order, Integral):
+            raise TypeError("B-spline derivative order must be an integer.")
+        order_ = int(order)
+        if not 0 <= order_ <= self.maximum_order:
+            raise ValueError("Requested derivative order is absent from this jet.")
+        return GatherStencil(
+            indices=self.indices,
+            weights=self.jets[..., order_, :],
+            source_size=self.source_size,
+            support=self.support,
+            case_shape=self.case_shape,
+        )
+
+
+def bspline_jet_stencil(
     knots: ArrayLike,
     query: ArrayLike,
     /,
     *,
     degree: int,
-    derivative_order: int = 0,
+    maximum_order: int = 1,
+    spans: ArrayLike | None = None,
     bounds: BoundsMode = "error",
     case_shape: tuple[int, ...] = (),
-) -> GatherStencil:
-    """Build a span-local B-spline map from control coefficients to queries."""
+) -> BSplineJetStencil:
+    """Build co-routed local basis derivatives through any requested order."""
     if isinstance(degree, bool) or not isinstance(degree, Integral):
         raise TypeError("B-spline degree must be an integer.")
-    if isinstance(derivative_order, bool) or not isinstance(derivative_order, Integral):
-        raise TypeError("B-spline derivative_order must be an integer.")
+    if isinstance(maximum_order, bool) or not isinstance(maximum_order, Integral):
+        raise TypeError("B-spline maximum_order must be an integer.")
     degree_ = int(degree)
-    order = int(derivative_order)
+    maximum_order_ = int(maximum_order)
     if degree_ < 0:
         raise ValueError("B-spline degree must be non-negative.")
-    if order < 0 or order > degree_:
-        raise ValueError(
-            "B-spline derivative_order must lie between zero and the degree."
-        )
+    if maximum_order_ < 0:
+        raise ValueError("B-spline maximum_order must be non-negative.")
     if bounds not in ("clip", "error", "extrapolate", "fill"):
         raise ValueError("bounds must be 'clip', 'error', 'extrapolate', or 'fill'.")
 
@@ -274,28 +342,77 @@ def bspline_stencil(
     )
     support = ~outside if bounds == "fill" else jnp.ones(query_.shape, dtype=bool)
 
-    spans = jnp.searchsorted(knots_, query_eval, side="right") - 1
-    spans = jax.lax.stop_gradient(
-        jnp.clip(spans, degree_, control_count - 1).astype(jnp.int32)
-    )
-    flat_spans = spans.reshape((-1,))
-    weights = _bspline_weights(
+    if spans is None:
+        spans_ = jnp.searchsorted(knots_, query_eval, side="right") - 1
+        spans_ = jnp.clip(spans_, degree_, control_count - 1).astype(jnp.int32)
+    else:
+        spans_raw = jnp.asarray(spans)
+        if spans_raw.shape != query_.shape:
+            raise ValueError("Explicit B-spline spans must match the query shape.")
+        if not jnp.issubdtype(spans_raw.dtype, jnp.integer):
+            raise TypeError("Explicit B-spline spans must be integer-valued.")
+        spans_ = spans_raw.astype(jnp.int32)
+        spans_ = eqx.error_if(
+            spans_,
+            jnp.any((spans_ < degree_) | (spans_ >= control_count)),
+            "Explicit B-spline spans lie outside the active span range.",
+        )
+        if bounds != "extrapolate":
+            spans_ = eqx.error_if(
+                spans_,
+                jnp.any(
+                    (query_eval < knots_[spans_]) | (query_eval > knots_[spans_ + 1])
+                ),
+                "Explicit B-spline spans are not aligned with their queries.",
+            )
+    spans_ = jax.lax.stop_gradient(spans_)
+    jets = _bspline_jets(
         knots_,
         query_eval,
-        spans,
+        spans_,
         degree_,
-        order,
-    ).reshape((-1, degree_ + 1))
+        maximum_order_,
+    )
     offsets = jnp.arange(degree_ + 1, dtype=jnp.int32) - degree_
-    indices = flat_spans[:, None] + offsets[None, :]
-    route_shape = query_.shape + (degree_ + 1,)
-    return GatherStencil(
-        indices=indices.reshape(route_shape),
-        weights=weights.reshape(route_shape),
+    indices = spans_[..., None] + offsets
+    return BSplineJetStencil(
+        indices=indices,
+        jets=jets,
         source_size=control_count,
         support=support,
+        degree=degree_,
+        maximum_order=maximum_order_,
         case_shape=cases,
     )
+
+
+def bspline_stencil(
+    knots: ArrayLike,
+    query: ArrayLike,
+    /,
+    *,
+    degree: int,
+    derivative_order: int = 0,
+    bounds: BoundsMode = "error",
+    case_shape: tuple[int, ...] = (),
+    spans: ArrayLike | None = None,
+) -> GatherStencil:
+    """Build a span-local B-spline map from control coefficients to queries."""
+    if isinstance(derivative_order, bool) or not isinstance(derivative_order, Integral):
+        raise TypeError("B-spline derivative_order must be an integer.")
+    order = int(derivative_order)
+    if order < 0:
+        raise ValueError("B-spline derivative_order must be non-negative.")
+    jet = bspline_jet_stencil(
+        knots,
+        query,
+        degree=degree,
+        maximum_order=order,
+        spans=spans,
+        bounds=bounds,
+        case_shape=case_shape,
+    )
+    return jet.derivative(order)
 
 
 def bspline_evaluate(
@@ -387,4 +504,10 @@ def bspline_batched_evaluate(
     )
 
 
-__all__ = ["bspline_batched_evaluate", "bspline_evaluate", "bspline_stencil"]
+__all__ = [
+    "BSplineJetStencil",
+    "bspline_batched_evaluate",
+    "bspline_evaluate",
+    "bspline_jet_stencil",
+    "bspline_stencil",
+]

@@ -11,6 +11,15 @@
   uniform Cartesian FMM, and BH-short-range single-device TreePM. Each profile records
   explicit unsupported physics, topology, approximation, capacity, distribution, and
   communication boundaries.
+- Added an S1 isogeometric-analysis path for regular untrimmed
+  full-dimensional two-dimensional single-patch NURBS maps with clamped
+  isotropic frozen B-spline grids, positive mean-one-gauge weights, exactly
+  isoparametric scalar H1 fields, explicit Gauss quadrature, homogeneous strong
+  traces or natural Neumann boundaries, and sum-factorized matrix-free
+  finite-element forms. Added affine and exact rational quarter-annulus
+  qualification producers, an end-to-end Poisson example, and record-only
+  degree/span timing producers; sampled map evidence is not a global
+  injectivity certificate or BRep/CAD support.
 - Closed remaining advanced-cosmology boundaries with projected canonical physical
   state, content-addressed products/artifacts, dependency-aware derivatives, shared
   observation/covariance likelihood algebra, concrete pinned precision-process
@@ -61,8 +70,19 @@
   interoperation, neutrino component algebra, model-card power corrections,
   adiabatic gas--particle shared gravity, analytic halo foundations, Limber/RSD
   predictions, canonical CMB spectra, and bounded periodic force qualification.
-  Periodic LPT/PM remains flat-only; complete Boltzmann/CMB evolution and production
-  tree gravity remain explicit external or unsupported boundaries.
+  Periodic LPT/PM remains flat-only; calibrated external spectra and production
+  distributed gravity remain explicit provider/qualification boundaries.
+- Closed the declared astronomy capability boundaries with exact astronomical time
+  instants and routes, IERS Earth orientation, compiled frame graphs, pinned
+  artifacts and Chebyshev ephemerides, CCSDS/TLE products, high-fidelity force and
+  light-time models, adaptive Gauss--Radau IAS15, analytical/DSST propagation,
+  bounded event and maneuver schedules, encounter and hierarchical gravity,
+  coupled variable-mass vehicles, tracking/variational/orbit-determination/mission
+  products, calibrated WCS imaging, surveys, radiative transfer, waveform and
+  exoplanet operators, native early-universe/Boltzmann/nonlinear cosmology, and
+  compact-object EOS/TOV models. Provider discovery, network access, external data
+  redistribution, and smooth-gradient claims across discrete topology remain
+  intentionally excluded.
 - Extended Material Point Method with explicit USF/USL-minus/MUSL schedules,
   fixed-capacity adaptive realization and scheduled replay, constitutive capability
   and algorithmic-tangent contracts, isotropic plane stress, multiplicative
@@ -158,9 +178,14 @@
   irreversible joint breakage, and fixed-capacity topology transactions. Added
   transactional implicit Newmark volumetric FEM, mixed pressure gauges,
   rigid--deformable attachment KKT operators, objective two-/three-dimensional
-  Cosserat rods, triangular membrane/bending shells, fixed-capacity deformable
-  contact, and explicit rigid--MPM weld/penalty/impulse coupling with branch,
-  rank, energy, route, and rollback certificates.
+  Cosserat rods and triangular membrane/bending shells. Replaced the partial
+  particle-local deformable-contact routes and 2-D penalty workflow with
+  exact-map collision surfaces, dense/sweep-and-prune candidate epochs,
+  area-weighted physical barrier contact, conservative inclusion CCD, T3/T4
+  inversion limits, static and transactional Newmark solves, lagged Coulomb
+  friction, fixed-route sensitivities, and direct rod/shell collision-surface
+  adapters. Explicit rigid--MPM weld/penalty/impulse coupling retains separate
+  branch, rank, energy, route, and rollback certificates.
 - Added epochal particle-capacity growth with stable structured interaction
   identities, transactional state migration, fixed-pool insertion and fragmentation
   retries, segmented replay, and transition pullbacks. Added multidimensional

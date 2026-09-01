@@ -285,10 +285,6 @@
 
 ---
 
-::: phydrax.discretization.DeformableContactPlan
-
----
-
 ::: phydrax.discretization.RigidMPMCouplingPlan
 
 ---
