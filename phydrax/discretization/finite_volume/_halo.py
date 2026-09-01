@@ -13,7 +13,8 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._boundary import FiniteVolumeBoundarySet, PrescribedNormalFluxBoundary
+from .._conservation_boundary import PrescribedNormalFluxBoundary
+from ._boundary import FiniteVolumeBoundarySet
 from ._high_resolution import (
     CharacteristicReconstructionPlan,
     HighResolutionReconstructionPlan,

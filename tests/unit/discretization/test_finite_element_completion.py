@@ -210,9 +210,10 @@ def test_energy_custom_residual_and_interior_flux_share_one_compiler():
     ).prepare()
     flux = phx.equations.InteriorFacetAction(
         "w",
+        ("w",),
         lambda plus, minus, points, weights, normal, context: (
-            plus - minus,
-            minus - plus,
+            plus[0] - minus[0],
+            minus[0] - plus[0],
         ),
         action_id="jump-flux",
     )

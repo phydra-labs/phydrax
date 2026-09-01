@@ -10,7 +10,7 @@ import pytest
 
 import phydrax as phx
 import phydrax.discretization.finite_volume._unstructured_embedded_boundary as embedded_boundary_module
-from phydrax.discretization.finite_volume._boundary import ExtrapolationBoundary
+from phydrax.discretization._conservation_boundary import ExtrapolationBoundary
 from phydrax.discretization.finite_volume._embedded_dynamics import (
     lower_embedded_stage_metrics,
     UnstructuredEmbeddedBoundarySet,

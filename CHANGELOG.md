@@ -10,6 +10,11 @@
 - Added prepared harmonic-balance planning, resource evidence, numeric refresh,
   and provenance around the existing Fourier-collocation circuit residual and
   matrix-free native nonlinear solve.
+- Added high-order conservation completion with physical DGSEM boundaries,
+  conservative SSP-stage entropy filtering, tensor LDG Navier–Stokes, stable
+  simplex and hybrid references, exact-mass nodal DG, mixed 2-D/3-D mortars,
+  high-order mesh import, cost-aware distributed phases, runtime checkpoints,
+  exact-time schedules, streaming triggers, and bounded asynchronous publication.
 - Added advanced hydrodynamics with corrected graph-stage timing, pressure/reference
   semantics, unified mapped kinetic and boundary ownership, truthful work ledgers,
   variational surface tension, coherent wave forcing/absorption, vertical rezoning,

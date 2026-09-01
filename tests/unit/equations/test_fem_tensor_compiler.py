@@ -18,6 +18,7 @@ from phydrax.discretization.fem._reference_operator import (
 )
 from phydrax.equations._finite_element_variational import (
     FiniteElementForm,
+    InteriorFacetAction,
     MassAction,
     PairwiseVolumeFluxAction,
 )
@@ -353,3 +354,64 @@ def test_pairwise_volume_flux_lowers_to_collocated_authoritative_action():
     assert program.worksets[0].signature.local_kernel == "collocated"
     assert table.bindings[0].kernel_kind == "pairwise-volume-flux"
     assert table.bindings[0].local_kernel == "collocated"
+
+
+def test_tensor_interior_facet_reads_multiple_fields_and_writes_one():
+    coordinates = jnp.asarray(
+        (
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (2.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 1.0),
+            (2.0, 1.0),
+        )
+    )
+    mesh = phx.discretization.CellMesh(
+        coordinates,
+        (
+            phx.discretization.CellBlock(
+                "quads",
+                "quadrilateral",
+                jnp.asarray(((0, 1, 4, 3), (1, 2, 5, 4)), dtype=jnp.int32),
+            ),
+        ),
+    )
+    element = phx.discretization.discontinuous_element("quadrilateral", 2)
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        (
+            phx.discretization.FiniteElementFieldSpec("u", element),
+            phx.discretization.FiniteElementFieldSpec("g", element, component_shape=(2,)),
+        ),
+    ).prepare()
+
+    def flux(plus, minus, points, weights, normal, context):
+        del points, weights, normal, context
+        value = (plus[0] - minus[0]) + jnp.sum(plus[1] - minus[1], axis=-1)
+        return value, -value
+
+    action = InteriorFacetAction(
+        "u",
+        ("u", "g"),
+        flux,
+        domain=discretization.interior_facet_domain,
+        action_id="tensor-cross-field-facet",
+    )
+    compiled = phx.equations.compile_finite_element_problem(
+        FiniteElementForm("tensor-cross-field", ("u", "g"), (action,)),
+        discretization,
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free",
+            local_kernel="auto",
+        ),
+    )
+    state = compiled.state_space.zeros()
+    state = (
+        jnp.linspace(0.0, 1.0, state[0].size).reshape(state[0].shape),
+        jnp.linspace(-0.5, 0.75, state[1].size).reshape(state[1].shape),
+    )
+    residual = compiled.residual(state)
+    assert jnp.linalg.norm(residual[0]) > 0.0
+    assert jnp.allclose(jnp.sum(residual[0]), 0.0, atol=2.0e-12)
+    assert jnp.array_equal(residual[1], jnp.zeros_like(residual[1]))

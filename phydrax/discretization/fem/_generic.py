@@ -18,7 +18,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, BlockSpace, OperatorProperties
 from ...sparse import EdgeRelation, RowRelation, SparseLinearMap
-from .._cell_complex import PolygonalConnectivity
+from .._cell_complex import PolygonalConnectivity, PolyhedralConnectivity
 from .._cell_mesh import CellBlock, CellMesh
 from .._core import (
     DiscretizationCapability,
@@ -962,6 +962,10 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
         cell_facets = np.asarray(connectivity.cell_edges, dtype=np.int32)
         valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
         facet_count = int(connectivity.edges.shape[0])
+    elif isinstance(connectivity, PolyhedralConnectivity):
+        cell_facets = np.asarray(connectivity.cell_faces, dtype=np.int32)
+        valid = np.asarray(connectivity.cell_face_valid, dtype=bool)
+        facet_count = int(connectivity.faces.shape[0])
     else:
         cell_facets = np.asarray(connectivity.cell_faces, dtype=np.int32)
         valid = np.ones_like(cell_facets, dtype=bool)
@@ -1027,6 +1031,25 @@ def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
             )
             gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
             determinant = np.linalg.det(gram)
+        elif block.cell_kind in ("prism", "pyramid"):
+            tetrahedra = (
+                ((0, 1, 2, 3), (1, 2, 4, 3), (2, 4, 5, 3))
+                if block.cell_kind == "prism"
+                else ((0, 1, 2, 4), (0, 2, 3, 4))
+            )
+            determinants = []
+            for first_vertex, second_vertex, third_vertex, fourth_vertex in tetrahedra:
+                edge_matrix = np.stack(
+                    (
+                        points[:, second_vertex] - points[:, first_vertex],
+                        points[:, third_vertex] - points[:, first_vertex],
+                        points[:, fourth_vertex] - points[:, first_vertex],
+                    ),
+                    axis=-1,
+                )
+                gram = np.swapaxes(edge_matrix, -1, -2) @ edge_matrix
+                determinants.append(np.linalg.det(gram))
+            determinant = np.min(np.stack(tuple(determinants), axis=-1), axis=-1)
         else:
             raise ValueError("Unsupported finite-element cell kind.")
         if np.any(~np.isfinite(determinant)) or np.any(determinant <= 0.0):
@@ -1769,6 +1792,34 @@ def _degree_aware_reference_rule(
             * weights[None, None, :]
             * one_minus_first**2
             * one_minus_second
+        )
+        return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
+    if cell_kind == "prism":
+        first, second, third = np.meshgrid(axis, axis, axis, indexing="ij")
+        points = np.stack((first, (1.0 - first) * second, third), axis=-1)
+        combined = (
+            weights[:, None, None]
+            * weights[None, :, None]
+            * weights[None, None, :]
+            * (1.0 - first)
+        )
+        return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
+    if cell_kind == "pyramid":
+        first, second, height = np.meshgrid(axis, axis, axis, indexing="ij")
+        scale = 1.0 - height
+        points = np.stack(
+            (
+                scale * first + 0.5 * height,
+                scale * second + 0.5 * height,
+                height,
+            ),
+            axis=-1,
+        )
+        combined = (
+            weights[:, None, None]
+            * weights[None, :, None]
+            * weights[None, None, :]
+            * scale**2
         )
         return jnp.asarray(points.reshape((-1, 3))), jnp.asarray(combined.reshape((-1,)))
     if cell_kind == "hexahedron":

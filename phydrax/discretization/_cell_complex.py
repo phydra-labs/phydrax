@@ -486,11 +486,277 @@ def tetrahedral_cell_complex(
     )
 
 
+class PolyhedralConnectivity(StrictModule, NonTrainableState):
+    """Canonical mixed tet/hex/prism/pyramid incidence with variable face arity."""
+
+    edges: Array
+    faces: Array
+    face_arities: Array
+    face_edges: Array
+    face_edge_valid: Array
+    face_edge_signs: Array
+    cell_faces: Array
+    cell_face_valid: Array
+    cell_face_signs: Array
+    face_cell_counts: Array
+    boundary_vertices: Array
+    boundary_edges: Array
+    boundary_faces: Array
+    vertex_count: int = eqx.field(static=True)
+    cell_count: int = eqx.field(static=True)
+
+
+_POLYHEDRAL_FACE_ROUTES = {
+    "tetrahedron": ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1)),
+    "hexahedron": (
+        (0, 3, 2, 1),
+        (4, 5, 6, 7),
+        (0, 1, 5, 4),
+        (1, 2, 6, 5),
+        (2, 3, 7, 6),
+        (3, 0, 4, 7),
+    ),
+    "prism": (
+        (0, 2, 1),
+        (3, 4, 5),
+        (0, 1, 4, 3),
+        (1, 2, 5, 4),
+        (2, 0, 3, 5),
+    ),
+    "pyramid": (
+        (0, 3, 2, 1),
+        (0, 1, 4),
+        (1, 2, 4),
+        (2, 3, 4),
+        (3, 0, 4),
+    ),
+}
+
+
+def _cycle_rotations(values: tuple[int, ...], /) -> tuple[tuple[int, ...], ...]:
+    return tuple(values[index:] + values[:index] for index in range(len(values)))
+
+
+def _canonical_face_cycle(values: tuple[int, ...], /) -> tuple[tuple[int, ...], float]:
+    forward = _cycle_rotations(values)
+    reversed_values = tuple(reversed(values))
+    backward = _cycle_rotations(reversed_values)
+    canonical = min(*forward, *backward)
+    return canonical, 1.0 if canonical in forward else -1.0
+
+
+def polyhedral_connectivity(
+    blocks: Sequence[tuple[str, ArrayLike]],
+    vertex_count: int,
+    /,
+) -> PolyhedralConnectivity:
+    """Build mixed three-dimensional manifold connectivity."""
+    vertices = int(vertex_count)
+    if vertices <= 0 or not blocks:
+        raise ValueError("Polyhedral connectivity requires vertices and cells.")
+    normalized = []
+    for name, values in blocks:
+        kind = str(name)
+        if kind not in _POLYHEDRAL_FACE_ROUTES:
+            raise ValueError(f"Unsupported polyhedral cell kind {kind!r}.")
+        arity = {"tetrahedron": 4, "hexahedron": 8, "prism": 6, "pyramid": 5}[kind]
+        normalized.append((kind, _validated_cells(kind, values, arity, vertices)))
+    cell_count = sum(cells.shape[0] for _kind, cells in normalized)
+    maximum_faces = 6
+    cell_faces = np.zeros((cell_count, maximum_faces), dtype=np.int32)
+    cell_valid = np.zeros((cell_count, maximum_faces), dtype=bool)
+    cell_signs = np.zeros((cell_count, maximum_faces), dtype=float)
+    face_keys: dict[tuple[int, ...], int] = {}
+    face_cycles: list[tuple[int, ...]] = []
+    face_incidents: list[list[float]] = []
+    all_cells = []
+    cell = 0
+    for kind, cells in normalized:
+        routes = _POLYHEDRAL_FACE_ROUTES[kind]
+        for cell_vertices in cells:
+            all_cells.append(tuple(int(value) for value in cell_vertices))
+            for local, route in enumerate(routes):
+                oriented = tuple(int(cell_vertices[index]) for index in route)
+                key = tuple(sorted(oriented))
+                canonical, sign = _canonical_face_cycle(oriented)
+                if key not in face_keys:
+                    face_keys[key] = len(face_keys)
+                    face_cycles.append(canonical)
+                    face_incidents.append([])
+                face = face_keys[key]
+                stored = face_cycles[face]
+                stored_rotations = _cycle_rotations(stored)
+                sign = 1.0 if oriented in stored_rotations else -1.0
+                cell_faces[cell, local] = face
+                cell_valid[cell, local] = True
+                cell_signs[cell, local] = sign
+                face_incidents[face].append(sign)
+            cell += 1
+    if any(len(values) > 2 for values in face_incidents):
+        raise ValueError("Polyhedral cells must be face-manifold.")
+    if any(len(values) == 2 and values[0] == values[1] for values in face_incidents):
+        raise ValueError("Shared polyhedral faces must have opposite orientation.")
+
+    edge_keys: dict[tuple[int, int], int] = {}
+    faces = np.full((len(face_cycles), 4), -1, dtype=np.int32)
+    face_arities = np.zeros((len(face_cycles),), dtype=np.int32)
+    face_edges = np.zeros((len(face_cycles), 4), dtype=np.int32)
+    face_edge_valid = np.zeros((len(face_cycles), 4), dtype=bool)
+    face_edge_signs = np.zeros((len(face_cycles), 4), dtype=float)
+    for face, cycle in enumerate(face_cycles):
+        arity = len(cycle)
+        faces[face, :arity] = cycle
+        face_arities[face] = arity
+        for local in range(arity):
+            start = int(cycle[local])
+            stop = int(cycle[(local + 1) % arity])
+            key = (min(start, stop), max(start, stop))
+            edge = edge_keys.setdefault(key, len(edge_keys))
+            face_edges[face, local] = edge
+            face_edge_valid[face, local] = True
+            face_edge_signs[face, local] = 1.0 if (start, stop) == key else -1.0
+    edges = np.asarray(tuple(edge_keys), dtype=np.int32)
+    counts = np.asarray([len(values) for values in face_incidents], dtype=np.int32)
+    boundary_faces = counts == 1
+    boundary_edges = np.zeros((edges.shape[0],), dtype=bool)
+    boundary_edges[
+        np.unique(face_edges[boundary_faces][face_edge_valid[boundary_faces]])
+    ] = True
+    boundary_vertices = np.zeros((vertices,), dtype=bool)
+    boundary_vertices[np.unique(faces[boundary_faces][faces[boundary_faces] >= 0])] = True
+    return PolyhedralConnectivity(
+        edges=jnp.asarray(edges),
+        faces=jnp.asarray(faces),
+        face_arities=jnp.asarray(face_arities),
+        face_edges=jnp.asarray(face_edges),
+        face_edge_valid=jnp.asarray(face_edge_valid),
+        face_edge_signs=jnp.asarray(face_edge_signs),
+        cell_faces=jnp.asarray(cell_faces),
+        cell_face_valid=jnp.asarray(cell_valid),
+        cell_face_signs=jnp.asarray(cell_signs),
+        face_cell_counts=jnp.asarray(counts),
+        boundary_vertices=jnp.asarray(boundary_vertices),
+        boundary_edges=jnp.asarray(boundary_edges),
+        boundary_faces=jnp.asarray(boundary_faces),
+        vertex_count=vertices,
+        cell_count=cell_count,
+    )
+
+
+def polyhedral_cell_complex(
+    blocks: Sequence[tuple[str, ArrayLike]],
+    vertex_count: int,
+    /,
+    *,
+    vertex_global_ids: ArrayLike | None = None,
+    cell_global_ids: ArrayLike | None = None,
+) -> CellComplexTopology:
+    connectivity = polyhedral_connectivity(blocks, vertex_count)
+    edges = np.asarray(connectivity.edges, dtype=np.int32)
+    faces = np.asarray(connectivity.faces, dtype=np.int32)
+    face_arities = np.asarray(connectivity.face_arities, dtype=np.int32)
+    face_edges = np.asarray(connectivity.face_edges, dtype=np.int32)
+    face_edge_valid = np.asarray(connectivity.face_edge_valid, dtype=bool)
+    cell_faces = np.asarray(connectivity.cell_faces, dtype=np.int32)
+    cell_face_valid = np.asarray(connectivity.cell_face_valid, dtype=bool)
+    vertex_ids = _resolved_entity_ids(
+        "vertex_global_ids", vertex_global_ids, vertex_count
+    )
+    cell_ids = _resolved_entity_ids(
+        "cell_global_ids", cell_global_ids, connectivity.cell_count
+    )
+    edge_ids = _canonical_entity_ids(np.sort(vertex_ids[edges], axis=1))
+    face_keys = np.full((faces.shape[0], 5), -1, dtype=np.int64)
+    face_keys[:, 0] = face_arities
+    for face, arity in enumerate(face_arities):
+        face_keys[face, 1 : 1 + arity] = np.sort(vertex_ids[faces[face, :arity]])
+    face_ids = _canonical_entity_ids(face_keys)
+    vertex_entities = EntitySet(
+        "vertices",
+        0,
+        vertex_ids,
+        subsets=(EntitySubset("boundary", connectivity.boundary_vertices),),
+    )
+    edge_entities = EntitySet(
+        "edges",
+        1,
+        edge_ids,
+        subsets=(EntitySubset("boundary", connectivity.boundary_edges),),
+    )
+    face_entities = EntitySet(
+        "faces",
+        2,
+        face_ids,
+        subsets=(EntitySubset("boundary", connectivity.boundary_faces),),
+    )
+    cell_entities = EntitySet(
+        "cells",
+        3,
+        cell_ids,
+        subsets=(
+            EntitySubset("boundary", np.zeros((connectivity.cell_count,), dtype=bool)),
+        ),
+    )
+    vertex_edge_relation = EdgeRelation(
+        edges.reshape((-1,)),
+        np.repeat(np.arange(edges.shape[0], dtype=np.int32), 2),
+        source_size=vertex_count,
+        target_size=edges.shape[0],
+    )
+    edge_face_relation = EdgeRelation(
+        face_edges[face_edge_valid],
+        np.broadcast_to(
+            np.arange(faces.shape[0], dtype=np.int32)[:, None],
+            face_edges.shape,
+        )[face_edge_valid],
+        source_size=edges.shape[0],
+        target_size=faces.shape[0],
+    )
+    face_cell_relation = EdgeRelation(
+        cell_faces[cell_face_valid],
+        np.broadcast_to(
+            np.arange(connectivity.cell_count, dtype=np.int32)[:, None],
+            cell_faces.shape,
+        )[cell_face_valid],
+        source_size=faces.shape[0],
+        target_size=connectivity.cell_count,
+    )
+    return CellComplexTopology(
+        (vertex_entities, edge_entities, face_entities, cell_entities),
+        (
+            OrientedIncidence(
+                1,
+                vertex_entities,
+                edge_entities,
+                vertex_edge_relation,
+                np.tile(np.asarray((-1.0, 1.0)), edges.shape[0]),
+            ),
+            OrientedIncidence(
+                2,
+                edge_entities,
+                face_entities,
+                edge_face_relation,
+                np.asarray(connectivity.face_edge_signs)[face_edge_valid],
+            ),
+            OrientedIncidence(
+                3,
+                face_entities,
+                cell_entities,
+                face_cell_relation,
+                np.asarray(connectivity.cell_face_signs)[cell_face_valid],
+            ),
+        ),
+    )
+
+
 __all__ = [
     "PolygonalConnectivity",
+    "PolyhedralConnectivity",
     "TetrahedralConnectivity",
     "polygonal_cell_complex",
     "polygonal_connectivity",
+    "polyhedral_cell_complex",
+    "polyhedral_connectivity",
     "tetrahedral_cell_complex",
     "tetrahedral_connectivity",
 ]

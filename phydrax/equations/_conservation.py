@@ -17,6 +17,7 @@ from ..discretization import (
     DiscretizationRecord,
     DiscretizationRole,
 )
+from ..discretization.fem._boundary import FiniteElementBoundarySet
 from ..discretization.fem._generic import FiniteElementDiscretization
 from ..discretization.finite_difference import (
     PreparedSBPConservationDynamics,
@@ -75,6 +76,10 @@ from .fem._conservation import (
     DGSEMConservationMethodPlan,
     PreparedDGSEMConservationDynamics,
 )
+from .fem._nodal_conservation import (
+    NodalDGConservationMethodPlan,
+    PreparedNodalDGConservationDynamics,
+)
 
 
 class ConservationProblemIR(StrictModule):
@@ -85,6 +90,7 @@ class ConservationProblemIR(StrictModule):
         FiniteVolumeBoundarySet
         | TriangleFiniteVolumeBoundarySet
         | UnstructuredFiniteVolumeBoundarySet
+        | FiniteElementBoundarySet
         | None
     )
     source: Any = eqx.field(static=True)
@@ -102,6 +108,7 @@ class ConservationProblemIR(StrictModule):
             FiniteVolumeBoundarySet
             | TriangleFiniteVolumeBoundarySet
             | UnstructuredFiniteVolumeBoundarySet
+            | FiniteElementBoundarySet
             | None
         ),
         /,
@@ -122,11 +129,11 @@ class ConservationProblemIR(StrictModule):
                 FiniteVolumeBoundarySet,
                 TriangleFiniteVolumeBoundarySet,
                 UnstructuredFiniteVolumeBoundarySet,
+                FiniteElementBoundarySet,
             ),
         ):
             raise TypeError(
-                "boundaries must be a prepared finite-volume boundary set or None "
-                "for a fully periodic method."
+                "boundaries must be a prepared conservation boundary set or None."
             )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
@@ -182,6 +189,7 @@ class CompiledConservationProblem(StrictModule):
         | SpectralConservationMethodPlan
         | SBPFluxDifferencingMethodPlan
         | DGSEMConservationMethodPlan
+        | NodalDGConservationMethodPlan
     )
     dynamics: (
         PreparedFiniteVolumeDynamics
@@ -190,6 +198,7 @@ class CompiledConservationProblem(StrictModule):
         | PreparedSpectralConservationDynamics
         | PreparedSBPConservationDynamics
         | PreparedDGSEMConservationDynamics
+        | PreparedNodalDGConservationDynamics
     )
     discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
@@ -213,6 +222,7 @@ class CompiledConservationProblem(StrictModule):
             | SpectralConservationMethodPlan
             | SBPFluxDifferencingMethodPlan
             | DGSEMConservationMethodPlan
+            | NodalDGConservationMethodPlan
         ),
         dynamics: (
             PreparedFiniteVolumeDynamics
@@ -221,6 +231,7 @@ class CompiledConservationProblem(StrictModule):
             | PreparedSpectralConservationDynamics
             | PreparedSBPConservationDynamics
             | PreparedDGSEMConservationDynamics
+            | PreparedNodalDGConservationDynamics
         ),
         /,
     ):
@@ -299,16 +310,22 @@ class CompiledConservationProblem(StrictModule):
         return self.dynamics.face_fluxes(time, state, args)
 
     def weak_residual(self, time: Array, state: Array, args: Any = None, /) -> Array:
-        if not isinstance(self.dynamics, PreparedDGSEMConservationDynamics):
+        if not isinstance(
+            self.dynamics,
+            (PreparedDGSEMConservationDynamics, PreparedNodalDGConservationDynamics),
+        ):
             raise TypeError(
-                "A dual-valued weak residual is specific to finite-element DGSEM."
+                "A dual-valued weak residual is specific to finite-element DG methods."
             )
         return self.dynamics.weak_residual(time, state, args)
 
     def mass_inverted_rate(self, time: Array, state: Array, args: Any = None, /) -> Array:
-        if not isinstance(self.dynamics, PreparedDGSEMConservationDynamics):
+        if not isinstance(
+            self.dynamics,
+            (PreparedDGSEMConservationDynamics, PreparedNodalDGConservationDynamics),
+        ):
             raise TypeError(
-                "An explicit FE mass solve is specific to finite-element DGSEM."
+                "An explicit FE mass solve is specific to finite-element DG methods."
             )
         return self.dynamics.mass_inverted_rate(time, state, args)
 
@@ -444,6 +461,7 @@ def compile_conservation_problem(
         | SpectralConservationMethodPlan
         | SBPFluxDifferencingMethodPlan
         | DGSEMConservationMethodPlan
+        | NodalDGConservationMethodPlan
     ),
     /,
     *,
@@ -458,18 +476,47 @@ def compile_conservation_problem(
         raise TypeError("problem must be a ConservationProblemIR.")
     _validate_entropy_pair(problem, entropy_pair)
     if isinstance(discretization, FiniteElementDiscretization):
+        if isinstance(method, NodalDGConservationMethodPlan):
+            if not isinstance(problem.boundaries, FiniteElementBoundarySet):
+                raise TypeError("Nodal DG requires exhaustive FiniteElementBoundarySet.")
+            if any(
+                value is not None for value in (capacity, bathymetry, precision, coupling)
+            ):
+                raise ValueError(
+                    "Nodal DG does not accept finite-volume capacity, bathymetry, "
+                    "precision, or coupling options."
+                )
+            dynamics = PreparedNodalDGConservationDynamics(
+                problem.system,
+                discretization,
+                method,
+                problem.boundaries,
+                source=problem.source,
+                entropy_pair=entropy_pair,
+            )
+            return CompiledConservationProblem(problem, discretization, method, dynamics)
         if not isinstance(method, DGSEMConservationMethodPlan):
             raise TypeError(
                 "Finite-element DGSEM geometry requires DGSEMConservationMethodPlan."
             )
-        if not isinstance(problem.system, EulerSystem):
+        if isinstance(problem.system, EulerSystem):
+            if method.viscous is not None:
+                raise ValueError("Euler DGSEM cannot compile a viscous LDG plan.")
+        elif isinstance(problem.system, CompressibleNavierStokesSystem):
+            if method.viscous is None:
+                raise ValueError(
+                    "Compressible Navier–Stokes DGSEM requires an LDG viscous plan."
+                )
+        else:
             raise TypeError(
-                "Initial finite-element DGSEM conservation supports inviscid "
-                "EulerSystem only."
+                "Finite-element DGSEM supports EulerSystem or "
+                "CompressibleNavierStokesSystem."
             )
-        if problem.boundaries is not None:
-            raise ValueError(
-                "Periodic finite-element DGSEM conservation requires boundaries=None."
+        if problem.boundaries is not None and not isinstance(
+            problem.boundaries, FiniteElementBoundarySet
+        ):
+            raise TypeError(
+                "Finite-element DGSEM requires FiniteElementBoundarySet or None."
             )
         if any(
             value is not None for value in (capacity, bathymetry, precision, coupling)
@@ -488,6 +535,7 @@ def compile_conservation_problem(
             problem.system,
             discretization,
             method,
+            boundaries=problem.boundaries,
             source=problem.source,
             entropy_pair=entropy_pair,
         )

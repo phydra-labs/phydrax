@@ -11,6 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -586,6 +587,136 @@ class CompressibleNavierStokesSystem(
 
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
         return self.inviscid.primitive_to_conserved(primitive)
+
+    def primitive_gradients(
+        self,
+        state: ArrayLike,
+        conserved_gradient: ArrayLike,
+        /,
+    ) -> tuple[Array, Array]:
+        """Return velocity and temperature gradients from conserved gradients."""
+        value = jnp.asarray(state)
+        gradient = jnp.asarray(conserved_gradient)
+        expected = value.shape + (self.dimension,)
+        if gradient.shape != expected:
+            raise ValueError(
+                "Conserved gradients must append one physical derivative axis."
+            )
+        density = value[..., 0]
+        momentum = value[..., 1 : 1 + self.dimension]
+        velocity = momentum / density[..., None]
+        density_gradient = gradient[..., 0, :]
+        momentum_gradient = gradient[..., 1 : 1 + self.dimension, :]
+        velocity_gradient = (
+            momentum_gradient - velocity[..., :, None] * density_gradient[..., None, :]
+        ) / density[..., None, None]
+        energy_gradient = gradient[..., -1, :]
+        speed_squared = oe.contract("...i,...i->...", velocity, velocity, backend="jax")
+        kinetic_gradient = (
+            oe.contract(
+                "...i,...ij->...j",
+                velocity,
+                momentum_gradient,
+                backend="jax",
+            )
+            - 0.5 * speed_squared[..., None] * density_gradient
+        )
+        pressure = self.pressure(value)
+        pressure_gradient = (self.gamma - 1.0) * (energy_gradient - kinetic_gradient)
+        gas_constant = self.material.gas_constant
+        temperature_gradient = pressure_gradient / (
+            density[..., None] * gas_constant
+        ) - pressure[..., None] * density_gradient / (
+            density[..., None] ** 2 * gas_constant
+        )
+        return velocity_gradient, temperature_gradient
+
+    def viscous_flux(
+        self,
+        state: ArrayLike,
+        conserved_gradient: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        """Return the positive diffusive flux tensor for conserved variables."""
+        value = jnp.asarray(state)
+        velocity = value[..., 1 : 1 + self.dimension] / value[..., :1]
+        velocity_gradient, temperature_gradient = self.primitive_gradients(
+            value, conserved_gradient
+        )
+        temperature = self.temperature(value)
+        properties = self.transport.properties(temperature, value, args)
+        return self.viscous_flux_from_primitive_gradients(
+            velocity,
+            velocity_gradient,
+            temperature_gradient,
+            properties.dynamic_viscosity,
+            properties.bulk_viscosity,
+            properties.thermal_conductivity,
+        )
+
+    def viscous_flux_from_primitive_gradients(
+        self,
+        velocity: ArrayLike,
+        velocity_gradient: ArrayLike,
+        temperature_gradient: ArrayLike,
+        dynamic_viscosity: ArrayLike,
+        bulk_viscosity: ArrayLike,
+        thermal_conductivity: ArrayLike,
+        /,
+    ) -> Array:
+        """Return diffusive flux from primitive gradients and transport coefficients."""
+        velocity_ = jnp.asarray(velocity)
+        gradient = jnp.asarray(velocity_gradient)
+        temperature_gradient_ = jnp.asarray(temperature_gradient)
+        viscosity = jnp.asarray(dynamic_viscosity)
+        bulk = jnp.asarray(bulk_viscosity)
+        conductivity = jnp.asarray(thermal_conductivity)
+        coefficient_shape = velocity_.shape[:-1]
+        if (
+            velocity_.shape[-1] != self.dimension
+            or gradient.shape != velocity_.shape + (self.dimension,)
+            or temperature_gradient_.shape != velocity_.shape
+            or viscosity.shape != coefficient_shape
+            or bulk.shape != coefficient_shape
+            or conductivity.shape != coefficient_shape
+        ):
+            raise ValueError(
+                "Primitive gradients and transport coefficients are incompatible."
+            )
+        divergence = jnp.trace(gradient, axis1=-2, axis2=-1)
+        identity = jnp.eye(self.dimension, dtype=velocity_.dtype)
+        deviatoric = (
+            gradient
+            + jnp.swapaxes(gradient, -1, -2)
+            - (2.0 / 3.0) * divergence[..., None, None] * identity
+        )
+        stress = (
+            viscosity[..., None, None] * deviatoric
+            + bulk[..., None, None] * divergence[..., None, None] * identity
+        )
+        energy_flux = (
+            oe.contract("...i,...ij->...j", velocity_, stress, backend="jax")
+            + conductivity[..., None] * temperature_gradient_
+        )
+        mass_flux = jnp.zeros(
+            velocity_.shape[:-1] + (1, self.dimension), dtype=velocity_.dtype
+        )
+        return jnp.concatenate((mass_flux, stress, energy_flux[..., None, :]), axis=-2)
+
+    def viscous_normal_flux(
+        self,
+        state: ArrayLike,
+        conserved_gradient: ArrayLike,
+        normal: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        normal_ = jnp.asarray(normal)
+        flux = self.viscous_flux(state, conserved_gradient, args)
+        if normal_.shape != flux.shape[:-2] + (self.dimension,):
+            raise ValueError("Viscous normal shape is incompatible with the state.")
+        return oe.contract("...ij,...j->...i", flux, normal_, backend="jax")
 
     def physical_flux(self, state: Array, axis: int, args: Any = None, /) -> Array:
         return self.inviscid.physical_flux(state, axis, args)

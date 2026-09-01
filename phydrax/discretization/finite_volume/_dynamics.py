@@ -18,10 +18,8 @@ from ..._numerics._compensated import compensated_sum, compensated_sum_chunks
 from ..._precision import PrecisionEvidenceEnvelope
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ._boundary import (
-    FiniteVolumeBoundarySet,
-    PrescribedNormalFluxBoundary,
-)
+from .._conservation_boundary import PrescribedNormalFluxBoundary
+from ._boundary import FiniteVolumeBoundarySet
 from ._closure import ConservativeFaceClosurePlan
 from ._entropy import (
     _evaluate_finite_volume_entropy_diagnostics,

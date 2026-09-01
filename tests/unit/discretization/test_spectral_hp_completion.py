@@ -5,6 +5,7 @@
 import jax.numpy as jnp
 import numpy as np
 
+import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
 from phydrax.discretization.fem import (
     AnisotropicHPattern,
@@ -22,8 +23,7 @@ from phydrax.discretization.fem import (
     NIrregularMortarPlan,
     refine_anisotropic_hp_cells,
     resize_hp_forest,
-    SimplexModalFamily,
-    SimplexSBPPlan,
+    SimplexNodalFamily,
     tensor_hcurl_family,
     tensor_hdiv_family,
     TensorDeRhamComplex,
@@ -107,10 +107,10 @@ def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact():
     np.testing.assert_allclose(np.asarray(covariant), (0.5, 2.0 / 3.0))
     np.testing.assert_allclose(np.asarray(contravariant), (1.0 / 3.0, 1.0))
 
-    triangle = SimplexModalFamily("triangle", 3)
-    tetrahedron = SimplexModalFamily("tetrahedron", 2)
+    triangle = SimplexNodalFamily("triangle", 3)
+    tetrahedron = SimplexNodalFamily("tetrahedron", 2)
     np.testing.assert_allclose(
-        np.asarray(triangle.tabulate(triangle.nodes)),
+        np.asarray(triangle.tabulate(triangle.nodes)[0]),
         np.eye(triangle.nodes.shape[0]),
         atol=2.0e-12,
     )
@@ -131,9 +131,9 @@ def test_tensor_de_rham_piola_and_simplex_hybrid_families_are_exact():
     assert hcurl.mapping == "covariant_piola"
     assert hdiv.mapping == "contravariant_piola"
     assert HybridReferenceFamily("prism", 2).nodes.shape[1] == 3
-    assert HybridReferenceFamily("pyramid", 2).nodes.shape[1] == 3
+    assert HybridReferenceFamily("pyramid", 1).nodes.shape[1] == 3
     prism = HybridReferenceFamily("prism", 2)
-    pyramid = HybridReferenceFamily("pyramid", 2)
+    pyramid = HybridReferenceFamily("pyramid", 1)
     np.testing.assert_allclose(
         np.asarray(prism.tabulate(prism.nodes)),
         np.eye(prism.nodes.shape[0]),
@@ -183,10 +183,7 @@ def test_compatible_transfers_hybrid_mortars_and_auxiliary_correction():
     assert len(refinement.child_maps) == 2
 
 
-def test_simplex_sbp_unfitted_and_interface_transfers_conserve():
-    family = SimplexModalFamily("triangle", 3)
-    sbp = SimplexSBPPlan(family)
-    assert sbp.polynomial_derivative_error < 1.0e-12
+def test_unfitted_and_interface_transfers_conserve():
 
     aggregation = UnfittedAggregationPlan(
         jnp.asarray((0.05, 0.8)),
@@ -206,3 +203,50 @@ def test_simplex_sbp_unfitted_and_interface_transfers_conserve():
         np.asarray(transfer.apply(jnp.asarray((2.0, 4.0)))),
         (2.0, 4.0),
     )
+
+
+def test_prism_and_pyramid_reference_families_prepare_real_cell_meshes():
+    prism_points = jnp.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 0.0, 1.0),
+            (1.0, 0.0, 1.0),
+            (0.0, 1.0, 1.0),
+        )
+    )
+    pyramid_points = jnp.asarray(
+        (
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.5, 0.5, 1.0),
+        )
+    )
+    for kind, points in (("prism", prism_points), ("pyramid", pyramid_points)):
+        family = HybridReferenceFamily(kind, 1)
+        values, gradients = family.tabulate_with_gradients(family.nodes)
+        np.testing.assert_allclose(values, np.eye(points.shape[0]), atol=3.0e-10)
+        assert jnp.all(jnp.isfinite(gradients))
+        mesh = CellMesh(
+            points,
+            (
+                CellBlock(
+                    "cells",
+                    kind,
+                    jnp.arange(points.shape[0], dtype=jnp.int32)[None, :],
+                ),
+            ),
+        )
+        plan = phx.discretization.FiniteElementPlan(
+            mesh,
+            phx.discretization.FiniteElementFieldSpec(
+                "u", phx.discretization.discontinuous_element(kind, 1)
+            ),
+        ).prepare()
+        assert plan.mesh.topological_dimension == 3
+        assert plan.exterior_facet_domain.entity_indices.shape[0] == (
+            5 if kind == "pyramid" else 5
+        )

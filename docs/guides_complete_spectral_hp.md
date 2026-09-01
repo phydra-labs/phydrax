@@ -30,31 +30,23 @@ preserving stable root/path identities. Forests can grow transactionally with
 reports curvature evidence. `NIrregularMortarPlan` groups an arbitrary supported
 set of child patches under one coarse trace.
 
-## Robust DGSEM
+## Robust conservation dynamics
 
-The robust physics layer provides:
+Tensor GLL DGSEM supports explicit physical/periodic facet ownership, arbitrary-
+normal numerical fluxes, diagonal mass inversion, state and weak-residual
+linearizations, conservative SSP-stage entropy/positivity filtering, and one
+two-pass LDG compressible Navier–Stokes path. Certificates continue to distinguish
+periodic inviscid entropy evidence from uncertified physical-boundary and viscous
+extensions.
 
-- characteristic inflow, outflow, slip-wall, and no-slip-wall states;
-- entropy wall evidence;
-- source/flux well-balance ledgers;
-- BR1 viscous gradients, divergence, and mortar fluxes;
-- action-aware overintegration;
-- entropy, kinetic-energy, and skew split forms;
-- troubled-cell evidence;
-- conservative modal filtering;
-- density/pressure positivity limiting;
-- DG/subcell finite-volume projection, advancement, and reconstruction.
+`NodalDGConservationMethodPlan` supplies exact-mass weak DG on stable simplex
+references, mixed triangle/quadrilateral mortars, curved coordinate fields,
+tetrahedra, prisms, and rational linear pyramids. Nonpolynomial overintegration is
+recorded as heuristic quadrature evidence.
 
 Entropy-mortar defects can be derived from left/right states, entropy variables,
-numerical flux, and entropy potentials through
-`derived_mortar_entropy_defect`; callers do not need to assert a defect manually.
-
-## Moving meshes and temporal hp
-
-`ALEMetricState` records coordinates, mesh velocity, Jacobian evolution, and the
-temporal GCL defect. `MovingMortarMetricPlan` advances mortar geometry.
-`LocalTimeSteppingPlan` supplies level steps and conservative refluxing.
-`TemporalHPBudget` separates spatial, temporal, and algebraic error contributions.
+numerical flux, and entropy potentials through `derived_mortar_entropy_defect`;
+callers do not need to assert a defect manually.
 
 ## Compatible tensor spaces
 
@@ -71,13 +63,13 @@ covariant and contravariant physical mappings. `TensorDeRhamTransferPlan`,
 
 ## Simplex and hybrid references
 
-`SimplexModalFamily` supports high-order triangles and tetrahedra.
-`SimplexSBPPlan` constructs nodal derivative actions. `HybridReferenceFamily`
-provides prism and pyramid nodes, while `HybridRefinementPlan` and
-`HybridMortarPlan` provide child maps and polynomial interface reproduction.
+`SimplexNodalFamily` supplies Modepy warp-and-blend triangle/tetrahedron nodes and
+orthonormal modal tabulation. `HybridReferenceFamily` supplies
+triangle-times-interval prism bases and a rational degree-one pyramid basis.
+Mixed three-dimensional faces use canonical polyhedral connectivity and
+two-sided conservative interface routes.
 
-These reference contracts do not create a second mesh runtime. Mesh-level hybrid
-connectivity continues through the canonical `CellMesh` extension path.
+These references remain ordinary `CellMesh` and finite-element compiler values.
 
 ## Advanced solvers
 
@@ -112,16 +104,16 @@ explicitly chooses a relaxed approximate policy.
 ## Performance and persistence
 
 - `PersistentSemanticCache` stores arrays and metadata under semantic IDs.
-- `HeterogeneousSignatureSchedule` groups equal scientific signatures.
 - `FusedMortarAction` and `FusedTensorTransfer` preserve transpose structure.
 - `HPMixedPrecisionPolicy` prevents accidental precision narrowing.
 - `HPWorksetMemoryPlan` computes a bounded workset capacity.
-- adaptive VTK, XDMF, and forest output preserve epoch information;
-- Gmsh and Exodus-array adapters build canonical meshes.
+- adaptive VTK, XDMF, forest output, and full-runtime checkpoints preserve identities;
+- the meshio finite-element importer preserves high-order coordinate DOFs.
 
 ## Current boundary
 
-This implementation intentionally excludes an actual multi-host communication
-runtime, MPI partitioner, dynamic migration engine, and distributed failure
-recovery. Partition-independent plans and serial restart data remain available,
-but communication is supplied by external runtime work.
+The distributed lowerer provides cost-aware ownership and explicit owned-local,
+halo-update, interface, and contribution-sum phases. JAX named-axis collectives
+are available; an MPI runtime and dynamic migration engine remain external.
+Pyramid approximation is currently degree one, and mixed-cell viscous interfaces
+remain outside the certified implementation.

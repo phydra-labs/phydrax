@@ -488,8 +488,10 @@ from ._finite_volume_topology_events import (
 from ._fixed_step import (
     AbstractAcceptedStepTransform,
     AbstractFixedStepMethod,
+    AbstractSSPRKStageTransform,
     AcceptedStepTransformResult,
     CallableFixedStepMethod,
+    CallableSSPRKStageTransform,
     CompositeAcceptedStepTransform,
     FixedStepProblem,
     FixedStepReplayMode,
@@ -501,9 +503,11 @@ from ._fixed_step import (
     FixedStepScalarDiagnostics,
     FixedStepSolution,
     IdentityAcceptedStepTransform,
+    IdentitySSPRKStageTransform,
     solve_fixed_step,
     SSPRK33FixedStepMethod,
     SSPRK54FixedStepMethod,
+    StageTransformResult,
 )
 from ._fock_continuation import (
     FockContinuationPolicy,
@@ -1322,6 +1326,17 @@ from ._rough_delay import (
 )
 from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 from ._rough_logode import LinearLogODE, LogODE
+from ._runtime_lifecycle import (
+    AcceptedStepTrigger,
+    AcceptedStepTriggerState,
+    BoundedAsyncPublisher,
+    ExactTimeSchedule,
+    read_runtime_checkpoint,
+    RuntimeCheckpointEnvelope,
+    StreamingObservablePlan,
+    StreamingObservableState,
+    write_runtime_checkpoint,
+)
 from ._scalar_boundary3d import *  # noqa: F403
 from ._scalar_boundary3d import __all__ as _scalar_boundary_all
 from ._scalar_interfaces3d import *  # noqa: F403
@@ -2377,7 +2392,9 @@ __all__ = [
     "fit_stinespring_process",
     "AbstractAcceptedStepTransform",
     "AbstractFixedStepMethod",
+    "AbstractSSPRKStageTransform",
     "AcceptedStepTransformResult",
+    "CallableSSPRKStageTransform",
     "CompositeAcceptedStepTransform",
     "CallableFixedStepMethod",
     "FixedStepProblem",
@@ -2390,9 +2407,20 @@ __all__ = [
     "FixedStepResult",
     "FixedStepSolution",
     "IdentityAcceptedStepTransform",
+    "IdentitySSPRKStageTransform",
     "SSPRK33FixedStepMethod",
     "SSPRK54FixedStepMethod",
+    "StageTransformResult",
     "solve_fixed_step",
+    "AcceptedStepTrigger",
+    "AcceptedStepTriggerState",
+    "BoundedAsyncPublisher",
+    "ExactTimeSchedule",
+    "read_runtime_checkpoint",
+    "RuntimeCheckpointEnvelope",
+    "StreamingObservablePlan",
+    "StreamingObservableState",
+    "write_runtime_checkpoint",
     "LatticeBoltzmannFixedStepMethod",
     "ConservativeFiniteVolumeDVMPlan",
     "FiniteVolumeDVMResidualEvidence",

@@ -17,6 +17,7 @@ from ...discretization._local_variational import (
     AbstractPreparedLocalDiscretization,
 )
 from ...discretization.fem import FiniteElementDiscretization, IntegrationDomain
+from ...discretization.fem._boundary import tensor_local_face
 from ...discretization.fem._high_order import SumFactorizationPlan
 from ...discretization.fem._sbp import MappedTensorMetrics
 from ...linalg import DualSpace
@@ -24,6 +25,7 @@ from ...sparse import scatter_local as _scatter_local
 from ...variational import FunctionalContext, LocalFieldJet, LocalGeometry
 from .._finite_element_variational import (
     _action_domain,
+    _action_output_fields,
     _action_rule,
     _interval_rule,
     _reference_rule_data,
@@ -418,15 +420,24 @@ def _mortar_facet_residual(
 ) -> Array:
     if workset.entity_indices.shape[0] != 1:
         raise ValueError("Each compiled mortar workset currently owns one patch.")
-    owner_routes = dict(workset.gathers)[action.field_name][0]
-    neighbour_routes = dict(workset.neighbour_gathers)[action.field_name][0]
+    owner_routes = dict(workset.gathers)[_action_output_fields(action)[0]][0]
+    neighbour_routes = dict(workset.neighbour_gathers)[_action_output_fields(action)[0]][
+        0
+    ]
     owner_trace = state[owner_routes]
     neighbour_trace = state[neighbour_routes]
     owner_lift, neighbour_lift = execute_finite_element_mortar_flux(
         workset,
         owner_trace,
         neighbour_trace,
-        action.kernel,
+        lambda plus, minus, points, weights, normal, execution_context: action.kernel(
+            (plus,),
+            (minus,),
+            points,
+            weights,
+            normal,
+            execution_context,
+        ),
         context,
     )
     result = jnp.zeros_like(state)
@@ -511,7 +522,7 @@ def _prepared_local_volume_residual(
             region.field_names, region.reference_actions, strict=True
         )
     }
-    output_field = action.field_name
+    output_field = _action_output_fields(action)[0]
     output_state = state_by_field[output_field]
     gathers = dict(workset.gathers)
     dofs = gathers[output_field]
@@ -1239,7 +1250,7 @@ def _full_residual(
                 else:
                     raise ValueError("Unsupported functional integration domain.")
                 continue
-            output_field = action.field_name
+            output_field = _action_output_fields(action)[0]
             output_state = state_by_field[output_field]
             output_field_index = discretization._field_index(output_field)
             output_dof_map = discretization.dof_maps[output_field_index]
@@ -1297,9 +1308,18 @@ def _full_residual(
                 residual_by_field[output_field] = output_residual - load
                 continue
             if isinstance(action, ExteriorFacetAction):
-                residual_by_field[output_field] = (
-                    output_residual
-                    + _exterior_facet_residual(
+                facet_residual = (
+                    _prepared_tensor_facet_residual(
+                        discretization,
+                        state_by_field,
+                        output_field,
+                        action,
+                        workset,
+                        context,
+                        accumulation,
+                    )
+                    if workset.reference is not None
+                    else _exterior_facet_residual(
                         discretization,
                         output_field_index,
                         output_state,
@@ -1310,17 +1330,36 @@ def _full_residual(
                         accumulation,
                     )
                 )
+                residual_by_field[output_field] = output_residual + facet_residual
                 continue
             if isinstance(action, InteriorFacetAction):
-                facet_residual = (
-                    _mortar_facet_residual(
+                if workset.mortar is not None:
+                    if action.input_field_names != (output_field,):
+                        raise ValueError(
+                            "Cross-field mortar facets are not yet supported."
+                        )
+                    facet_residual = _mortar_facet_residual(
                         output_state,
                         action,
                         workset,
                         context,
                     )
-                    if workset.mortar is not None
-                    else _interior_facet_residual(
+                elif workset.reference is not None:
+                    facet_residual = _prepared_tensor_facet_residual(
+                        discretization,
+                        state_by_field,
+                        output_field,
+                        action,
+                        workset,
+                        context,
+                        accumulation,
+                    )
+                else:
+                    if action.input_field_names != (output_field,):
+                        raise ValueError(
+                            "Cross-field legacy facets require prepared references."
+                        )
+                    facet_residual = _interior_facet_residual(
                         discretization,
                         output_field_index,
                         output_state,
@@ -1330,7 +1369,6 @@ def _full_residual(
                         context,
                         accumulation,
                     )
-                )
                 residual_by_field[output_field] = output_residual + facet_residual
                 continue
             rule = _action_rule(action, block.name, block.cell_kind)
@@ -1895,47 +1933,34 @@ def _certified_facet_geometry(
     reference,
     facet,
     cells: Array,
+    local_facet: int,
     /,
 ) -> tuple[Array, Array]:
-    reference_nodes = np.asarray(reference.element.reference_nodes)
+    reference_nodes = jnp.asarray(reference.element.reference_nodes)
     dimension = reference_nodes.shape[1]
-    normal = np.asarray(facet.normals[0])
-    axis = int(np.argmax(np.abs(normal)))
-    side = 0 if normal[axis] < 0.0 else 1
-    nodal_shape = tuple(
-        np.unique(reference_nodes[:, coordinate_axis]).size
-        for coordinate_axis in range(dimension)
-    )
+    axis, side = tensor_local_face(reference.element.cell_kind, int(local_facet))
+    node_count = int(round(reference.element.local_dof_count ** (1.0 / dimension)))
+    nodal_shape = (node_count,) * dimension
     reference_grid = reference_nodes.reshape(nodal_shape + (dimension,))
-    face_nodes = np.take(
+    face_nodes = jnp.take(
         reference_grid,
         0 if side == 0 else -1,
         axis=axis,
     ).reshape((-1, dimension))
-    facet_points = np.asarray(facet.points)
-    if face_nodes.shape != facet_points.shape:
-        raise ValueError(
-            "Certified facet metrics require the collocated nodal trace rule."
-        )
-    distances = np.max(np.abs(facet_points[:, None, :] - face_nodes[None, :, :]), axis=-1)
-    permutation = np.argmin(distances, axis=1).astype(np.int32)
-    if (
-        np.max(np.min(distances, axis=1), initial=0.0) > 1.0e-12
-        or np.unique(permutation).size != permutation.size
-    ):
-        raise ValueError(
-            "Certified facet metric nodes do not match the prepared trace nodes."
-        )
+    facet_points = jnp.asarray(facet.points)
+    distances = jnp.max(
+        jnp.abs(facet_points[:, None, :] - face_nodes[None, :, :]), axis=-1
+    )
+    permutation = jnp.argmin(distances, axis=1).astype(jnp.int32)
     physical_points = metrics.face_coordinates[axis][cells, side].reshape(
         (cells.shape[0], -1, dimension)
     )
     scaled_normal = metrics.face_scaled_normals[axis][cells, side].reshape(
         (cells.shape[0], -1, dimension)
     )
-    indices = jnp.asarray(permutation, dtype=jnp.int32)
     return (
-        jnp.take(physical_points, indices, axis=1),
-        jnp.take(scaled_normal, indices, axis=1),
+        jnp.take(physical_points, permutation, axis=1),
+        jnp.take(scaled_normal, permutation, axis=1),
     )
 
 
@@ -1951,11 +1976,17 @@ def _prepared_facet_side(
     *,
     neighbour: bool,
 ):
-    if len(discretization.mesh.blocks) != 1:
-        raise ValueError(
-            "Prepared tensor facets currently require one homogeneous block."
-        )
-    reference = workset.reference
+    block_names = tuple(block.name for block in discretization.mesh.blocks)
+    block_index = block_names.index(workset.signature.block_name)
+    offsets = np.cumsum(
+        (0,) + tuple(block.cell_count for block in discretization.mesh.blocks)
+    )
+    local_cells = cells - int(offsets[block_index])
+    reference = (
+        workset.neighbour_reference
+        if neighbour and workset.neighbour_reference is not None
+        else workset.reference
+    )
     if reference is None:
         raise ValueError("Prepared facet execution requires a prepared reference.")
     facet = reference.facets[int(local_facet)]
@@ -1965,14 +1996,15 @@ def _prepared_facet_side(
             reference,
             facet,
             cells,
+            local_facet,
         )
         surface_jacobian = jnp.linalg.norm(scaled_normal, axis=-1)
         normal = scaled_normal / surface_jacobian[..., None]
         physical_weights = surface_jacobian * facet.weights[None, :]
     else:
-        coordinate_element = discretization.coordinate_elements[0]
+        coordinate_element = discretization.coordinate_elements[block_index]
         coordinate_basis, coordinate_gradients = coordinate_element.tabulate(facet.points)
-        coordinate_routes = discretization.coordinate_dofs[0][cells]
+        coordinate_routes = discretization.coordinate_dofs[block_index][local_cells]
         metric = FiniteElementMetricData(
             coordinate_basis,
             coordinate_gradients,
@@ -1988,8 +2020,8 @@ def _prepared_facet_side(
         physical_weights = facet_metric.physical_weights
         normal = facet_metric.normal
     dof_map = discretization.dof_maps[field_index]
-    dofs = dof_map.cell_dofs[0][cells]
-    orientation = dof_map.orientations[0][cells]
+    dofs = dof_map.cell_dofs[block_index][local_cells]
+    orientation = dof_map.orientations[block_index][local_cells]
     if state is None:
         trace = None
     else:
@@ -2019,8 +2051,8 @@ def _prepared_facet_side(
 
 def _prepared_tensor_facet_residual(
     discretization: FiniteElementDiscretization,
-    field_index: int,
-    state: Array,
+    state_by_field: dict[str, Array],
+    output_field: str,
     action: InteriorFacetAction | ExteriorFacetAction,
     workset,
     context: FiniteElementExecutionContext,
@@ -2030,6 +2062,18 @@ def _prepared_tensor_facet_residual(
     reference = workset.reference
     if reference is None:
         raise ValueError("Prepared tensor facet execution requires a reference.")
+    output_index = discretization._field_index(output_field)
+    output_state = state_by_field[output_field]
+    output_element = discretization.elements[output_index][0]
+    for input_field in action.input_field_names:
+        input_index = discretization._field_index(input_field)
+        if (
+            discretization.elements[input_index][0].element_id
+            != output_element.element_id
+        ):
+            raise ValueError(
+                "Prepared cross-field facets require one shared reference element."
+            )
     owners = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
     neighbours = jnp.maximum(jnp.asarray(workset.neighbour_cells, dtype=jnp.int32), 0)
     owner_local = jnp.asarray(workset.owner_local_entities, dtype=jnp.int32)
@@ -2037,10 +2081,8 @@ def _prepared_tensor_facet_residual(
     valid = jnp.asarray(workset.valid)
     count = owners.shape[0]
     point_count = reference.facets[0].points.shape[0]
-    component_shape = state.shape[1:]
-    trace_shape = (count, point_count) + component_shape
-    plus_value = jnp.zeros(trace_shape, dtype=state.dtype)
-    minus_value = jnp.zeros(trace_shape, dtype=state.dtype)
+    output_component_shape = output_state.shape[1:]
+    output_trace_shape = (count, point_count) + output_component_shape
     physical_points = jnp.zeros(
         (count, point_count, context.runtime.coordinates.shape[-1]),
         dtype=context.runtime.coordinates.dtype,
@@ -2054,8 +2096,8 @@ def _prepared_tensor_facet_residual(
     for local_facet in range(len(reference.facets)):
         plus = _prepared_facet_side(
             discretization,
-            field_index,
-            state,
+            output_index,
+            None,
             workset,
             owners,
             local_facet,
@@ -2063,33 +2105,57 @@ def _prepared_tensor_facet_residual(
             neighbour=False,
         )
         active = valid & (owner_local == local_facet)
-        value_mask = active.reshape((count, 1) + (1,) * len(component_shape))
         point_mask = active[:, None, None]
         scalar_mask = active[:, None]
-        plus_value = jnp.where(value_mask, plus[4], plus_value)
         physical_points = jnp.where(point_mask, plus[5], physical_points)
         physical_weights = jnp.where(scalar_mask, plus[6], physical_weights)
         normal = jnp.where(point_mask, plus[7], normal)
         plus_sides.append(plus)
         if isinstance(action, InteriorFacetAction):
-            minus = _prepared_facet_side(
+            minus_sides.append(
+                _prepared_facet_side(
+                    discretization,
+                    output_index,
+                    None,
+                    workset,
+                    neighbours,
+                    local_facet,
+                    context,
+                    neighbour=True,
+                )
+            )
+
+    def traces(field_name: str, /, *, neighbour: bool = False) -> Array:
+        field_index = discretization._field_index(field_name)
+        state = state_by_field[field_name]
+        component_shape = state.shape[1:]
+        values = jnp.zeros((count, point_count) + component_shape, dtype=state.dtype)
+        cells = neighbours if neighbour else owners
+        local_entities = neighbour_local if neighbour else owner_local
+        for local_facet in range(len(reference.facets)):
+            side = _prepared_facet_side(
                 discretization,
                 field_index,
                 state,
                 workset,
-                neighbours,
+                cells,
                 local_facet,
                 context,
-                neighbour=True,
+                neighbour=neighbour,
             )
-            minus_active = valid & (neighbour_local == local_facet)
-            minus_mask = minus_active.reshape((count, 1) + (1,) * len(component_shape))
-            minus_value = jnp.where(minus_mask, minus[4], minus_value)
-            minus_sides.append(minus)
+            active = valid & (local_entities == local_facet)
+            mask = active.reshape((count, 1) + (1,) * len(component_shape))
+            values = jnp.where(mask, side[4], values)
+        return values
+
+    plus_values = tuple(traces(field) for field in action.input_field_names)
     if isinstance(action, InteriorFacetAction):
+        minus_values = tuple(
+            traces(field, neighbour=True) for field in action.input_field_names
+        )
         plus_flux, minus_flux = action.kernel(
-            plus_value,
-            minus_value,
+            plus_values,
+            minus_values,
             physical_points,
             physical_weights,
             normal,
@@ -2097,34 +2163,41 @@ def _prepared_tensor_facet_residual(
         )
         plus_flux = jnp.asarray(plus_flux)
         minus_flux = jnp.asarray(minus_flux)
-        if plus_flux.shape != trace_shape or minus_flux.shape != trace_shape:
+        if (
+            plus_flux.shape != output_trace_shape
+            or minus_flux.shape != output_trace_shape
+        ):
             raise ValueError(
-                "Interior facet kernel must return both canonical trace shapes."
+                "Interior facet kernel must return output-field trace shapes."
             )
     else:
         plus_flux = jnp.asarray(
             action.kernel(
-                plus_value,
+                plus_values,
                 physical_points,
                 physical_weights,
                 normal,
                 context,
             )
         )
-        if plus_flux.shape != trace_shape:
-            raise ValueError("Exterior facet kernel must return the trace shape.")
+        if plus_flux.shape != output_trace_shape:
+            raise ValueError(
+                "Exterior facet kernel must return the output-field trace shape."
+            )
         minus_flux = None
     weighted_plus = (
-        physical_weights.reshape((count, point_count) + (1,) * len(component_shape))
+        physical_weights.reshape(
+            (count, point_count) + (1,) * len(output_component_shape)
+        )
         * plus_flux
     )
-    result = jnp.zeros_like(state)
+    result = jnp.zeros_like(output_state)
     for local_facet, plus in enumerate(plus_sides):
         active = valid & (owner_local == local_facet)
         local_flux = _localize_facet(weighted_plus, plus[3])
         local = oe.contract("qi,eq...->ei...", plus[0].basis_values, local_flux)
         local = jnp.where(
-            active.reshape((count, 1) + (1,) * len(component_shape)),
+            active.reshape((count, 1) + (1,) * len(output_component_shape)),
             local,
             0.0,
         )
@@ -2134,7 +2207,9 @@ def _prepared_tensor_facet_residual(
         result = _scatter_local(result, plus[1], local, accumulation)
     if minus_flux is not None:
         weighted_minus = (
-            physical_weights.reshape((count, point_count) + (1,) * len(component_shape))
+            physical_weights.reshape(
+                (count, point_count) + (1,) * len(output_component_shape)
+            )
             * minus_flux
         )
         for local_facet, minus in enumerate(minus_sides):
@@ -2142,7 +2217,7 @@ def _prepared_tensor_facet_residual(
             local_flux = _localize_facet(weighted_minus, minus[3])
             local = oe.contract("qi,eq...->ei...", minus[0].basis_values, local_flux)
             local = jnp.where(
-                active.reshape((count, 1) + (1,) * len(component_shape)),
+                active.reshape((count, 1) + (1,) * len(output_component_shape)),
                 local,
                 0.0,
             )
@@ -2222,7 +2297,7 @@ def _sipg_facet_residual(
         physical_points.shape[:-1],
     )
     cell_geometry = discretization.evaluate_block_geometry(
-        action.field_name,
+        _action_output_fields(action)[0],
         0,
         context.runtime.coordinates,
         discretization.block_geometries[field_index][0].reference_points,
@@ -2262,7 +2337,7 @@ def _sipg_facet_residual(
             parameter,
         )
         geometry = discretization.evaluate_block_geometry(
-            action.field_name,
+            _action_output_fields(action)[0],
             0,
             context.runtime.coordinates,
             reference_points,
@@ -2538,7 +2613,7 @@ def _cell_local_interior_facet_residual(
             parameter,
         )
         geometry = discretization.evaluate_block_geometry(
-            action.field_name,
+            _action_output_fields(action)[0],
             0,
             context.runtime.coordinates,
             points,
@@ -2549,7 +2624,11 @@ def _cell_local_interior_facet_residual(
         basis = geometry.basis_values
         dofs = dof_map.cell_dofs[0][cells]
         dof_orientation = dof_map.orientations[0][cells]
-        value = oe.contract("qi,ei->eq", basis, state[dofs] * dof_orientation)
+        local_state = state[dofs]
+        oriented = local_state * dof_orientation.reshape(
+            dof_orientation.shape + (1,) * (local_state.ndim - dof_orientation.ndim)
+        )
+        value = oe.contract("qi,ei...->eq...", basis, oriented)
         return basis, dofs, dof_orientation, value
 
     result = jnp.zeros_like(state)
@@ -2581,11 +2660,11 @@ def _cell_local_interior_facet_residual(
                         neighbours,
                     )
                     plus_flux, minus_flux = action.kernel(
-                        plus_value,
-                        minus_value,
+                        (plus_value,),
+                        (minus_value,),
                         physical_points,
                         weights,
-                        normal,
+                        jnp.broadcast_to(normal[:, None, :], physical_points.shape),
                         context,
                     )
                     plus_flux = jnp.asarray(plus_flux)
@@ -2599,13 +2678,13 @@ def _cell_local_interior_facet_residual(
                         )
                     active_weights = weights * active[:, None]
                     plus_residual = oe.contract(
-                        "eq,eq,qi->ei",
+                        "eq,eq...,qi->ei...",
                         active_weights,
                         plus_flux,
                         plus_basis,
                     )
                     minus_residual = oe.contract(
-                        "eq,eq,qi->ei",
+                        "eq,eq...,qi->ei...",
                         active_weights,
                         minus_flux,
                         minus_basis,
@@ -2613,13 +2692,21 @@ def _cell_local_interior_facet_residual(
                     result = _scatter_local(
                         result,
                         plus_dofs,
-                        plus_residual * plus_dof_orientation,
+                        plus_residual
+                        * plus_dof_orientation.reshape(
+                            plus_dof_orientation.shape
+                            + (1,) * (plus_residual.ndim - plus_dof_orientation.ndim)
+                        ),
                         accumulation,
                     )
                     result = _scatter_local(
                         result,
                         minus_dofs,
-                        minus_residual * minus_dof_orientation,
+                        minus_residual
+                        * minus_dof_orientation.reshape(
+                            minus_dof_orientation.shape
+                            + (1,) * (minus_residual.ndim - minus_dof_orientation.ndim)
+                        ),
                         accumulation,
                     )
     return result
@@ -2689,7 +2776,7 @@ def _exterior_facet_residual(
                 parameter,
             )
             geometry = discretization.evaluate_block_geometry(
-                action.field_name,
+                _action_output_fields(action)[0],
                 0,
                 context.runtime.coordinates,
                 points,
@@ -2700,14 +2787,24 @@ def _exterior_facet_residual(
                 raise ValueError("Exterior state flux requires a scalar element.")
             dofs = dof_map.cell_dofs[0][owners]
             dof_orientation = dof_map.orientations[0][owners]
-            value = oe.contract("qi,ei->eq", basis, state[dofs] * dof_orientation)
+            local_state = state[dofs]
+            oriented = local_state * dof_orientation.reshape(
+                dof_orientation.shape + (1,) * (local_state.ndim - dof_orientation.ndim)
+            )
+            value = oe.contract("qi,ei...->eq...", basis, oriented)
             flux = jnp.asarray(
-                action.kernel(value, physical_points, weights, normal, context)
+                action.kernel(
+                    (value,),
+                    physical_points,
+                    weights,
+                    jnp.broadcast_to(normal[:, None, :], physical_points.shape),
+                    context,
+                )
             )
             if flux.shape != value.shape:
                 raise ValueError("Exterior flux kernel must return the trace shape.")
             local = oe.contract(
-                "eq,eq,qi->ei",
+                "eq,eq...,qi->ei...",
                 weights * active[:, None],
                 flux,
                 basis,
@@ -2715,7 +2812,10 @@ def _exterior_facet_residual(
             result = _scatter_local(
                 result,
                 dofs,
-                local * dof_orientation,
+                local
+                * dof_orientation.reshape(
+                    dof_orientation.shape + (1,) * (local.ndim - dof_orientation.ndim)
+                ),
                 accumulation,
             )
     return result
@@ -2840,11 +2940,11 @@ def _interior_facet_residual(
     plus_value = oe.contract("qi,ei...->eq...", trace_basis, plus_local)
     minus_value = oe.contract("qi,ei...->eq...", trace_basis, minus_local)
     plus_flux, minus_flux = action.kernel(
-        plus_value,
-        minus_value,
+        (plus_value,),
+        (minus_value,),
         physical_points,
         weights,
-        normal,
+        jnp.broadcast_to(normal[:, None, :], physical_points.shape),
         context,
     )
     plus_flux = jnp.asarray(plus_flux)

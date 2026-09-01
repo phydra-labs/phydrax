@@ -8,7 +8,7 @@ import phydrax as phx
 
 
 def run():
-    triangle = phx.discretization.fem.SimplexModalFamily("triangle", 4)
+    triangle = phx.discretization.fem.SimplexNodalFamily("triangle", 4)
     prism = phx.discretization.fem.HybridReferenceFamily("prism", 3)
     mortar = phx.discretization.fem.HybridMortarPlan(
         triangle.nodes[:, :1],

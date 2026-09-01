@@ -99,7 +99,7 @@ def _map_edge_rule(
     /,
 ) -> tuple[Array, Array, Array]:
     if data.cell != "interval":
-        raise ValueError("Quadrilateral facets require interval reference rules.")
+        raise ValueError("Two-dimensional facets require interval reference rules.")
     topology = reference_cell_topology(cell_kind)
     vertex_ids = topology.entities[1][facet_index]
     vertices = jnp.asarray(tuple(topology.vertices[index] for index in vertex_ids))
@@ -118,12 +118,27 @@ def _map_face_rule(
     data: ReferenceCellData,
     /,
 ) -> tuple[Array, Array, Array]:
-    if data.cell != "quadrilateral":
-        raise ValueError("Hexahedron facets require quadrilateral reference rules.")
     topology = reference_cell_topology(cell_kind)
     vertex_ids = topology.entities[2][facet_index]
     corners = jnp.asarray(tuple(topology.vertices[index] for index in vertex_ids))
     parameter = jnp.asarray(data.points)
+    if len(vertex_ids) == 3:
+        if data.cell != "triangle":
+            raise ValueError("Triangular faces require triangle reference rules.")
+        first = parameter[:, 0]
+        second = parameter[:, 1]
+        points = (
+            (1.0 - first - second)[:, None] * corners[0]
+            + first[:, None] * corners[1]
+            + second[:, None] * corners[2]
+        )
+        normal_vector = jnp.cross(corners[1] - corners[0], corners[2] - corners[0])
+        scale = jnp.linalg.norm(normal_vector)
+        normal = normal_vector / scale
+        normals = jnp.broadcast_to(normal, points.shape)
+        return points, jnp.asarray(data.weights) * scale, normals
+    if len(vertex_ids) != 4 or data.cell != "quadrilateral":
+        raise ValueError("Quadrilateral faces require quadrilateral reference rules.")
     u = parameter[:, 0]
     v = parameter[:, 1]
     points = (
@@ -346,10 +361,15 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
 
         if not isinstance(element, FiniteElementSpec):
             raise TypeError("element must be FiniteElementSpec.")
-        if element.cell_kind not in ("quadrilateral", "hexahedron"):
-            raise ValueError(
-                "Prepared tensor references require a quadrilateral or hexahedron."
-            )
+        if element.cell_kind not in (
+            "triangle",
+            "quadrilateral",
+            "tetrahedron",
+            "hexahedron",
+            "prism",
+            "pyramid",
+        ):
+            raise ValueError("Prepared references require a supported FE cell.")
         if element.representation != "point_value":
             raise ValueError("Reference nodal actions require point-value coefficients.")
         if element.value_shape:
@@ -399,7 +419,7 @@ class PreparedFiniteElementReference(StrictModule, NonTrainableState):
             rule_id = _rule_id(rule, data_raw)
             facet_points, facet_weights, facet_normals = (
                 _map_edge_rule(element.cell_kind, facet_index, data_raw)
-                if element.cell_kind == "quadrilateral"
+                if element.topological_dimension == 2
                 else _map_face_rule(element.cell_kind, facet_index, data_raw)
             )
             facet_points = precision.geometry(facet_points)

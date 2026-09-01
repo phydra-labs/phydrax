@@ -13,6 +13,7 @@ from phydrax.discretization.fem._generic import _degree_aware_reference_rule
 from phydrax.discretization.fem._high_order import (
     lagrange_1d_tabulation,
     ReferenceNodalFamily,
+    SimplexNodalFamily,
     SumFactorizationPlan,
     TensorProductTabulation,
 )
@@ -26,6 +27,8 @@ from phydrax.integration._rules import (
     ReferenceHexahedronRule,
     ReferenceIntervalRule,
     ReferenceQuadrilateralRule,
+    ReferenceTetrahedronRule,
+    ReferenceTriangleRule,
 )
 
 
@@ -373,3 +376,64 @@ def test_prepared_reference_identity_binds_rules_actions_and_precision():
     assert baseline.prepared_id != other_precision.prepared_id
     assert baseline.report.report_id != fewer_actions.report.report_id
     assert baseline.report.precision_id != other_precision.report.precision_id
+
+
+@pytest.mark.parametrize(
+    ("cell", "order"),
+    (("triangle", 5), ("tetrahedron", 3)),
+)
+def test_modepy_simplex_family_and_prepared_reference_reproduce_polynomials(cell, order):
+    family = SimplexNodalFamily(cell, order)
+    dimension = family.nodes.shape[1]
+    nodal_values, _nodal_gradients = family.tabulate(family.nodes)
+    np.testing.assert_allclose(nodal_values, np.eye(family.nodes.shape[0]), atol=2.0e-10)
+    points = np.asarray(family.nodes) * 0.73 + 0.05
+    values, gradients = family.tabulate(points)
+    polynomial_nodes = np.asarray(family.nodes)[:, 0] ** order + 0.25 * np.asarray(
+        family.nodes
+    )[:, -1] ** min(order, 2)
+    expected = points[:, 0] ** order + 0.25 * points[:, -1] ** min(order, 2)
+    np.testing.assert_allclose(values @ polynomial_nodes, expected, atol=3.0e-9)
+    assert gradients.shape == (
+        points.shape[0],
+        family.nodes.shape[0],
+        dimension,
+    )
+
+    axis_rule = GaussLegendreRule(order + 2)
+    volume_rule = (
+        ReferenceTriangleRule(axis_rule)
+        if cell == "triangle"
+        else ReferenceTetrahedronRule(axis_rule)
+    )
+    facet_rule = (
+        ReferenceIntervalRule(axis_rule)
+        if cell == "triangle"
+        else ReferenceTriangleRule(axis_rule)
+    )
+    facet_count = 3 if cell == "triangle" else 4
+    reference = PreparedFiniteElementReference(
+        family.finite_element(),
+        volume_rule,
+        (facet_rule,) * facet_count,
+        (
+            "interpolate",
+            "interpolate_transpose",
+            "gradient",
+            "gradient_transpose",
+            "trace",
+            "trace_transpose",
+        ),
+        FiniteElementPrecisionPolicy(),
+    )
+    mass = oe.contract(
+        "q,qi,qj->ij",
+        reference.weights,
+        reference.basis_values,
+        reference.basis_values,
+    )
+    assert np.min(np.linalg.eigvalsh(np.asarray(mass))) > 0.0
+    for facet in reference.facets:
+        assert facet.normals.shape == facet.points.shape
+        assert jnp.all(facet.weights > 0.0)
+    assert family.condition_number < 1.0e5

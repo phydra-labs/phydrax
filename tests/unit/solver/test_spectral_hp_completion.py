@@ -122,7 +122,8 @@ def test_adaptive_high_order_io_and_mesh_import(tmp_path):
         "1 0 0 0\n2 1 0 0\n3 1 1 0\n4 0 1 0\n$EndNodes\n"
         "$Elements\n1\n1 3 0 1 2 3 4\n$EndElements\n"
     )
-    mesh = phx.discretization.fem.read_gmsh_high_order(gmsh)
+    imported = phx.discretization.fem.read_finite_element_mesh(gmsh)
+    mesh = imported.mesh
     assert mesh.blocks[0].cell_kind == "quadrilateral"
     exodus = phx.discretization.fem.read_exodus_high_order_arrays(
         mesh.coordinates, mesh.blocks[0].vertices, "quadrilateral"

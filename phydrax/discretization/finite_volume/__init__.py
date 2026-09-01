@@ -4,6 +4,15 @@
 
 """Structured conservative finite-volume discretizations."""
 
+from .._conservation_boundary import (
+    AbstractConservationBoundary,
+    ALEBoundaryContext,
+    ConstantStateBoundary,
+    ExtrapolationBoundary,
+    PrescribedNormalFluxBoundary,
+    PrescribedStateBoundary,
+    ReflectiveBoundary,
+)
 from ._amr import (
     ConservativeAMRSynchronizationPlan,
     ConservativeAMRSynchronizationResult,
@@ -15,17 +24,7 @@ from ._automatic_remap import (
     UnstructuredConservativeRemapEvidence,
     UnstructuredConservativeRemapStatus,
 )
-from ._boundary import (
-    AbstractFiniteVolumeBoundary,
-    ALEBoundaryContext,
-    ConstantStateBoundary,
-    ExtrapolationBoundary,
-    FiniteVolumeBoundaryPair,
-    FiniteVolumeBoundarySet,
-    PrescribedNormalFluxBoundary,
-    PrescribedStateBoundary,
-    ReflectiveBoundary,
-)
+from ._boundary import FiniteVolumeBoundaryPair, FiniteVolumeBoundarySet
 from ._capillarity import (
     BalancedCapillaryOperator,
     CapillaryFaceRateBlock,
@@ -530,7 +529,7 @@ __all__ = [
     "PreparedConservativeAdvection",
     "PreparedConservativeDiffusion",
     "AbstractFaceReconstructionPlan",
-    "AbstractFiniteVolumeBoundary",
+    "AbstractConservationBoundary",
     "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",

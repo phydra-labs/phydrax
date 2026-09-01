@@ -328,8 +328,8 @@ class FiniteElementLocalProvider(StrictModule):
         if len(set(value_shapes)) != 1:
             raise ValueError("One local field binding requires a uniform FE value shape.")
         component_shape = tuple(dof_map.component_shape)
-        execution_shape = tuple(value_shapes[0]) + component_shape
-        public_shape = execution_shape
+        execution_shape = component_shape
+        public_shape = component_shape
         return LocalFieldBinding(
             str(name),
             discretization.field_spaces[field_index],

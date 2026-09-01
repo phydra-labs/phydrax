@@ -9,15 +9,17 @@ API.
 ## Reference approximation
 
 `ReferenceNodalFamily` prepares anisotropic tensor-product nodal families on
-quadrilaterals and hexahedra. Gauss--Lobatto--Legendre nodes and weights come from
-the canonical polynomial substrate. `PreparedFiniteElementReference` binds one
-`FiniteElementSpec` to explicit volume and facet rules, requested reference
-actions, precision, dense tabulation, traces, and optional tensor factors.
+quadrilaterals and hexahedra. `SimplexNodalFamily` uses Modepy warp-and-blend
+nodes and orthonormal triangle/tetrahedron modes. `HybridReferenceFamily`
+provides triangle-times-interval prism bases and the rational linear pyramid.
+`PreparedFiniteElementReference` binds each supported cell to explicit volume
+and facet rules, requested actions, precision, dense tabulation, traces, and
+optional tensor factors.
 
 A field's coefficient representation is independent of conformity. Continuous
 and discontinuous nodal Lagrange fields both use `point_value`; modal and moment
-families retain their own representations. Geometry elements and field elements
-remain independent.
+families retain their own representations. Geometry and field elements remain
+independent.
 
 ## Quadrature and mass
 
@@ -81,11 +83,22 @@ metric-identity, free-stream, watertight-face, or opposite-normal evidence.
 
 `certify_dgsem_flux_compatibility` is separate from `ConvexEntropyPair`. It checks
 the concrete physical fluxes against symmetry, consistency, entropy-potential,
-and interface-dissipation identities. A complete entropy-stability claim also
-records boundary, source, and viscous evidence. The initial conservation compiler
-scope is periodic stationary mapped quadrilateral or hexahedral DGSEM; it does
-not claim positivity preservation, shock limiting, ALE GCL, or viscous entropy
-stability.
+and interface-dissipation identities. Physical boundary patches are explicit
+and exhaustive. A stateful modal entropy/positivity filter can run after every
+SSPRK stage while conserving geometry-weighted means. Compressible
+Navier–Stokes uses one two-pass LDG path; viscous and physical-boundary entropy
+status remains explicitly uncertified.
+
+
+## General nodal DG
+
+`NodalDGConservationMethodPlan` lowers ordinary weak-form DG through the same FE
+action compiler. Exact cell-local mass matrices use Phydrax Cholesky
+factorizations. Role-specific quadrature evidence marks nonpolynomial
+overintegration as heuristic rather than exact. Supported executions include
+triangles, quadrilaterals, tetrahedra, prisms, rational linear pyramids, curved
+coordinate fields, mixed triangle/quad mortars, and conforming mixed
+three-dimensional polyhedral interfaces.
 
 ## Transfers, multigrid, mortars, and distribution
 
@@ -102,18 +115,20 @@ compatibility, and conservative integrated-flux evidence. Fixed-capacity hp
 transactions retain accepted topology, lineage, degree tuples, deterministic
 workset buckets, transfers, and rollback semantics.
 
-Distributed plans use explicit owned/halo worksets, dependency/completion
-identities, exactly-once facet ownership, deterministic reductions, and
-partition-independent global pairings. The current backend is JAX named-axis and
-backend-neutral plan execution; no MPI runtime is claimed.
+Distributed plans use cost-aware shape/order estimates, explicit owned/halo
+worksets, dependency/completion identities, exactly-once facet ownership,
+deterministic reductions, and partition-independent global pairings. The
+execution lowerer exposes owned-local, halo-update, interface, and
+contribution-sum phases. JAX named-axis collectives remain the current backend;
+no MPI runtime is claimed.
 
 ## Solvers and analysis
 
-Spectral elements emit ordinary Phydrax spaces and operators. Linear and nonlinear
-solves, block preconditioners, multigrid, DAE and second-order integration,
-generalized eigenproblems, Ritz extraction, recycling, continuation, results,
-accepted-step schedules, and checkpoints remain in `phydrax.linalg` and
-`phydrax.solver`.
+Spectral elements emit ordinary Phydrax spaces and operators. SSPRK stage
+transforms, exact-time target schedules, portable full-runtime checkpoints,
+streaming observables, accepted-step triggers, and bounded asynchronous
+publication compose with existing linear, nonlinear, DAE, continuation, and
+result substrates.
 
 ## Adaptive tensor hp epochs
 
@@ -175,10 +190,11 @@ Nonconforming DGSEM flux ledgers reject a mortar without a passing certificate.
 
 - h-refinement is isotropic with a 2:1 face-balance contract; anisotropic h and
   arbitrary n-irregular interfaces are not provided.
-- Tensor reference actions cover quadrilaterals and hexahedra; simplex tensor-SBP
-  execution is separate future work.
-- High-order compatible H(div)/H(curl) tensor families are not provided.
-- DGSEM is periodic and stationary-mesh only.
+- Tensor entropy-certified DGSEM remains quadrilateral/hexahedral; general
+  simplex and hybrid nodal DG does not claim the tensor SBP certificate.
+- Pyramid approximation is currently the rational degree-one space.
+- Nodal LDG viscosity is complete for the physical-boundary tetrahedron path;
+  mixed-cell viscous interfaces remain unsupported.
 - Mortar entropy compatibility is not inferred from ordinary L2 projection.
-- Distributed plans do not constitute dynamic repartitioning, cell migration, an
-  MPI mesh partitioner, or a communication runtime.
+- Distributed phases do not constitute dynamic cell migration or an MPI
+  runtime.

@@ -397,6 +397,68 @@ class ReferenceTetrahedronRule(StrictModule):
         )
 
 
+class ReferencePrismRule(StrictModule):
+    """Triangle-times-interval quadrature on the unit prism."""
+
+    rule: IntervalRule
+
+    def __init__(self, rule: IntervalRule | None = None):
+        self.rule = GaussLegendreRule(6) if rule is None else rule
+
+    def materialize(self) -> ReferenceCellData:
+        triangle = ReferenceTriangleRule(self.rule).materialize()
+        axis, weights, _ = _unit_interval_data(self.rule)
+        triangle_count = triangle.points.shape[0]
+        points = jnp.concatenate(
+            (
+                jnp.broadcast_to(
+                    triangle.points[:, None, :],
+                    (triangle_count, axis.shape[0], 2),
+                ),
+                jnp.broadcast_to(
+                    axis[None, :, None],
+                    (triangle_count, axis.shape[0], 1),
+                ),
+            ),
+            axis=-1,
+        )
+        combined = triangle.weights[:, None] * weights[None, :]
+        return ReferenceCellData(
+            points.reshape((-1, 3)), combined.reshape((-1,)), None, "prism"
+        )
+
+
+class ReferencePyramidRule(StrictModule):
+    """Collapsed-cube quadrature on a square-base unit pyramid."""
+
+    rule: IntervalRule
+
+    def __init__(self, rule: IntervalRule | None = None):
+        self.rule = GaussLegendreRule(8) if rule is None else rule
+
+    def materialize(self) -> ReferenceCellData:
+        axis, weights, _ = _unit_interval_data(self.rule)
+        first, second, height = jnp.meshgrid(axis, axis, axis, indexing="ij")
+        scale = 1.0 - height
+        points = jnp.stack(
+            (
+                scale * first + 0.5 * height,
+                scale * second + 0.5 * height,
+                height,
+            ),
+            axis=-1,
+        )
+        combined = (
+            weights[:, None, None]
+            * weights[None, :, None]
+            * weights[None, None, :]
+            * scale**2
+        )
+        return ReferenceCellData(
+            points.reshape((-1, 3)), combined.reshape((-1,)), None, "pyramid"
+        )
+
+
 class ReferenceHexahedronRule(StrictModule):
     """Tensor quadrature on the unit cube."""
 
@@ -422,6 +484,8 @@ ReferenceRule: TypeAlias = (
     | ReferenceTriangleRule
     | ReferenceQuadrilateralRule
     | ReferenceTetrahedronRule
+    | ReferencePrismRule
+    | ReferencePyramidRule
     | ReferenceHexahedronRule
     | CubatureRule
 )
@@ -435,6 +499,10 @@ def reference_rule_data(rule: ReferenceRule, /) -> ReferenceCellData:
     if isinstance(rule, ReferenceQuadrilateralRule):
         return rule.materialize()
     if isinstance(rule, ReferenceTetrahedronRule):
+        return rule.materialize()
+    if isinstance(rule, ReferencePrismRule):
+        return rule.materialize()
+    if isinstance(rule, ReferencePyramidRule):
         return rule.materialize()
     if isinstance(rule, ReferenceHexahedronRule):
         return rule.materialize()
@@ -456,6 +524,8 @@ __all__ = [
     "ReferenceCellData",
     "ReferenceHexahedronRule",
     "ReferenceIntervalRule",
+    "ReferencePrismRule",
+    "ReferencePyramidRule",
     "ReferenceQuadrilateralRule",
     "ReferenceRule",
     "ReferenceTetrahedronRule",

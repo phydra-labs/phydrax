@@ -29,6 +29,66 @@ class OffsetTransform(phx.solver.AbstractAcceptedStepTransform):
         )
 
 
+class EvidenceStageTransform(phx.solver.AbstractSSPRKStageTransform):
+    failed_stage: int = eqx.field(static=True)
+    transform_id: str = eqx.field(static=True)
+
+    def __init__(self, failed_stage=0):
+        self.failed_stage = int(failed_stage)
+        self.transform_id = f"stage-evidence:{self.failed_stage}"
+
+    def apply(self, stage_index, time, candidate_state, args, /):
+        del time, args
+        return phx.solver.StageTransformResult(
+            candidate_state,
+            jnp.asarray(True),
+            jnp.asarray(stage_index != self.failed_stage),
+            jnp.asarray(float(stage_index), dtype=candidate_state.dtype),
+        )
+
+
+@pytest.mark.parametrize(
+    ("method_type", "stage_count"),
+    (
+        (phx.solver.SSPRK33FixedStepMethod, 3),
+        (phx.solver.SSPRK54FixedStepMethod, 5),
+    ),
+)
+def test_ssprk_stage_transform_reports_every_stage(method_type, stage_count):
+    method = method_type(
+        lambda time, state, args: jnp.zeros_like(state),
+        stage_transform=EvidenceStageTransform(),
+    )
+    result = method.step(
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        jnp.asarray((1.0,)),
+        jnp.asarray(0.1),
+        None,
+    )
+    assert result.successful
+    assert result.transform_applied
+    assert result.transform_correction_norm == stage_count
+    assert jnp.allclose(result.accepted_state, jnp.asarray((1.0,)))
+
+
+def test_failed_ssprk_stage_rejects_the_complete_step():
+    method = phx.solver.SSPRK33FixedStepMethod(
+        lambda time, state, args: -state,
+        stage_transform=EvidenceStageTransform(failed_stage=2),
+    )
+    state = jnp.asarray((1.0,))
+    result = method.step(
+        jnp.asarray(0),
+        jnp.asarray(0.0),
+        state,
+        jnp.asarray(0.1),
+        None,
+    )
+    assert not result.successful
+    assert jnp.array_equal(result.accepted_state, state)
+
+
 def test_fixed_step_ssprk_solves_and_saves_requested_stride():
     method = phx.solver.SSPRK33FixedStepMethod(lambda time, state, args: -state)
     problem = phx.solver.FixedStepProblem(

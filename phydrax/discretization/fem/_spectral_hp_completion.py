@@ -9,15 +9,21 @@ from itertools import product
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._polynomial._orthogonal import legendre_rule_data
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import ArraySpace, DenseLinearOperator, LinearSystem, solve
+from ._high_order import (
+    lagrange_1d_tabulation,
+    SimplexNodalFamily,
+)
 from ._hp import FiniteElementHPLineage, FiniteElementHPTopology
 from ._hp_runtime import (
     finite_element_hp_balance_error,
@@ -25,6 +31,8 @@ from ._hp_runtime import (
     FiniteElementHPRefinementResult,
     tensor_trace_interpolation,
 )
+from ._reference import FiniteElementSpec
+from ._reference_topology import reference_cell_topology
 
 
 class AnisotropicHPattern(StrictModule, NonTrainableState):
@@ -662,127 +670,151 @@ class TensorPiolaMap(StrictModule, NonTrainableState):
         return oe.contract("...ij,...j->...i", matrix, value) / determinant[..., None]
 
 
-class SimplexModalFamily(StrictModule, NonTrainableState):
-    cell_kind: Literal["triangle", "tetrahedron"] = eqx.field(static=True)
-    degree: int = eqx.field(static=True)
-    exponents: tuple[tuple[int, ...], ...] = eqx.field(static=True)
-    nodes: Array
-    vandermonde: Array
-    inverse_vandermonde: Array
-    family_id: str = eqx.field(static=True)
-
-    def __init__(self, cell_kind: Literal["triangle", "tetrahedron"], degree: int, /):
-        kind = cell_kind
-        p = int(degree)
-        dimension = 2 if kind == "triangle" else 3 if kind == "tetrahedron" else 0
-        if dimension == 0 or p < 1:
-            raise ValueError(
-                "Simplex modal families require triangle/tetrahedron and p >= 1."
-            )
-        exponents = tuple(
-            value for value in product(range(p + 1), repeat=dimension) if sum(value) <= p
-        )
-        barycentric = []
-        if dimension == 2:
-            for i in range(p + 1):
-                for j in range(p + 1 - i):
-                    barycentric.append((i / p, j / p))
-        else:
-            for i in range(p + 1):
-                for j in range(p + 1 - i):
-                    for k in range(p + 1 - i - j):
-                        barycentric.append((i / p, j / p, k / p))
-        nodes = np.asarray(barycentric)
-        vandermonde = np.stack(
-            [np.prod(nodes ** np.asarray(exponent), axis=1) for exponent in exponents],
-            axis=1,
-        )
-        self.cell_kind = kind
-        self.degree = p
-        self.exponents = exponents
-        self.nodes = jnp.asarray(nodes)
-        self.vandermonde = jnp.asarray(vandermonde)
-        self.inverse_vandermonde = jnp.asarray(np.linalg.inv(vandermonde))
-        self.family_id = canonical_fingerprint(
-            {
-                "kind": "simplex-modal-family",
-                "cell_kind": kind,
-                "degree": p,
-                "nodes": array_tree_fingerprint(nodes),
-            }
-        )
-
-    def tabulate(self, points: ArrayLike, /) -> Array:
-        points_ = jnp.asarray(points)
-        modal = jnp.stack(
-            [
-                jnp.prod(points_ ** jnp.asarray(exponent), axis=-1)
-                for exponent in self.exponents
-            ],
-            axis=-1,
-        )
-        return modal @ self.inverse_vandermonde
-
-
 class HybridReferenceFamily(StrictModule, NonTrainableState):
+    """Polynomial prism family and rational linear pyramid family."""
+
     cell_kind: Literal["prism", "pyramid"] = eqx.field(static=True)
     degree: int = eqx.field(static=True)
     nodes: Array
-    inverse_kernel: Array
+    basis_permutation: tuple[int, ...] = eqx.field(static=True)
     family_id: str = eqx.field(static=True)
 
     def __init__(self, cell_kind: Literal["prism", "pyramid"], degree: int, /):
-        kind = cell_kind
+        kind = str(cell_kind)
         p = int(degree)
         if kind not in ("prism", "pyramid") or p < 1:
+            raise ValueError("Hybrid references require prism/pyramid and degree >= 1.")
+        if kind == "pyramid" and p != 1:
             raise ValueError(
-                "Hybrid reference families require prism/pyramid and p >= 1."
+                "The rational pyramid reference currently supports degree one."
             )
-        axis = np.linspace(0.0, 1.0, p + 1)
-        points = []
         if kind == "prism":
-            for z in axis:
-                for i in range(p + 1):
-                    for j in range(p + 1 - i):
-                        points.append((i / p, j / p, z))
+            triangle = SimplexNodalFamily("triangle", p)
+            rule = legendre_rule_data(p + 1, "lobatto")
+            z_nodes = 0.5 * (np.asarray(rule.nodes) + 1.0)
+            generated_nodes = np.asarray(
+                [
+                    (float(point[0]), float(point[1]), float(z))
+                    for point in np.asarray(triangle.nodes)
+                    for z in z_nodes
+                ]
+            )
+            if p == 1:
+                nodes = np.asarray(reference_cell_topology("prism").vertices)
+                permutation = tuple(
+                    int(
+                        np.flatnonzero(
+                            np.max(np.abs(generated_nodes - point), axis=1) <= 2.0e-12
+                        )[0]
+                    )
+                    for point in nodes
+                )
+            else:
+                nodes = generated_nodes
+                permutation = tuple(range(nodes.shape[0]))
         else:
-            for layer, z in enumerate(axis):
-                width = p - layer
-                if width == 0:
-                    points.append((0.5, 0.5, 1.0))
-                else:
-                    for i in range(width + 1):
-                        for j in range(width + 1):
-                            scale = 1.0 - z
-                            points.append(
-                                (
-                                    0.5 + scale * (i / width - 0.5),
-                                    0.5 + scale * (j / width - 0.5),
-                                    z,
-                                )
-                            )
-        nodes = np.asarray(points)
-        delta = nodes[:, None, :] - nodes[None, :, :]
-        kernel = np.exp(-4.0 * np.sum(delta**2, axis=-1))
-        inverse_kernel = np.linalg.inv(kernel)
+            nodes = np.asarray(reference_cell_topology("pyramid").vertices)
+            permutation = tuple(range(nodes.shape[0]))
         self.cell_kind = kind
         self.degree = p
         self.nodes = jnp.asarray(nodes)
-        self.inverse_kernel = jnp.asarray(inverse_kernel)
+        self.basis_permutation = permutation
         self.family_id = canonical_fingerprint(
             {
                 "kind": "hybrid-reference-family",
                 "cell_kind": kind,
                 "degree": p,
+                "basis": (
+                    "simplex-times-legendre"
+                    if kind == "prism"
+                    else "rational-linear-pyramid"
+                ),
                 "nodes": array_tree_fingerprint(nodes),
             }
         )
 
-    def tabulate(self, points: ArrayLike, /) -> Array:
+    @staticmethod
+    def _pyramid_values(points: Array) -> Array:
+        def one(point):
+            x, y, z = point
+            scale = 1.0 - z
+            safe = jnp.where(scale > 1.0e-12, scale, 1.0)
+            first = jnp.where(scale > 1.0e-12, (x - 0.5 * z) / safe, 0.5)
+            second = jnp.where(scale > 1.0e-12, (y - 0.5 * z) / safe, 0.5)
+            return jnp.asarray(
+                (
+                    scale * (1.0 - first) * (1.0 - second),
+                    scale * first * (1.0 - second),
+                    scale * first * second,
+                    scale * (1.0 - first) * second,
+                    z,
+                )
+            )
+
+        return jax.vmap(one)(points)
+
+    def tabulate_with_gradients(self, points: ArrayLike, /) -> tuple[Array, Array]:
         points_ = jnp.asarray(points)
-        delta = points_[..., :, None, :] - self.nodes[None, :, :]
-        kernel = jnp.exp(-4.0 * jnp.sum(delta**2, axis=-1))
-        return kernel @ self.inverse_kernel
+        if points_.ndim != 2 or points_.shape[-1] != 3:
+            raise ValueError("Hybrid reference points must have shape (n, 3).")
+        if self.cell_kind == "pyramid":
+            values = self._pyramid_values(points_)
+            gradients = jax.vmap(
+                jax.jacfwd(lambda point: self._pyramid_values(point[None, :])[0])
+            )(points_)
+            return values, gradients
+        triangle = SimplexNodalFamily("triangle", self.degree)
+        triangle_values, triangle_gradients = triangle.tabulate(points_[..., :2])
+        rule = legendre_rule_data(self.degree + 1, "lobatto")
+        z_nodes = 0.5 * (jnp.asarray(rule.nodes) + 1.0)
+        z_values, z_gradients = lagrange_1d_tabulation(z_nodes, points_[..., 2])
+        values = oe.contract(
+            "qi,qj->qij", triangle_values, z_values, backend="jax"
+        ).reshape((points_.shape[0], -1))
+        horizontal = oe.contract(
+            "qid,qj->qijd", triangle_gradients, z_values, backend="jax"
+        )
+        vertical = oe.contract("qi,qj->qij", triangle_values, z_gradients, backend="jax")[
+            ..., None
+        ]
+        gradients = jnp.concatenate((horizontal, vertical), axis=-1).reshape(
+            (points_.shape[0], -1, 3)
+        )
+        permutation = jnp.asarray(self.basis_permutation, dtype=jnp.int32)
+        return values[:, permutation], gradients[:, permutation]
+
+    def tabulate(self, points: ArrayLike, /) -> Array:
+        return self.tabulate_with_gradients(points)[0]
+
+    def finite_element(self, /, *, conformity: str = "H1") -> FiniteElementSpec:
+        if conformity not in ("H1", "L2"):
+            raise ValueError("Hybrid finite elements support H1 or L2 conformity.")
+        topology = reference_cell_topology(self.cell_kind)
+        entities = [[[] for _entity in dimension] for dimension in topology.entities]
+        if conformity == "H1":
+            if self.degree != 1:
+                raise ValueError("H1 hybrid geometry currently requires degree one.")
+            reference_vertices = np.asarray(topology.vertices)
+            for vertex, point in enumerate(reference_vertices):
+                matches = np.flatnonzero(
+                    np.max(np.abs(np.asarray(self.nodes) - point), axis=1) <= 2.0e-12
+                )
+                if matches.size != 1:
+                    raise ValueError("Hybrid vertex node association is ambiguous.")
+                entities[0][vertex].append(int(matches[0]))
+        else:
+            entities[-1][0].extend(range(self.nodes.shape[0]))
+        return FiniteElementSpec(
+            "HybridLagrange",
+            self.cell_kind,
+            self.degree,
+            self.nodes,
+            tuple(tuple(tuple(values) for values in dimension) for dimension in entities),
+            conformity=conformity,
+            representation="point_value",
+            tabulator=self.tabulate_with_gradients,
+            tabulator_id=self.family_id,
+        )
 
 
 class LevelSetCutQuadrature(StrictModule, NonTrainableState):
@@ -1013,47 +1045,6 @@ class CompatibleAuxiliaryMultigrid(StrictModule, NonTrainableState):
         )
 
 
-class SimplexSBPPlan(StrictModule, NonTrainableState):
-    family: SimplexModalFamily
-    mass: Array
-    derivatives: tuple[Array, ...]
-    polynomial_derivative_error: Array
-
-    def __init__(self, family: SimplexModalFamily, /):
-        nodes = np.asarray(family.nodes)
-        vandermonde = np.asarray(family.vandermonde)
-        count = nodes.shape[0]
-        mass = np.eye(count) / count
-        derivatives = []
-        maximum_error = 0.0
-        inverse = np.linalg.inv(vandermonde)
-        for axis in range(nodes.shape[1]):
-            derivative_modal = np.zeros_like(vandermonde)
-            for column, exponent in enumerate(family.exponents):
-                if exponent[axis] == 0:
-                    continue
-                reduced = list(exponent)
-                coefficient = reduced[axis]
-                reduced[axis] -= 1
-                target = family.exponents.index(tuple(reduced))
-                derivative_modal[target, column] = coefficient
-            derivative = vandermonde @ derivative_modal @ inverse
-            derivatives.append(derivative)
-            maximum_error = max(
-                maximum_error,
-                float(
-                    np.max(
-                        np.abs(derivative @ np.ones((count,))),
-                        initial=0.0,
-                    )
-                ),
-            )
-        self.family = family
-        self.mass = jnp.asarray(mass)
-        self.derivatives = tuple(jnp.asarray(value) for value in derivatives)
-        self.polynomial_derivative_error = jnp.asarray(maximum_error)
-
-
 class HybridRefinementPlan(StrictModule, NonTrainableState):
     cell_kind: str = eqx.field(static=True)
     child_maps: tuple[tuple[Array, Array], ...]
@@ -1227,8 +1218,6 @@ __all__ = [
     "HybridReferenceFamily",
     "LevelSetCutQuadrature",
     "NIrregularMortarPlan",
-    "SimplexModalFamily",
-    "SimplexSBPPlan",
     "TensorCompatibleFamily",
     "TensorDeRhamComplex",
     "TensorDeRhamTransferPlan",
