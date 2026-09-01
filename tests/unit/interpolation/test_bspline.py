@@ -15,7 +15,10 @@ from phydrax._interpolation import (
     apply_gather_stencil,
     BoundsMode,
     bspline_evaluate,
+    bspline_jet_stencil,
     bspline_stencil,
+    RationalSplineJet,
+    TensorBSplineJetPlan,
 )
 
 
@@ -51,7 +54,7 @@ def _dense_basis(
 
 
 @pytest.mark.parametrize("degree", range(6))
-def test_bspline_basis_and_derivatives_match_scipy(degree):
+def test_local_spline_basis_and_derivatives_match_scipy(degree):
     control_count = degree + 5
     knots = _open_knots(degree, control_count)
     query = np.asarray([0.0, 0.07, 0.31, 0.5, 0.83, 1.0 - 1e-8, 1.0])
@@ -74,6 +77,130 @@ def test_bspline_basis_and_derivatives_match_scipy(degree):
             expected_sum,
             atol=2e-10,
         )
+
+
+def test_bspline_jet_uses_explicit_spans_and_zeroes_orders_above_degree():
+    degree = 2
+    control_count = 6
+    knots = _open_knots(degree, control_count)
+    query = np.asarray([[0.08, 0.21, 0.39], [0.57, 0.76, 0.94]])
+    spans = np.clip(
+        np.searchsorted(knots, query, side="right") - 1,
+        degree,
+        control_count - 1,
+    ).astype(np.int32)
+    jet = bspline_jet_stencil(
+        knots,
+        jnp.asarray(query),
+        degree=degree,
+        maximum_order=degree + 3,
+        spans=jnp.asarray(spans),
+    )
+    oracle = SciPyBSpline(knots, np.eye(control_count), degree)
+
+    assert jet.indices.shape == query.shape + (degree + 1,)
+    assert jet.jets.shape == query.shape + (degree + 4, degree + 1)
+    for order in range(degree + 1):
+        dense = apply_gather_stencil(
+            jnp.eye(control_count),
+            jet.derivative(order),
+        ).values
+        assert np.allclose(
+            np.asarray(dense),
+            oracle(query, nu=order),
+            rtol=2e-10,
+            atol=2e-10,
+        )
+    assert np.array_equal(
+        np.asarray(jet.jets[..., degree + 1 :, :]),
+        np.zeros(query.shape + (3, degree + 1)),
+    )
+
+
+def test_tensor_bspline_complete_hessian_multi_indices_have_exact_transposes():
+    degree = 2
+    knots = jnp.asarray(_open_knots(degree, 5))
+    u_stencil = bspline_jet_stencil(
+        knots,
+        jnp.asarray([0.17, 0.63]),
+        degree=degree,
+        maximum_order=2,
+    )
+    v_stencil = bspline_jet_stencil(
+        knots,
+        jnp.asarray([0.31, 0.82]),
+        degree=degree,
+        maximum_order=2,
+    )
+    plan = TensorBSplineJetPlan((u_stencil, v_stencil), maximum_order=2)
+    controls = jnp.arange(50, dtype=float).reshape((5, 5, 2)) / 13.0
+    messages = jnp.cos(jnp.arange(8, dtype=float)).reshape((2, 2, 2))
+
+    assert plan.multi_indices == (
+        (0, 0),
+        (1, 0),
+        (0, 1),
+        (2, 0),
+        (1, 1),
+        (0, 2),
+    )
+    assert plan.gradient(controls).shape == (2, 2, 2, 2)
+    assert plan.hessian(controls).shape == (2, 2, 2, 2, 2)
+    for multi_index in plan.multi_indices:
+        forward_pairing = jnp.vdot(plan.apply(controls, multi_index), messages)
+        transpose_pairing = jnp.vdot(
+            controls,
+            plan.transpose(messages, multi_index),
+        )
+        assert float(forward_pairing) == pytest.approx(
+            float(transpose_pairing),
+            rel=2e-12,
+            abs=2e-12,
+        )
+
+
+def test_degree_one_rational_tensor_has_complete_nonuniform_weight_hessian():
+    knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
+    point = jnp.asarray([0.37, 0.58])
+    stencils = tuple(
+        bspline_jet_stencil(
+            knots,
+            point[axis],
+            degree=1,
+            maximum_order=2,
+        )
+        for axis in range(2)
+    )
+    plan = TensorBSplineJetPlan(stencils, maximum_order=2)
+    weights = jnp.asarray([[1.0, 1.7], [2.4, 4.1]])
+    controls = jnp.asarray([[0.2, 1.3], [2.1, 4.7]])
+    rational = RationalSplineJet(plan, weights)
+
+    def dense(parameters):
+        u_basis = jnp.asarray([1.0 - parameters[0], parameters[0]])
+        v_basis = jnp.asarray([1.0 - parameters[1], parameters[1]])
+        weighted_basis = u_basis[:, None] * v_basis[None, :] * weights
+        return jnp.sum(weighted_basis * controls) / jnp.sum(weighted_basis)
+
+    expected_gradient = jax.jacfwd(dense)(point)
+    expected_hessian = jax.jacfwd(jax.jacfwd(dense))(point)
+    actual_gradient = rational.gradient_apply(controls)
+    actual_hessian = rational.hessian_apply(controls)
+
+    assert rational.values.shape == (4,)
+    assert rational.gradients.shape == (4, 2)
+    assert rational.hessians.shape == (4, 2, 2)
+    assert np.allclose(np.asarray(actual_gradient), np.asarray(expected_gradient))
+    assert np.allclose(np.asarray(actual_hessian), np.asarray(expected_hessian))
+    assert np.allclose(np.asarray(actual_hessian), np.asarray(actual_hessian.T))
+    assert np.all(np.abs(np.asarray(actual_hessian)[(0, 0, 1), (0, 1, 1)]) > 1e-8)
+
+    message = jnp.asarray(1.7)
+    assert float(jnp.vdot(rational.apply(controls), message)) == pytest.approx(
+        float(jnp.vdot(controls, rational.transpose(message))),
+        rel=2e-12,
+        abs=2e-12,
+    )
 
 
 def test_bspline_repeated_and_unclamped_knots_match_scipy():
@@ -302,8 +429,8 @@ def test_bspline_validation_is_transformation_safe():
         bspline_stencil(knots, jnp.asarray(0.2 + 0.1j), degree=2)
     with pytest.raises(TypeError, match="degree must be an integer"):
         bspline_stencil(knots, 0.2, degree=invalid_degree)
-    with pytest.raises(ValueError, match="between zero and the degree"):
-        bspline_stencil(knots, 0.2, degree=2, derivative_order=3)
+    above_degree = bspline_stencil(knots, 0.2, degree=2, derivative_order=3)
+    assert np.array_equal(np.asarray(above_degree.weights), np.zeros((3,)))
     with pytest.raises(ValueError, match="non-empty"):
         bspline_stencil(knots, jnp.empty((0,)), degree=2)
     with pytest.raises(ValueError, match="begin with case_shape"):

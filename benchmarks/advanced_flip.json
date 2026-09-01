@@ -1,0 +1,12 @@
+{
+  "liquid_cells": 144,
+  "interface_band_cells": 388,
+  "surface_energy": 86.49766093317378,
+  "ghost_divergence": 1.8689798184875644e-08,
+  "air_pressure_defect": 0.0,
+  "viscous_dissipation": 0.00021033768064670404,
+  "viscous_energy_increase": 0.0,
+  "compile_and_first_ms": 4274.075792000076,
+  "steady_ms": 1.6881197498150868,
+  "successful": true
+}

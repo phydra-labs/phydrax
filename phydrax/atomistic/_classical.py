@@ -433,7 +433,7 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
     explicit_epsilon: Array | None
     explicit_sigma: Array | None
     cutoff: float = eqx.field(static=True)
-    switch_distance: float = eqx.field(static=True)
+    switch_distance: float | None = eqx.field(static=True)
     combining_rule: LennardJonesCombiningRule = eqx.field(static=True)
     name: str = eqx.field(static=True)
     force_group: int = eqx.field(static=True)
@@ -455,19 +455,24 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
         name: str = "lennard-jones",
         force_group: int = 0,
     ):
-        epsilon_ = _parameters("epsilon", epsilon, positive=True)
+        epsilon_ = _parameters("epsilon", epsilon)
         sigma_ = _parameters("sigma", sigma, positive=True)
-        if epsilon_.shape != sigma_.shape:
-            raise ValueError("Lennard-Jones epsilon and sigma tables must match.")
+        if epsilon_.shape != sigma_.shape or bool(jnp.any(epsilon_ < 0.0)):
+            raise ValueError(
+                "Lennard-Jones epsilon must be non-negative and match positive sigma."
+            )
         cutoff_ = float(cutoff)
-        switch_ = 0.8 * cutoff_ if switch_distance is None else float(switch_distance)
+        switch_ = None if switch_distance is None else float(switch_distance)
         if (
             not math.isfinite(cutoff_)
-            or not math.isfinite(switch_)
-            or not 0.0 <= switch_ < cutoff_
+            or cutoff_ <= 0.0
+            or (
+                switch_ is not None
+                and (not math.isfinite(switch_) or not 0.0 <= switch_ < cutoff_)
+            )
         ):
             raise ValueError(
-                "Lennard-Jones switching requires 0 <= switch_distance < cutoff."
+                "Lennard-Jones cutoff must be positive and switching must lie below it."
             )
         if combining_rule not in ("lorentz-berthelot", "geometric", "explicit"):
             raise ValueError("Unknown Lennard-Jones combining rule.")
@@ -486,13 +491,14 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
                 or explicit_sigma_host.shape != expected
                 or np.any(~np.isfinite(explicit_epsilon_host))
                 or np.any(~np.isfinite(explicit_sigma_host))
-                or np.any(explicit_epsilon_host <= 0.0)
+                or np.any(explicit_epsilon_host < 0.0)
                 or np.any(explicit_sigma_host <= 0.0)
                 or not np.allclose(explicit_epsilon_host, explicit_epsilon_host.T)
                 or not np.allclose(explicit_sigma_host, explicit_sigma_host.T)
             ):
                 raise ValueError(
-                    "Explicit Lennard-Jones matrices must be positive finite symmetric tables."
+                    "Explicit Lennard-Jones epsilon must be non-negative; sigma must be "
+                    "positive, finite, and symmetric."
                 )
             explicit_epsilon_ = jnp.asarray(explicit_epsilon_host)
             explicit_sigma_ = jnp.asarray(explicit_sigma_host)
@@ -611,14 +617,17 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
         safe_distance = jnp.where(active & (distance > 0.0), distance, 1.0)
         ratio6 = (sigma / safe_distance) ** 6
         raw = 4.0 * epsilon * (ratio6 * ratio6 - ratio6)
-        width = self.plan.cutoff - self.plan.switch_distance
-        scaled = (distance - self.plan.switch_distance) / width
-        smooth = 1.0 - 10.0 * scaled**3 + 15.0 * scaled**4 - 6.0 * scaled**5
-        switch = jnp.where(
-            distance <= self.plan.switch_distance,
-            1.0,
-            jnp.where(distance < self.plan.cutoff, smooth, 0.0),
-        )
+        if self.plan.switch_distance is None:
+            switch = jnp.where(distance < self.plan.cutoff, 1.0, 0.0)
+        else:
+            width = self.plan.cutoff - self.plan.switch_distance
+            scaled = (distance - self.plan.switch_distance) / width
+            smooth = 1.0 - 10.0 * scaled**3 + 15.0 * scaled**4 - 6.0 * scaled**5
+            switch = jnp.where(
+                distance <= self.plan.switch_distance,
+                1.0,
+                jnp.where(distance < self.plan.cutoff, smooth, 0.0),
+            )
         interaction = jnp.where(
             active,
             raw * switch * context.lennard_jones_scales,

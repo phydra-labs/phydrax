@@ -242,17 +242,20 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
         exception_slots = resolve("pair_exceptions", plan.pair_exceptions)
         sorted_ids = np.sort(particle_ids)
         rank_by_id = {int(identifier): rank for rank, identifier in enumerate(sorted_ids)}
-        capacity = particle_ids.size
-        exception_keys = np.zeros((exception_slots.shape[0],), dtype=np.int64)
-        for index, pair in enumerate(np.asarray(plan.pair_exceptions, dtype=np.int64)):
-            left = rank_by_id[int(pair[0])]
-            right = rank_by_id[int(pair[1])]
-            exception_keys[index] = (
-                left * (2 * capacity - left - 1) // 2 + right - left - 1
-            )
-        order = np.argsort(exception_keys, kind="stable")
+        exception_pairs = np.asarray(plan.pair_exceptions, dtype=np.int64)
+        exception_keys = np.zeros((exception_pairs.shape[0], 5), dtype=np.int64)
+        if exception_pairs.size:
+            exception_keys[:, 0] = 0
+            exception_keys[:, 1:3] = exception_pairs
+        order = (
+            np.lexsort((exception_keys[:, 2], exception_keys[:, 1]))
+            if exception_keys.shape[0]
+            else np.zeros((0,), dtype=np.int64)
+        )
         exception_keys = exception_keys[order]
-        if exception_keys.size and np.any(exception_keys[1:] == exception_keys[:-1]):
+        if exception_keys.shape[0] > 1 and np.any(
+            np.all(exception_keys[1:] == exception_keys[:-1], axis=-1)
+        ):
             raise ValueError("Pair exceptions resolve to duplicate stable pair keys.")
         self.plan = plan
         self.bond_indices = jnp.asarray(bonds)
@@ -285,13 +288,17 @@ class PreparedMolecularTopology(StrictModule, NonTrainableState):
 
     def pair_scales(self, pair_keys: ArrayLike, /) -> tuple[Array, Array]:
         keys = jnp.asarray(pair_keys, dtype=jnp.int64)
+        if keys.ndim != 2 or keys.shape[1] != 5:
+            raise ValueError("Pair keys must have shape (routes, 5).")
         count = int(self.exception_keys.shape[0])
         if count == 0:
-            one = jnp.ones(keys.shape, dtype=self.lennard_jones_scales.dtype)
+            one = jnp.ones(keys.shape[:1], dtype=self.lennard_jones_scales.dtype)
             return one, one
-        raw = jnp.searchsorted(self.exception_keys, keys)
-        index = jnp.clip(raw, 0, count - 1)
-        matched = (raw < count) & (self.exception_keys[index] == keys)
+        comparisons = jnp.all(
+            keys[:, None, :] == self.exception_keys[None, :, :], axis=-1
+        )
+        matched = jnp.any(comparisons, axis=1)
+        index = jnp.argmax(comparisons, axis=1)
         lj = jnp.where(matched, self.lennard_jones_scales[index], 1.0)
         electrostatic = jnp.where(matched, self.electrostatic_scales[index], 1.0)
         return lj, electrostatic

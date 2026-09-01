@@ -1,0 +1,13 @@
+{
+  "benchmark": "contact-dynamics",
+  "device": "TFRT_CPU_0",
+  "dtype": "float64",
+  "elapsed_seconds": 18.215788624998822,
+  "accepted": true,
+  "iterations": 5,
+  "objective_evaluations": 11,
+  "linear_iterations": 8,
+  "active_contacts": 2,
+  "minimum_gap": 0.08763490039938762,
+  "rejection_reasons": 0
+}

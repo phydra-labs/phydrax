@@ -7,8 +7,10 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike
+from opt_einsum import contract
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
@@ -158,7 +160,7 @@ class CmbSpectrumTable(StrictModule):
             | jnp.any(jnp.abs(values - jnp.swapaxes(values, -1, -2)) > 1.0e-10),
             "CMB spectra must be finite and symmetric.",
         )
-        if provenance.differentiability != "native-parameter":
+        if not provenance.differentiation.stored_values:
             ell = jax.lax.stop_gradient(ell)
             values = jax.lax.stop_gradient(values)
         self.multipoles = ell
@@ -242,7 +244,100 @@ class CmbSpectrumTransformPlan(StrictModule, NonTrainableState):
         return jnp.stack(rows)
 
 
+class CmbBandpowerResponseResult(StrictModule):
+    predicted_bandpowers: Array
+    residual: Array
+    whitened_residual: Array
+    log_likelihood: Array
+    valid: Array
+    plan_id: str = eqx.field(static=True)
+    provenance_id: str = eqx.field(static=True)
+
+
+class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
+    """Fixed theory-vector windows and Cholesky-whitened bandpower likelihood."""
+
+    transform: CmbSpectrumTransformPlan
+    windows: Array
+    observed_bandpowers: Array
+    covariance_cholesky: Array
+    expected_temperature_unit: str = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        transform: CmbSpectrumTransformPlan,
+        windows: ArrayLike,
+        observed_bandpowers: ArrayLike,
+        covariance_cholesky: ArrayLike,
+        /,
+        *,
+        expected_temperature_unit: str,
+        response_id: str,
+    ):
+        if not isinstance(transform, CmbSpectrumTransformPlan):
+            raise TypeError("transform must be a CmbSpectrumTransformPlan.")
+        windows_host = np.asarray(windows, dtype=float)
+        observed_host = np.asarray(observed_bandpowers, dtype=float)
+        cholesky_host = np.asarray(covariance_cholesky, dtype=float)
+        bands = windows_host.shape[0] if windows_host.ndim == 3 else 0
+        if (
+            windows_host.ndim != 3
+            or observed_host.shape != (bands,)
+            or cholesky_host.shape != (bands, bands)
+            or np.any(~np.isfinite(windows_host))
+            or np.any(~np.isfinite(observed_host))
+            or np.any(~np.isfinite(cholesky_host))
+            or np.any(np.diag(cholesky_host) <= 0.0)
+        ):
+            raise ValueError("CMB response arrays are invalid.")
+        unit = str(expected_temperature_unit).strip()
+        identifier = str(response_id).strip()
+        if not unit or not identifier:
+            raise ValueError("CMB response unit and ID must be non-empty.")
+        self.transform = transform
+        self.windows = jnp.asarray(windows_host)
+        self.observed_bandpowers = jnp.asarray(observed_host)
+        self.covariance_cholesky = jnp.asarray(cholesky_host)
+        self.expected_temperature_unit = unit
+        self.plan_id = canonical_fingerprint(
+            {
+                "kind": "cmb-bandpower-response",
+                "response_id": identifier,
+                "transform": transform.plan_id,
+                "shape": list(windows_host.shape),
+                "temperature_unit": unit,
+            }
+        )
+
+    def evaluate(self, table: CmbSpectrumTable, /) -> CmbBandpowerResponseResult:
+        if not isinstance(table, CmbSpectrumTable):
+            raise TypeError("table must be a CmbSpectrumTable.")
+        if table.temperature_unit != self.expected_temperature_unit:
+            raise ValueError("CMB table temperature unit does not match response.")
+        packed = self.transform.pack(table)
+        if packed.shape != self.windows.shape[1:]:
+            raise ValueError("CMB packed theory grid does not match response windows.")
+        predicted = contract("brl,rl->b", self.windows, packed)
+        residual = self.observed_bandpowers - predicted
+        whitened = jsp.linalg.solve_triangular(
+            self.covariance_cholesky, residual, lower=True
+        )
+        valid = jnp.all(jnp.isfinite(predicted)) & jnp.all(jnp.isfinite(whitened))
+        return CmbBandpowerResponseResult(
+            predicted,
+            residual,
+            whitened,
+            jnp.where(valid, -0.5 * jnp.sum(whitened * whitened), -jnp.inf),
+            valid,
+            self.plan_id,
+            table.provenance.provenance_id,
+        )
+
+
 __all__ = [
+    "CmbBandpowerResponsePlan",
+    "CmbBandpowerResponseResult",
     "CMB_FIELDS",
     "CMB_MODES",
     "CmbSpectrumTable",

@@ -18,7 +18,7 @@ def test_massive_neutrino_species_and_request_identity():
         cosmology.MassiveNeutrinoSpecies(0.05),
         cosmology.MassiveNeutrinoSpecies(0.01, degeneracy=2.0),
     )
-    request = cosmology.LinearTheoryRequest(
+    request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
@@ -26,11 +26,11 @@ def test_massive_neutrino_species_and_request_identity():
         neutrinos=species,
     )
     assert request.request_id
-    assert request.realization.parameter_names[-2:] == (
-        "massive_neutrino_mass_0",
-        "massive_neutrino_mass_1",
-    )
-    changed = cosmology.LinearTheoryRequest(
+    assert "massive_neutrino_mass_0" in request.realization.parameter_names
+    assert "massive_neutrino_mass_1" in request.realization.parameter_names
+    assert "massive_neutrino_temperature_ratio_1" in request.realization.parameter_names
+    assert "massive_neutrino_degeneracy_1" in request.realization.parameter_names
+    changed = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
@@ -42,30 +42,34 @@ def test_massive_neutrino_species_and_request_identity():
         cosmology.MassiveNeutrinoSpecies(-0.1)
 
 
-def test_subprocess_linear_theory_backend_returns_named_constant_products():
+def test_concrete_linear_theory_backend_returns_named_constant_products(tmp_path):
     root = Path(__file__).parents[2]
     worker = root / "_linear_theory_worker.py"
     scale = cosmology.CosmologyScaleContract("Mpc", "solar_mass", "Gyr")
-    request = cosmology.LinearTheoryRequest(
+    request = cosmology.CosmologyModelRequest(
         scale,
         hubble_constant=70.0,
         baryon_density=0.05,
         cold_dark_matter_density=0.25,
         neutrinos=(cosmology.MassiveNeutrinoSpecies(0.05),),
     )
-    backend = cosmology.SubprocessLinearTheoryBackend(
-        sys.executable,
+    build = cosmology.BackendBuildManifest(
+        backend="class",
+        release="fixture",
+        application=sys.executable,
         arguments=(str(worker), "{request}", "{output}"),
-        backend_name="fixture-linear-theory",
-        backend_version="current",
-        numerical_policy_id="fixture-policy",
+        license_id="internal-test",
     )
-    assert backend.availability().available
-    result = backend.run(request)
+    backend = cosmology.ClassLinearTheoryBackend(
+        build,
+        cosmology.LinearTheoryResourcePolicy(timeout_seconds=60.0),
+        str(tmp_path),
+    )
+    result = backend.run(request).products
     assert result.return_code == 0
     assert result.thermodynamics is not None
     assert result.power.descriptor.left_field == "cold_baryon"
-    assert result.power.provenance.differentiability == "constant"
+    assert not result.power.provenance.differentiation.query_coordinates
     np.testing.assert_allclose(result.power.evaluate([1.0, 3.0], 0.75), [0.625, 1.875])
     np.testing.assert_allclose(
         result.transfer.evaluate("density/total_matter", [1.0, 3.0], 0.75),

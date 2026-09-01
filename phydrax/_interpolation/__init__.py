@@ -9,7 +9,13 @@ from ._barycentric import (
     barycentric_differentiation_matrix,
     barycentric_interpolate,
 )
-from ._bspline import bspline_batched_evaluate, bspline_evaluate, bspline_stencil
+from ._bspline import (
+    bspline_batched_evaluate,
+    bspline_evaluate,
+    bspline_jet_stencil,
+    bspline_stencil,
+    BSplineJetStencil,
+)
 from ._bspline_grid import BSplineGrid, TrainableBSplineGrid
 from ._bspline_grid_bank import BSplineGridBank
 from ._bspline_projection import (
@@ -47,6 +53,7 @@ from ._piecewise import (
     nearest_stencil,
     nearest_stencil_from_indices,
 )
+from ._rational_spline import RationalSplineJet
 from ._rectilinear import (
     AxisBound,
     RECTILINEAR_CAPABILITIES,
@@ -54,6 +61,7 @@ from ._rectilinear import (
     RectilinearBoundaryMode,
 )
 from ._stencil import apply_gather_stencil, gather_patches, GatherStencil
+from ._tensor_bspline import TensorBSplineJetPlan
 from ._types import (
     BoundsMode,
     InterpolationCapabilities,
@@ -72,9 +80,12 @@ __all__ = [
     "FourierEvaluationMethod",
     "RECTILINEAR_CAPABILITIES",
     "BSplineGrid",
+    "BSplineJetStencil",
     "BSplineGridBank",
     "BSplineGridTransfer",
     "TrainableBSplineGrid",
+    "RationalSplineJet",
+    "TensorBSplineJetPlan",
     "ProjectionMethod",
     "BoundsMode",
     "AxisBound",
@@ -93,6 +104,7 @@ __all__ = [
     "bspline_cross_gram",
     "bspline_mass_matrix",
     "bspline_projection_matrix",
+    "bspline_jet_stencil",
     "bspline_stencil",
     "cubic_hermite_interpolate",
     "cubic_hermite_segment",
